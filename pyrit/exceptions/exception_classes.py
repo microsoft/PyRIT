@@ -7,7 +7,7 @@ import os
 import uuid
 from abc import ABC
 from collections.abc import Callable, Sequence
-from typing import Any, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 from openai import RateLimitError
 from tenacity import (
@@ -25,7 +25,8 @@ from pyrit.exceptions.exceptions_helpers import log_exception
 from pyrit.models import Message, MessagePiece, construct_response_from_request
 
 logger = logging.getLogger(__name__)
-_WrappedCallable = TypeVar("_WrappedCallable", bound=Callable[..., Any])
+_RetryParams = ParamSpec("_RetryParams")
+_RetryResult = TypeVar("_RetryResult")
 
 
 def _get_custom_result_retry_max_num_attempts() -> int:
@@ -346,7 +347,7 @@ class ExperimentalWarning(FutureWarning):
 
 def pyrit_custom_result_retry(
     retry_function: Callable[..., bool], retry_max_num_attempts: int | None = None
-) -> Callable[[_WrappedCallable], _WrappedCallable]:
+) -> Callable[[Callable[_RetryParams, _RetryResult]], Callable[_RetryParams, _RetryResult]]:
     """
     Apply retry logic with exponential backoff to a function.
 
@@ -365,7 +366,7 @@ def pyrit_custom_result_retry(
 
     """
 
-    def inner_retry(func: _WrappedCallable) -> _WrappedCallable:
+    def inner_retry(func: Callable[_RetryParams, _RetryResult]) -> Callable[_RetryParams, _RetryResult]:
         # Use static value if explicitly provided, otherwise use dynamic getter
         stop_strategy: stop_base
         if retry_max_num_attempts is not None:

@@ -23,7 +23,7 @@ from sqlalchemy.schema import CreateIndex, CreateTable
 from pyrit.memory.alembic.versions.e5f7a9c1b3d2_add_identifiers_tables import IdentifierGraphInserter
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
 from pyrit.memory.memory_models import AttackResultEntry
-from pyrit.models import AtomicAttackIdentifier, AttackIdentifier, TargetIdentifier
+from pyrit.models import AtomicAttackIdentifier, AttackIdentifier, TargetIdentifier, compute_eval_hash
 
 if TYPE_CHECKING:
     from pytest import LogCaptureFixture
@@ -31,11 +31,15 @@ if TYPE_CHECKING:
 
 MAIN_REVISION = "34a18645c7e9"
 ANALYTICS_REVISION = "901e6c7bf9d4"
+TARGET_IDENTITY_REVISION = "3f6a9d2c8b1e"
 
 
 def test_analytics_migration_is_single_successor_of_main() -> None:
     scripts = ScriptDirectory(str(Path(__file__).resolve().parents[3] / "pyrit" / "memory" / "alembic"))
-    assert scripts.get_heads() == [ANALYTICS_REVISION]
+    assert scripts.get_heads() == [TARGET_IDENTITY_REVISION]
+    correction = scripts.get_revision(TARGET_IDENTITY_REVISION)
+    assert correction is not None
+    assert correction.down_revision == ANALYTICS_REVISION
     revision = scripts.get_revision(ANALYTICS_REVISION)
     assert revision is not None
     assert revision.down_revision == MAIN_REVISION
@@ -80,7 +84,7 @@ def test_analytics_migration_upgrades_from_main_revisions(*, tmp_path: Path, sta
             head_revision = connection.execute(
                 text("SELECT version_num FROM pyrit_memory_alembic_version")
             ).scalar_one()
-            assert head_revision == ANALYTICS_REVISION
+            assert head_revision == TARGET_IDENTITY_REVISION
             assert (
                 connection.execute(
                     text('SELECT resolved_atomic_attack_identifier_hash FROM "AttackResultEntries" WHERE id = :id'),
@@ -383,3 +387,67 @@ def test_mssql_evaluation_migration_uses_a_bounded_index_and_one_result_source()
     assert sql.count("FROM [AttackResultEntries]") == 1
     assert "LEFT OUTER JOIN [TargetIdentifiers]" in sql
     assert "ScoreEntries" not in sql and "PromptMemoryEntries" not in sql
+
+
+def test_target_identity_correction_recomputes_keys_written_by_the_original_revision(tmp_path: Path) -> None:
+    """A database that already applied the original revision keeps its merged keys until this revision runs."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'target-identity.sqlite'}")
+    bank = TargetIdentifier(
+        class_name="HTTPTarget", class_module="tests", model_name="", endpoint="https://bank.example"
+    )
+    hr = TargetIdentifier(class_name="HTTPTarget", class_module="tests", model_name="", endpoint="https://hr.example")
+    model = TargetIdentifier(
+        class_name="MockTarget", class_module="tests", model_name="deployment", underlying_model_name="model-x"
+    )
+
+    def document(target: TargetIdentifier) -> dict[str, Any]:
+        attack = AttackIdentifier(class_name="ProbeAttack", class_module="tests", objective_target=target)
+        return AtomicAttackIdentifier.build(attack_identifier=attack).model_dump()
+
+    def original_rule_hash(target: TargetIdentifier) -> str:
+        return compute_eval_hash(
+            target,
+            child_eval_rules=ObjectiveTargetAnalyticsIdentityV1._CHILD_RULES,
+            own_rule=ObjectiveTargetAnalyticsIdentityV1._OWN_RULE,
+            root_unwrap_child="targets",
+        )
+
+    try:
+        with engine.begin() as connection:
+            config = configuration(connection)
+            command.upgrade(config, ANALYTICS_REVISION)
+            ids = {
+                name: insert_result(connection, identifier=document(t))
+                for name, t in (("bank", bank), ("hr", hr), ("model", model))
+            }
+            # Simulate keys written before the correction: both HTTP targets share one merged key.
+            for name, target in (("bank", bank), ("hr", hr), ("model", model)):
+                connection.execute(
+                    text('UPDATE "AttackResultEntries" SET objective_target_eval_hash_v1 = :key WHERE id = :id'),
+                    {"key": original_rule_hash(target), "id": ids[name]},
+                )
+            assert original_rule_hash(bank) == original_rule_hash(hr)
+
+            command.upgrade(config, "head")
+
+            stored = dict(
+                connection.execute(text('SELECT id, objective_target_eval_hash_v1 FROM "AttackResultEntries"')).all()
+            )
+            assert stored == {
+                ids["bank"]: bank.hash,
+                ids["hr"]: hr.hash,
+                ids["model"]: original_rule_hash(model),
+            }
+            assert stored[ids["model"]] == ObjectiveTargetAnalyticsIdentityV1.hash(identifier=model)
+            command.check(config)
+            command.downgrade(config, ANALYTICS_REVISION)
+            assert (
+                dict(
+                    connection.execute(
+                        text('SELECT id, objective_target_eval_hash_v1 FROM "AttackResultEntries"')
+                    ).all()
+                )
+                == stored
+            )
+    finally:
+        engine.dispose()

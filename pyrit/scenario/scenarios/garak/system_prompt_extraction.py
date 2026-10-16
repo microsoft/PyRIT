@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import random
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
@@ -198,7 +198,7 @@ class SystemPromptExtraction(Scenario):
             note="The objective limit is shared across all selected categories.",
         )
 
-    def _sample_system_prompts(self, seeds_by_dataset: dict[str, list[Seed]]) -> list[str]:
+    def _sample_system_prompts(self, seeds_by_dataset: dict[str, list[Seed[Any]]]) -> list[str]:
         """
         Select system prompts from the filtered seed populations.
 
@@ -215,7 +215,7 @@ class SystemPromptExtraction(Scenario):
         return system_prompts
 
     @staticmethod
-    def _group_templates(seeds: list[Seed]) -> dict[str, list[str]]:
+    def _group_templates(seeds: list[Seed[Any]]) -> dict[str, list[str]]:
         """
         Group filtered extraction templates by ``technique`` metadata.
 

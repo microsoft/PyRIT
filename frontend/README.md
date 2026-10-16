@@ -21,6 +21,34 @@ refreshes do not override your open/closed choice. Creating, copying, or repeati
 conversations still opens the desktop drawer. On narrow screens the drawer opens
 only when requested and closes after selecting a conversation.
 
+Each saved turn, including a system turn, has a **Copy or Branch** menu with
+visible descriptions for each action. **Copy to next message** copies only that message
+to the prompt box. **Branch conversation** and **Branch attack** copy history
+including that turn into the same attack or a new attack (a separate group of
+conversations), open the
+conversation panel, and select the copy at its full
+`/attacks/{attack_id}/conversations/{conversation_id}` URL. Copying
+within a target-free attack keeps it target-free until you send a prompt.
+When you save an edited conversation, its final user turn moves to the prompt
+box instead of saved history. Text and attachments retain their metadata,
+including text-only video remix IDs. You can enter and edit prompts without a target.
+Send stays disabled until you select a target; no target-warning box is shown.
+
+**Use in scan** opens the configuration to apply a PyRIT attack technique after
+prepending history including the selected turn. It saves a target-free copy
+and opens `/scanner/technique.execute?prepended_conversation_id={conversation_id}`.
+The scanner configuration fills **prepended_conversation_id** from this URL.
+There is no clipboard step, and opening the configuration does not launch a scan.
+Select **Add new conversation** beside that field to build simulated history,
+or **Edit conversation** to load its current history. **Add to attack** saves all
+turns to a new conversation and updates the field. It does not change the source
+history, send prompts, or launch a scan. These controls are not in Registry.
+Scan launch is disabled while a conversation loads or its editor is open.
+The **Apply converters to conversation** toggle beside **Edit conversation** is
+off by default and disabled when the conversation ID is empty. When enabled,
+request converters run on the stored history during the scan, without changing
+the source conversation. New outgoing turns are always converted.
+
 ## Dataset catalog
 
 The **Datasets** page shows summaries of datasets already loaded into the backend's
@@ -59,6 +87,51 @@ If the runtime changes while preparing a new chat message or saving a draft to
 a new attack, the draft is kept so you can retry after loading finishes. Copies
 and drafts saved to an existing attack remain available during defaults reloads
 and keep that attack's attribution.
+
+## Attack results analytics
+
+Open **Analytics** to filter saved results, compare SDK-computed outcome
+statistics, and drill into matching attacks. See the
+[analytics GUI guide](../doc/gui/0_gui.md#attack-results-analytics) for cohort
+semantics, denominators, time bounds, URL sharing, and refresh behavior.
+The implementation follows
+[part 5 of the analytics roadmap](https://gist.github.com/romanlutz/34230aba87f7fa07996772a4099e9a78).
+
+The shared `AttackResults/OutcomeSummaryBar` accepts `OutcomeStatistics`, not
+result rows. This keeps it reusable without counting a paginated sample or
+inferring historical scenario breakdowns from retries.
+
+### Isolated analytics browser checks
+
+From `frontend`, run:
+
+```bash
+npm run test:e2e:analytics
+```
+
+This builds the current frontend and starts the real application routes and
+compatibility/readiness middleware over a disposable local SQLite database.
+Its synthetic results include repeated conversation IDs, all result roles,
+converter memberships, and a saved retry scenario. It uses a private home,
+explicit empty environment-file/initializer lists, and no provider calls,
+shared database, or Azure credentials. The normal E2E configuration excludes
+this fixture-specific spec; its dedicated configuration owns the server.
+CI runs it as an additional isolated shard of the required Frontend E2E check,
+using the same report upload, merge, and failure gate as the other projects.
+Python dependencies must first be available through `uv sync` at the repository
+root. `PYRIT_E2E_ANALYTICS_PORT` changes the loopback port when needed.
+If Python is managed only by uv, point Vite's existing Python override at that
+environment before running the command. In PowerShell:
+
+```powershell
+$env:PYRIT_PYTHON = uv run python -c "import sys; print(sys.executable)"
+npm run test:e2e:analytics
+```
+
+Set `PYRIT_ANALYTICS_SCREENSHOT_DIR` to an artifact directory to also capture the
+verified overview in light/dark, a heatmap drill-down, and narrow controls/report views.
+The browser checks do not mock analytics APIs. They do not repeat the separate
+100,000-result backend performance workload.
 
 ## Development
 
@@ -206,10 +279,12 @@ E2E_LIVE_MODE=true npx playwright test
 
 The mock and seeded projects run in the **GitHub Actions** pull-request workflow. The live project is intended for a protected pipeline with an Entra identity or API keys.
 
-CI runs two isolated mock shards alongside one serial seeded job, with one
-worker per job. Each job starts its own Vite server and Python backend because
-mock specs still depend on backend auth bootstrap and some API calls. The jobs
-never share backend state. The required **Frontend E2E Tests** check merges their reports and fails
+CI runs two isolated mock shards, one serial seeded job, and one isolated
+analytics job, with one worker per job. Mock and seeded jobs start their own
+Vite server and Python backend because mock specs still depend on backend auth
+bootstrap and some API calls. The analytics job serves its production build
+from the disposable SQLite fixture. Jobs never share backend state.
+The required **Frontend E2E Tests** check merges their reports and fails
 if any shard fails, is cancelled, or is missing a report. Skipped and flaky tests
 also fail CI.
 
@@ -234,6 +309,11 @@ servers with reuse disabled, even when `E2E_FRONTEND_PORT` is set.
 
 The frontend proxies API requests to `http://localhost:8000` in development.
 Configure this in `vite.config.ts` if needed.
+
+The Vite development server binds to `127.0.0.1` by default so its `/api`
+proxy cannot expose a local unauthenticated backend to the LAN. Environments
+that already provide an isolated network boundary, such as a devcontainer with
+controlled port forwarding, can explicitly set `PYRIT_FRONTEND_HOST=0.0.0.0`.
 
 The Vite development server disables its own CORS handling. Use the frontend's
 same-origin `/api` proxy for API requests. Cross-origin API preflights pass to

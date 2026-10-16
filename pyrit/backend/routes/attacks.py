@@ -73,6 +73,20 @@ async def save_conversation_async(*, body: SaveConversationRequest, request: Req
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.get("/conversations/{conversation_id}", response_model=AddMessageResponse)
+async def get_saved_conversation_async(conversation_id: IdentifierStr) -> AddMessageResponse:
+    """
+    Get a saved chat conversation and its attack for the scanner editor.
+
+    Returns:
+        The stored attack and conversation.
+    """
+    response = await get_attack_service().get_saved_conversation_async(conversation_id=conversation_id)
+    if response is None:
+        raise HTTPException(status_code=404, detail="Saved chat conversation not found")
+    return response
+
+
 @router.get(
     "",
     response_model=AttackListResponse,

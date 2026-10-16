@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -36,7 +35,7 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
     # so harm_categories is left empty. Only or-bench-toxic contains genuinely harmful
     # prompts, so only that subset maps `category` to the canonical taxonomy.
     MAPS_HARM_CATEGORIES: bool = False
-    HARM_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast("dict[str, list[HarmCategory]]", {})
+    HARM_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {}
 
     should_register = False  # abstract base — subclasses register themselves
 

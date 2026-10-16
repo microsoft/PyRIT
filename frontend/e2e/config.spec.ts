@@ -710,15 +710,16 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await expect(badge).toContainText(/gpt-4o/);
   });
 
-  test("should enable chat input after a target is set", async ({ page }) => {
+  test("should enable sending after a target is set", async ({ page }) => {
     await page.route(/\/api\/targets/, async (route) => {
       await route.fulfill(mockTargetsList(SAMPLE_TARGETS));
     });
 
-    // Start in chat with the composer disabled until a target is selected.
     await page.goto("/");
     await page.getByTitle("Technique.execute").click();
-    await expect(page.getByRole("textbox")).toBeDisabled();
+    await expect(page.getByRole("textbox")).toBeEnabled();
+    await page.getByRole("textbox").fill("Draft without a target");
+    await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
 
     // Go to targets, set a target
     await page.getByTitle("Registry").click();

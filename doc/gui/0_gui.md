@@ -11,15 +11,17 @@ There are several ways to run CoPyRIT:
 If you have PyRIT installed, use the `pyrit_backend` command to start the server. The bundled frontend is served automatically.
 
 ```bash
-pyrit_backend
+pyrit_backend --auth-mode local
 ```
 
 Then open `http://localhost:8000` in your browser.
 
-Authentication-disabled local servers deny administrator operations by default. To enable administrator operations
+Local mode deliberately disables incoming-request Entra authentication and is
+restricted to a loopback host by the packaged CLI. Authentication-disabled local
+servers deny administrator operations by default. To enable administrator operations
 (configuration, initializer administration, and creating targets that run model repository code) for a trusted local
-development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use this
-setting on a network-accessible deployment.
+development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use these local settings on a
+network-accessible deployment.
 
 ### Docker
 
@@ -35,7 +37,75 @@ To deploy an isolated instance for an external team, see [Deploy a New Instance]
 
 ## Views
 
-CoPyRIT has three main views, accessible from the left sidebar: **Technique.execute** (Chat), **Attack History**, and **Target Configuration**. The **Theme** menu is available at the bottom of the sidebar.
+Use the left sidebar to open **Home**, **Technique.execute** (Chat), **History**, **Analytics**, **Scanner**,
+**Datasets**, or the **Registry**. **Configuration** is available to administrators.
+The **Theme** menu is at the bottom of the sidebar.
+
+### Attack Results Analytics
+
+**Analytics** explores saved attack results using the
+[SDK analytics API](../code/analytics/0_attack_results.md). Every distinct saved
+AttackResult ID counts, including different IDs sharing a conversation and all
+result roles. Selecting a scenario filters this same population, including its
+retries. It does not switch to the scanner's latest-execution-unit statistics.
+
+Use **Operation**, **Operator**, **Objective target**, or **Add filter** to select
+saved metadata. Additional dimensions include model, targeted harm category,
+attack type, request or response converters, scenario run, and arbitrary label
+keys. Targeted harms describe intended coverage, not harms detected by scorers.
+Target options use persisted behavioral identities, not current registry
+membership. The content hash in a matching row is for inspecting that saved
+target, not a substitute for its filter key.
+
+Filter values load only when their editor is open, with debounced search and
+bounded **First values** / **Next values** paging. Selections survive searches
+and pages. Values within a filter are alternatives (**ANY**); converters also
+support **ALL**. Separate filter chips are combined with **AND**, even when
+they select the same dimension. Missing metadata, an empty converter pipeline,
+and literal values such as `Unknown` remain distinct.
+
+**Last updated** accepts ISO 8601 timestamps with `Z` (UTC) or an explicit offset.
+For example, `2026-11-01T01:30:00-07:00` and `2026-11-01T01:30:00-08:00`
+are different instants during a daylight saving transition. After is inclusive;
+before is exclusive. Microseconds are retained. These bounds describe last
+updates, not attack execution times.
+
+The dashboard offers outcome-composition bars, success-rate bars, and a
+two-axis heatmap. **ASR denominator** defaults to decided results (successes plus
+failures). All-results ASR includes errors and undetermined outcomes. Both rates
+come from the SDK. Counts are explicit: `100%, 3 success / 3 decided, 5 total`
+means three successes and two results without a decision, not five successes.
+An unavailable decided denominator displays **Unavailable**, not `0%`.
+Outcome filters apply to the entire dashboard and mark **ASR*** with an
+explanation, including the `100%*` produced by a successes-only cohort.
+
+Click a group, outcome segment, or heatmap cell to append the SDK's drill-down
+predicates. Overlapping group totals must not be added together. When the
+16-predicate or 500-value budget prevents another drill-down, the SDK's reason
+is displayed; the current charts, results, and filter editing remain available.
+Group and result pages stay bounded. **Show cell data** provides a textual
+heatmap view. Matching result rows open the ordinary saved-attack view with a
+click, Enter, or Space.
+
+Use **Reload** for a new report. **Last refreshed** shows the last successful
+report time; paging matching results updates only **Page read**, not the report.
+Presentation changes preserve pages and do not request new aggregates.
+The dashboard does not poll, although the app's shared readiness checks continue.
+Errors retain a same-cohort last successful report with a stale warning. Busy
+read retries honor the server's cooldown; invalid result cursors can return to
+the first results page without recalculating the report.
+
+Copy the browser URL to share filters and presentation. New links put the state
+after `#analytics=`, so large filter values are not sent in HTTP request targets
+and do not exceed the backend's 8 KiB URL limit on reload. Valid older query
+links are migrated to this representation; invalid links require an explicit
+reset rather than silently querying a broader cohort. Browser Back and the
+Analytics sidebar button retain the exploration. Links contain the selected
+metadata values, so share them only with appropriate recipients.
+
+Outcome fills are consistent across summaries, bars, swatches, and result
+badges: success is green, failure red, execution error blue, and undetermined
+gray. Text and keyboard actions remain available independently of color.
 
 ### Themes
 

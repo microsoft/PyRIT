@@ -62,6 +62,12 @@ import type {
   ManualScoreRequest,
   UpdateAttackRequest,
   SaveConversationRequest,
+  AttackAnalyticsQuery,
+  AttackAnalyticsReport,
+  AttackAnalyticsResultsQuery,
+  AttackAnalyticsResults,
+  AttackAnalyticsFacetQuery,
+  AttackAnalyticsFacets,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -176,6 +182,30 @@ apiClient.interceptors.response.use(
 )
 
 export { apiClient }
+
+export const analyticsApi = {
+  query: async (
+    query: AttackAnalyticsQuery,
+    signal?: AbortSignal,
+  ): Promise<AttackAnalyticsReport> => {
+    const response = await apiClient.post<AttackAnalyticsReport>('/analytics/attacks/query', query, { signal })
+    return response.data
+  },
+  results: async (
+    query: AttackAnalyticsResultsQuery,
+    signal?: AbortSignal,
+  ): Promise<AttackAnalyticsResults> => {
+    const response = await apiClient.post<AttackAnalyticsResults>('/analytics/attacks/results', query, { signal })
+    return response.data
+  },
+  facets: async (
+    query: AttackAnalyticsFacetQuery,
+    signal?: AbortSignal,
+  ): Promise<AttackAnalyticsFacets> => {
+    const response = await apiClient.post<AttackAnalyticsFacets>('/analytics/attacks/facets', query, { signal })
+    return response.data
+  },
+}
 
 export const healthApi = {
   checkHealth: async () => {
@@ -357,6 +387,11 @@ export const attacksApi = {
     const response = await apiClient.delete(
       `/attacks/${encodeURIComponent(attackResultId)}/human-score`
     )
+    return response.data
+  },
+
+  getConversation: async (conversationId: string): Promise<AddMessageResponse> => {
+    const response = await apiClient.get(`/attacks/conversations/${encodeURIComponent(conversationId)}`)
     return response.data
   },
 

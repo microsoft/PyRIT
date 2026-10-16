@@ -35,6 +35,7 @@ from pyrit.memory.analytics_sql import (
     JsonScalar,
     ResolvedAttackIdentifierHash,
     UnicodeLower,
+    UnicodeStrip,
 )
 from pyrit.memory.attack_analytics import AttackAnalyticsReader
 from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
@@ -1117,6 +1118,36 @@ def test_json_array_checks_distinguish_shape_from_missing_members(
     with sqlite_instance.engine.connect() as connection:
         result = connection.execute(select(JsonIsArray(literal(raw)), JsonArrayEmpty(literal(raw)))).one()
     assert tuple(result) == (is_array, is_empty)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "",
+        *[chr(codepoint) for codepoint in range(0x3001) if chr(codepoint).isspace()],
+        " \t\r\n\xa0\u2003",
+        "\t model \xa0 name \r\n",
+        "\u200bmodel\u200b",
+        "\x00model\x00",
+    ],
+)
+def test_unicode_strip_matches_python_without_changing_internal_text(
+    sqlite_instance: SQLiteMemory, value: str | None
+) -> None:
+    with sqlite_instance.engine.connect() as connection:
+        stripped = connection.execute(select(UnicodeStrip(literal(value, UnicodeText())))).scalar_one()
+    assert stripped == (value.strip() if value is not None else None)
+
+
+def test_mssql_unicode_strip_uses_native_trim_with_bounded_unicode_characters() -> None:
+    statement = select(UnicodeStrip(column("model_name", UnicodeText())))
+    sql = str(statement.compile(dialect=mssql.dialect()))
+    assert " FROM model_name COLLATE Latin1_General_100_BIN2)" in sql
+    whitespace = next(iter(statement.selected_columns)).clauses.clauses[1]
+    assert whitespace.type.length == 29
+    assert set(whitespace.value) == {chr(codepoint) for codepoint in range(0x3001) if chr(codepoint).isspace()}
+    assert statement._generate_cache_key() is not None
 
 
 @pytest.mark.parametrize("raw", [1, '["Alpha", 1]', '{"class_name": "Alpha"}', "not json"])

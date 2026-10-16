@@ -403,12 +403,13 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             RuntimeError: If the executor returned neither a completed
                 result nor an incomplete objective (defensive guard).
         """
-        expectation_override = {"expectation": expectation} if expectation is not None else {}
-        result_fields: dict[str, Any] = {}
+        executor_kwargs: dict[str, Any] = {}
+        if expectation is not None:
+            executor_kwargs["expectation"] = expectation
         if child_attack.atomic_attack_identifier is not None:
-            result_fields["atomic_attack_identifiers"] = [child_attack.atomic_attack_identifier]
+            executor_kwargs["atomic_attack_identifiers"] = [child_attack.atomic_attack_identifier]
         if child_attack.result_metadata:
-            result_fields["result_metadata"] = [child_attack.result_metadata]
+            executor_kwargs["result_metadata"] = [child_attack.result_metadata]
         executor_result = await self._executor.execute_attack_from_seed_groups_async(
             attack=child_attack.strategy,
             seed_groups=[child_attack.seed_group],
@@ -417,8 +418,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             memory_labels=memory_labels,
             return_partial_on_failure=True,
             attribution=attribution,
-            **expectation_override,
-            **result_fields,
+            **executor_kwargs,
         )
         if executor_result.completed_results:
             return executor_result.completed_results[0]

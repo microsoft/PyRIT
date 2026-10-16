@@ -18,7 +18,7 @@ from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.memory import SQLiteMemory
-from test_support.fixtures import compatibility_headers, compatibility_id  # noqa: F401
+from test_support.fixtures import authentication_policy, compatibility_headers, compatibility_id  # noqa: F401
 
 
 @pytest.fixture

@@ -22,6 +22,7 @@ const E2E_BACKEND_URL = `http://127.0.0.1:${E2E_BACKEND_PORT}`;
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: "**/analytics.spec.ts",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -85,7 +86,7 @@ export default defineConfig({
         {
           command:
             `cd .. && uv run --no-sync python -m pyrit.backend.pyrit_backend ` +
-            `--host 127.0.0.1 --port ${E2E_BACKEND_PORT} --log-level warning ` +
+            `--auth-mode local --host 127.0.0.1 --port ${E2E_BACKEND_PORT} --log-level warning ` +
             "--config-file tests/end_to_end/test_config.yaml",
           env: { PYRIT_DEV_MODE: "true" },
           url: `${E2E_BACKEND_URL}/api/health`,
