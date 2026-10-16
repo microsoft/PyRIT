@@ -24,6 +24,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, limit_requests_per_minute
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 T = TypeVar("T")
 
@@ -32,6 +33,21 @@ async def run_memory_session_async(*, memory: MemoryInterface, operation: Callab
     """Run a test's direct ORM operation on the async memory connection."""
     async with await memory.get_session_async() as session:
         return await session.run_sync(operation)
+
+
+def make_technique_class(*, techniques: Sequence[str], aggregates: Sequence[str] = ()) -> type[ScenarioTechnique]:
+    """
+    Build the technique catalog a scenario declaring these names would have.
+
+    ``ScenarioMetadata`` carries the catalog itself so that preset validation and the
+    launch path resolve technique tokens through one implementation, so a test building
+    metadata by hand needs a catalog that agrees with the names it passes.
+    """
+    members = [(name.upper(), (name, {"all"})) for name in aggregates]
+    members += [(name.upper(), (name, set())) for name in techniques]
+    # The functional Enum API builds a new enum class, but the overload ty selects is the
+    # member-lookup form, so it infers an instance rather than the class this returns.
+    return ScenarioTechnique("MockTechnique", members)  # ty: ignore[invalid-return-type]
 
 
 def make_scenario_identifier(

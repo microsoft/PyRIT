@@ -138,6 +138,7 @@ export function useConversationDraft(newAttackContext?: NewAttackContext) {
   }
   const save = async (
     destination: SaveConversationRequest['destination'], onSaved: (response: AddMessageResponse, target?: TargetInstance | null) => void,
+    messages: ConversationDraftMessage[] = draft?.messages ?? [],
   ): Promise<void> => {
     if (!draft || workflow.saving || savePending.current) return
     savePending.current = true
@@ -156,7 +157,7 @@ export function useConversationDraft(newAttackContext?: NewAttackContext) {
         target = await buildTemperatureTarget(target, Number(draft.temperature))
       }
       if (activeId.current !== id) return
-      const response = await workflow.save({ ...draft, target }, destination, newAttackContext)
+      const response = await workflow.save({ ...draft, target, messages }, destination, newAttackContext)
       if (activeId.current !== id) return
       saved.current = true
       if (draft.temperature.trim()) onSaved(response, target)

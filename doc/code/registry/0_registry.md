@@ -81,6 +81,23 @@ Use `create_instance(type_name, **params)` to build an object without adding it
 to `.instances`. The caller owns that object and its cleanup.
 `create_named_instance(...)` remains the build-and-register operation.
 
+For a target that owns resources, release it even if the operation fails:
+
+```python
+from pyrit.registry import TargetRegistry
+
+temporary = TargetRegistry.get_registry_singleton().create_instance(
+    "OpenAIChatTarget", endpoint=endpoint, model_name=model_name, api_key=api_key
+)
+try:
+    response = await temporary.send_prompt_async(message=message)
+finally:
+    await temporary.cleanup_target_async()
+```
+
+To retry, construct a new temporary target for each attempt and keep cleanup
+inside that attempt's `finally` block.
+
 The existing `POST /api/targets`, `POST /api/converters`, and `POST /api/scorers`
 endpoints accept `register: false`. Registration defaults to `true`, so existing
 clients keep their behavior. For example:
@@ -96,6 +113,11 @@ clients keep their behavior. For example:
 The response contains an `identifier` and, for targets, `capabilities`. It does
 not contain a registry name or a reusable object handle. The backend discards
 the built object after returning its descriptor.
+
+For scorers, this is a construction check and an identity preview only. No
+scoring or scenario endpoint accepts the returned descriptor. Register the
+scorer to use it in those operations, or construct and use an unregistered
+scorer directly in Python.
 
 Targets and converters can also use a registered source that supports
 reconstruction:

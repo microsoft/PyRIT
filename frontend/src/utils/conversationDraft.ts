@@ -131,6 +131,31 @@ export function draftAttachment(piece: ConversationDraftPiece): MessageAttachmen
     file: piece.file,
     sourceValue: piece.file ? undefined : piece.original_value,
     sourceDataType: piece.data_type,
+    pieceId: piece.source_piece_id,
+    metadata: piece.prompt_metadata,
+  }
+}
+
+export function draftMessageToInput(message: ConversationDraftMessage): {
+  text: string; attachments: MessageAttachment[]; textMetadata?: Record<string, unknown>
+} {
+  const pieces = message.pieces.map((piece: ConversationDraftPiece) => piece.converted_value === undefined ? piece : {
+    ...piece,
+    original_value: piece.converted_value,
+    data_type: piece.converted_value_data_type ?? piece.data_type,
+    source_piece_id: piece.converted_value === piece.original_value
+      && (piece.converted_value_data_type ?? piece.data_type) === piece.data_type ? piece.source_piece_id : undefined,
+    file: undefined,
+    previewUrl: undefined,
+  })
+  const textPieces = pieces.filter((piece: ConversationDraftPiece) => !isPathDataType(piece.data_type))
+  const textMetadata = textPieces.reduce<Record<string, unknown>>(
+    (metadata: Record<string, unknown>, piece: ConversationDraftPiece) => ({ ...metadata, ...piece.prompt_metadata }), {},
+  )
+  return {
+    text: textPieces.map((piece: ConversationDraftPiece) => piece.original_value).join('\n'),
+    textMetadata: Object.keys(textMetadata).length ? textMetadata : undefined,
+    attachments: pieces.filter((piece: ConversationDraftPiece) => isPathDataType(piece.data_type)).map(draftAttachment),
   }
 }
 

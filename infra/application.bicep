@@ -201,6 +201,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: 'gui'
             }
             {
+              name: 'PYRIT_AUTH_MODE'
+              value: 'entra'
+            }
+            {
               name: 'AZURE_SQL_SERVER'
               value: sqlServerFqdn
             }

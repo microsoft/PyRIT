@@ -105,6 +105,17 @@ export function toApiError(err: unknown): ApiError {
   }
 }
 
+/** Respect a server-directed cooldown before a user retries a busy read. */
+export function retryAfterMilliseconds(error: unknown): number {
+  if (!isAxiosError(error) || error.response?.status !== 503) return 0
+  const header: unknown = error.response.headers?.['retry-after']
+  if (typeof header !== 'string' && typeof header !== 'number') return 0
+  const seconds = Number(header)
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000
+  const date = typeof header === 'string' ? Date.parse(header) : NaN
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------

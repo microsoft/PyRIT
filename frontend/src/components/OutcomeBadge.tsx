@@ -1,4 +1,6 @@
-import { Badge, tokens } from '@fluentui/react-components'
+import type { ReactElement } from 'react'
+
+import { Badge, mergeClasses } from '@fluentui/react-components'
 import type { BadgeProps } from '@fluentui/react-components'
 import {
   CheckmarkCircleRegular,
@@ -9,26 +11,36 @@ import {
 
 import type { AttackOutcome } from '@/types'
 
-const OUTCOME_ICONS: Record<AttackOutcome, React.ReactElement> = {
-  success: <CheckmarkCircleRegular style={{ color: tokens.colorPaletteGreenForeground1 }} />,
-  failure: <DismissCircleRegular style={{ color: tokens.colorPaletteRedForeground1 }} />,
-  error: <ErrorCircleRegular style={{ color: tokens.colorPaletteRedForeground1 }} />,
-  undetermined: <QuestionCircleRegular style={{ color: tokens.colorNeutralForeground3 }} />,
-}
+import { useOutcomeBadgeStyles } from './OutcomeBadge.styles'
 
-const OUTCOME_COLORS: Record<AttackOutcome, 'success' | 'danger' | 'informative' | 'warning'> = {
-  success: 'success',
-  failure: 'danger',
-  error: 'warning',
-  undetermined: 'informative',
+const OUTCOME_ICONS: Record<AttackOutcome, ReactElement> = {
+  success: <CheckmarkCircleRegular />,
+  failure: <DismissCircleRegular />,
+  error: <ErrorCircleRegular />,
+  undetermined: <QuestionCircleRegular />,
 }
 
 interface OutcomeBadgeProps {
-  outcome?: AttackOutcome | null
-  testId?: string
-  className?: string
-  appearance?: BadgeProps['appearance']
-  size?: BadgeProps['size']
+  readonly outcome?: AttackOutcome | null
+  readonly testId?: string
+  readonly className?: string
+  readonly appearance?: BadgeProps['appearance']
+  readonly size?: BadgeProps['size']
+  readonly label?: string
+}
+
+interface OutcomeIconProps {
+  readonly outcome?: AttackOutcome | null
+}
+
+export function OutcomeIcon({ outcome }: OutcomeIconProps) {
+  const styles = useOutcomeBadgeStyles()
+  const normalizedOutcome = outcome ?? 'undetermined'
+  return (
+    <span className={mergeClasses(styles.icon, styles[normalizedOutcome])} role="img" aria-label={normalizedOutcome}>
+      {OUTCOME_ICONS[normalizedOutcome]}
+    </span>
+  )
 }
 
 export default function OutcomeBadge({
@@ -37,19 +49,20 @@ export default function OutcomeBadge({
   className,
   appearance = 'filled',
   size,
+  label,
 }: OutcomeBadgeProps) {
+  const styles = useOutcomeBadgeStyles()
   const normalizedOutcome = outcome ?? 'undetermined'
 
   return (
     <Badge
       appearance={appearance}
-      color={OUTCOME_COLORS[normalizedOutcome]}
       icon={OUTCOME_ICONS[normalizedOutcome]}
       size={size}
-      className={className}
+      className={mergeClasses(styles[normalizedOutcome], styles[appearance], className)}
       data-testid={testId}
     >
-      {normalizedOutcome}
+      {label ?? normalizedOutcome}
     </Badge>
   )
 }

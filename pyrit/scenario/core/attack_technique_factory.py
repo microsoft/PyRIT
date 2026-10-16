@@ -39,6 +39,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Identifiable,
     PromptDataType,
+    SeedGroupRequirements,
     SeedIdentifier,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -51,6 +52,7 @@ from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemProm
 from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
+from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -143,6 +145,7 @@ class AttackTechniqueFactory(Identifiable):
         adversarial_seed_prompt: SeedPrompt | str | None = None,
         adversarial_prompt_template: str | SeedPrompt | None = None,
         seed_technique: AttackTechniqueSeedGroup | None = None,
+        requirements: TechniqueRequirements | None = None,
         uses_adversarial: bool | None = None,
         supports_additional_request_converters: bool = False,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
@@ -186,6 +189,8 @@ class AttackTechniqueFactory(Identifiable):
                 resolved target like ``adversarial_system_prompt``.
             seed_technique: Optional technique seed group attached to created
                 techniques.
+            requirements: Target and incoming dataset requirements. Attack-class
+                target requirements always apply in addition to these declarations.
             uses_adversarial: Whether this technique drives an adversarial
                 chat during execution. ``None`` auto-derives from the attack
                 class constructor signature and seed-technique shape.
@@ -231,6 +236,7 @@ class AttackTechniqueFactory(Identifiable):
         )
         self._adversarial_system_prompt_prefix: str | None = None
         self._seed_technique = seed_technique
+        self._requirements = requirements or TechniqueRequirements()
         self._supports_additional_request_converters = supports_additional_request_converters
         self._scorer_override_policy = scorer_override_policy
         self._use_score_as_feedback = use_score_as_feedback
@@ -269,6 +275,7 @@ class AttackTechniqueFactory(Identifiable):
         uses_adversarial: bool | None = None,
         supports_additional_request_converters: bool = False,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
+        requirements: TechniqueRequirements | None = None,
     ) -> AttackTechniqueFactory:
         """
         Alternative constructor that builds a ``SeedSimulatedConversation`` inline.
@@ -330,6 +337,8 @@ class AttackTechniqueFactory(Identifiable):
                 incompatible with the attack's ``attack_scoring_config`` type
                 annotation. Defaults to ``WARN``. Forwarded to the factory
                 constructor.
+            requirements: Optional requirements override. Defaults to strict
+                objective-only dataset input; technique-owned seeds are not restricted.
 
         Returns:
             AttackTechniqueFactory: A new factory whose ``seed_technique`` is the
@@ -411,6 +420,7 @@ class AttackTechniqueFactory(Identifiable):
             uses_adversarial=uses_adversarial,
             supports_additional_request_converters=supports_additional_request_converters,
             scorer_override_policy=scorer_override_policy,
+            requirements=requirements or TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True)),
         )
 
     def _derive_uses_adversarial(self) -> bool:
@@ -569,6 +579,11 @@ class AttackTechniqueFactory(Identifiable):
     def seed_technique(self) -> AttackTechniqueSeedGroup | None:
         """The optional technique seed group."""
         return self._seed_technique
+
+    @property
+    def requirements(self) -> TechniqueRequirements:
+        """The declared requirements, in addition to the attack-class target contract."""
+        return self._requirements
 
     def can_append_request_converter(self, *, converter_type: type[Converter]) -> bool:
         """
@@ -895,6 +910,7 @@ class AttackTechniqueFactory(Identifiable):
             )
 
         kwargs = dict(self._attack_kwargs)
+        self._requirements.validate_target(target=objective_target, attack_class=self._attack_class)
         kwargs["objective_target"] = objective_target
 
         accepted_params = self._compatibility_helper.accepted_params
@@ -939,7 +955,7 @@ class AttackTechniqueFactory(Identifiable):
                 kwargs["attack_converter_config"] = converter_config
 
         attack = self._attack_class(**kwargs)
-        return AttackTechnique(attack=attack, seed_technique=self._seed_technique)
+        return AttackTechnique(attack=attack, seed_technique=self._seed_technique, requirements=self._requirements)
 
     def _apply_score_feedback_override(self, *, attack_scoring_config: AttackScoringConfig) -> AttackScoringConfig:
         """
@@ -1147,6 +1163,8 @@ class AttackTechniqueFactory(Identifiable):
             params["adversarial_system_prompt_prefix"] = self._adversarial_system_prompt_prefix
         if self._use_score_as_feedback is not None:
             params["use_score_as_feedback"] = self._use_score_as_feedback
+        if self._requirements.adaptation is not None:
+            params["seed_group_adaptation"] = self._requirements.adaptation
 
         children: dict[str, Any] = {}
         if self._seed_technique is not None:

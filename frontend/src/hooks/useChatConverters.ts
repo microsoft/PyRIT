@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { buildAppliedConversions } from '@/utils/conversionResults'
 import { buildConverterInputs } from '@/components/Chat/converterTypes'
@@ -36,6 +36,8 @@ interface ConversionState {
   applied: Record<string, PieceConversion>
   runId: number
   isConverting: boolean
+  runOwners: Record<string, number>
+  activeRuns: number[]
 }
 
 interface ConversionJob {
@@ -177,9 +179,10 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
     applied: {},
     runId: 0,
     isConverting: false,
+    runOwners: {},
+    activeRuns: [],
   }))
   const nextRunId = useRef(0)
-  const activeRun = useRef<number | null>(null)
 
   if (state.scopeKey !== scopeKey) {
     setState({
@@ -188,6 +191,7 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
         pieceType, stages.map((stage: ConverterPipelineStage) => ({ id: stage.id, converterId: stage.converterId })),
       ])),
       workingInputs: {}, runId: state.runId + 1, isConverting: false,
+      runOwners: {}, activeRuns: [],
     })
   } else if (state.generation !== generation) {
     // A runtime generation change invalidates every generated result. Working
@@ -206,14 +210,13 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
       applied: {},
       runId: state.runId + 1,
       isConverting: false,
+      runOwners: {},
+      activeRuns: [],
     })
   } else if (state.sourceInputs !== inputs) {
     setState(reconcileInputs(state, inputs))
   }
 
-  useEffect(() => {
-    activeRun.current = null
-  }, [generation, scopeKey])
 
   const setPipeline = useCallback((
     pieceType: string,
@@ -240,7 +243,6 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
   }, [])
 
   const discardTemporarySettings = useCallback((): void => {
-    activeRun.current = null
     setState((current: ConversionState) => {
       let next = current
       for (const [pieceType, stages] of Object.entries(current.pipelines)) {
@@ -248,7 +250,10 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
           id: stage.id, converterId: stage.converterId,
         })))
       }
-      return { ...next, applied: current.applied, runId: current.runId + 1, isConverting: false }
+      return {
+        ...next, applied: current.applied, runId: current.runId + 1, isConverting: false,
+        runOwners: {}, activeRuns: [],
+      }
     })
   }, [])
 
@@ -286,7 +291,7 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
     afterStageId,
     includeIncomplete = false,
   }: ConversionScope): Promise<void> => {
-    if (activeRun.current !== null && activeRun.current === state.runId) return
+    if (state.activeRuns.length > 0 && state.activeRuns[state.activeRuns.length - 1] === state.runId) return
     const completed = completedResults(state)
     const selected = state.inputs.flatMap((input: VersionedInput): ConversionJob[] => {
       if (
@@ -309,12 +314,16 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
     })
     if (selected.length === 0) return
     const runId = ++nextRunId.current
-    activeRun.current = runId
     const affected = new Set(selected.map(({ input }: ConversionJob) => input.id))
     setState((current: ConversionState) => ({
       ...current,
       runId,
       isConverting: true,
+      activeRuns: [...current.activeRuns, runId],
+      runOwners: {
+        ...current.runOwners,
+        ...Object.fromEntries(selected.map(({ input }: ConversionJob) => [input.id, runId])),
+      },
       stageResults: {
         ...current.stageResults,
         ...Object.fromEntries(selected.map(({ input, prefix }: ConversionJob) => [input.id, prefix])),
@@ -351,12 +360,13 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
         return { input, pipelineRevision, error: `Conversion from stage ${start + 1} failed: ${toApiError(error).detail}` }
       }
     }))
-    if (activeRun.current === runId) activeRun.current = null
     setState((current: ConversionState) => {
-      if (current.runId !== runId) return current
+      const activeRuns = current.activeRuns.filter((active: number) => active !== runId)
       const stageResults = { ...current.stageResults }
       const errors = { ...current.errors }
       for (const outcome of outcomes) {
+        // A newer run that selected this input owns its outcome slot now.
+        if (current.runOwners[outcome.input.id] !== runId) continue
         const input = current.inputs.find((candidate: VersionedInput) => candidate.id === outcome.input.id)
         if (
           !input || input.revision !== outcome.input.revision
@@ -365,7 +375,7 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
         if (outcome.stages) stageResults[input.id] = outcome.stages
         else if (outcome.error) errors[input.id] = outcome.error
       }
-      return { ...current, stageResults, errors, isConverting: false }
+      return { ...current, stageResults, errors, activeRuns, isConverting: activeRuns.length > 0 }
     })
   }
 
@@ -382,9 +392,9 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
   }, [])
 
   const clearAll = useCallback((): void => {
-    activeRun.current = null
     setState((current: ConversionState) => ({
       ...current, runId: 0, isConverting: false, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
+      runOwners: {}, activeRuns: [],
     }))
   }, [])
 
@@ -402,7 +412,6 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
     conversions: Record<string, PieceConversion>,
     pipelines?: Record<string, ConverterPipelineStage[]>,
   ): void => {
-    activeRun.current = null
     const restoredPipelines: Record<string, ConverterPipelineStage[]> = { ...pipelines }
     if (!pipelines) {
       for (const conversion of Object.values(conversions)) {
@@ -426,6 +435,7 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
       }
       return {
         ...next, applied: { ...conversions }, workingInputs: {}, stageResults: {}, errors: {}, runId: 0, isConverting: false,
+        runOwners: {}, activeRuns: [],
       }
     })
   }, [])

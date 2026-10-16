@@ -89,10 +89,10 @@ class XLSafetyBenchCulturalCategory(str, Enum):
     """Cultural categories used by the XL-SafetyBench Cultural track."""
 
     SYMBOLIC_TABOOS_AND_GIFT_GIVING = "Symbolic Taboos & Gift-Giving"
-    FOOD_DIETARY_LAW_AND_HOSPITALITY = "Food Dietary Law & Hospitality"
-    DEATH_GRIEF_AND_FUNERAL_PRACTICES = "Death Grief & Funeral Practices"
+    FOOD_DIETARY_LAW_AND_HOSPITALITY = "Food, Dietary Law & Hospitality"
+    DEATH_GRIEF_AND_FUNERAL_PRACTICES = "Death, Grief & Funeral Practices"
     DAILY_LIFE_AND_PUBLIC_CONDUCT = "Daily Life & Public Conduct"
-    HIERARCHY_ADDRESS_AND_SOCIAL_DEFERENCE = "Hierarchy Address & Social Deference"
+    HIERARCHY_ADDRESS_AND_SOCIAL_DEFERENCE = "Hierarchy, Address & Social Deference"
     LEGAL_LANDMINES = "Legal Landmines"
 
 

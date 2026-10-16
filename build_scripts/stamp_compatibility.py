@@ -6,9 +6,9 @@
 import argparse
 import json
 import os
-import re
 import runpy
 import subprocess
+import tomllib
 import warnings
 from collections.abc import Callable
 from pathlib import Path
@@ -31,8 +31,12 @@ def _version(root: Path) -> str:
         raise ValueError("Python package version must be a string")
     project_file = root / "pyproject.toml"
     if project_file.is_file():
-        project_version = re.search(r'^version\s*=\s*"([^"]+)"', project_file.read_text(encoding="utf-8"), re.MULTILINE)
-        if project_version is None or project_version[1] != version:
+        project_data = tomllib.loads(project_file.read_text(encoding="utf-8"))
+        project = project_data.get("project", {})
+        if not isinstance(project, dict):
+            raise ValueError("Python package and project versions differ")
+        project_version = project.get("version")
+        if not isinstance(project_version, str) or project_version != version:
             raise ValueError("Python package and project versions differ")
     return version
 

@@ -19,7 +19,7 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringCon
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
 from pyrit.score import FloatScaleThresholdScorer, Scorer, TrueFalseScorer
@@ -48,6 +48,8 @@ class _StubAttack:
     ``inspect.signature`` sees the same keyword-only parameters that the
     factory's ``_validate_kwargs`` expects.
     """
+
+    TARGET_REQUIREMENTS = TargetRequirements()
 
     def __init__(
         self,
@@ -302,7 +304,7 @@ class TestFactoryInit:
         assert not factory.can_append_request_converter(converter_type=TranslationConverter)
 
     def test_request_converter_composition_requires_supported_constructor(self):
-        class _NoConverterAttack:
+        class _NoConverterAttack(_StubAttack):
             def __init__(self, *, objective_target, attack_scoring_config=None):
                 self.objective_target = objective_target
 
@@ -440,7 +442,7 @@ class TestFactoryCreate:
         """Factory uses shallow copy — mutable values inside kwargs are shared (by design)."""
         mutable_list = [1, 2, 3]
 
-        class _ListAttack:
+        class _ListAttack(_StubAttack):
             def __init__(self, *, objective_target, attack_scoring_config=None, items: list | None = None):
                 self.objective_target = objective_target
                 self.items = items
@@ -467,7 +469,7 @@ class TestFactoryCreate:
         """When optional configs are None, adversarial and converter should not be passed."""
         unset = object()
 
-        class _SentinelAttack:
+        class _SentinelAttack(_StubAttack):
             def __init__(
                 self,
                 *,
@@ -495,7 +497,7 @@ class TestFactoryCreate:
         """An explicitly baked None remains distinct from an omitted converter config."""
         unset = object()
 
-        class _RequiredNullableConverterAttack:
+        class _RequiredNullableConverterAttack(_StubAttack):
             def __init__(
                 self,
                 *,
@@ -565,7 +567,7 @@ class TestFactoryCreate:
     def test_create_extra_request_converters_raise_when_unsupported(self):
         """Attacks that don't accept ``attack_converter_config`` reject extras instead of dropping them."""
 
-        class _NoConverterAttack:
+        class _NoConverterAttack(_StubAttack):
             def __init__(self, *, objective_target, attack_scoring_config=None):
                 self.objective_target = objective_target
 
@@ -587,7 +589,7 @@ class TestFactoryCreate:
         """Forward-referenced scoring config defined after factory init resolves and raises on incompatible type."""
         import sys
 
-        class _DeferredAttack:
+        class _DeferredAttack(_StubAttack):
             def __init__(
                 self,
                 *,
@@ -630,7 +632,7 @@ class TestFactoryCreate:
         """Forward-referenced scoring config with WARN policy logs and omits incompatible config."""
         import sys
 
-        class _DeferredWarnAttack:
+        class _DeferredWarnAttack(_StubAttack):
             def __init__(
                 self,
                 *,
@@ -668,7 +670,7 @@ class TestFactoryCreate:
         """Forward-referenced scoring config with SKIP policy silently omits incompatible config."""
         import sys
 
-        class _DeferredSkipAttack:
+        class _DeferredSkipAttack(_StubAttack):
             def __init__(
                 self,
                 *,
@@ -772,7 +774,7 @@ class TestFactoryIdentifier:
         mock_identifiable = MagicMock(spec=Identifiable)
         mock_identifiable.get_identifier.return_value = expected_id
 
-        class _IdentifiableParamAttack:
+        class _IdentifiableParamAttack(_StubAttack):
             def __init__(self, *, objective_target, config=None):
                 pass
 
@@ -834,7 +836,7 @@ class TestFactoryIdentifier:
 class TestCustomAdversarialPrompt:
     """Tests for the adversarial_system_prompt / adversarial_seed_prompt params."""
 
-    class _AdversarialAttack:
+    class _AdversarialAttack(_StubAttack):
         def __init__(self, *, objective_target, attack_scoring_config=None, attack_adversarial_config=None):
             self.objective_target = objective_target
             self.attack_scoring_config = attack_scoring_config
@@ -1163,7 +1165,7 @@ class TestCustomAdversarialPrompt:
 class TestWithAdversarialSystemPromptPrefix:
     """Tests for ``with_adversarial_system_prompt_prefix``, the explicit prefix-layering API."""
 
-    class _AdversarialAttack:
+    class _AdversarialAttack(_StubAttack):
         def __init__(self, *, objective_target=None, attack_scoring_config=None, attack_adversarial_config=None):
             self.attack_adversarial_config = attack_adversarial_config
 
@@ -1286,7 +1288,7 @@ class TestWithAdversarialSystemPromptPrefix:
 
 
 class TestResolveAdversarialChat:
-    class _AdversarialAttack:
+    class _AdversarialAttack(_StubAttack):
         def __init__(self, *, objective_target=None, attack_scoring_config=None, attack_adversarial_config=None):
             self.attack_adversarial_config = attack_adversarial_config
 
@@ -1399,7 +1401,7 @@ class TestWithSimulatedConversationPromptSources:
 class TestScoreFeedbackOverride:
     """Tests for the technique-level ``use_score_as_feedback`` override."""
 
-    class _AdversarialAttack:
+    class _AdversarialAttack(_StubAttack):
         def __init__(self, *, objective_target=None, attack_scoring_config=None, attack_adversarial_config=None):
             self.attack_scoring_config = attack_scoring_config
 
@@ -1441,7 +1443,7 @@ class TestScoreFeedbackOverride:
     def test_override_keeps_scoring_config_subtype(self):
         """TAP's config has its own constructor; copying must keep its type and threshold."""
 
-        class _TapStubAttack:
+        class _TapStubAttack(_StubAttack):
             def __init__(self, *, objective_target, attack_scoring_config: TAPAttackScoringConfig | None = None):
                 self.attack_scoring_config = attack_scoring_config
 
@@ -1467,7 +1469,7 @@ class TestScoreFeedbackOverride:
         """A skipped scenario config leaves the attack to build its own default, which would
         silently run with feedback on, so create() must reject the technique instead."""
 
-        class _TapStubAttack:
+        class _TapStubAttack(_StubAttack):
             def __init__(self, *, objective_target, attack_scoring_config: TAPAttackScoringConfig | None = None):
                 self.attack_scoring_config = attack_scoring_config
 
@@ -1482,7 +1484,7 @@ class TestScoreFeedbackOverride:
             factory.create(objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=AttackScoringConfig())
 
     def test_skipped_scenario_config_applies_override_to_baked_config(self):
-        class _TapStubAttack:
+        class _TapStubAttack(_StubAttack):
             def __init__(self, *, objective_target, attack_scoring_config: TAPAttackScoringConfig | None = None):
                 self.attack_scoring_config = attack_scoring_config
 
@@ -1524,7 +1526,7 @@ class TestScoreFeedbackOverride:
             )
 
     def test_override_requires_attack_scoring_config_param(self):
-        class _NoScoringAttack:
+        class _NoScoringAttack(_StubAttack):
             def __init__(self, *, objective_target):
                 pass
 

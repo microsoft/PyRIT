@@ -15,6 +15,8 @@ import sys
 import time
 from pathlib import Path
 
+from pyrit.common.authentication import should_default_to_local_authentication
+
 # Ensure emoji and other Unicode characters don't crash on Windows consoles
 # that use legacy encodings like cp1252. Characters that can't be encoded
 # are replaced with '?' instead of raising UnicodeEncodeError.
@@ -182,6 +184,8 @@ def start_backend(*, config_file: str | None = None, initializers: list[str] | N
     # Set development mode environment variable
     env = os.environ.copy()
     env["PYRIT_DEV_MODE"] = "true"
+    if should_default_to_local_authentication(environment=env):
+        env["PYRIT_AUTH_MODE"] = "local"
     # Force unbuffered output so init logs appear in real-time when piped
     env["PYTHONUNBUFFERED"] = "1"
 
@@ -226,12 +230,23 @@ def start_frontend():
 
     # Start frontend process with stdout piped so we can detect the actual port
     npm_cmd = "npm.cmd" if is_windows() else "npm"
+    environment = os.environ.copy()
+    environment.setdefault("PYRIT_FRONTEND_HOST", "127.0.0.1")
+    environment["PYRIT_PYTHON"] = sys.executable
     return subprocess.Popen(
         [npm_cmd, "run", "dev"],
-        env={**os.environ, "PYRIT_PYTHON": sys.executable},
+        env=environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
+
+
+def _parse_vite_port(output: str) -> int | None:
+    """Return the port from Vite's loopback-ready message."""
+    import re
+
+    match = re.search(r"Local:\s+http://[^:/\s]+:(\d+)", output)
+    return int(match.group(1)) if match else None
 
 
 def _detect_frontend_port(frontend_process, *, timeout: int = 10) -> int:
@@ -239,7 +254,6 @@ def _detect_frontend_port(frontend_process, *, timeout: int = 10) -> int:
 
     Falls back to 3000 if detection times out.
     """
-    import re
     import selectors
 
     default_port = 3000
@@ -258,11 +272,10 @@ def _detect_frontend_port(frontend_process, *, timeout: int = 10) -> int:
                 if data:
                     collected += data
                     text = collected.decode(errors="replace")
-                    # Vite prints:  ➜  Local:   http://localhost:XXXX/
-                    match = re.search(r"Local:\s+http://localhost:(\d+)", text)
-                    if match:
+                    port = _parse_vite_port(text)
+                    if port is not None:
                         sel.close()
-                        return int(match.group(1))
+                        return port
             if frontend_process.poll() is not None:
                 break
 
@@ -273,8 +286,8 @@ def _detect_frontend_port(frontend_process, *, timeout: int = 10) -> int:
     return default_port
 
 
-def _forward_backend_output(backend_process):
-    """Forward backend stdout to the terminal in a background thread.
+def _forward_process_output(process):
+    """Forward child-process stdout to the terminal in a background thread.
 
     Runs until the pipe is closed (process exits or stdout is exhausted).
     """
@@ -282,7 +295,7 @@ def _forward_backend_output(backend_process):
 
     def _reader():
         try:
-            for line in backend_process.stdout:
+            for line in process.stdout:
                 sys.stdout.buffer.write(line)
                 sys.stdout.buffer.flush()
         except (ValueError, OSError):
@@ -331,11 +344,12 @@ def start_servers(*, config_file: str | None = None):
     print("⏳ Waiting for backend to initialize (this may take a minute)...")
 
     # Forward backend output to the terminal in real-time
-    _forward_backend_output(backend)
+    _forward_process_output(backend)
 
     # Start frontend in parallel while backend initializes
     frontend = start_frontend()
     frontend_port = _detect_frontend_port(frontend)
+    _forward_process_output(frontend)
 
     # Now wait for backend to be actually healthy
     backend_healthy = _wait_for_backend(backend)
@@ -508,6 +522,7 @@ def main():
                 time.sleep(1)
             frontend = start_frontend()
             frontend_port = _detect_frontend_port(frontend)
+            _forward_process_output(frontend)
             print(f"✅ Frontend running on http://localhost:{frontend_port} (PID: {frontend.pid})")
             print("\nPress Ctrl+C to stop")
             try:

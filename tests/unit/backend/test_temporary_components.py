@@ -14,6 +14,7 @@ import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
+from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.models.attacks import (
     CreateAttackRequest,
     MessagePieceRequest,
@@ -38,7 +39,7 @@ from pyrit.converter import CaesarConverter, Converter, ConverterResult, LLMGene
 from pyrit.memory import SQLiteMemory
 from pyrit.models import JSONValue, PromptDataType
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.prompt_target import HuggingFaceChatTarget, OpenAIChatTarget
 from pyrit.prompt_target.common.utils import _get_rate_limit_lock
 from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
 from unit.backend.mocks import _settle_send_async
@@ -89,6 +90,38 @@ class _ForwardedConverter(LLMGenericTextConverter):
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestTemporaryComponents:
+    @pytest.mark.parametrize("register", [True, False])
+    async def test_hugging_face_construction_uses_request_loop_async(self, register: bool) -> None:
+        request_loop = asyncio.get_running_loop()
+        constructed: list[HuggingFaceChatTarget] = []
+        registry = TargetRegistry.get_registry_singleton()
+        factory = registry.create_instance_from_external_input
+
+        def create(name: str, *, params: Any) -> HuggingFaceChatTarget:
+            target = factory(name, params=params)
+            assert isinstance(target, HuggingFaceChatTarget)
+            constructed.append(target)
+            return target
+
+        with (
+            patch.object(HuggingFaceChatTarget, "load_model_and_tokenizer_async", new_callable=AsyncMock) as load,
+            patch.object(registry, "create_instance_from_external_input", side_effect=create),
+        ):
+            response = await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    name="local-model" if register else None,
+                    type="HuggingFaceChatTarget",
+                    register=register,
+                    params={"model_path": "test-model"},
+                )
+            )
+            [target] = constructed
+            await target.load_model_and_tokenizer_task
+            assert target.load_model_and_tokenizer_task.get_loop() is request_loop
+            load.assert_awaited_once()
+            assert response.identifier.class_name == "HuggingFaceChatTarget"
+            assert registry.instances.get_names() == (["local-model"] if register else [])
+
     @pytest.mark.parametrize(
         ("router", "path", "payload", "registry"),
         [
@@ -133,6 +166,7 @@ class TestTemporaryComponents:
         registry: type[TargetRegistry] | type[ConverterRegistry] | type[ScorerRegistry],
     ) -> None:
         app = FastAPI()
+        app.state.authentication_policy = AuthenticationPolicy(mode="local")
         app.include_router(router, prefix="/api")
         with TestClient(app) as client:
             response = client.post(path, json=payload)
@@ -183,6 +217,35 @@ class TestTemporaryComponents:
             assert "test-only-key" not in str(binding.to_metadata())
         finally:
             await restored.cleanup_target_async()
+            await source.cleanup_target_async()
+
+    async def test_identity_source_reuses_resolved_token_provider_async(self) -> None:
+        provider = AsyncMock(return_value="test-token")
+        with patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value=provider):
+            source = OpenAIChatTarget(
+                endpoint="https://example.openai.azure.com",
+                model_name="test",
+                auth_mode="identity",
+            )
+        registry = TargetRegistry.get_registry_singleton()
+        registry.instances.register(source, name="source")
+        private = None
+        try:
+            with patch(
+                "pyrit.auth.openai_auth.get_azure_openai_auth",
+                side_effect=AssertionError("Must reuse the source provider"),
+            ):
+                private = await TargetService().build_from_source_async(
+                    SourceInstanceSpec(
+                        source_name="source", source_hash=source.get_identifier().hash, params={"temperature": 0.8}
+                    )
+                )
+            assert private._api_key is source._api_key
+            assert await private._api_key() == "test-token"
+            assert private.get_identifier().temperature == 0.8
+        finally:
+            if private is not None:
+                await private.cleanup_target_async()
             await source.cleanup_target_async()
 
     async def test_two_temperature_variants_are_isolated_async(self) -> None:
