@@ -82,12 +82,11 @@ class Finding(FindingCreate):
 
 
 class FindingEvidence(BaseModel):
-    """A conversation linked to a finding as evidence."""
+    """A saved attack result linked to a finding as evidence."""
 
     model_config = ConfigDict(extra="forbid")
 
     id: UUID = Field(default_factory=uuid4)
     finding_id: UUID
-    conversation_id: str = Field(min_length=1, max_length=128)
     attack_result_id: UUID
     attached_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))

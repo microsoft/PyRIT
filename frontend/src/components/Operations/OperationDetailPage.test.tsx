@@ -78,15 +78,16 @@ it('refreshes evidence counts without collapsing the expanded list after detachm
   const evidence = {
     item: {
       id: '123e4567-e89b-12d3-a456-426614174000', finding_id: FINDING.id, attack_result_id: 'owner',
-      conversation_id: 'source', attached_at: '2026-10-08T12:00:00Z',
+      attached_at: '2026-10-08T12:00:00Z',
     },
     availability: 'available' as const, scenario_result_id: null,
+    objective: 'Source objective', outcome: 'success' as const, conversation_id: 'source',
   }
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [{ ...FINDING, evidence_count: 1 }] })
   jest.mocked(operationsApi.listFindingEvidence).mockResolvedValue({ ...EMPTY, items: [evidence] })
   renderPage()
   await user.click(await screen.findByRole('button', { name: 'Evidence (1)' }))
-  await user.click(await screen.findByRole('button', { name: 'Remove link: source' }))
+  await user.click(await screen.findByRole('button', { name: 'Remove link: Source objective' }))
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
   jest.mocked(operationsApi.listFindingEvidence).mockResolvedValue(EMPTY)
   await user.click(screen.getByRole('button', { name: 'Remove evidence link' }))
@@ -132,21 +133,21 @@ it('shows the operation and records a finding within it', async () => {
   })
 })
 
-it('links an optional evidence conversation when the finding is created, but not when editing', async () => {
+it('links an optional evidence attack when the finding is created, but not when editing', async () => {
   const user = userEvent.setup()
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ items: [FINDING], has_more: false, next_offset: null })
   renderPage()
   await user.click(await screen.findByRole('button', { name: 'New finding' }))
   const dialog = screen.getByRole('dialog')
   await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'With evidence')
-  await user.type(within(dialog).getByRole('textbox', { name: 'Evidence conversation ID' }), 'conversation-1')
+  await user.type(within(dialog).getByRole('textbox', { name: 'Evidence attack ID' }), 'attack-1')
   await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
   await waitFor(() => expect(operationsApi.createFinding).toHaveBeenCalledWith('op-1', expect.objectContaining({
-    title: 'With evidence', conversation_id: 'conversation-1',
+    title: 'With evidence', attack_result_id: 'attack-1',
   })))
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   await user.click(await screen.findByRole('button', { name: `Edit finding: ${FINDING.title}` }))
-  expect(within(screen.getByRole('dialog')).queryByRole('textbox', { name: 'Evidence conversation ID' }))
+  expect(within(screen.getByRole('dialog')).queryByRole('textbox', { name: 'Evidence attack ID' }))
     .not.toBeInTheDocument()
 })
 

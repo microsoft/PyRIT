@@ -1809,7 +1809,7 @@ export default function ChatWindow({
           outcomeButtonRef={outcomeButtonRef}
         />
         <FindingEvidenceDialog
-          attackResultId={isEvidenceUnavailable ? '' : attackResultId ?? ''} conversationId={activeConversationId ?? ''}
+          attackResultId={isEvidenceUnavailable ? '' : attackResultId ?? ''}
           defaultOperationId={operationId} disabled={isFindingActionDisabled}
           open={isFindingDialogOpen} onOpenChange={setIsFindingDialogOpen} returnFocusRef={outcomeButtonRef} />
         {editorError && <MessageBar intent="error"><MessageBarBody>{editorError}</MessageBarBody></MessageBar>}

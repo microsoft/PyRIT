@@ -860,13 +860,13 @@ class MemoryInterface(abc.ABC):
 
     async def add_finding_evidence_async(self, *, evidence: FindingEvidence) -> FindingEvidence:
         """
-        Link a conversation to a finding, if the finding still exists.
+        Link a saved attack result to a finding, if the finding still exists.
 
         The insert runs before the existence check so the write lock is held
         when the finding is checked, and a concurrent delete can't leave an orphan.
 
         Returns:
-            FindingEvidence: The saved evidence, or the existing link for the same finding and conversation.
+            FindingEvidence: The saved evidence, or the existing link for the same finding and attack result.
 
         Raises:
             LookupError: If the finding does not exist.
@@ -885,7 +885,7 @@ class MemoryInterface(abc.ABC):
                 if await session.scalar(select(FindingEntry.id).where(FindingEntry.id == evidence.finding_id)) is None:
                     raise LookupError(f"Finding '{evidence.finding_id}' not found.") from exc
             existing = await self.get_finding_evidence_by_source_async(
-                finding_id=evidence.finding_id, conversation_id=evidence.conversation_id
+                finding_id=evidence.finding_id, attack_result_id=evidence.attack_result_id
             )
             if existing is None:
                 raise
@@ -916,10 +916,10 @@ class MemoryInterface(abc.ABC):
             return [entry.get_evidence() for entry in (await session.scalars(statement)).all()]
 
     async def get_finding_evidence_by_source_async(
-        self, *, finding_id: uuid.UUID, conversation_id: str
+        self, *, finding_id: uuid.UUID, attack_result_id: uuid.UUID
     ) -> FindingEvidence | None:
         """
-        Read the evidence linking a finding to a conversation.
+        Read the evidence linking a finding to a saved attack result.
 
         Returns:
             FindingEvidence | None: The evidence, if linked.
@@ -928,14 +928,14 @@ class MemoryInterface(abc.ABC):
             entry = await session.scalar(
                 select(FindingEvidenceEntry).where(
                     FindingEvidenceEntry.finding_id == finding_id,
-                    FindingEvidenceEntry.conversation_id == conversation_id,
+                    FindingEvidenceEntry.attack_result_id == attack_result_id,
                 )
             )
             return entry.get_evidence() if entry else None
 
     async def delete_finding_evidence_async(self, *, finding_id: uuid.UUID, evidence_id: uuid.UUID) -> None:
         """
-        Unlink evidence from a finding. The conversation is kept.
+        Unlink evidence from a finding. The attack result is kept.
 
         Raises:
             LookupError: If the evidence does not belong to the finding.

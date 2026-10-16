@@ -93,7 +93,7 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
     const saved = editing
       ? await operationsApi.updateFinding(operationId, editing.id, draft)
       : await operationsApi.createFinding(operationId, {
-        ...draft, id: attempt.id, ...(attempt.conversationId ? { conversation_id: attempt.conversationId } : {}),
+        ...draft, id: attempt.id, ...(attempt.attackResultId ? { attack_result_id: attempt.attackResultId } : {}),
       })
     setNotice(`Finding ${editing ? 'updated' : 'saved'}: ${saved.title}`)
     setOpen(false)

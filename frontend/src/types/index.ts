@@ -1727,9 +1727,7 @@ export interface FindingCreate {
 /** Resending the same id and content returns the finding an earlier, unanswered request saved. */
 export interface FindingCreateRequest extends FindingCreate {
   id?: string
-  /** A saved conversation to link as evidence in the same request. */
-  conversation_id?: string
-  /** The conversation's attack; the server finds it when omitted. */
+  /** A saved attack result to link as evidence in the same request. */
   attack_result_id?: string
 }
 
@@ -1755,13 +1753,11 @@ export interface FindingListItem extends Finding {
 
 export interface FindingEvidenceCreateRequest {
   attack_result_id: string
-  conversation_id: string
 }
 
 export interface FindingEvidence {
   id: string
   finding_id: string
-  conversation_id: string
   attack_result_id: string
   attached_at: string
 }
@@ -1779,9 +1775,11 @@ export interface FindingEvidenceItem {
   source_operation_id?: string | null
   source_operation_name?: string | null
   objective?: string | null
-  is_main_conversation?: boolean | null
-  /** This conversation's own score; never an auxiliary score. */
+  outcome?: AttackOutcome | null
+  /** The attack's current score: its human score, otherwise its automated score. */
   score?: BackendScore | null
+  /** The conversation to open: the one holding the score, otherwise the attack's main conversation. */
+  conversation_id?: string | null
 }
 
 export interface FindingEvidenceListResponse {

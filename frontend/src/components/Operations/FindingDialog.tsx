@@ -20,14 +20,14 @@ const EMPTY_DRAFT: FindingCreate = {
 /** One save attempt. The id repeats while the input does, so a retry returns a finding a lost response saved. */
 export interface FindingSaveAttempt {
   id: string
-  conversationId: string
+  attackResultId: string
 }
 
 interface FindingDialogProps {
   initialValues?: FindingCreate
   editing?: boolean
   context?: React.ReactNode
-  /** Shows an optional conversation ID to link as evidence. */
+  /** Shows an optional attack ID to link as evidence. */
   evidenceField?: boolean
   saveDisabled?: boolean
   onSave: (draft: FindingCreate, attempt: FindingSaveAttempt) => Promise<void>
@@ -39,7 +39,7 @@ export default function FindingDialog({
 }: FindingDialogProps) {
   const styles = useFindingDialogStyles()
   const [draft, setDraft] = useState<FindingCreate>({ ...EMPTY_DRAFT, ...initialValues })
-  const [conversationId, setConversationId] = useState('')
+  const [attackResultId, setAttackResultId] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const submitting = useRef(false)
@@ -64,22 +64,22 @@ export default function FindingDialog({
 
   useEffect(() => {
     if (!draft.title && !draft.description && !draft.severity_other && !draft.harm_type && !draft.harm_type_other
-      && !conversationId) return
+      && !attackResultId) return
     const protectDraft = (event: BeforeUnloadEvent): void => { event.preventDefault() }
     window.addEventListener('beforeunload', protectDraft)
     return () => { window.removeEventListener('beforeunload', protectDraft) }
-  }, [draft.title, draft.description, draft.severity_other, draft.harm_type, draft.harm_type_other, conversationId])
+  }, [draft.title, draft.description, draft.severity_other, draft.harm_type, draft.harm_type_other, attackResultId])
 
   const save = async (): Promise<void> => {
     if (submitting.current || !canSave) return
     submitting.current = true
     setSaving(true)
     setError('')
-    const trimmedConversationId = conversationId.trim()
-    const signature = JSON.stringify([draft, trimmedConversationId])
+    const trimmedAttackResultId = attackResultId.trim()
+    const signature = JSON.stringify([draft, trimmedAttackResultId])
     if (attempt.current?.signature !== signature) attempt.current = { signature, id: generateClientId() }
     try {
-      await onSave(draft, { id: attempt.current.id, conversationId: trimmedConversationId })
+      await onSave(draft, { id: attempt.current.id, attackResultId: trimmedAttackResultId })
     } catch (cause: unknown) {
       setError(toApiError(cause).detail)
     } finally {
@@ -157,10 +157,10 @@ export default function FindingDialog({
               <Textarea value={draft.description} disabled={saving} resize="vertical" name="description" autoComplete="off"
                 onChange={(_, data) => { setDraft(value => ({ ...value, description: data.value })) }} />
             </Field>
-            {evidenceField && <Field label="Evidence conversation ID"
-              hint="Optional. Links a saved conversation as evidence; the conversation is not changed.">
-              <Input value={conversationId} disabled={saving} name="conversation_id" autoComplete="off"
-                onChange={(_, data) => { setConversationId(data.value) }} />
+            {evidenceField && <Field label="Evidence attack ID"
+              hint="Optional. Links a saved attack as evidence; the attack is not changed. Its ID is in the attack's address.">
+              <Input value={attackResultId} disabled={saving} name="attack_result_id" autoComplete="off"
+                onChange={(_, data) => { setAttackResultId(data.value) }} />
             </Field>}
             <div className={styles.actions}>
               <Button className={styles.button} disabled={saving} onClick={onClose}>Cancel</Button>

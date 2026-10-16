@@ -308,7 +308,8 @@ class FindingEntry(Base):
             name="ck_findings_severity_other",
         ),
         CheckConstraint(
-            "(harm_type = 'Other' AND harm_type_other IS NOT NULL AND LTRIM(RTRIM(harm_type_other)) <> '') "
+            "(harm_type IS NOT NULL AND harm_type = 'Other' AND harm_type_other IS NOT NULL "
+            "AND LTRIM(RTRIM(harm_type_other)) <> '') "
             "OR ((harm_type IS NULL OR harm_type <> 'Other') AND harm_type_other IS NULL)",
             name="ck_findings_harm_type_other",
         ),
@@ -368,19 +369,18 @@ class FindingEntry(Base):
 
 
 class FindingEvidenceEntry(Base):
-    """A finding-to-conversation link. Conversations can be deleted, so they have no foreign key here."""
+    """A finding-to-attack-result link. Attack results can be deleted, so they have no foreign key here."""
 
     __tablename__ = "FindingEvidenceEntries"
     __table_args__ = (
         Index("ix_FindingEvidenceEntries_finding_id", "finding_id"),
-        UniqueConstraint("finding_id", "conversation_id", name="uq_finding_evidence_source"),
+        UniqueConstraint("finding_id", "attack_result_id", name="uq_finding_evidence_source"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
     finding_id: Mapped[uuid.UUID] = mapped_column(
         CustomUUID, ForeignKey(f"{FindingEntry.__tablename__}.id"), nullable=False
     )
-    conversation_id: Mapped[str] = mapped_column(String(128), nullable=False)
     attack_result_id: Mapped[uuid.UUID] = mapped_column(CustomUUID, nullable=False)
     attached_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 
@@ -389,7 +389,6 @@ class FindingEvidenceEntry(Base):
         validated = FindingEvidence.model_validate(evidence.model_dump())
         self.id = validated.id
         self.finding_id = validated.finding_id
-        self.conversation_id = validated.conversation_id
         self.attack_result_id = validated.attack_result_id
         self.attached_at = validated.attached_at.astimezone(UTC)
 
@@ -403,7 +402,6 @@ class FindingEvidenceEntry(Base):
         return FindingEvidence(
             id=self.id,
             finding_id=self.finding_id,
-            conversation_id=self.conversation_id,
             attack_result_id=self.attack_result_id,
             attached_at=self.attached_at,
         )

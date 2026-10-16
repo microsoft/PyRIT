@@ -31,9 +31,9 @@ import * as messageMapper from "../../utils/messageMapper";
 
 jest.mock("./FindingEvidenceDialog", () => ({
   __esModule: true,
-  default: ({ attackResultId, conversationId, disabled, open }: {
-    attackResultId: string; conversationId: string; disabled: boolean; open: boolean;
-  }) => <div data-testid="finding-evidence-dialog" data-attack={attackResultId} data-conversation={conversationId}
+  default: ({ attackResultId, disabled, open }: {
+    attackResultId: string; disabled: boolean; open: boolean;
+  }) => <div data-testid="finding-evidence-dialog" data-attack={attackResultId}
     data-disabled={String(disabled)} data-open={String(open)} />,
 }));
 
@@ -436,7 +436,7 @@ describe("ChatWindow Integration", () => {
     await user.keyboard("{Escape}");
   }
 
-  it("opens the finding dialog for the viewed conversation from Attack Result Details", async () => {
+  it("opens the finding dialog for the viewed attack from Attack Result Details", async () => {
     const user = userEvent.setup();
     mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Saved").messages);
     mockedMapper.backendMessagesToFrontend.mockReturnValue([{ role: "user", content: "Saved", timestamp: "" }]);
@@ -445,7 +445,6 @@ describe("ChatWindow Integration", () => {
     const dialog = screen.getByTestId("finding-evidence-dialog");
     await waitFor(() => { expect(dialog).toHaveAttribute("data-disabled", "false"); });
     expect(dialog).toHaveAttribute("data-attack", "owner");
-    expect(dialog).toHaveAttribute("data-conversation", "related");
     expect(dialog).toHaveAttribute("data-open", "false");
     expect(screen.queryByRole("button", { name: "Link to finding" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Objective achieved outcome: undetermined" }));
@@ -462,8 +461,8 @@ describe("ChatWindow Integration", () => {
     const dialog = screen.getByTestId("finding-evidence-dialog");
     rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
       activeConversationId="another" /></TestWrapper>);
-    await waitFor(() => { expect(dialog).toHaveAttribute("data-conversation", "another"); });
-    expect(screen.getByTestId("finding-evidence-dialog")).toBe(dialog);
+    await waitFor(() => { expect(screen.getByTestId("finding-evidence-dialog")).toBe(dialog); });
+    expect(dialog).toHaveAttribute("data-attack", "owner");
   });
 
   it.each([404, 503])("distinguishes evidence-origin message load status %s", async (status: number) => {

@@ -103,16 +103,14 @@ def test_migration_enforces_unique_evidence_source() -> None:
     try:
         with engine.begin() as connection:
             command.upgrade(_config_for(connection), REVISION)
-            values = {
-                "finding_id": uuid4(),
-                "conversation_id": "source",
-                "attack_result_id": uuid4(),
-                "attached_at": datetime.now(UTC),
-            }
+            values = {"finding_id": uuid4(), "attack_result_id": uuid4(), "attached_at": datetime.now(UTC)}
             connection.execute(sa.insert(FindingEvidenceEntry).values(id=uuid4(), **values))
             with pytest.raises(IntegrityError):
                 connection.execute(sa.insert(FindingEvidenceEntry).values(id=uuid4(), **values))
             connection.execute(sa.insert(FindingEvidenceEntry).values(id=uuid4(), **{**values, "finding_id": uuid4()}))
+            connection.execute(
+                sa.insert(FindingEvidenceEntry).values(id=uuid4(), **{**values, "attack_result_id": uuid4()})
+            )
     finally:
         engine.dispose()
 
@@ -126,6 +124,7 @@ def test_migration_enforces_unique_evidence_source() -> None:
         {"severity_other": "Custom"},
         {"harm_type": "Other"},
         {"harm_type": "Malware", "harm_type_other": "Custom"},
+        {"harm_type_other": "Custom"},
     ],
 )
 def test_migration_rejects_inconsistent_finding_classifications(invalid: dict[str, str]) -> None:
@@ -135,6 +134,7 @@ def test_migration_rejects_inconsistent_finding_classifications(invalid: dict[st
         with engine.begin() as connection:
             command.upgrade(_config_for(connection), REVISION)
             insert = sa.insert(FindingEntry)
+            connection.execute(insert.values(id=uuid4(), operation_id=uuid4(), **valid))
             # Harm types are unconstrained so HarmCategory can change without a migration.
             connection.execute(
                 insert.values(id=uuid4(), operation_id=uuid4(), **valid, harm_type="Not a current category")
@@ -172,8 +172,7 @@ def test_migration_compiles_bounded_keys_for_sql_server() -> None:
     assert migration.down_revision == PREVIOUS_REVISION
     assert "NVARCHAR(128)" in ddl
     assert "name_key NVARCHAR(384) COLLATE Latin1_General_100_BIN2 NOT NULL" in ddl
-    assert "VARCHAR(128)" in ddl
-    assert "UNIQUE (finding_id, conversation_id)" in ddl
+    assert "UNIQUE (finding_id, attack_result_id)" in ddl
     for constraint in ("ck_findings_severity", "ck_findings_severity_other", "ck_findings_harm_type_other"):
         assert f"CONSTRAINT {constraint} CHECK" in ddl
     assert "CREATE UNIQUE INDEX [ix_OperationEntries_name_key]" in ddl

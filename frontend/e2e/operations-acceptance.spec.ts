@@ -191,7 +191,7 @@ test('links cross-Operation and unassigned evidence without rewriting source att
     await dialog.getByRole('radio', { name: /Cross-Operation evidence/ }).click()
     const attached = page.waitForResponse(result =>
       new URL(result.url()).pathname.endsWith(`/findings/${finding.id}/evidence`) && result.request().method() === 'POST')
-    await dialog.getByRole('button', { name: 'Attach conversation', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Attach attack', exact: true }).click()
     expect((await attached).status()).toBe(201)
     const stored = await (await request.get(`/api/attacks/${source.attack_result_id}`)).json()
     expect(stored.operation_id).toBe(sourceId)
@@ -201,7 +201,7 @@ test('links cross-Operation and unassigned evidence without rewriting source att
   const evidence = page.getByRole('region', { name: 'Finding evidence', exact: true })
   await expect(evidence.getByText(`From operation: ${sourceOperation.name}`, { exact: true })).toBeVisible()
   await expect(evidence.getByText('Not in an operation', { exact: true })).toBeVisible()
-  await expect(evidence.getByRole('link', { name: 'Open conversation', exact: true })).toHaveCount(2)
+  await expect(evidence.getByRole('link', { name: 'Open attack', exact: true })).toHaveCount(2)
 })
 
 test('keeps legacy name-only activity in paginated general history, outside ID-scoped history @seeded', async ({ page, request }) => {

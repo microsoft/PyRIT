@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import asyncio
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
@@ -13,14 +12,14 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 
 from pyrit.backend.main import app
-from pyrit.backend.models.operations import FindingCreateRequest, FindingEvidenceCreateRequest
+from pyrit.backend.models.operations import FindingEvidenceCreateRequest
 from pyrit.backend.services.operation_service import FindingNotFoundError, OperationService
 from pyrit.memory import CentralMemory, SQLiteMemory
-from pyrit.memory.memory_models import AttackResultEntry, Base, ConversationEntry, PromptMemoryEntry
+from pyrit.memory.memory_models import AttackResultEntry, Base, PromptMemoryEntry
 from pyrit.models import (
+    AttackOutcome,
     AttackResult,
     ComponentIdentifier,
-    Conversation,
     ConversationReference,
     ConversationType,
     Finding,
@@ -164,33 +163,34 @@ def test_finding_create_retried_with_the_same_id_returns_the_saved_finding(
     assert [item["title"] for item in client.get(path).json()["items"]] == ["Assessment"]
 
 
-@pytest.mark.parametrize("names_attack", [True, False])
-def test_finding_create_links_conversation_evidence_in_the_same_request(
+def test_finding_create_links_attack_evidence_in_the_same_request(
     compatibility_headers: dict[str, str],
     evidence_source_async: tuple[Operation, Finding, AttackResult],
-    names_attack: bool,
 ) -> None:
     operation, _, attack = evidence_source_async
     client = TestClient(app, headers=compatibility_headers)
     path = f"/api/operations/{operation.id}/findings"
-    body = {"id": str(uuid4()), "title": "With evidence", "severity": "low", "conversation_id": "main"}
-    if names_attack:
-        body["attack_result_id"] = attack.attack_result_id
+    body = {
+        "id": str(uuid4()),
+        "title": "With evidence",
+        "severity": "low",
+        "attack_result_id": attack.attack_result_id,
+    }
     created = client.post(path, json=body)
     assert created.status_code == 201
     assert client.post(path, json=body).json() == created.json()
     evidence = client.get(f"{path}/{body['id']}/evidence").json()["items"]
-    assert [(item["item"]["conversation_id"], item["item"]["attack_result_id"]) for item in evidence] == [
-        ("main", attack.attack_result_id)
+    assert [(item["item"]["attack_result_id"], item["conversation_id"]) for item in evidence] == [
+        (attack.attack_result_id, "main")
     ]
 
 
 @pytest.mark.parametrize(
     ("source", "status_code"),
     [
-        ({"conversation_id": "unknown"}, 404),
-        ({"conversation_id": "other", "attack": True}, 404),
-        ({"attack": True}, 422),
+        ({"attack_result_id": str(MISSING_ID)}, 404),
+        ({"attack_result_id": "not-a-uuid"}, 422),
+        ({"conversation_id": "main"}, 422),
     ],
 )
 def test_finding_create_saves_nothing_when_its_evidence_cannot_be_linked(
@@ -199,15 +199,10 @@ def test_finding_create_saves_nothing_when_its_evidence_cannot_be_linked(
     source: dict[str, object],
     status_code: int,
 ) -> None:
-    operation, finding, attack = evidence_source_async
+    operation, finding, _ = evidence_source_async
     client = TestClient(app, headers=compatibility_headers)
     path = f"/api/operations/{operation.id}/findings"
-    body: dict[str, object] = {"title": "Unlinked", "severity": "low"}
-    if "conversation_id" in source:
-        body["conversation_id"] = source["conversation_id"]
-    if source.get("attack"):
-        body["attack_result_id"] = attack.attack_result_id
-    assert client.post(path, json=body).status_code == status_code
+    assert client.post(path, json={"title": "Unlinked", "severity": "low", **source}).status_code == status_code
     assert [item["id"] for item in client.get(path).json()["items"]] == [str(finding.id)]
 
 
@@ -312,7 +307,7 @@ def test_finding_evidence_attach_returns_created_then_already_attached(
     operation, finding, attack = evidence_source_async
     client = TestClient(app, headers=compatibility_headers)
     path = f"/api/operations/{operation.id}/findings/{finding.id}/evidence"
-    body = {"attack_result_id": attack.attack_result_id, "conversation_id": "main"}
+    body = {"attack_result_id": attack.attack_result_id}
     created = client.post(path, json=body)
     repeated = client.post(path, json=body)
     assert created.status_code == 201
@@ -327,8 +322,9 @@ def test_finding_evidence_attach_returns_created_then_already_attached(
         "source_operation_id": str(operation.id),
         "source_operation_name": operation.name,
         "objective": "Evidence",
-        "is_main_conversation": True,
+        "outcome": "undetermined",
         "score": None,
+        "conversation_id": "main",
     }
     assert client.get(f"/api/operations/{operation.id}/findings").json()["items"][0]["evidence_count"] == 1
     evidence_id = created.json()["item"]["id"]
@@ -364,7 +360,7 @@ async def test_finding_evidence_accepts_any_saved_attack_without_changing_it_asy
     )
     client = TestClient(app, headers=compatibility_headers)
     path = f"/api/operations/{operation.id}/findings/{finding.id}/evidence"
-    response = client.post(path, json={"attack_result_id": attack.attack_result_id, "conversation_id": "source"})
+    response = client.post(path, json={"attack_result_id": attack.attack_result_id})
     assert response.status_code == 201
     listed = client.get(path).json()["items"][0]
     assert listed["source_operation_id"] == (str(other.id) if attribution == "other_operation" else None)
@@ -373,146 +369,118 @@ async def test_finding_evidence_accepts_any_saved_attack_without_changing_it_asy
     assert (stored.operation_id, stored.operation) == (attack.operation_id, attack.operation)
 
 
-@pytest.mark.parametrize("missing", ["operation", "finding", "attack", "conversation"])
-def test_finding_evidence_rejects_missing_sources(
+@pytest.mark.parametrize("missing", ["operation", "finding", "attack", "messages"])
+async def test_finding_evidence_rejects_missing_sources_async(
+    sqlite_instance: SQLiteMemory,
     compatibility_headers: dict[str, str],
     evidence_source_async: tuple[Operation, Finding, AttackResult],
     missing: str,
 ) -> None:
     operation, finding, attack = evidence_source_async
+    attack_result_id = attack.attack_result_id
+    if missing == "attack":
+        attack_result_id = str(MISSING_ID)
+    elif missing == "messages":
+        empty = AttackResult(conversation_id="empty", objective="Nothing saved")
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[empty])
+        attack_result_id = empty.attack_result_id
     response = TestClient(app, headers=compatibility_headers).post(
         f"/api/operations/{MISSING_ID if missing == 'operation' else operation.id}/findings/"
         f"{MISSING_ID if missing == 'finding' else finding.id}/evidence",
-        json={
-            "attack_result_id": str(MISSING_ID) if missing == "attack" else attack.attack_result_id,
-            "conversation_id": "other" if missing == "conversation" else "main",
-        },
+        json={"attack_result_id": attack_result_id},
     )
     assert response.status_code == 404
 
 
-async def test_finding_create_finds_the_attack_of_a_branch_conversation_async(
-    sqlite_instance: SQLiteMemory, evidence_source_async: tuple[Operation, Finding, AttackResult]
-) -> None:
-    operation, _, attack = evidence_source_async
-    await sqlite_instance.update_attack_result_by_id_async(
-        attack_result_id=attack.attack_result_id, update_fields={"pruned_conversation_ids": ["branch"]}
-    )
-    await sqlite_instance.add_message_to_memory_async(
-        request=Message(message_pieces=[MessagePiece(role="user", original_value="Branch", conversation_id="branch")])
-    )
-    with sqlite_instance._get_session() as session:
-        session.merge(
-            ConversationEntry(
-                conversation=Conversation(conversation_id="branch", attack_result_id=attack.attack_result_id)
-            )
-        )
-        session.commit()
-    finding = await OperationService().create_finding_async(
-        operation_id=operation.id,
-        request=FindingCreateRequest(title="Branch", severity="low", conversation_id="branch"),
-    )
-    evidence = await sqlite_instance.get_finding_evidence_by_source_async(
-        finding_id=finding.id, conversation_id="branch"
-    )
-    assert evidence is not None and evidence.attack_result_id == UUID(attack.attack_result_id)
-
-
-async def test_finding_evidence_related_membership_and_unavailability_async(
+async def test_finding_evidence_opens_the_scored_conversation_else_the_main_one_async(
     sqlite_instance: SQLiteMemory,
     evidence_source_async: tuple[Operation, Finding, AttackResult],
 ) -> None:
     operation, finding, attack = evidence_source_async
-    attack.related_conversations = {
-        ConversationReference(conversation_id="related", conversation_type=ConversationType.PRUNED),
-    }
-    await sqlite_instance.update_attack_result_by_id_async(
-        attack_result_id=attack.attack_result_id, update_fields={"pruned_conversation_ids": ["related"]}
+    branch = MessagePiece(role="assistant", original_value="Branch", conversation_id="branch")
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[branch])
+    score = Score(
+        score_value="true",
+        score_type="true_false",
+        score_rationale="Scored on the branch",
+        scorer_class_identifier=ComponentIdentifier(class_name="SelfAskTrueFalseScorer", class_module="pyrit.score"),
+        message_piece_id=branch.id,
     )
-    await sqlite_instance.add_message_to_memory_async(
-        request=Message(message_pieces=[MessagePiece(role="user", original_value="Related", conversation_id="related")])
+    await sqlite_instance.add_scores_to_memory_async(scores=[score])
+    await sqlite_instance.update_attack_result_by_id_async(
+        attack_result_id=attack.attack_result_id,
+        update_fields={"pruned_conversation_ids": ["branch"], "automated_score_id": str(score.id)},
     )
     service = OperationService()
     saved = await service.attach_finding_evidence_async(
         operation_id=operation.id,
         finding_id=finding.id,
-        request=FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id, conversation_id="related"),
+        request=FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id),
     )
+
+    async def opened_async() -> tuple[str | None, str]:
+        page = await service.list_finding_evidence_async(
+            operation_id=operation.id, finding_id=finding.id, limit=20, offset=0
+        )
+        assert page.items[0].item == saved.item
+        return page.items[0].conversation_id, page.items[0].availability
+
+    assert await opened_async() == ("branch", "available")
+    # A score left on a conversation that is no longer part of the attack opens the main conversation.
     await sqlite_instance.update_attack_result_by_id_async(
         attack_result_id=attack.attack_result_id, update_fields={"pruned_conversation_ids": []}
     )
-    page = await service.list_finding_evidence_async(
-        operation_id=operation.id, finding_id=finding.id, limit=20, offset=0
-    )
-    assert page.items[0].item == saved.item
-    assert page.items[0].availability == "unavailable"
+    assert await opened_async() == ("main", "available")
     with patch.object(sqlite_instance, "get_attack_results_async", new_callable=AsyncMock) as mocked:
         mocked.side_effect = RuntimeError("storage failed")
         with pytest.raises(RuntimeError, match="storage failed"):
-            await service.list_finding_evidence_async(
-                operation_id=operation.id, finding_id=finding.id, limit=20, offset=0
-            )
+            await opened_async()
 
 
-async def test_finding_evidence_shows_each_conversations_own_score_async(sqlite_instance: SQLiteMemory) -> None:
+async def test_finding_evidence_shows_the_attacks_current_outcome_and_score_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Scores"))
     finding = await sqlite_instance.add_finding_async(
         finding=Finding(operation_id=operation.id, title="Scored", severity="low")
     )
-    objective_scorer = ComponentIdentifier(class_name="SelfAskTrueFalseScorer", class_module="pyrit.score")
-    auxiliary_scorer = ComponentIdentifier(class_name="SelfAskRefusalScorer", class_module="pyrit.score")
-    human_scorer = ComponentIdentifier(class_name="ManualScorer", class_module="pyrit.score")
-    branches = ["objective", "human", "auxiliary", "unscored"]
     pieces = {
         conversation_id: MessagePiece(role="assistant", original_value=conversation_id, conversation_id=conversation_id)
-        for conversation_id in ["main", *branches]
+        for conversation_id in ["main", "branch", "unscored"]
     }
     await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=list(pieces.values()))
-    start = datetime.now(UTC)
 
-    def make_score(conversation_id: str, scorer: ComponentIdentifier, minute: int) -> Score:
+    def make_score(conversation_id: str, scorer: str, value: str) -> Score:
         return Score(
-            score_value="true",
+            score_value=value,
             score_type="true_false",
-            score_rationale=f"{scorer.class_name} on {conversation_id} at {minute}",
-            scorer_class_identifier=scorer,
+            score_rationale=f"{scorer} on {conversation_id}",
+            scorer_class_identifier=ComponentIdentifier(class_name=scorer, class_module="pyrit.score"),
             message_piece_id=pieces[conversation_id].id,
-            timestamp=start + timedelta(minutes=minute),
         )
 
-    headline = make_score("main", objective_scorer, 0)
-    await sqlite_instance.add_scores_to_memory_async(
-        scores=[
-            headline,
-            # A later human score that is not the headline, as left behind when a human score is removed.
-            make_score("main", human_scorer, 1),
-            make_score("objective", objective_scorer, 0),
-            make_score("objective", objective_scorer, 1),
-            make_score("objective", auxiliary_scorer, 2),
-            make_score("human", objective_scorer, 2),
-            make_score("human", human_scorer, 1),
-            make_score("auxiliary", auxiliary_scorer, 0),
-        ]
-    )
-    attack = AttackResult(
+    automated = make_score("main", "SelfAskTrueFalseScorer", "true")
+    human = make_score("branch", "ManualScorer", "false")
+    await sqlite_instance.add_scores_to_memory_async(scores=[automated, human])
+    scored = AttackResult(
         conversation_id="main",
         objective="Scored objective",
         operation_id=operation.id,
-        automated_score=headline,
+        automated_score=automated,
+        human_score=human,
+        outcome=AttackOutcome.FAILURE,
         related_conversations={
-            ConversationReference(conversation_id=conversation_id, conversation_type=ConversationType.PRUNED)
-            for conversation_id in branches
+            ConversationReference(conversation_id="branch", conversation_type=ConversationType.PRUNED)
         },
     )
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
+    unscored = AttackResult(conversation_id="unscored", objective="Unscored objective")
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[scored, unscored])
     service = OperationService()
-    for conversation_id in ["main", *branches]:
+    for attack in [scored, unscored, scored]:
         await service.attach_finding_evidence_async(
             operation_id=operation.id,
             finding_id=finding.id,
-            request=FindingEvidenceCreateRequest(
-                attack_result_id=attack.attack_result_id, conversation_id=conversation_id
-            ),
+            request=FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id),
         )
 
     page = await service.list_finding_evidence_async(
@@ -520,21 +488,19 @@ async def test_finding_evidence_shows_each_conversations_own_score_async(sqlite_
     )
 
     shown = {
-        evidence.item.conversation_id: (
-            evidence.is_main_conversation,
+        evidence.objective: (
+            evidence.outcome,
             evidence.score.score_rationale if evidence.score else None,
             evidence.score.is_objective_score if evidence.score else None,
+            evidence.conversation_id,
         )
         for evidence in page.items
     }
+    # The human score is the attack's current score, so the branch it was given in is the one to open.
     assert shown == {
-        "main": (True, "SelfAskTrueFalseScorer on main at 0", True),
-        "objective": (False, "SelfAskTrueFalseScorer on objective at 1", False),
-        "human": (False, "ManualScorer on human at 1", False),
-        "auxiliary": (False, None, None),
-        "unscored": (False, None, None),
+        "Scored objective": (AttackOutcome.FAILURE, "ManualScorer on branch", True, "branch"),
+        "Unscored objective": (AttackOutcome.UNDETERMINED, None, None, "unscored"),
     }
-    assert {evidence.objective for evidence in page.items} == {"Scored objective"}
 
 
 async def test_finding_search_is_literal_case_insensitive_async(sqlite_instance: SQLiteMemory) -> None:
@@ -558,7 +524,7 @@ async def test_concurrent_attach_preserves_one_association_async(
         await asyncio.to_thread(Base.metadata.create_all, memory.engine)
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             operation, finding, attack = await _store_evidence_source_async(memory)
-            request = FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id, conversation_id="main")
+            request = FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id)
             results = await asyncio.gather(
                 *[
                     OperationService().attach_finding_evidence_async(
@@ -580,7 +546,7 @@ async def test_unrelated_integrity_failure_propagates_async(
 ) -> None:
     operation, finding, attack = evidence_source_async
     service = OperationService()
-    request = FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id, conversation_id="main")
+    request = FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id)
     await service.attach_finding_evidence_async(operation_id=operation.id, finding_id=finding.id, request=request)
     failure = IntegrityError("insert", {}, RuntimeError("UNIQUE constraint failed: FindingEvidenceEntries.id"))
     with patch.object(sqlite_instance, "add_finding_evidence_async", side_effect=failure):
@@ -607,7 +573,7 @@ async def test_attach_after_concurrent_finding_delete_is_not_found_async(
             await OperationService().attach_finding_evidence_async(
                 operation_id=operation.id,
                 finding_id=finding.id,
-                request=FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id, conversation_id="main"),
+                request=FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id),
             )
     assert await sqlite_instance.get_finding_evidence_counts_async(finding_ids=[finding.id]) == {}
 
@@ -623,7 +589,7 @@ async def test_evidence_retains_missing_source_async(
     saved = await service.attach_finding_evidence_async(
         operation_id=operation.id,
         finding_id=finding.id,
-        request=FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id, conversation_id="main"),
+        request=FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id),
     )
     async with await sqlite_instance.get_session_async() as session, session.begin():
         await session.execute(delete(table))
@@ -643,10 +609,7 @@ async def test_evidence_detach_is_scoped_and_does_not_mutate_source_async(
     client = TestClient(app, headers=compatibility_headers)
     saved = client.post(
         f"/api/operations/{operation.id}/findings/{finding.id}/evidence",
-        json={
-            "attack_result_id": attack.attack_result_id,
-            "conversation_id": "main",
-        },
+        json={"attack_result_id": attack.attack_result_id},
     ).json()["item"]
     other = await sqlite_instance.add_finding_async(
         finding=Finding(operation_id=operation.id, title="Other", severity="low")
@@ -665,10 +628,10 @@ async def test_evidence_detach_is_scoped_and_does_not_mutate_source_async(
 @pytest.mark.parametrize(
     "body",
     [
-        {"attack_result_id": "invalid", "conversation_id": "main"},
-        {"attack_result_id": str(MISSING_ID), "conversation_id": ""},
-        {"attack_result_id": str(MISSING_ID), "conversation_id": "x" * 129},
-        {"attack_result_id": str(MISSING_ID), "conversation_id": "main", "operation": "forged"},
+        {"attack_result_id": "invalid"},
+        {},
+        {"attack_result_id": str(MISSING_ID), "conversation_id": "main"},
+        {"attack_result_id": str(MISSING_ID), "operation": "forged"},
     ],
 )
 def test_evidence_input_is_strict(
@@ -687,18 +650,10 @@ async def test_evidence_page_batches_sources_and_counts_async(
 ) -> None:
     operation, finding, attack = evidence_source_async
     await sqlite_instance.add_finding_evidence_async(
-        evidence=FindingEvidence(
-            finding_id=finding.id,
-            attack_result_id=UUID(attack.attack_result_id),
-            conversation_id="main",
-        )
+        evidence=FindingEvidence(finding_id=finding.id, attack_result_id=UUID(attack.attack_result_id))
     )
     await sqlite_instance.add_finding_evidence_async(
-        evidence=FindingEvidence(
-            finding_id=finding.id,
-            attack_result_id=uuid4(),
-            conversation_id="missing",
-        )
+        evidence=FindingEvidence(finding_id=finding.id, attack_result_id=uuid4())
     )
     with (
         patch.object(

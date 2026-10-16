@@ -13,11 +13,10 @@ jest.mock('@/services/api', () => ({
 }))
 const ID = '123e4567-e89b-12d3-a456-426614174000'
 const EVIDENCE: FindingEvidenceItem = {
-  item: { id: ID, finding_id: 'finding', conversation_id: 'source/1', attack_result_id: 'attack/1',
-    attached_at: '2026-10-08T12:00:00Z' },
+  item: { id: ID, finding_id: 'finding', attack_result_id: 'attack/1', attached_at: '2026-10-08T12:00:00Z' },
   availability: 'available', scenario_result_id: ID,
   source_operation_id: 'operation', source_operation_name: 'This operation',
-  objective: 'Get the recipe', is_main_conversation: true, score: null,
+  objective: 'Get the recipe', outcome: 'success', score: null, conversation_id: 'source/1',
 }
 const SCORE: BackendScore = {
   id: 'score', message_piece_id: 'piece', scorer_type: 'SelfAskTrueFalseScorer', score_type: 'true_false',
@@ -37,51 +36,49 @@ beforeEach(() => {
   jest.mocked(operationsApi.detachFindingEvidence).mockResolvedValue(undefined)
 })
 
-it('loads only on expansion and builds existing viewer/scanner evidence links', async () => {
+it('loads only on expansion and opens the conversation holding the score', async () => {
   const user = userEvent.setup()
   renderList()
   expect(operationsApi.listFindingEvidence).not.toHaveBeenCalled()
   await user.click(screen.getByRole('button', { name: 'Evidence (1)' }))
-  expect(await screen.findByText('source/1')).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: 'Open conversation' })).toHaveAttribute('href',
+  expect(await screen.findByText('Get the recipe')).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Open attack' })).toHaveAttribute('href',
     `/attacks/attack%2F1/conversations/source%2F1?scenarioResultId=${ID}&findingEvidenceId=${ID}`)
 })
 
-it('shows each conversation with its objective, main or branch role, and own score', async () => {
+it("shows each attack's objective, outcome, and current score", async () => {
   const user = userEvent.setup()
   jest.mocked(operationsApi.listFindingEvidence).mockResolvedValue({ ...EMPTY, items: [
     { ...EVIDENCE, score: SCORE },
-    { ...EVIDENCE, item: { ...EVIDENCE.item, id: 'branch-link', conversation_id: 'branch/1' }, is_main_conversation: false },
+    {
+      ...EVIDENCE, item: { ...EVIDENCE.item, id: 'unscored-link', attack_result_id: 'attack/2' },
+      objective: 'Unscored objective', outcome: 'undetermined', conversation_id: 'main/2',
+    },
   ] })
   renderList()
   await user.click(screen.getByRole('button', { name: 'Evidence (1)' }))
-  const main = await screen.findByRole('row', { name: /source\/1/ })
-  const branch = screen.getByRole('row', { name: /branch\/1/ })
-  expect(within(main).getByText('Main')).toBeInTheDocument()
-  expect(within(main).getByText('Get the recipe')).toBeInTheDocument()
-  expect(within(main).getByText('success')).toBeInTheDocument()
-  expect(within(main).getByText('SelfAskTrueFalseScorer')).toBeInTheDocument()
-  expect(within(main).getByText('The response complied.')).toBeInTheDocument()
-  expect(within(branch).getByText('Branch')).toBeInTheDocument()
-  expect(within(branch).getByText('Not scored')).toBeInTheDocument()
+  const scored = await screen.findByRole('row', { name: /Get the recipe/ })
+  const unscored = screen.getByRole('row', { name: /Unscored objective/ })
+  expect(within(scored).getByText('success')).toBeInTheDocument()
+  expect(within(scored).getByText('SelfAskTrueFalseScorer')).toBeInTheDocument()
+  expect(within(scored).getByText('The response complied.')).toBeInTheDocument()
+  expect(within(unscored).getByText('undetermined')).toBeInTheDocument()
+  expect(within(unscored).getByText('Not scored')).toBeInTheDocument()
 })
 
-it.each([
-  ['a false verdict', { score_value: 'False' }, 'failure'],
-  ['an undetermined score', { score_value: null, status: 'undetermined' }, 'undetermined'],
-  ['a numeric score', { score_type: 'float_scale', score_value: '0.8' }, '0.8'],
-])('labels %s like the chat outcome badge where it has one', async (
-  _case: string, overrides: Partial<BackendScore>, shown: string,
-) => {
-  const user = userEvent.setup()
-  jest.mocked(operationsApi.listFindingEvidence).mockResolvedValue({
-    ...EMPTY, items: [{ ...EVIDENCE, score: { ...SCORE, ...overrides } }],
-  })
-  renderList()
-  await user.click(screen.getByRole('button', { name: 'Evidence (1)' }))
-  const row = await screen.findByRole('row', { name: /source\/1/ })
-  expect(within(row).getByText(shown)).toBeInTheDocument()
-})
+it.each(['success', 'failure', 'undetermined', 'error'] as const)(
+  "badges a %s attack with the same outcome as chat, whatever its score's value",
+  async (outcome) => {
+    const user = userEvent.setup()
+    jest.mocked(operationsApi.listFindingEvidence).mockResolvedValue({
+      ...EMPTY, items: [{ ...EVIDENCE, outcome, score: SCORE }],
+    })
+    renderList()
+    await user.click(screen.getByRole('button', { name: 'Evidence (1)' }))
+    const row = await screen.findByRole('row', { name: /Get the recipe/ })
+    expect(within(row).getByText(outcome)).toBeInTheDocument()
+  },
+)
 
 it.each([
   ['the same operation', 'operation', 'This operation', null],
@@ -97,7 +94,7 @@ it.each([
   })
   renderList()
   await user.click(screen.getByRole('button', { name: 'Evidence (1)' }))
-  await screen.findByText('source/1')
+  await screen.findByText('Get the recipe')
   if (shown) expect(screen.getByText(shown)).toBeInTheDocument()
   else expect(screen.queryByText(/From operation|Not in an operation/)).not.toBeInTheDocument()
 })
@@ -105,15 +102,20 @@ it.each([
 it('retains unavailable identity, confirms association-only removal, and refreshes count', async () => {
   const user = userEvent.setup()
   const onDetached = jest.fn()
-  jest.mocked(operationsApi.listFindingEvidence).mockResolvedValue({ ...EMPTY, items: [{ ...EVIDENCE, availability: 'unavailable' }] })
+  // An attack that no longer exists has no objective or outcome, so the row names it by ID.
+  jest.mocked(operationsApi.listFindingEvidence).mockResolvedValue({ ...EMPTY, items: [{
+    ...EVIDENCE, availability: 'unavailable', source_operation_id: null, source_operation_name: null,
+    objective: null, outcome: null, conversation_id: null,
+  }] })
   renderList(onDetached)
   await user.click(screen.getByRole('button', { name: 'Evidence (1)' }))
   expect(await screen.findByText('Evidence unavailable')).toBeInTheDocument()
-  expect(screen.queryByRole('link', { name: 'Open conversation' })).not.toBeInTheDocument()
-  expect(screen.queryByText('Not scored')).not.toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: 'Remove link: source/1' }))
-  expect(screen.getByRole('dialog')).toHaveTextContent('source/1')
-  expect(screen.getByRole('dialog')).toHaveTextContent('The conversation is not deleted')
+  expect(screen.getByText('attack/1')).toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: 'Open attack' })).not.toBeInTheDocument()
+  expect(screen.queryByText(/Not scored|Not in an operation/)).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Remove link: attack/1' }))
+  expect(screen.getByRole('dialog')).toHaveTextContent('attack/1')
+  expect(screen.getByRole('dialog')).toHaveTextContent('The attack is not deleted')
   expect(operationsApi.detachFindingEvidence).not.toHaveBeenCalled()
   jest.mocked(operationsApi.listFindingEvidence).mockResolvedValue(EMPTY)
   await user.click(screen.getByRole('button', { name: 'Remove evidence link' }))
@@ -128,11 +130,11 @@ it('paginates and returns from an emptied last page after detach', async () => {
   })
   renderList()
   await user.click(screen.getByRole('button', { name: 'Evidence (1)' }))
-  await screen.findByText('source/1')
+  await screen.findByText('Get the recipe')
   await user.click(screen.getByRole('button', { name: 'Next evidence' }))
   await waitFor(() => { expect(operationsApi.listFindingEvidence).toHaveBeenCalledWith('operation', 'finding', { limit: 20, offset: 20 }) })
-  await screen.findByText('source/1')
-  await user.click(screen.getByRole('button', { name: 'Remove link: source/1' }))
+  await screen.findByText('Get the recipe')
+  await user.click(screen.getByRole('button', { name: 'Remove link: Get the recipe' }))
   jest.mocked(operationsApi.listFindingEvidence).mockResolvedValueOnce(EMPTY).mockResolvedValueOnce({ ...EMPTY, items: [EVIDENCE] })
   await user.click(screen.getByRole('button', { name: 'Remove evidence link' }))
   await waitFor(() => { expect(operationsApi.listFindingEvidence).toHaveBeenLastCalledWith('operation', 'finding', { limit: 20, offset: 0 }) })

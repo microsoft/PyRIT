@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from collections.abc import Sequence
 from uuid import UUID, uuid4
 
 from pyrit.backend.models.attacks import ScoreView
@@ -18,7 +19,6 @@ from pyrit.backend.models.operations import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackResult, Finding, FindingCreate, FindingEvidence, Operation, OperationCreate
-from pyrit.score import ManualScorer
 
 
 class OperationNotFoundError(LookupError):
@@ -30,7 +30,7 @@ class FindingNotFoundError(LookupError):
 
 
 class FindingEvidenceNotFoundError(LookupError):
-    """Raised when an evidence link or its conversation cannot be found."""
+    """Raised when an evidence link or its attack result cannot be found."""
 
 
 class FindingConflictError(ValueError):
@@ -115,7 +115,7 @@ class OperationService:
 
     async def create_finding_async(self, *, operation_id: UUID, request: FindingCreateRequest) -> Finding:
         """
-        Save a finding within an existing operation, together with its evidence when a conversation is given.
+        Save a finding within an existing operation, together with its evidence when an attack result is given.
 
         Returns:
             Finding: The saved finding, or the one an earlier request with the same ID and content saved.
@@ -135,7 +135,7 @@ class OperationService:
         if saved.model_dump(exclude={"created_at"}) != finding.model_dump(exclude={"created_at"}) or (
             evidence is not None
             and await memory.get_finding_evidence_by_source_async(
-                finding_id=saved.id, conversation_id=evidence.conversation_id
+                finding_id=saved.id, attack_result_id=evidence.attack_result_id
             )
             is None
         ):
@@ -170,22 +170,17 @@ class OperationService:
         self, *, operation_id: UUID, finding_id: UUID, request: FindingEvidenceCreateRequest
     ) -> FindingEvidenceAttachResponse:
         """
-        Link a conversation to a finding.
+        Link a saved attack result to a finding.
 
         The attack can belong to any Operation or none; linking never changes its attribution.
-        The conversation must be an active, non-empty conversation of that attack.
 
         Returns:
             FindingEvidenceAttachResponse: The evidence and whether it was newly linked.
         """
         await self.get_async(operation_id)
         await self._require_finding_async(operation_id=operation_id, finding_id=finding_id)
-        await self._require_evidence_source_async(
-            attack_result_id=request.attack_result_id, conversation_id=request.conversation_id
-        )
-        evidence = FindingEvidence(
-            finding_id=finding_id, conversation_id=request.conversation_id, attack_result_id=request.attack_result_id
-        )
+        await self._require_evidence_source_async(attack_result_id=request.attack_result_id)
+        evidence = FindingEvidence(finding_id=finding_id, attack_result_id=request.attack_result_id)
         try:
             saved = await CentralMemory.get_memory_instance().add_finding_evidence_async(evidence=evidence)
         except LookupError as exc:
@@ -196,10 +191,12 @@ class OperationService:
         self, *, operation_id: UUID, finding_id: UUID, limit: int, offset: int
     ) -> FindingEvidenceListResponse:
         """
-        Read one page of a finding's evidence. Links whose conversation is gone are kept and marked unavailable.
+        Read one page of a finding's evidence. Links whose attack result is gone are kept and marked unavailable.
+
+        Each item shows its attack's current outcome and score, and the conversation holding that score.
 
         Returns:
-            FindingEvidenceListResponse: The evidence with availability and scanner context.
+            FindingEvidenceListResponse: The evidence with availability and attack context.
         """
         await self.get_async(operation_id)
         await self._require_finding_async(operation_id=operation_id, finding_id=finding_id)
@@ -219,7 +216,8 @@ class OperationService:
             if linked_ids
             else {}
         )
-        stats = await memory.get_conversation_stats_async(conversation_ids=[item.conversation_id for item in page])
+        conversations = await self._score_conversations_async(attacks=attacks)
+        stats = await memory.get_conversation_stats_async(conversation_ids=list(set(conversations.values())))
         items = []
         for item in page:
             owner = owners.get(str(item.attack_result_id))
@@ -230,11 +228,8 @@ class OperationService:
                     )
                 )
                 continue
-            available = (
-                item.conversation_id in owner.get_active_conversation_ids()
-                and item.conversation_id in stats
-                and stats[item.conversation_id].message_count > 0
-            )
+            conversation_id = conversations[owner.attack_result_id]
+            available = conversation_id in stats and stats[conversation_id].message_count > 0
             items.append(
                 FindingEvidenceItem(
                     item=item,
@@ -245,12 +240,11 @@ class OperationService:
                         operation_names.get(owner.operation_id) if owner.operation_id else owner.operation
                     ),
                     objective=owner.objective,
-                    is_main_conversation=item.conversation_id == owner.conversation_id,
-                    score=(
-                        await self._conversation_score_async(attack=owner, conversation_id=item.conversation_id)
-                        if available
-                        else None
-                    ),
+                    outcome=owner.outcome,
+                    score=ScoreView.from_domain(owner.last_score, is_objective_score=True)
+                    if owner.last_score
+                    else None,
+                    conversation_id=conversation_id,
                 )
             )
         return FindingEvidenceListResponse(
@@ -258,29 +252,33 @@ class OperationService:
         )
 
     @staticmethod
-    async def _conversation_score_async(*, attack: AttackResult, conversation_id: str) -> ScoreView | None:
+    async def _score_conversations_async(*, attacks: Sequence[AttackResult]) -> dict[str, str]:
         """
-        Pick the score that represents one of an attack's conversations, never an auxiliary score.
-
-        The attack's headline score wins when it is in this conversation. Otherwise the latest human score
-        wins, then the latest score from the scorer that produced the attack's automated score.
+        Find the conversation holding each attack's score, so the score shown and the transcript opened agree.
 
         Returns:
-            ScoreView | None: The chosen score, or None when the conversation has no such score.
+            dict[str, str]: By attack result ID, the active conversation holding its score, otherwise its main one.
         """
-        scores = await CentralMemory.get_memory_instance().get_prompt_scores_async(conversation_id=conversation_id)
-        headline = attack.last_score
-        if headline is not None and any(str(score.id) == str(headline.id) for score in scores):
-            return ScoreView.from_domain(headline, is_objective_score=True)
-        automated = attack.automated_score
-        objective_hash = (
-            automated.scorer_class_identifier.hash if automated and automated.scorer_class_identifier else None
+        piece_ids = [
+            str(attack.last_score.message_piece_id)
+            for attack in attacks
+            if attack.last_score is not None and attack.last_score.message_piece_id is not None
+        ]
+        pieces = (
+            await CentralMemory.get_memory_instance().get_message_pieces_async(prompt_ids=piece_ids)
+            if piece_ids
+            else []
         )
-        scorers = [(score, score.scorer_class_identifier) for score in scores if score.scorer_class_identifier]
-        human = [score for score, scorer in scorers if scorer.class_name == ManualScorer.__name__]
-        objective = [score for score, scorer in scorers if scorer.hash == objective_hash]
-        latest = max(human or objective, key=lambda score: score.timestamp, default=None)
-        return ScoreView.from_domain(latest) if latest else None
+        scored_in: dict[str, str] = {str(piece.id): str(piece.conversation_id) for piece in pieces}
+        conversations: dict[str, str] = {}
+        for attack in attacks:
+            score = attack.last_score
+            scored = scored_in.get(str(score.message_piece_id)) if score is not None else None
+            active = attack.get_active_conversation_ids()
+            conversations[attack.attack_result_id] = (
+                scored if scored is not None and scored in active else attack.conversation_id
+            )
+        return conversations
 
     async def detach_finding_evidence_async(self, *, operation_id: UUID, finding_id: UUID, evidence_id: UUID) -> None:
         """Unlink evidence, but only if it belongs to the requested finding."""
@@ -303,62 +301,35 @@ class OperationService:
 
     async def _new_evidence_async(self, *, finding_id: UUID, request: FindingCreateRequest) -> FindingEvidence | None:
         """
-        Build evidence for a new finding from its conversation, finding the attack when only the conversation is given.
+        Build the evidence to save with a new finding.
 
         Returns:
-            FindingEvidence | None: The evidence to save with the finding, or None without a conversation.
+            FindingEvidence | None: The evidence, or None when the request names no attack result.
         """
-        if request.conversation_id is None:
+        if request.attack_result_id is None:
             return None
-        attack_result_id = request.attack_result_id or await self._find_conversation_attack_async(
-            conversation_id=request.conversation_id
-        )
-        await self._require_evidence_source_async(
-            attack_result_id=attack_result_id, conversation_id=request.conversation_id
-        )
-        return FindingEvidence(
-            finding_id=finding_id, conversation_id=request.conversation_id, attack_result_id=attack_result_id
-        )
+        await self._require_evidence_source_async(attack_result_id=request.attack_result_id)
+        return FindingEvidence(finding_id=finding_id, attack_result_id=request.attack_result_id)
 
     @staticmethod
-    async def _find_conversation_attack_async(*, conversation_id: str) -> UUID:
+    async def _require_evidence_source_async(*, attack_result_id: UUID) -> None:
         """
-        Find the attack a conversation belongs to, as its main conversation or as a recorded branch.
-
-        Returns:
-            UUID: The owning attack's ID.
-
-        Raises:
-            FindingEvidenceNotFoundError: If no saved attack holds the conversation.
-        """
-        memory = CentralMemory.get_memory_instance()
-        attacks = await memory.get_attack_results_async(conversation_id=conversation_id, limit=1)
-        if attacks:
-            return UUID(attacks[0].attack_result_id)
-        conversation = await memory.get_conversation_metadata_async(conversation_id=conversation_id)
-        if conversation is None or conversation.attack_result_id is None:
-            raise FindingEvidenceNotFoundError("The conversation is not saved as part of an attack.")
-        return UUID(conversation.attack_result_id)
-
-    @staticmethod
-    async def _require_evidence_source_async(*, attack_result_id: UUID, conversation_id: str) -> None:
-        """
-        Check that a conversation is an active, non-empty conversation of an existing attack.
+        Check that a saved attack result exists and has saved messages.
 
         The attack can belong to any Operation or none; linking never changes its attribution.
 
         Raises:
-            FindingEvidenceNotFoundError: If the attack, membership, or messages are missing.
+            FindingEvidenceNotFoundError: If the attack result or its messages are missing.
         """
         memory = CentralMemory.get_memory_instance()
         attacks = await memory.get_attack_results_async(attack_result_ids=[str(attack_result_id)])
         if not attacks:
-            raise FindingEvidenceNotFoundError("The owning attack no longer exists.")
-        if conversation_id not in attacks[0].get_active_conversation_ids():
-            raise FindingEvidenceNotFoundError("The conversation is not an active member of this attack.")
-        stats = await memory.get_conversation_stats_async(conversation_ids=[conversation_id])
-        if conversation_id not in stats or stats[conversation_id].message_count == 0:
-            raise FindingEvidenceNotFoundError("The conversation has no saved messages.")
+            raise FindingEvidenceNotFoundError("The attack result does not exist.")
+        stats = await memory.get_conversation_stats_async(
+            conversation_ids=list(attacks[0].get_active_conversation_ids())
+        )
+        if not any(stat.message_count > 0 for stat in stats.values()):
+            raise FindingEvidenceNotFoundError("The attack result has no saved messages.")
 
     async def update_finding_async(self, *, operation_id: UUID, finding_id: UUID, request: FindingCreate) -> Finding:
         """

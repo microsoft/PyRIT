@@ -123,11 +123,11 @@ async def test_duplicate_id_returns_the_saved_finding_unchanged(sqlite_instance:
 async def test_finding_and_evidence_save_together_or_not_at_all(sqlite_instance: SQLiteMemory) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Case"))
     finding = Finding(operation_id=operation.id, title="With evidence", severity="low")
-    evidence = FindingEvidence(finding_id=finding.id, conversation_id="conversation", attack_result_id=uuid4())
+    evidence = FindingEvidence(finding_id=finding.id, attack_result_id=uuid4())
     assert await sqlite_instance.add_finding_async(finding=finding, evidence=evidence) == finding
     assert (
         await sqlite_instance.get_finding_evidence_by_source_async(
-            finding_id=finding.id, conversation_id="conversation"
+            finding_id=finding.id, attack_result_id=evidence.attack_result_id
         )
         == evidence
     )
@@ -173,7 +173,7 @@ async def test_finding_classifications_persist_and_clear_without_losing_evidence
     )
     saved = await sqlite_instance.add_finding_async(finding=original)
     assert saved == original
-    evidence = FindingEvidence(finding_id=saved.id, conversation_id="preserved", attack_result_id=uuid4())
+    evidence = FindingEvidence(finding_id=saved.id, attack_result_id=uuid4())
     await sqlite_instance.add_finding_evidence_async(evidence=evidence)
     read = await sqlite_instance.get_finding_async(operation_id=operation.id, finding_id=saved.id)
     assert read == original
@@ -263,7 +263,6 @@ async def test_add_finding_evidence_and_get_page(sqlite_instance: SQLiteMemory) 
         FindingEvidence(
             id=UUID(int=i),
             finding_id=finding.id,
-            conversation_id=f"conversation-{i}",
             attack_result_id=uuid4(),
             attached_at=stamp,
         )
@@ -275,12 +274,14 @@ async def test_add_finding_evidence_and_get_page(sqlite_instance: SQLiteMemory) 
     assert await sqlite_instance.get_finding_evidence_async(finding_id=finding.id, limit=2, offset=2) == items[:1]
     assert (
         await sqlite_instance.get_finding_evidence_by_source_async(
-            finding_id=finding.id, conversation_id="conversation-1"
+            finding_id=finding.id, attack_result_id=items[0].attack_result_id
         )
         == items[0]
     )
     assert (
-        await sqlite_instance.get_finding_evidence_by_source_async(finding_id=uuid4(), conversation_id="conversation-1")
+        await sqlite_instance.get_finding_evidence_by_source_async(
+            finding_id=uuid4(), attack_result_id=items[0].attack_result_id
+        )
         is None
     )
     assert await sqlite_instance.get_finding_async(operation_id=operation.id, finding_id=finding.id) == finding
@@ -289,7 +290,7 @@ async def test_add_finding_evidence_and_get_page(sqlite_instance: SQLiteMemory) 
 
 
 async def test_finding_evidence_requires_an_existing_finding(sqlite_instance: SQLiteMemory) -> None:
-    evidence = FindingEvidence(finding_id=uuid4(), conversation_id="source", attack_result_id=uuid4())
+    evidence = FindingEvidence(finding_id=uuid4(), attack_result_id=uuid4())
     with pytest.raises(LookupError):
         await sqlite_instance.add_finding_evidence_async(evidence=evidence)
     async with await sqlite_instance.get_session_async() as session:
@@ -297,18 +298,18 @@ async def test_finding_evidence_requires_an_existing_finding(sqlite_instance: SQ
 
 
 async def test_finding_evidence_foreign_key_failure_is_lookup_error(sqlite_instance: SQLiteMemory) -> None:
-    evidence = FindingEvidence(finding_id=uuid4(), conversation_id="source", attack_result_id=uuid4())
+    evidence = FindingEvidence(finding_id=uuid4(), attack_result_id=uuid4())
     failure = IntegrityError("insert", {}, RuntimeError("foreign key"))
     with patch.object(AsyncSession, "flush", side_effect=failure), pytest.raises(LookupError):
         await sqlite_instance.add_finding_evidence_async(evidence=evidence)
 
 
-async def test_finding_evidence_unique_per_finding_conversation(sqlite_instance: SQLiteMemory) -> None:
+async def test_finding_evidence_unique_per_finding_attack_result(sqlite_instance: SQLiteMemory) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Evidence"))
     finding = await sqlite_instance.add_finding_async(
         finding=Finding(operation_id=operation.id, title="A", severity="low")
     )
-    evidence = FindingEvidence(finding_id=finding.id, conversation_id="source", attack_result_id=uuid4())
+    evidence = FindingEvidence(finding_id=finding.id, attack_result_id=uuid4())
     await sqlite_instance.add_finding_evidence_async(evidence=evidence)
     duplicate = evidence.model_copy(update={"id": uuid4()})
     assert await sqlite_instance.add_finding_evidence_async(evidence=duplicate) == evidence
@@ -320,23 +321,26 @@ async def test_unrelated_integrity_failures_propagate(sqlite_instance: SQLiteMem
     finding = await sqlite_instance.add_finding_async(
         finding=Finding(operation_id=operation.id, title="A", severity="low")
     )
-    evidence = FindingEvidence(finding_id=finding.id, conversation_id="source", attack_result_id=uuid4())
+    evidence = FindingEvidence(finding_id=finding.id, attack_result_id=uuid4())
     await sqlite_instance.add_finding_evidence_async(evidence=evidence)
     with pytest.raises(IntegrityError):
-        await sqlite_instance.add_finding_evidence_async(evidence=evidence.model_copy(update={"conversation_id": "x"}))
+        await sqlite_instance.add_finding_evidence_async(
+            evidence=evidence.model_copy(update={"attack_result_id": uuid4()})
+        )
     with pytest.raises(IntegrityError):
         await sqlite_instance.add_operation_async(operation.model_copy(update={"name": "Different"}))
 
 
-async def test_one_conversation_can_support_multiple_findings_and_counts(sqlite_instance: SQLiteMemory) -> None:
+async def test_one_attack_result_can_support_multiple_findings_and_counts(sqlite_instance: SQLiteMemory) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Evidence"))
     findings = [
         await sqlite_instance.add_finding_async(finding=Finding(operation_id=operation.id, title=title, severity="low"))
         for title in ["A", "B", "C"]
     ]
+    attack_result_id = uuid4()
     for finding in findings[:2]:
         await sqlite_instance.add_finding_evidence_async(
-            evidence=FindingEvidence(finding_id=finding.id, conversation_id="source", attack_result_id=uuid4())
+            evidence=FindingEvidence(finding_id=finding.id, attack_result_id=attack_result_id)
         )
     assert await sqlite_instance.get_finding_evidence_counts_async(finding_ids=[f.id for f in findings]) == {
         findings[0].id: 1,
@@ -373,7 +377,7 @@ async def test_delete_finding_removes_evidence_without_deleting_source(sqlite_in
         )
     )
     evidence = await sqlite_instance.add_finding_evidence_async(
-        evidence=FindingEvidence(finding_id=finding.id, conversation_id="source", attack_result_id=uuid4())
+        evidence=FindingEvidence(finding_id=finding.id, attack_result_id=uuid4())
     )
     with pytest.raises(LookupError):
         await sqlite_instance.delete_finding_async(operation_id=uuid4(), finding_id=finding.id)

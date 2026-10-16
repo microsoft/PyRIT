@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import {
-  Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
+  Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
   MessageBar, MessageBarBody, Spinner, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text,
 } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronLeftRegular, ChevronRightRegular, DeleteRegular } from '@fluentui/react-icons'
@@ -26,23 +26,24 @@ interface FindingEvidenceListProps {
   actions?: React.ReactNode
 }
 
-function scoreOutcome(score: BackendScore): AttackOutcome | null {
-  if (score.score_value === null || score.score_value === undefined) return 'undetermined'
-  if (score.score_type !== 'true_false') return null
-  return score.score_value.toLowerCase() === 'true' ? 'success' : 'failure'
-}
-
-function EvidenceScore({ score }: { score: BackendScore }) {
+/** The attack's outcome with the score behind it, the same result Chat shows for the attack. */
+function EvidenceResult({ outcome, score }: { outcome: AttackOutcome; score?: BackendScore | null }) {
   const styles = useFindingEvidenceListStyles()
-  const outcome = scoreOutcome(score)
   return (
     <div className={styles.stack}>
-      {outcome ? <OutcomeBadge outcome={outcome} appearance="tint" size="small" />
-        : <Badge appearance="tint" color="brand" size="small">{score.score_value}</Badge>}
-      <Text size={200}>{score.scorer_type}</Text>
-      {score.score_rationale && <Text size={200}>{score.score_rationale}</Text>}
+      <OutcomeBadge outcome={outcome} appearance="tint" size="small" />
+      {score ? <>
+        <Text size={200}>{score.scorer_type}</Text>
+        {score.score_rationale && <Text size={200}>{score.score_rationale}</Text>}
+      </> : <Text size={200}>Not scored</Text>}
     </div>
   )
+}
+
+/** An attack that no longer exists has no objective or outcome, so its ID stands in for it. */
+function evidenceLabel(item: FindingEvidence, outcome?: AttackOutcome | null, objective?: string | null): string {
+  if (!outcome) return item.attack_result_id
+  return objective?.trim() || 'No objective'
 }
 
 export default function FindingEvidenceList({
@@ -119,47 +120,44 @@ export default function FindingEvidenceList({
           </MessageBarBody></MessageBar>
         ) : page?.items.length === 0 ? <Text>No evidence attached.</Text> : (
           <div className={styles.tableScroll}>
-            <Table aria-label="Evidence conversations" className={styles.table}>
+            <Table aria-label="Evidence attacks" className={styles.table}>
               <TableHeader><TableRow>
-                <TableHeaderCell className={styles.textColumn}>Conversation</TableHeaderCell>
-                <TableHeaderCell className={styles.textColumn}>Objective</TableHeaderCell>
-                <TableHeaderCell className={styles.textColumn}>Score</TableHeaderCell>
+                <TableHeaderCell className={styles.textColumn}>Attack</TableHeaderCell>
+                <TableHeaderCell className={styles.textColumn}>Result</TableHeaderCell>
                 <TableHeaderCell>Attached</TableHeaderCell>
                 <TableHeaderCell>Actions</TableHeaderCell>
               </TableRow></TableHeader>
               <TableBody>{page?.items.map(({
                 item, availability, scenario_result_id: scenarioResultId, source_operation_id: sourceOperationId,
-                source_operation_name: sourceOperationName, objective, is_main_conversation: isMain, score,
-              }) => (
-                <TableRow key={item.id}>
-                  <TableCell className={styles.cell}><div className={styles.stack}>
-                    <Text>{item.conversation_id}</Text>
-                    {typeof isMain === 'boolean' && (
-                      <Badge appearance="outline" size="small">{isMain ? 'Main' : 'Branch'}</Badge>
-                    )}
-                    {sourceOperationId !== operationId && (
-                      <Text size={200}>{sourceOperationName ? `From operation: ${sourceOperationName}` : 'Not in an operation'}</Text>
-                    )}
-                  </div></TableCell>
-                  <TableCell className={styles.cell}>{objective?.trim() || 'No objective'}</TableCell>
-                  <TableCell className={styles.cell}>
-                    {score ? <EvidenceScore score={score} /> : availability === 'available' && 'Not scored'}
-                  </TableCell>
-                  <TableCell className={styles.cell}>
-                    <time dateTime={item.attached_at}>{new Date(item.attached_at).toLocaleString()}</time>
-                  </TableCell>
-                  <TableCell className={styles.cell}><div className={styles.rowActions}>
-                    {availability === 'available' ? (
-                      <Link to={attackConversationRoutePath(item.attack_result_id, item.conversation_id, scenarioResultId, item.id)}>
-                        Open conversation
-                      </Link>
-                    ) : <Text>Evidence unavailable</Text>}
-                    <Button className={styles.button} icon={<DeleteRegular />} title="Remove link"
-                      aria-label={`Remove link: ${item.conversation_id}`}
-                      onClick={() => { setRemoving(item); setRemoveError('') }} />
-                  </div></TableCell>
-                </TableRow>
-              ))}</TableBody>
+                source_operation_name: sourceOperationName, objective, outcome, score,
+                conversation_id: conversationId,
+              }) => {
+                const label = evidenceLabel(item, outcome, objective)
+                return (
+                  <TableRow key={item.id}>
+                    <TableCell className={styles.cell}><div className={styles.stack}>
+                      <Text>{label}</Text>
+                      {outcome && sourceOperationId !== operationId && (
+                        <Text size={200}>{sourceOperationName ? `From operation: ${sourceOperationName}` : 'Not in an operation'}</Text>
+                      )}
+                    </div></TableCell>
+                    <TableCell className={styles.cell}>{outcome && <EvidenceResult outcome={outcome} score={score} />}</TableCell>
+                    <TableCell className={styles.cell}>
+                      <time dateTime={item.attached_at}>{new Date(item.attached_at).toLocaleString()}</time>
+                    </TableCell>
+                    <TableCell className={styles.cell}><div className={styles.rowActions}>
+                      {availability === 'available' && conversationId ? (
+                        <Link to={attackConversationRoutePath(item.attack_result_id, conversationId, scenarioResultId, item.id)}>
+                          Open attack
+                        </Link>
+                      ) : <Text>Evidence unavailable</Text>}
+                      <Button className={styles.button} icon={<DeleteRegular />} title="Remove link"
+                        aria-label={`Remove link: ${label}`}
+                        onClick={() => { setRemoving(item); setRemoveError('') }} />
+                    </div></TableCell>
+                  </TableRow>
+                )
+              })}</TableBody>
             </Table>
           </div>
         )}
@@ -179,7 +177,7 @@ export default function FindingEvidenceList({
         <DialogSurface><DialogBody>
           <DialogTitle>Remove evidence link?</DialogTitle>
           <DialogContent>
-            <Text>Remove the link to conversation {removing?.conversation_id}? The conversation is not deleted.</Text>
+            <Text>Remove the link to attack {removing?.attack_result_id}? The attack is not deleted.</Text>
             {removeError && <MessageBar intent="error"><MessageBarBody>Could not remove link: {removeError}</MessageBarBody></MessageBar>}
           </DialogContent>
           <DialogActions>

@@ -79,7 +79,8 @@ def upgrade() -> None:
             name="ck_findings_severity_other",
         ),
         sa.CheckConstraint(
-            "(harm_type = 'Other' AND harm_type_other IS NOT NULL AND LTRIM(RTRIM(harm_type_other)) <> '') "
+            "(harm_type IS NOT NULL AND harm_type = 'Other' AND harm_type_other IS NOT NULL "
+            "AND LTRIM(RTRIM(harm_type_other)) <> '') "
             "OR ((harm_type IS NULL OR harm_type <> 'Other') AND harm_type_other IS NULL)",
             name="ck_findings_harm_type_other",
         ),
@@ -89,11 +90,10 @@ def upgrade() -> None:
         "FindingEvidenceEntries",
         sa.Column("id", CustomUUID(), primary_key=True),
         sa.Column("finding_id", CustomUUID(), nullable=False),
-        sa.Column("conversation_id", sa.String(128), nullable=False),
         sa.Column("attack_result_id", CustomUUID(), nullable=False),
         sa.Column("attached_at", UTCDateTime(), nullable=False),
         sa.ForeignKeyConstraint(["finding_id"], ["FindingEntries.id"], name="fk_finding_evidence_finding"),
-        sa.UniqueConstraint("finding_id", "conversation_id", name="uq_finding_evidence_source"),
+        sa.UniqueConstraint("finding_id", "attack_result_id", name="uq_finding_evidence_source"),
     )
     op.create_index("ix_FindingEvidenceEntries_finding_id", "FindingEvidenceEntries", ["finding_id"])
     for table, constraint in _ACTIVITY_TABLES:

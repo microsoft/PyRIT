@@ -19,7 +19,6 @@ const PAGE_SIZE = 20
 
 interface FindingEvidenceDialogProps {
   attackResultId: string
-  conversationId: string
   disabled: boolean
   /** The Operation selected for new activity, used when the attack has no Operation of its own. */
   defaultOperationId?: string | null
@@ -32,14 +31,13 @@ interface FindingEvidenceDialogProps {
 interface AttachmentSource {
   operation: Operation
   attackResultId: string
-  conversationId: string
 }
 
 export default function FindingEvidenceDialog({
-  attackResultId, conversationId, disabled, defaultOperationId = null, open, onOpenChange, returnFocusRef,
+  attackResultId, disabled, defaultOperationId = null, open, onOpenChange, returnFocusRef,
 }: FindingEvidenceDialogProps) {
   const styles = useFindingEvidenceDialogStyles()
-  const viewKey = JSON.stringify([attackResultId, conversationId])
+  const viewKey = attackResultId
   const [defaultLookup, setDefaultLookup] = useState<{ key: string; operation: Operation | null } | null>(null)
   const [chosen, setChosen] = useState<{ key: string; operation: Operation } | null>(null)
   const [operations, setOperations] = useState<Operation[]>([])
@@ -55,7 +53,7 @@ export default function FindingEvidenceDialog({
   const [listRevision, setListRevision] = useState(0)
   const [settledKey, setSettledKey] = useState('')
   const [attachError, setAttachError] = useState('')
-  // Kept per viewed conversation, so switching conversations does not show another one's result.
+  // Kept per viewed attack, so switching attacks does not show another one's result.
   const [notice, setNotice] = useState<{ key: string; text: string } | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
@@ -70,16 +68,16 @@ export default function FindingEvidenceDialog({
   // Evidence can come from any attack; the user picks whose findings to link, defaulting to the attack's own Operation.
   const operation = chosen?.key === viewKey ? chosen.operation
     : defaultLookup?.key === viewKey ? defaultLookup.operation : null
-  const requestKey = JSON.stringify([attackResultId, conversationId, operation?.id, title, offset, listRevision])
-  // A selection only applies to the conversation and operation it was made for.
-  const selectionKey = JSON.stringify([attackResultId, conversationId, operation?.id])
+  const requestKey = JSON.stringify([attackResultId, operation?.id, title, offset, listRevision])
+  // A selection only applies to the attack and operation it was made for.
+  const selectionKey = JSON.stringify([attackResultId, operation?.id])
   const selection = picked?.key === selectionKey ? picked.finding : null
   const setSelection = (finding: FindingListItem | null): void => {
     setPicked(finding ? { key: selectionKey, finding } : null)
   }
 
   useEffect(() => {
-    if (!attackResultId || !conversationId) return
+    if (!attackResultId) return
     let ignore = false
     const resolve = async (): Promise<void> => {
       try {
@@ -94,7 +92,7 @@ export default function FindingEvidenceDialog({
     }
     void resolve()
     return () => { ignore = true }
-  }, [attackResultId, conversationId, defaultOperationId, viewKey])
+  }, [attackResultId, defaultOperationId, viewKey])
 
   useEffect(() => {
     if (!open) return
@@ -129,21 +127,19 @@ export default function FindingEvidenceDialog({
   }, [open, creating, returnFocusRef])
 
   const draftEligible = creationSource !== null && !disabled
-    && creationSource.attackResultId === attackResultId && creationSource.conversationId === conversationId
-    && creationSource.operation.id === operation?.id
+    && creationSource.attackResultId === attackResultId && creationSource.operation.id === operation?.id
 
   // One request saves the finding and its evidence together, and a retry with the same id cannot duplicate it.
   const createAndAttach = async (draft: FindingCreate, attempt: FindingSaveAttempt): Promise<void> => {
     if (!draftEligible || !creationSource) {
-      throw new Error('The viewed conversation changed. Return to the original conversation before saving.')
+      throw new Error('The viewed attack changed. Return to the original attack before saving.')
     }
     const finding = await operationsApi.createFinding(creationSource.operation.id, {
-      ...draft, id: attempt.id,
-      conversation_id: creationSource.conversationId, attack_result_id: creationSource.attackResultId,
+      ...draft, id: attempt.id, attack_result_id: creationSource.attackResultId,
     })
     setCreating(false)
     onOpenChange(false)
-    setNotice({ key: viewKey, text: `Finding created and conversation attached: ${finding.title}` })
+    setNotice({ key: viewKey, text: `Finding created and attack attached: ${finding.title}` })
   }
 
   const attach = async (): Promise<void> => {
@@ -154,7 +150,7 @@ export default function FindingEvidenceDialog({
     setNotice(null)
     try {
       const response = await operationsApi.attachFindingEvidence(operation.id, selection.id, {
-        attack_result_id: attackResultId, conversation_id: conversationId,
+        attack_result_id: attackResultId,
       })
       setNotice({ key: viewKey, text: response.created ? 'Attached' : 'Already attached' })
       onOpenChange(false)
@@ -171,9 +167,9 @@ export default function FindingEvidenceDialog({
       {notice?.key === viewKey && <Text size={200} role="status">{notice.text}</Text>}
       {creating && <FindingDialog
         context={<>
-          <Text>Operation: {creationSource?.operation.name}. Save and attach the entire viewed conversation.</Text>
+          <Text>Operation: {creationSource?.operation.name}. Save and attach the viewed attack.</Text>
           {!draftEligible && <MessageBar intent="error"><MessageBarBody>
-            The viewed conversation changed. Return to the original conversation before saving.
+            The viewed attack changed. Return to the original attack before saving.
           </MessageBarBody></MessageBar>}
         </>}
         saveDisabled={!draftEligible}
@@ -203,7 +199,7 @@ export default function FindingEvidenceDialog({
                 disabled={submitting || disabled || !operation}
                 onClick={() => {
                   if (operation) {
-                    setCreationSource({ operation, attackResultId, conversationId })
+                    setCreationSource({ operation, attackResultId })
                     setCreating(true)
                   }
                 }}>New finding</Button>
@@ -260,7 +256,7 @@ export default function FindingEvidenceDialog({
             <Button className={styles.button} appearance="primary"
               disabledFocusable={submitting}
               disabled={!selection || settledKey !== requestKey || Boolean(listError) || disabled}
-              aria-label={submitting ? 'Attaching...' : 'Attach conversation'}
+              aria-label={submitting ? 'Attaching...' : 'Attach attack'}
               onClick={() => { void attach() }}>{submitting ? 'Attaching...' : 'Attach'}</Button>
           </DialogActions>
         </DialogBody></DialogSurface>

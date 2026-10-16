@@ -100,7 +100,7 @@ async def update_operation_async(*, operation_id: UUID, request: OperationUpdate
 @router.post("/{operation_id}/findings", response_model=Finding, status_code=status.HTTP_201_CREATED)
 async def create_operation_finding_async(*, operation_id: UUID, request: FindingCreateRequest) -> Finding:
     """
-    Record a finding within an operation, optionally with one saved conversation as evidence.
+    Record a finding within an operation, optionally with one saved attack result as evidence.
 
     Retrying with the same ID and content returns the saved finding.
 
@@ -169,7 +169,7 @@ async def attach_finding_evidence_async(
     *, operation_id: UUID, finding_id: UUID, request: FindingEvidenceCreateRequest, response: Response
 ) -> FindingEvidenceAttachResponse:
     """
-    Link a saved conversation to a finding, or return the existing link.
+    Link a saved attack result to a finding, or return the existing link.
 
     Returns:
         FindingEvidenceAttachResponse: The evidence and whether it was newly linked.
@@ -192,7 +192,7 @@ async def list_finding_evidence_async(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> FindingEvidenceListResponse:
     """
-    List one page of a finding's evidence, with whether each conversation is still available.
+    List one page of a finding's evidence, with whether each attack result is still available.
 
     Returns:
         FindingEvidenceListResponse: The page and the offset of the next one, if any.
@@ -207,7 +207,7 @@ async def list_finding_evidence_async(
 @router.delete("/{operation_id}/findings/{finding_id}/evidence/{evidence_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def detach_finding_evidence_async(*, operation_id: UUID, finding_id: UUID, evidence_id: UUID) -> Response:
     """
-    Unlink evidence from a finding. The conversation is kept.
+    Unlink evidence from a finding. The attack result is kept.
 
     Returns:
         Response: An empty success response.

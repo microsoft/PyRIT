@@ -7,7 +7,7 @@ import { operationsApi } from '@/services/api'
 
 jest.mock('@/services/api', () => ({ operationsApi: { getFindingOptions: jest.fn() } }))
 
-const ATTEMPT = { id: expect.any(String), conversationId: '' }
+const ATTEMPT = { id: expect.any(String), attackResultId: '' }
 
 beforeEach(() => {
   jest.clearAllMocks()
@@ -162,17 +162,17 @@ describe('FindingDialog', () => {
     expect(edited).not.toBe(first)
   })
 
-  it('offers an optional evidence conversation only when asked and sends it trimmed', async () => {
+  it('offers an optional evidence attack only when asked and sends it trimmed', async () => {
     const user = userEvent.setup()
     const onSave = jest.fn().mockResolvedValue(undefined)
     render(<FluentProvider theme={webLightTheme}><FindingDialog evidenceField onSave={onSave} onClose={jest.fn()} />
     </FluentProvider>)
     await user.type(screen.getByRole('textbox', { name: 'Title' }), 'With evidence')
-    await user.type(screen.getByRole('textbox', { name: 'Evidence conversation ID' }), '  conversation-1 ')
+    await user.type(screen.getByRole('textbox', { name: 'Evidence attack ID' }), '  attack-1 ')
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: 'Save finding' }))
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ title: 'With evidence' }), {
-      id: expect.any(String), conversationId: 'conversation-1',
+      id: expect.any(String), attackResultId: 'attack-1',
     })
   })
 })

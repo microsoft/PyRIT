@@ -576,7 +576,7 @@ Open an operation and choose **New finding**.
 | Severity | Yes | Critical, Important, Moderate, Low, Informational, or Other (your own text). Defaults to Moderate. |
 | Harm-type | No | A PyRIT harm category, Other (your own text), or Not set |
 | Description | No | Free text |
-| Evidence conversation ID | No | A saved conversation to attach in the same save |
+| Evidence attack ID | No | A saved attack to attach in the same save. Its ID is in the attack's address. |
 
 Findings are sorted by severity in the order above, newest first within each
 level, 20 per page. **Edit** changes any field; the operation and creation time
@@ -585,35 +585,32 @@ stay fixed. **Delete** asks for confirmation and can't be undone.
 **All execution history** opens History filtered by the Operation's ID. The
 filter stays when you switch between Attacks and Scanner.
 
-#### Conversation evidence
+#### Attack evidence
 
-To attach a saved conversation, open it in Chat, select the outcome badge to open
-**Attack Result Details**, and choose **Add as finding**. Choose the finding's
-Operation, search by title, select a finding, and choose **Attach**. The
-conversation can come from any Operation or none.
+Evidence is a saved attack. To attach one, open it in Chat, select the outcome
+badge to open **Attack Result Details**, and choose **Add as finding**. Choose
+the finding's Operation, search by title, select a finding, and choose
+**Attach**. The attack can come from any Operation or none.
 
 **New finding** in that dialog opens the same form and saves the finding and its
-evidence together, so neither is saved if the conversation can't be attached.
-Saving again after a lost response returns the finding that was already saved
-rather than creating a second one.
+evidence together, so neither is saved if the attack can't be attached. Saving
+again after a lost response returns the finding that was already saved rather
+than creating a second one.
 
-Evidence points to the live conversation, not a copy, so later messages show up
-too. Attaching the same conversation again reports **Already attached**.
+Evidence points to the live attack, not a copy, so later messages and scores
+show up too. An attack can support several findings, and attaching the same
+attack to a finding again reports **Already attached**.
 
 On the operation page, **Evidence (n)** under a finding opens a table of its
-conversations. Each row shows the attack's objective, whether the conversation
-is the attack's **Main** conversation or a **Branch**, and that conversation's
-own score: the attack's headline score if it sits there, otherwise its latest
-human score, otherwise its latest score from the attack's objective scorer.
-Auxiliary scores never appear; a conversation without one reads **Not scored**.
-True and false scores use the same **success** and **failure** badges as Chat.
-Chat's badge is the attack's single outcome, so when branches are scored
-differently, the table shows each conversation's own result.
-Evidence from another Operation shows its source; unassigned activity shows
-**Not in an operation**. **Open conversation** reopens one in Chat. If a conversation no longer exists,
-its entry stays, shows its ID and attachment time, and reads **Evidence
-unavailable**. **Remove link** removes only the link, never the conversation.
-Deleting a finding removes its links the same way.
+attacks. Each row shows the attack's objective, its outcome with the same badge
+as Chat, and the score behind it: the human score if there is one, otherwise
+the automated score. An attack without a score reads **Not scored**. Evidence
+from another Operation shows its source; unassigned activity shows **Not in an
+operation**. **Open attack** opens it in Chat at the conversation that holds the
+score, or at its main conversation, so the transcript matches the result shown.
+If an attack no longer exists, its entry stays, shows the attack's ID and
+attachment time, and reads **Evidence unavailable**. **Remove link** removes only
+the link, never the attack. Deleting a finding removes its links the same way.
 
 #### Upgrading an existing database
 
