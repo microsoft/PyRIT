@@ -489,12 +489,13 @@ async def test_openai_response_target_scopes_provider_session_to_send() -> None:
     target._suppress_tools = False
     target._run_tool_call_loop_async = AsyncMock(return_value=[])  # type: ignore[method-assign]
     send_implementation = inspect.unwrap(OpenAIResponseTarget._send_prompt_to_target_async)
+    conversation = [Message.from_prompt(prompt="Hello", role="user")]
 
-    result = await send_implementation(target, normalized_conversation=[])
+    result = await send_implementation(target, normalized_conversation=conversation)
 
     assert result == []
     assert lifecycle == ["enter", "exit"]
-    target._run_tool_call_loop_async.assert_awaited_once_with(normalized_conversation=[])
+    target._run_tool_call_loop_async.assert_awaited_once_with(normalized_conversation=conversation)
 
 
 async def test_openai_response_target_retries_request_inside_provider_scope() -> None:
