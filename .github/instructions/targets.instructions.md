@@ -82,6 +82,11 @@ def __init__(self, endpoint: str, api_key: str) -> None: ...  # missing *
   ``__init__`` and forward it to ``super().__init__`` so callers can
   override capabilities per-instance (this is required for HTTP / Playwright
   targets whose capabilities depend on deployment configuration).
+- ``supports_editable_history`` describes native support for caller-supplied
+  history changes, not whether the target stores state. Callers use
+  ``validate_history_replay()`` before branching stored history. Targets with
+  an explicit restoration path can override this check without claiming
+  editable history. Live session and context checks remain at send time.
 
 ## Identifiable Pattern
 

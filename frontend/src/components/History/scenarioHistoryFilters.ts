@@ -4,7 +4,7 @@ export interface ScenarioHistoryFilters {
   scenarioNames: string[]
   statuses: ScenarioRunState[]
   operator: string[]
-  operation: string[]
+  operationId: string[]
   otherLabels: string[]
   labelSearchText: string
 }
@@ -13,7 +13,7 @@ export const DEFAULT_SCENARIO_HISTORY_FILTERS: ScenarioHistoryFilters = {
   scenarioNames: [],
   statuses: [],
   operator: [],
-  operation: [],
+  operationId: [],
   otherLabels: [],
   labelSearchText: '',
 }
@@ -38,7 +38,7 @@ export function scenarioHistoryFiltersFromSearchParams(
     scenarioNames: params.getAll('scenario'),
     statuses,
     operator: params.getAll('operator'),
-    operation: params.getAll('operation'),
+    operationId: params.getAll('operation_id'),
     otherLabels: params.getAll('label'),
     labelSearchText: params.get('labelSearch') ?? '',
   }
@@ -51,7 +51,7 @@ export function scenarioHistoryFiltersToSearchParams(
   for (const scenarioName of filters.scenarioNames) params.append('scenario', scenarioName)
   for (const status of filters.statuses) params.append('status', status)
   for (const operator of filters.operator) params.append('operator', operator)
-  for (const operation of filters.operation) params.append('operation', operation)
+  for (const operationId of filters.operationId) params.append('operation_id', operationId)
   for (const label of filters.otherLabels) params.append('label', label)
   if (filters.labelSearchText) params.set('labelSearch', filters.labelSearchText)
   return params

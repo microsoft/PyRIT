@@ -690,8 +690,10 @@ async def test_concurrent_insert_and_final_delete_do_not_orphan_score(
         event.listen(engine, "checkout", _disable_busy_wait, named=True)
         try:
             # Prove that the writes conflict without requiring the holder to beat SQLite's busy timeout.
-            with pytest.raises(OperationalError, match="database is locked") as locked:
-                await compete_async()
+            with patch("pyrit.memory.memory_session._lock_observations", wraps=_lock_observations) as lookup:
+                with pytest.raises(OperationalError, match="database is locked") as locked:
+                    await compete_async()
+                lookup.assert_not_called()
             assert isinstance(locked.value.orig, sqlite3.OperationalError)
             assert locked.value.orig.sqlite_errorcode == sqlite3.SQLITE_BUSY
             assert locked.value.statement == "BEGIN IMMEDIATE"

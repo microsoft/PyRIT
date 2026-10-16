@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from starlette.requests import Request
 
 import pyrit.backend.services.runtime_lifecycle as lifecycle_module
+from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import configuration, health
@@ -42,6 +43,7 @@ def runtime(tmp_path: Path) -> Generator[RuntimeLifecycle, None, None]:
     )
     source = ConfigurationFileService(config_file_value=str(config_path))
     app = FastAPI()
+    app.state.authentication_policy = AuthenticationPolicy(mode="local")
     with patch.dict(os.environ, {}, clear=True):
         service = RuntimeLifecycle(app=app, source=source)
     assert service.topology_supported
@@ -203,6 +205,45 @@ async def test_success_preflights_then_replaces_idle_runtime(runtime: RuntimeLif
     lifecycle_module.close_services_async.assert_awaited_once()
     config.apply_prepared_reinitialization_async.assert_awaited_once()
     assert runtime.version == (await runtime.source.read_with_version_async())[1]
+
+
+async def test_startup_publishes_default_operation_without_creating_it_async(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("memory_db_type: in_memory\noperation: ' op_trash_panda '\n", encoding="utf-8")
+    source = ConfigurationFileService(config_file_value=str(config_path))
+    app = FastAPI()
+    lifecycle = RuntimeLifecycle(app=app, source=source)
+    config = ConfigurationLoader(
+        memory_db_type="in_memory", env_files=[], operator="roakey", operation=" op_trash_panda "
+    )
+    memory = MagicMock(spec=MemoryInterface)
+
+    with (
+        patch.object(lifecycle, "_load_async", AsyncMock(return_value=config)),
+        patch.object(lifecycle, "_management_async", AsyncMock()),
+        patch.object(config, "initialize_pyrit_async", AsyncMock()),
+        patch.object(lifecycle_module, "get_scenario_run_service", return_value=MagicMock(spec=ScenarioRunService)),
+        patch.object(CentralMemory, "_memory_instance", memory),
+    ):
+        await lifecycle.startup_async()
+
+    assert lifecycle.state == "ready"
+    assert app.state.default_operation == "op_trash_panda"
+    assert app.state.default_labels == {"operator": "roakey"}
+    memory.add_operation_async.assert_not_called()
+
+
+async def test_live_apply_publishes_default_operation_without_creating_it_async(runtime: RuntimeLifecycle) -> None:
+    config = await runtime._load_async()
+    config.operation = "configured_operation"
+    memory = MagicMock(spec=MemoryInterface)
+
+    with patch.object(CentralMemory, "_memory_instance", memory):
+        await apply_async(runtime)
+
+    assert runtime.app.state.default_operation == "configured_operation"
+    assert "operation" not in runtime.app.state.default_labels
+    memory.add_operation_async.assert_not_called()
 
 
 async def test_saved_opt_in_is_required(runtime: RuntimeLifecycle) -> None:
@@ -558,7 +599,7 @@ async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repai
 
 
 def test_authorization_policy_does_not_change_with_environment(runtime: RuntimeLifecycle) -> None:
-    runtime.app.state.auth_environment["PYRIT_ALLOW_UNAUTHENTICATED_ADMIN"] = ""
+    runtime.app.state.authentication_policy = AuthenticationPolicy(mode="local")
     request = Request({"type": "http", "app": runtime.app})
     with patch.dict(os.environ, {"PYRIT_ALLOW_UNAUTHENTICATED_ADMIN": "true"}):
         with pytest.raises(Exception) as error:

@@ -6,7 +6,8 @@
 import asyncio
 import logging
 from collections import OrderedDict
-from collections.abc import Iterable, Sequence
+from collections.abc import AsyncGenerator, Iterable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -85,6 +86,14 @@ class _ProgressSummaryState:
 
 
 @dataclass
+class _ProgressRefreshState:
+    """Refresh ownership shared by a run's current caller and waiters."""
+
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    callers: int = 0
+
+
+@dataclass
 class _ProgressCacheEntry:
     """Hydrated and mapped progress state for one scenario run."""
 
@@ -97,7 +106,7 @@ class _ProgressCacheEntry:
 
 
 class ScenarioProgressReadModel:
-    """Hydrate, map, cache, and summarize persisted progress with one event-loop-owned async refresh lock."""
+    """Hydrate, map, cache, and summarize persisted progress with an event-loop-owned refresh lock per run."""
 
     _CACHE_MAX_RUNS = 32
     _STORAGE_PAGE_SIZE = 500
@@ -106,7 +115,7 @@ class ScenarioProgressReadModel:
         """Initialize a read model over the scenario-result store."""
         self._memory = memory
         self._cache: OrderedDict[str, _ProgressCacheEntry] = OrderedDict()
-        self._cache_lock = asyncio.Lock()
+        self._refresh_states: dict[str, _ProgressRefreshState] = {}
 
     async def get_snapshot_async(
         self,
@@ -132,7 +141,7 @@ class ScenarioProgressReadModel:
         Returns:
             ScenarioProgressSnapshot: Deltas, mapped results, summary, and effective plan.
         """
-        async with self._cache_lock:
+        async with self._refresh_run_async(scenario_result_id=scenario_result_id):
             entry = self._get_cache_entry(scenario_result_id=scenario_result_id, plan=plan, terminal=terminal)
             first_new_index = len(entry.results)
             deltas_updated = await self._hydrate_new_deltas_async(scenario_result_id=scenario_result_id, entry=entry)
@@ -146,6 +155,23 @@ class ScenarioProgressReadModel:
                 objective_scorer_identifier=objective_scorer_identifier,
                 deltas_updated=deltas_updated,
             )
+
+    @asynccontextmanager
+    async def _refresh_run_async(self, *, scenario_result_id: str) -> AsyncGenerator[None, None]:
+        """Keep one run's lock and cache entry protected until its last caller exits."""
+        state = self._refresh_states.get(scenario_result_id)
+        if state is None:
+            state = _ProgressRefreshState()
+            self._refresh_states[scenario_result_id] = state
+        state.callers += 1
+        try:
+            async with state.lock:
+                yield
+        finally:
+            state.callers -= 1
+            if state.callers == 0:
+                del self._refresh_states[scenario_result_id]
+            self._trim_cache()
 
     def _get_cache_entry(
         self, *, scenario_result_id: str, plan: ScenarioRunPlan | None, terminal: bool
@@ -164,10 +190,19 @@ class ScenarioProgressReadModel:
             entry = _ProgressCacheEntry(plan_signature=plan_signature)
             self._cache[scenario_result_id] = entry
         self._cache.move_to_end(scenario_result_id)
-        while len(self._cache) > self._CACHE_MAX_RUNS:
-            self._cache.popitem(last=False)
+        self._trim_cache()
 
         return entry
+
+    def _trim_cache(self) -> None:
+        """Evict idle LRU entries; protected runs may temporarily exceed the limit."""
+        if len(self._cache) <= self._CACHE_MAX_RUNS:
+            return
+        for scenario_result_id in list(self._cache):
+            if len(self._cache) <= self._CACHE_MAX_RUNS:
+                break
+            if scenario_result_id not in self._refresh_states:
+                del self._cache[scenario_result_id]
 
     def _build_snapshot(
         self,

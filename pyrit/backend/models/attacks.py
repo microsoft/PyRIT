@@ -231,6 +231,9 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
     human_score: ScoreView | None = None
 
     # Mapper-populated presentation fields (need external stats / metadata).
+    operation_name: str | None = Field(
+        default=None, description="Current saved Operation name, or the historical name for legacy activity"
+    )
     message_count: int = Field(default=0, description="Total number of messages in the attack")
     last_message_preview: str | None = Field(default=None, description="Preview of the last message")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Attack creation timestamp")
@@ -434,7 +437,9 @@ class _AttackAttributionInput(BaseModel):
     """Shared first-class attribution input with temporary legacy label aliases."""
 
     operator: str | None = Field(None, max_length=128, description="Operator responsible for the attack")
-    operation: str | None = Field(None, max_length=128, description="Operation associated with the attack")
+    # TODO(PyRIT 1.4): Remove with Operation name attribution.
+    operation: str | None = Field(None, max_length=128, description="Deprecated saved Operation name; use operation_id")
+    operation_id: uuid.UUID | None = Field(None, description="Saved Operation reference, or unassigned")
     labels: LabelDict | None = Field(None, description="Arbitrary user-defined labels for filtering")
 
     @model_validator(mode="before")

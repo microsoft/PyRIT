@@ -77,7 +77,7 @@ describe('useConversationSave', () => {
 
   it('blocks new attacks while defaults load but still saves within an existing attack', async () => {
     jest.mocked(attacksApi.saveConversation).mockResolvedValue(response)
-    const context: NewAttackContext = { generation: 'gen-1', ready: false, labels: { operation: 'new_op' } }
+    const context: NewAttackContext = { generation: 'gen-1', ready: false, labels: { team: 'new' }, operationId: 'new-id' }
     const { result } = renderHook(() => useConversationSave(context))
     await act(async () => {
       await expect(result.current.save(input, 'new_attack')).rejects.toThrow('Default labels are not ready')
@@ -87,6 +87,7 @@ describe('useConversationSave', () => {
     expect(attacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
       destination: 'same_attack', labels: input.labels,
     }))
+    expect(jest.mocked(attacksApi.saveConversation).mock.calls[0][0].operation_id).toBeUndefined()
   })
 
   it.each([
@@ -96,34 +97,34 @@ describe('useConversationSave', () => {
     let finish: (messages: Awaited<ReturnType<typeof conversationDraft.serializeDraft>>) => void = () => {}
     jest.spyOn(conversationDraft, 'serializeDraft').mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
     jest.mocked(attacksApi.saveConversation).mockResolvedValue(response)
-    const context: NewAttackContext = { generation: 'gen-1', ready: true, labels: { operation: 'old_op' } }
+    const context: NewAttackContext = { generation: 'gen-1', ready: true, labels: { team: 'old' }, operationId: 'old-id' }
     const { result, rerender } = renderHook(
       (props: NewAttackContext) => useConversationSave(props), { initialProps: context },
     )
     let pending: Promise<AddMessageResponse>
     await act(async () => { pending = result.current.save(input, 'new_attack') })
-    rerender({ ...next, labels: { operation: 'new_op' } })
+    rerender({ ...next, labels: { team: 'new' }, operationId: 'new-id' })
     await act(async () => {
       finish([{ role: 'user', pieces: [{ data_type: 'text', original_value: 'Prompt' }] }])
       await expect(pending).rejects.toThrow('Runtime or default labels changed')
     })
     expect(attacksApi.saveConversation).not.toHaveBeenCalled()
     expect(result.current.saving).toBe(false)
-    rerender({ generation: 'gen-2', ready: true, labels: { operation: 'new_op' } })
+    rerender({ generation: 'gen-2', ready: true, labels: { team: 'new' }, operationId: 'new-id' })
     await act(async () => { await result.current.save(input, 'new_attack') })
     expect(attacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
-      operation: 'new_op', labels: { operation: 'new_op' },
+      operation_id: 'new-id', labels: { team: 'new' },
     }))
   })
 
-  it('uses current labels rather than the labels captured when editing began', async () => {
+  it('uses current labels and Operation rather than those captured when editing began', async () => {
     jest.mocked(attacksApi.saveConversation).mockResolvedValue(response)
     const { result } = renderHook(() => useConversationSave({
-      generation: 'gen-2', ready: true, labels: { operator: 'owner', operation: 'refreshed_op' },
+      generation: 'gen-2', ready: true, labels: { operator: 'owner', team: 'refreshed' }, operationId: 'refreshed-id',
     }))
-    await act(async () => { await result.current.save({ ...input, labels: { operation: 'old_op' } }, 'new_attack') })
+    await act(async () => { await result.current.save({ ...input, labels: { team: 'old' } }, 'new_attack') })
     expect(attacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
-      operator: 'owner', operation: 'refreshed_op', labels: { operator: 'owner', operation: 'refreshed_op' },
+      operator: 'owner', operation_id: 'refreshed-id', labels: { operator: 'owner', team: 'refreshed' },
     }))
   })
 })
