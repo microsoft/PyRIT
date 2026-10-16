@@ -159,6 +159,11 @@ await printer.write_async(resumed_result)  # type: ignore
 # when you need to distinguish two factories that wrap the same attack class
 # with different configurations.
 #
+# Each child also records the name its technique was registered under (e.g.
+# `"crescendo"`) as `child.technique_name`, which scenario result printers and
+# `pyrit_scan scenario-results` show as the technique label. It is `None` for
+# results saved before the name was recorded.
+#
 # Use `result.get_display_groups()` to aggregate `attack_results` by the
 # per-dataset display label set by the scenario.
 #

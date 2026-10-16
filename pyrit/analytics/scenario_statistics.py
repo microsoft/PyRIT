@@ -302,6 +302,37 @@ def select_execution_attempts(attempts: Sequence[_AttemptT]) -> Sequence[_Attemp
     return execution_attempts if execution_attempts else attempts
 
 
+def select_execution_attack_result_ids(scenario_result: ScenarioResult) -> set[str]:
+    """
+    Select the IDs of the attack results that count as execution attempts.
+
+    Applies ``select_execution_attempts`` to each execution unit, so the selection matches
+    ``ScenarioExecutionStatistics.attempts``: an orchestration envelope is left out when its
+    child attempts are present.
+
+    Args:
+        scenario_result (ScenarioResult): The scenario result with its hydrated attack results.
+
+    Returns:
+        set[str]: The selected attack result IDs.
+    """
+    plan_lookup = ScenarioPlanLookup.from_plan(plan=load_scenario_run_plan(scenario_result))
+    attempts_by_unit: dict[ScenarioExecutionUnit, list[ScenarioAttempt]] = {}
+    for atomic_attack_name, results in scenario_result.attack_results.items():
+        for attack_result in results:
+            attempt = resolve_attack_result_attempt(
+                atomic_attack_name=atomic_attack_name,
+                attack_result=attack_result,
+                plan_lookup=plan_lookup,
+            )
+            attempts_by_unit.setdefault(attempt.unit, []).append(attempt)
+    return {
+        attempt.attempt_id
+        for unit_attempts in attempts_by_unit.values()
+        for attempt in select_execution_attempts(unit_attempts)
+    }
+
+
 def retry_pressure(*, attempts_per_unit: Iterable[int], persisted_retries: Iterable[int]) -> int:
     """
     Combine per-attempt retries with re-attempts of the same execution unit.
