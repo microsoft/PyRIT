@@ -91,7 +91,7 @@ class AddImageVideoConverter(Converter):
             ModuleNotFoundError: If OpenCV is not installed.
             ValueError: If the image path is invalid, the input video format is unsupported, the input
                 video cannot be read, the output video cannot be written, or the overlay image cannot
-                be decoded.
+                be decoded or has an unsupported bit depth.
         """
         try:
             import cv2  # noqa: F401
@@ -135,7 +135,8 @@ class AddImageVideoConverter(Converter):
 
         Raises:
             ValueError: If the input video format is unsupported, the input video cannot be read,
-                the output video cannot be written, or the overlay image cannot be decoded.
+                the output video cannot be written, or the overlay image cannot be decoded or has an
+                unsupported bit depth.
         """
         import cv2
 
@@ -169,10 +170,13 @@ class AddImageVideoConverter(Converter):
                 decoded = cv2.imdecode(image_np_arr, cv2.IMREAD_UNCHANGED)
                 if decoded is None:
                     raise ValueError("Failed to decode overlay image")
-                # Frames are 8-bit BGR: scale 16-bit images down, and give a grayscale image (no
-                # channel axis, or a single channel) three channels
+                # Frames are 8-bit BGR: scale 16-bit images down, reject other depths (a float32 TIFF
+                # would be silently truncated), and give a grayscale image (no channel axis, or a
+                # single channel) three channels
                 if decoded.dtype == np.uint16:
                     decoded = cv2.convertScaleAbs(decoded, alpha=255 / 65535)
+                elif decoded.dtype != np.uint8:
+                    raise ValueError(f"Unsupported overlay image depth: {decoded.dtype}")
                 if decoded.ndim == 2 or decoded.shape[2] == 1:
                     decoded = cv2.cvtColor(decoded, cv2.COLOR_GRAY2BGR)
                 overlay = cv2.resize(decoded, self._img_resize_size)

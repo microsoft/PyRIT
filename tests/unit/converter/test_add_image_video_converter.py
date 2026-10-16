@@ -225,6 +225,20 @@ def test_add_image_to_video_scales_16_bit_image(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
+def test_add_image_to_video_rejects_float_image(tmp_path: Path) -> None:
+    import cv2
+
+    video_bytes = _write_video(tmp_path / "input.mp4", fps=10)
+    converter = AddImageVideoConverter(video_path=tmp_path / "input.mp4", img_position=(8, 8), img_resize_size=(32, 24))
+    success, encoded = cv2.imencode(".tiff", np.full((24, 32), 0.5, dtype=np.float32))
+    assert success
+
+    with patch("pyrit.converter.add_image_to_video_converter.DB_DATA_PATH", tmp_path):
+        with pytest.raises(ValueError, match="Unsupported overlay image depth: float32"):
+            converter._add_image_to_video_sync(video_bytes=video_bytes, image_bytes=encoded.tobytes())
+
+
+@pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
 def test_add_image_to_video_keeps_fractional_frame_rate(tmp_path: Path) -> None:
     video_bytes = _write_video(tmp_path / "input.mp4", fps=29.97)
     converter = AddImageVideoConverter(video_path=tmp_path / "input.mp4", img_position=(8, 8), img_resize_size=(32, 24))
@@ -250,6 +264,35 @@ def test_add_image_to_video_raises_for_unreadable_video(tmp_path: Path, video_by
                 video_bytes=video_bytes, image_bytes=_png(np.zeros((24, 32, 3), dtype=np.uint8))
             )
 
+    assert set(tmp_path.iterdir()) == files_before
+
+
+@pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
+def test_add_image_to_video_raises_when_video_has_no_frames(tmp_path: Path) -> None:
+    import cv2
+
+    converter = AddImageVideoConverter(video_path=tmp_path / "input.mp4")
+    files_before = set(tmp_path.iterdir())
+    # The container opens but holds no decodable frames
+    capture = MagicMock(spec=cv2.VideoCapture)
+    capture.isOpened.return_value = True
+    capture.read.return_value = (False, None)
+    capture.get.side_effect = lambda prop: {
+        cv2.CAP_PROP_FPS: 10.0,
+        cv2.CAP_PROP_FRAME_WIDTH: 128,
+        cv2.CAP_PROP_FRAME_HEIGHT: 96,
+    }[prop]
+
+    with (
+        patch("pyrit.converter.add_image_to_video_converter.DB_DATA_PATH", tmp_path),
+        patch.object(cv2, "VideoCapture", return_value=capture),
+    ):
+        with pytest.raises(ValueError, match="it has no frames"):
+            converter._add_image_to_video_sync(
+                video_bytes=b"container", image_bytes=_png(np.zeros((24, 32, 3), dtype=np.uint8))
+            )
+
+    capture.release.assert_called_once()
     assert set(tmp_path.iterdir()) == files_before
 
 
