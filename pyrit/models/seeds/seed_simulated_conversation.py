@@ -222,7 +222,7 @@ def _keep_prompt_instance(value: Any, handler: ValidatorFunctionWrapHandler) -> 
 SystemPrompt = Annotated[SeedPrompt, WrapValidator(_keep_prompt_instance)]
 
 
-class SeedSimulatedConversation(Seed):
+class SeedSimulatedConversation(Seed[Literal["text"]]):
     """
     Configuration for generating a simulated conversation dynamically.
 

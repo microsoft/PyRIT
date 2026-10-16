@@ -10,6 +10,7 @@ import time
 import traceback
 import uuid
 from abc import ABC
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
@@ -50,9 +51,10 @@ from pyrit.models import (
     UndeterminedScoreError,
 )
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.score.observation.lifecycle import AttemptObserver
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncGenerator, Callable
     from types import TracebackType
 
     from pyrit.executor.attack.component.prepended_conversation_config import (
@@ -69,6 +71,7 @@ if TYPE_CHECKING:
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.prompt_target import PromptTarget
     from pyrit.prompt_target.common.target_capabilities import CapabilityName
+    from pyrit.score import Scorer
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
 AttackStrategyResultT = TypeVar("AttackStrategyResultT", bound="AttackResult")
@@ -212,6 +215,11 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     # and resume. Set by AttackExecutor per-task before scheduling. Stays None
     # for ad-hoc/direct attack execution outside any orchestrator.
     _attribution: AttackResultAttribution | None = None
+
+    _atomic_attack_identifier: AtomicAttackIdentifier | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _result_metadata: dict[str, Any] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     # ID of the AttackResult this execution produces. Allocated when execution starts.
     _attack_result_id: str | None = field(default=None, init=False, repr=False, compare=False)
@@ -485,6 +493,10 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             result: The AttackResult that is about to be persisted.
         """
         attribution = context._attribution
+        result.operation_id = context.params.operation_id
+        if context._atomic_attack_identifier is not None:
+            result.atomic_attack_identifier = context._atomic_attack_identifier
+        result.metadata.update(context._result_metadata)
         attribution_data = AttackResultMetadata(
             result_role=context._result_role,
             attempt_index=attribution.attempt_index if attribution is not None else None,
@@ -708,6 +720,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             logger=logger,
         )
         self._default_event_handler = event_handler
+        # TODO(PyRIT 1.4): Remove with Operation name attribution from GLOBAL_MEMORY_LABELS.
+        self._global_operation_name = self._memory_labels.pop("operation", None)
         # Local import avoids the component package's import cycle through attack config.
         from pyrit.executor.attack.component.prepended_conversation_config import (
             PrependedConversationConfig,
@@ -943,6 +957,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         context._error_result_persistence_error = None
         context._error_result_metadata.clear()
         context._persisted_attack_result_id = None
+        await self._resolve_operation_async(context=context)
         self._validate_scoring_expectation(context=context)
         context._error_result_identifier_builder = lambda: AtomicAttackIdentifier.build(
             attack_identifier=self.get_identifier()
@@ -982,6 +997,135 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             context._persisted_attack_result_id = result.attack_result_id
         return result
 
+    async def _resolve_operation_async(self, *, context: AttackStrategyContextT) -> None:
+        """
+        Resolve the execution's saved Operation before setup, accepting deprecated Operation names.
+
+        An explicit ID wins, and a ``memory_labels["operation"]`` name is then removed. Otherwise the name,
+        or one from ``GLOBAL_MEMORY_LABELS``, stays in the labels so prompts and the result keep it, and
+        links the execution to the saved Operation with that name when one exists. Executions attributed
+        by a parent, such as a scenario, keep the labels and ID the parent resolved.
+
+        Raises:
+            ValueError: If the ID is malformed.
+            LookupError: If the ID does not belong to a saved Operation.
+        """
+        labels = context.memory_labels
+        # TODO(PyRIT 1.4): Remove name handling with Operation name attribution; keep only the ID check.
+        operation_name = labels.get("operation")
+        operation_id = context.params.operation_id
+        if context._attribution is not None:
+            if operation_id is not None:
+                operation_name = None
+        elif operation_id is not None:
+            if operation_name is not None:
+                context.memory_labels = {key: value for key, value in labels.items() if key != "operation"}
+        elif operation_name is None and self._global_operation_name is not None:
+            operation_name = self._global_operation_name
+            context.memory_labels = {**labels, "operation": operation_name}
+        resolved = await CentralMemory.get_memory_instance().resolve_operation_id_async(
+            operation_id=operation_id, operation_name=operation_name
+        )
+        if resolved != operation_id:
+            context.params = dataclasses.replace(context.params, operation_id=resolved)
+
+    @asynccontextmanager
+    async def _execution_context_async(self, context: AttackStrategyContextT) -> AsyncGenerator[None, None]:
+        """
+        Set up the attempt, then observe it until it ends.
+
+        Scorers that observe evidence across an attempt record their baselines after setup and
+        before the attack sends anything. Starting inside the strategy's execution keeps a
+        failure to start within its error handling, so the attempt's error result is recorded
+        under its allocated ID like any other failure. Every observer is stopped when the attempt
+        ends, whatever the outcome.
+
+        Args:
+            context (AttackStrategyContextT): The attack execution context, with its
+                ``attack_result_id`` already allocated.
+
+        Yields:
+            None: Control returns to the strategy once observation has started.
+
+        Raises:
+            ValueError: If the attempt has no allocated ``attack_result_id``.
+        """
+        async with super()._execution_context_async(context):
+            attempt_id = context._attack_result_id
+            if attempt_id is None:
+                raise ValueError("An attempt must have its attack_result_id allocated before it is observed.")
+            started: list[AttemptObserver] = []
+            try:
+                for scorer, expectation in self._attempt_observers(context=context):
+                    started.append(scorer)
+                    await scorer.start_observing_async(attempt_id=attempt_id, expectation=expectation)
+                yield
+            finally:
+                self._stop_observers(observers=started, attempt_id=attempt_id)
+
+    def _stop_observers(self, *, observers: list[AttemptObserver], attempt_id: str) -> None:
+        """
+        Stop every observer, reporting failures without replacing the attempt's outcome.
+
+        Each observer is stopped once, even when one stop fails, so a failing observer cannot
+        leave another holding the attempt's state or replace the error, cancellation, or result
+        already in flight.
+
+        Args:
+            observers (list[AttemptObserver]): The observers that were asked to start.
+            attempt_id (str): The attempt being released.
+        """
+        stopped: set[int] = set()
+        for observer in observers:
+            if id(observer) in stopped:
+                continue
+            stopped.add(id(observer))
+            try:
+                observer.stop_observing(attempt_id=attempt_id)
+            except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+                self._logger.warning(
+                    "Failed to stop %s observing attempt %s: %s",
+                    type(observer).__name__,
+                    attempt_id,
+                    error,
+                )
+
+    def _attempt_observers(
+        self, *, context: AttackStrategyContextT
+    ) -> list[tuple[AttemptObserver, ScoringExpectation]]:
+        """
+        Pair each scorer that observes across an attempt with the expectation routed to it.
+
+        Wrapped scorers are included: each child is paired with the expectation its wrapper
+        routes to it, so wrapping a scorer does not change whether it observes the attempt.
+
+        Returns:
+            list[tuple[AttemptObserver, ScoringExpectation]]: Observing scorers and their expectations.
+        """
+        if self.DELEGATES_SCORING:
+            return []
+        scoring_config = self.get_attack_scoring_config()
+        if scoring_config is None:
+            return []
+        prepared = prepare_attack_scoring(
+            objective_scorer=scoring_config.objective_scorer,
+            auxiliary_scorers=scoring_config.auxiliary_scorers,
+            expectation=context.expectation,
+        )
+        pending: list[tuple[Scorer | None, ScoringExpectation | None]] = [
+            (scoring_config.objective_scorer, prepared.objective_expectation),
+            *zip(prepared.auxiliary_scorers, prepared.auxiliary_expectations, strict=True),
+        ]
+        observers: list[tuple[AttemptObserver, ScoringExpectation]] = []
+        while pending:
+            scorer, expectation = pending.pop(0)
+            if scorer is None or expectation is None:
+                continue
+            if isinstance(scorer, AttemptObserver):
+                observers.append((scorer, expectation))
+            pending.extend(scorer._get_child_expectations(expectation=expectation))
+        return observers
+
     def _validate_scoring_expectation(self, *, context: AttackStrategyContextT) -> None:
         """Check execution criteria before setup unless child attacks own scoring."""
         if self.DELEGATES_SCORING:
@@ -1010,6 +1154,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         next_message: Message | None = None,
         prepended_conversation: list[Message] | None = None,
         memory_labels: dict[str, str] | None = None,
+        operation_id: uuid.UUID | None = None,
         persist_attack_result: bool = True,
         **kwargs: Any,
     ) -> AttackStrategyResultT: ...

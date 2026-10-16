@@ -535,6 +535,7 @@ class AdversarialBenchmark(Scenario):
             objective_target=context.objective_target,
             objective_scorer=self._objective_scorer,
             memory_labels=context.memory_labels,
+            incompatible_technique_policy=context.incompatible_technique_policy,
         )
         # ``display_group`` is the TargetRegistry name the caller passed via
         # ``--adversarial-targets`` so per-model ASR rolls up naturally — not any internal
@@ -913,7 +914,13 @@ class AdversarialBenchmark(Scenario):
                             "attack_result_id": str(uuid.uuid4()),
                             "attribution_parent_id": self._scenario_result_id,
                             "attribution_data": attribution_data,
-                            "labels": {**result.labels, **self._memory_labels},
+                            "operation_id": self._operation_id,
+                            "operation": None,
+                            "labels": {
+                                key: value
+                                for key, value in {**result.labels, **self._memory_labels}.items()
+                                if key != "operation"
+                            },
                             "metadata": metadata,
                         },
                     )

@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+import os
 import struct
 import uuid
 from collections.abc import Mapping, Sequence
@@ -85,7 +86,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         results_container_url: str | None = None,
         results_sas_token: str | None = None,
         verbose: bool = False,
-        skip_schema_migration: bool = False,
+        skip_schema_migration: bool = True,
         silent: bool = False,
         _defer_initialization: bool = False,
     ) -> None:
@@ -100,7 +101,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             results_sas_token (str | None): The Shared Access Signature (SAS) token for the storage container.
                 If not provided, falls back to the 'AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN' environment variable.
             verbose (bool): Whether to enable verbose logging for the database engine. Defaults to False.
-            skip_schema_migration (bool): Whether to skip schema migration. Defaults to False.
+            skip_schema_migration (bool): Whether to skip schema migration. Defaults to True.
+                Set to False to explicitly migrate a non-production database during initialization.
             silent (bool): If True, suppresses schema migration console output. Defaults to False.
         """
         self._connection_string = default_values.get_required_value(
@@ -141,6 +143,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         self._initialized = not _defer_initialization
 
     def _initialize_schema(self) -> None:
+        if os.environ.get("PYRIT_REQUIRE_CURRENT_SCHEMA") == "true":
+            self._check_schema_migration()
+            return
         prod_connection_string = default_values.get_non_required_value(
             env_var_name=self.AZURE_SQL_DB_CONNECTION_STRING_PROD
         )
@@ -374,7 +379,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         Generate SQL conditions for filtering by prompt metadata.
 
-        Uses JSON_VALUE() function specific to SQL Azure to query metadata fields in JSON format.
+        Uses OPENJSON() to compare free-form metadata keys literally rather than
+        interpreting them as JSON path expressions. Only strings, numbers, and
+        booleans match, preserving JSON_VALUE() scalar filtering semantics.
 
         Args:
             prompt_metadata (dict[str, str | int]): Dictionary of metadata key-value pairs to filter by.
@@ -383,15 +390,26 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             list: List containing a single SQLAlchemy text condition with bound parameters.
         """
         json_validation = "ISJSON(prompt_metadata) = 1"
-        json_conditions = " AND ".join([f"JSON_VALUE(prompt_metadata, '$.{key}') = :{key}" for key in prompt_metadata])
+        json_conditions, bindparams = [], {}
+        for index, (key, value) in enumerate(prompt_metadata.items()):
+            key_param, value_param = f"md_key_{index}", f"md_value_{index}"
+            alias = f"metadata_{index}"
+            json_conditions.append(
+                f"EXISTS (SELECT 1 FROM OPENJSON(prompt_metadata) AS [{alias}] "
+                f"WHERE [{alias}].[key] = :{key_param} "
+                f"AND DATALENGTH([{alias}].[key]) = DATALENGTH(CAST(:{key_param} AS NVARCHAR(MAX))) "
+                f"AND [{alias}].[type] IN (1, 2, 3) "
+                f"AND [{alias}].[value] = :{value_param})"
+            )
+            bindparams[key_param] = key
+            bindparams[value_param] = str(value)
+
         # Combine both conditions
-        conditions = f"{json_validation} AND {json_conditions}"
+        conditions = f"{json_validation} AND " + " AND ".join(json_conditions)
 
         # Create SQL condition using SQLAlchemy's text() with bindparams
         # for safe parameter passing, preventing SQL injection
-        # Note: JSON_VALUE always returns nvarchar in SQL Server, so we must convert all values to strings
-        # to avoid type conversion errors when comparing mixed types (e.g., int and string)
-        condition = text(conditions).bindparams(**{key: str(value) for key, value in prompt_metadata.items()})
+        condition = text(conditions).bindparams(**bindparams)
         return [condition]
 
     def _get_message_pieces_prompt_metadata_conditions(

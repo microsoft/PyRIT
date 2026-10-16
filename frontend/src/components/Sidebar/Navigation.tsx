@@ -14,6 +14,8 @@ import {
   HomeRegular,
   SettingsRegular,
   HistoryRegular,
+  DataBarVerticalRegular,
+  BriefcaseRegular,
   PersonFeedbackRegular,
   ScriptRegular,
   TargetRegular,
@@ -30,6 +32,8 @@ export type ViewName =
   | 'home'
   | 'chat'
   | 'history'
+  | 'analytics'
+  | 'operations'
   | 'registry'
   | 'configuration'
   | 'scenarios'
@@ -86,8 +90,8 @@ export default function Navigation({
           data-active={currentView === 'chat'}
           appearance="subtle"
           icon={<ChatRegular />}
-          title="Chat"
-          aria-label="Chat"
+          title="Technique.execute"
+          aria-label="Technique.execute"
           aria-current={currentView === 'chat' ? 'page' : undefined}
           onClick={() => onNavigate('chat')}
         />
@@ -101,6 +105,28 @@ export default function Navigation({
           aria-label="History"
           aria-current={currentView === 'history' ? 'page' : undefined}
           onClick={() => onNavigate('history')}
+        />
+
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'analytics'}
+          appearance="subtle"
+          icon={<DataBarVerticalRegular />}
+          title="Analytics"
+          aria-label="Analytics"
+          aria-current={currentView === 'analytics' ? 'page' : undefined}
+          onClick={() => onNavigate('analytics')}
+        />
+
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'operations'}
+          appearance="subtle"
+          icon={<BriefcaseRegular />}
+          title="Operations"
+          aria-label="Operations"
+          aria-current={currentView === 'operations' ? 'page' : undefined}
+          onClick={() => onNavigate('operations')}
         />
 
         <Button

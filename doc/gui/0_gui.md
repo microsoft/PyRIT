@@ -11,14 +11,17 @@ There are several ways to run CoPyRIT:
 If you have PyRIT installed, use the `pyrit_backend` command to start the server. The bundled frontend is served automatically.
 
 ```bash
-pyrit_backend
+pyrit_backend --auth-mode local
 ```
 
 Then open `http://localhost:8000` in your browser.
 
-Authentication-disabled local servers deny administrator operations by default. To enable configuration and initializer
-administration for a trusted local development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use this
-setting on a network-accessible deployment.
+Local mode deliberately disables incoming-request Entra authentication and is
+restricted to a loopback host by the packaged CLI. Authentication-disabled local
+servers deny administrator operations by default. To enable administrator operations
+(configuration, initializer administration, and creating targets that run model repository code) for a trusted local
+development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use these local settings on a
+network-accessible deployment.
 
 ### Docker
 
@@ -34,7 +37,75 @@ To deploy an isolated instance for an external team, see [Deploy a New Instance]
 
 ## Views
 
-CoPyRIT has three main views, accessible from the left sidebar: **Chat**, **Attack History**, and **Target Configuration**. The **Theme** menu is available at the bottom of the sidebar.
+Use the left sidebar to open **Home**, **Technique.execute** (Chat), **History**, **Analytics**,
+**Operations**, **Scanner**, **Datasets**, or the **Registry**. **Configuration** is available to administrators.
+The **Theme** menu is at the bottom of the sidebar.
+
+### Attack Results Analytics
+
+**Analytics** explores saved attack results using the
+[SDK analytics API](../code/analytics/0_attack_results.md). Every distinct saved
+AttackResult ID counts, including different IDs sharing a conversation and all
+result roles. Selecting a scenario filters this same population, including its
+retries. It does not switch to the scanner's latest-execution-unit statistics.
+
+Use **Operation**, **Operator**, **Objective target**, or **Add filter** to select
+saved metadata. Additional dimensions include model, targeted harm category,
+attack type, request or response converters, scenario run, and arbitrary label
+keys. Targeted harms describe intended coverage, not harms detected by scorers.
+Target options use persisted behavioral identities, not current registry
+membership. The content hash in a matching row is for inspecting that saved
+target, not a substitute for its filter key.
+
+Filter values load only when their editor is open, with debounced search and
+bounded **First values** / **Next values** paging. Selections survive searches
+and pages. Values within a filter are alternatives (**ANY**); converters also
+support **ALL**. Separate filter chips are combined with **AND**, even when
+they select the same dimension. Missing metadata, an empty converter pipeline,
+and literal values such as `Unknown` remain distinct.
+
+**Last updated** accepts ISO 8601 timestamps with `Z` (UTC) or an explicit offset.
+For example, `2026-11-01T01:30:00-07:00` and `2026-11-01T01:30:00-08:00`
+are different instants during a daylight saving transition. After is inclusive;
+before is exclusive. Microseconds are retained. These bounds describe last
+updates, not attack execution times.
+
+The dashboard offers outcome-composition bars, success-rate bars, and a
+two-axis heatmap. **ASR denominator** defaults to decided results (successes plus
+failures). All-results ASR includes errors and undetermined outcomes. Both rates
+come from the SDK. Counts are explicit: `100%, 3 success / 3 decided, 5 total`
+means three successes and two results without a decision, not five successes.
+An unavailable decided denominator displays **Unavailable**, not `0%`.
+Outcome filters apply to the entire dashboard and mark **ASR*** with an
+explanation, including the `100%*` produced by a successes-only cohort.
+
+Click a group, outcome segment, or heatmap cell to append the SDK's drill-down
+predicates. Overlapping group totals must not be added together. When the
+16-predicate or 500-value budget prevents another drill-down, the SDK's reason
+is displayed; the current charts, results, and filter editing remain available.
+Group and result pages stay bounded. **Show cell data** provides a textual
+heatmap view. Matching result rows open the ordinary saved-attack view with a
+click, Enter, or Space.
+
+Use **Reload** for a new report. **Last refreshed** shows the last successful
+report time; paging matching results updates only **Page read**, not the report.
+Presentation changes preserve pages and do not request new aggregates.
+The dashboard does not poll, although the app's shared readiness checks continue.
+Errors retain a same-cohort last successful report with a stale warning. Busy
+read retries honor the server's cooldown; invalid result cursors can return to
+the first results page without recalculating the report.
+
+Copy the browser URL to share filters and presentation. New links put the state
+after `#analytics=`, so large filter values are not sent in HTTP request targets
+and do not exceed the backend's 8 KiB URL limit on reload. Valid older query
+links are migrated to this representation; invalid links require an explicit
+reset rather than silently querying a broader cohort. Browser Back and the
+Analytics sidebar button retain the exploration. Links contain the selected
+metadata values, so share them only with appropriate recipients.
+
+Outcome fills are consistent across summaries, bars, swatches, and result
+badges: success is green, failure red, execution error blue, and undetermined
+gray. Text and keyboard actions remain available independently of color.
 
 ### Themes
 
@@ -65,12 +136,11 @@ CoPyRIT stores these six preferences in one account-scoped browser record:
 | --- | --- |
 | Default objective target | Initial target for new chats and scanner runs |
 | Default adversarial target | Shared adversarial target for supported scanner scenarios |
-| Operation name (`operation`) | Label for new attacks and scanner runs |
+| Selected Operation | Groups new attacks and scanner runs by its saved ID |
 | Custom run labels | Additional labels for new attacks and scanner runs |
 | Theme | System, Light, Dark, or a named preset |
 | Chat display mode | Raw text or rendered Markdown |
 
-The GUI uses `operation` and `operator` as its label names, not `op_name` and `username`.
 For signed-in users, `operator` is the lowercase username before `@`. It is derived
 from the account, cannot be edited, and is not saved as a user preference. With
 authentication disabled, the local profile can save an operator label.
@@ -78,8 +148,8 @@ authentication disabled, the local profile can save an operator label.
 All six preferences use `pyrit.userPreferences.v1.<tenant>:<homeAccountId>` in
 browser local storage. Authentication-disabled use has a separate `local` profile.
 These settings do not follow you to another browser or device. Changes to labels
-apply to future runs, not stored attacks. Backend label defaults still apply when
-there is no user override. Removing a custom default label is also saved.
+apply to future runs, not stored attacks. Backend configuration supplies initial
+defaults. Removing a custom default label is also saved.
 Open tabs synchronize preferences for the same account. Each edit is merged with
 the latest saved values. On HTTPS and localhost, browser locks also serialize
 concurrent saves so edits to different defaults do not overwrite each other.
@@ -379,13 +449,20 @@ Export stays available for read-only historical conversations, and is disabled w
 
 #### Labels
 
-The labels bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. Click the labels icon to open **Default Labels** and add, edit, or remove custom labels. The required `operator` and `operation` controls remain in the bar, outside this popover, and cannot be removed. A signed-in operator is read-only.
+The labels bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. Click the labels icon to open **Default Labels** and add, edit, or remove custom labels. **Operator:** is an always-visible text input; **Operation:** is an always-visible searchable dropdown outside this popover. Operator is required; an operation is optional and removable. A signed-in operator is read-only.
 
 In Chat, the active target, Markdown toggle, export menu, conversations panel toggle, and **New Attack** button share the right side of this bar. They wrap below the labels on narrow screens.
 
-Clicking the `operation` label opens a picker listing the operations already recorded in memory, so you can choose one without typing it from memory. Typing a name that doesn't exist yet offers to create it. Very long lists show the first 200 and say how many are left, so type to narrow them. On narrow screens, use the labels icon to view or edit labels that do not fit inline.
+Open the **Operation** dropdown to choose a saved operation. **New operation…** stays first, including while searching, and opens the creation dialog. Typing alone never selects an unsaved name. Very long lists show up to 200 saved choices and say how many match, so type to narrow them. The compact metadata controls wrap on narrow screens; custom labels that do not fit remain available through the labels icon.
 
-Your choices persist in this browser across navigation and refreshes. Backend configuration supplies defaults for labels you have not chosen, and the signed-in account alias takes precedence over the default or remembered operator during initialization. Scanner launches receive the active labels from this bar.
+A configured or remembered name that isn't saved yet is highlighted in yellow,
+like a placeholder operator, and screen readers announce it as not registered.
+Choose **Register** to save it, pick a saved Operation from the **Operation**
+dropdown, or choose **Clear** to run without one. New attacks and scans stay
+blocked until the selection is resolved or cleared. Startup does not create
+Operations.
+
+Your choices persist in this browser across navigation and refreshes. Backend configuration supplies initial defaults, and the signed-in account alias takes precedence over the default or remembered operator during initialization. Scanner launches receive the active labels and selected Operation ID from this bar.
 
 Changing these labels does not relabel existing attacks or scenario runs. History attribution and the **Run configuration** shown for a scenario run still describe that saved run. Operator and target restrictions on existing attacks remain in effect.
 
@@ -420,7 +497,7 @@ Filter attacks by:
 - **Outcome:** Success, failure, or undetermined
 - **Converter:** Which converters were applied
 - **Operator:** Who ran the attack
-- **Operation:** The operation label
+- **Operation:** Saved Operation
 - **Custom labels:** Free-form key:value label filtering with auto-complete
 
 Click "Reset" to clear all filters.
@@ -435,7 +512,7 @@ The table displays:
 | Attack Type | The attack class name |
 | Target | Target type and model name |
 | Operator | Who ran the attack |
-| Operation | Operation label |
+| Operation | Operation name |
 | Msgs | Total message count |
 | Convs | Number of conversations |
 | Converters | Converter badges (truncated with tooltip) |
@@ -475,6 +552,78 @@ In active runs and saved scenario results, **Atomic attack groups** defaults to 
 
 Until you expand or collapse the section, its default follows the current group count as progress loads. Once you choose, the section keeps your choice during progress updates for the same run, even if the count crosses 20. Opening a different run resets to that run's count-based default.
 
+### Operations and Findings
+
+An operation groups related red-teaming work. Inside it you record findings:
+human assessments, whether or not an attack produced them.
+
+Open **Operations** in the sidebar and choose **New operation**. Names are unique,
+ignoring case and surrounding spaces; if the name is taken, the dialog offers the
+existing operation. An optional description records the engagement's purpose and
+scope. The **Operation** dropdown in the labels bar applies the
+selected operation to new attacks and scanner runs, and **New operation…** at the
+top of that list creates one without leaving the page.
+
+On an operation's page, **Add description** or **Edit description** changes the
+description. Saving replaces it, so if two people edit at once, the last save wins.
+Operations can't be renamed or deleted from the GUI.
+
+#### Findings
+
+Open an operation and choose **New finding**.
+
+| Field | Required | Values |
+| --- | --- | --- |
+| Title | Yes | Free text |
+| Severity | Yes | Critical, Important, Moderate, Low, Informational, or Other (your own text). Defaults to Moderate. |
+| Harm-type | No | A PyRIT harm category, Other (your own text), or Not set |
+| Description | No | Free text |
+| Evidence attack ID | No | A saved attack to attach in the same save. Its ID is in the attack's address. |
+
+Findings are sorted by severity in the order above, newest first within each
+level, 20 per page. **Edit** changes any field; the operation and creation time
+stay fixed. **Delete** asks for confirmation and can't be undone.
+
+**All execution history** opens History filtered by the Operation's ID. The
+filter stays when you switch between Attacks and Scanner.
+
+#### Attack evidence
+
+Evidence is a saved attack. To attach one, open it in Chat, select the outcome
+badge to open **Attack Result Details**, and choose **Add as finding**. Choose
+the finding's Operation, search by title, select a finding, and choose
+**Attach**. The attack can come from any Operation or none.
+
+**New finding** in that dialog opens the same form and saves the finding and its
+evidence together, so neither is saved if the attack can't be attached. Saving
+again after a lost response returns the finding that was already saved rather
+than creating a second one.
+
+Evidence points to the live attack, not a copy, so later messages and scores
+show up too. An attack can support several findings, and attaching the same
+attack to a finding again reports **Already attached**.
+
+On the operation page, **Evidence (n)** under a finding opens a table of its
+attacks. Each row shows the attack's objective, its outcome with the same badge
+as Chat, and the score behind it: the human score if there is one, otherwise
+the automated score. An attack without a score reads **Not scored**. Evidence
+from another Operation shows its source; unassigned activity shows **Not in an
+operation**. **Open attack** opens it in Chat at the conversation that holds the
+score, or at its main conversation, so the transcript matches the result shown.
+If an attack no longer exists, its entry stays, shows the attack's ID and
+attachment time, and reads **Evidence unavailable**. **Remove link** removes only
+the link, never the attack. Deleting a finding removes its links the same way.
+
+#### Upgrading an existing database
+
+One migration adds Operations, findings, evidence, and optional Operation IDs on
+attacks and scanner runs. It registers legacy names without changing historical
+attribution. Legacy activity remains in general history but does not appear in
+Operation-ID filters. The backend applies it automatically when it starts, so
+restart a running backend after upgrading. If you start memory with
+`skip_schema_migration=True`, run the migration yourself. Downgrading refuses to
+drop the tables while any operation exists.
+
 ### Technique Registry
 
 Open **Registry > Techniques**, or go to `/registry/techniques`. Targets and
@@ -511,7 +660,59 @@ Defaults are saved in this browser, separately for each signed-in account. They 
 
 A missing or changed default is shown as unavailable. Select a new default or clear it; CoPyRIT does not silently substitute a different target. If browser storage is unavailable, a warning states that the choice applies only in the current session.
 
-Scanner forms let you override either selection for one run. **Objective Target** is the target the scenario runs against. **Adversarial Target**, under **Parameters** above **Dataset override**, is the target used to generate attacks. The adversarial selector appears only for scenarios whose available techniques use the shared default; scenarios with no such use, including the explicit-target adversarial benchmark, do not show it or send an override. **Use server default** clears the per-run adversarial override. Changes to your defaults do not change existing chats or queued/running scans. Explicit adversarial targets in a scenario or technique still take priority. Scorer targets are unchanged.
+Scanner forms let you override either selection for one run. **Objective Target** is the target the scenario runs against. **Adversarial Target**, under **Parameters**, is the target used to generate attacks. The adversarial selector appears only for scenarios whose available techniques use the shared default; scenarios with no such use, including the explicit-target adversarial benchmark, do not show it or send an override. **Use server default** clears the per-run adversarial override. Changes to your defaults do not change existing chats or queued/running scans. Explicit adversarial targets in a scenario or technique still take priority. Scorer targets are unchanged.
+
+### Scenario datasets
+
+**Datasets** is a separate section below **Techniques**. Its table has **Dataset**,
+**Size**, and **Include Criteria** columns. **Size** shows an upper bound, such as **Up to 4
+of 200**, when the stored total is known, or **Up to 4** before loading. This is not
+an exact selected count: filters and the combined objective limit can reduce it.
+Click a supported size to edit its limit, use all available examples, or reset to
+the displayed default. Required reference data shows its stored size without a
+limit editor.
+
+Select a name from **Add dataset** to add it immediately. Provider names remain
+available before their data is stored. Selecting a name never loads it. The remove
+icon is available only when the scenario permits removal and another source will
+remain. A scenario that permits only one source uses **Choose dataset** to replace
+it. **Browse datasets**, beside **Reset datasets**, opens the dataset browser.
+**Reset datasets** restores source defaults and row limits without clearing
+the combined objective limit or filters.
+
+**Load datasets** appears only while selected data is missing. It loads missing
+sources and keeps existing data, including manual edits. It may download data or
+use a configured generator, but does not start a scan. A missing source without a
+provider must be imported first. When all selected data is loaded, the load button
+and loading controls are omitted.
+
+Loaded rows show harm categories and data types as differently colored chips.
+All labels start checked when there is no configured filter. Uncheck labels to
+narrow the existing filters for **all selected datasets**, not just the row clicked.
+Checking all labels restores the default request when no filter was configured.
+Partial category selections require every checked label and retain substring
+matching; data types match any checked type. An empty selection blocks launch
+instead of silently restoring all data. Selection is shown on the metadata chips;
+there is no separate filter list below the table. No preview of data values is provided.
+
+**Maximum objectives** shows its resolved value. Click it to enter a positive
+integer, use all available objectives, or reset to the displayed default. This
+limits objectives, not prompts sent. Four objectives with three techniques produce
+12 attacks, plus four more if the baseline is enabled. Each attack can send several
+prompts. The run estimate shows the resulting attacks.
+
+Scenarios that build objectives from templates or reference data apply the total
+limit to the completed objectives, not to the required reference data. Their
+generation limits still apply. A scenario that requires one objective per selected
+technique rejects a total limit smaller than the number of techniques.
+
+**Load missing data when the scan starts** is one switch for the selected sources.
+Its initial state reflects their resolved loading rules, which normally load
+missing data. Turning it off prevents automatic loading on scan start without
+disabling the manual load action. Existing source-specific rules are not silently
+replaced until the switch is changed. Closing a limit editor does not clear an
+invalid draft. Estimate and launch use the same dataset edits.
+Resume uses the saved request and original selection and never loads datasets.
 
 #### Core Adversarial Default Override
 
@@ -535,14 +736,20 @@ New runs save the adversarial target selection with their launch configuration. 
 
 #### Creating Targets
 
-Click "New Target" to open the creation dialog. Fill in:
+Click "New Target" to open the creation dialog. Fill in the fields shown for the
+selected target; required fields and authentication options depend on the target:
 
-- **Target Type** (required): Select from `OpenAIChatTarget`, `OpenAICompletionTarget`, `OpenAIImageTarget`, `OpenAIVideoTarget`, `OpenAITTSTarget`, `OpenAIResponseTarget`, or `AzureMLChatTarget`
-- **Endpoint URL** (required): Your Azure OpenAI, OpenAI API, or Azure ML endpoint
-- **Model / Deployment Name** (required): e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`
-- **API Key** (optional): Stored in memory only (not persisted to disk)
+- **Target Type** (required): Select from backend-discovered targets supported by the form, including `OpenAIChatTarget`, `OpenAICompletionTarget`, `OpenAIImageTarget`, `OpenAIVideoTarget`, `OpenAITTSTarget`, `OpenAIResponseTarget`, `AzureMLChatTarget`, and `GitHubCopilotTarget`.
+- **Endpoint URL**: Your Azure OpenAI, OpenAI API, or Azure ML endpoint, when applicable.
+- **Model / Deployment Name**: e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`.
+- **API Key** (optional): Stored in memory only (not persisted to disk).
 
-For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **Temperature**, **Top P**, and **Repetition Penalty**.
+For `AzureMLChatTarget`, **Advanced settings** include **Max New Tokens**,
+**Temperature**, **Top P**, and **Repetition Penalty**.
+
+For GitHub Copilot, provide a model ID and either a GitHub token or an
+instance-configured `GITHUB_TOKEN`; see the
+[framework example](../code/targets/github_copilot_target.ipynb).
 
 #### Auto-Populating Targets
 

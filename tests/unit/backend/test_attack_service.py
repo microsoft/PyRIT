@@ -15,9 +15,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlencode
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 import pyrit
 import pyrit.backend.services.pagination as backend_pagination
@@ -29,7 +30,9 @@ from pyrit.backend.models.attacks import (
     CreateAttackRequest,
     CreateConversationRequest,
     MessagePieceRequest,
+    MessageRequest,
     PrependedMessageRequest,
+    SaveConversationRequest,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
 )
@@ -52,7 +55,7 @@ from pyrit.backend.services.pagination import (
 )
 from pyrit.common.utils import to_sha256
 from pyrit.memory import CentralMemory, SQLiteMemory
-from pyrit.memory.memory_models import ConversationEntry
+from pyrit.memory.memory_models import AttackResultEntry, ConversationEntry, OperationEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -66,6 +69,7 @@ from pyrit.models import (
     ConversationType,
     Message,
     MessagePiece,
+    Operation,
     PromptDataType,
     PromptResponseError,
     Score,
@@ -80,6 +84,88 @@ from unit.mocks import MockPromptTarget
 @pytest.fixture
 def mock_memory() -> MagicMock:
     return make_mock_memory()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_missing_operation_rejected_before_target_or_media_preparation_async(sqlite_instance) -> None:
+    service = AttackService()
+    with (
+        patch.object(service, "_get_save_target_async", new_callable=AsyncMock) as target,
+        patch.object(service, "_prepare_message_pieces_async", new_callable=AsyncMock) as pieces,
+    ):
+        with pytest.raises(LookupError, match="Operation"):
+            await service.create_attack_async(
+                request=CreateAttackRequest(system_prompt="must not persist", operation_id=uuid.uuid4())
+            )
+        target.assert_not_awaited()
+        pieces.assert_not_awaited()
+    assert await sqlite_instance.get_attack_results_async() == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("name", [" engagement", "missing"])
+async def test_create_attack_keeps_deprecated_name_and_links_a_saved_operation_async(
+    sqlite_instance, name: str
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    with pytest.warns(DeprecationWarning, match="operation_id"):
+        created = await AttackService().create_attack_async(
+            request=CreateAttackRequest(labels={"operation": name, "team": "red"})
+        )
+    stored = (await sqlite_instance.get_attack_results_async(attack_result_ids=[created.attack_result_id]))[0]
+    assert (stored.operation_id, stored.operation, stored.labels) == (
+        operation.id if name == " engagement" else None,
+        name,
+        {"team": "red", "source": "gui"},
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("destination", ["same_attack", "new_attack"])
+async def test_conversation_save_preserves_stored_or_uses_new_operation_async(
+    sqlite_instance, destination: str
+) -> None:
+    original = await sqlite_instance.add_operation_async(Operation(name="Original"))
+    selected = await sqlite_instance.add_operation_async(Operation(name="Selected"))
+    service = AttackService()
+    source = await service.create_attack_async(request=CreateAttackRequest(operation_id=original.id))
+    saved = await service.save_conversation_async(
+        request=SaveConversationRequest(
+            save_id=uuid.uuid4(),
+            destination=destination,
+            attack_result_id=uuid.UUID(source.attack_result_id) if destination == "same_attack" else None,
+            operation_id=selected.id if destination == "new_attack" else None,
+            messages=[MessageRequest(role="user", pieces=[MessagePieceRequest(original_value="draft")])],
+        )
+    )
+    result = (await sqlite_instance.get_attack_results_async(attack_result_ids=[saved.attack.attack_result_id]))[0]
+    assert result.operation_id == (original.id if destination == "same_attack" else selected.id)
+    assert (await sqlite_instance.get_attack_results_async(attack_result_ids=[source.attack_result_id]))[
+        0
+    ].operation_id == original.id
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_list_attacks_filters_by_id_and_shows_current_operation_name_async(sqlite_instance) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Before rename"))
+    service = AttackService()
+    linked = await service.create_attack_async(request=CreateAttackRequest(operation_id=operation.id))
+    legacy = AttackResult(conversation_id="legacy", objective="objective", operation="Before rename")
+    with sqlite_instance._get_session() as session:
+        session.add(AttackResultEntry(entry=legacy))
+        session.execute(update(OperationEntry).where(OperationEntry.id == operation.id).values(name="After rename"))
+        session.commit()
+
+    by_id = await service.list_attacks_async(operation_ids=[operation.id])
+    by_name = await service.list_attacks_async(operation=["Before rename"])
+    assert [(item.attack_result_id, item.operation_name) for item in by_id.items] == [
+        (linked.attack_result_id, "After rename")
+    ]
+    assert [(item.attack_result_id, item.operation_name) for item in by_name.items] == [
+        (legacy.attack_result_id, "Before rename")
+    ]
+    detail = await service.get_attack_async(attack_result_id=linked.attack_result_id)
+    assert detail is not None and detail.operation_name == "After rename"
 
 
 @pytest.fixture
@@ -877,6 +963,33 @@ class TestGetConversationMessages:
 class TestCreateAttack:
     """Tests for create_attack method."""
 
+    @pytest.mark.parametrize("reference", [False, True])
+    @pytest.mark.parametrize("field", ["original_value", "converted_value"])
+    async def test_rejects_unmanaged_prepended_media_async(
+        self, *, managed_media_path: Path, tmp_path: Path, reference: bool, field: str
+    ) -> None:
+        path = tmp_path / "outside.png"
+        path.write_bytes(b"image")
+        value = f"/api/media?{urlencode({'path': str(path)})}" if reference else str(path)
+        piece = MessagePieceRequest(
+            data_type="image_path",
+            original_value=value if field == "original_value" else str(managed_media_path),
+            converted_value=value if field == "converted_value" else str(managed_media_path),
+        )
+        service = AttackService()
+        with (
+            patch.object(service, "_get_save_target_async", new=AsyncMock(return_value=None)),
+            patch.object(service._memory, "add_conversation_branches_to_attack_async", new_callable=AsyncMock) as store,
+            pytest.raises(ValueError, match="outside the allowed results directory"),
+        ):
+            await service.create_attack_async(
+                request=CreateAttackRequest(
+                    prepended_conversation=[PrependedMessageRequest(role="user", pieces=[piece])]
+                )
+            )
+
+        store.assert_not_awaited()
+
     @pytest.mark.parametrize("copy_history", [False, True])
     async def test_manual_creation_registers_ownership_async(
         self, *, sqlite_instance: SQLiteMemory, copy_history: bool
@@ -942,7 +1055,7 @@ class TestCreateAttack:
                     target_registry_name="target-1",
                     name="My Attack",
                     operator="alice",
-                    operation="nightly",
+                    operation_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
                     labels={"team": "red"},
                 )
             )
@@ -953,7 +1066,8 @@ class TestCreateAttack:
             stored_attack = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert stored_attack.metadata["target_registry_name"] == "target-1"
             assert stored_attack.operator == "alice"
-            assert stored_attack.operation == "nightly"
+            assert stored_attack.operation_id == uuid.UUID("00000000-0000-0000-0000-000000000001")
+            assert stored_attack.operation is None
             assert stored_attack.labels == {"team": "red", "source": "gui"}
 
     async def test_create_attack_stores_prepended_conversation(self, attack_service, mock_memory) -> None:
@@ -2196,17 +2310,14 @@ class TestPersistBase64Pieces:
         for serializer in serializers:
             serializer.save_b64_image_async.assert_awaited_once()
 
-    @pytest.mark.parametrize(
-        ("converted_value", "expected_value"),
-        [
-            ("/api/media?path=preview.png", "preview.png"),
-            ("https://example.com/preview.png?token=example", "https://example.com/preview.png?token=example"),
-            ("preview.png", "preview.png"),
-        ],
-    )
+    @pytest.mark.parametrize("origin", ["reference", "url", "local"])
     async def test_converted_media_references_are_not_repersisted_async(
-        self, *, converted_value: str, expected_value: str
+        self, *, origin: str, managed_media_path: Path
     ) -> None:
+        expected_value = "https://example.com/preview.png?token=example" if origin == "url" else str(managed_media_path)
+        converted_value = (
+            f"/api/media?{urlencode({'path': expected_value})}" if origin == "reference" else expected_value
+        )
         request = AddMessageRequest(
             pieces=[
                 MessagePieceRequest(
@@ -2218,10 +2329,7 @@ class TestPersistBase64Pieces:
             send=False,
             target_conversation_id="test-id",
         )
-        with (
-            patch("pyrit.backend.services.media_persistence.Path.is_file", return_value=True),
-            patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory,
-        ):
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory:
             await AttackService._persist_base64_pieces_async(pieces=request.pieces)
 
         assert request.pieces[0].original_value == "source"
@@ -2487,14 +2595,14 @@ class TestPersistBase64Pieces:
         assert request.pieces[0].original_value == ("https://myblob.blob.core.windows.net/images/photo.png?sv=2024")
         assert request.pieces[0].converted_value == request.pieces[0].original_value
 
-    async def test_media_reference_is_resolved_without_persistence(self, attack_service) -> None:
+    async def test_media_reference_is_resolved_without_persistence(self, *, managed_media_path: Path) -> None:
         """Local media URLs are converted back to their decoded file paths."""
         request = AddMessageRequest(
             role="user",
             pieces=[
                 MessagePieceRequest(
                     data_type="image_path",
-                    original_value="/api/media?path=%2Ftmp%2Fimage.png",
+                    original_value=f"/api/media?{urlencode({'path': str(managed_media_path)})}",
                 ),
             ],
             send=False,
@@ -2504,14 +2612,13 @@ class TestPersistBase64Pieces:
         with patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory:
             await AttackService._persist_base64_pieces_async(pieces=request.pieces)
 
-        assert request.pieces[0].original_value == "/tmp/image.png"
-        assert request.pieces[0].converted_value == "/tmp/image.png"
+        assert request.pieces[0].original_value == str(managed_media_path)
+        assert request.pieces[0].converted_value == str(managed_media_path)
         factory.assert_not_called()
 
-    async def test_existing_file_is_kept_without_persistence(self, attack_service, tmp_path: Path) -> None:
+    async def test_existing_file_is_kept_without_persistence(self, *, managed_media_path: Path) -> None:
         """An existing path remains the canonical original and converted value."""
-        media_path = tmp_path / "image.png"
-        media_path.write_bytes(b"image")
+        media_path = managed_media_path
         request = AddMessageRequest(
             role="user",
             pieces=[MessagePieceRequest(data_type="image_path", original_value=str(media_path))],
@@ -3375,17 +3482,71 @@ class TestAttackServiceAdditionalCoverage:
 
 
 def test_create_attack_request_normalizes_legacy_attribution_labels() -> None:
-    labels = {"operator": "alice", "operation": "nightly", "team": "red"}
+    labels = {"operator": "alice", "team": "red"}
 
     with pytest.warns(DeprecationWarning, match="removed in 1.4.0"):
         request = CreateAttackRequest(target_registry_name="target", labels=labels)
 
     assert request.operator == "alice"
-    assert request.operation == "nightly"
+    assert request.operation_id is None
     assert request.labels == {"team": "red"}
-    assert labels == {"operator": "alice", "operation": "nightly", "team": "red"}
+    assert labels == {"operator": "alice", "team": "red"}
 
 
 def test_create_attack_request_rejects_overlength_values() -> None:
     with pytest.raises(ValueError, match="at most 128"):
         CreateAttackRequest(target_registry_name="target", operator="x" * 129)
+
+
+class TestRemoveHumanScoreOutcomeByScoreType:
+    """Removing a human score must follow the canonical score-to-outcome contract (#3181)."""
+
+    @pytest.mark.parametrize(
+        ("score_type", "score_value", "expected_outcome"),
+        [
+            ("float_scale", "0.9", "success"),
+            ("float_scale", "0.0", "failure"),
+            ("true_false", "True", "success"),
+            ("true_false", "False", "failure"),
+        ],
+    )
+    async def test_remove_human_score_maps_typed_score_values(
+        self,
+        attack_service,
+        mock_memory,
+        score_type: str,
+        score_value: str,
+        expected_outcome: str,
+    ) -> None:
+        attack = make_attack_result(conversation_id="test-id")
+        attack.automated_score = Score(
+            score_type=score_type,
+            score_value=score_value,
+            score_rationale="Automated rationale",
+        )
+        mock_memory.get_attack_results_async.return_value = [attack]
+
+        await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
+
+        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        assert update_fields["outcome"] == expected_outcome
+
+    async def test_remove_human_score_with_undetermined_automated_score_is_undetermined(
+        self,
+        attack_service,
+        mock_memory,
+    ) -> None:
+        attack = make_attack_result(conversation_id="test-id")
+        attack.automated_score = Score(
+            score_type="true_false",
+            score_value=None,
+            score_rationale="No verdict",
+            status="undetermined",
+        )
+        mock_memory.get_attack_results_async.return_value = [attack]
+
+        await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
+
+        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        assert update_fields["outcome"] == "undetermined"
+        assert update_fields["outcome_reason"] is None

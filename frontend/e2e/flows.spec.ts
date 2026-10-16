@@ -210,7 +210,7 @@ async function activateTarget(
   await expect(row).toBeVisible({ timeout: 10_000 });
   await page.getByRole("combobox", { name: "Default objective target", exact: true })
     .selectOption(targetRegistryName);
-  await page.getByTitle("Chat").click();
+  await page.getByTitle("Technique.execute").click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5_000 });
 }
 
@@ -842,7 +842,7 @@ for (const variant of TARGET_VARIANTS) {
         }
 
         await page.getByTestId("copy-to-input-btn-1").click();
-        await page.getByRole("menuitem", { name: "New conversation", exact: true }).click();
+        await page.getByRole("menuitem", { name: "Branch conversation", exact: true }).click();
       } else {
         // Single-turn targets disable branch buttons in the UI.
         // Branch via the API instead to test the backend operation.

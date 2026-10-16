@@ -5,8 +5,9 @@ import inspect
 import io
 import json
 import zipfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
@@ -220,10 +221,21 @@ class TestRemoteDatasetLoader:
                 "2025-09-20T04:09:11.080923+00:00",
                 datetime(2025, 9, 20, 4, 9, 11, 80923, tzinfo=UTC),
             ),
+            # Z without fractional seconds (common API format, native 3.11 parsing)
+            ("2026-01-15T00:00:00Z", datetime(2026, 1, 15, 0, 0, 0, tzinfo=UTC)),
+            # Non-UTC timezone offset
+            (
+                "2025-03-10T12:30:00+05:30",
+                datetime(2025, 3, 10, 12, 30, 0, tzinfo=timezone(timedelta(hours=5, minutes=30))),
+            ),
         ],
     )
     def test_parse_datetime(self, value: str | None, expected: datetime | None) -> None:
         assert ConcreteRemoteLoader._parse_datetime(value) == expected
+
+    @pytest.mark.parametrize("value", [1720000000, True, {"timestamp": "invalid"}, ["2026-01-15"]])
+    def test_parse_datetime_non_string_returns_none(self, value: Any) -> None:
+        assert ConcreteRemoteLoader._parse_datetime(value) is None
 
     def test_fetch_from_url_invalid_file_type_raises(self):
         loader = ConcreteRemoteLoader()
@@ -461,3 +473,33 @@ class TestFetchFromHuggingFaceDownloadMode:
 
         assert mock_load.call_args.kwargs["download_mode"] == DownloadMode.FORCE_REDOWNLOAD
         assert mock_load.call_args.kwargs["cache_dir"] is None
+
+    @pytest.mark.parametrize("cache", [False, True])
+    async def test_custom_cache_directory_respects_cache_flag(self, cache: bool) -> None:
+        from datasets import DownloadMode
+
+        loader = ConcreteRemoteLoader()
+        with (
+            patch.dict("os.environ", {"HF_DATASETS_CACHE": "short-cache"}),
+            patch("pyrit.datasets.seed_datasets.remote.remote_dataset_loader.load_dataset") as mock_load,
+        ):
+            await loader._fetch_from_huggingface_async(dataset_name="owner/ds", split="train", cache=cache)
+
+        assert mock_load.call_args.kwargs["cache_dir"] == ("short-cache" if cache else None)
+        assert mock_load.call_args.kwargs["download_mode"] == (
+            DownloadMode.REUSE_DATASET_IF_EXISTS if cache else DownloadMode.FORCE_REDOWNLOAD
+        )
+
+    @pytest.mark.parametrize("value", ["", None])
+    async def test_default_cache_directory_without_override(self, value: str | None) -> None:
+        from pyrit.common.path import DB_DATA_PATH
+
+        environment = {} if value is None else {"HF_DATASETS_CACHE": value}
+        loader = ConcreteRemoteLoader()
+        with (
+            patch.dict("os.environ", environment, clear=True),
+            patch("pyrit.datasets.seed_datasets.remote.remote_dataset_loader.load_dataset") as mock_load,
+        ):
+            await loader._fetch_from_huggingface_async(dataset_name="owner/ds", split="train", cache=True)
+
+        assert mock_load.call_args.kwargs["cache_dir"] == str(DB_DATA_PATH / "huggingface")

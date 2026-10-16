@@ -415,7 +415,8 @@ export async function attachmentToMessagePieceRequest(att: MessageAttachment): P
  */
 export async function buildMessagePieces(
   text: string,
-  attachments: MessageAttachment[]
+  attachments: MessageAttachment[],
+  textMetadata?: Record<string, unknown>,
 ): Promise<MessagePieceRequest[]> {
   const pieces: MessagePieceRequest[] = []
 
@@ -430,7 +431,7 @@ export async function buildMessagePieces(
     pieces.push({
       data_type: 'text',
       original_value: text,
-      prompt_metadata: videoId ? { video_id: videoId } : undefined,
+      prompt_metadata: videoId ? { ...textMetadata, video_id: videoId } : textMetadata,
     })
   }
 

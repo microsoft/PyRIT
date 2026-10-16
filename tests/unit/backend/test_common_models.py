@@ -14,6 +14,7 @@ from pyrit.backend.models.attacks import (
     AddMessageRequest,
     CreateAttackRequest,
     MessagePieceRequest,
+    SaveConversationRequest,
     UpdateAttackRequest,
 )
 from pyrit.backend.models.common import (
@@ -38,6 +39,7 @@ from pyrit.backend.models.converters import ConverterPreviewRequest, CreateConve
 from pyrit.backend.models.initializers import RegisterInitializerRequest
 from pyrit.backend.models.scores import ManualScoreRequest
 from pyrit.backend.models.targets import CreateTargetRequest
+from pyrit.backend.models.techniques import CreateTechniqueRequest
 
 
 class TestPaginationInfo:
@@ -446,6 +448,8 @@ def test_update_attack_request_expected_objective_is_not_length_limited() -> Non
         {"converter_ids": ["converter"] * (MAX_ITEMS + 1)},
         {"request_converter_configurations": [{"converter_ids": ["converter"]}] * (MAX_ITEMS + 1)},
         {"pieces": [{"original_value": "text", "mime_type": "m" * (MAX_IDENTIFIER_LENGTH + 1)}]},
+        {"start_token": "s" * (MAX_IDENTIFIER_LENGTH + 1)},
+        {"end_token": "e" * (MAX_IDENTIFIER_LENGTH + 1)},
     ],
 )
 def test_add_message_request_rejects_values_over_limits(overrides: dict[str, object]) -> None:
@@ -478,7 +482,51 @@ def test_message_piece_content_is_not_length_limited() -> None:
             "params",
         ),
         (ConverterPreviewRequest, {"original_value": "x", "converter_ids": ["c"] * (MAX_ITEMS + 1)}, "converter_ids"),
+        (
+            ConverterPreviewRequest,
+            {"original_value": "x", "converter_ids": [], "start_token": "s" * (MAX_IDENTIFIER_LENGTH + 1)},
+            "start_token",
+        ),
+        (
+            ConverterPreviewRequest,
+            {"original_value": "x", "converter_ids": [], "end_token": "e" * (MAX_IDENTIFIER_LENGTH + 1)},
+            "end_token",
+        ),
+        (
+            CreateTechniqueRequest,
+            {"name": "t", "type": "PromptSendingAttack", "description": "d" * (MAX_TEXT_LENGTH + 1)},
+            "description",
+        ),
+        (
+            CreateTechniqueRequest,
+            {"name": "t", "type": "RedTeamingAttack", "adversarial_chat": "a" * (MAX_IDENTIFIER_LENGTH + 1)},
+            "adversarial_chat",
+        ),
+        (
+            CreateTechniqueRequest,
+            {"name": "t", "type": "PromptSendingAttack", "request_converters": ["c" * (MAX_IDENTIFIER_LENGTH + 1)]},
+            "request_converters",
+        ),
+        (
+            CreateTechniqueRequest,
+            {"name": "t", "type": "PromptSendingAttack", "response_converters": ["c" * (MAX_IDENTIFIER_LENGTH + 1)]},
+            "response_converters",
+        ),
+        (
+            CreateTechniqueRequest,
+            {"name": "t", "type": "PromptSendingAttack", "params": {"p" * (MAX_IDENTIFIER_LENGTH + 1): 1}},
+            "params",
+        ),
         (CreateTargetRequest, {"type": "t" * (MAX_IDENTIFIER_LENGTH + 1)}, "type"),
+        (
+            SaveConversationRequest,
+            {
+                "save_id": str(uuid.uuid4()),
+                "destination": "new_attack",
+                "target_registry_name": "t" * (MAX_IDENTIFIER_LENGTH + 1),
+            },
+            "target_registry_name",
+        ),
         (
             ManualScoreRequest,
             {
@@ -498,6 +546,20 @@ def test_request_models_reject_values_over_limits(
         model.model_validate(payload)
 
     assert [item["loc"][0] for item in error.value.errors()] == [field]
+
+
+def test_create_technique_request_accepts_values_at_limits() -> None:
+    request = CreateTechniqueRequest(
+        name="t",
+        type="RedTeamingAttack",
+        description="d" * MAX_TEXT_LENGTH,
+        adversarial_chat="a" * MAX_IDENTIFIER_LENGTH,
+        request_converters=["c" * MAX_IDENTIFIER_LENGTH],
+        params={"p" * MAX_IDENTIFIER_LENGTH: 1},
+        adversarial_system_prompt="s" * (MAX_TEXT_LENGTH + 1),
+    )
+
+    assert len(request.adversarial_system_prompt or "") == MAX_TEXT_LENGTH + 1
 
 
 def test_label_filter_limits_ignore_surrounding_whitespace() -> None:

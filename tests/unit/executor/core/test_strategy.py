@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from dataclasses import dataclass
+from typing import Generic, TypeVar, assert_type
 
 import pytest
 
@@ -25,6 +26,39 @@ class MockContext(StrategyContext):
     """A mock context for testing."""
 
     value: str = "test"
+
+
+_ValueT = TypeVar("_ValueT")
+
+
+@dataclass
+class GenericContext(StrategyContext, Generic[_ValueT]):
+    value: _ValueT
+
+
+def test_duplicate_preserves_context_subclass() -> None:
+    context = MockContext(value="original")
+
+    duplicate = context.duplicate()
+
+    assert_type(duplicate, MockContext)
+    assert type(duplicate) is MockContext
+    assert duplicate == context
+    assert duplicate is not context
+
+
+def test_duplicate_preserves_generic_context_and_copies_nested_values() -> None:
+    context = GenericContext[list[int]](value=[1, 2])
+
+    duplicate = context.duplicate()
+
+    assert_type(duplicate, GenericContext[list[int]])
+    assert type(duplicate) is GenericContext
+    assert duplicate == context
+    assert duplicate is not context
+    duplicate.value.append(3)
+    assert context.value == [1, 2]
+    assert duplicate.value == [1, 2, 3]
 
 
 class RaisingEventHandler(StrategyEventHandler[MockContext, str]):

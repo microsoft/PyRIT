@@ -206,6 +206,7 @@ async def attack_result_to_summary_async(
     ar: AttackResult,
     *,
     stats: ConversationStats,
+    operation_name: str | None = None,
 ) -> AttackSummary:
     """
     Build an AttackSummary view from an AttackResult.
@@ -218,6 +219,8 @@ async def attack_result_to_summary_async(
     Args:
         ar: The domain AttackResult.
         stats: Pre-aggregated conversation stats (from ``get_conversation_stats``).
+        operation_name: The current name of the saved Operation, when the attack has one.
+            Legacy attacks without an Operation ID show their historical name instead.
 
     Returns:
         AttackSummary view ready for the API response.
@@ -237,6 +240,7 @@ async def attack_result_to_summary_async(
         ),
         human_score=ScoreView.from_domain(ar.human_score, is_objective_score=True) if ar.human_score else None,
         labels=labels,
+        operation_name=operation_name if ar.operation_id is not None else ar.operation,
         message_count=stats.message_count,
         last_message_preview=format_last_message_preview(
             value=stats.last_message_preview,

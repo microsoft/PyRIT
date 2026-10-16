@@ -1,5 +1,6 @@
-import { Badge, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components'
+import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components'
 
+import OutcomeBadge from '@/components/OutcomeBadge'
 import {
   formatAttackSuccess,
   formatDuration,
@@ -9,16 +10,6 @@ import {
 import type { ScenarioProgressResult } from '@/types'
 
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
-
-const OUTCOME_BADGE_COLORS: Record<
-  ScenarioProgressResult['outcome'],
-  'success' | 'danger' | 'warning' | 'informative'
-> = {
-  success: 'success',
-  failure: 'danger',
-  error: 'warning',
-  undetermined: 'informative',
-}
 
 interface AttackExecutionTableProps {
   readonly attempts: ScenarioProgressResult[]
@@ -81,9 +72,7 @@ export default function AttackExecutionTable({
                 <Text>{attempt.atomic_attack_name}</Text>
               </TableCell>
               <TableCell>
-                <Badge appearance="tint" color={OUTCOME_BADGE_COLORS[attempt.outcome]}>
-                  {formatAttackSuccess(attempt.outcome)}
-                </Badge>
+                <OutcomeBadge appearance="tint" outcome={attempt.outcome} label={formatAttackSuccess(attempt.outcome)} />
               </TableCell>
               <TableCell>
                 <Text className={styles.preview}>

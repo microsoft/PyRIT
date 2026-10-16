@@ -1,4 +1,5 @@
 const SCENARIO_RESULT_ID_QUERY_KEY = 'scenarioResultId'
+const FINDING_EVIDENCE_ID_QUERY_KEY = 'findingEvidenceId'
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
@@ -19,7 +20,14 @@ export function scenarioRunProvenance(searchParams: URLSearchParams): string | n
   if (values.length !== 1 || !UUID_PATTERN.test(values[0])) {
     return null
   }
+
   return values[0]
+}
+
+/** Returns one validated evidence id. Never returns a caller-supplied return URL. */
+export function findingEvidenceOrigin(searchParams: URLSearchParams): string | null {
+  const values = searchParams.getAll(FINDING_EVIDENCE_ID_QUERY_KEY)
+  return values.length === 1 && UUID_PATTERN.test(values[0]) ? values[0] : null
 }
 
 /** Builds an attack-detail route with optional bounded scenario-run provenance. */
@@ -38,11 +46,14 @@ export function attackConversationRoutePath(
   attackResultId: string,
   conversationId: string,
   scenarioResultId?: string | null,
+  findingEvidenceId?: string | null,
 ): string {
-  return appendScenarioRunProvenance(
+  const path = appendScenarioRunProvenance(
     `/attacks/${encodeURIComponent(attackResultId)}/conversations/${encodeURIComponent(conversationId)}`,
     scenarioResultId,
   )
+  if (!findingEvidenceId || !UUID_PATTERN.test(findingEvidenceId)) return path
+  return `${path}${path.includes('?') ? '&' : '?'}${FINDING_EVIDENCE_ID_QUERY_KEY}=${encodeURIComponent(findingEvidenceId)}`
 }
 
 /** Builds the route for one scenario run. Callers must pass a trusted persisted ID. */
@@ -68,14 +79,15 @@ function appendScenarioRunProvenance(path: string, scenarioResultId?: string | n
 /** Catalog route. Dataset identity is never a path segment. */
 export const DATASETS_PATH = '/datasets'
 
-/** Selection contract for the prompt table (#2745). The key stays in the query. */
+/** Selection route. The opaque key stays in the query and is sent back to the seed API. */
 export const DATASET_DETAIL_PATH = '/datasets/detail'
 
 const SELECTION_KEY_PARAM = 'selection_key'
 
 /**
- * Reads the opaque selection key. A missing or repeated key is not a selection.
- * The returned string is for catalog lookup only and is not sent back to the server.
+ * Reads the opaque selection key. A missing or repeated key is not a selection
+ * and must not be replaced with another dataset. Callers send this value back
+ * on seed list and detail requests; they do not look up an arbitrary dataset.
  */
 export function selectionKeyFromSearchParams(params: URLSearchParams): string | null {
   const values = params.getAll(SELECTION_KEY_PARAM)

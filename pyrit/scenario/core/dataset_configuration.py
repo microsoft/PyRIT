@@ -47,6 +47,7 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit, normalize_dataset_limit
+from pyrit.models.scenario_dataset import DatasetFetchPolicy
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -65,13 +66,6 @@ _ItemT = TypeVar("_ItemT")
 
 class _Unset(Enum):
     VALUE = "unset"
-
-
-class DatasetFetchPolicy(str, Enum):
-    """When preparation may load a provider's dataset into memory."""
-
-    NEVER = "never"
-    IF_MISSING = "if_missing"
 
 
 def _resolve_limit(*, name: str, value: DatasetLimit | _Unset, default: ResolvedDatasetLimit) -> ResolvedDatasetLimit:
@@ -163,7 +157,7 @@ class ResolvedDataset:
             seeds, in configuration order. Empty for inline ``seeds`` / ``seed_groups``.
     """
 
-    seeds: Sequence[Seed]
+    seeds: Sequence[Seed[Any]]
     source_kind: DatasetSourceKind
     dataset_names: tuple[str, ...] = ()
 
@@ -244,7 +238,7 @@ def require_harm_categories(required: set[str]) -> Callable[[ResolvedDataset], N
     return _validate
 
 
-def require_seed_type(seed_type: type[Seed]) -> Callable[[ResolvedDataset], None]:
+def require_seed_type(seed_type: type[Seed[Any]]) -> Callable[[ResolvedDataset], None]:
     """
     Build a validator that requires every resolved seed to be an instance of ``seed_type``.
 
@@ -355,7 +349,7 @@ class DatasetConfiguration:
     def __init__(
         self,
         *,
-        seeds: Sequence[Seed] | None = None,
+        seeds: Sequence[Seed[Any]] | None = None,
         seed_groups: list[SeedGroup] | None = None,
         sources: Sequence[DatasetSource] | None = None,
         max_per_dataset: DatasetLimit = "default",
@@ -521,19 +515,25 @@ class DatasetConfiguration:
     def _preparation_sources(self) -> list[tuple[DatasetSource, DatasetFetchPolicy]]:
         return [(source, source.fetch or self.fetch) for source in self.sources]
 
-    async def prepare_async(self) -> None:
+    async def prepare_async(self, *, fetch: DatasetFetchPolicy | None = None) -> None:
         """
         Check all sources, then populate missing datasets from configured or registered providers.
+
+        Args:
+            fetch: Optional policy for this operation only. Source settings remain unchanged.
 
         Raises:
             DatasetConstraintError: If a missing source cannot be fetched or provider data is invalid.
         """
         self.validate_configuration()
+        if fetch is not None and not isinstance(fetch, DatasetFetchPolicy):
+            raise DatasetConstraintError("'fetch' must be a DatasetFetchPolicy.")
         if self.source_kind is DatasetSourceKind.INLINE:
             return
         policies: dict[str, DatasetFetchPolicy] = {}
         configured_providers: dict[str, SeedDatasetProvider | None] = {}
         for source, policy in self._preparation_sources():
+            policy = fetch if fetch is not None else policy
             name = source.name
             if name in policies and policies[name] is not policy:
                 raise DatasetConstraintError(f"Dataset '{name}' has conflicting fetch policies.")
@@ -703,7 +703,7 @@ class DatasetConfiguration:
     # Resolution helpers
     # =========================================================================
 
-    async def _collect_named_seeds_async(self) -> dict[str, list[Seed]]:
+    async def _collect_named_seeds_async(self) -> dict[str, list[Seed[Any]]]:
         """
         Collect seeds for each configured dataset name, keyed by name.
 
@@ -717,12 +717,12 @@ class DatasetConfiguration:
         Raises:
             DatasetConstraintError: If any configured dataset yields no seeds.
         """
-        result: dict[str, list[Seed]] = {}
+        result: dict[str, list[Seed[Any]]] = {}
         for name in self.dataset_names:
             result[name] = await self._collect_seeds_for_dataset_async(dataset_name=name)
         return result
 
-    async def _collect_seeds_for_dataset_async(self, *, dataset_name: str) -> list[Seed]:
+    async def _collect_seeds_for_dataset_async(self, *, dataset_name: str) -> list[Seed[Any]]:
         """
         Read seeds for a single dataset name without fetching or writing.
 
@@ -828,7 +828,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         inline = self._seeds is not None or self._seed_groups is not None
         return 5 if not inline else "all"
 
-    def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
+    def _build_attack_groups(self, seeds: list[Seed[Any]]) -> list[AttackSeedGroup]:
         """
         Shape raw seeds into attack groups (override seam).
 
@@ -1026,6 +1026,11 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             max_total=max_total, max_dataset_size=max_dataset_size, max_per_dataset="all", validators=validators
         )
         self._configurations = list(configurations)
+
+    @property
+    def configurations(self) -> tuple[DatasetAttackConfiguration, ...]:
+        """The child configurations, in order."""
+        return tuple(self._configurations)
 
     @property
     def has_sampling_limits(self) -> bool:

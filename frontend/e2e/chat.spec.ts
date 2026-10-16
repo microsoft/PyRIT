@@ -152,7 +152,7 @@ async function activateMockTarget(page: Page) {
   await objectiveDefault.selectOption({ index: 1 });
 
   // Return to Chat view
-  await page.getByTitle("Chat").click();
+  await page.getByTitle("Technique.execute").click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
@@ -170,18 +170,18 @@ test.describe("Application Smoke Tests", () => {
   });
 
   test("should display chat ribbon", async ({ page }) => {
-    await expect(page.getByTitle("Chat")).toBeVisible({ timeout: 10000 });
-    await page.getByTitle("Chat").click();
+    await expect(page.getByTitle("Technique.execute")).toBeVisible({ timeout: 10000 });
+    await page.getByTitle("Technique.execute").click();
     await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 10000 });
   });
 
   test("should have New Attack button", async ({ page }) => {
-    await page.getByTitle("Chat").click();
+    await page.getByTitle("Technique.execute").click();
     await expect(page.getByRole("button", { name: /new attack/i })).toBeVisible();
   });
 
   test("should offer the target picker without a bottom warning", async ({ page }) => {
-    await page.getByTitle("Chat").click();
+    await page.getByTitle("Technique.execute").click();
     await expect(page.getByRole("combobox", { name: "Chat target" })).toBeVisible();
     await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
   });
@@ -190,7 +190,7 @@ test.describe("Application Smoke Tests", () => {
 test.describe("Theme Toggle", () => {
   test("should toggle dark/light theme", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByTitle("Chat")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTitle("Technique.execute")).toBeVisible({ timeout: 10000 });
 
     // The app defaults to system mode, so the toggle button title should say "Theme: System"
     const themeBtn = page.getByTitle("Theme: System");
@@ -246,7 +246,7 @@ test.describe("Chat Functionality", () => {
       });
     });
 
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("Start a mobile conversation");
     await page.getByRole("button", { name: /send/i }).click();
     await expect(getMessageByText(page, "Start a mobile conversation")).toBeVisible();
@@ -283,7 +283,7 @@ test.describe("Chat Functionality", () => {
   });
 
   test("should send a message and receive backend response", async ({ page }) => {
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await expect(input).toBeEnabled();
 
     await input.fill("Hello, this is a test message");
@@ -299,7 +299,7 @@ test.describe("Chat Functionality", () => {
   });
 
   test("should clear input after sending", async ({ page }) => {
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("Test message");
     await page.getByRole("button", { name: /send/i }).click();
 
@@ -308,7 +308,7 @@ test.describe("Chat Functionality", () => {
 
   test("should disable send button when input is empty", async ({ page }) => {
     const sendButton = page.getByRole("button", { name: /send/i });
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
 
     // Clear any existing text
     await input.fill("");
@@ -316,13 +316,13 @@ test.describe("Chat Functionality", () => {
   });
 
   test("should enable send button when input has text", async ({ page }) => {
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("Some text");
     await expect(page.getByRole("button", { name: /send/i })).toBeEnabled();
   });
 
   test("should start new chat when clicking New Chat", async ({ page }) => {
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("First message");
     await page.getByRole("button", { name: /send/i }).click();
 
@@ -347,7 +347,7 @@ test.describe("Multiple Messages", () => {
   });
 
   test("should maintain conversation history", async ({ page }) => {
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
 
     // Send first message
     await input.fill("First message");
@@ -372,12 +372,17 @@ test.describe("Multiple Messages", () => {
 });
 
 test.describe("Chat without target", () => {
-  test("should disable input when no target is selected", async ({ page }) => {
+  test("should allow drafting but block sending when no target is selected", async ({ page }) => {
     await page.goto("/");
-    await page.getByTitle("Chat").click();
+    await page.getByTitle("Technique.execute").click();
 
-    await expect(page.getByRole("textbox")).toBeDisabled();
+    const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
+    await expect(input).toBeEnabled();
+    await input.fill("Unsent draft");
     await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+    await input.press("Enter");
+    await expect(input).toHaveValue("Unsent draft");
+    await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
   });
 });
 
@@ -508,7 +513,7 @@ test.describe("Multi-modal: Image response", () => {
     await activateMockTarget(page);
     await page.setViewportSize({ width: 390, height: 844 });
 
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("Generate an image");
     await page.getByRole("button", { name: /send/i }).click();
 
@@ -607,7 +612,7 @@ test.describe("Multi-modal: Audio response", () => {
     await activateMockTarget(page);
     await page.setViewportSize({ width: 390, height: 844 });
 
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("Speak this out loud");
     await page.getByRole("button", { name: /send/i }).click();
 
@@ -679,7 +684,7 @@ test.describe("Multi-modal: Video response", () => {
     await page.goto("/");
     await activateMockTarget(page);
 
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("Create a video clip");
     await page.getByRole("button", { name: /send/i }).click();
 
@@ -721,7 +726,7 @@ test.describe("Multi-modal: Mixed text + image response", () => {
     await page.goto("/");
     await activateMockTarget(page);
 
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("Analyze this");
     await page.getByRole("button", { name: /send/i }).click();
 
@@ -751,7 +756,7 @@ test.describe("Multi-modal: Error response from target", () => {
     await page.goto("/");
     await activateMockTarget(page);
 
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("unsafe prompt");
     await page.getByRole("button", { name: /send/i }).click();
 
@@ -772,7 +777,7 @@ test.describe("Multi-turn conversation flow", () => {
   });
 
   test("should send three messages in sequence", async ({ page }) => {
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     let createdAttacks = 0;
     page.on("request", (request: Request) => {
       if (request.method() === "POST" && new URL(request.url()).pathname === "/api/attacks") {
@@ -812,7 +817,7 @@ test.describe("Multi-turn conversation flow", () => {
   });
 
   test("should reset conversation on New Chat and send again", async ({ page }) => {
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
 
     // Send a message
     await input.fill("Before reset");
@@ -912,7 +917,7 @@ test.describe("Target type scenarios", () => {
       .selectOption("dall-e-image-gen");
 
     // Navigate to chat
-    await page.getByTitle("Chat").click();
+    await page.getByTitle("Technique.execute").click();
     // Scope queries to the badge so we don't also match the (hidden)
     // copy of the target text that Fluent's Tooltip renders into the DOM.
     const badge = page.getByTestId("target-badge");
@@ -929,7 +934,7 @@ test.describe("Conversation export", () => {
     await activateMockTarget(page);
 
     // A viewable conversation must be on screen before export is enabled.
-    await page.getByRole("textbox").fill("Export me please");
+    await page.getByTestId("chat-input").fill("Export me please");
     await page.getByRole("button", { name: /send/i }).click();
     await expect(
       page.getByText("Mock response for: Export me please"),
@@ -1017,7 +1022,7 @@ test.describe("Conversation export with media", () => {
     await page.goto("/");
     await activateMockTarget(page);
 
-    await page.getByRole("textbox").fill("Generate an image");
+    await page.getByTestId("chat-input").fill("Generate an image");
     await page.getByRole("button", { name: /send/i }).click();
     await expect(page.locator('img:not([alt="Co-PyRIT Logo"])')).toBeVisible({ timeout: 10000 });
 
@@ -1070,7 +1075,7 @@ test.describe("Conversation export with media", () => {
     await page.goto("/");
     await activateMockTarget(page);
 
-    await page.getByRole("textbox").fill("Generate an image");
+    await page.getByTestId("chat-input").fill("Generate an image");
     await page.getByRole("button", { name: /send/i }).click();
     await expect(page.locator('img:not([alt="Co-PyRIT Logo"])')).toBeVisible({ timeout: 10000 });
 

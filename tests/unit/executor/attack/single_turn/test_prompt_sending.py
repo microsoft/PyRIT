@@ -1292,8 +1292,8 @@ class TestDetermineAttackOutcome:
 
         outcome, reason = attack._determine_attack_outcome(response=sample_response, score=None, context=basic_context)
 
-        assert outcome == AttackOutcome.FAILURE
-        assert reason == "Failed to achieve objective after 3 attempts"
+        assert outcome == AttackOutcome.UNDETERMINED
+        assert reason == "Objective scorer returned no score"
 
     def test_determine_attack_outcome_edge_case_empty_response(self, mock_target, basic_context):
         """Test with an empty response object"""
@@ -1306,8 +1306,8 @@ class TestDetermineAttackOutcome:
 
         outcome, reason = attack._determine_attack_outcome(response=empty_response, score=None, context=basic_context)
 
-        assert outcome == AttackOutcome.FAILURE
-        assert reason == "Failed to achieve objective after 3 attempts"
+        assert outcome == AttackOutcome.UNDETERMINED
+        assert reason == "Objective scorer returned no score"
 
 
 @pytest.mark.usefixtures("patch_central_database")

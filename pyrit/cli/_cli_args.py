@@ -19,15 +19,18 @@ import inspect
 import json
 import logging
 import shlex
+import sys
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
+from uuid import UUID
 
 from pyrit.common.cli_helpers import (
     CONFIG_FILE_HELP,
     validate_log_level,
     validate_log_level_argparse,
 )
+from pyrit.common.deprecation import print_deprecation_message
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -173,6 +176,84 @@ def parse_dataset_limit(value: str) -> int | Literal["all", "default"]:
     return normalize_dataset_limit(value)
 
 
+def parse_dataset_source(value: str) -> Any:
+    """
+    Parse a named source with an optional source cap.
+
+    Returns:
+        DatasetSourceInput: Validated named source.
+
+    Raises:
+        ValueError: If the token is malformed.
+    """
+    from pyrit.models.scenario_dataset import DatasetSourceInput
+
+    parts = value.split(":")
+    if len(parts) > 2 or not parts[0].strip():
+        raise ValueError("Expected dataset name[:positive-limit|all|default].")
+    return DatasetSourceInput(name=parts[0], max_size=parse_dataset_limit(parts[1]) if len(parts) == 2 else "default")
+
+
+def parse_dataset_fetch(value: str) -> str:
+    """
+    Validate the global preparation policy without importing dataset providers.
+
+    Returns:
+        str: Validated preparation policy.
+
+    Raises:
+        ValueError: If the policy is unsupported.
+    """
+    if value not in {"never", "if_missing"}:
+        raise ValueError("Dataset fetch must be 'never' or 'if_missing'.")
+    return value
+
+
+def build_dataset_request_fields(args: dict[str, Any]) -> dict[str, Any]:
+    """
+    Build the same edit-only dataset request for scanner and shell.
+
+    Returns:
+        dict[str, Any]: Either the new request or legacy dataset fields.
+
+    Raises:
+        ValueError: If new and deprecated flags are mixed.
+    """
+    from pyrit.models.scenario_dataset import ScenarioDatasetRequest
+
+    new_keys = ("datasets", "max_per_dataset", "max_total", "dataset_fetch")
+    new_form = any(args.get(key) is not None for key in new_keys)
+    if new_form and any(args.get(key) is not None for key in ("dataset_names", "max_dataset_size")):
+        raise ValueError(
+            "Do not mix --datasets/--max-per-dataset/--max-total/--dataset-fetch with deprecated dataset flags."
+        )
+    filters = collapse_dataset_filters(args["dataset_filters"]) if args.get("dataset_filters") else None
+    if new_form:
+        return {
+            "datasets": ScenarioDatasetRequest(
+                sources=args.get("datasets"),
+                max_per_dataset=args.get("max_per_dataset") or "default",
+                max_total=args.get("max_total") or "default",
+                fetch=args.get("dataset_fetch"),
+                filters=filters,
+            )
+        }
+    fields: dict[str, Any] = {}
+    for key in ("dataset_names", "max_dataset_size"):
+        if args.get(key) is not None:
+            from pyrit.common.deprecation import print_deprecation_message
+
+            print_deprecation_message(
+                old_item="--" + key.replace("_", "-"),
+                new_item="--datasets" if key == "dataset_names" else "--max-total",
+                removed_in="1.4.0",
+            )
+            fields[key] = args[key]
+    if filters:
+        fields["dataset_filters"] = filters
+    return fields
+
+
 # ---------------------------------------------------------------------------
 # Argparse adapter
 # ---------------------------------------------------------------------------
@@ -311,6 +392,12 @@ def parse_memory_labels(json_string: str) -> dict[str, str]:
             raise ValueError(f"All label keys and values must be strings. Got: {key}={value}")
         validated_labels[key] = value
 
+    # TODO(PyRIT 1.4): Remove this notice with Operation name attribution.
+    if "operation" in validated_labels:
+        print_deprecation_message(old_item="--memory-labels operation", new_item="--operation-id", removed_in="1.4.0")
+        # DeprecationWarning is suppressed by default in a CLI, so also print a visible note.
+        print("Note: 'operation' in --memory-labels is deprecated; use --operation-id instead.", file=sys.stderr)
+
     return validated_labels
 
 
@@ -426,9 +513,11 @@ ARG_HELP = {
     "memory_labels": 'Additional labels as JSON string (e.g., \'{"experiment": "test1"}\')',
     "database": "Database type to use for memory storage",
     "log_level": "Logging level",
-    "dataset_names": "List of dataset names to use instead of scenario defaults (e.g., harmbench advbench). "
+    "dataset_names": "Deprecated; use --datasets. List of dataset names instead of scenario defaults "
+    "(e.g., harmbench advbench). "
     "Retains source settings for names already selected by the scenario",
-    "max_dataset_size": "Total attack-group limit (positive integer, 'default', or 'all' for no total limit). "
+    "max_dataset_size": "Deprecated; use --max-total. Total attack-group limit "
+    "(positive integer, 'default', or 'all'). "
     "Omit to retain the scenario default. Per-dataset limits still apply",
     "dataset_filters": "Dataset seed filters as KEY=VALUE tokens "
     "(e.g., harm_categories=cyber data_types=text). Keys filter seeds before sizing. "
@@ -627,6 +716,11 @@ _MEMORY_LABELS_ARG = _ArgSpec(
     result_key="memory_labels",
     parser=parse_memory_labels,
 )
+_OPERATION_ID_ARG = _ArgSpec(
+    flags=["--operation-id"],
+    result_key="operation_id",
+    parser=UUID,
+)
 _LOG_LEVEL_ARG = _ArgSpec(
     flags=["--log-level"],
     result_key="log_level",
@@ -659,9 +753,14 @@ _RUN_ARG_SPECS: list[_ArgSpec] = [
     _MAX_CONCURRENCY_ARG,
     _MAX_RETRIES_ARG,
     _MEMORY_LABELS_ARG,
+    _OPERATION_ID_ARG,
     _DATASET_NAMES_ARG,
     _MAX_DATASET_SIZE_ARG,
     _DATASET_FILTERS_ARG,
+    _ArgSpec(flags=["--datasets"], result_key="datasets", multi_value=True, parser=parse_dataset_source),
+    _ArgSpec(flags=["--max-per-dataset"], result_key="max_per_dataset", parser=parse_dataset_limit),
+    _ArgSpec(flags=["--max-total"], result_key="max_total", parser=parse_dataset_limit),
+    _ArgSpec(flags=["--dataset-fetch"], result_key="dataset_fetch", parser=parse_dataset_fetch),
     _TARGET_ARG,
 ]
 

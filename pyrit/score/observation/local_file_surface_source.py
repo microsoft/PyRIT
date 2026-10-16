@@ -22,6 +22,7 @@ from pyrit.models import (
     Acquisition,
     ComponentIdentifier,
     Observation,
+    SurfaceBaseline,
     SurfaceCoverage,
     SurfaceEntry,
     SurfaceMatch,
@@ -80,7 +81,11 @@ class LocalFileSurfaceSource:
     next entry or chunk.
 
     The snapshot shows what the root holds when it is read, not which run wrote it. A caller
-    that needs attribution gives each attempt its own root.
+    that needs attribution gives each attempt its own isolated root. The optional lifecycle
+    supports content-state comparison:
+    ``start_observing_async`` records a baseline before the attempt acts, and
+    ``finalize_async`` takes a snapshot that carries it, so a scorer compares each location
+    with what it held before.
     """
 
     _READ_CHUNK_BYTES = 1 << 16
@@ -151,25 +156,85 @@ class LocalFileSurfaceSource:
             ValueError: If the scorable leaves the root.
             asyncio.CancelledError: If the awaiting task is cancelled; the worker stops too.
         """
+        return await self._acquire_async(scorable=scorable, baseline=None)
+
+    async def start_observing_async(self, *, scorable: SurfaceScorable) -> SurfaceBaseline:
+        """
+        Record what the named locations hold before an attempt acts.
+
+        The baseline uses the same bounds as a snapshot, so a location it could not read in
+        full is recorded with what was retained and a gap in its coverage.
+
+        Args:
+            scorable (SurfaceScorable): The locations to record.
+
+        Returns:
+            SurfaceBaseline: The recorded entries and their coverage.
+
+        Raises:
+            TypeError: If the acquisition produced another payload kind.
+        """
+        observation = await self._acquire_async(scorable=scorable, baseline=None)
+        payload = observation.payload
+        if not isinstance(payload, SurfaceObservationPayload):
+            raise TypeError("A surface acquisition must produce a surface payload.")
+        return SurfaceBaseline(captured_at=observation.observed_at, entries=payload.entries, coverage=payload.coverage)
+
+    async def finalize_async(self, *, scorable: SurfaceScorable, baseline: SurfaceBaseline) -> Observation:
+        """
+        Acquire a snapshot of the named locations that carries the baseline it is compared with.
+
+        Args:
+            scorable (SurfaceScorable): The locations to read.
+            baseline (SurfaceBaseline): What the locations held when the attempt started.
+
+        Returns:
+            Observation: The snapshot, carrying the baseline.
+        """
+        return await self._acquire_async(scorable=scorable, baseline=baseline)
+
+    async def _acquire_async(self, *, scorable: SurfaceScorable, baseline: SurfaceBaseline | None) -> Observation:
+        """
+        Run one bounded acquisition in a worker thread.
+
+        Returns:
+            Observation: The snapshot, including acquisition and coverage state.
+
+        Raises:
+            ValueError: If the scorable leaves the root.
+            asyncio.CancelledError: If the awaiting task is cancelled; the worker stops too.
+        """
         relative = PurePosixPath(scorable.uri.lstrip("/"))
         if ".." in relative.parts or not relative.parts:
             raise ValueError("A file surface locator must name a location inside the root.")
         cancel = threading.Event()
         try:
-            return await asyncio.to_thread(self._acquire, scorable=scorable, relative=relative, cancel=cancel)
+            return await asyncio.to_thread(
+                self._acquire, scorable=scorable, relative=relative, cancel=cancel, baseline=baseline
+            )
         except asyncio.CancelledError:
             # to_thread cannot interrupt its worker; the flag stops it at the next checkpoint.
             cancel.set()
             raise
 
-    def _acquire(self, *, scorable: SurfaceScorable, relative: PurePosixPath, cancel: threading.Event) -> Observation:
+    def _acquire(
+        self,
+        *,
+        scorable: SurfaceScorable,
+        relative: PurePosixPath,
+        cancel: threading.Event,
+        baseline: SurfaceBaseline | None,
+    ) -> Observation:
         try:
             root = Path(os.path.realpath(self._root, strict=True))
         except OSError:
             root = None
         if root is None or not root.is_dir():
             return self._observation(
-                scorable=scorable, acquisition=Acquisition.UNAVAILABLE, reasons=("surface_root_unavailable",)
+                scorable=scorable,
+                acquisition=Acquisition.UNAVAILABLE,
+                reasons=("surface_root_unavailable",),
+                baseline=baseline,
             )
 
         budget = _Budget(
@@ -198,6 +263,7 @@ class LocalFileSurfaceSource:
             acquisition=Acquisition.PARTIAL if reasons else Acquisition.COMPLETE,
             reasons=reasons,
             entries=tuple(entries),
+            baseline=baseline,
         )
 
     # --- enumeration ---------------------------------------------------------------------
@@ -416,6 +482,7 @@ class LocalFileSurfaceSource:
         acquisition: Acquisition,
         reasons: tuple[str, ...],
         entries: tuple[SurfaceEntry, ...] = (),
+        baseline: SurfaceBaseline | None = None,
     ) -> Observation:
         return Observation(
             source_identifier=self.get_identifier(),
@@ -425,6 +492,7 @@ class LocalFileSurfaceSource:
                 scope=scorable,
                 entries=entries,
                 coverage=SurfaceCoverage(complete=acquisition is Acquisition.COMPLETE, reasons=reasons),
+                baseline=baseline,
             ),
         )
 

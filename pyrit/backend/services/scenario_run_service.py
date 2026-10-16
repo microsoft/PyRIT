@@ -82,7 +82,7 @@ from pyrit.models.catalog.scenario import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
-from pyrit.scenario import Scenario
+from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import override_default_adversarial_target
 
 logger = logging.getLogger(__name__)
@@ -108,6 +108,7 @@ _LAUNCH_REQUEST_FIELDS = (
     "target_name",
     "adversarial_target_name",
     "techniques",
+    "datasets",
     "dataset_names",
     "max_dataset_size",
     "dataset_filters",
@@ -115,6 +116,8 @@ _LAUNCH_REQUEST_FIELDS = (
     "max_retries",
     "include_baseline",
 )
+# Fields added after the first saved launch records; older records omit them.
+_OPTIONAL_LAUNCH_FIELDS = frozenset({"adversarial_target_name", "datasets", "max_dataset_size"})
 
 _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
     {
@@ -125,6 +128,7 @@ _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
         "num_jailbreak_attempts",
         "num_jailbreaks",
         "sub_harm",
+        "incompatible_technique_policy",
         "version",
     }
 )
@@ -330,12 +334,14 @@ class ScenarioRunService:
             # Launch records from before per-run target selection used the server default.
             raw_request = {"adversarial_target_name": None, **raw_request}
         if not isinstance(raw_request, dict) or any(
-            name not in raw_request for name in _LAUNCH_REQUEST_FIELDS if name != "max_dataset_size"
+            name not in raw_request for name in _LAUNCH_REQUEST_FIELDS if name not in _OPTIONAL_LAUNCH_FIELDS
         ):
             raise ScenarioRunConflictError("The saved launch configuration is incomplete; resume was not started.")
         try:
-            request = RunScenarioRequest.model_validate(
-                {name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS if name in raw_request}, strict=True
+            # JSON validation accepts saved enum values as strings while keeping strict type checks.
+            request = RunScenarioRequest.model_validate_json(
+                json.dumps({name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS if name in raw_request}),
+                strict=True,
             )
         except ValidationError as exc:
             raise ScenarioRunConflictError(
@@ -358,13 +364,25 @@ class ScenarioRunService:
         identifier = stored.scenario_identifier
         if (
             "scenario_techniques" in declared_names and request.techniques is None and identifier.techniques is None
-        ) or ("dataset_config" in declared_names and request.dataset_names is None and identifier.datasets is None):
+        ) or ("dataset_config" in declared_names and request.dataset_request is None and identifier.datasets is None):
             raise ScenarioRunConflictError("The saved scenario identity is missing techniques or datasets.")
         custom_params = {
             name: value
             for name, value in identifier.params.items()
             if name not in {"version", "techniques", "datasets"}
         }
+        saved_policy = raw_request.get(
+            "incompatible_technique_policy", stored.metadata.get("incompatible_technique_policy")
+        )
+        if saved_policy is not None:
+            try:
+                custom_params["incompatible_technique_policy"] = IncompatibleTechniquePolicy(saved_policy).value
+            except ValueError as exc:
+                raise ScenarioRunConflictError(
+                    "The saved incompatible-technique policy is invalid; resume was not started."
+                ) from exc
+        # Dataset names are not copied from the identity: the saved request reproduces them, and the
+        # stored-identity check on initialization rejects any difference.
         return request.model_copy(
             update={
                 "scenario_result_id": str(stored.id),
@@ -374,10 +392,8 @@ class ScenarioRunService:
                 "techniques": request.techniques
                 if request.techniques is not None or "scenario_techniques" not in declared_names
                 else identifier.techniques,
-                "dataset_names": request.dataset_names
-                if request.dataset_names is not None or "dataset_config" not in declared_names
-                else identifier.datasets,
                 "labels": dict(stored.labels) if "memory_labels" in declared_names else None,
+                "operation_id": stored.operation_id,
             },
             deep=True,
         )
@@ -408,6 +424,7 @@ class ScenarioRunService:
         try:
             if self._stopping:
                 raise RuntimeError("Scenario run scheduling is stopping.")
+            request = await self._validate_run_operation_async(request=request)
             resumed_from_cancelled = await self._is_run_cancelled_async(scenario_result_id=request.scenario_result_id)
             if request.scenario_result_id:
                 self._preparing_run_ids.add(request.scenario_result_id)
@@ -568,6 +585,34 @@ class ScenarioRunService:
             )
         logger.warning("Abandoned scenario preparation completed after the request was cancelled.")
 
+    async def _validate_run_operation_async(self, *, request: RunScenarioRequest) -> RunScenarioRequest:
+        """
+        Check the saved reference before initializers or provider-backed preparation.
+
+        A fresh run's explicit ID wins over a deprecated ``labels.operation`` name, which is then removed.
+        Otherwise the name stays for the scenario to resolve.
+
+        Returns:
+            The request carrying its stored run attribution when resuming, or its checked ID.
+
+        Raises:
+            LookupError: If a supplied Operation ID does not exist.
+            ValueError: If continuation attempts to change attribution.
+        """
+        if request.scenario_result_id:
+            stored = await self._memory.get_scenario_result_header_async(scenario_result_id=request.scenario_result_id)
+            if stored is None:
+                raise ScenarioRunNotFoundError(f"Scenario run '{request.scenario_result_id}' not found.")
+            if request.operation_id is not None and request.operation_id != stored.operation_id:
+                raise ValueError("Operation attribution is immutable on continuation")
+            return request.model_copy(update={"operation_id": stored.operation_id})
+        if request.operation_id is None:
+            return request
+        await self._memory.require_operation_async(operation_id=request.operation_id)
+        # TODO(PyRIT 1.4): Remove with Operation name attribution, which the scenario resolves until then.
+        labels = {key: value for key, value in (request.labels or {}).items() if key != "operation"}
+        return request.model_copy(update={"labels": labels if request.labels is not None else None})
+
     async def _prepare_run_async(self, *, request: RunScenarioRequest) -> _PreparedRun:
         """
         Resolve and initialize the scenario for a run request.
@@ -609,9 +654,7 @@ class ScenarioRunService:
                 scenario_class=scenario_class,
                 objective_target=objective_target,
                 techniques=request.techniques,
-                dataset_names=request.dataset_names,
-                max_dataset_size=request.max_dataset_size,
-                dataset_filters=request.dataset_filters,
+                datasets=request.dataset_request,
                 include_baseline=request.include_baseline,
                 max_concurrency=request.max_concurrency
                 if "max_concurrency" in declared_names or "max_concurrency" in request.model_fields_set
@@ -621,6 +664,7 @@ class ScenarioRunService:
                 else None,
                 memory_labels=request.labels,
             )
+            init_kwargs["operation_id"] = request.operation_id
             scenario = await self._initialize_scenario_async(request=request, init_kwargs=init_kwargs)
         return _PreparedRun(scenario=scenario, adversarial_target=adversarial_target)
 
@@ -675,6 +719,7 @@ class ScenarioRunService:
         scenario_names: Sequence[str] | None = None,
         statuses: Sequence[ScenarioRunState | str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
+        operation_ids: Sequence[uuid.UUID] | None = None,
         limit: int = 100,
         cursor: str | None = None,
     ) -> ScenarioRunListResponse:
@@ -685,6 +730,8 @@ class ScenarioRunService:
             scenario_names: Registered or persisted scenario names to match.
             statuses: Run states to match.
             labels: Labels with OR-within-key and AND-across-key semantics.
+            operation_ids: Saved Operation IDs to match. Legacy runs that only carry an
+                operation label never match.
             limit: Maximum number of runs to return.
             cursor: Opaque cursor from the previous page.
 
@@ -700,13 +747,14 @@ class ScenarioRunService:
             }
         )
         normalized_labels = normalize_label_filters(labels=labels)
-        fingerprint = fingerprint_filters(
-            filters={
-                "scenario_names": normalized_names,
-                "statuses": normalized_statuses,
-                "labels": normalized_labels,
-            }
-        )
+        fingerprint_values: dict[str, Any] = {
+            "scenario_names": normalized_names,
+            "statuses": normalized_statuses,
+            "labels": normalized_labels,
+        }
+        if operation_ids:
+            fingerprint_values["operation_ids"] = [str(operation_id) for operation_id in operation_ids]
+        fingerprint = fingerprint_filters(filters=fingerprint_values)
         decoded_cursor = decode_keyset_cursor(cursor=cursor, fingerprint=fingerprint)
         after = (
             ScenarioHistoryKeysetCursor(
@@ -720,6 +768,7 @@ class ScenarioRunService:
             scenario_names=normalized_names,
             statuses=normalized_statuses,
             labels=normalized_labels,
+            operation_ids=operation_ids,
             cursor=after,
             limit=limit,
         )
@@ -737,12 +786,24 @@ class ScenarioRunService:
                 **(await self._memory.get_scenario_history_aggregates_async(scenario_result_ids=unusable_plan_ids)),
             }
         aggregates = await self._recount_with_sdk_statistics_async(aggregates=aggregates, plans=plans)
+        linked_ids = {record.operation_id for record in records if record.operation_id is not None}
+        operation_names = (
+            {
+                operation.id: operation.name
+                for operation in await self._memory.get_operations_async(operation_ids=list(linked_ids))
+            }
+            if linked_ids
+            else {}
+        )
         items = [
             self._build_history_summary(
                 record=record,
                 atomic_groups=plans[record.scenario_result_id],
                 aggregate=aggregates.get(record.scenario_result_id)
                 or ScenarioHistoryAggregate.empty(scenario_result_id=record.scenario_result_id),
+                operation_name=operation_names.get(record.operation_id)
+                if record.operation_id is not None
+                else record.labels.get("operation"),
             )
             for record in records
         ]
@@ -1214,7 +1275,28 @@ class ScenarioRunService:
         scenario_class = scenario_registry.get_class(request.scenario_name)
         declared = scenario_class.supported_parameters()
         declared_names = {parameter.name for parameter in declared}
-        launch_request = {name: getattr(request, name) for name in _LAUNCH_REQUEST_FIELDS}
+        launch_request = request.model_dump(mode="json", include=set(_LAUNCH_REQUEST_FIELDS))
+        policy_parameter = next(
+            (parameter for parameter in declared if parameter.name == "incompatible_technique_policy"),
+            None,
+        )
+        policy = (
+            resolve_declared_params(
+                declared=[policy_parameter],
+                raw_args={
+                    "incompatible_technique_policy": (request.scenario_params or {}).get(
+                        "incompatible_technique_policy"
+                    )
+                },
+                owner=f"Scenario '{request.scenario_name}'",
+            )["incompatible_technique_policy"]
+            if policy_parameter is not None
+            else None
+        )
+        if policy_parameter is not None:
+            launch_request["incompatible_technique_policy"] = (
+                policy or scenario_class.INCOMPATIBLE_TECHNIQUE_POLICY
+            ).value
         numeric_parameters = [
             parameter for parameter in declared if parameter.name in {"max_concurrency", "max_retries"}
         ]
@@ -1633,6 +1715,7 @@ class ScenarioRunService:
         record: ScenarioHistoryRunRecord,
         atomic_groups: list[ScenarioRunPlanAtomicGroup] | None,
         aggregate: ScenarioHistoryAggregate,
+        operation_name: str | None = None,
     ) -> ScenarioRunListItem:
         """
         Map lightweight persisted history projections to the public summary DTO.
@@ -1730,6 +1813,8 @@ class ScenarioRunService:
             objective_achieved_rate=success_percentage(succeeded=successful, completed=completed) or 0,
             total_retries=aggregate.total_retries,
             labels=record.labels,
+            operation_id=record.operation_id,
+            operation_name=operation_name,
             completed_at=record.completed_at if terminal else None,
             pyrit_version=record.pyrit_version,
             target=target,

@@ -170,6 +170,28 @@ describe('ObjectiveHeader', () => {
     })
   })
 
+  it('offers Add as finding in Attack Result Details, closing the details when chosen', async () => {
+    const user = userEvent.setup()
+    const onAddFinding = jest.fn()
+    const { rerender } = render(
+      <TestWrapper>
+        <ObjectiveHeader objective="" outcome="undetermined" onAddFinding={onAddFinding} />
+      </TestWrapper>,
+    )
+
+    await user.click(screen.getByRole('button', { name: /objective achieved outcome: undetermined/i }))
+    expect(screen.getByRole('button', { name: 'Add as finding' })).toBeDisabled()
+    rerender(
+      <TestWrapper>
+        <ObjectiveHeader objective="" outcome="undetermined" onAddFinding={onAddFinding} canAddFinding />
+      </TestWrapper>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Add as finding' }))
+
+    expect(onAddFinding).toHaveBeenCalledTimes(1)
+    await waitFor(() => { expect(screen.queryByText('Attack Result Details')).not.toBeInTheDocument() })
+  })
+
   it('does not render an expand toggle when the objective fits on one line', () => {
     render(
       <TestWrapper>

@@ -264,6 +264,10 @@ async function mockScenarioAPIs(page: Page): Promise<ScenarioMocks> {
     });
   });
 
+  await page.route(/\/api\/datasets(?:\?|$)/, async (route) => {
+    await route.fulfill({ json: { items: [] } });
+  });
+
   await page.route(/\/api\/runtime(?:\?|$)/, async (route) => {
     await route.fulfill({
       status: 200,
@@ -535,12 +539,14 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     const primaryNavigation = page.getByRole("navigation", { name: "Primary" });
     const primaryButtons = primaryNavigation.getByRole("button");
     await expect(primaryNavigation.getByRole("button", { name: "Configuration" })).toBeVisible();
-    await expect(primaryButtons).toHaveCount(7);
+    await expect(primaryButtons).toHaveCount(9);
     expect(await primaryButtons.evaluateAll((buttons) =>
       buttons.map((button) => button.getAttribute("aria-label")))).toEqual([
       "Home",
-      "Chat",
+      "Technique.execute",
       "History",
+      "Analytics",
+      "Operations",
       "Scanner",
       "Datasets",
       "Registry",

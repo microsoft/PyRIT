@@ -5,12 +5,13 @@ import os
 import uuid
 from collections.abc import AsyncGenerator, MutableSequence, Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import inspect, or_, select, text
 from sqlalchemy.dialects import mssql
+from sqlalchemy.orm import Query, Session
 
 from pyrit.common.singleton import Singleton
 from pyrit.converter.base64_converter import Base64Converter
@@ -119,6 +120,90 @@ async def test_insert_embedding_entry_async(memory_interface: AzureSQLMemory):
         assert persisted_embedding_entry is not None
         assert persisted_embedding_entry.embedding == [1, 2, 3]
         assert persisted_embedding_entry.embedding_type_name == "test_type"
+
+
+@pytest.mark.parametrize(
+    "prompt_metadata",
+    [
+        {"plain": "value", "plain ": "padded value"},
+        {"": "empty key", " ": "space key"},
+        {"café": "unicode key", "café ": "padded unicode key"},
+    ],
+)
+def test_metadata_conditions_guard_literal_key_lengths(
+    uninitialized_memory_interface: AzureSQLMemory, prompt_metadata: dict[str, str]
+):
+    condition = uninitialized_memory_interface._get_metadata_conditions(prompt_metadata=prompt_metadata)[0]
+    compiled = condition.compile(dialect=mssql.dialect())
+    sql = str(compiled)
+
+    assert sql.count("DATALENGTH(") == 2 * len(prompt_metadata)
+    for index, (key, value) in enumerate(prompt_metadata.items()):
+        alias = f"metadata_{index}"
+        assert f"[{alias}].[key] = :md_key_{index}" in sql
+        assert f"DATALENGTH([{alias}].[key]) = DATALENGTH(CAST(:md_key_{index} AS NVARCHAR(MAX)))" in sql
+        assert f"[{alias}].[value] = :md_value_{index}" in sql
+        assert compiled.params[f"md_key_{index}"] == key
+        assert compiled.params[f"md_value_{index}"] == value
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"payload": "{}"},
+        {"payload": "[]"},
+        {"payload": "", "count": 7, "enabled": "true"},
+        {'branch"."leaf': "{}", r"\u0061": "[]"},
+    ],
+)
+def test_metadata_conditions_only_match_scalar_json_types(
+    *, uninitialized_memory_interface: AzureSQLMemory, metadata: dict[str, str | int]
+) -> None:
+    conditions = [
+        *uninitialized_memory_interface._get_message_pieces_prompt_metadata_conditions(prompt_metadata=metadata),
+        uninitialized_memory_interface._get_seed_metadata_conditions(metadata=metadata),
+    ]
+
+    for condition in conditions:
+        compiled = condition.compile(dialect=mssql.dialect(paramstyle="qmark"))
+        sql = str(compiled)
+        for index, (key, value) in enumerate(metadata.items()):
+            assert f"[metadata_{index}].[type] IN (1, 2, 3)" in sql
+            assert compiled.params[f"md_key_{index}"] == key
+            assert compiled.params[f"md_value_{index}"] == str(value)
+        assert compiled.positiontup == [
+            param
+            for index in range(len(metadata))
+            for param in (f"md_key_{index}", f"md_key_{index}", f"md_value_{index}")
+        ]
+
+
+@pytest.mark.parametrize("value", ["{}", "[]"])
+@pytest.mark.parametrize("remove_groups", [False, True])
+def test_remove_seeds_metadata_only_matches_scalar_json_types(
+    *, uninitialized_memory_interface: AzureSQLMemory, value: str, remove_groups: bool
+) -> None:
+    session = MagicMock(spec=Session)
+    query = MagicMock(spec=Query)
+    session.query.return_value = query
+    query.filter.return_value = query
+    query.delete.return_value = 1
+
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        if remove_groups:
+            removed = uninitialized_memory_interface._execute_remove_seed_groups_from_memory(
+                metadata={"payload": value}
+            )
+        else:
+            removed = uninitialized_memory_interface._execute_remove_seeds_from_memory(metadata={"payload": value})
+
+    assert removed == 1
+    condition = query.filter.call_args.args[0]
+    compiled = condition.compile(dialect=mssql.dialect())
+    assert "[metadata_0].[type] IN (1, 2, 3)" in str(compiled)
+    assert compiled.params["md_key_0"] == "payload"
+    assert compiled.params["md_value_0"] == value
+    session.commit.assert_called_once()
 
 
 def test_disable_embedding(memory_interface: AzureSQLMemory):
@@ -806,12 +891,38 @@ def test_init_prod_connection_runs_check_only_not_migration():
                 connection_string=prod_conn,
                 results_container_url="https://test.blob.core.windows.net/test",
                 results_sas_token="valid_sas_token",
+                skip_schema_migration=False,
             )
             mock_check.assert_called_once()
             mock_migration.assert_not_called()
     finally:
         Singleton._instances.clear()
         Singleton._instances.update(saved)
+
+
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_internal_deployment_checks_schema_without_upgrade(
+    *, uninitialized_memory_interface: AzureSQLMemory, mismatch: bool
+) -> None:
+    from alembic.util.exc import CommandError
+
+    uninitialized_memory_interface._skip_schema_migration = False
+    with (
+        patch.dict(os.environ, {"PYRIT_REQUIRE_CURRENT_SCHEMA": "true"}),
+        patch.object(
+            uninitialized_memory_interface,
+            "_check_schema_migration",
+            side_effect=CommandError("Schema mismatch") if mismatch else None,
+        ) as check,
+        patch.object(uninitialized_memory_interface, "_run_schema_migration") as upgrade,
+    ):
+        if mismatch:
+            with pytest.raises(CommandError, match="Schema mismatch"):
+                uninitialized_memory_interface._initialize_schema()
+        else:
+            uninitialized_memory_interface._initialize_schema()
+        check.assert_called_once()
+        upgrade.assert_not_called()
 
 
 def test_init_prod_connection_warns_on_schema_mismatch():
@@ -855,8 +966,8 @@ def test_init_prod_connection_warns_on_schema_mismatch():
         Singleton._instances.update(saved)
 
 
-def test_init_allows_migration_when_connection_does_not_match_prod():
-    """Migration proceeds normally when the connection string does not match the prod env var."""
+def test_init_allows_explicit_migration_when_connection_does_not_match_prod() -> None:
+    """An explicit migration is allowed when the connection does not match production."""
     saved = Singleton._instances.copy()
     Singleton._instances.clear()
     try:
@@ -878,6 +989,7 @@ def test_init_allows_migration_when_connection_does_not_match_prod():
                 connection_string="Server=tcp:dev.database.windows.net;",
                 results_container_url="https://test.blob.core.windows.net/test",
                 results_sas_token="valid_sas_token",
+                skip_schema_migration=False,
             )
             mock_migration.assert_called_once()
     finally:
@@ -885,8 +997,8 @@ def test_init_allows_migration_when_connection_does_not_match_prod():
         Singleton._instances.update(saved)
 
 
-def test_init_allows_migration_when_prod_env_var_not_set():
-    """Migration proceeds normally when AZURE_SQL_DB_CONNECTION_STRING_PROD is not set."""
+def test_init_allows_explicit_migration_when_prod_env_var_not_set() -> None:
+    """An explicit migration is allowed when no production connection is configured."""
     saved = Singleton._instances.copy()
     Singleton._instances.clear()
     try:
@@ -909,11 +1021,48 @@ def test_init_allows_migration_when_prod_env_var_not_set():
                 connection_string="Server=tcp:dev.database.windows.net;",
                 results_container_url="https://test.blob.core.windows.net/test",
                 results_sas_token="valid_sas_token",
+                skip_schema_migration=False,
             )
             mock_migration.assert_called_once()
     finally:
         Singleton._instances.clear()
         Singleton._instances.update(saved)
+
+
+@pytest.mark.parametrize("defer_initialization", [False, True])
+@pytest.mark.parametrize("prod_connection", ["", "Server=tcp:prod.database.windows.net;"])
+async def test_init_checks_without_migrating_by_default_async(
+    *, defer_initialization: bool, prod_connection: str
+) -> None:
+    with (
+        patch.object(Singleton, "_instances", {}),
+        patch.object(AzureSQLMemory, "_create_engine"),
+        patch.object(AzureSQLMemory, "_create_auth_token"),
+        patch.object(AzureSQLMemory, "_enable_azure_authorization"),
+        patch.object(AzureSQLMemory, "_check_schema_migration") as check,
+        patch.object(AzureSQLMemory, "_run_schema_migration") as migrate,
+        patch.dict(
+            os.environ,
+            {
+                AzureSQLMemory.AZURE_SQL_DB_CONNECTION_STRING_PROD: prod_connection,
+                "PYRIT_REQUIRE_CURRENT_SCHEMA": "",
+            },
+        ),
+    ):
+        memory = cast(
+            "AzureSQLMemory",
+            AzureSQLMemory(
+                connection_string="Server=tcp:dev.database.windows.net;",
+                results_container_url="https://test.blob.core.windows.net/test",
+                results_sas_token="valid_sas_token",
+                _defer_initialization=defer_initialization,
+            ),
+        )
+        if defer_initialization:
+            check.assert_not_called()
+            await memory.initialize_async()
+        check.assert_called_once()
+        migrate.assert_not_called()
 
 
 def test_init_prod_with_skip_schema_migration_still_checks():
@@ -983,3 +1132,53 @@ def test_scenario_role_match_condition_uses_binary_collation_and_datalength_guar
     compiled_mssql = str(condition.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}))
     assert "(result_role COLLATE Latin1_General_100_BIN2) = 'target_facing'" in compiled_mssql
     assert "datalength(result_role) = datalength(N'target_facing')" in compiled_mssql
+
+
+def test_get_metadata_conditions_binds_special_character_keys(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """Metadata keys are bound literally instead of becoming JSON paths or bind names."""
+    conditions = uninitialized_memory_interface._get_metadata_conditions(
+        prompt_metadata={"a.b": "v1", "prompt-type": "v2"}
+    )
+
+    compiled = conditions[0].compile(dialect=mssql.dialect())
+    sql = str(compiled)
+    assert sql.count("FROM OPENJSON(prompt_metadata)") == 2
+    assert "ISJSON(prompt_metadata) = 1" in sql
+    assert "JSON_VALUE" not in sql
+    assert compiled.params == {
+        "md_key_0": "a.b",
+        "md_value_0": "v1",
+        "md_key_1": "prompt-type",
+        "md_value_1": "v2",
+    }
+
+
+@pytest.mark.parametrize("key", ['a"."b', 'a"b', r"a\b", "", " ", "\u00e9 "])
+@pytest.mark.parametrize("value", ["1", 1])
+def test_metadata_conditions_match_literal_keys_in_all_wrappers(
+    *, uninitialized_memory_interface: AzureSQLMemory, key: str, value: str | int
+) -> None:
+    metadata = {key: value, "selected": 1}
+    direct = uninitialized_memory_interface._get_metadata_conditions(prompt_metadata=metadata)[0]
+    seed = uninitialized_memory_interface._get_seed_metadata_conditions(metadata=metadata)
+    message = uninitialized_memory_interface._get_message_pieces_prompt_metadata_conditions(prompt_metadata=metadata)[0]
+
+    for condition in (direct, seed, message):
+        compiled = condition.compile(dialect=mssql.pyodbc.dialect(paramstyle="qmark"))
+        sql = str(compiled)
+        assert sql.count("FROM OPENJSON(prompt_metadata)") == 2
+        assert "JSON_VALUE" not in sql
+        for index in range(2):
+            assert f"[metadata_{index}].[key] = ?" in sql
+            assert f"DATALENGTH([metadata_{index}].[key]) = DATALENGTH(CAST(? AS NVARCHAR(MAX)))" in sql
+            assert f"[metadata_{index}].[type] IN (1, 2, 3)" in sql
+            assert f"[metadata_{index}].[value] = ?" in sql
+        assert compiled.params == {
+            "md_key_0": key,
+            "md_value_0": str(value),
+            "md_key_1": "selected",
+            "md_value_1": "1",
+        }
+        assert compiled.positiontup == ["md_key_0", "md_key_0", "md_value_0", "md_key_1", "md_key_1", "md_value_1"]

@@ -53,6 +53,7 @@ from pyrit.memory.analytics_sql import (
     JsonObjectAggregate,
     JsonScalar,
     UnicodeLower,
+    UnicodeStrip,
 )
 from pyrit.memory.memory_models import (
     AtomicAttackIdentifierEntry,
@@ -63,6 +64,7 @@ from pyrit.memory.memory_models import (
     AttackTechniqueIdentifierEntry,
     ConverterIdentifierEntry,
     CustomUUID,
+    OperationEntry,
     ScenarioResultEntry,
     TargetIdentifierEntry,
 )
@@ -167,6 +169,7 @@ class AttackAnalyticsQueryCompiler:
         self._label_columns = label_columns or {}
         self._from: FromClause = self.root
         self._sources: dict[str, _Source] = {}
+        self._operation_name: ColumnElement[Any] | None = None
         self._identifiers_ready = False
         self.atomic = AtomicAttackIdentifierEntry.__table__.alias("analytics_atomic")
         self.technique = AttackTechniqueIdentifierEntry.__table__.alias("analytics_technique")
@@ -175,6 +178,7 @@ class AttackAnalyticsQueryCompiler:
         self._converter_arrays: dict[
             AttackAnalyticsConverterDirection, tuple[ColumnElement[Any], ColumnElement[Any]]
         ] = {}
+        self._filter_projections: dict[int, ColumnElement[Any]] = {}
 
     def totals(self) -> Select[*tuple[Any, ...]]:
         """
@@ -665,6 +669,7 @@ class AttackAnalyticsQueryCompiler:
         target_content_hash = func.coalesce(self.target.c.hash, self._target_property(path="hash"))
         request = self._converter_source(direction=AttackAnalyticsConverterDirection.REQUEST)
         response = self._converter_source(direction=AttackAnalyticsConverterDirection.RESPONSE)
+        operation = self._operation_value()
         conditions = self._conditions()
         if after is not None:
             timestamp = after.timestamp.astimezone(UTC).replace(tzinfo=None)
@@ -682,7 +687,7 @@ class AttackAnalyticsQueryCompiler:
                 else func.substring(self.root.c.objective, 1, 200).label("objective_preview"),
                 self.root.c.outcome,
                 self.root.c.timestamp.label("updated_at"),
-                self.root.c.operation,
+                operation.label("operation"),
                 self.root.c.operator,
                 attack.label.label("attack_type"),
                 model.label.label("target_model"),
@@ -731,7 +736,10 @@ class AttackAnalyticsQueryCompiler:
                 ``_from``, but never executes SQL or loads a component instance.
         """
         name = dimension.name
-        if name in {AttackAnalyticsDimensionName.OPERATION, AttackAnalyticsDimensionName.OPERATOR}:
+        if name is AttackAnalyticsDimensionName.OPERATION:
+            value = self._operation_value()
+            return _Source(value=value, label=value)
+        if name is AttackAnalyticsDimensionName.OPERATOR:
             value = self.root.c[name.value]
             return _Source(value=value, label=value)
         if name is AttackAnalyticsDimensionName.LABEL:
@@ -758,9 +766,11 @@ class AttackAnalyticsQueryCompiler:
             return _Source(value=value, label=value, insensitive=True)
         if name is AttackAnalyticsDimensionName.OBJECTIVE_TARGET:
             value = self.root.c.objective_target_eval_hash_v1
+            # Model-less targets record a blank model name; fall through to the class name so
+            # the SDK's short-hash suffix makes the label readable without endpoint details.
             label = func.coalesce(
-                self.target.c.model_name,
-                self._target_property(path="params.model_name", embedded=embedded),
+                func.nullif(UnicodeStrip(self.target.c.model_name), ""),
+                func.nullif(UnicodeStrip(self._target_property(path="params.model_name", embedded=embedded)), ""),
                 self.target.c.class_name,
                 self._target_property(path="class_name", embedded=embedded),
                 value,
@@ -773,6 +783,25 @@ class AttackAnalyticsQueryCompiler:
             self._target_property(path="params.underlying_model_name", embedded=embedded),
         )
         return _Source(value=value, label=value)
+
+    def _operation_value(self) -> ColumnElement[Any]:
+        """
+        Resolve a result's Operation as its saved Operation's current name, else its stored name.
+
+        History lists activity the same way, so results attributed by ID and by a matching name group
+        together. The saved Operation is joined once per compiler. Compacted facts already carry the
+        resolved name.
+
+        Returns:
+            ColumnElement[Any]: The Operation name, or NULL for unassigned activity.
+        """
+        if "operation_id" not in self.root.c:
+            return self.root.c.operation
+        if self._operation_name is None:
+            saved = OperationEntry.__table__.alias("analytics_operation")
+            self._from = self._from.outerjoin(saved, saved.c.id == self.root.c.operation_id)
+            self._operation_name = func.coalesce(saved.c.name, self.root.c.operation)
+        return self._operation_name
 
     def _ensure_identifiers(self) -> None:
         """
@@ -869,7 +898,9 @@ class AttackAnalyticsQueryCompiler:
         A retained converter list takes precedence: migration backfills can have
         fewer edges than recorded members when a child has no usable hash.
         Edges remain a fallback for identifiers without a retained converter list.
-        A recorded [] means no converters, unlike absent identifier metadata.
+        A recorded [] means no converters, unlike absent identifier metadata. A recorded
+        attack identifier with no list or edges also means no converters, because
+        identifiers omit an empty converter list.
 
         Args:
             direction (AttackAnalyticsConverterDirection): Request or response pipeline;
@@ -930,6 +961,11 @@ class AttackAnalyticsQueryCompiler:
             self._from = self._from.outerjoin(arrays, arrays.c.attack_identifier_hash == self.attack.c.hash)
             path = f"children.{direction.value}_converters"
             retained = JsonContainer(self.attack.c.identifier_json, f"$.{path}")
+            # Identifiers leave out an empty converter list, so a recorded attack with no
+            # converter list or edges ran without converters, which is not missing metadata.
+            recorded_without_converters = case(
+                (self.attack.c.hash.isnot(None), literal("[]", UnicodeText())), else_=null()
+            )
             self._converter_arrays[direction] = (
                 func.coalesce(
                     retained,
@@ -939,8 +975,9 @@ class AttackAnalyticsQueryCompiler:
                     ),
                     JsonContainer(self.root.c.atomic_attack_identifier, f"$.children.attack.{path}"),
                     arrays.c.names,
+                    recorded_without_converters,
                 ),
-                func.coalesce(retained, arrays.c.names),
+                func.coalesce(retained, arrays.c.names, recorded_without_converters),
             )
         value = self._converter_arrays[direction][0 if embedded else 1]
         return _Source(value=value, label=value, array=True, converters=True, insensitive=True)
@@ -987,10 +1024,12 @@ class AttackAnalyticsQueryCompiler:
             ColumnElement[bool]: A scalar comparison or combination of membership
                 tests. Missing metadata and a recorded empty pipeline remain distinct.
         """
-        source = self._source(predicate.dimension)
         values = [value for option in predicate.values if (value := option.value) is not None]
         missing = any(option.kind is AttackAnalyticsValueKind.MISSING for option in predicate.values)
         no_converters = any(option.kind is AttackAnalyticsValueKind.NO_CONVERTERS for option in predicate.values)
+        if predicate.dimension.name is AttackAnalyticsDimensionName.OPERATION and "operation_id" in self.root.c:
+            return self._operation_predicate(values=values, missing=missing, index=index)
+        source = self._source(predicate.dimension)
         if not source.array:
             matches: list[ColumnElement[bool]] = [source.value.is_(None)] if missing else []
             if values:
@@ -1005,13 +1044,20 @@ class AttackAnalyticsQueryCompiler:
             return or_(*matches)
         raw = source.value
         if self.dialect == "mssql" and (missing or no_converters):
-            self._from, projected = self._grouping_projection(
-                origin=self._from,
-                values=[raw.label(f"filter_source_{index}")],
-                name=f"filter_source_{index}",
-                force=True,
-            )
-            raw = projected[0]
+            # The lateral join belongs to the compiler, not to one statement:
+            # report_async runs totals() and then groups()/matrix() on the same
+            # instance, so re-adding it would duplicate the correlation name.
+            if index in self._filter_projections:
+                raw = self._filter_projections[index]
+            else:
+                self._from, projected = self._grouping_projection(
+                    origin=self._from,
+                    values=[raw.label(f"filter_source_{index}")],
+                    name=f"filter_source_{index}",
+                    force=True,
+                )
+                self._filter_projections[index] = projected[0]
+                raw = projected[0]
         items = JsonArrayItems(raw).table_valued(column("key"), column("value"), column("type"))
         items = items.alias(f"filter_items_{index}")
         kind, value, _ = self._array_key(source=source, raw=raw, items=items)
@@ -1050,6 +1096,28 @@ class AttackAnalyticsQueryCompiler:
         if no_converters:
             matches.append(JsonArrayEmpty(raw) == true())
         return and_(*matches) if predicate.match_mode is AttackAnalyticsMatchMode.ALL else or_(*matches)
+
+    def _operation_predicate(self, *, values: list[str], missing: bool, index: int) -> ColumnElement[bool]:
+        """
+        Match the resolved Operation name through the ``operation`` and ``operation_id`` indexes.
+
+        A result linked to a saved Operation also matches its own stored name, which may be
+        spelled differently.
+
+        Returns:
+            ColumnElement[bool]: Stored-name and saved-Operation lookups combined with OR.
+        """
+        root = self.root.c
+        matches: list[ColumnElement[bool]] = (
+            [and_(root.operation_id.is_(None), root.operation.is_(None))] if missing else []
+        )
+        if values:
+            requested = self._filter_values(values=values, index=index)
+            expected = select(self._collate(cast(requested.c.value, UnicodeText()))).select_from(requested)
+            saved = OperationEntry.__table__.alias(f"filter_operation_{index}")
+            matches.append(self._collate(root.operation).in_(expected))
+            matches.append(root.operation_id.in_(select(saved.c.id).where(self._collate(saved.c.name).in_(expected))))
+        return or_(*matches)
 
     @staticmethod
     def _filter_values(*, values: list[str], index: int) -> FromClause:
@@ -1251,11 +1319,10 @@ class AttackAnalyticsQueryCompiler:
         }
         label_columns: dict[str, str] = {}
         for index, dimension in enumerate(dimensions):
-            if dimension.name in {
-                AttackAnalyticsDimensionName.OPERATION,
-                AttackAnalyticsDimensionName.OPERATOR,
-            }:
-                values[dimension.name.value] = base.root.c[dimension.name.value]
+            if dimension.name is AttackAnalyticsDimensionName.OPERATION:
+                values["operation"] = base._operation_value()
+            elif dimension.name is AttackAnalyticsDimensionName.OPERATOR:
+                values["operator"] = base.root.c.operator
             elif dimension.name is AttackAnalyticsDimensionName.TARGETED_HARM_CATEGORY:
                 values["targeted_harm_categories"] = base.root.c.targeted_harm_categories
             elif dimension.name is AttackAnalyticsDimensionName.OBJECTIVE_TARGET:

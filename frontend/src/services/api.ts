@@ -29,6 +29,9 @@ import type {
   AttackSummary,
   AttackListResponse,
   DatasetListResponse,
+  SeedExampleDetailResponse,
+  SeedExampleListParams,
+  SeedExampleListResponse,
   ConversationMessagesResponse,
   AddMessageRequest,
   AddMessageResponse,
@@ -43,6 +46,7 @@ import type {
   RunScenarioRequest,
   ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
+  ScenarioDatasetLoadResponse,
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
@@ -58,9 +62,80 @@ import type {
   ManualScoreRequest,
   UpdateAttackRequest,
   SaveConversationRequest,
+  Finding,
+  FindingCreate,
+  FindingCreateRequest,
+  FindingListResponse,
+  FindingOptionsResponse,
+  FindingEvidenceCreateRequest,
+  FindingEvidenceAttachResponse,
+  FindingEvidenceListResponse,
+  Operation,
+  OperationCreate,
+  OperationListResponse,
+  OperationUpdate,
+  AttackAnalyticsQuery,
+  AttackAnalyticsReport,
+  AttackAnalyticsResultsQuery,
+  AttackAnalyticsResults,
+  AttackAnalyticsFacetQuery,
+  AttackAnalyticsFacets,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+
+const operationPath = (operationId: string): string => `/operations/${encodeURIComponent(operationId)}`
+
+export const operationsApi = {
+  getFindingOptions: async (): Promise<FindingOptionsResponse> => {
+    return (await apiClient.get('/operations/finding-options')).data
+  },
+  list: async (): Promise<OperationListResponse> => {
+    return (await apiClient.get('/operations')).data
+  },
+  get: async (operationId: string): Promise<Operation> => {
+    return (await apiClient.get(operationPath(operationId))).data
+  },
+  create: async (request: OperationCreate): Promise<Operation> => {
+    return (await apiClient.post('/operations', request)).data
+  },
+  update: async (operationId: string, request: OperationUpdate): Promise<Operation> => {
+    return (await apiClient.patch(operationPath(operationId), request)).data
+  },
+  listFindings: async (
+    operationId: string, params: { limit: number; offset: number; title?: string },
+  ): Promise<FindingListResponse> => {
+    return (await apiClient.get(`${operationPath(operationId)}/findings`, { params })).data
+  },
+  createFinding: async (operationId: string, request: FindingCreateRequest): Promise<Finding> => {
+    return (await apiClient.post(`${operationPath(operationId)}/findings`, request)).data
+  },
+  updateFinding: async (operationId: string, findingId: string, request: FindingCreate): Promise<Finding> => {
+    return (await apiClient.put(`${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}`, request)).data
+  },
+  deleteFinding: async (operationId: string, findingId: string): Promise<void> => {
+    await apiClient.delete(`${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}`)
+  },
+  attachFindingEvidence: async (
+    operationId: string, findingId: string, request: FindingEvidenceCreateRequest,
+  ): Promise<FindingEvidenceAttachResponse> => {
+    return (await apiClient.post(
+      `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence`, request,
+    )).data
+  },
+  listFindingEvidence: async (
+    operationId: string, findingId: string, params: { limit: number; offset: number },
+  ): Promise<FindingEvidenceListResponse> => {
+    return (await apiClient.get(
+      `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence`, { params },
+    )).data
+  },
+  detachFindingEvidence: async (operationId: string, findingId: string, evidenceId: string): Promise<void> => {
+    await apiClient.delete(
+      `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence/${encodeURIComponent(evidenceId)}`,
+    )
+  },
+}
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -172,6 +247,30 @@ apiClient.interceptors.response.use(
 )
 
 export { apiClient }
+
+export const analyticsApi = {
+  query: async (
+    query: AttackAnalyticsQuery,
+    signal?: AbortSignal,
+  ): Promise<AttackAnalyticsReport> => {
+    const response = await apiClient.post<AttackAnalyticsReport>('/analytics/attacks/query', query, { signal })
+    return response.data
+  },
+  results: async (
+    query: AttackAnalyticsResultsQuery,
+    signal?: AbortSignal,
+  ): Promise<AttackAnalyticsResults> => {
+    const response = await apiClient.post<AttackAnalyticsResults>('/analytics/attacks/results', query, { signal })
+    return response.data
+  },
+  facets: async (
+    query: AttackAnalyticsFacetQuery,
+    signal?: AbortSignal,
+  ): Promise<AttackAnalyticsFacets> => {
+    const response = await apiClient.post<AttackAnalyticsFacets>('/analytics/attacks/facets', query, { signal })
+    return response.data
+  },
+}
 
 export const healthApi = {
   checkHealth: async () => {
@@ -356,6 +455,11 @@ export const attacksApi = {
     return response.data
   },
 
+  getConversation: async (conversationId: string): Promise<AddMessageResponse> => {
+    const response = await apiClient.get(`/attacks/conversations/${encodeURIComponent(conversationId)}`)
+    return response.data
+  },
+
   getMessages: async (attackResultId: string, conversationId: string): Promise<ConversationMessagesResponse> => {
     const response = await apiClient.get(
       `/attacks/${encodeURIComponent(attackResultId)}/messages`,
@@ -429,6 +533,7 @@ export const attacksApi = {
     outcome?: string
     operator?: string[]
     operation?: string[]
+    operation_id?: string[]
     label?: string[]
     min_turns?: number
     max_turns?: number
@@ -480,6 +585,14 @@ export const labelsApi = {
 }
 
 export const scenariosApi = {
+  loadDatasets: async (
+    scenarioName: string, request: ScenarioRunSizeEstimateRequest,
+  ): Promise<ScenarioDatasetLoadResponse> => {
+    const response = await apiClient.post(
+      `/scenarios/catalog/${encodeURIComponent(scenarioName)}/datasets/load`, request, { timeout: 300_000 },
+    )
+    return response.data
+  },
   /**
    * Lists one page of the scenario catalog. Callers that need the full
    * catalog should follow `pagination.next_cursor` until `has_more` is false.
@@ -535,6 +648,7 @@ export const scenariosApi = {
     scenario_names?: string[]
     run_statuses?: ScenarioRunState[]
     label?: string[]
+    operation_id?: string[]
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,
@@ -577,6 +691,21 @@ export const scenariosApi = {
   },
 }
 
+const MAX_SEED_SEARCH_LENGTH = 1_000
+
+function seedListQuery(params: SeedExampleListParams): Record<string, string | number | readonly string[]> {
+  const query: Record<string, string | number | readonly string[]> = {
+    selection_key: params.selection_key,
+  }
+  if (params.limit != null) query.limit = params.limit
+  if (params.cursor) query.cursor = params.cursor
+  if (params.search) query.search = params.search.slice(0, MAX_SEED_SEARCH_LENGTH)
+  if (params.modality && params.modality.length > 0) query.modality = params.modality
+  if (params.seed_type && params.seed_type.length > 0) query.seed_type = params.seed_type
+  if (params.harm_category && params.harm_category.length > 0) query.harm_category = params.harm_category
+  return query
+}
+
 export const datasetsApi = {
   /**
    * Lists dataset summaries. Counts, modalities, and harm categories on the
@@ -588,6 +717,44 @@ export const datasetsApi = {
   ): Promise<DatasetListResponse> => {
     const response = await apiClient.get('/datasets', {
       params: { loaded_only },
+      signal,
+    })
+    return response.data
+  },
+
+  /**
+   * Lists one page of logical examples for a dataset.
+   * Requires the opaque selection key; an empty key is not sent.
+   */
+  listSeedExamples: async (
+    params: SeedExampleListParams,
+    signal?: AbortSignal,
+  ): Promise<SeedExampleListResponse> => {
+    if (!params.selection_key) {
+      throw new Error('A dataset selection key is required to list seed examples.')
+    }
+    const response = await apiClient.get('/datasets/seeds', {
+      params: seedListQuery(params),
+      paramsSerializer: { indexes: null },
+      signal,
+    })
+    return response.data
+  },
+
+  /**
+   * Loads every stored member of one logical example in that dataset.
+   * The example id alone is not enough: the selection key keeps the group scoped.
+   */
+  getSeedExample: async (
+    exampleId: string,
+    selectionKey: string,
+    signal?: AbortSignal,
+  ): Promise<SeedExampleDetailResponse> => {
+    if (!selectionKey) {
+      throw new Error('A dataset selection key is required to read a seed example.')
+    }
+    const response = await apiClient.get(`/datasets/seeds/${encodeURIComponent(exampleId)}`, {
+      params: { selection_key: selectionKey },
       signal,
     })
     return response.data

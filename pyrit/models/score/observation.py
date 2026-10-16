@@ -25,7 +25,7 @@ from pyrit.models.score.scorable import (
     SurfaceScorable,
     TraceScorable,
 )
-from pyrit.models.score.surface import SurfaceCoverage, SurfaceEntry, SurfaceMatch
+from pyrit.models.score.surface import SurfaceBaseline, SurfaceCoverage, SurfaceEntry, SurfaceMatch
 from pyrit.models.score.trace import ToolExecution, TraceCoverage
 
 if TYPE_CHECKING:
@@ -366,7 +366,12 @@ class ToolEventsObservationPayload(BaseModel):
 
 
 class SurfaceObservationPayload(BaseModel):
-    """An immutable snapshot of the locations a surface scorable names, as they were when read."""
+    """
+    An immutable snapshot of the locations a surface scorable names, as they were when read.
+
+    A snapshot finalized against a ``baseline`` carries it, so replay can tell which locations
+    differ between the observed states. It does not retain write events.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -375,6 +380,7 @@ class SurfaceObservationPayload(BaseModel):
     scope: SurfaceScorable
     entries: tuple[SurfaceEntry, ...] = ()
     coverage: SurfaceCoverage = Field(default_factory=SurfaceCoverage)
+    baseline: SurfaceBaseline | None = None
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -401,12 +407,14 @@ class SurfaceObservationPayload(BaseModel):
             SurfaceObservationPayload: The validated snapshot.
 
         Raises:
-            ValueError: If an entry repeats or falls outside an exact locator.
+            ValueError: If an entry repeats or falls outside an exact locator, including a
+                baseline entry.
         """
         uris = [entry.uri for entry in self.entries]
         if len(set(uris)) != len(uris):
             raise ValueError("Surface entries must name each location once.")
-        if self.scope.match is SurfaceMatch.EXACT and any(uri != self.scope.uri for uri in uris):
+        baseline_uris = [entry.uri for entry in self.baseline.entries] if self.baseline is not None else []
+        if self.scope.match is SurfaceMatch.EXACT and any(uri != self.scope.uri for uri in [*uris, *baseline_uris]):
             raise ValueError("An exact surface scope can only hold an entry for its own location.")
         return self
 
