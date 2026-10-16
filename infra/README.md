@@ -436,6 +436,7 @@ All four deployment stages reuse `infra/pipelines/deploy-stage.yml`, which keeps
 | --- | --- | --- | --- |
 | Infrastructure | `infra/pipelines/deploy_infra.sh` | `infra/infrastructure.bicep` | Shared infrastructure and Private Link cutover/recovery |
 | App | `infra/pipelines/deploy_app.sh` | `infra/application.bicep` | Container App image and configuration |
+| App (before the app deployment) | `infra/pipelines/deploy_app.sh` | `infra/migration.bicep` | Database migration job |
 
 The scripts share scope validation, preview, and readiness helpers in `deployment_common.sh`, but do not dispatch between phases or pass deployment-mode flags to Bicep. Only the app stage applies the Container App definition, once per environment.
 
@@ -449,7 +450,7 @@ The app stage then checks the readiness fields in `/api/health` through that sam
 
 On readiness failure, the pipeline prints the revision, the failure state or timeout reason, and a revision-specific `az containerapp logs show` command. Use that command or **Azure Portal > Container App > Monitoring > Log stream**, selecting the failed revision and console logs, to find `PyRIT startup failed` and its traceback. For historical startup errors, use **Monitoring > Logs** in the connected Log Analytics workspace. Exception details remain in access-controlled logs, not the public health response or pipeline output. `/api/health` and configuration recovery remain available when runtime initialization fails; repair the underlying source, permissions, or data, then restart the backend and retry deployment.
 
-App deployment does not downgrade or create a database; application startup still follows the image's normal migration behavior. App-stage failures do not invoke infrastructure, image, or database rollback because migrations may make the previous image incompatible. The previous image digest is logged for an explicit recovery decision.
+The internal app deployment checks the database and migrates it if needed before it applies the app (see [Database migration](#database-migration)). The new revision only checks the schema and fails readiness when the schema is not current. App-stage failures do not invoke infrastructure, image, or database rollback because migrations may make the previous image incompatible. The previous image digest is logged for an explicit recovery decision.
 
 Direct community deployments use the same two templates as the internal pipeline: deploy `infrastructure.bicep` before `application.bicep`. Both phases use **Incremental** deployment mode so omitted resources are not deleted. The application phase requires existing infrastructure, a managed identity, and a registry.
 
@@ -506,6 +507,61 @@ The resource group, registry, image-pull authorization, managed identity, Key Va
 The internal workflow is update-only for networking: its app name and prefixes must resolve to the existing app/environment/VNet/subnet/NAT/PIP. It records the current PIP resource ID and address before preview, requires protected resources to remain unchanged except Azure read-only normalization, and verifies the same PIP/address after deployment.
 
 The optional infrastructure stage also creates a `CanNotDelete` lock scoped to the reserved PIP. Its validated Front Door origin uses Private Link to the ACA environment, and the ACA public endpoint is disabled after a successful infrastructure deployment. App-only runs preserve that environment access mode, including an existing public-access fallback.
+
+#### Database migration
+
+Each internal app stage (test, and prod after approval) does these steps in sequence:
+
+1. Validate the inputs and preview the app deployment.
+2. Preview, then create or update the manual ACA job `<deploymentAppName>-migrate` from `infra/migration.bicep`. This does not start the job. The job uses the built image, the app managed identity, and the app configuration sources. If job preparation fails, the running app is not stopped.
+3. Start a check-only execution of the job with `pyrit.cli.pyrit_migrate --check-only` and wait up to 30 minutes. It validates the database target and checks the schema without applying migrations. If it succeeds, skip steps 4 and 5: deploy without stopping the app. If the execution fails, log the failure and use the stopped-app migration path. A start/status API error, interrupted execution, or polling timeout aborts deployment without stopping the app.
+4. Deactivate all active revisions and wait for their replicas, including replicas from inactive revisions, to stop. Each poll reads all revision states in one Azure API call. Missing or invalid replica counts do not count as zero. If shutdown is not confirmed, do not start the migration. The app is offline until step 6. This also supports a rerun when the app is already stopped.
+5. Start the job without check-only arguments and wait up to 30 minutes. Before opening a database connection, it verifies that the connection string identifies the deployment server and database. It then upgrades the schema and checks it. If the migration fails or times out, stop. The app stays offline and is not deployed. Fix the cause and run the stage again.
+6. Deploy the app with `PYRIT_REQUIRE_CURRENT_SCHEMA=true`. The app checks the schema and does not migrate. If the app template did not change (for example, a rerun with the same image), the stage activates the previous revision again, including when a successful check skipped migration on an already-stopped app.
+
+Azure SQL initialization checks the schema without migrating by default, including calls to `initialize_pyrit_async`. A migration requires the explicit migration command, or `skip_schema_migration=False` for non-production initialization. The internal backend's `PYRIT_REQUIRE_CURRENT_SCHEMA=true` also blocks that initialization opt-in and fails startup on a schema mismatch. The job can share the backend identity: SQL DDL permission alone does not trigger migrations. SQLite initialization is unchanged.
+
+Because the app is offline during the migration, migrations do not need to be compatible with the previous image.
+
+The job and backend use the same configuration loading rules: deployment-generated defaults, with `pyritConfigFileUri` as an optional override, then the configured environment sources. The job does not run initializers. `AZURE_SQL_DB_CONNECTION_STRING` must use a structured `mssql+pyodbc://` URL whose host and database match `sqlServerFqdn` and `sqlDatabaseName`. Opaque `odbc_connect`/DSN URLs and query parameters that override the target are rejected. A mismatch stops the migration before any database connection is opened.
+
+**Manual step before you merge:** give the app managed identity DDL permission on each database. Run this as the SQL Entra administrator:
+
+```sql
+-- Test database (airtdev) and production database (airtprod)
+ALTER ROLE db_ddladmin ADD MEMBER [<managed-identity-name>];
+```
+
+Without this permission, the first migration fails and the app stays stopped.
+
+#### SQL isolation
+
+The shared SQL servers allow public access from IP rules and Azure services. The target is: only the PyRIT backends (ACA app and migration job) reach SQL, through a private endpoint in the app VNet. The pipeline does not change SQL server access. It only shows a warning while public access is enabled.
+
+**Manual steps (an administrator does these once for each slot):**
+
+1. Select an unused `/28` in the app VNet for the SQL subnet. Record it with the network IPAM owner.
+2. Deploy the private endpoint, subnet, and private DNS zone:
+
+   ```bash
+   az deployment group create -g <deploymentResourceGroup> \
+     --template-file infra/sql_access.bicep \
+     --parameters appName=<deploymentAppName> sqlServerResourceId=<sql-server-resource-id> \
+       sqlSubnetAddressPrefix=<unused-/28>
+   ```
+
+   Approve the private endpoint connection on the SQL server if it is pending. Later infrastructure runs keep this subnet.
+3. Run an app deployment. Make sure that the migration job and `/api/health` succeed through the private endpoint.
+4. Get approval from all owners of other clients of the shared server, or move PyRIT to a dedicated server. Disabling public access stops all public clients, including developer machines.
+5. Disable public access, then deploy again to confirm the backends still work:
+
+   ```bash
+   az sql server update --ids <sql-server-resource-id> --enable-public-network false
+   ```
+
+6. Make sure that point-in-time restore is enabled. It is the database rollback path.
+
+Network isolation does not replace SQL authorization. Keep SQL users limited to the backend identities and administrators.
 
 #### Validation
 

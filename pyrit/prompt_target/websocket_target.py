@@ -119,6 +119,11 @@ class WebsocketTarget(PromptTarget):
         """
         return self._create_identifier(params={"protocol_identifier": self._protocol_identifier})
 
+    def validate_history_replay(self) -> None:
+        """Check for a restoration callback or configured history support."""
+        if self._conversation_restore_callback is None:
+            super().validate_history_replay()
+
     async def _connect_async(self) -> ClientConnection:
         """
         Open a connection to the configured WebSocket endpoint.

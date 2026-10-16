@@ -85,6 +85,8 @@ def run_container(mode, tag="latest"):
         "-v",
         f"{env_file}:/home/vscode/.pyrit/.env:ro",
     ]
+    if mode == "gui":
+        cmd.extend(["-e", "PYRIT_AUTH_MODE=local"])
 
     # Add .env.local if it exists
     if env_local_file.exists():

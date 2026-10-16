@@ -3,12 +3,14 @@
 
 """Local SQLite smoke coverage and unit tests of the integration workload's failure gates."""
 
+import asyncio
 import os
 import subprocess
 import sys
-from functools import partial
+from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from time import monotonic
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import httpx
 import pytest
@@ -16,8 +18,10 @@ import pytest
 from pyrit.analytics import AttackResultAnalytics
 from pyrit.analytics._execution import AnalyticsExecution
 from pyrit.backend.middleware.compatibility import CompatibilityAPI
+from pyrit.exceptions.analytics_exception import AnalyticsTimeoutException
 from pyrit.memory import SQLiteMemory
-from pyrit.models import AttackAnalyticsResultsQuery
+from pyrit.memory.query_control import QueryControl
+from pyrit.models import AttackAnalyticsQuery, AttackAnalyticsReport, AttackAnalyticsResultsQuery
 from test_support.analytics_benchmark import (  # noqa: F401
     AnalyticsBenchmark,
     RequestSample,
@@ -27,6 +31,18 @@ from test_support.analytics_benchmark import (  # noqa: F401
     sqlite_instance,
 )
 from unit.memory.test_attack_analytics import make_result
+
+
+@pytest.fixture
+def semantic_analytics_budgets() -> Iterator[None]:
+    """Disable elapsed-time gates, but retain admission, cancellation, and cleanup."""
+    timeout = asyncio.timeout
+    with (
+        patch("pyrit.analytics._execution.monotonic", return_value=monotonic()),
+        patch("pyrit.analytics._execution.asyncio.timeout", side_effect=lambda delay: timeout(None)),
+        patch.object(QueryControl, "remaining", new_callable=PropertyMock, return_value=float("inf")),
+    ):
+        yield
 
 
 @pytest.fixture
@@ -44,18 +60,27 @@ def measurements() -> AnalyticsBenchmark:
     return benchmark
 
 
+@pytest.mark.timeout(120)
+@pytest.mark.usefixtures("semantic_analytics_budgets")
+@pytest.mark.parametrize("elapsed_report_seconds", [0.0, 31.0], ids=["normal", "expired-report-deadline"])
 async def test_local_sqlite_workload_counts_requests_writes_and_continuations_async(
     *,
     benchmark_app: CompatibilityAPI,
     sqlite_instance: SQLiteMemory,
     compatibility_headers: dict[str, str],
+    elapsed_report_seconds: float,
 ) -> None:
-    # Unit tests check semantics; the integration workload asserts production latency. Budgets must
-    # stay finite but unreachable, because an expired budget answers 504 and would be counted here as
-    # a failed request: a loaded runner's report tail exceeded 30s and failed this test for latency.
-    budgets = partial(AnalyticsExecution, queue_timeout=300.0, report_timeout=300.0, quick_timeout=300.0)
     workload = AnalyticsBenchmark(memory=sqlite_instance, app=benchmark_app, headers=compatibility_headers, count=1_000)
-    with patch("pyrit.analytics.attack_result_analytics.AnalyticsExecution", side_effect=budgets):
+    report_async = AttackResultAnalytics._report_async
+
+    async def delayed_report_async(
+        analytics: AttackResultAnalytics, *, query: AttackAnalyticsQuery, control: QueryControl
+    ) -> AttackAnalyticsReport:
+        # Consume the budget without a real sleep or dependence on runner speed.
+        control.deadline -= elapsed_report_seconds
+        return await report_async(analytics, query=query, control=control)
+
+    with patch.object(AttackResultAnalytics, "_report_async", new=delayed_report_async):
         report = await workload.run_async(analysts=5, iterations=1)
     assert not workload.failures
     assert report["final_results"] == 1_000 + report["writes"]["inserts"]
@@ -63,9 +88,57 @@ async def test_local_sqlite_workload_counts_requests_writes_and_continuations_as
     assert not report["writes"]["errors"]
     assert report["verification_requests"] == {"successful": 2, "errors": 0}
     assert report["peak_concurrent_requests"] == 5
-    for measurement in report["workloads"].values():
-        assert measurement["successful_requests"] == 6, report["failures"]
-        assert measurement["error_requests"] == measurement["not_sent"] == 0
+    for kind, measurement in report["workloads"].items():
+        errors = [sample.error for sample in [workload.cold[kind], *workload.samples[kind]] if sample.error]
+        assert measurement["successful_requests"] == 6, f"{kind}: {errors}"
+        assert measurement["error_requests"] == measurement["not_sent"] == 0, f"{kind}: {errors}"
+
+
+@pytest.mark.timeout(120)
+@pytest.mark.usefixtures("semantic_analytics_budgets")
+@pytest.mark.parametrize("error", [ValueError("query failed"), AnalyticsTimeoutException()])
+async def test_semantic_budgets_preserve_admission_cancellation_and_errors_async(error: Exception) -> None:
+    execution = AnalyticsExecution(report_workers=1)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocked_async(control: QueryControl) -> None:
+        entered.set()
+        await release.wait()
+        control.check()
+
+    async def failed_async(control: QueryControl) -> None:
+        control.check()
+        raise error
+
+    first = asyncio.create_task(execution.run_async(report=True, task=blocked_async))
+    callers = [first]
+    try:
+        await entered.wait()
+        queued = asyncio.create_task(execution.run_async(report=True, task=blocked_async))
+        callers.append(queued)
+        await asyncio.sleep(0)
+        assert execution._lanes[True].active == 1
+        assert len(execution._lanes[True].queued) == 1
+        queued.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await queued
+        assert not execution._lanes[True].queued
+        release.set()
+        await first
+        with pytest.raises(type(error)):
+            await execution.run_async(report=True, task=failed_async)
+        control = QueryControl(deadline=-1.0)
+        control.check()
+        control.cancel()
+        with pytest.raises(AnalyticsTimeoutException):
+            control.check()
+    finally:
+        release.set()
+        for caller in callers[1:]:
+            caller.cancel()
+        await asyncio.gather(*callers, return_exceptions=True)
+        await execution.close_async()
 
 
 def test_nearest_rank_percentile_preserves_threshold_precision() -> None:

@@ -6,10 +6,12 @@
 import asyncio
 import functools
 import random
+import uuid
 from typing import Any, ClassVar
 from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
+import sqlalchemy as sa
 from unit.mocks import MockPromptTarget, make_scenario_identifier, make_scenario_result
 
 from pyrit.analytics import compute_scenario_statistics
@@ -21,8 +23,11 @@ from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
     AttackResult,
+    AttackResultSelection,
     AttackSeedGroup,
     ComponentIdentifier,
+    Message,
+    Operation,
     ScenarioRunPlanGroupKind,
     ScenarioRunState,
     SeedDataset,
@@ -217,6 +222,165 @@ class ConcreteScenario(Scenario):
         if not self._atomic_attacks_to_return and scenario_techniques is None:
             return []
         return super()._resolve_scenario_techniques(scenario_techniques=scenario_techniques)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_unknown_operation_rejected_before_scenario_build_async(
+    sqlite_instance: MemoryInterface, mock_objective_target
+) -> None:
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(args={"objective_target": mock_objective_target, "operation_id": uuid.uuid4()})
+    with patch.object(scenario, "_build_atomic_attacks_async", new_callable=AsyncMock) as build:
+        with pytest.raises(LookupError, match="Operation"):
+            await scenario.initialize_async()
+        assert build.await_count == 0
+    assert await sqlite_instance.get_scenario_results_async() == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("assigned", [False, True])
+async def test_resume_retains_stored_id_or_legacy_null_async(
+    sqlite_instance: MemoryInterface, mock_objective_target, assigned: bool
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Scenario"))
+    operation_id = operation.id if assigned else None
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(args={"objective_target": mock_objective_target, "operation_id": operation_id})
+    await scenario.initialize_async()
+    stored = (await sqlite_instance.get_scenario_results_async())[0]
+    assert stored.operation_id == operation_id
+    resumed = ConcreteScenario(version=1, scenario_result_id=str(stored.id))
+    resumed.set_params_from_args(args={"objective_target": mock_objective_target})
+    await resumed.initialize_async()
+    assert resumed._operation_id == operation_id
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_fresh_run_resolves_deprecated_operation_name_async(
+    sqlite_instance: MemoryInterface, mock_objective_target
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(
+        args={"objective_target": mock_objective_target, "memory_labels": {"operation": " ENGAGEMENT", "other": "x"}}
+    )
+    with pytest.warns(DeprecationWarning, match="operation_id"):
+        await scenario.initialize_async()
+    stored = (await sqlite_instance.get_scenario_results_async())[0]
+    assert (stored.operation_id, stored.labels) == (operation.id, {"other": "x", "operation": " ENGAGEMENT"})
+    resumed = ConcreteScenario(version=1, scenario_result_id=str(stored.id))
+    resumed.set_params_from_args(
+        args={"objective_target": mock_objective_target, "memory_labels": {"operation": "Engagement"}}
+    )
+    await resumed.initialize_async()
+    assert resumed._operation_id == operation.id
+    assert resumed._build_scenario_context(seed_groups_by_dataset={}).memory_labels == {"operation": " ENGAGEMENT"}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("explicit", [False, True])
+async def test_global_operation_name_applies_only_without_supplied_attribution_async(
+    sqlite_instance: MemoryInterface, mock_objective_target, explicit: bool
+) -> None:
+    global_operation = await sqlite_instance.add_operation_async(Operation(name="Global"))
+    chosen = await sqlite_instance.add_operation_async(Operation(name="Chosen"))
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(
+        args={"objective_target": mock_objective_target, "operation_id": chosen.id if explicit else None}
+    )
+    with patch.dict("os.environ", {"GLOBAL_MEMORY_LABELS": '{"operation": "global"}'}):
+        await scenario.initialize_async()
+    assert scenario._operation_id == (chosen.id if explicit else global_operation.id)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_unknown_operation_name_is_kept_without_an_id_async(
+    sqlite_instance: MemoryInterface, mock_objective_target
+) -> None:
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(args={"objective_target": mock_objective_target, "memory_labels": {"operation": "x"}})
+    with pytest.warns(DeprecationWarning, match="operation_id"):
+        await scenario.initialize_async()
+    stored = (await sqlite_instance.get_scenario_results_async())[0]
+    assert (stored.operation_id, stored.labels) == (None, {"operation": "x"})
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_resume_rejects_a_different_operation_name_async(
+    sqlite_instance: MemoryInterface, mock_objective_target
+) -> None:
+    await sqlite_instance.add_operation_async(Operation(name="Other"))
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+    await scenario.initialize_async()
+    stored = (await sqlite_instance.get_scenario_results_async())[0]
+    resumed = ConcreteScenario(version=1, scenario_result_id=str(stored.id))
+    resumed.set_params_from_args(
+        args={"objective_target": mock_objective_target, "memory_labels": {"operation": "Other"}}
+    )
+    with pytest.raises(ValueError, match="immutable"):
+        await resumed.initialize_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_legacy_resume_dispatches_null_without_rewriting_name_async(
+    sqlite_instance: MemoryInterface, mock_objective_target
+) -> None:
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+    await scenario.initialize_async()
+    stored = (await sqlite_instance.get_scenario_results_async())[0]
+    with sqlite_instance.engine.begin() as connection:
+        connection.execute(
+            sa.text("UPDATE ScenarioResultEntries SET labels = :labels WHERE id = :id"),
+            {"labels": '{"operation": "Legacy", "other": "retained"}', "id": str(stored.id)},
+        )
+    resumed = ConcreteScenario(version=1, scenario_result_id=str(stored.id))
+    resumed.set_params_from_args(
+        args={"objective_target": mock_objective_target, "memory_labels": {"operation": "Legacy", "other": "retained"}}
+    )
+    await resumed.initialize_async()
+    assert resumed._build_scenario_context(seed_groups_by_dataset={}).memory_labels == {
+        "operation": "Legacy",
+        "other": "retained",
+    }
+    assert resumed._operation_id is None
+    retained = (await sqlite_instance.get_scenario_results_async())[0]
+    assert retained.labels == {"operation": "Legacy", "other": "retained"}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("retry", [False, True])
+async def test_scenario_persists_id_on_real_atomic_results_async(sqlite_instance: MemoryInterface, retry: bool) -> None:
+    target = MockPromptTarget()
+    original_send = target._send_prompt_to_target_async
+    send_count = 0
+
+    async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        nonlocal send_count
+        send_count += 1
+        if retry and send_count == 1:
+            raise RuntimeError("Transient trial failure")
+        return await original_send(normalized_conversation=normalized_conversation)
+
+    target._send_prompt_to_target_async = AsyncMock(side_effect=send_async)
+    operation = await sqlite_instance.add_operation_async(Operation(name="Scenario"))
+    atomic = AtomicAttack(
+        atomic_attack_name="direct",
+        attack_technique=AttackTechnique(attack=PromptSendingAttack(objective_target=target)),
+        seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="objective")])],
+        operation_id=str(operation.id).upper(),
+    )
+    scenario = ConcreteScenario(version=1, atomic_attacks_to_return=[atomic])
+    scenario.set_params_from_args(args={"objective_target": target, "operation_id": operation.id, "max_retries": 1})
+    await scenario.initialize_async()
+    result = await scenario.run_async()
+    assert result.operation_id == operation.id
+    assert len(result.attack_results["direct"]) == (2 if retry else 1)
+    assert all(row.operation_id == operation.id for row in result.attack_results["direct"])
+    rows = await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS)
+    assert len(rows) == (2 if retry else 1)
+    assert all(row.operation_id == operation.id for row in rows)
 
 
 def test_scenario_base_class_is_abstract():
@@ -735,7 +899,7 @@ class TestScenarioExecution:
         # internal semaphore caps total in-flight objectives at 4.
         assert len(result.attack_results) == 3
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True)
+            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True, operation_id=None)
 
         # Verify results are aggregated correctly by atomic attack name
         assert "attack_run_1" in result.attack_results
@@ -803,7 +967,7 @@ class TestScenarioExecution:
         # 3 atomic attacks, max_concurrency=5 -> parallel path with a shared AttackExecutor.
         # Each atomic attack receives the same executor instance.
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True)
+            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True, operation_id=None)
 
         # Verify result structure
         assert isinstance(result, ScenarioResult)
@@ -2384,4 +2548,4 @@ class TestScenarioParallelExecution:
         await scenario.run_async()
 
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True)
+            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True, operation_id=None)

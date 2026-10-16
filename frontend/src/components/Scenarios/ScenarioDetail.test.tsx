@@ -1,11 +1,12 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { createMemoryRouter, Link, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 
-import { scenariosApi, targetsApi } from '@/services/api'
+import { attacksApi, scenariosApi, targetsApi } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
 import type {
+  AddMessageResponse,
   RegisteredScenario,
   ScenarioRunSizeEstimateRequest,
   ScenarioRunSizeEstimateResponse,
@@ -17,6 +18,7 @@ import ScenarioDetail from './ScenarioDetail'
 jest.mock('@/hooks/useRuntime', () => ({ useRuntime: jest.fn() }))
 
 jest.mock('@/services/api', () => ({
+  attacksApi: { getConversation: jest.fn(), saveConversation: jest.fn() },
   datasetsApi: { listDatasets: jest.fn().mockResolvedValue({ items: ['harmbench', 'ds_a', 'ds_b', 'remote', 'stale-dataset'].map((name) => ({
     name, selection_key: `dataset:named:${name}`, loaded: true, provider_available: true,
     logical_examples: 8, seed_pieces: null, objectives: null, modalities: ['text', 'image_path', 'audio_path'],
@@ -37,6 +39,7 @@ const mockEstimateRun = scenariosApi.estimateRun as jest.Mock
 const mockStartRun = scenariosApi.startRun as jest.Mock
 const mockListTargets = targetsApi.listTargets as jest.Mock
 const mockUseRuntime = jest.mocked(useRuntime)
+const mockAttacks = jest.mocked(attacksApi)
 
 const mockNavigate = jest.fn()
 const RAW_IMAGE_HTML = ['<', 'img src=x onerror="alert(1)">'].join('')
@@ -185,6 +188,7 @@ async function setObjectiveLimit(user: ReturnType<typeof userEvent.setup>, value
 function renderDetail(
   path: string,
   props: Partial<React.ComponentProps<typeof ScenarioDetail>> = {},
+  dataRouter = false,
 ) {
   const defaultProps = {
     targets: [makeTarget('target-a'), makeTarget('target-b')],
@@ -197,14 +201,16 @@ function renderDetail(
   const merged = { ...defaultProps, ...props }
   const renderPage = (pageProps: React.ComponentProps<typeof ScenarioDetail>): React.ReactElement => (
     <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={[path]}>
+      {dataRouter ? <RouterProvider router={createMemoryRouter([{
+        path: '/:catalog/:scenarioName', element: <ScenarioDetail {...pageProps} />,
+      }], { initialEntries: [path] })} /> : <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route
             path="/:catalog/:scenarioName"
             element={<ScenarioDetail {...pageProps} />}
           />
         </Routes>
-      </MemoryRouter>
+      </MemoryRouter>}
     </FluentProvider>
   )
   const view = render(renderPage(merged))
@@ -231,6 +237,302 @@ describe('ScenarioDetail', () => {
 
   afterEach(() => {
     jest.useRealTimers()
+  })
+
+  describe('scanner conversation configuration', () => {
+    const saved: AddMessageResponse = {
+      attack: {
+        attack_result_id: 'history-attack', conversation_id: 'history-conversation', attack_type: 'ManualAttack',
+        objective: '', converters: [], message_count: 1, related_conversation_ids: [],
+        labels: {}, created_at: '', updated_at: '', target_unbound: true,
+      },
+      messages: {
+        conversation_id: 'history-conversation', target_response_status: null,
+        messages: [{
+          role: 'system', turn_number: 0, created_at: '',
+          message_pieces: [{
+            id: 'history-piece', original_value_data_type: 'text', original_value: 'Saved context',
+            converted_value_data_type: 'text', converted_value: 'Saved context', scores: [], response_error: 'none',
+          }],
+        }],
+      },
+    }
+
+    beforeEach(() => {
+      mockGetScenario.mockResolvedValue(makeScenario({
+        supported_parameters: [
+          { name: 'prepended_conversation_id', type_name: 'str', required: false },
+          { name: 'apply_converters_to_prepended_history', type_name: 'bool', required: false, default: 'False' },
+          { name: 'max_turns', type_name: 'int', required: false },
+        ],
+      }))
+      mockAttacks.getConversation.mockReset()
+      mockAttacks.saveConversation.mockReset()
+      mockAttacks.getConversation.mockResolvedValue(saved)
+      mockAttacks.saveConversation.mockResolvedValue({
+        ...saved, messages: { ...saved.messages, conversation_id: 'edited-conversation' },
+      })
+    })
+
+    it('should save all builder turns into the scanner field without losing configuration or sending', async () => {
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute', {}, true)
+      await user.type(await screen.findByRole('spinbutton', { name: 'max_turns' }), '3')
+      expect(screen.getByRole('button', { name: 'Edit conversation' })).toBeDisabled()
+      await user.click(screen.getByRole('button', { name: 'Add new conversation' }))
+      const first = screen.getByRole('region', { name: 'Message 1' })
+      await user.selectOptions(within(first).getByRole('combobox'), 'system')
+      await user.type(within(first).getByRole('textbox'), 'Simulated context')
+      await user.click(screen.getByRole('button', { name: 'Insert message after message 1' }))
+      await user.type(within(screen.getByRole('region', { name: 'Message 2' })).getByRole('textbox'), 'Final user turn')
+      expect(screen.queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Add to attack' }))
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('edited-conversation')
+      expect(screen.getByRole('spinbutton', { name: 'max_turns' })).toHaveValue(3)
+      expect(mockAttacks.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+        destination: 'new_attack', target_registry_name: undefined, operator: 'roakey',
+        messages: [
+          expect.objectContaining({ role: 'system', pieces: [expect.objectContaining({ original_value: 'Simulated context' })] }),
+          expect.objectContaining({ role: 'user', pieces: [expect.objectContaining({ original_value: 'Final user turn' })] }),
+        ],
+      }))
+      expect(mockAttacks.getConversation).not.toHaveBeenCalled()
+      expect(mockStartRun).not.toHaveBeenCalled()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { max_turns: 3, prepended_conversation_id: 'edited-conversation', apply_converters_to_prepended_history: false },
+      }), expect.any(Object)))
+      expect(screen.getByRole('switch', { name: 'Apply converters to conversation' })).toBeEnabled()
+    })
+
+    it('should enable the converters toggle only with a conversation ID and submit its boolean choice', async () => {
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute')
+      const toggle = await screen.findByRole('switch', { name: 'Apply converters to conversation' })
+      const id = screen.getByRole('textbox', { name: 'prepended_conversation_id' })
+      expect(toggle).not.toBeChecked()
+      expect(toggle).toBeDisabled()
+      expect(screen.queryByRole('combobox', { name: 'apply_converters_to_prepended_history' })).not.toBeInTheDocument()
+      await user.type(id, '   ')
+      expect(toggle).toBeDisabled()
+      await user.clear(id)
+      await user.type(id, 'history-conversation')
+      expect(toggle).toBeEnabled()
+      await user.click(toggle)
+      expect(toggle).toBeChecked()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { prepended_conversation_id: 'history-conversation', apply_converters_to_prepended_history: true },
+      }), expect.any(Object)))
+      await user.click(toggle)
+      expect(toggle).not.toBeChecked()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { prepended_conversation_id: 'history-conversation', apply_converters_to_prepended_history: false },
+      }), expect.any(Object)))
+      await user.clear(id)
+      expect(toggle).toBeDisabled()
+      expect(mockStartRun).not.toHaveBeenCalled()
+    })
+
+    it('should fill the conversation from the URL without opening an editor or launching a scan', async () => {
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute?prepended_conversation_id=history-conversation')
+      const id = await screen.findByRole('textbox', { name: 'prepended_conversation_id' })
+      expect(id).toHaveValue('history-conversation')
+      expect(screen.getByRole('button', { name: 'Edit conversation' })).toBeEnabled()
+      expect(screen.getByRole('switch', { name: 'Apply converters to conversation' })).toBeEnabled()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(mockAttacks.getConversation).not.toHaveBeenCalled()
+      expect(mockStartRun).not.toHaveBeenCalled()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { prepended_conversation_id: 'history-conversation', apply_converters_to_prepended_history: false },
+      }), expect.any(Object)))
+      await user.clear(id)
+      await user.type(id, 'another-conversation')
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { prepended_conversation_id: 'another-conversation', apply_converters_to_prepended_history: false },
+      }), expect.any(Object)))
+      expect(id).toHaveValue('another-conversation')
+    })
+
+    it('should fill a new conversation when the same scanner is opened with a different URL parameter', async () => {
+      const user = userEvent.setup()
+      render(<FluentProvider theme={webLightTheme}>
+        <MemoryRouter initialEntries={['/scanner/technique.execute?prepended_conversation_id=first-conversation']}>
+          <Link to="/scanner/technique.execute?prepended_conversation_id=second-conversation">Use another conversation</Link>
+          <Routes><Route path="/scanner/:scenarioName" element={
+            <ScenarioDetail targets={[]} defaultObjectiveTarget={null} defaultAdversarialTarget={null}
+              labels={{ operator: 'roakey' }} defaultsReady onNavigate={jest.fn()} />
+          } /></Routes>
+        </MemoryRouter>
+      </FluentProvider>)
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('first-conversation')
+      await user.click(screen.getByRole('link', { name: 'Use another conversation' }))
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('second-conversation')
+      expect(mockStartRun).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      '?prepended_conversation_id=%20%20',
+      '?prepended_conversation_id=first&prepended_conversation_id=second',
+    ])('should leave the conversation unset for an empty or ambiguous URL parameter: %s', async (query: string) => {
+      renderDetail(`/scanner/technique.execute${query}`)
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('')
+      expect(screen.getByRole('button', { name: 'Edit conversation' })).toBeDisabled()
+      expect(mockStartRun).not.toHaveBeenCalled()
+    })
+
+    it('should decode the conversation URL parameter', async () => {
+      renderDetail('/scanner/technique.execute?prepended_conversation_id=saved%2Fhistory%20%26%20context')
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('saved/history & context')
+    })
+
+    it('should preserve defaults and ignore conversation IDs that the scanner does not support', async () => {
+      mockGetScenario.mockResolvedValue(makeScenario({
+        supported_parameters: [{ name: 'max_turns', type_name: 'int', required: false, default: '7' }],
+      }))
+      renderDetail('/scanner/foundry.red_team_agent?prepended_conversation_id=history-conversation')
+      expect(await screen.findByRole('spinbutton', { name: 'max_turns' })).toHaveValue(7)
+      expect(screen.queryByRole('textbox', { name: 'prepended_conversation_id' })).not.toBeInTheDocument()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { max_turns: 7 },
+      }), expect.any(Object)))
+    })
+
+    it.each(['False', 'True'])('should use the declared %s converters default', async (defaultValue: string) => {
+      mockGetScenario.mockResolvedValue(makeScenario({
+        supported_parameters: [
+          { name: 'prepended_conversation_id', type_name: 'str', required: false, default: 'history-conversation' },
+          { name: 'apply_converters_to_prepended_history', type_name: 'bool', required: false, default: defaultValue },
+        ],
+      }))
+      renderDetail('/scanner/technique.execute')
+      const toggle = await screen.findByRole('switch', { name: 'Apply converters to conversation' })
+      expect(toggle).toBeEnabled()
+      if (defaultValue === 'True') expect(toggle).toBeChecked()
+      else expect(toggle).not.toBeChecked()
+    })
+
+    it('should load the field history for editing and replace its ID with a saved copy', async () => {
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute', {}, true)
+      await user.type(await screen.findByRole('textbox', { name: 'prepended_conversation_id' }), ' history-conversation ')
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      const first = await screen.findByRole('region', { name: 'Message 1' })
+      expect(within(first).getByRole('textbox')).toHaveValue('Saved context')
+      await user.type(within(first).getByRole('textbox'), ' changed')
+      await user.click(screen.getByRole('button', { name: 'Add to attack' }))
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('edited-conversation')
+      expect(mockAttacks.getConversation).toHaveBeenCalledWith('history-conversation')
+      expect(mockAttacks.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+        destination: 'new_attack', source_attack_result_id: 'history-attack',
+        source_conversation_id: 'history-conversation', target_registry_name: undefined,
+        messages: [expect.objectContaining({
+          role: 'system', pieces: [expect.objectContaining({ original_value: 'Saved context changed' })],
+        })],
+      }))
+      expect(mockStartRun).not.toHaveBeenCalled()
+    })
+
+    it('should block scan preview while history loads or its editor is open', async () => {
+      let resolveConversation: (response: AddMessageResponse) => void = () => {}
+      mockAttacks.getConversation.mockReturnValue(new Promise<AddMessageResponse>((resolve) => {
+        resolveConversation = resolve
+      }))
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute?prepended_conversation_id=history-conversation', {}, true)
+      const launch = await screen.findByRole('button', { name: 'Launch scan' })
+      const form = launch.closest('form')
+      if (!form) throw new Error('Launch scan must submit the configuration form.')
+      expect(launch).toBeEnabled()
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      expect(launch).toBeDisabled()
+      await user.click(launch)
+      fireEvent.submit(form)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(mockStartRun).not.toHaveBeenCalled()
+
+      await act(async () => { resolveConversation(saved) })
+      await screen.findByRole('region', { name: 'Message 1' })
+      fireEvent.submit(form)
+      expect(screen.queryByText('Run preview')).not.toBeInTheDocument()
+      expect(mockStartRun).not.toHaveBeenCalled()
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+      await screen.findByRole('textbox', { name: 'prepended_conversation_id' })
+      expect(launch).toBeEnabled()
+      await confirmRunPreview(user)
+      expect(mockStartRun).toHaveBeenCalledTimes(1)
+      expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+        scenario_params: expect.objectContaining({ prepended_conversation_id: 'history-conversation' }),
+      }))
+    })
+
+    it('should block scan preview until the edited conversation is saved and launch with its new ID', async () => {
+      let resolveSave: (response: AddMessageResponse) => void = () => {}
+      mockAttacks.saveConversation.mockReturnValue(new Promise<AddMessageResponse>((resolve) => {
+        resolveSave = resolve
+      }))
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute?prepended_conversation_id=history-conversation', {}, true)
+      const launch = await screen.findByRole('button', { name: 'Launch scan' })
+      const form = launch.closest('form')
+      if (!form) throw new Error('Launch scan must submit the configuration form.')
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      await user.type(within(await screen.findByRole('region', { name: 'Message 1' })).getByRole('textbox'), ' changed')
+      await user.click(screen.getByRole('button', { name: 'Add to attack' }))
+      expect(mockAttacks.saveConversation).toHaveBeenCalledTimes(1)
+      expect(launch).toBeDisabled()
+      fireEvent.submit(form)
+      expect(screen.queryByText('Run preview')).not.toBeInTheDocument()
+      expect(mockStartRun).not.toHaveBeenCalled()
+
+      await act(async () => {
+        resolveSave({ ...saved, messages: { ...saved.messages, conversation_id: 'edited-conversation' } })
+      })
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('edited-conversation')
+      expect(launch).toBeEnabled()
+      await confirmRunPreview(user)
+      expect(mockStartRun).toHaveBeenCalledTimes(1)
+      expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+        scenario_params: expect.objectContaining({ prepended_conversation_id: 'edited-conversation' }),
+      }))
+    })
+
+    it('should keep the configured ID when an edited draft is discarded', async () => {
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute', {}, true)
+      await user.type(await screen.findByRole('textbox', { name: 'prepended_conversation_id' }), 'history-conversation')
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      await user.type(within(await screen.findByRole('region', { name: 'Message 1' })).getByRole('textbox'), ' discarded')
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+      await user.click(await screen.findByRole('button', { name: 'Discard draft' }))
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('history-conversation')
+      expect(mockAttacks.saveConversation).not.toHaveBeenCalled()
+    })
+
+    it('should report a missing conversation without opening an empty editor or changing the field', async () => {
+      mockAttacks.getConversation.mockRejectedValue(new Error('Saved chat conversation not found'))
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute', {}, true)
+      await user.type(await screen.findByRole('textbox', { name: 'prepended_conversation_id' }), 'missing')
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      expect(await screen.findByText('Saved chat conversation not found')).toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('missing')
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(mockAttacks.saveConversation).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled()
+    })
+
+    it('should keep the draft and scanner ID when saving fails', async () => {
+      mockAttacks.saveConversation.mockRejectedValue(new Error('Conversation save failed'))
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute', {}, true)
+      await user.type(await screen.findByRole('textbox', { name: 'prepended_conversation_id' }), 'history-conversation')
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      await user.type(within(await screen.findByRole('region', { name: 'Message 1' })).getByRole('textbox'), ' kept')
+      await user.click(screen.getByRole('button', { name: 'Add to attack' }))
+      expect(await screen.findByText('Conversation save failed')).toBeInTheDocument()
+      expect(within(screen.getByRole('region', { name: 'Message 1' })).getByRole('textbox')).toHaveValue('Saved context kept')
+      expect(mockStartRun).not.toHaveBeenCalled()
+    })
   })
 
   it('blocks a legacy catalog response without support names instead of guessing common support', async () => {
@@ -1454,7 +1756,9 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     mockStartRun.mockResolvedValueOnce({ scenario_result_id: 'sr-1' })
 
-    renderDetail('/scanner/foundry.red_team_agent', { labels: { operator: 'roakey', operation: 'op1' } })
+    renderDetail('/scanner/foundry.red_team_agent', {
+      labels: { operator: 'roakey', team: 'red' }, operationId: 'operation-1',
+    })
     await screen.findByTestId('scenario-target-select')
 
     await confirmRunPreview(user)
@@ -1467,7 +1771,8 @@ describe('ScenarioDetail', () => {
       max_concurrency: 10,
       max_retries: 0,
       include_baseline: true,
-      labels: { operator: 'roakey', operation: 'op1' },
+      labels: { operator: 'roakey', team: 'red' },
+      operation_id: 'operation-1',
     })
   })
 

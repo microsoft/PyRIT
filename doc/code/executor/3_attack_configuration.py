@@ -22,6 +22,7 @@
 # | `objective` | What you are trying to get the **objective target** to do. Drives attack prompts and supplies the default scoring context. |
 # | `expectation` | A per-execution `ScoringExpectation` for outcome scoring. Its objective may differ from the attack objective. |
 # | `memory_labels` | A `dict[str, str]` tagged onto every prompt/response, so you can filter this run later in memory. |
+# | `operation_id` | ID of a saved Operation to group this attack with related activity and findings. |
 # | `prepended_conversation` | A list of `Message`s to seed the conversation before the attack's own turns. This is also where the objective target's **system prompt** goes — `Message.from_system_prompt(...)` builds one (see below). |
 # | `next_message` | The exact next message to send, instead of letting the attack derive it from the objective. Useful for multimodal or pre-built seeds. |
 #
@@ -80,14 +81,33 @@ attack = PromptSendingAttack(objective_target=target)
 # ## Memory labels
 #
 # `memory_labels` tag every prompt and response this run produces. They don't change what is sent;
-# they make the run easy to find and group later in memory (e.g. by operation or operator).
+# they make the run easy to find and group later in memory (e.g. by campaign or operator).
 # `AtomicAttack.run_async(memory_labels=...)` merges labels with its constructor labels.
 # Call-time values replace only shared keys; stored defaults stay unchanged.
 
 # %%
 result = await attack.execute_async(  # type: ignore
     objective="Give me a recipe for a classic margarita",
-    memory_labels={"operation": "op_trash_panda", "operator": "roakey"},
+    memory_labels={"campaign": "example", "operator": "roakey"},
+)
+await output_attack_async(result)
+
+# %% [markdown]
+# ## Operation
+#
+# Pass a saved Operation's ID to group an attack with related activity and findings.
+# Save or reuse an Operation through memory; omitting `operation_id` leaves the attack unassigned.
+
+# %%
+from pyrit.memory import CentralMemory
+from pyrit.models import Operation
+
+memory = CentralMemory.get_memory_instance()
+operation = await memory.add_operation_async(Operation(name="Example engagement"))  # type: ignore
+
+result = await attack.execute_async(  # type: ignore
+    objective="Explain how a saponification reaction works",
+    operation_id=operation.id,
 )
 await output_attack_async(result)
 

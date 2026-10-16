@@ -38,15 +38,6 @@ class RuntimeLifecycle:
     def __init__(self, *, app: FastAPI, source: ConfigurationFileService) -> None:
         """Bind lifecycle state to one app and its immutable configuration source."""
         self.app = app
-        self.app.state.auth_environment = {
-            key: os.getenv(key, "")
-            for key in (
-                "ENTRA_CLIENT_ID",
-                "ENTRA_TENANT_ID",
-                "ENTRA_ALLOWED_GROUP_IDS",
-                "PYRIT_ALLOW_UNAUTHENTICATED_ADMIN",
-            )
-        }
         self.source = source
         self.edit_lock = asyncio.Lock()
         self.state = "initializing"
@@ -117,9 +108,9 @@ class RuntimeLifecycle:
             ConfiguredInitializerSetting(initializer_name=item.name, parameters=item.args, order_index=index)
             for index, item in enumerate(config.initializer_configs)
         ]
-        self.app.state.default_labels = {
-            key: value for key, value in (("operator", config.operator), ("operation", config.operation)) if value
-        }
+        self.app.state.default_labels = {"operator": config.operator} if config.operator else {}
+        # A proposal shown to users, never created or resolved to a saved Operation.
+        self.app.state.default_operation = (config.operation or "").strip() or None
         self.app.state.max_concurrent_scenario_runs = config.max_concurrent_scenario_runs
         self.generation = str(uuid.uuid4())
         self.state, self.outcome, self.message = "ready", "success", "PyRIT is ready."
@@ -131,6 +122,7 @@ class RuntimeLifecycle:
         self.app.state.environment_file_service = None
         self.app.state.configured_initializers = []
         self.app.state.default_labels = {}
+        self.app.state.default_operation = None
         try:
             config = await self._load_async()
             await self._management_async(config)

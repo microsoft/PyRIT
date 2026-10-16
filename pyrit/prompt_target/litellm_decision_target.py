@@ -6,6 +6,7 @@ import math
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
+from pyrit.exceptions import pyrit_target_retry
 from pyrit.models import (
     ComponentIdentifier,
     Message,
@@ -106,6 +107,7 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
         }
         return self._create_identifier(params={"endpoint": self._endpoint, "headers": headers or None})
 
+    @pyrit_target_retry
     @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
@@ -154,7 +156,8 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
             **self._parse_request(request.converted_value),
             "model": self._model_name,
             "api_key": await self._resolve_api_key_async(),
-            "num_retries": self._num_retries,
+            # Decision APIs do not use LiteLLM's chat retry wrapper. PyRIT owns retries.
+            "num_retries": 0,
         }
         if self._endpoint:
             body["api_base"] = self._endpoint

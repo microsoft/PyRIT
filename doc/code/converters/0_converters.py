@@ -67,6 +67,11 @@ print(df)
 
 # %% [markdown]
 # Converters can be used to perform these types of transformations. Here is a simple program that uses Rot13Converter converter, RandomCapitalLettersConverter, and AsciiArtConverter.
+#
+# `AsciiArtConverter` accepts case-insensitive font names, including `mix` for a
+# seeded mixture of single-row glyphs. Characters the font cannot fully render
+# pass through unchanged with a warning. Combining characters and emoji sequences
+# stay together, and mixed text is padded using terminal display widths.
 
 # %%
 from pyrit.converter import (

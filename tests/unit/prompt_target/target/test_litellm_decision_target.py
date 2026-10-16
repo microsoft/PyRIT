@@ -72,7 +72,7 @@ class TestLiteLLMDecisionTarget:
         assert body["api_key"] == "test-api-key"
         assert body["state"] == REQUEST["state"]
         assert body["questions"] == REQUEST["questions"]
-        assert body["num_retries"] == max(get_retry_max_num_attempts() - 1, 0)
+        assert body["num_retries"] == 0
         assert "messages" not in body
         assert "drop_params" not in body
         assert json.loads(responses[0].get_value()) == RESPONSE
@@ -220,7 +220,7 @@ class TestLiteLLMDecisionTarget:
         assert REQUEST["state"]["response"] == "Paris."
 
     @pytest.mark.parametrize("error_name", ["AuthenticationError", "RateLimitError"])
-    async def test_sdk_errors_are_translated_without_an_extra_retry_async(
+    async def test_sdk_errors_use_target_retry_policy_async(
         self, *, target: LiteLLMDecisionTarget, decision_sdk: MagicMock, error_name: str
     ) -> None:
         response = httpx.Response(
@@ -234,7 +234,8 @@ class TestLiteLLMDecisionTarget:
         error = PyritException if error_name == "AuthenticationError" else RateLimitException
         with pytest.raises(error):
             await target.send_prompt_async(message=_request(json.dumps(REQUEST)))
-        decision_sdk.adecisions.assert_awaited_once()
+        expected_attempts = 1 if error_name == "AuthenticationError" else get_retry_max_num_attempts()
+        assert decision_sdk.adecisions.await_count == expected_attempts
 
     async def test_connection_error_is_translated_async(
         self, *, target: LiteLLMDecisionTarget, decision_sdk: MagicMock
@@ -244,7 +245,46 @@ class TestLiteLLMDecisionTarget:
         )
         with pytest.raises(RateLimitException):
             await target.send_prompt_async(message=_request(json.dumps(REQUEST)))
-        decision_sdk.adecisions.assert_awaited_once()
+        assert decision_sdk.adecisions.await_count == get_retry_max_num_attempts()
+
+    @pytest.mark.parametrize("api_name", ["asystemone", "adecisions"])
+    @pytest.mark.parametrize(
+        ("status", "recover"),
+        [(429, True), (503, True), (429, False), (503, False), (401, False), (400, False)],
+    )
+    async def test_real_sdk_transient_retry_policy_async(self, *, api_name: str, status: int, recover: bool) -> None:
+        litellm = pytest.importorskip("litellm")
+        from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+
+        target = LiteLLMDecisionTarget(model_name=MODEL, endpoint=ENDPOINT, api_key="test-api-key")
+        request = httpx.Request("POST", f"{ENDPOINT}/alpha/decisions")
+        failure = httpx.Response(status, json={"error": {"message": "Provider error"}}, request=request)
+        failure_error = httpx.HTTPStatusError("Provider error", request=request, response=failure)
+        success = httpx.Response(200, json=RESPONSE, request=request)
+        transient = status in (429, 503)
+        attempts = 2 if recover else 3 if transient else 1
+        with (
+            patch.dict("os.environ", {"RETRY_MAX_NUM_ATTEMPTS": "3", "RETRY_WAIT_MAX_SECONDS": "0"}),
+            patch.object(litellm, "asystemone", getattr(litellm, api_name) if api_name == "asystemone" else None),
+            patch.object(
+                AsyncHTTPHandler,
+                "post",
+                new_callable=AsyncMock,
+                side_effect=[failure_error, success] if recover else [failure_error] * attempts,
+            ) as post,
+        ):
+            if recover:
+                responses = await target.send_prompt_async(message=_request(json.dumps(REQUEST)))
+                assert json.loads(responses[0].get_value()) == RESPONSE
+            else:
+                with pytest.raises(RateLimitException if transient else PyritException):
+                    await target.send_prompt_async(message=_request(json.dumps(REQUEST)))
+
+        assert post.await_count == attempts
+        assert all(
+            call.kwargs["json"] == {**REQUEST, "model": "microsoft/microsoft-decision-1"}
+            for call in post.call_args_list
+        )
 
     @pytest.mark.parametrize(
         ("provider_probability", "probability"),
