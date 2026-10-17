@@ -195,6 +195,37 @@ class TestAssertGenerator:
             for group in result.seed_groups
         )
 
+    @pytest.mark.parametrize("system_prompt", ["", "Use the published support policy."])
+    async def test_whitespace_system_prompt_retries_then_retains_all_groups_async(self, system_prompt: str) -> None:
+        target = make_assert_generation_target()
+        batch_attempts: dict[str, int] = {}
+
+        async def whitespace_first_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            responses = await assert_generation_response_async(normalized_conversation=normalized_conversation)
+            request = normalized_conversation[-1].get_piece()
+            if request.prompt_metadata["assert_stage"] == "seed_groups":
+                conversation_id = request.conversation_id
+                batch_attempts[conversation_id] = batch_attempts.get(conversation_id, 0) + 1
+                invalid = len(batch_attempts) == 2 and batch_attempts[conversation_id] == 1
+                assert all(message.get_piece().role != "assistant" for message in normalized_conversation)
+                value = json.loads(responses[0].get_value())
+                for group in value["seed_groups"]:
+                    group["system_prompt"] = " \n " if invalid else system_prompt
+                responses[0].get_piece().converted_value = json.dumps(value)
+            return responses
+
+        with patch.object(target, "_send_prompt_to_target_async", side_effect=whitespace_first_async):
+            result = await AssertGenerator(target=target).execute_async(config=make_assert_config())
+
+        assert len(batch_attempts) > 1
+        assert sum(batch_attempts.values()) == len(batch_attempts) + 1
+        assert len(result.seed_groups) == 6
+        assert all(
+            [prompt.value for prompt in group.prompts if prompt.role == "system"]
+            == ([system_prompt] if system_prompt else [])
+            for group in result.seed_groups
+        )
+
     @pytest.mark.parametrize("include_user, include_adversarial", [(True, False), (False, True), (True, True)])
     async def test_requested_inputs_share_the_generated_objective_async(
         self, include_user: bool, include_adversarial: bool

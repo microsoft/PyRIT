@@ -22,6 +22,63 @@ from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAssertProvider:
+    @pytest.mark.parametrize("instructions", [("First role.", "Second role."), ("First role.", None), (None, "Role.")])
+    @pytest.mark.parametrize("same_user_prompt", [True, False])
+    async def test_separate_writes_retain_complete_behavioral_variants_async(
+        self,
+        *,
+        sqlite_instance: MemoryInterface,
+        instructions: tuple[str | None, str | None],
+        same_user_prompt: bool,
+    ) -> None:
+        datasets = []
+        expected_groups = []
+        for index, role in enumerate(instructions):
+            result = make_assert_result(
+                config=make_assert_config(group_count=1, include_adversarial_prompt=role is not None),
+                duplicate_text=True,
+                system_prompt="Use the published support policy.",
+            )
+            group = result.seed_groups[0]
+            if role is not None:
+                group.adversarial_prompts.system_prompt.value += f"\n{role}"
+                group.objective.metadata.update(group.adversarial_prompts.to_metadata())
+            if not same_user_prompt:
+                next(prompt for prompt in group.prompts if prompt.role == "user").value += f" Item {index}."
+            dataset = await AssertProvider(dataset_name="assert_variants", result=result).fetch_dataset_async()
+            datasets.append(dataset)
+            expected_groups.extend(group_seeds_into_attack_groups(dataset.seeds))
+            await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="operator")
+
+        stored = await sqlite_instance.get_seeds_async(dataset_name="assert_variants")
+        groups = group_seeds_into_attack_groups(stored)
+        assert len(groups) == 2
+        assert len(stored) == 6
+        expected_by_id = {group.logical_id: group for group in expected_groups}
+        assert {group.logical_id for group in groups} == expected_by_id.keys()
+        for group in groups:
+            expected = expected_by_id[group.logical_id]
+            assert {seed.id for seed in group.seeds} == {seed.id for seed in expected.seeds}
+            assert group.objective.metadata == expected.objective.metadata
+            assert group.adversarial_prompts == expected.adversarial_prompts
+            assert [(prompt.role, prompt.value) for prompt in group.prompts] == [
+                (prompt.role, prompt.value) for prompt in expected.prompts
+            ]
+        await sqlite_instance.add_seed_datasets_to_memory_async(datasets=datasets, added_by="operator")
+        assert len(await sqlite_instance.get_seeds_async(dataset_name="assert_variants")) == 6
+
+    async def test_storage_deduplicates_identical_inputs_with_fresh_seed_ids_async(
+        self, sqlite_instance: MemoryInterface
+    ) -> None:
+        for _ in range(2):
+            result = make_assert_result(config=make_assert_config(group_count=1))
+            dataset = await AssertProvider(dataset_name="identical", result=result).fetch_dataset_async()
+            await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="operator")
+
+        stored = await sqlite_instance.get_seeds_async(dataset_name="identical")
+        assert len(stored) == 2
+        assert len(group_seeds_into_attack_groups(stored)) == 1
+
     async def test_storage_preserves_group_associations_and_duplicate_objectives_async(
         self, sqlite_instance: MemoryInterface
     ) -> None:

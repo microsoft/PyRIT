@@ -181,11 +181,12 @@ def filter_compatible_seed_groups(
     retained: list[AttackSeedGroup] = []
     for group in seed_groups:
         try:
-            prepare_seed_group(
+            prepared = prepare_seed_group(
                 seed_group=group,
                 requirements=factory.requirements.seed_group,
                 seed_technique=factory.seed_technique,
             )
+            factory.validate_group_adversarial_prompts(prepared.seed_group)
         except IncompatibleTechniqueError:
             continue
         retained.append(group)
@@ -327,7 +328,8 @@ class MatrixAtomicAttackBuilder:
 
         Named group adversarial prompts configure fresh attack instances. Repeated
         objectives also need separate execution units. Other groups stay batched.
-        Group-specific units share the technique's display group.
+        Group-specific units share the technique's display group. Known prompt-contract
+        mismatches follow the configured skip/raise policy before attack construction.
 
         Args:
             technique_factories (dict[str, AttackTechniqueFactory]): Mapping of technique
@@ -383,6 +385,7 @@ class MatrixAtomicAttackBuilder:
                     technique_name=technique_name,
                     dataset_name=name,
                     policy=self._incompatible_technique_policy,
+                    validate_group=factory.validate_group_adversarial_prompts,
                 )
                 for name, groups in dataset_groups.items()
             }

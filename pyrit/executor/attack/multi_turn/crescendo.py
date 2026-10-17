@@ -130,6 +130,8 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
     You can learn more about the Crescendo attack [@russinovich2024crescendo].
     """
 
+    ADVERSARIAL_SYSTEM_PROMPT_PARAMETERS = ("objective", "max_turns")
+
     # Crescendo relies on native live history for both gradual escalation and
     # backtracking. Squashed or non-editable history changes those semantics.
     TARGET_REQUIREMENTS = TargetRequirements(
@@ -245,7 +247,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
             config=attack_adversarial_config,
             default_system_prompt_path=CrescendoAttack.DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH,
-            system_prompt_required_parameters=["objective", "max_turns"],
+            system_prompt_required_parameters=list(self.ADVERSARIAL_SYSTEM_PROMPT_PARAMETERS),
             system_prompt_error_message="Crescendo system prompt must have 'objective' and 'max_turns' parameters",
         )
         self._adversarial_chat_system_prompt_template = self._resolved_adversarial.system_prompt

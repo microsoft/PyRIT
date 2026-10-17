@@ -1562,6 +1562,8 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         AttackResult: The result of the TAP attack execution.
     """
 
+    ADVERSARIAL_SYSTEM_PROMPT_PARAMETERS = ("desired_prefix",)
+
     # Default paths for TAP attack prompts
     DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH: Path = (
         EXECUTOR_SEED_PROMPT_PATH / "tree_of_attacks" / "adversarial_system_prompt.yaml"
@@ -1687,7 +1689,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
             config=attack_adversarial_config,
             default_system_prompt_path=TreeOfAttacksWithPruningAttack.DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
-            system_prompt_required_parameters=["desired_prefix"],
+            system_prompt_required_parameters=list(self.ADVERSARIAL_SYSTEM_PROMPT_PARAMETERS),
             system_prompt_error_message="Adversarial seed prompt must have a desired_prefix",
         )
         self._adversarial_chat_system_seed_prompt = self._resolved_adversarial.system_prompt

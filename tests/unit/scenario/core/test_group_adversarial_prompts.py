@@ -5,9 +5,18 @@ import json
 from unittest.mock import patch
 
 import pytest
+from unit.assert_mocks import make_assert_config, make_assert_result
 from unit.mocks import MockPromptTarget
 
-from pyrit.executor.attack import AttackExecutor, AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
+from pyrit.executor.attack import (
+    AttackExecutor,
+    AttackScoringConfig,
+    AttackStrategy,
+    CrescendoAttack,
+    PromptSendingAttack,
+    RedTeamingAttack,
+    TreeOfAttacksWithPruningAttack,
+)
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AdversarialPrompts,
@@ -24,7 +33,9 @@ from pyrit.models import (
 )
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
+from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, IncompatibleTechniquePolicy
 from pyrit.score import SubStringScorer
+from pyrit.setup.initializers.techniques.core import get_technique_factories
 
 
 def _group(
@@ -60,6 +71,59 @@ class _PolicyScorer(SubStringScorer):
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestGroupAdversarialPrompts:
+    @pytest.mark.parametrize("policy", list(IncompatibleTechniquePolicy))
+    @pytest.mark.parametrize("include_user", [True, False])
+    def test_core_matrix_checks_group_inputs_before_construction(
+        self,
+        *,
+        policy: IncompatibleTechniquePolicy,
+        include_user: bool,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        groups = list(
+            make_assert_result(config=make_assert_config(group_count=2, include_user_prompt=include_user)).seed_groups
+        )
+        catalog = {factory.name: factory for factory in get_technique_factories()}
+        factories = {name: catalog[name] for name in ("code_attack", "tap", "red_teaming")}
+        builder = MatrixAtomicAttackBuilder(
+            objective_target=MockPromptTarget(),
+            objective_scorer=SubStringScorer(substring="30 days"),
+            incompatible_technique_policy=policy,
+        )
+        with (
+            patch(
+                "pyrit.scenario.core.attack_technique_factory.get_default_adversarial_target",
+                return_value=MockPromptTarget(),
+            ),
+            patch.object(factories["code_attack"], "create", wraps=factories["code_attack"].create) as code,
+            patch.object(factories["tap"], "create", wraps=factories["tap"].create) as tap,
+            patch.object(factories["red_teaming"], "create", wraps=factories["red_teaming"].create) as red_teaming,
+        ):
+            if policy is IncompatibleTechniquePolicy.RAISE:
+                with pytest.raises(IncompatibleTechniqueError, match="code_attack.*does not accept"):
+                    builder.build(
+                        technique_factories=factories, dataset_groups={"assert": groups}, include_baseline=True
+                    )
+                red_teaming.assert_not_called()
+            else:
+                atomics = builder.build(
+                    technique_factories=factories, dataset_groups={"assert": groups}, include_baseline=True
+                )
+                assert len(atomics) == 3
+                assert atomics[0].atomic_attack_name == "baseline"
+                assert atomics[0].seed_groups == groups
+                assert [atomic.technique_name for atomic in atomics[1:]] == ["red_teaming", "red_teaming"]
+                assert [atomic.seed_groups[0] for atomic in atomics[1:]] == groups
+                assert red_teaming.call_count == 2
+                summaries = [
+                    record.getMessage() for record in caplog.records if "skipped 2 seed group" in record.getMessage()
+                ]
+                assert len(summaries) == 2
+                assert any("code_attack" in summary for summary in summaries)
+                assert any("tap" in summary and "desired_prefix" in summary for summary in summaries)
+            code.assert_not_called()
+            tap.assert_not_called()
+
     def test_factory_binds_named_inputs_to_fresh_constructor_configs(self) -> None:
         adversarial_chat = MockPromptTarget()
         objective_target = MockPromptTarget()
@@ -128,17 +192,21 @@ class TestGroupAdversarialPrompts:
                 adversarial_system_prompt=None if baked else "An explicit role for {{ objective }}",
             )
 
-    def test_constructor_validates_the_group_prompt_contract(self) -> None:
+    @pytest.mark.parametrize("attack_class", [RedTeamingAttack, CrescendoAttack, TreeOfAttacksWithPruningAttack])
+    def test_factory_validates_the_group_prompt_contract(self, attack_class: type[AttackStrategy]) -> None:
         group = AttackSeedGroup(
             seeds=[SeedObjective(value="goal")],
             adversarial_prompts=AdversarialPrompts(system_prompt=SeedPrompt(value="No objective parameter.")),
         )
-        with pytest.raises(ValueError, match="must have an objective"):
-            _factory(MockPromptTarget()).create(
-                objective_target=MockPromptTarget(),
-                attack_scoring_config=AttackScoringConfig(objective_scorer=SubStringScorer(substring="yes")),
-                seed_group=group,
-            )
+        factory = AttackTechniqueFactory(name="missing_parameters", attack_class=attack_class)
+        with patch.object(attack_class, "__init__") as constructor:
+            with pytest.raises(IncompatibleTechniqueError, match="missing required parameters"):
+                factory.create(
+                    objective_target=MockPromptTarget(),
+                    attack_scoring_config=AttackScoringConfig(objective_scorer=SubStringScorer(substring="yes")),
+                    seed_group=group,
+                )
+            constructor.assert_not_called()
 
     def test_matrix_uses_stable_names_and_independent_attacks(self) -> None:
         objective_target = MockPromptTarget()

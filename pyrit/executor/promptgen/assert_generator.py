@@ -74,7 +74,7 @@ class _GeneratedGroup(BaseModel):
     objective: _Text
     user_prompt: _Text | None = None
     adversarial_instructions: _Text | None = None
-    system_prompt: str = ""
+    system_prompt: Annotated[str, StringConstraints(max_length=0)] | _Text = ""
 
 
 class _GroupBatch(BaseModel):
