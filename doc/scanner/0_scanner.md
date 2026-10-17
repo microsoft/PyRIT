@@ -58,7 +58,7 @@ PyRIT ships with scenarios organized into the following families:
 | Family | Scenarios | Documentation |
 |--------|-----------|---------------|
 | **Adaptive** | TextAdaptive | [Adaptive Scenarios](adaptive.ipynb) |
-| **AIRT** | RapidResponse, Psychosocial, Cyber, Jailbreak, Multilingual, Leakage, Scam | [AIRT Scenarios](airt.ipynb) |
+| **AIRT** | RapidResponse, Psychosocial, Cyber, Jailbreak, Multilingual, Leakage, AggregationLeakage, Scam | [AIRT Scenarios](airt.ipynb) |
 | **Benchmark** | AdversarialBenchmark | [Benchmark Scenarios](benchmark.ipynb) |
 | **Foundry** | RedTeamAgent | [Foundry Scenarios](foundry.ipynb) |
 | **Garak** | Encoding, FigStep, WebInjection, Doctor, SystemPromptExtraction, PackageHallucination, AudioAchillesHeel | [Garak Scenarios](garak.ipynb) |
