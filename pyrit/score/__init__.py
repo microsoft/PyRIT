@@ -43,12 +43,15 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScorer
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.message_scorer import MessageScorer
+    from pyrit.score.observation.docker_sandbox_client import DockerRuntimeProfile, DockerSandboxClient
     from pyrit.score.observation.execution import NonReplayableObservationError
     from pyrit.score.observation.lifecycle import AttemptObserver, SurfaceLifecycleSource
     from pyrit.score.observation.local_file_surface_source import LocalFileSurfaceSource
     from pyrit.score.observation.observation_source import ObservationSource
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
+    from pyrit.score.observation.program_execution_source import ProgramExecutionSource
+    from pyrit.score.observation.sandbox_client import SandboxClient, SandboxExecutionError, SandboxRun
     from pyrit.score.observation.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
     from pyrit.score.response_handler import (
         CallableResponseHandler,
@@ -102,6 +105,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.message_tool_call_scorer import MessageToolCallScorer
     from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
     from pyrit.score.true_false.output_matches_scorer import OutputMatchesScorer
+    from pyrit.score.true_false.program_execution_scorer import ProgramExecutionScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
     from pyrit.score.true_false.regex.agent_threat_rules_scorer import AgentThreatRulesScorer
@@ -162,6 +166,13 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.wildguard_scorer import WildGuardScorer, render_wildguard_prompt
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "DockerRuntimeProfile": "pyrit.score.observation.docker_sandbox_client",
+    "DockerSandboxClient": "pyrit.score.observation.docker_sandbox_client",
+    "ProgramExecutionScorer": "pyrit.score.true_false.program_execution_scorer",
+    "ProgramExecutionSource": "pyrit.score.observation.program_execution_source",
+    "SandboxClient": "pyrit.score.observation.sandbox_client",
+    "SandboxExecutionError": "pyrit.score.observation.sandbox_client",
+    "SandboxRun": "pyrit.score.observation.sandbox_client",
     "OutputMatchesScorer": "pyrit.score.true_false.output_matches_scorer",
     "AnsiEscapeOutputScorer": "pyrit.score.true_false.regex.ansi_escape_output_scorer",
     "AnthraxKeywordScorer": "pyrit.score.true_false.regex.anthrax_keyword_scorer",

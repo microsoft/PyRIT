@@ -16,11 +16,13 @@ from pyrit.models.identifiers.component_identifier import (
     ComponentIdentifier,  # noqa: TC001  (runtime-required by Pydantic field annotations)
 )
 from pyrit.models.literals import MEDIA_PATH_DATA_TYPES
+from pyrit.models.score.program import ProgramExecutionEvent  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.score.scorable import (
     ContentEntryScorable,
     ContentScorable,
     ConversationScorable,
     MessageScorable,
+    ProgramExecutionScorable,
     ScorableUnion,  # noqa: TC001  (runtime-required by Pydantic field annotations)
     SurfaceScorable,
     TraceScorable,
@@ -419,11 +421,77 @@ class SurfaceObservationPayload(BaseModel):
         return self
 
 
+class ProgramExecutionObservationPayload(BaseModel):
+    """
+    What one isolated execution attempt produced: one event per invocation that ran.
+
+    ``program_sha256`` digests the exact code the sandbox received, so the evidence names the
+    program even if the message it came from is later edited. ``reasons`` explains why an
+    acquisition is not complete. A program that fails its invocations is still complete
+    evidence; only a sandbox that could not run it, or did not finish, leaves gaps.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["program_execution"] = "program_execution"
+    schema_version: Literal[1] = 1
+    program_sha256: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    events: tuple[ProgramExecutionEvent, ...] = ()
+    reasons: tuple[str, ...] = ()
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def _validate_schema_version(cls, value: Any) -> Any:
+        """
+        Require the exact supported schema version, without numeric coercion.
+
+        Returns:
+            Any: The supported schema version.
+
+        Raises:
+            ValueError: If the version is not exactly the supported integer.
+        """
+        if type(value) is not int or value != 1:
+            raise ValueError("Unsupported program execution payload schema_version; expected 1.")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_events(self) -> ProgramExecutionObservationPayload:
+        """
+        Keep one event per case, in case order.
+
+        Returns:
+            ProgramExecutionObservationPayload: The validated payload.
+
+        Raises:
+            ValueError: If a case repeats, events are out of order, or events lack a program digest.
+        """
+        indices = [event.case_index for event in self.events]
+        if indices != sorted(set(indices)):
+            raise ValueError("Program execution events must name each case once, in case order.")
+        if self.events and self.program_sha256 is None:
+            raise ValueError("Program execution events require the digest of the program that ran.")
+        return self
+
+    def event_for(self, case_index: int) -> ProgramExecutionEvent | None:
+        """
+        Return the event for one case.
+
+        Args:
+            case_index (int): The case's position in the condition.
+
+        Returns:
+            ProgramExecutionEvent | None: The event, or None when that case did not run.
+        """
+        return next((event for event in self.events if event.case_index == case_index), None)
+
+
 ObservationPayload = Annotated[
     ScorerTargetResponsePayload
     | ToolEventsObservationPayload
     | ConversationObservationPayload
-    | SurfaceObservationPayload,
+    | SurfaceObservationPayload
+    | ProgramExecutionObservationPayload,
     Field(discriminator="kind"),
 ]
 
@@ -528,6 +596,36 @@ class Observation(BaseModel):
             raise ValueError("Unavailable or failed surface acquisition cannot contain entries.")
         return self
 
+    @model_validator(mode="after")
+    def _validate_program_acquisition(self) -> Observation:
+        """
+        Require acquisition status to agree with the execution events.
+
+        Returns:
+            Observation: The validated observation.
+
+        Raises:
+            ValueError: If the anchor, events, or acquisition are inconsistent.
+        """
+        if not isinstance(self.payload, ProgramExecutionObservationPayload):
+            return self
+        if not isinstance(self.scorable, ProgramExecutionScorable):
+            raise ValueError("Program execution observations require a ProgramExecutionScorable.")
+        events = self.payload.events
+        if any(event.case_index >= len(self.scorable.invocations) for event in events):
+            raise ValueError("Program execution events must belong to the scorable's invocations.")
+        if any(event.runtime_profile != self.scorable.runtime_profile for event in events):
+            raise ValueError("Program execution events must use the scorable's runtime profile.")
+        if self.acquisition is Acquisition.COMPLETE and (
+            len(events) != len(self.scorable.invocations) or self.payload.reasons
+        ):
+            raise ValueError("Complete program acquisition requires one event per invocation and no gaps.")
+        if self.acquisition is Acquisition.PARTIAL and len(events) == len(self.scorable.invocations):
+            raise ValueError("Partial program acquisition cannot hold an event for every invocation.")
+        if self.acquisition in (Acquisition.UNAVAILABLE, Acquisition.ERROR) and events:
+            raise ValueError("Unavailable or failed program acquisition cannot contain events.")
+        return self
+
     @property
     def response_message_piece_ids(self) -> tuple[uuid.UUID, ...]:
         """The ordered message references retained by this payload."""
@@ -566,7 +664,10 @@ class Observation(BaseModel):
         Raises:
             ValueError: If scored or response evidence is missing, modified, or unsupported.
         """
-        if isinstance(self.payload, (ToolEventsObservationPayload, SurfaceObservationPayload)):
+        if isinstance(
+            self.payload,
+            (ToolEventsObservationPayload, SurfaceObservationPayload, ProgramExecutionObservationPayload),
+        ):
             return
         if isinstance(self.payload, ConversationObservationPayload):
             if not isinstance(self.scorable, ConversationScorable):

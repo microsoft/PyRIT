@@ -2796,15 +2796,19 @@ class MemoryInterface(abc.ABC):
             SQLAlchemyError: If the score or identifier rows cannot be persisted.
         """
         observations = [Observation.model_validate(observation.model_dump()) for observation in observations]
-        new_ids, referenced_ids = self._validate_score_inputs(scores=scores, observations=observations)
+        _, referenced_ids = self._validate_score_inputs(scores=scores, observations=observations)
         with closing(self._get_session()) as session:
             try:
                 _begin_sqlite_write(session)
-                self._validate_observation_links(
+                already_stored = self._validate_observation_links(
                     session=session,
-                    new_observation_ids=new_ids,
+                    new_observations={str(observation.id): observation for observation in observations},
                     referenced_observation_ids=referenced_ids,
                 )
+                # An identical observation another call stored first is linked, not inserted again.
+                observations = [
+                    observation for observation in observations if str(observation.id) not in already_stored
+                ]
                 canonical_scores = self._resolve_score_message_anchors(session=session, scores=scores)
                 content_entries, persisted_scores, persisted_observations = self._prepare_score_anchors(
                     scores=canonical_scores,
@@ -3016,24 +3020,42 @@ class MemoryInterface(abc.ABC):
         cls,
         *,
         session: Session,
-        new_observation_ids: set[str],
+        new_observations: Mapping[str, Observation],
         referenced_observation_ids: set[str],
-    ) -> None:
+    ) -> set[str]:
         """
         Reject conflicting new IDs and links to observations that do not exist.
 
+        A new observation whose ID is already stored is accepted only when the stored row is
+        the same observation, as when concurrent scoring calls share one acquisition. The
+        check runs under the observation locks, so the first writer inserts and the others link.
+
+        Returns:
+            set[str]: IDs of new observations already stored unchanged, to link rather than insert.
+
         Raises:
-            ValueError: If a new ID conflicts or a referenced observation does not exist.
+            ValueError: If a new ID holds different evidence or a referenced observation does not exist.
         """
+        new_observation_ids = set(new_observations)
         existing = _lock_observations(
             session=session, observation_ids=sorted(new_observation_ids | referenced_observation_ids)
         )
-        conflicts = new_observation_ids & existing
-        if conflicts:
-            raise ValueError(f"New observation IDs already exist: {sorted(conflicts)}.")
+        already_stored = new_observation_ids & existing
+        if already_stored:
+            stored: dict[str, Observation] = {}
+            ids = sorted(already_stored)
+            for start in range(0, len(ids), cls._MAX_BIND_VARS):
+                entries = session.scalars(
+                    select(ObservationEntry).where(ObservationEntry.id.in_(ids[start : start + cls._MAX_BIND_VARS]))
+                )
+                stored.update({str(entry.id): entry.get_observation() for entry in entries})
+            conflicts = sorted(i for i in already_stored if stored.get(i) != new_observations[i])
+            if conflicts:
+                raise ValueError(f"New observation IDs already exist: {conflicts}.")
         missing = referenced_observation_ids - new_observation_ids - existing
         if missing:
             raise ValueError(f"Score references observations not found in memory: {sorted(missing)}.")
+        return already_stored
 
     @classmethod
     def _validate_observation_evidence(

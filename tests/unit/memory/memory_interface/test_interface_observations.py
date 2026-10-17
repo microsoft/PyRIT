@@ -135,6 +135,48 @@ async def test_existing_observation_can_support_another_score(sqlite_instance: M
     assert (await sqlite_instance.get_scores_async(score_ids=[replay_score.id]))[0].observation_ids == [observation.id]
 
 
+async def _stored_observation_and_score_async(memory: MemoryInterface) -> tuple[Observation, Score]:
+    piece = MessagePiece(role="assistant", original_value="response", conversation_id=str(uuid.uuid4()))
+    (await memory.add_message_pieces_to_memory_async(message_pieces=[piece]))
+    scorable = MessageScorable(message_piece_ids=(piece.id,))
+    expectation = ScoringExpectation(objective="Judge the response")
+    observation = await _observation_async(
+        memory=memory, scorable=scorable, response_piece_id=piece.id, expectation=expectation
+    )
+    score = Score(
+        score_value="true",
+        score_type="true_false",
+        scorable=scorable,
+        scored_expectation=expectation,
+        observation_ids=[observation.id],
+    )
+    (await memory.add_scores_to_memory_async(scores=[score], observations=[observation]))
+    return observation, score
+
+
+async def test_identical_new_observation_already_stored_is_linked_not_inserted(sqlite_instance: MemoryInterface):
+    observation, first_score = await _stored_observation_and_score_async(sqlite_instance)
+    second_score = first_score.model_copy(update={"id": uuid.uuid4()})
+
+    (await sqlite_instance.add_scores_to_memory_async(scores=[second_score], observations=[observation]))
+
+    assert len(sqlite_instance._query_entries(ObservationEntry)) == 1
+    stored = await sqlite_instance.get_scores_async(score_ids=[first_score.id, second_score.id])
+    assert [score.observation_ids for score in stored] == [[observation.id], [observation.id]]
+
+
+async def test_different_evidence_under_a_stored_observation_id_is_rejected(sqlite_instance: MemoryInterface):
+    observation, first_score = await _stored_observation_and_score_async(sqlite_instance)
+    changed = observation.model_copy(update={"metadata": {"note": "different"}})
+    second_score = first_score.model_copy(update={"id": uuid.uuid4()})
+
+    with pytest.raises(ValueError, match="New observation IDs already exist"):
+        await sqlite_instance.add_scores_to_memory_async(scores=[second_score], observations=[changed])
+
+    assert await sqlite_instance.get_scores_async(score_ids=[second_score.id]) == []
+    assert (await sqlite_instance.get_observations_async(observation_ids=[observation.id]))[0] == observation
+
+
 async def test_unreferenced_observation_is_not_persisted(sqlite_instance: MemoryInterface):
     piece = MessagePiece(role="assistant", original_value="response", conversation_id=str(uuid.uuid4()))
     (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece]))

@@ -14,6 +14,8 @@ from pyrit.models import (
     Message,
     MessagePiece,
     MessageScorable,
+    ProgramExecutionScorable,
+    ProgramInvocation,
     Scorable,
     Score,
     SurfaceScorable,
@@ -188,6 +190,12 @@ def test_every_union_member_round_trips_to_its_own_type():
         TraceScorable(trace_ids=("1" * 32,)),
         SurfaceScorable(uri="/data/out.txt"),
         ConversationScorable(conversation_id="whole-conversation"),
+        ProgramExecutionScorable(
+            execution_id=uuid.uuid4(),
+            program=ContentScorable(value="print(1)"),
+            runtime_profile="python-3.12",
+            invocations=(ProgramInvocation(),),
+        ),
     ]
 
     assert {type(case) for case in cases} == set(SCORABLE_TYPES)

@@ -295,6 +295,11 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Surface sources read what a location holds for a `SurfaceScorable`, such as files under one
   root directory. `FileWriteScorer` evaluates its `ContentWritten` condition against that
   evidence. The caller owns workspace isolation; a snapshot does not identify its writer.
+- Program-execution sources run a program for a `ProgramExecutionScorable` through an injected
+  `SandboxClient`, such as `DockerSandboxClient`. `ProgramExecutionScorer` splits its `ProgramBehaves`
+  condition so the source receives only the runtime profile and invocations, never the expected
+  results. A program that fails is observed evidence; a sandbox that cannot run it is an
+  acquisition error, so the verdict is undetermined rather than false.
 - Observation lifecycle is optional. A scorer that implements `AttemptObserver`, whether it is a
   root scorer or wrapped inside one, is asked by the attack to start observing after setup, once
   its attempt ID is allocated and before anything is sent, and to stop when the attempt ends. A

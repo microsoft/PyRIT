@@ -10,15 +10,24 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.score.observation.conversation_source import ConversationSource
+    from pyrit.score.observation.docker_sandbox_client import DockerRuntimeProfile, DockerSandboxClient
     from pyrit.score.observation.execution import NonReplayableObservationError
     from pyrit.score.observation.lifecycle import AttemptObserver, SurfaceLifecycleSource
     from pyrit.score.observation.local_file_surface_source import LocalFileSurfaceSource
     from pyrit.score.observation.observation_source import ObservationSource
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
+    from pyrit.score.observation.program_execution_source import ProgramExecutionSource
+    from pyrit.score.observation.sandbox_client import SandboxClient, SandboxExecutionError, SandboxRun
     from pyrit.score.observation.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "DockerRuntimeProfile": "pyrit.score.observation.docker_sandbox_client",
+    "DockerSandboxClient": "pyrit.score.observation.docker_sandbox_client",
+    "ProgramExecutionSource": "pyrit.score.observation.program_execution_source",
+    "SandboxClient": "pyrit.score.observation.sandbox_client",
+    "SandboxExecutionError": "pyrit.score.observation.sandbox_client",
+    "SandboxRun": "pyrit.score.observation.sandbox_client",
     "AttemptObserver": "pyrit.score.observation.lifecycle",
     "ConversationSource": "pyrit.score.observation.conversation_source",
     "InMemoryTraceClient": "pyrit.score.observation.trace_client",
