@@ -90,6 +90,8 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
     allowing for various attack techniques and scenarios.
     """
 
+    ADVERSARIAL_SYSTEM_PROMPT_PARAMETERS = ("objective",)
+
     @apply_defaults
     def __init__(
         self,
@@ -173,7 +175,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
             config=attack_adversarial_config,
             default_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
-            system_prompt_required_parameters=["objective"],
+            system_prompt_required_parameters=list(self.ADVERSARIAL_SYSTEM_PROMPT_PARAMETERS),
             system_prompt_error_message="Adversarial seed prompt must have an objective",
             resolve_user_messages=True,
         )

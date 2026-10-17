@@ -63,12 +63,14 @@ explicitly in memory, then select it by name in a scenario. Generation providers
 from discovery and bulk loading, so listing datasets cannot trigger model calls. Generation
 checks structure and count, not semantic quality.
 
-The mechanism is not limited to one seed type. The first provider,
-[`TargetObjectiveProvider`](./6_generated_datasets.ipynb), generates text objectives only.
-Other seed types, such as prompts, multimodal groups, and simulated conversations, can use
-the same boundary later.
+The mechanism is not limited to one seed type.
+[`TargetObjectiveProvider`](./6_generated_datasets.ipynb) generates text objectives only.
 
-The provider accepts a `SeedPrompt` as its `system_prompt`. The default generation rules
+[`AssertProvider`](../executor/7_promptgen.ipynb) packages an `AssertGeneratorResult`
+as a named dataset of native `AttackSeedGroup` objects, retaining their objectives,
+target messages, and separately routed adversarial prompts.
+
+`TargetObjectiveProvider` accepts a `SeedPrompt` as its `system_prompt`. The default generation rules
 and JSON response schema are defined in a bundled YAML file, using the same
 `response_json_schema` header as scorer prompts. Load a custom YAML with
 `SeedPrompt.from_yaml_file(...)` to change the generation rules.

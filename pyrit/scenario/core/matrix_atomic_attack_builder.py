@@ -19,6 +19,7 @@ interface yet — each scenario calls the builder it needs directly.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -109,6 +110,17 @@ def _default_display_group(combo: MatrixCombo) -> str:
     return combo.technique_name
 
 
+def _unique_group_name(*, name: str, occurrences: Counter[str]) -> str:
+    """
+    Give repeated, behaviorally identical groups separate execution names.
+
+    Returns:
+        str: The name, with an occurrence suffix when needed.
+    """
+    occurrences[name] += 1
+    return name if occurrences[name] == 1 else f"{name}__{occurrences[name]}"
+
+
 def build_baseline_atomic_attack(
     *,
     objective_target: PromptTarget,
@@ -169,11 +181,12 @@ def filter_compatible_seed_groups(
     retained: list[AttackSeedGroup] = []
     for group in seed_groups:
         try:
-            prepare_seed_group(
+            prepared = prepare_seed_group(
                 seed_group=group,
                 requirements=factory.requirements.seed_group,
                 seed_technique=factory.seed_technique,
             )
+            factory.validate_group_adversarial_prompts(prepared.seed_group)
         except IncompatibleTechniqueError:
             continue
         retained.append(group)
@@ -313,6 +326,11 @@ class MatrixAtomicAttackBuilder:
         before passing ``technique_factories`` in — the builder stays generic and does
         not forward such a concept itself.
 
+        Named group adversarial prompts configure fresh attack instances. Repeated
+        objectives also need separate execution units. Other groups stay batched.
+        Group-specific units share the technique's display group. Known prompt-contract
+        mismatches follow the configured skip/raise policy before attack construction.
+
         Args:
             technique_factories (dict[str, AttackTechniqueFactory]): Mapping of technique
                 name to the factory that produces it. Only these techniques are built.
@@ -333,8 +351,8 @@ class MatrixAtomicAttackBuilder:
                 from technique name to request converters appended on top of that technique's
                 built-in converters (via ``factory.create(extra_request_converters=...)``).
                 Techniques absent from the mapping are built unchanged.
-            include_baseline (bool): When ``True``, prepend a baseline atomic attack built
-                from the flattened seed groups across all datasets.
+            include_baseline (bool): When ``True``, prepend baseline attacks built from
+                the flattened seed groups. Repeated objectives use separate units.
 
         Returns:
             list[AtomicAttack]: The generated atomic attacks, baseline first when requested.
@@ -367,6 +385,7 @@ class MatrixAtomicAttackBuilder:
                     technique_name=technique_name,
                     dataset_name=name,
                     policy=self._incompatible_technique_policy,
+                    validate_group=factory.validate_group_adversarial_prompts,
                 )
                 for name, groups in dataset_groups.items()
             }
@@ -379,43 +398,65 @@ class MatrixAtomicAttackBuilder:
                     if not compatible_groups:
                         continue
 
-                    attack_technique = factory.create(
-                        objective_target=self._objective_target,
-                        attack_scoring_config=scoring_config,
-                        adversarial_chat=target_instance,
-                        extra_request_converters=extra_request_converters,
-                    )
-
                     combo = MatrixCombo(
                         technique_name=technique_name,
                         dataset_name=dataset_name,
                         target_name=target_name,
                     )
-                    atomic_attacks.append(
-                        AtomicAttack(
-                            atomic_attack_name=name_fn(combo),
-                            attack_technique=attack_technique,
-                            seed_groups=compatible_groups,
-                            adversarial_chat=(
-                                target_instance if target_instance is not None else factory.resolve_adversarial_chat()
-                            ),
-                            objective_scorer=cast("TrueFalseScorer", self._objective_scorer),
-                            memory_labels=self._memory_labels,
-                            display_group=display_group_fn(combo),
-                            technique_name=technique_name,
+                    per_group = any(group.adversarial_prompts is not None for group in compatible_groups) or len(
+                        {group.objective.value for group in compatible_groups}
+                    ) != len(compatible_groups)
+                    populations = [[group] for group in compatible_groups] if per_group else [compatible_groups]
+                    occurrences: Counter[str] = Counter()
+                    for population in populations:
+                        group = population[0]
+                        attack_technique = factory.create(
+                            objective_target=self._objective_target,
+                            attack_scoring_config=scoring_config,
+                            adversarial_chat=target_instance,
+                            extra_request_converters=extra_request_converters,
+                            seed_group=group if per_group else None,
                         )
-                    )
+                        name = name_fn(combo)
+                        if per_group:
+                            name = _unique_group_name(name=f"{name}__{group.logical_id}", occurrences=occurrences)
+                        atomic_attacks.append(
+                            AtomicAttack(
+                                atomic_attack_name=name,
+                                attack_technique=attack_technique,
+                                seed_groups=population,
+                                adversarial_chat=(
+                                    target_instance
+                                    if target_instance is not None
+                                    else factory.resolve_adversarial_chat()
+                                ),
+                                objective_scorer=cast("TrueFalseScorer", self._objective_scorer),
+                                memory_labels=self._memory_labels,
+                                display_group=display_group_fn(combo),
+                                technique_name=technique_name,
+                            )
+                        )
 
         if include_baseline:
             all_seed_groups = [group for groups in dataset_groups.values() for group in groups]
-            atomic_attacks.insert(
-                0,
+            repeated_objectives = len({group.objective.value for group in all_seed_groups}) != len(all_seed_groups)
+            populations = [[group] for group in all_seed_groups] if repeated_objectives else [all_seed_groups]
+            occurrences = Counter()
+            baselines = [
                 build_baseline_atomic_attack(
                     objective_target=self._objective_target,
                     objective_scorer=self._objective_scorer,
-                    seed_groups=all_seed_groups,
+                    seed_groups=population,
                     memory_labels=self._memory_labels,
-                ),
-            )
+                    atomic_attack_name=(
+                        _unique_group_name(name=f"baseline__{population[0].logical_id}", occurrences=occurrences)
+                        if repeated_objectives
+                        else "baseline"
+                    ),
+                    display_group="baseline" if repeated_objectives else None,
+                )
+                for population in populations
+            ]
+            atomic_attacks = [*baselines, *atomic_attacks]
 
         return atomic_attacks

@@ -661,6 +661,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
+    #: Template parameters required by a replacement adversarial system prompt.
+    ADVERSARIAL_SYSTEM_PROMPT_PARAMETERS: ClassVar[tuple[str, ...]] = ()
+
     #: Compound attacks set this when children own outcome scoring and expectation validation.
     #: No scoring configuration alone does not imply delegation.
     DELEGATES_SCORING: ClassVar[bool] = False
