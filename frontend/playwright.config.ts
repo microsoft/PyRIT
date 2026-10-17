@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import type { UserPreferences } from "./src/types";
+
 const E2E_FRONTEND_PORT = Number.parseInt(
   process.env.E2E_FRONTEND_PORT ?? "3000",
   10,
@@ -15,8 +17,7 @@ if (
 const E2E_FRONTEND_URL = `http://127.0.0.1:${E2E_FRONTEND_PORT}`;
 const USE_DEDICATED_VITE =
   Boolean(process.env.CI) || process.env.E2E_FRONTEND_PORT !== undefined;
-const CI_SEEDED_MODE =
-  !!process.env.CI && process.env.E2E_SEEDED_MODE === "true";
+const SEEDED_MODE = process.env.E2E_SEEDED_MODE === "true";
 const E2E_BACKEND_PORT = process.env.PYRIT_E2E_BACKEND_PORT ?? "18000";
 const E2E_BACKEND_URL = `http://127.0.0.1:${E2E_BACKEND_PORT}`;
 
@@ -61,7 +62,29 @@ export default defineConfig({
     },
     {
       name: "seeded",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: {
+          cookies: [],
+          origins: [{
+            origin: E2E_FRONTEND_URL,
+            localStorage: [
+              { name: "pyrit-tour-completed", value: "true" },
+              {
+                name: "pyrit.userPreferences.v1.local",
+                value: JSON.stringify({
+                  targets: { objective: null, adversarial: null },
+                  hiddenTargetRegistryNames: [],
+                  labels: {},
+                  theme: "system",
+                  chatMarkdown: false,
+                  operation: null,
+                } satisfies UserPreferences),
+              },
+            ],
+          }],
+        },
+      },
       grep: /@seeded/,
       fullyParallel: false,
       workers: 1,
@@ -81,13 +104,13 @@ export default defineConfig({
   ],
 
   /* Automatically start servers before running tests */
-  webServer: CI_SEEDED_MODE
+  webServer: SEEDED_MODE
     ? [
         {
           command:
             `cd .. && uv run --no-sync python -m pyrit.backend.pyrit_backend ` +
-            `--host 127.0.0.1 --port ${E2E_BACKEND_PORT} --log-level warning ` +
-            "--config-file tests/end_to_end/test_config.yaml",
+            `--auth-mode local --host 127.0.0.1 --port ${E2E_BACKEND_PORT} --log-level warning ` +
+            "--config-file tests/end_to_end/browser_config.yaml",
           env: { PYRIT_DEV_MODE: "true" },
           url: `${E2E_BACKEND_URL}/api/health`,
           reuseExistingServer: false,
@@ -105,7 +128,7 @@ export default defineConfig({
         },
       ]
     : {
-        // Mock CI needs only Vite. Local seeded/live runs use dev.py.
+        // Mock CI needs only Vite. Local live runs use dev.py.
         command: USE_DEDICATED_VITE
           ? `npx vite --host 127.0.0.1 --port ${E2E_FRONTEND_PORT} --strictPort`
           : "python dev.py",

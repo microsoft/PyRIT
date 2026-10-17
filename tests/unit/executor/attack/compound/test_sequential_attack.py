@@ -69,7 +69,9 @@ def _patch_run_child_attack(*, strategies_by_id: dict[int, MagicMock]):
     counters: dict[int, int] = dict.fromkeys(strategies_by_id, 0)
     calls: list[dict] = []
 
-    async def _stub(self, *, child_attack, memory_labels, child_result_ids, attribution=None, expectation=None):
+    async def _stub(
+        self, *, child_attack, memory_labels, child_result_ids, attribution=None, expectation=None, operation_id=None
+    ):
         sid = id(child_attack.strategy)
         idx = counters[sid]
         counters[sid] = idx + 1
@@ -673,7 +675,16 @@ class TestResultShape:
 
         captured_ids: list[str] = []
 
-        async def _stub(self, *, child_attack, memory_labels, child_result_ids, attribution=None, expectation=None):
+        async def _stub(
+            self,
+            *,
+            child_attack,
+            memory_labels,
+            child_result_ids,
+            attribution=None,
+            expectation=None,
+            operation_id=None,
+        ):
             inner = AttackResult(
                 conversation_id=f"c-{child_attack.strategy._name}",
                 objective="obj",
@@ -694,7 +705,16 @@ class TestResultShape:
 
         inner_ids: list[str] = []
 
-        async def _stub(self, *, child_attack, memory_labels, child_result_ids, attribution=None, expectation=None):
+        async def _stub(
+            self,
+            *,
+            child_attack,
+            memory_labels,
+            child_result_ids,
+            attribution=None,
+            expectation=None,
+            operation_id=None,
+        ):
             inner = AttackResult(conversation_id="c", objective="obj", outcome=AttackOutcome.SUCCESS)
             inner_ids.append(inner.attack_result_id)
             return inner
@@ -785,7 +805,16 @@ class TestResultShape:
         child_attacks = [SequentialChildAttack(strategy=s, seed_group=seed_group) for s in (a, b)]
         compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
 
-        async def _stub(self, *, child_attack, memory_labels, child_result_ids, attribution=None, expectation=None):
+        async def _stub(
+            self,
+            *,
+            child_attack,
+            memory_labels,
+            child_result_ids,
+            attribution=None,
+            expectation=None,
+            operation_id=None,
+        ):
             return AttackResult(
                 conversation_id="c",
                 objective="obj",

@@ -1,5 +1,5 @@
 import { isThemeMode } from '@/themes/themePresets'
-import type { TargetReference, UserPreferences } from '@/types'
+import type { OperationSelection, TargetReference, UserPreferences } from '@/types'
 
 const STORAGE_PREFIX = 'pyrit.userPreferences.v1.'
 
@@ -25,6 +25,22 @@ function isTargetReference(value: unknown): value is TargetReference | null {
   )
 }
 
+function isOperationSelection(value: unknown): value is OperationSelection | null {
+  if (value === null) return true
+  if (!isRecord(value) || Object.keys(value).length !== 1) return false
+  const reference = value.id ?? value.name
+  return typeof reference === 'string' && reference.length > 0
+}
+
+/** Earlier versions kept the Operation's name as a label. It becomes a name selection that the user must resolve. */
+function withMigratedOperation(preferences: UserPreferences): UserPreferences {
+  if (!('operation' in preferences.labels)) return preferences
+  const { operation: legacyName, ...labels } = preferences.labels
+  const operation = preferences.operation !== undefined ? preferences.operation
+    : legacyName === null ? null : { name: legacyName }
+  return { ...preferences, labels, operation }
+}
+
 function parsePreferences(raw: string): UserPreferences {
   const value: unknown = JSON.parse(raw)
   if (
@@ -36,6 +52,7 @@ function parsePreferences(raw: string): UserPreferences {
     || !Object.values(value.labels).every((label: unknown) => label === null || typeof label === 'string')
     || !isThemeMode(value.theme)
     || typeof value.chatMarkdown !== 'boolean'
+    || (value.operation !== undefined && !isOperationSelection(value.operation))
     || (
       value.hiddenTargetRegistryNames !== undefined
       && (
@@ -52,6 +69,7 @@ function parsePreferences(raw: string): UserPreferences {
     labels: Object.fromEntries(
       Object.entries(value.labels).map(([key, label]) => [key, typeof label === 'string' ? label : null]),
     ),
+    ...(value.operation !== undefined ? { operation: value.operation } : {}),
     theme: value.theme,
     chatMarkdown: value.chatMarkdown,
   }
@@ -95,8 +113,7 @@ function readLegacyPreferences(accountKey: string): UserPreferences {
 
 export function readUserPreferences(accountKey: string): UserPreferences {
   const stored = window.localStorage.getItem(userPreferencesStorageKey(accountKey))
-  if (stored === null) return readLegacyPreferences(accountKey)
-  return parsePreferences(stored)
+  return withMigratedOperation(stored === null ? readLegacyPreferences(accountKey) : parsePreferences(stored))
 }
 
 export function writeUserPreferences(accountKey: string, preferences: UserPreferences): void {

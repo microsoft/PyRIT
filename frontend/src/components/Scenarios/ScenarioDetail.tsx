@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import {
   Badge,
@@ -17,6 +17,7 @@ import {
   mergeClasses,
   Select,
   Spinner,
+  Switch,
   Text,
   Tooltip,
   ToggleButton,
@@ -27,10 +28,12 @@ import {
   InfoRegular,
   SettingsRegular,
 } from '@fluentui/react-icons'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
+import ConversationEditor, { type ConversationEditorHandle } from '@/components/Chat/ConversationEditor'
 import TargetSelect from '@/components/Config/TargetSelect'
+import { useConversationDraft } from '@/hooks/useConversationDraft'
 import { useRuntime } from '@/hooks/useRuntime'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import ParameterField from '@/components/Parameters/ParameterField'
@@ -41,9 +44,10 @@ import {
   type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
 import type { ViewName } from '@/components/Sidebar/Navigation'
-import { scenariosApi } from '@/services/api'
+import { attacksApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
+  AddMessageResponse,
   Parameter,
   RegisteredScenario,
   RunScenarioRequest,
@@ -58,6 +62,7 @@ import type {
   ScenarioRunSizeEstimateResponse,
   TargetInstance,
 } from '@/types'
+import { newDraftMessage, toConversationDraft } from '@/utils/conversationDraft'
 import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
 import { sameTarget, targetModelName } from '@/utils/targetIdentity'
 
@@ -239,6 +244,7 @@ interface BuildEstimateRequestInput {
 }
 
 interface BuildRunRequestInput extends BuildEstimateRequestInput {
+  operationId: string | null
   maxConcurrency: number
   maxRetries: number
   labels: Record<string, string>
@@ -371,6 +377,7 @@ function buildRunRequest(input: BuildRunRequestInput): BuildRunRequestResult {
     scenario_name: input.scenario.scenario_name,
     ...estimateRequest,
   }
+  if (input.operationId) request.operation_id = input.operationId
   if (supportsParameter(input.scenario, 'max_concurrency')) {
     request.max_concurrency = input.maxConcurrency
   }
@@ -388,6 +395,8 @@ interface ScenarioDetailProps {
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
+  /** The saved Operation that new runs join, or null for none. */
+  operationId?: string | null
   /** False while the current generation's server defaults are still loading. */
   defaultsReady?: boolean
   onNavigate: (view: ViewName) => void
@@ -395,23 +404,28 @@ interface ScenarioDetailProps {
 
 export default function ScenarioDetail(props: ScenarioDetailProps) {
   const { scenarioName: encodedScenarioName } = useParams<{ scenarioName: string }>()
-  // Keying on the raw URL param forces a full remount (and state reset to the
-  // initial "loading" values) whenever the route navigates from one scenario
-  // detail page directly to another.
-  return <ScenarioDetailContent key={encodedScenarioName} encodedScenarioName={encodedScenarioName} {...props} />
+  const [searchParams] = useSearchParams()
+  const conversationIds = searchParams.getAll('prepended_conversation_id')
+  const initialConversationId = conversationIds.length === 1 ? conversationIds[0].trim() : ''
+  // A new scenario or conversation link starts a fresh configuration form.
+  return <ScenarioDetailContent key={`${encodedScenarioName}:${initialConversationId}`}
+    encodedScenarioName={encodedScenarioName} initialConversationId={initialConversationId} {...props} />
 }
 
 interface ScenarioDetailContentProps extends ScenarioDetailProps {
   encodedScenarioName: string | undefined
+  initialConversationId: string
 }
 
 function ScenarioDetailContent({
   encodedScenarioName,
+  initialConversationId,
   targets,
   defaultObjectiveTarget,
   defaultAdversarialTarget,
   defaultsReady = false,
   labels,
+  operationId = null,
   onNavigate,
 }: ScenarioDetailContentProps) {
   const styles = useScenarioDetailStyles()
@@ -519,10 +533,12 @@ function ScenarioDetailContent({
     <ScenarioLaunchForm
       key={scenario.scenario_name}
       scenario={scenario}
+      initialConversationId={initialConversationId}
       targets={targets}
       defaultObjectiveTarget={defaultObjectiveTarget}
       defaultAdversarialTarget={defaultAdversarialTarget}
       labels={labels}
+      operationId={operationId}
       defaultsReady={defaultsReady}
       onNavigate={onNavigate}
     />
@@ -531,10 +547,12 @@ function ScenarioDetailContent({
 
 interface ScenarioLaunchFormProps {
   scenario: RegisteredScenario
+  initialConversationId: string
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
+  operationId: string | null
   /** False while the current generation's server defaults are still loading. */
   defaultsReady?: boolean
   onNavigate: (view: ViewName) => void
@@ -542,10 +560,12 @@ interface ScenarioLaunchFormProps {
 
 function ScenarioLaunchForm({
   scenario,
+  initialConversationId,
   targets,
   defaultObjectiveTarget,
   defaultAdversarialTarget,
   labels,
+  operationId,
   defaultsReady = false,
   onNavigate,
 }: ScenarioLaunchFormProps) {
@@ -567,6 +587,9 @@ function ScenarioLaunchForm({
     ),
     [scenario],
   )
+  const conversationConvertersParameter = dynamicParameters.some((parameter) => parameter.name === 'prepended_conversation_id')
+    ? dynamicParameters.find((parameter) => parameter.name === 'apply_converters_to_prepended_history')
+    : undefined
   const supportsObjectiveTarget = supportsParameter(scenario, 'objective_target')
   const supportsTechniques = supportsParameter(scenario, 'scenario_techniques')
   const supportsBaseline = supportsParameter(scenario, 'include_baseline')
@@ -630,12 +653,61 @@ function ScenarioLaunchForm({
   const [maxConcurrency, setMaxConcurrency] = useState(DEFAULT_MAX_CONCURRENCY)
   const [maxRetries, setMaxRetries] = useState(DEFAULT_MAX_RETRIES)
   const [scenarioParamValues, setScenarioParamValues] = useState<Record<string, ParameterFormValue>>(() =>
-    getInitialFormValues(dynamicParameters),
+    getInitialFormValues(dynamicParameters, initialConversationId ? { prepended_conversation_id: initialConversationId } : undefined),
   )
   const [validationError, setValidationError] = useState<string | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(false)
+  const newAttackContext = useMemo(() => ({
+    generation: runtime.generation,
+    ready: runtime.ready && defaultsReady && !staleSelection,
+    labels,
+  }), [runtime.generation, runtime.ready, defaultsReady, staleSelection, labels])
+  const conversation = useConversationDraft(newAttackContext)
+  const conversationEditorRef = useRef<ConversationEditorHandle>(null)
+  const conversationContextRef = useRef(newAttackContext)
+  useLayoutEffect(() => { conversationContextRef.current = newAttackContext }, [newAttackContext])
+  const conversationLoadSequence = useRef(0)
+  useEffect(() => () => { conversationLoadSequence.current += 1 }, [])
+  const [conversationParameter, setConversationParameter] = useState('')
+  const [loadingConversation, setLoadingConversation] = useState(false)
+  const [conversationError, setConversationError] = useState<string | null>(null)
+  const conversationBusy = loadingConversation || conversation.draft !== null
+  const configuredConversationId = scenarioParamValues.prepended_conversation_id
+  const canEditConversation = typeof configuredConversationId === 'string' && Boolean(configuredConversationId.trim())
+
+  const beginConversation = async (parameterName: string, edit: boolean): Promise<void> => {
+    if (conversationBusy || previewOpen || isSubmittingRef.current) return
+    const sequence = ++conversationLoadSequence.current
+    const initialContext = conversationContextRef.current
+    setConversationParameter(parameterName)
+    setConversationError(null)
+    setLoadingConversation(edit)
+    try {
+      const value = scenarioParamValues[parameterName]
+      if (edit && (typeof value !== 'string' || !value.trim())) {
+        throw new Error('Enter a saved conversation ID before editing.')
+      }
+      const source = edit && typeof value === 'string' ? await attacksApi.getConversation(value.trim()) : null
+      if (sequence !== conversationLoadSequence.current) return
+      const currentContext = conversationContextRef.current
+      if (!currentContext.ready || currentContext.generation !== initialContext.generation) {
+        throw new Error('Runtime or default labels changed. Retry after default labels finish loading.')
+      }
+      conversation.begin({
+        messages: source ? toConversationDraft(source.messages.messages) : [newDraftMessage()],
+        objective: '', initialObjective: '',
+        sourceAttackId: source?.attack.attack_result_id ?? null,
+        sourceConversationId: source?.messages.conversation_id ?? null,
+        target: null, labels: currentContext.labels,
+      })
+    } catch (error) {
+      if (sequence === conversationLoadSequence.current) setConversationError(toApiError(error).detail)
+    } finally {
+      if (sequence === conversationLoadSequence.current) setLoadingConversation(false)
+    }
+  }
   const [estimateRequestState, setEstimateRequestState] = useState<EstimateRequestState | null>(null)
   const [lastGoodEstimate, setLastGoodEstimate] = useState<SuccessfulEstimateResult | null>(null)
   // Synchronous guard against a double-submit racing ahead of the state update.
@@ -718,6 +790,7 @@ function ScenarioLaunchForm({
       maxRetries,
       includeBaseline: isBaselineForbidden ? false : baselineChecked,
       labels,
+      operationId,
     }),
     [
       adversarialTargetName,
@@ -729,6 +802,7 @@ function ScenarioLaunchForm({
       labels,
       maxConcurrency,
       maxRetries,
+      operationId,
       scenario,
       scenarioParamValues,
       targetName,
@@ -907,7 +981,7 @@ function ScenarioLaunchForm({
   }
 
   const handleLaunchConfirmed = async (): Promise<void> => {
-    if (isSubmittingRef.current || !runtime.ready || !defaultsReady || staleSelection || unavailableSelection) {
+    if (isSubmittingRef.current || conversationBusy || !runtime.ready || !defaultsReady || staleSelection || unavailableSelection) {
       return
     }
 
@@ -939,6 +1013,7 @@ function ScenarioLaunchForm({
 
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
+    if (conversationBusy || isSubmittingRef.current) return
     setApiError(null)
     if (!requestResult.ok) {
       setValidationError(requestResult.error)
@@ -1177,15 +1252,43 @@ function ScenarioLaunchForm({
                 Parameters
               </Text>
               <div className={styles.dynamicParameters}>
-                {dynamicParameters.map((parameter) => (
-                  <ParameterField
-                    key={parameter.name}
-                    parameter={parameter}
-                    value={scenarioParamValues[parameter.name]}
-                    disabled={submitting}
-                    onChange={updateScenarioParam}
-                    testIdPrefix="scenario-param"
-                  />
+                {dynamicParameters.filter((parameter) => parameter.name !== conversationConvertersParameter?.name).map((parameter) => (
+                  <div key={parameter.name} className={styles.dynamicParameters}>
+                    <ParameterField
+                      parameter={parameter}
+                      value={scenarioParamValues[parameter.name]}
+                      disabled={submitting || loadingConversation}
+                      onChange={updateScenarioParam}
+                      testIdPrefix="scenario-param"
+                    />
+                    {parameter.name === 'prepended_conversation_id' && <>
+                      <div className={styles.conversationActions}>
+                        <Button type="button" className={styles.touchTarget}
+                          disabled={submitting || conversationBusy || previewOpen || !newAttackContext.ready}
+                          onClick={() => { void beginConversation(parameter.name, false) }}>
+                          Add new conversation
+                        </Button>
+                        <Button type="button" className={styles.touchTarget}
+                          disabled={submitting || conversationBusy || previewOpen || !newAttackContext.ready || !canEditConversation}
+                          onClick={() => { void beginConversation(parameter.name, true) }}>
+                          Edit conversation
+                        </Button>
+                        {conversationConvertersParameter && (
+                          <Tooltip relationship="description"
+                            content="Apply request converters to stored history when the scan runs. The source conversation does not change. New outgoing turns are always converted.">
+                            <Switch label="Apply converters to conversation" className={styles.selectionControl}
+                              checked={scenarioParamValues[conversationConvertersParameter.name] === 'true'}
+                              disabled={submitting || loadingConversation || !newAttackContext.ready || !canEditConversation}
+                              onChange={(_, data) => updateScenarioParam(conversationConvertersParameter.name, String(data.checked))} />
+                          </Tooltip>
+                        )}
+                      </div>
+                      {loadingConversation && <Spinner size="tiny" label="Loading conversation..." />}
+                      {conversationError && <MessageBar intent="error">
+                        <MessageBarBody>{conversationError}</MessageBarBody>
+                      </MessageBar>}
+                    </>}
+                  </div>
                 ))}
                 {scenario.uses_default_adversarial_target && (
                   <TargetSelect
@@ -1297,13 +1400,32 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan
               </Button>
             </section>
           </form>
+
+          {conversation.draft && <Dialog open onOpenChange={(_, data) => {
+            if (!data.open) conversationEditorRef.current?.cancel()
+          }}>
+            <DialogSurface className={styles.conversationSurface}>
+              <DialogBody>
+                <DialogTitle>{conversation.draft.sourceConversationId ? 'Edit conversation' : 'New conversation'}</DialogTitle>
+                <DialogContent className={styles.conversationContent}>
+                  <ConversationEditor key={conversation.draft.id} ref={conversationEditorRef} controller={conversation}
+                    saveDestination="new_attack" saveLabel="Add to attack"
+                    newAttackDisabledReason={!newAttackContext.ready ? 'Default labels are not ready.' : undefined}
+                    onSaved={(response: AddMessageResponse) => {
+                      updateScenarioParam(conversationParameter, response.messages.conversation_id)
+                      conversation.discard()
+                    }} />
+                </DialogContent>
+              </DialogBody>
+            </DialogSurface>
+          </Dialog>}
 
           <Dialog
             open={previewOpen}
@@ -1422,7 +1544,7 @@ function ScenarioLaunchForm({
                   </Button>
                   <Button
                     appearance="primary"
-                    disabled={submitting || !runtime.ready || !defaultsReady || !requestResult.ok}
+                    disabled={submitting || conversationBusy || !runtime.ready || !defaultsReady || !requestResult.ok}
                     onClick={() => void handleLaunchConfirmed()}
                     data-testid="confirm-launch-scenario-btn"
                   >

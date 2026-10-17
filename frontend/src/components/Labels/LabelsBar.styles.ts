@@ -1,5 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
-import { mobileTouchTarget, NARROW_VIEWPORT_QUERY } from '../../styles/touchTargets'
+import { mobileTouchTarget, mobileTouchTargetHeight, NARROW_VIEWPORT_QUERY } from '@/styles/touchTargets'
 
 export const useLabelsBarStyles = makeStyles({
   root: {
@@ -27,12 +27,30 @@ export const useLabelsBarStyles = makeStyles({
     display: 'flex',
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
-    flexWrap: 'nowrap',
+    flexWrap: 'wrap',
     // Metadata has no popover fallback, so keep it reachable on narrow bars.
     overflowX: 'auto',
     flex: '1 1 0',
     minWidth: 0,
   },
+  metadata: { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalM, minWidth: 0 },
+  metadataField: { display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalXS, minWidth: 0 },
+  metadataPlaceholder: {
+    backgroundColor: tokens.colorPaletteYellowBackground2,
+    border: `1px solid ${tokens.colorPaletteYellowBorder1}`,
+  },
+  srOnly: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: '0',
+    margin: '-1px',
+    overflow: 'hidden',
+    clip: 'rect(0,0,0,0)',
+    whiteSpace: 'nowrap',
+  },
+  operatorEditor: { position: 'relative', display: 'flex', flexDirection: 'column' },
+  operatorInput: { width: '100px', ...mobileTouchTargetHeight },
   measureRow: {
     position: 'absolute',
     visibility: 'hidden',
@@ -58,10 +76,6 @@ export const useLabelsBarStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground3,
     border: `1px solid ${tokens.colorNeutralStroke1}`,
   },
-  labelDummy: {
-    backgroundColor: tokens.colorPaletteYellowBackground2,
-    border: `1px solid ${tokens.colorPaletteYellowBorder1}`,
-  },
   labelEdit: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -82,7 +96,11 @@ export const useLabelsBarStyles = makeStyles({
     width: '16px',
     height: '16px',
     padding: 0,
+    ...mobileTouchTarget,
   },
+  actionButton: { flexShrink: 0, ...mobileTouchTargetHeight },
+  operationEditor: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, minWidth: 0 },
+  operationStatus: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS },
   popover: {
     [NARROW_VIEWPORT_QUERY]: {
       boxSizing: 'border-box',
@@ -147,7 +165,7 @@ export const useLabelsBarStyles = makeStyles({
   // clips what overflows. Let it shrink rather than lose its chevron: Fluent
   // puts an intrinsic min-width on both the root and the inner input.
   operationPicker: {
-    width: '180px',
+    width: '140px',
     minWidth: 0,
     maxWidth: '100%',
     '& input': {

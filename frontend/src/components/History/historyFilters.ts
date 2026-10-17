@@ -8,7 +8,7 @@ export interface HistoryFilters {
   hasConverters: boolean | undefined
   includeScenarioAttacks: boolean
   operator: string[]
-  operation: string[]
+  operationId: string[]
   otherLabels: string[]
   labelSearchText: string
 }
@@ -21,7 +21,7 @@ export const DEFAULT_HISTORY_FILTERS: HistoryFilters = {
   hasConverters: undefined,
   includeScenarioAttacks: true,
   operator: [],
-  operation: [],
+  operationId: [],
   otherLabels: [],
   labelSearchText: '',
 }
@@ -37,7 +37,7 @@ export function filtersFromSearchParams(params: URLSearchParams): HistoryFilters
     hasConverters: hasConverters === null ? undefined : hasConverters === 'true',
     includeScenarioAttacks: params.get('includeScannerAttacks') !== 'false',
     operator: params.getAll('operator'),
-    operation: params.getAll('operation'),
+    operationId: params.getAll('operation_id'),
     otherLabels: params.getAll('label'),
     labelSearchText: params.get('labelSearch') ?? '',
   }
@@ -53,7 +53,7 @@ export function filtersToSearchParams(filters: HistoryFilters): URLSearchParams 
   if (filters.hasConverters !== undefined) params.set('hasConverters', String(filters.hasConverters))
   if (!filters.includeScenarioAttacks) params.set('includeScannerAttacks', 'false')
   for (const operator of filters.operator) params.append('operator', operator)
-  for (const operation of filters.operation) params.append('operation', operation)
+  for (const operationId of filters.operationId) params.append('operation_id', operationId)
   for (const label of filters.otherLabels) params.append('label', label)
   if (filters.labelSearchText) params.set('labelSearch', filters.labelSearchText)
   return params

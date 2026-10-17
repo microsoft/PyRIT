@@ -337,7 +337,7 @@ class TestFigStepAtomicAttacks:
 
     async def test_memory_labels_are_forwarded(self, mock_objective_target, mock_objective_scorer):
         scenario = FigStep(objective_scorer=mock_objective_scorer)
-        labels = {"operation": "figstep-test"}
+        labels = {"team": "figstep-test"}
 
         await _initialize(
             scenario=scenario,

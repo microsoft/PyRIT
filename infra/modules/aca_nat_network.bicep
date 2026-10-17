@@ -13,6 +13,8 @@ param vnetAddressPrefix string
 @description('Dedicated Container Apps infrastructure subnet address prefix')
 param infrastructureSubnetAddressPrefix string
 
+param sqlSubnetAddressPrefix string = ''
+
 @description('Existing Azure Policy IP tags to preserve when adopting a reserved egress public IP')
 param egressPublicIpTags array = []
 
@@ -66,6 +68,25 @@ resource natGateway 'Microsoft.Network/natGateways@2024-05-01' = {
   }
 }
 
+var infrastructureSubnet = {
+  name: infrastructureSubnetName
+  properties: {
+    addressPrefix: infrastructureSubnetAddressPrefix
+    defaultOutboundAccess: false
+    delegations: [
+      {
+        name: 'aca-environment-delegation'
+        properties: {
+          serviceName: 'Microsoft.App/environments'
+        }
+      }
+    ]
+    natGateway: {
+      id: natGateway.id
+    }
+  }
+}
+
 resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   name: '${namePrefix}-vnet'
   location: location
@@ -77,26 +98,18 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
         vnetAddressPrefix
       ]
     }
-    subnets: [
+    subnets: concat([
+      infrastructureSubnet
+    ], empty(sqlSubnetAddressPrefix) ? [] : [
       {
-        name: infrastructureSubnetName
+        name: '${namePrefix}-sql-subnet'
         properties: {
-          addressPrefix: infrastructureSubnetAddressPrefix
+          addressPrefix: sqlSubnetAddressPrefix
           defaultOutboundAccess: false
-          delegations: [
-            {
-              name: 'aca-environment-delegation'
-              properties: {
-                serviceName: 'Microsoft.App/environments'
-              }
-            }
-          ]
-          natGateway: {
-            id: natGateway.id
-          }
+          privateEndpointNetworkPolicies: 'Disabled'
         }
       }
-    ]
+    ])
   }
 }
 

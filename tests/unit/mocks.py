@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
+    AttackResult,
     ComponentIdentifier,
     Message,
     MessagePiece,
@@ -27,6 +28,12 @@ from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfigur
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 T = TypeVar("T")
+
+
+async def add_legacy_attack_results_async(memory: MemoryInterface, *, attack_results: Sequence[AttackResult]) -> None:
+    """Store attacks attributed only by Operation name, like rows written before Operation IDs existed."""
+    with patch.object(MemoryInterface, "_validate_activity_operation"):
+        await memory.add_attack_results_to_memory_async(attack_results=attack_results)
 
 
 async def run_memory_session_async(*, memory: MemoryInterface, operation: Callable[[Session], T]) -> T:

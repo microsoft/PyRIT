@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import sqlite3
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -657,28 +658,26 @@ async def test_concurrent_insert_and_final_delete_do_not_orphan_score(
     score, observation, _ = await _score_and_observation_async(file_memory)
     replay = score.model_copy(update={"id": uuid.uuid4()})
     (await file_memory.add_scores_to_memory_async(scores=[score], observations=[observation]))
-    competing_write = asyncio.Event()
 
-    def _before_write(*, statement: str, **kwargs: Any) -> None:
-        if statement == "BEGIN IMMEDIATE":
-            competing_write.set()
+    def _disable_busy_wait(*, dbapi_connection: Any, **kwargs: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA busy_timeout=0")
+        finally:
+            cursor.close()
 
     async def compete_async() -> None:
         if insert_first:
             async with await file_memory.get_session_async() as session:
                 await session.delete(await session.get(ScoreEntry, score.id))
                 await session.commit()
+        elif insert_via_orm:
+            async with await file_memory.get_session_async() as session:
+                session.add(ScoreEntry(entry=replay))
+                session.add(ScoreObservationEntry(score_id=replay.id, position=0, observation_id=observation.id))
+                await session.commit()
         else:
-            with pytest.raises(ValueError, match="not found in memory"):
-                if insert_via_orm:
-                    async with await file_memory.get_session_async() as session:
-                        session.add(ScoreEntry(entry=replay))
-                        session.add(
-                            ScoreObservationEntry(score_id=replay.id, position=0, observation_id=observation.id)
-                        )
-                        await session.commit()
-                else:
-                    (await file_memory.add_scores_to_memory_async(scores=[replay]))
+            (await file_memory.add_scores_to_memory_async(scores=[replay]))
 
     engine = file_memory._get_async_engine().sync_engine
     async with await file_memory.get_session_async() as session:
@@ -688,22 +687,32 @@ async def test_concurrent_insert_and_final_delete_do_not_orphan_score(
         else:
             await session.delete(await session.get(ScoreEntry, score.id))
         await session.flush()
-        event.listen(engine, "before_cursor_execute", _before_write, named=True)
-        task = asyncio.create_task(compete_async())
+        event.listen(engine, "checkout", _disable_busy_wait, named=True)
         try:
-            await asyncio.wait_for(competing_write.wait(), timeout=5)
-            assert not task.done()
+            # Prove that the writes conflict without requiring the holder to beat SQLite's busy timeout.
+            with patch("pyrit.memory.memory_session._lock_observations", wraps=_lock_observations) as lookup:
+                with pytest.raises(OperationalError, match="database is locked") as locked:
+                    await compete_async()
+                lookup.assert_not_called()
+            assert isinstance(locked.value.orig, sqlite3.OperationalError)
+            assert locked.value.orig.sqlite_errorcode == sqlite3.SQLITE_BUSY
+            assert locked.value.statement == "BEGIN IMMEDIATE"
             await session.commit()
-            await asyncio.wait_for(task, timeout=10)
+            if insert_first:
+                await compete_async()
+            else:
+                with pytest.raises(ValueError, match="not found in memory"):
+                    await compete_async()
         finally:
             await session.rollback()
-            if not task.done():
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-            event.remove(engine, "before_cursor_execute", _before_write)
+            event.remove(engine, "checkout", _disable_busy_wait)
     expected = [observation] if insert_first else []
     assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == expected
     assert len(file_memory._query_entries(ScoreEntry)) == int(insert_first)
+    links = file_memory._query_entries(ScoreObservationEntry)
+    assert [(link.score_id, link.observation_id) for link in links] == (
+        [(replay.id, observation.id)] if insert_first else []
+    )
 
 
 @pytest.mark.parametrize("dialect", ["sqlite", "mssql"])

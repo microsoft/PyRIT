@@ -7,7 +7,7 @@ import {
 } from '@fluentui/react-components'
 import { QuestionCircleRegular } from '@fluentui/react-icons'
 
-import LabelsBar from '@/components/Labels/LabelsBar'
+import LabelsBar, { type OperationControlProps } from '@/components/Labels/LabelsBar'
 import { useTheme } from '@/hooks/useTheme'
 
 import { versionApi } from '../../services/api'
@@ -15,7 +15,7 @@ import Navigation, { type ViewName } from '../Sidebar/Navigation'
 import { UserAccountButton } from '../UserAccountButton'
 import { useMainLayoutStyles } from './MainLayout.styles'
 
-interface MainLayoutProps {
+interface MainLayoutProps extends OperationControlProps {
   children: React.ReactNode
   currentView: ViewName
   onNavigate: (view: ViewName) => void
@@ -36,6 +36,9 @@ export default function MainLayout({
   canManageConfiguration,
   labels,
   onLabelsChange,
+  operation,
+  onOperationChange,
+  onRetryOperation,
   operatorReadOnly,
   toolbarRef,
   onStartTour,
@@ -135,7 +138,8 @@ export default function MainLayout({
           >
             <div className={styles.labelsRow}>
               <div className={styles.labelsControls}>
-                <LabelsBar labels={labels} onLabelsChange={onLabelsChange} operatorReadOnly={operatorReadOnly} />
+                <LabelsBar labels={labels} onLabelsChange={onLabelsChange} operatorReadOnly={operatorReadOnly}
+              operation={operation} onOperationChange={onOperationChange} onRetryOperation={onRetryOperation} />
               </div>
               <div ref={toolbarRef} className={styles.toolbarSlot} />
             </div>
