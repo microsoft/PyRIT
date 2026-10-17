@@ -30,7 +30,7 @@ from pyrit.models.seeds.seed_prompt import SeedPrompt
 if TYPE_CHECKING:
     from pathlib import Path
 
-T = TypeVar("T", bound=Seed)
+T = TypeVar("T", bound=Seed[Any])
 
 # Seed model fields that callers may write as a bare string in YAML
 # (e.g. ``authors: Jane Doe``) but the model declares as ``list[str]``.
@@ -92,7 +92,7 @@ def _read_yaml(file: str | Path) -> dict[str, Any]:
     return data
 
 
-def _set_local_origin(*, seed: Seed, file: str | Path) -> None:
+def _set_local_origin(*, seed: Seed[Any], file: str | Path) -> None:
     """
     Assign local origin unless the YAML explicitly declares a conflicting origin.
 

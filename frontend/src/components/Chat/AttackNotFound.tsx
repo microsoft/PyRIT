@@ -7,6 +7,7 @@ interface AttackNotFoundProps {
   onBackToHistory: () => void
   /** 'not-found' for a genuine 404; 'error' for a transient load failure. */
   variant?: 'not-found' | 'error'
+  findingEvidenceId?: string | null
 }
 
 export default function AttackNotFound({
@@ -14,6 +15,7 @@ export default function AttackNotFound({
   onStartNew,
   onBackToHistory,
   variant = 'not-found',
+  findingEvidenceId,
 }: AttackNotFoundProps) {
   const styles = useAttackNotFoundStyles()
   const isError = variant === 'error'
@@ -21,7 +23,7 @@ export default function AttackNotFound({
   return (
     <div className={styles.root} data-testid={isError ? 'attack-load-error' : 'attack-not-found'}>
       <Text size={500} weight="semibold">
-        {isError ? 'Could not load attack' : 'Attack not found'}
+        {isError ? 'Could not load attack' : findingEvidenceId ? 'Evidence unavailable' : 'Attack not found'}
       </Text>
       <Text className={styles.detail}>
         {isError ? (

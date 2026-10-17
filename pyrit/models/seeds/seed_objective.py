@@ -19,7 +19,7 @@ from pyrit.models.seeds.seed import Seed
 logger = logging.getLogger(__name__)
 
 
-class SeedObjective(Seed):
+class SeedObjective(Seed[Literal["text"]]):
     """Represents a seed objective with various attributes and metadata."""
 
     # Discriminator field for the polymorphic Seed union (see seed_group.SeedUnion).

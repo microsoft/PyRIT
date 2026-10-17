@@ -225,6 +225,23 @@ class PromptTarget(Identifiable):
         """
         validate_tool_conversation(messages)
 
+    def validate_history_replay(self) -> None:
+        """
+        Check configuration support for initializing a new conversation from stored history.
+
+        Native editable history or an explicit history adapter is sufficient.
+        Targets with a provider-specific restoration path can override this check.
+        This does not validate message content or guarantee that a live session exists.
+
+        Raises:
+            ValueError: If neither native support nor a configured history adapter is available.
+        """
+        if not self.configuration.includes(
+            capability=CapabilityName.MULTI_TURN
+        ) and self.configuration.pipeline.has_normalizer_for(capability=CapabilityName.MULTI_TURN):
+            return
+        self.configuration.ensure_can_handle(capability=CapabilityName.EDITABLE_HISTORY)
+
     @final
     async def send_prompt_async(
         self,

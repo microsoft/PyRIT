@@ -24,9 +24,14 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from pyrit.cli._config_reader import DEFAULT_SERVER_STARTUP_TIMEOUT
+from pyrit.common.authentication import should_default_to_local_authentication
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _logger = logging.getLogger(__name__)
 _HEALTH_PROBE_TIMEOUT = 5.0
@@ -55,6 +60,7 @@ def _build_server_launch_plan(
     startup_timeout: float,
     executable: str,
     platform_name: str,
+    environment: Mapping[str, str] | None = None,
 ) -> _ServerLaunchPlan:
     """
     Validate launch parameters and build platform-specific process settings.
@@ -67,6 +73,7 @@ def _build_server_launch_plan(
         startup_timeout: Seconds to wait for readiness.
         executable: Python executable used to launch the backend module.
         platform_name: Operating-system family, such as ``posix`` or ``nt``.
+        environment: Process environment inherited by the backend.
 
     Returns:
         _ServerLaunchPlan: Validated command and process settings.
@@ -91,6 +98,12 @@ def _build_server_launch_plan(
         "--port",
         str(port),
     ]
+    environment = os.environ if environment is None else environment
+    auth_mode = environment.get("PYRIT_AUTH_MODE", "").strip().casefold()
+    if auth_mode in {"local", "entra"}:
+        command.extend(["--auth-mode", auth_mode])
+    elif should_default_to_local_authentication(environment=environment):
+        command.extend(["--auth-mode", "local"])
     if config_file is not None:
         command.extend(["--config-file", str(config_file)])
     if log_level is not None:

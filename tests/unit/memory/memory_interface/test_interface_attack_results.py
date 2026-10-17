@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.dialects import mssql
-from unit.mocks import get_mock_target_identifier, make_scenario_result
+from unit.mocks import add_legacy_attack_results_async, get_mock_target_identifier, make_scenario_result
 
 from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
@@ -1105,8 +1105,8 @@ async def test_get_attack_results_by_labels_single(sqlite_instance: MemoryInterf
     )
 
     (
-        await sqlite_instance.add_attack_results_to_memory_async(
-            attack_results=[attack_result1, attack_result2, attack_result3]
+        await add_legacy_attack_results_async(
+            sqlite_instance, attack_results=[attack_result1, attack_result2, attack_result3]
         )
     )
 
@@ -1265,7 +1265,7 @@ async def test_get_attack_results_by_labels_multiple(sqlite_instance: MemoryInte
         ),
     ]
 
-    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
+    (await add_legacy_attack_results_async(sqlite_instance, attack_results=attack_results))
 
     # Test filtering by multiple labels (AND logic)
     roakey_initial_results = await sqlite_instance.get_attack_results_async(
@@ -1303,13 +1303,14 @@ async def test_get_attack_results_by_labels_or_within_key_and_across_keys(sqlite
     """Test that OR-within-key composes with AND-across-keys."""
 
     (
-        await sqlite_instance.add_attack_results_to_memory_async(
+        await add_legacy_attack_results_async(
+            sqlite_instance,
             attack_results=[
                 create_attack_result("conv_1", 1, labels={"operator": "alice", "operation": "red"}),
                 create_attack_result("conv_2", 2, labels={"operator": "bob", "operation": "red"}),
                 create_attack_result("conv_3", 3, labels={"operator": "charlie", "operation": "red"}),
                 create_attack_result("conv_4", 4, labels={"operator": "alice", "operation": "blue"}),
-            ]
+            ],
         )
     )
 
@@ -1324,7 +1325,7 @@ async def test_get_attack_results_labels_no_matches(sqlite_instance: MemoryInter
 
     # Create attack result with labels that don't match the search
     attack_result = create_attack_result("conv_1", 1, AttackOutcome.SUCCESS, labels={"operation": "test_op"})
-    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
+    (await add_legacy_attack_results_async(sqlite_instance, attack_results=[attack_result]))
 
     # Search for non-existent labels
     results = await sqlite_instance.get_attack_results_async(labels={"nonexistent": "value"})
@@ -1363,7 +1364,7 @@ async def test_get_attack_results_labels_key_exists_value_mismatch(sqlite_instan
         ),
         create_attack_result("conv_3", 3, AttackOutcome.FAILURE, labels={"operation": "test_op"}),
     ]
-    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
+    (await add_legacy_attack_results_async(sqlite_instance, attack_results=attack_results))
 
     # Query for key that exists but with wrong value
     results = await sqlite_instance.get_attack_results_async(labels={"operation": "op_doesnotexist"})
@@ -1572,7 +1573,8 @@ async def test_get_unique_attack_labels_deduplicates_across_attacks(sqlite_insta
 
 async def test_get_unique_attack_labels_narrows_by_attribution_and_labels(sqlite_instance: MemoryInterface):
     (
-        await sqlite_instance.add_attack_results_to_memory_async(
+        await add_legacy_attack_results_async(
+            sqlite_instance,
             attack_results=[
                 create_attack_result(
                     "conv_1",
@@ -1595,7 +1597,7 @@ async def test_get_unique_attack_labels_narrows_by_attribution_and_labels(sqlite
                     operation="nightly",
                     labels={"team": "red", "env": "dev"},
                 ),
-            ]
+            ],
         )
     )
 
@@ -1614,7 +1616,7 @@ async def test_get_attack_results_filters_dedicated_attribution_columns(sqlite_i
         create_attack_result("conv_2", 2, operator="bob", operation="nightly"),
         create_attack_result("conv_3", 3, operator="alice", operation="daytime"),
     ]
-    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
+    (await add_legacy_attack_results_async(sqlite_instance, attack_results=attack_results))
 
     results = await sqlite_instance.get_attack_results_async(operator=["alice"], operation="nightly")
 
@@ -1641,14 +1643,15 @@ async def test_get_attack_results_rejects_conflicting_attribution_filters(sqlite
 
 async def test_unique_attack_attribution_uses_dedicated_columns(sqlite_instance: MemoryInterface):
     (
-        await sqlite_instance.add_attack_results_to_memory_async(
+        await add_legacy_attack_results_async(
+            sqlite_instance,
             attack_results=[
                 create_attack_result("conv_1", 1, operator="bob", operation="nightly", labels={"team": "red"}),
                 create_attack_result("conv_2", 2, operator="alice", operation="nightly", labels={"team": "blue"}),
                 create_attack_result("conv_3", 3),
                 create_attack_result("conv_4", 4, operator="alice"),
                 create_attack_result("conv_5", 5, operation="nightly"),
-            ]
+            ],
         )
     )
 

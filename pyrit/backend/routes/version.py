@@ -45,6 +45,7 @@ class VersionResponse(BaseModel):
     display: str
     database_info: str | None = None
     default_labels: dict[str, str] | None = None
+    default_operation: str | None = None
 
 
 @router.get("", response_model=VersionResponse)
@@ -90,6 +91,7 @@ async def get_version_async(request: Request) -> VersionResponse:
 
     # Read default labels from app state (set by pyrit_backend CLI)
     default_labels: dict[str, str] | None = getattr(request.app.state, "default_labels", None) or None
+    default_operation: str | None = getattr(request.app.state, "default_operation", None)
 
     return VersionResponse(
         version=version,
@@ -100,4 +102,5 @@ async def get_version_async(request: Request) -> VersionResponse:
         display=display,
         database_info=database_info,
         default_labels=default_labels,
+        default_operation=default_operation,
     )

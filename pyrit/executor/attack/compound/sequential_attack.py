@@ -329,6 +329,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 attribution=attribution,
                 expectation=context.params.expectation,
                 child_result_ids=child_ids,
+                operation_id=context.params.operation_id,
             )
             results.append(result)
             child_ids.append(result.attack_result_id)
@@ -369,6 +370,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         child_result_ids: list[str],
         attribution: AttackResultAttribution | None = None,
         expectation: ScoringExpectation | None = None,
+        operation_id: uuid.UUID | None = None,
     ) -> AttackResult:
         """
         Execute one child attack via ``AttackExecutor`` and return its result.
@@ -389,6 +391,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 parent linkage.
             expectation (ScoringExpectation | None): Explicit scoring input forwarded unchanged.
                 Omission leaves the child's seed preparation and objective fallback in control.
+            operation_id (uuid.UUID | None): Run-owned saved Operation reference.
             child_result_ids (list[str]): This execution's ordered child links. A confirmed
                 persisted result from a failed dispatch is appended before its exception is re-raised.
 
@@ -403,22 +406,23 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             RuntimeError: If the executor returned neither a completed
                 result nor an incomplete objective (defensive guard).
         """
-        expectation_override = {"expectation": expectation} if expectation is not None else {}
-        result_fields: dict[str, Any] = {}
+        executor_kwargs: dict[str, Any] = {}
+        if expectation is not None:
+            executor_kwargs["expectation"] = expectation
         if child_attack.atomic_attack_identifier is not None:
-            result_fields["atomic_attack_identifiers"] = [child_attack.atomic_attack_identifier]
+            executor_kwargs["atomic_attack_identifiers"] = [child_attack.atomic_attack_identifier]
         if child_attack.result_metadata:
-            result_fields["result_metadata"] = [child_attack.result_metadata]
+            executor_kwargs["result_metadata"] = [child_attack.result_metadata]
         executor_result = await self._executor.execute_attack_from_seed_groups_async(
             attack=child_attack.strategy,
             seed_groups=[child_attack.seed_group],
             adversarial_chat=child_attack.adversarial_chat,
             objective_scorer=child_attack.objective_scorer,
             memory_labels=memory_labels,
+            operation_id=operation_id,
             return_partial_on_failure=True,
             attribution=attribution,
-            **expectation_override,
-            **result_fields,
+            **executor_kwargs,
         )
         if executor_result.completed_results:
             return executor_result.completed_results[0]

@@ -119,6 +119,30 @@ leak_score = (await system_prompt_scorer.score_message_async(message=response))[
 print(f"[system prompt extraction] overlap={leak_score.get_value()}")
 
 # %% [markdown]
+# ### DecisionScorer
+#
+# Uses Microsoft-Decision-1 to estimate whether a text response achieves its objective.
+# It returns a model probability from `0.0` to `1.0`, not calibrated confidence.
+# The instructions and criteria are in `pyrit/datasets/score/decision/objective_achieved.yaml`.
+# LiteLLM converts Boolean and numeric-string answers to numbers before the scorer validates them.
+# %%
+from pyrit.models import ContentScorable, ScoringExpectation
+from pyrit.prompt_target import LiteLLMDecisionTarget
+from pyrit.score import DecisionScorer
+
+decision_target = LiteLLMDecisionTarget(
+    model_name="openrouter/microsoft/microsoft-decision-1",
+    endpoint=os.environ.get("MICROSOFT_DECISION_ENDPOINT", "https://openrouter.ai/api"),
+    api_key=os.environ["MICROSOFT_DECISION_KEY"],
+)
+decision_scorer = DecisionScorer(chat_target=decision_target)
+decision_scores = await decision_scorer.score_async(
+    scorable=ContentScorable(value="Paris."),
+    expectation=ScoringExpectation(objective="Name the capital of France."),
+)  # type: ignore
+print(f"[decision] probability={decision_scores[0].get_value()}")
+
+# %% [markdown]
 # ## Local model scorers
 #
 # These scorers run model inference locally, on CPU or GPU. They may download model assets

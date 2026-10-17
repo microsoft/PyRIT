@@ -25,7 +25,7 @@ class AnsiEscapeOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     Returns True if any pattern matches.
     """
 
-    _DEFAULT_PATTERNS: dict[str, str] = {
+    _DEFAULT_PATTERNS: dict[str, str] | None = {
         # ESC [ -- 7-bit Control Sequence Introducer (colors, cursor movement, screen clearing).
         "ESC CSI": r"\x1b\[",
         # ESC ] -- 7-bit Operating System Command (hyperlinks, window titles, clipboard).

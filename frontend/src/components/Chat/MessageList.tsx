@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Text,
   Avatar,
@@ -23,7 +23,7 @@ import {
 } from '@fluentui/react-components'
 import {
   ArrowDownloadRegular,
-  ArrowReplyRegular,
+  BranchForkRegular,
   MoreHorizontalRegular,
   OpenRegular,
 } from '@fluentui/react-icons'
@@ -40,6 +40,7 @@ interface MessageListProps {
   onCopyToInput?: (messageIndex: number) => void
   onCopyToNewConversation?: (messageIndex: number) => void
   onCopyToNewAttack?: (messageIndex: number) => void
+  onUseInTechnique?: (messageIndex: number) => void
   copyConversationDisabled?: boolean
   newConversationDisabledReason?: string
   /** True while loading a historical attack's messages */
@@ -476,11 +477,12 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
  * line of compact text.
  */
 export default function MessageList({
-  messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, copyConversationDisabled = false,
+  messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
   newConversationDisabledReason, isLoading, globalMarkdown = false,
 }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const copyMenuId = useId()
 
   const handleDownload = async (att: MessageAttachment) => {
     try {
@@ -701,28 +703,37 @@ export default function MessageList({
 
               {!message.isLoading && !message.error && (
                 <div className={styles.messageActions} data-testid={`message-actions-${index}`}>
-                  {onCopyToInput && (isUser || isSimulated || message.role === 'assistant') && (
+                  {onCopyToInput && (
                     <Menu>
                       <MenuTrigger disableButtonEnhancement>
                         <Button
                           appearance="subtle"
                           size="small"
-                          icon={<ArrowReplyRegular />}
+                          icon={<BranchForkRegular />}
                           data-testid={`copy-to-input-btn-${index}`}
                           className={styles.messageActionButton}
-                          aria-label="Copy conversation"
-                        >Copy conversation</Button>
+                          aria-label="Copy or Branch"
+                        >Copy or Branch</Button>
                       </MenuTrigger>
                       <MenuPopover><MenuList>
-                        <MenuItem className={styles.copyMenuItem} onClick={() => onCopyToInput(index)} title="Copy this message to the prompt box">
-                          This conversation
+                        <MenuItem className={styles.copyMenuItem} onClick={() => onCopyToInput(index)}
+                          aria-label="Copy to next message" aria-describedby={`${copyMenuId}-${index}-prompt`}
+                          subText={{ id: `${copyMenuId}-${index}-prompt`, children: 'Copy only this message to the prompt box.' }}>
+                          Copy to next message
                         </MenuItem>
                         <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewConversation || copyConversationDisabled || Boolean(newConversationDisabledReason)}
-                          title={newConversationDisabledReason ?? 'Copy the conversation through this message into the same attack'}
-                          onClick={() => onCopyToNewConversation?.(index)}>New conversation</MenuItem>
+                          aria-label="Branch conversation" aria-describedby={`${copyMenuId}-${index}-conversation`}
+                          subText={{ id: `${copyMenuId}-${index}-conversation`,
+                            children: `Copy history including this turn into the same attack.${newConversationDisabledReason ? ` ${newConversationDisabledReason}` : ''}` }}
+                          onClick={() => onCopyToNewConversation?.(index)}>Branch conversation</MenuItem>
                         <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewAttack || copyConversationDisabled}
-                          title="Copy the conversation through this message into a new attack"
-                          onClick={() => onCopyToNewAttack?.(index)}>New attack</MenuItem>
+                          aria-label="Branch attack" aria-describedby={`${copyMenuId}-${index}-attack`}
+                          subText={{ id: `${copyMenuId}-${index}-attack`, children: 'Copy history including this turn into a new attack (i.e., separate group of conversations).' }}
+                          onClick={() => onCopyToNewAttack?.(index)}>Branch attack</MenuItem>
+                        {onUseInTechnique && <MenuItem className={styles.copyMenuItem} disabled={copyConversationDisabled}
+                          aria-label="Use in scan" aria-describedby={`${copyMenuId}-${index}-scan`}
+                          subText={{ id: `${copyMenuId}-${index}-scan`, children: 'Apply a PyRIT attack technique after prepending history including this turn.' }}
+                          onClick={() => onUseInTechnique(index)}>Use in scan</MenuItem>}
                       </MenuList></MenuPopover>
                     </Menu>
                   )}

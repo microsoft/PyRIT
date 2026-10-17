@@ -9,7 +9,6 @@ import threading
 from contextlib import suppress
 from dataclasses import replace
 from datetime import UTC, datetime
-from functools import partial
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, NonCallableMagicMock, call, create_autospec, patch
@@ -35,6 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
 
+    from copilot import CopilotSession
     from copilot.generated.session_events import SessionEvent
 
     from pyrit.memory import MemoryInterface
@@ -62,6 +62,16 @@ def client(sdk: Any) -> Iterator[NonCallableMagicMock]:
         patch.dict("os.environ", {"GITHUB_TOKEN": ""}),
     ):
         yield client
+
+
+@pytest.fixture
+def native_session(client: NonCallableMagicMock) -> tuple[CopilotSession, AsyncMock]:
+    from copilot import CopilotSession
+
+    request = AsyncMock()
+    session = CopilotSession(session_id="sdk-session-id", client=SimpleNamespace(request=request))
+    client.create_session.return_value = session
+    return session, request
 
 
 @pytest.fixture
@@ -1275,6 +1285,56 @@ async def test_cleanup_rejects_queued_turn_and_drains_active_send_async(
     client.stop.assert_awaited_once()
 
 
+@pytest.mark.usefixtures("patch_central_database")
+async def test_continuing_a_conversation_without_its_session_raises_async(
+    *,
+    sdk: Any,
+    client: NonCallableMagicMock,
+    sqlite_instance: MemoryInterface,
+) -> None:
+    """A copied or restarted conversation must not be answered by a fresh session that never saw its turns."""
+    conversation_id = "conversation-started-elsewhere"
+    session = client.create_session.return_value
+    session.send_and_wait.side_effect = [_assistant_reply("FIRST")]
+    first_target = GitHubCopilotTarget(model_name="gpt-5-mini")
+    await _send_normalized_async(
+        target=first_target, original_value="My secret word is avocado.", conversation_id=conversation_id
+    )
+
+    # A new target instance (e.g. after a backend restart) has the memory but not the Copilot session.
+    second_target = GitHubCopilotTarget(model_name="gpt-5-mini")
+    with pytest.raises(Exception, match="Error sending prompt") as raised:
+        await _send_normalized_async(
+            target=second_target, original_value="What is my secret word?", conversation_id=conversation_id
+        )
+    assert isinstance(raised.value.__cause__, ValueError)
+    assert "no Copilot session for conversation" in str(raised.value.__cause__)
+
+    client.create_session.assert_awaited_once()
+    assert session.send_and_wait.await_count == 1
+    await first_target.cleanup_target_async()
+    await second_target.cleanup_target_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_system_prompt_alone_still_starts_a_session_async(
+    *,
+    sdk: Any,
+    client: NonCallableMagicMock,
+    sqlite_instance: MemoryInterface,
+) -> None:
+    conversation_id = "system-only-conversation"
+    client.create_session.return_value.send_and_wait.side_effect = [_assistant_reply("OK")]
+    target = GitHubCopilotTarget(model_name="gpt-5-mini")
+    await target.set_system_prompt_async(system_prompt="Be brief.", conversation_id=conversation_id)
+
+    response = await _send_normalized_async(target=target, original_value="hi", conversation_id=conversation_id)
+
+    assert response.get_piece().converted_value == "OK"
+    client.create_session.assert_awaited_once()
+    await target.cleanup_target_async()
+
+
 @pytest.mark.usefixtures("patch_central_database", "sdk")
 def test_target_advertises_native_text_only_capabilities() -> None:
     capabilities = GitHubCopilotTarget(model_name="gpt-4o").capabilities
@@ -1546,11 +1606,11 @@ async def test_normalizer_surfaces_lifecycle_failures_async(
 @pytest.mark.parametrize("startup_delay_seconds", [0.0, 2.1])
 async def test_normalizer_surfaces_dispatch_timeout_and_cleans_up_without_replay_async(
     *,
-    sdk: Any,
+    native_session: tuple[CopilotSession, AsyncMock],
     client: NonCallableMagicMock,
     startup_delay_seconds: float,
 ) -> None:
-    session = client.create_session.return_value
+    session, request = native_session
     target = GitHubCopilotTarget(model_name="gpt-5-mini", response_timeout_seconds=0.01)
     send_entered = asyncio.Event()
 
@@ -1563,8 +1623,7 @@ async def test_normalizer_surfaces_dispatch_timeout_and_cleans_up_without_replay
         send_entered.set()
         await asyncio.Event().wait()
 
-    session.send.side_effect = stall_send_async
-    session.send_and_wait.side_effect = partial(sdk.CopilotSession.send_and_wait, session)
+    request.side_effect = stall_send_async
     send_task = asyncio.create_task(_send_normalized_async(target=target, original_value="Reply exactly HELLO."))
     try:
         await asyncio.wait_for(send_entered.wait(), timeout=10.0)
@@ -1572,7 +1631,8 @@ async def test_normalizer_surfaces_dispatch_timeout_and_cleans_up_without_replay
             # A bare watchdog TimeoutError must not satisfy the normalizer-wrapped failure.
             await asyncio.wait_for(send_task, timeout=10.0)
         assert isinstance(exc_info.value.__cause__, TimeoutError)
-        session.send.assert_awaited_once()
+        request.assert_awaited_once()
+        assert request.await_args.args[0] == "session.send"
         client.delete_session.assert_awaited_once_with("sdk-session-id")
         client.stop.assert_not_awaited()
     finally:
@@ -1678,22 +1738,26 @@ async def test_empty_reply_keeps_native_conversation_async(
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize(
     ("event_stream", "expected_error"),
-    [("aborted-idle", "abort"), ("abort-then-idle", "abort"), ("tool-then-idle", "tool")],
-    ids=["aborted-idle", "abort-then-idle", "tool-then-idle"],
+    [("completed", None), ("aborted-idle", "abort"), ("abort-then-idle", "abort"), ("tool-then-idle", "tool")],
+    ids=["completed", "aborted-idle", "abort-then-idle", "tool-then-idle"],
 )
-async def test_normalizer_rejects_unsafe_events_async(
+async def test_normalizer_handles_sdk_turn_events_async(
     *,
-    sdk: Any,
+    native_session: tuple[CopilotSession, AsyncMock],
     client: NonCallableMagicMock,
     sqlite_instance: MemoryInterface,
     event_stream: str,
-    expected_error: str,
+    expected_error: str | None,
 ) -> None:
     from copilot.generated.session_events import AbortData, SessionEventType, SessionIdleData, ToolExecutionStartData
 
-    session = client.create_session.return_value
+    session, request = native_session
     reply = _assistant_reply("HELLO")
     events = {
+        "completed": [
+            reply,
+            replace(reply, id=uuid4(), type=SessionEventType.SESSION_IDLE, data=SessionIdleData(aborted=False)),
+        ],
         "aborted-idle": [
             reply,
             replace(reply, id=uuid4(), type=SessionEventType.SESSION_IDLE, data=SessionIdleData(aborted=True)),
@@ -1721,41 +1785,41 @@ async def test_normalizer_rejects_unsafe_events_async(
             replace(reply, id=uuid4(), type=SessionEventType.SESSION_IDLE, data=SessionIdleData(aborted=False)),
         ],
     }[event_stream]
-    handlers: list[Callable[[SessionEvent], None]] = []
 
-    def subscribe(handler: Callable[[SessionEvent], None]) -> Callable[[], None]:
-        handlers.append(handler)
-        return partial(handlers.remove, handler)
-
-    async def send_events_async(*_args: Any, **_kwargs: Any) -> str:
+    async def send_events_async(*_args: Any, **_kwargs: Any) -> dict[str, str]:
         for event in events:
-            for handler in tuple(handlers):
-                handler(event)
-        return "sdk-request-id"
+            session._dispatch_event(event)
+        return {"messageId": "sdk-request-id"}
 
-    session.on.side_effect = subscribe
-    session.send.side_effect = send_events_async
-    session.send_and_wait.side_effect = partial(sdk.CopilotSession.send_and_wait, session)
+    request.side_effect = send_events_async
     conversation_id = str(uuid4())
     target = GitHubCopilotTarget(model_name="gpt-5-mini", response_timeout_seconds=1.0)
-    with pytest.raises(Exception, match="Error sending prompt with conversation ID:") as exc_info:
-        await _send_normalized_async(
-            target=target,
-            original_value="Reply exactly HELLO.",
-            conversation_id=conversation_id,
-        )
-    assert isinstance(exc_info.value.__cause__, RuntimeError)
-    assert expected_error in str(exc_info.value.__cause__).lower()
+    send = _send_normalized_async(
+        target=target,
+        original_value="Reply exactly HELLO.",
+        conversation_id=conversation_id,
+    )
+    if expected_error is None:
+        response = await send
+        assert response.get_piece().converted_value == "HELLO"
+        client.delete_session.assert_not_awaited()
+    else:
+        with pytest.raises(Exception, match="Error sending prompt with conversation ID:") as exc_info:
+            _ = await send
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert expected_error in str(exc_info.value.__cause__).lower()
+        client.delete_session.assert_awaited_once_with("sdk-session-id")
     assert await _message_roles_and_errors_async(memory=sqlite_instance, conversation_id=conversation_id) == [
         ("user", "none"),
-        ("assistant", "processing"),
+        ("assistant", "none" if expected_error is None else "processing"),
     ]
-    session.send.assert_awaited_once()
-    client.delete_session.assert_awaited_once_with("sdk-session-id")
+    request.assert_awaited_once()
+    assert request.await_args.args[0] == "session.send"
     client.stop.assert_not_awaited()
     await target.cleanup_target_async()
+    client.delete_session.assert_awaited_once_with("sdk-session-id")
     client.stop.assert_awaited_once()
-    assert not handlers
+    assert not session._event_handlers
 
 
 @pytest.mark.usefixtures("patch_central_database")

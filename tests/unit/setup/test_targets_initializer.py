@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.prompt_target import LiteLLMDecisionTarget, OpenAIChatTarget
 from pyrit.registry import TargetRegistry
 from pyrit.setup.initializers import TargetInitializer
 from pyrit.setup.initializers.targets import TARGET_CONFIGS, _auto_group_enabled, generate_rr_name, get_behavioral_key
@@ -104,6 +104,53 @@ class TestTargetInitializerInitialize:
 
         registry = TargetRegistry.get_registry_singleton()
         assert "platform_openai_chat" not in registry.instances
+
+    @pytest.mark.parametrize("endpoint", [None, "https://router.example.com/api"])
+    async def test_decision_target_needs_only_key_async(self, endpoint: str | None) -> None:
+        env_vars = {"MICROSOFT_DECISION_KEY": "test-decision-key"}
+        if endpoint:
+            env_vars["MICROSOFT_DECISION_ENDPOINT"] = endpoint
+
+        with patch.dict("os.environ", env_vars):
+            await TargetInitializer().initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        target = registry.instances.get("microsoft_decision")
+        assert isinstance(target, LiteLLMDecisionTarget)
+        assert target.get_identifier().params["model_name"] == "openrouter/microsoft/microsoft-decision-1"
+        assert target.get_identifier().params["endpoint"] == (endpoint or "https://openrouter.ai/api")
+        assert "open_router" not in registry.instances
+        assert len(registry.instances) == 1
+
+    async def test_decision_target_skipped_without_key_async(self) -> None:
+        with patch.dict("os.environ", {"OPEN_ROUTER_ENDPOINT": "https://openrouter.ai/api/v1"}):
+            await TargetInitializer().initialize_async()
+
+        assert "microsoft_decision" not in TargetRegistry.get_registry_singleton().instances
+
+    async def test_decision_target_does_not_use_old_openrouter_variables_async(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"OPENROUTER_KEY": "old-key", "OPEN_ROUTER_DECISION_ENDPOINT": "https://openrouter.ai/api"},
+        ):
+            await TargetInitializer().initialize_async()
+
+        assert "microsoft_decision" not in TargetRegistry.get_registry_singleton().instances
+
+    async def test_existing_openrouter_chat_configuration_unchanged_async(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "OPEN_ROUTER_ENDPOINT": "https://openrouter.ai/api/v1",
+                "OPEN_ROUTER_KEY": "test-chat-key",
+                "OPEN_ROUTER_CLAUDE_MODEL": "anthropic/claude-3.7-sonnet",
+            },
+        ):
+            await TargetInitializer().initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert isinstance(registry.instances.get("open_router"), OpenAIChatTarget)
+        assert "microsoft_decision" not in registry.instances
 
     async def test_does_not_register_target_without_api_key(self):
         """Test that target is not registered if api_key env var is missing."""

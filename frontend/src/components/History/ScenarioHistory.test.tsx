@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
-import { labelsApi, scenariosApi } from '@/services/api'
+import { labelsApi, operationsApi, scenariosApi } from '@/services/api'
 import type { ScenarioRunListItem, ScenarioRunListResponse, ScenarioRunState, ScenarioRunSummary } from '@/types'
 
 import ScenarioHistory from './ScenarioHistory'
@@ -18,6 +18,9 @@ jest.mock('@/services/api', () => ({
   labelsApi: {
     getLabels: jest.fn(),
   },
+  operationsApi: {
+    list: jest.fn(),
+  },
 }))
 
 jest.mock('@/hooks/useScenarioQueue', () => ({
@@ -26,6 +29,7 @@ jest.mock('@/hooks/useScenarioQueue', () => ({
 
 const mockedScenariosApi = scenariosApi as jest.Mocked<typeof scenariosApi>
 const mockedLabelsApi = labelsApi as jest.Mocked<typeof labelsApi>
+const mockedOperationsApi = operationsApi as jest.Mocked<typeof operationsApi>
 const mockUseScenarioQueue = useScenarioQueue as jest.Mock
 const mockQueueRetry = jest.fn()
 
@@ -47,6 +51,8 @@ const RUN: ScenarioRunListItem = {
   error_attacks: 1,
   total_retries: 2,
   labels: { operator: 'alice', operation: 'nightly', team: 'safety' },
+  operation_id: null,
+  operation_name: 'nightly',
   planned_total_available: true,
   attack_details_available: false,
   datasets_used: ['harmbench'],
@@ -93,6 +99,9 @@ describe('ScenarioHistory', () => {
     mockedLabelsApi.getLabels.mockResolvedValue({
       source: 'scenarios',
       labels: { operator: ['alice'], operation: ['nightly'], team: ['safety'] },
+    })
+    mockedOperationsApi.list.mockResolvedValue({
+      items: [{ id: 'id-nightly', name: 'Nightly', created_at: '2026-01-01T00:00:00Z', finding_counts: {} }],
     })
   })
 
@@ -394,6 +403,7 @@ describe('ScenarioHistory', () => {
         error_attacks: 1,
         total_retries: 0,
         labels: {},
+        operation_name: null,
         target: {
           target_type: 'TextTarget',
           endpoint: null,
@@ -708,7 +718,7 @@ describe('ScenarioHistory', () => {
         scenarioNames: ['foundry.red_team'],
         statuses: ['IN_PROGRESS', 'FAILED'],
         operator: ['alice'],
-        operation: ['nightly'],
+        operationId: ['id-nightly'],
         otherLabels: ['team:safety'],
       },
     })
@@ -719,8 +729,10 @@ describe('ScenarioHistory', () => {
       cursor: undefined,
       scenario_names: ['foundry.red_team'],
       run_statuses: ['IN_PROGRESS', 'FAILED'],
-      label: ['operator:alice', 'operation:nightly', 'team:safety'],
+      label: ['operator:alice', 'team:safety'],
+      operation_id: ['id-nightly'],
     })
+    expect(screen.getByTestId('scenario-operation-filter')).toHaveValue('Nightly')
 
     await user.click(screen.getByRole('button', { name: 'Next' }))
     await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenNthCalledWith(

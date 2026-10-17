@@ -8,6 +8,7 @@ Unit tests for the pyrit_shell CLI module (thin REST client).
 import asyncio
 from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 
@@ -142,6 +143,71 @@ class TestPyRITShell:
         s.do_list_scenarios("--unknown foo")
         captured = capsys.readouterr()
         assert "does not accept arguments" in captured.out
+
+    def test_list_operations_displays_name_and_id(self, shell, capsys) -> None:
+        from pyrit.models import Operation
+
+        s, client = shell
+        client.list_operations_async.return_value = [
+            Operation(name="Example", id=UUID("11111111-1111-4111-8111-111111111111"))
+        ]
+
+        s.onecmd("list-operations")
+
+        output = capsys.readouterr().out
+        assert "Example" in output
+        assert "11111111-1111-4111-8111-111111111111" in output
+
+    def test_list_operations_empty(self, shell, capsys) -> None:
+        s, client = shell
+        client.list_operations_async.return_value = []
+
+        s.onecmd("list-operations")
+
+        assert "No Operations found." in capsys.readouterr().out
+
+    def test_list_operations_rejects_arguments(self, shell, capsys) -> None:
+        s, client = shell
+
+        s.onecmd("list-operations extra")
+
+        assert "does not accept arguments" in capsys.readouterr().out
+        client.list_operations_async.assert_not_awaited()
+
+    def test_list_operations_reports_failure(self, shell, capsys) -> None:
+        s, client = shell
+        client.list_operations_async.side_effect = RuntimeError("Directory unavailable")
+
+        s.onecmd("list-operations")
+
+        assert "Error listing operations: Directory unavailable" in capsys.readouterr().out
+
+    def test_run_operation_id_reaches_request(self, shell) -> None:
+        s, client = shell
+        client.start_scenario_run_async.side_effect = RuntimeError("Stop before polling")
+
+        s.do_run("foo --target t --operation-id 11111111-1111-4111-8111-111111111111")
+
+        request = client.start_scenario_run_async.call_args.kwargs["request"]
+        assert request.operation_id == UUID("11111111-1111-4111-8111-111111111111")
+        assert request.labels is None
+
+    def test_run_without_operation_id_remains_unassigned(self, shell) -> None:
+        s, client = shell
+        client.start_scenario_run_async.side_effect = RuntimeError("Stop before polling")
+
+        s.do_run("foo --target t")
+
+        request = client.start_scenario_run_async.call_args.kwargs["request"]
+        assert request.operation_id is None
+
+    def test_run_invalid_operation_id_does_not_start(self, shell, capsys) -> None:
+        s, client = shell
+
+        s.do_run("foo --target t --operation-id not-a-uuid")
+
+        assert "Error:" in capsys.readouterr().out
+        client.start_scenario_run_async.assert_not_awaited()
 
     def test_do_list_initializers(self, shell):
         s, client = shell
