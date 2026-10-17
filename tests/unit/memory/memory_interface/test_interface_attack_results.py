@@ -14,7 +14,7 @@ from sqlalchemy.dialects import mssql
 from unit.mocks import get_mock_target_identifier, make_scenario_result
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
+from pyrit.memory import AttackResultKeysetCursor, MemoryInterface, SQLiteMemory
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
 from pyrit.memory.memory_interface import _AttackResultQuery
 from pyrit.memory.memory_models import AtomicAttackIdentifierEntry, AttackResultEntry, TargetIdentifierEntry
@@ -1173,6 +1173,59 @@ async def test_get_attack_results_matches_non_allowlisted_label_keys_literally_a
     assert {result.conversation_id for result in only_literal} == {"conv_1", "conv_4"}
     assert {result.conversation_id for result in combined} == {"conv_1"}
     assert len(await sqlite_instance.get_attack_results_async()) == 4
+
+
+async def test_get_attack_results_literal_label_keys_differing_by_trailing_space_stay_distinct_async(
+    *, sqlite_instance: MemoryInterface
+) -> None:
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            create_attack_result("conv_1", 1, labels={"team name": "review"}),
+            create_attack_result("conv_2", 2, labels={"team name ": "review"}),
+        ]
+    )
+
+    exact = await sqlite_instance.get_attack_results_async(labels={"team name": "review"})
+    padded = await sqlite_instance.get_attack_results_async(labels={"team name ": "review"})
+
+    assert [result.conversation_id for result in exact] == ["conv_1"]
+    assert [result.conversation_id for result in padded] == ["conv_2"]
+
+
+class _LegacyLabelMemory(SQLiteMemory):
+    """A backend written against the interface from before the literal label hook existed."""
+
+    _get_attack_result_literal_label_condition = MemoryInterface._get_attack_result_literal_label_condition
+
+
+async def test_literal_label_hook_is_optional_for_existing_backends_async() -> None:
+    assert "_get_attack_result_literal_label_condition" not in MemoryInterface.__abstractmethods__
+
+    memory = _LegacyLabelMemory.__new__(_LegacyLabelMemory)
+    try:
+        with patch.object(memory, "cleanup"):
+            memory.__init__(db_path=":memory:", skip_schema_migration=True)
+    finally:
+        await memory.dispose_engine_async()
+
+
+async def test_backend_without_literal_label_hook_rejects_only_literal_keys_async(
+    *, sqlite_instance: MemoryInterface
+) -> None:
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[create_attack_result("conv_1", 1, labels={"phase": "initial", "team name": "red"})]
+    )
+
+    with patch.object(
+        SQLiteMemory,
+        "_get_attack_result_literal_label_condition",
+        MemoryInterface._get_attack_result_literal_label_condition,
+    ):
+        allowlisted = await sqlite_instance.get_attack_results_async(labels={"phase": "initial"})
+        with pytest.raises(NotImplementedError, match="_get_attack_result_literal_label_condition"):
+            await sqlite_instance.get_attack_results_async(labels={"team name": "red"})
+
+    assert [result.conversation_id for result in allowlisted] == ["conv_1"]
 
 
 @pytest.mark.parametrize("key", ["team.name", "run-id"])

@@ -591,6 +591,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Azure SQL implementation that matches label names literally through OPENJSON.
 
         Keys and values are bound parameters, so no key becomes part of a JSON path or SQL text.
+        DATALENGTH keeps keys that differ only by trailing spaces apart, since SQL Server pads
+        strings before comparing them.
 
         Returns:
             Any: SQLAlchemy condition with bound parameters.
@@ -610,7 +612,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 placeholders.append(f":{value_param}")
             literal_conditions.append(
                 'EXISTS (SELECT 1 FROM OPENJSON("AttackResultEntries".labels) AS label_entry '
-                f"WHERE label_entry.[key] = :{key_param} AND label_entry.[value] IN ({', '.join(placeholders)}))"
+                f"WHERE label_entry.[key] = :{key_param} "
+                f"AND DATALENGTH(label_entry.[key]) = DATALENGTH(CAST(:{key_param} AS NVARCHAR(MAX))) "
+                f"AND label_entry.[value] IN ({', '.join(placeholders)}))"
             )
 
         parts: list[Any] = [AttackResultEntry.labels.isnot(None)]

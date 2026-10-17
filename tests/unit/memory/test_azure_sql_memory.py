@@ -535,6 +535,9 @@ def test_literal_label_condition_binds_keys_and_values(uninitialized_memory_inte
 
     assert 'OPENJSON("AttackResultEntries".labels)' in compiled
     assert "JSON_VALUE" not in compiled
+    # SQL Server pads strings before comparing, so "team name " would equal "team name" without this.
+    for key_param in ("are_literal_key_0", "are_literal_key_1"):
+        assert f"DATALENGTH(label_entry.[key]) = DATALENGTH(CAST(:{key_param} AS NVARCHAR(MAX)))" in compiled
     assert 'team"name' not in compiled
     assert condition.compile().params == {
         "are_literal_key_0": 'team"name',

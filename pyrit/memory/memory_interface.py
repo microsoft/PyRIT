@@ -2067,21 +2067,24 @@ class MemoryInterface(abc.ABC):
             Database-specific SQLAlchemy condition.
         """
 
-    @abc.abstractmethod
     def _get_attack_result_literal_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
         Return a condition matching AttackResult label names literally.
 
         Same semantics as ``_get_attack_result_label_condition``, but each key is compared to the
         stored label names as a bound value instead of being turned into a JSON path, so any key
-        string is safe.
+        string is safe. Backends that don't override it can still filter by allowlisted keys.
 
         Args:
             labels: Label-name-to-value(s) map.
 
-        Returns:
-            Database-specific SQLAlchemy condition.
+        Raises:
+            NotImplementedError: If the memory backend does not support literal label keys.
         """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _get_attack_result_literal_label_condition "
+            "to filter attack results by label keys outside [A-Za-z0-9_.-]+."
+        )
 
     def _execute_get_unique_attack_class_names(self) -> list[str]:
         """
