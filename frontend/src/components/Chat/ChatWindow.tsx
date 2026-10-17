@@ -39,7 +39,7 @@ import ObjectiveHeader from './ObjectiveHeader'
 import ConversationEditor from './ConversationEditor'
 import type { ConversationEditorHandle } from './ConversationEditor'
 import {
-  attachmentDraft, draftDataTypes, draftMessageToInput, editorTargetDisabledReason, historyReplayDisabledReason,
+  attachmentDraft, draftDataTypes, draftMessageToComposer, editorTargetDisabledReason, historyReplayDisabledReason,
   newDraftPiece, toConversationDraft,
 } from '@/utils/conversationDraft'
 import { useConversationSave } from '@/hooks/useConversationSave'
@@ -383,6 +383,7 @@ export default function ChatWindow({
   const editorObjective = editDraft?.objective ?? ''
   const isSavingEditor = editor.saving
   const editorRef = useRef<ConversationEditorHandle>(null)
+  const [editorInitialConverters, setEditorInitialConverters] = useState<ChatConverterSnapshot>()
   const [isLoadingEdit, setIsLoadingEdit] = useState(false)
   const copyingRef = useRef(false)
   const copySave = useConversationSave(newAttackContext)
@@ -1578,9 +1579,10 @@ export default function ChatWindow({
       if (sourceId !== viewedConvRef.current) return
       const sourceMessages = source?.messages ?? []
       const draftMessages = toConversationDraft(sourceMessages)
-      if (chatInputText || draftAttachments.length) {
+      if (chatInputText || draftAttachments.length || activePieceConversions.text) {
         const pieces: ConversationDraftPiece[] = [
-          ...(chatInputText ? [{ ...newDraftPiece(), draftId: 'text', original_value: chatInputText }] : []),
+          ...(chatInputText || activePieceConversions.text
+            ? [{ ...newDraftPiece(), draftId: 'text', original_value: chatInputText }] : []),
           ...draftAttachments.map(attachmentDraft),
         ].map((piece: ConversationDraftPiece) => {
           const conversion = activePieceConversions[piece.draftId]
@@ -1597,6 +1599,7 @@ export default function ChatWindow({
         initialObjective: currentObjective, sourceConversationId: sourceId,
         sourceAttackId: attackResultId, target, labels,
       })
+      setEditorInitialConverters(converters.snapshot())
       setIsConverterPanelOpen(false)
       onRefreshTargets()
     } catch (error) {
@@ -1621,6 +1624,25 @@ export default function ChatWindow({
     setPanelRefreshKey((key: number) => key + 1)
   }
 
+  const restoreEditorPrompt = (
+    prompt: ReturnType<typeof draftMessageToComposer> | undefined, snapshot: ChatConverterSnapshot,
+  ): void => {
+    const text = prompt?.text ?? ''
+    const attachments = prompt?.attachments.map((attachment: MessageAttachment) => attachment.file
+      ? { ...attachment, url: URL.createObjectURL(attachment.file) } : attachment) ?? []
+    setChatInputText(text)
+    setDraftAttachments(attachments)
+    if (prompt && snapshot.generation === launchStateRef.current.generation) {
+      converters.restoreSnapshot(prompt.converters, text, attachments)
+    } else {
+      restoreConversions(text, attachments, {}, snapshot.pipelines)
+      if (prompt) setEditorNotice('Prompt restored. The runtime changed; run the converter pipeline again before sending.')
+    }
+    inputBoxRef.current?.restoreDraft(text, attachments, prompt?.textMetadata)
+    inputBoxRef.current?.focus()
+    if (prompt?.notice) setEditorNotice(prompt.notice)
+  }
+
   const handleSaveEditor = (
     destination: 'same_attack' | 'new_attack', reuseUnsentConversation = false,
   ): Promise<boolean> => {
@@ -1631,19 +1653,13 @@ export default function ChatWindow({
     }
     setEditorError(null)
     const lastMessage = editDraft.messages[editDraft.messages.length - 1]
-    const pendingPrompt = lastMessage?.role === 'user' ? draftMessageToInput(lastMessage) : undefined
+    const snapshot = editorRef.current?.getConverters() ?? converters.snapshot()
+    const pendingPrompt = lastMessage?.role === 'user'
+      ? draftMessageToComposer(lastMessage, snapshot) : undefined
     const history = pendingPrompt ? editDraft.messages.slice(0, -1) : editDraft.messages
     return editor.save(destination, (response: AddMessageResponse) => {
-      const attachments = pendingPrompt?.attachments.map((attachment: MessageAttachment) => attachment.file
-        ? { ...attachment, url: URL.createObjectURL(attachment.file) } : attachment) ?? []
       handleEditorSaved(response)
-      if (pendingPrompt) {
-        setChatInputText(pendingPrompt.text)
-        setDraftAttachments(attachments)
-        restoreConversions(pendingPrompt.text, attachments, {}, {})
-        inputBoxRef.current?.restoreDraft(pendingPrompt.text, attachments, pendingPrompt.textMetadata)
-        inputBoxRef.current?.focus()
-      }
+      restoreEditorPrompt(pendingPrompt, snapshot)
     }, history, reuseUnsentConversation && destination === 'same_attack'
       && Boolean(editDraft.sourceConversationId && editDraft.sourceAttackId === attackResultId))
   }
@@ -1653,7 +1669,12 @@ export default function ChatWindow({
       return exitSaveRef.current
     }
     if (!editor.dirty) {
+      const snapshot = editorRef.current?.getConverters() ?? converters.snapshot()
+      const lastMessage = editDraft?.messages[editDraft.messages.length - 1]
+      const prompt = (chatInputText || draftAttachments.length || activePieceConversions.text) && lastMessage?.role === 'user'
+        ? draftMessageToComposer(lastMessage, snapshot) : undefined
       editor.discard()
+      restoreEditorPrompt(prompt, snapshot)
       return Promise.resolve(true)
     }
     if (attackResultId && sameAttackDisabledReason) {
@@ -2113,6 +2134,7 @@ export default function ChatWindow({
         {editDraft !== null && <ConversationEditor
           key={editDraft.id}
           ref={editorRef}
+          initialConverters={editorInitialConverters}
           controller={editor}
           sameAttackDisabledReason={sameAttackDisabledReason}
           newAttackDisabledReason={newAttackDisabledReason}

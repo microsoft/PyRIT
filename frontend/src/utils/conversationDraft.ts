@@ -1,6 +1,6 @@
 import type {
-  BackendMessage, ConversationDraftMessage, ConversationDraftPiece, ConversationDraftRole,
-  ConverterInputPiece, MessageAttachment, SaveConversationRequest, TargetInstance,
+  BackendMessage, ChatConverterSnapshot, ConversationDraftMessage, ConversationDraftPiece, ConversationDraftRole,
+  ConverterInputPiece, MessageAttachment, PieceConversion, SaveConversationRequest, TargetInstance,
 } from '@/types'
 import { generateClientId } from './clientId'
 import { dataTypeToAttachmentType, fileToBase64, mimeTypeToDataType } from './messageMapper'
@@ -171,6 +171,70 @@ export function draftMessageToInput(message: ConversationDraftMessage): {
     textMetadata: Object.keys(textMetadata).length ? textMetadata : undefined,
     attachments: pieces.filter((piece: ConversationDraftPiece) => isPathDataType(piece.data_type)).map(draftAttachment),
   }
+}
+
+export function draftMessageToComposer(
+  message: ConversationDraftMessage, snapshot: ChatConverterSnapshot,
+): ReturnType<typeof draftMessageToInput> & { converters: ChatConverterSnapshot; notice?: string } {
+  const textPieces = message.pieces.filter((piece: ConversationDraftPiece) => !isPathDataType(piece.data_type))
+  if (textPieces.length > 1) {
+    if (textPieces.every((piece: ConversationDraftPiece) => piece.data_type === 'text'
+      && (piece.converted_value_data_type ?? piece.data_type) === 'text')) {
+      const combined: ConversationDraftPiece = {
+        draftId: generateClientId(), data_type: 'text',
+        original_value: textPieces.map((piece: ConversationDraftPiece) => piece.original_value).join('\n'),
+        converted_value: textPieces.some((piece: ConversationDraftPiece) => piece.converted_value !== undefined)
+          ? textPieces.map((piece: ConversationDraftPiece) => piece.converted_value ?? piece.original_value).join('\n')
+          : undefined,
+        converted_value_data_type: 'text',
+        prompt_metadata: Object.assign({}, ...textPieces.map((piece: ConversationDraftPiece) => piece.prompt_metadata)),
+      }
+      const prompt = draftMessageToComposer({
+        ...message, pieces: [combined, ...message.pieces.filter((piece: ConversationDraftPiece) => isPathDataType(piece.data_type))],
+      }, snapshot)
+      if (prompt.converters.applied.text) prompt.converters.applied.text.manuallyEdited = true
+      return {
+        ...prompt,
+        notice: 'Multiple text pieces were combined. Original and converted text are retained; their separate text-stage edits cannot be combined.',
+      }
+    }
+    return {
+      ...draftMessageToInput(message),
+      converters: { ...snapshot, workingInputs: {}, stageResults: {}, errors: {}, applied: {} },
+      notice: 'Multiple text pieces were combined into one prompt. Their separate original/converted values and stage edits cannot be shown in one text input.',
+    }
+  }
+  const text = textPieces[0]?.original_value ?? ''
+  const attachments = message.pieces.filter((piece: ConversationDraftPiece) => isPathDataType(piece.data_type))
+    .map(draftAttachment)
+  const textMetadata = textPieces[0]?.prompt_metadata
+  const workingInputs: ChatConverterSnapshot['workingInputs'] = {}
+  const stageResults: ChatConverterSnapshot['stageResults'] = {}
+  const errors: ChatConverterSnapshot['errors'] = {}
+  const applied: ChatConverterSnapshot['applied'] = {}
+  for (const piece of message.pieces) {
+    const id = piece === textPieces[0] ? 'text' : piece.draftId
+    if (snapshot.workingInputs[piece.draftId] !== undefined) workingInputs[id] = snapshot.workingInputs[piece.draftId]
+    if (snapshot.stageResults[piece.draftId]) stageResults[id] = snapshot.stageResults[piece.draftId]
+    if (snapshot.errors[piece.draftId]) errors[id] = snapshot.errors[piece.draftId]
+    const previous = snapshot.applied[piece.draftId]
+    const convertedType = piece.converted_value_data_type ?? piece.data_type
+    if (piece.converted_value !== undefined && (piece.converted_value !== piece.original_value
+      || convertedType !== piece.data_type || piece.applied_converter_ids?.length || previous)) {
+      const conversion: PieceConversion = {
+        pieceId: id,
+        pieceType: isPathDataType(piece.data_type) ? dataTypeToAttachmentType(piece.data_type) : 'text',
+        originalValue: piece.original_value,
+        convertedValue: piece.converted_value,
+        convertedDataType: convertedType,
+        converterInstanceIds: piece.applied_converter_ids ?? previous?.converterInstanceIds ?? [],
+        ...(previous?.manuallyEdited || (previous && previous.convertedValue !== piece.converted_value)
+          ? { manuallyEdited: true } : {}),
+      }
+      applied[id] = conversion
+    }
+  }
+  return { text, attachments, textMetadata, converters: { ...snapshot, workingInputs, stageResults, errors, applied } }
 }
 
 export function attachmentDraft(attachment: MessageAttachment): ConversationDraftPiece {

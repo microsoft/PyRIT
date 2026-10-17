@@ -223,8 +223,14 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
     getTextMetadata: (): Record<string, unknown> | undefined => textMetadataRef.current,
   }))
 
-  const unsupportedAttachmentTypes = getUnsupportedAttachmentTypes(attachments, activeTarget)
-  const unsupportedConverterOutputTypes = getUnsupportedConverterOutputTypes(converterOutputDataTypes, activeTarget)
+  const convertedAttachmentIds = new Set(mediaConversions.map((conversion) => conversion.pieceId))
+  const unsupportedAttachmentTypes = getUnsupportedAttachmentTypes(
+    attachments.filter((attachment: MessageAttachment) => !attachment.draftId || !convertedAttachmentIds.has(attachment.draftId)),
+    activeTarget,
+  )
+  const unsupportedConverterOutputTypes = getUnsupportedConverterOutputTypes(
+    [...converterOutputDataTypes, ...mediaConversions.map((conversion) => conversion.convertedDataType)], activeTarget,
+  )
   const hasUnsupportedModalities = unsupportedAttachmentTypes.length > 0 || unsupportedConverterOutputTypes.length > 0
   const canSend = !disabled && !sendDisabled && !hasUnsupportedModalities
     && Boolean(input || convertedValue != null || convertedFileChip || attachments.length)

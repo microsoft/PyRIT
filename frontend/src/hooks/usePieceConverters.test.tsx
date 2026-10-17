@@ -27,6 +27,26 @@ const second: ConverterInputPiece[] = [{ id: 'two', pieceType: 'text', name: 'Se
 describe('usePieceConverters', () => {
   beforeEach(() => jest.resetAllMocks())
 
+  it('keeps stage edits when editor selection changes and converts only selected pieces', async () => {
+    jest.mocked(convertersApi.previewConversion).mockResolvedValue(response('converted'))
+    const inputs = [...first, ...second]
+    const { result, rerender } = renderHook(({ selected }: { selected: string }) => usePieceConverters(
+      inputs, undefined, { selectedIds: new Set([selected]) },
+    ), { initialProps: { selected: 'one' } })
+    act(() => result.current.addConverter('text', 'converter'))
+    await act(async () => { await result.current.convert('text') })
+    const stageId = result.current.stageResults.one[0].stageId
+    act(() => { result.current.editStageOutput('one', stageId, 'Edited first') })
+    rerender({ selected: 'two' })
+    expect(result.current.inputs.map((input) => input.id)).toEqual(['two'])
+    expect(result.current.results).toEqual({})
+    await act(async () => { await result.current.convert('text') })
+    rerender({ selected: 'one' })
+    expect(result.current.results.one.converted_value).toBe('Edited first')
+    expect(result.current.snapshot().stageResults.two[0].value).toBe('converted')
+    expect(convertersApi.previewConversion).toHaveBeenCalledTimes(2)
+  })
+
   it('starts the new selection immediately and ignores a late result from the old selection', async () => {
     let resolveOld: (value: ConverterPreviewResponse) => void = () => {}
     jest.mocked(convertersApi.previewConversion)

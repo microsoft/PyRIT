@@ -57,6 +57,11 @@ interface ConversionScope {
   includeIncomplete?: boolean
 }
 
+interface PieceConverterOptions {
+  initialSnapshot?: ChatConverterSnapshot
+  selectedIds?: ReadonlySet<string>
+}
+
 function omitPieces<T>(values: Record<string, T>, ids: Set<string>): Record<string, T> {
   return Object.fromEntries(Object.entries(values).filter(([id]: [string, T]) => !ids.has(id)))
 }
@@ -163,7 +168,9 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
   return usePieceConverters(inputs)
 }
 
-export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: string): ChatConverterController {
+export function usePieceConverters(
+  inputs: ConverterInputPiece[], scopeKey?: string, options: PieceConverterOptions = {},
+): ChatConverterController {
   const { generation } = useRuntime()
   const [state, setState] = useState<ConversionState>(() => ({
     generation,
@@ -181,6 +188,7 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
     isConverting: false,
     runOwners: {},
     activeRuns: [],
+    ...(options.initialSnapshot?.generation === generation ? options.initialSnapshot : {}),
   }))
   const nextRunId = useRef(0)
   const currentState = useRef<ConversionState | null>(state)
@@ -299,6 +307,7 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
     if (state.activeRuns.length > 0 && state.activeRuns[state.activeRuns.length - 1] === state.runId) return
     const completed = completedResults(state)
     const selected = state.inputs.flatMap((input: VersionedInput): ConversionJob[] => {
+      if (options.selectedIds && !options.selectedIds.has(input.id)) return []
       if (
         pieceType !== undefined
         && pieceType !== input.pieceType
@@ -512,11 +521,13 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
       ? 'Repeated sends are unavailable after editing a conversion or converting only part of a prompt. Send once or reset conversions.'
       : undefined,
     editRevision: state.nextRevision,
-    inputs: state.inputs,
+    inputs: state.inputs.filter((input: VersionedInput) => !options.selectedIds || options.selectedIds.has(input.id)),
     workingInputs: state.workingInputs,
     pipelines: state.pipelines,
     stageResults: state.stageResults,
-    results: completedResults(state),
+    results: Object.fromEntries(Object.entries(completedResults(state)).filter(
+      ([id]: [string, ConverterPreviewResponse]) => !options.selectedIds || options.selectedIds.has(id),
+    )),
     errors: state.errors,
     applied: state.applied,
     isConverting: state.isConverting,

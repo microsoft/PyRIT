@@ -373,6 +373,12 @@ history requires both multi-turn and editable-history support, including for
 An initial system/developer setup is also allowed when the target supports
 system prompts and multiple turns. The final user prompt returns to the composer
 and is not treated as replayed history.
+The normal prompt box keeps its original and converted values separate. Its
+converter pipeline, working input, and stage edits remain available in the same
+tab when you save or leave the editor. Saving does not run converters again.
+Changing the selected messages in the editor does not discard their stage edits.
+If a final user message has multiple text pieces, the prompt box combines them
+and shows a notice because one text input cannot retain separate per-piece stages.
 
 The target must also accept every effective data type, including audio, video, and tool
 pieces. A converted piece is checked using its converted data type. The
@@ -456,6 +462,9 @@ in history. Undo does not reverse any action already taken by the target.
 The prompt, converter order, working input, generated stages, and manual
 middle-stage edits are restored from memory. Undo does not run the converters
 again. You can edit a restored stage and convert only the remaining stages.
+This also applies after editing and saving a conversation: Undo keeps the edited
+history and restores the original/converted prompt and its pipeline as they were
+immediately before sending.
 
 The control is hidden when the target cannot replay the history that undo would retain.
 Only that retained prefix counts: an otherwise empty first-turn undo remains available

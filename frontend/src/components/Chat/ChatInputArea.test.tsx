@@ -1499,6 +1499,33 @@ describe("ChatInputArea", () => {
   // Unsupported modality warnings
   // ---------------------------------------------------------------------------
 
+  it("validates converted attachment types while retaining their unsupported originals", async () => {
+    const user = userEvent.setup();
+    const ref = { current: null as ChatInputAreaHandle | null };
+    const props = {
+      ...defaultProps,
+      activeTarget: makeTarget({
+        target_registry_name: "text", capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
+      }),
+    };
+    const rendered = render(<TestWrapper><ChatInputArea ref={ref} {...props}
+      mediaConversions={[{ pieceId: "image", convertedValue: "Image transcript", convertedDataType: "text" }]} />
+    </TestWrapper>);
+    act(() => { ref.current?.restoreDraft("", [{
+      draftId: "image", type: "image", name: "original.png", url: "/original.png", mimeType: "image/png",
+    }]); });
+    expect(screen.queryByTestId("unsupported-modality-warning")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(defaultProps.onSend).toHaveBeenCalled();
+    rendered.rerender(<TestWrapper><ChatInputArea ref={ref} {...props} mediaConversions={[]} /></TestWrapper>);
+    act(() => { ref.current?.restoreDraft("", [{
+      draftId: "image", type: "image", name: "original.png", url: "/original.png", mimeType: "image/png",
+    }]); });
+    expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  });
+
   it("should show warning when attaching image to text-only target", async () => {
     const user = userEvent.setup();
 
