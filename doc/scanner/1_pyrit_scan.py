@@ -46,6 +46,18 @@
 # !pyrit_scan list-scenarios
 
 # %% [markdown]
+# Use `list-operations` to find saved Operation names and IDs:
+#
+# ```shell
+# pyrit_scan list-operations
+# pyrit_scan run garak.encoding --target my_target --operation-id <UUID>
+# ```
+#
+# Use an ID returned by `list-operations`. Omitting `--operation-id` leaves the run
+# unassigned. `operation` in `--memory-labels` is deprecated and will be removed in 1.4.0.
+# Until then it links the run to the saved Operation with that name when one exists,
+# and is otherwise kept as a plain name.
+#
 # **Tip**: You can also surface user-defined scenarios. List your initializer script in the
 # `initialization_scripts` section of the config file the backend loads (see [here](../getting_started/pyrit_conf.md)).
 # The backend runs those scripts at startup and auto-discovers any `Scenario` subclasses they
@@ -120,6 +132,7 @@
 # - `--max-concurrency <int>`: Maximum number of concurrent attack executions
 # - `--max-retries <int>`: Maximum number of automatic retries if the scenario raises an exception
 # - `--memory-labels <json>`: Additional labels to apply to all attack runs (must be a JSON string with string keys and values)
+# - `--operation-id <UUID>`: Saved Operation ID for this run
 #
 # Dataset-backed scenarios can also select a supported dataset. Requested datasets are fetched
 # on demand, so a full dataset preload is not required:

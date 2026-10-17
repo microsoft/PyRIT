@@ -22,12 +22,12 @@
 # ## Part 1 — Memory Labels
 #
 # Memory labels are a free-form dictionary for tagging prompts for easier querying and scoring later on. The `GLOBAL_MEMORY_LABELS`
-# environment variable can be set to apply labels (e.g. `operator` and `operation`) to all prompts sent by any attack.
+# environment variable can be set to apply labels (e.g. `operator` and `campaign`) to all prompts sent by any attack.
 # Passed-in labels will be combined with `GLOBAL_MEMORY_LABELS` into one dictionary. In the case of collisions,
 # the passed-in labels take precedence.
 #
-# You can then query the database (either AzureSQL or SQLite) for prompts with specific labels, such as `operator` and/or `operation`
-# (which are standard), as well as any others you'd like, including `harm_category`, `language`, `technique`, etc.
+# You can query AzureSQL or SQLite for prompts with labels such as `operator`, `campaign`, or `harm_category`.
+# Select a saved Operation with `operation_id`; it is separate from memory labels.
 #
 # We take the following steps in Part 1:
 # 1. Send prompts to a text target using `PromptSendingAttack`, passing in `memory_labels` to the execution function.

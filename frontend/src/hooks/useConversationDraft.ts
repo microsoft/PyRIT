@@ -133,13 +133,14 @@ export function useConversationDraft(newAttackContext?: NewAttackContext) {
   }
   const save = async (
     destination: SaveConversationRequest['destination'], onSaved: (response: AddMessageResponse) => void,
+    messages: ConversationDraftMessage[] = draft?.messages ?? [],
   ): Promise<void> => {
     if (!draft || workflow.saving) return
     const id = draft.id
     setError(null)
     try {
       if (validationError || targetError) throw new Error(validationError ?? targetError)
-      const response = await workflow.save(draft, destination)
+      const response = await workflow.save({ ...draft, messages }, destination)
       if (activeId.current !== id) return
       saved.current = true
       onSaved(response)

@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.prompt_target import LiteLLMDecisionTarget, OpenAIChatTarget
 from pyrit.registry import ScorerRegistry, TargetRegistry
-from pyrit.score import LikertScalePaths
+from pyrit.score import DecisionScorer, FloatScaleThresholdScorer, LikertScalePaths
 from pyrit.setup.initializers import ScorerInitializer
 from pyrit.setup.initializers.scorers import (
     GPT4O_TARGET,
@@ -149,6 +149,61 @@ class TestScorerInitializerInitialize:
         assert registry.instances.get("refusal_gpt4o_objective_strict") is not None
         # inverted_refusal uses the gpt4o refusal fallback
         assert registry.instances.get("inverted_refusal") is not None
+
+    async def test_decision_scorers_register_without_defaults_async(self) -> None:
+        target = LiteLLMDecisionTarget(model_name="openrouter/microsoft/microsoft-decision-1", api_key="test-key")
+        TargetRegistry.get_registry_singleton().instances.register(target, name="microsoft_decision")
+        await ScorerInitializer().initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        raw = registry.instances.get("task_achieved_microsoft_decision")
+        wrapped = registry.instances.get("task_achieved_microsoft_decision_threshold_07")
+        assert isinstance(raw, DecisionScorer)
+        assert isinstance(wrapped, FloatScaleThresholdScorer)
+        assert raw.get_chat_target() is target
+        assert isinstance(wrapped._scorer, DecisionScorer)
+        assert wrapped._scorer is not raw
+        assert wrapped._scorer.get_chat_target() is target
+        assert wrapped._scorer.get_identifier() == raw.get_identifier()
+        assert wrapped._threshold == 0.7
+        assert len(registry.instances) == 2
+        assert len(registry.instances.get_by_tag(tag=ScorerInitializerTags.MICROSOFT_DECISION)) == 2
+        for tag in (
+            ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER,
+            ScorerInitializerTags.BEST_OBJECTIVE,
+            ScorerInitializerTags.BEST_TASK_ACHIEVED,
+        ):
+            assert registry.instances.get_by_tag(tag=tag) == []
+
+    async def test_decision_scorers_skipped_without_target_async(self) -> None:
+        self._register_mock_target(name=GPT4O_TARGET)
+        await ScorerInitializer().initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        assert registry.instances.get("task_achieved_microsoft_decision") is None
+        assert registry.instances.get("task_achieved_microsoft_decision_threshold_07") is None
+
+    async def test_decision_scorers_do_not_change_existing_best_tags_async(self) -> None:
+        self._register_all_scorer_targets()
+        initializer = ScorerInitializer()
+        with patch("pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash", return_value=None):
+            await initializer.initialize_async()
+            registry = ScorerRegistry.get_registry_singleton()
+            expected = {
+                tag: [entry.name for entry in registry.instances.get_by_tag(tag=tag)]
+                for tag in ScorerInitializerTags
+                if tag.value.startswith("best_") or tag is ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER
+            }
+            original_count = len(registry.instances)
+            ScorerRegistry.reset_registry_singleton()
+            target = LiteLLMDecisionTarget(model_name="openrouter/microsoft/microsoft-decision-1", api_key="test-key")
+            TargetRegistry.get_registry_singleton().instances.register(target, name="microsoft_decision")
+            await initializer.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        assert len(registry.instances) == original_count + 2
+        for tag, names in expected.items():
+            assert [entry.name for entry in registry.instances.get_by_tag(tag=tag)] == names
 
     async def test_refusal_scorers_registered(self) -> None:
         """Test that refusal scorers are registered when gpt4o target is available."""

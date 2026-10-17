@@ -1,10 +1,25 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from uuid import UUID
+
 import pytest
 
-from pyrit.cli._cli_args import _argparse_validator, parse_list_targets_arguments, parse_run_arguments
+from pyrit.cli._cli_args import (
+    _argparse_validator,
+    parse_list_targets_arguments,
+    parse_memory_labels,
+    parse_run_arguments,
+)
 from pyrit.models import Parameter
+
+
+def test_parse_memory_labels_warns_visibly_about_an_operation_name(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.warns(DeprecationWarning, match="--operation-id"):
+        assert parse_memory_labels('{"operation": "x", "team": "red"}') == {"operation": "x", "team": "red"}
+    assert "'operation' in --memory-labels is deprecated" in capsys.readouterr().err
+    assert parse_memory_labels('{"team": "red"}') == {"team": "red"}
+    assert capsys.readouterr().err == ""
 
 
 def test_shell_parsers_omit_unsupplied_arguments() -> None:
@@ -92,3 +107,25 @@ def test_parse_run_arguments_first_wins_on_scenario_vs_scenario_collision():
     # The first declaration owns the flag; only one scenario__ key is produced.
     assert result["scenario__max_turns"] == "4"
     assert "scenario__max-turns" not in result
+
+
+def test_parse_run_arguments_operation_id() -> None:
+    result = parse_run_arguments(
+        args_string="foo --target t --operation-id 11111111-1111-4111-8111-111111111111",
+        declared_params=[_sp(name="operation_id")],
+    )
+
+    assert result["operation_id"] == UUID("11111111-1111-4111-8111-111111111111")
+    assert "scenario__operation_id" not in result
+
+
+def test_parse_run_arguments_without_operation_id() -> None:
+    result = parse_run_arguments(args_string="foo --target t")
+
+    assert "operation_id" not in result
+
+
+@pytest.mark.parametrize("value", ["not-a-uuid", ""])
+def test_parse_run_arguments_invalid_operation_id(value: str) -> None:
+    with pytest.raises(ValueError):
+        parse_run_arguments(args_string=f"foo --target t --operation-id {value}")

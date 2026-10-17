@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from pyrit.cli._auth import AuthMode, TokenProvider
-    from pyrit.models import ScenarioResult
+    from pyrit.models import Operation, ScenarioResult
     from pyrit.models.catalog import (
         RegisteredInitializer,
         RegisteredScenario,
@@ -267,6 +267,18 @@ class PyRITApiClient:
     # ------------------------------------------------------------------
     # Datasets
     # ------------------------------------------------------------------
+
+    async def list_operations_async(self) -> list[Operation]:
+        """
+        Read the saved Operation directory without registering or resolving names.
+
+        Returns:
+            Saved Operations in directory order.
+        """
+        from pyrit.models import Operation
+
+        payload = await self._get_json_async(path="/api/operations")
+        return [Operation.model_validate(item) for item in payload["items"]]
 
     async def list_datasets_async(self) -> dict[str, Any]:
         """

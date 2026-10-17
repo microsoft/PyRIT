@@ -15,9 +15,11 @@ from pyrit.backend.services.media_persistence import (
     MediaOrigin,
     persist_media_value_async,
     persist_message_pieces_async,
+    results_container_url,
+    validate_blob_media_url,
     validate_media_path,
 )
-from pyrit.memory import CentralMemory, SQLiteMemory
+from pyrit.memory import AzureBlobStorageIO, CentralMemory, DiskStorageIO, SQLiteMemory, data_serializer_factory
 
 
 def _serializer(*, value: str = "/saved/media.bin") -> MagicMock:
@@ -56,6 +58,183 @@ async def test_media_reference_requires_path_async(value: str) -> None:
         await persist_media_value_async(value=value, data_type="image_path", serializer_factory=factory)
 
     factory.assert_not_called()
+
+
+RESULTS_CONTAINER = "https://account.blob.core.windows.net/results"
+RESULTS_CONTAINER_SPELLINGS = [
+    RESULTS_CONTAINER,
+    f"{RESULTS_CONTAINER}/",
+    f"{RESULTS_CONTAINER}//",
+    "https://account.blob.core.windows.net:443/results",
+]
+
+
+def _blob_results_memory(results_path: str = RESULTS_CONTAINER) -> MagicMock:
+    memory = MagicMock()
+    memory.results_path = results_path
+    memory.results_storage_io = MagicMock(spec=AzureBlobStorageIO)
+    return memory
+
+
+@pytest.mark.parametrize("results_path", RESULTS_CONTAINER_SPELLINGS)
+def test_results_container_url_is_the_blob_results_path(results_path: str) -> None:
+    with patch.object(CentralMemory, "get_memory_instance", return_value=_blob_results_memory(results_path)):
+        assert results_container_url() == results_path
+
+
+def test_results_container_url_for_local_results_is_none() -> None:
+    memory = MagicMock()
+    memory.results_path = "/home/user/.pyrit/dbdata"
+    memory.results_storage_io = DiskStorageIO()
+
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        assert results_container_url() is None
+
+
+def test_results_container_url_without_memory_is_none() -> None:
+    with patch.object(CentralMemory, "get_memory_instance", side_effect=ValueError("not initialized")):
+        assert results_container_url() is None
+
+
+@pytest.mark.parametrize("results_path", RESULTS_CONTAINER_SPELLINGS)
+@pytest.mark.parametrize("category", ["prompt-memory-entries", "seed-prompt-entries"])
+async def test_validate_blob_media_url_accepts_urls_the_serializer_writes(results_path: str, category: str) -> None:
+    with patch.object(CentralMemory, "get_memory_instance", return_value=_blob_results_memory(results_path)):
+        serializer = data_serializer_factory(category=category, data_type="image_path", extension="png")
+        url = str(await serializer.get_data_filename_async())
+
+    assert validate_blob_media_url(url=url, container_url=results_path) == url
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            f"{RESULTS_CONTAINER}/prompt-memory-entries/images/a.png",
+            f"{RESULTS_CONTAINER}/prompt-memory-entries/images/a.png",
+        ),
+        (
+            f"{RESULTS_CONTAINER}/seed-prompt-entries/a.png?sv=1&sig=x#part",
+            f"{RESULTS_CONTAINER}/seed-prompt-entries/a.png",
+        ),
+        (
+            "https://ACCOUNT.blob.core.windows.net/results/prompt-memory-entries/a.png",
+            "https://ACCOUNT.blob.core.windows.net/results/prompt-memory-entries/a.png",
+        ),
+    ],
+)
+def test_validate_blob_media_url_accepts_results_container_media(url: str, expected: str) -> None:
+    assert validate_blob_media_url(url=url, container_url=RESULTS_CONTAINER) == expected
+    assert validate_blob_media_url(url=url, container_url=f"{RESULTS_CONTAINER}/") == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://other.blob.core.windows.net/results/prompt-memory-entries/a.png",
+        "https://account.blob.core.windows.net/other/prompt-memory-entries/a.png",
+        "https://account.blob.core.windows.net/results2/prompt-memory-entries/a.png",
+        "https://account.blob.core.windows.net.evil.test/results/prompt-memory-entries/a.png",
+        "https://example.test/results/prompt-memory-entries/a.png",
+        "http://account.blob.core.windows.net/results/prompt-memory-entries/a.png",
+        "https://account.blob.core.windows.net:8443/results/prompt-memory-entries/a.png",
+        "https://user@account.blob.core.windows.net/results/prompt-memory-entries/a.png",
+        f"{RESULTS_CONTAINER}/custom_initializers/script.py",
+        f"{RESULTS_CONTAINER}/prompt-memory-entries",
+        f"{RESULTS_CONTAINER}/prompt-memory-entries/",
+        f"{RESULTS_CONTAINER}//prompt-memory-entries/a.png",
+        f"{RESULTS_CONTAINER}/prompt-memory-entries/../config.yaml",
+        f"{RESULTS_CONTAINER}/prompt-memory-entries/%2e%2e/config.yaml",
+        f"{RESULTS_CONTAINER}/prompt-memory-entries/a%2F..%2F..%2Fconfig.yaml",
+    ],
+)
+def test_validate_blob_media_url_rejects_other_locations(url: str) -> None:
+    with pytest.raises(MediaAccessDeniedError, match="results container"):
+        validate_blob_media_url(url=url, container_url=RESULTS_CONTAINER)
+
+
+@pytest.mark.parametrize(
+    ("url", "container_url"),
+    [
+        (f"{RESULTS_CONTAINER}/prompt-memory-entries/a.png", "https://account.blob.core.windows.net:443/results"),
+        ("https://account.blob.core.windows.net:443/results/prompt-memory-entries/a.png", RESULTS_CONTAINER),
+    ],
+)
+def test_validate_blob_media_url_treats_an_omitted_port_as_443(url: str, container_url: str) -> None:
+    assert validate_blob_media_url(url=url, container_url=container_url) == url
+
+
+@pytest.mark.parametrize(
+    ("url", "container_url"),
+    [
+        (f"{RESULTS_CONTAINER}/prompt-memory-entries/a.png", "https://account.blob.core.windows.net:8443/results"),
+        ("https://account.blob.core.windows.net:0/results/prompt-memory-entries/a.png", RESULTS_CONTAINER),
+        ("https://account.blob.core.windows.net:abc/results/prompt-memory-entries/a.png", RESULTS_CONTAINER),
+        ("https://account.blob.core.windows.net:99999/results/prompt-memory-entries/a.png", RESULTS_CONTAINER),
+        (f"{RESULTS_CONTAINER}/prompt-memory-entries/a.png", "https://account.blob.core.windows.net:abc/results"),
+        (
+            "https://account.blob.core.windows.net:abc/results/prompt-memory-entries/a.png",
+            "https://account.blob.core.windows.net:abc/results",
+        ),
+        (
+            "https://user@account.blob.core.windows.net:443/results/prompt-memory-entries/a.png",
+            "https://account.blob.core.windows.net:443/results",
+        ),
+    ],
+)
+def test_validate_blob_media_url_rejects_other_ports_and_user_info(url: str, container_url: str) -> None:
+    with pytest.raises(MediaAccessDeniedError, match="results container"):
+        validate_blob_media_url(url=url, container_url=container_url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"{RESULTS_CONTAINER}///prompt-memory-entries/a.png",
+        f"{RESULTS_CONTAINER}//./prompt-memory-entries/a.png",
+        f"{RESULTS_CONTAINER}//custom_initializers/script.py",
+    ],
+)
+def test_validate_blob_media_url_rejects_more_than_the_container_trailing_slash(url: str) -> None:
+    with pytest.raises(MediaAccessDeniedError, match="results container"):
+        validate_blob_media_url(url=url, container_url=f"{RESULTS_CONTAINER}/")
+
+
+async def test_blob_results_storage_keeps_only_results_container_media() -> None:
+    factory = MagicMock()
+    memory = _blob_results_memory()
+
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        kept = await persist_media_value_async(
+            value=f"{RESULTS_CONTAINER}/prompt-memory-entries/a.png?sig=caller",
+            data_type="image_path",
+            serializer_factory=factory,
+        )
+        for value in (
+            "https://other.blob.core.windows.net/results/prompt-memory-entries/a.png",
+            "https://example.test/a.png",
+        ):
+            with pytest.raises(MediaAccessDeniedError, match="results container"):
+                await persist_media_value_async(value=value, data_type="image_path", serializer_factory=factory)
+
+    assert kept.value == f"{RESULTS_CONTAINER}/prompt-memory-entries/a.png"
+    assert kept.origin is MediaOrigin.REMOTE_URL
+    factory.assert_not_called()
+
+
+async def test_blob_results_storage_rejects_foreign_converted_media() -> None:
+    piece = MessagePieceRequest(
+        data_type="text",
+        original_value="describe this",
+        converted_value="https://other.blob.core.windows.net/results/prompt-memory-entries/a.png",
+        converted_value_data_type="image_path",
+    )
+
+    with (
+        patch.object(CentralMemory, "get_memory_instance", return_value=_blob_results_memory()),
+        pytest.raises(MediaAccessDeniedError, match="results container"),
+    ):
+        await persist_message_pieces_async(pieces=[piece], serializer_factory=MagicMock())
 
 
 class TestValidateMediaPath:

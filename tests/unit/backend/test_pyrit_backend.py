@@ -13,6 +13,7 @@ class TestParseArgs:
 
     def test_parse_args_defaults(self) -> None:
         args = pyrit_backend.parse_args(args=[])
+        assert args.auth_mode is None
         assert args.host == "localhost"
         assert args.port == 8000
         assert args.config_file is None
@@ -37,6 +38,11 @@ class TestParseArgs:
     def test_parse_args_accepts_reload(self) -> None:
         args = pyrit_backend.parse_args(args=["--reload"])
         assert args.reload is True
+
+    def test_parse_args_accepts_auth_mode(self) -> None:
+        args = pyrit_backend.parse_args(args=["--auth-mode", "local"])
+
+        assert args.auth_mode == "local"
 
 
 class TestMain:
@@ -66,6 +72,16 @@ class TestMain:
             pyrit_backend.main(args=["--config-file", blob_uri])
 
             assert os.environ["PYRIT_CONFIG_FILE"] == blob_uri
+
+    @patch("pyrit.backend.pyrit_backend._run_server")
+    def test_main_forwards_auth_mode_via_env(self, mock_run_server: MagicMock) -> None:
+        import os
+
+        with patch.dict(os.environ, {}, clear=True):
+            result = pyrit_backend.main(args=["--auth-mode", "local"])
+
+            assert result == 0
+            assert os.environ["PYRIT_AUTH_MODE"] == "local"
 
     @patch("pyrit.backend.pyrit_backend._run_server")
     def test_main_passes_host_and_port(self, mock_run_server: MagicMock) -> None:
@@ -104,11 +120,32 @@ class TestMain:
 
     @patch("pyrit.backend.pyrit_backend._run_server")
     def test_main_warns_when_binding_non_loopback(self, mock_run_server: MagicMock, capsys) -> None:
-        pyrit_backend.main(args=["--host", "0.0.0.0", "--port", "9000"])
+        with patch.dict("os.environ", {}, clear=True):
+            pyrit_backend.main(args=["--host", "0.0.0.0", "--port", "9000"])
         captured = capsys.readouterr()
         assert "WARNING" in captured.err
         assert "0.0.0.0" in captured.err
         assert "9000" in captured.err
+
+    @patch("pyrit.backend.pyrit_backend._run_server")
+    def test_main_rejects_local_auth_on_non_loopback(self, mock_run_server: MagicMock, capsys) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            result = pyrit_backend.main(args=["--auth-mode", "local", "--host", "0.0.0.0"])
+
+        assert result == 1
+        assert "may only be used with a loopback host" in capsys.readouterr().err
+        mock_run_server.assert_not_called()
+
+    @patch("pyrit.backend.pyrit_backend._run_server")
+    def test_main_allows_environment_selected_local_mode_for_container_bind(
+        self, mock_run_server: MagicMock, capsys
+    ) -> None:
+        with patch.dict("os.environ", {"PYRIT_AUTH_MODE": "local"}, clear=True):
+            result = pyrit_backend.main(args=["--host", "0.0.0.0"])
+
+        assert result == 0
+        assert "launcher must enforce loopback-only publication" in capsys.readouterr().err
+        mock_run_server.assert_called_once()
 
     @patch("pyrit.backend.pyrit_backend._run_server")
     def test_main_no_warning_for_localhost(self, mock_run_server: MagicMock, capsys) -> None:

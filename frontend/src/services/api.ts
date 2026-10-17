@@ -62,6 +62,18 @@ import type {
   ManualScoreRequest,
   UpdateAttackRequest,
   SaveConversationRequest,
+  Finding,
+  FindingCreate,
+  FindingCreateRequest,
+  FindingListResponse,
+  FindingOptionsResponse,
+  FindingEvidenceCreateRequest,
+  FindingEvidenceAttachResponse,
+  FindingEvidenceListResponse,
+  Operation,
+  OperationCreate,
+  OperationListResponse,
+  OperationUpdate,
   AttackAnalyticsQuery,
   AttackAnalyticsReport,
   AttackAnalyticsResultsQuery,
@@ -71,6 +83,59 @@ import type {
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+
+const operationPath = (operationId: string): string => `/operations/${encodeURIComponent(operationId)}`
+
+export const operationsApi = {
+  getFindingOptions: async (): Promise<FindingOptionsResponse> => {
+    return (await apiClient.get('/operations/finding-options')).data
+  },
+  list: async (): Promise<OperationListResponse> => {
+    return (await apiClient.get('/operations')).data
+  },
+  get: async (operationId: string): Promise<Operation> => {
+    return (await apiClient.get(operationPath(operationId))).data
+  },
+  create: async (request: OperationCreate): Promise<Operation> => {
+    return (await apiClient.post('/operations', request)).data
+  },
+  update: async (operationId: string, request: OperationUpdate): Promise<Operation> => {
+    return (await apiClient.patch(operationPath(operationId), request)).data
+  },
+  listFindings: async (
+    operationId: string, params: { limit: number; offset: number; title?: string },
+  ): Promise<FindingListResponse> => {
+    return (await apiClient.get(`${operationPath(operationId)}/findings`, { params })).data
+  },
+  createFinding: async (operationId: string, request: FindingCreateRequest): Promise<Finding> => {
+    return (await apiClient.post(`${operationPath(operationId)}/findings`, request)).data
+  },
+  updateFinding: async (operationId: string, findingId: string, request: FindingCreate): Promise<Finding> => {
+    return (await apiClient.put(`${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}`, request)).data
+  },
+  deleteFinding: async (operationId: string, findingId: string): Promise<void> => {
+    await apiClient.delete(`${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}`)
+  },
+  attachFindingEvidence: async (
+    operationId: string, findingId: string, request: FindingEvidenceCreateRequest,
+  ): Promise<FindingEvidenceAttachResponse> => {
+    return (await apiClient.post(
+      `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence`, request,
+    )).data
+  },
+  listFindingEvidence: async (
+    operationId: string, findingId: string, params: { limit: number; offset: number },
+  ): Promise<FindingEvidenceListResponse> => {
+    return (await apiClient.get(
+      `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence`, { params },
+    )).data
+  },
+  detachFindingEvidence: async (operationId: string, findingId: string, evidenceId: string): Promise<void> => {
+    await apiClient.delete(
+      `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence/${encodeURIComponent(evidenceId)}`,
+    )
+  },
+}
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -390,6 +455,11 @@ export const attacksApi = {
     return response.data
   },
 
+  getConversation: async (conversationId: string): Promise<AddMessageResponse> => {
+    const response = await apiClient.get(`/attacks/conversations/${encodeURIComponent(conversationId)}`)
+    return response.data
+  },
+
   getMessages: async (attackResultId: string, conversationId: string): Promise<ConversationMessagesResponse> => {
     const response = await apiClient.get(
       `/attacks/${encodeURIComponent(attackResultId)}/messages`,
@@ -463,6 +533,7 @@ export const attacksApi = {
     outcome?: string
     operator?: string[]
     operation?: string[]
+    operation_id?: string[]
     label?: string[]
     min_turns?: number
     max_turns?: number
@@ -577,6 +648,7 @@ export const scenariosApi = {
     scenario_names?: string[]
     run_statuses?: ScenarioRunState[]
     label?: string[]
+    operation_id?: string[]
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,

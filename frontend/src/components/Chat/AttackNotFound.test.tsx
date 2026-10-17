@@ -24,6 +24,15 @@ function renderNotFound(props: Partial<React.ComponentProps<typeof AttackNotFoun
 }
 
 describe("AttackNotFound", () => {
+  it("shows evidence unavailable only for evidence-origin not-found", () => {
+    renderNotFound({ findingEvidenceId: "123e4567-e89b-12d3-a456-426614174000" });
+    expect(screen.getByText("Evidence unavailable")).toBeInTheDocument();
+  });
+  it("keeps network errors distinct even for evidence origin", () => {
+    renderNotFound({ findingEvidenceId: "123e4567-e89b-12d3-a456-426614174000", variant: "error" });
+    expect(screen.getByText("Could not load attack")).toBeInTheDocument();
+    expect(screen.queryByText("Evidence unavailable")).not.toBeInTheDocument();
+  });
   it("shows the missing attack id", () => {
     renderNotFound();
     expect(screen.getByTestId("attack-not-found")).toBeInTheDocument();
