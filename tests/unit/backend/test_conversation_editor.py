@@ -46,6 +46,7 @@ from pyrit.models.target.request_trace_context import RequestTraceContext
 from pyrit.models.target.target_capabilities import TargetCapabilities
 from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async
 from unit.backend.mocks import _settle_send_async, message_send_lifecycle_async
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, run_memory_session_async
 
@@ -1305,11 +1306,31 @@ class TestConversationEditor:
 
         with patch.object(storage, "write_file_async", side_effect=interrupted_write_async):
             task = asyncio.create_task(AttackService().save_conversation_async(request=request))
-            await asyncio.wait_for(started.wait(), timeout=5)
-            if cancel:
-                task.cancel()
+            started_task = asyncio.create_task(started.wait())
+            try:
+                done, _ = await asyncio.wait(
+                    {task, started_task},
+                    timeout=TEST_WATCHDOG_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not done:
+                    raise TimeoutError("The media write did not start before the test watchdog expired.")
+                if not started.is_set():
+                    await task
+                    pytest.fail("The conversation save finished without writing media.")
+                if cancel:
+                    task.cancel()
+                    finish.set()
+                with pytest.raises(asyncio.CancelledError if cancel else OSError):
+                    await wait_for_completion_async(future=task)
+            finally:
+                if not task.done():
+                    task.cancel()
+                # The shielded writer must finish before the save task can clean up.
                 finish.set()
-            with pytest.raises(asyncio.CancelledError if cancel else OSError):
-                await task
+                started_task.cancel()
+                await wait_for_completion_async(
+                    future=asyncio.gather(task, started_task, return_exceptions=True),
+                )
         assert not list(Path(sqlite_instance.results_path).rglob("*.txt"))
         assert (await sqlite_instance.get_attack_results_async()) == []
