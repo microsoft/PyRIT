@@ -61,16 +61,19 @@ initializers:
   # server.startup_timeout below.
   # - name: load_default_datasets
 
-# Operator and Operation Labels
-# ------------------------------
-# Default labels applied to all attacks created with PyRIT.
+  # Operator and Operation Defaults
+# -------------------------------
+# GUI defaults for new attacks and scans.
 #
 # - operator: Identifies who is running the attack (e.g., your team name or alias).
-# - operation: Groups related attacks under a campaign or engagement name.
+# - operation: Proposes a saved Operation name to group new activity under. It is
+#   never created automatically: until it is saved, the GUI highlights it as not
+#   registered and each user chooses an existing Operation, registers it, or
+#   clears it.
 #
 # Both are optional.
 operator: roakey
-operation: op_trash_panda
+# operation: my_engagement
 
 # Initialization Scripts
 # ----------------------
@@ -139,6 +142,12 @@ allow_custom_initializers: false
 # Container URIs may include a SAS; otherwise DefaultAzureCredential is used. Defaults to
 # ~/.pyrit/custom_initializers.
 # custom_initializers_source: https://account.blob.core.windows.net/container/custom_initializers
+
+# Optional storage for scenario presets, the saved scenario configurations the
+# scanner UI launches from. This may be a local directory or an Azure Blob
+# container URI with an optional blob prefix. Container URIs may include a SAS;
+# otherwise DefaultAzureCredential is used. Defaults to ~/.pyrit/scenario_presets.
+# scenario_presets_source: https://account.blob.core.windows.net/container/scenario_presets
 
 # Upload Folder for API-Created Targets
 # -------------------------------------

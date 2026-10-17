@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from sqlalchemy import Boolean, String, UnicodeText
+from sqlalchemy import Boolean, String, Unicode, UnicodeText, literal
 from sqlalchemy.exc import CompileError
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.elements import BindParameter
@@ -23,6 +23,7 @@ from sqlalchemy.sql.functions import FunctionElement
 from sqlalchemy.sql.selectable import Join, Lateral
 
 if TYPE_CHECKING:
+    from sqlalchemy.sql import ColumnElement
     from sqlalchemy.sql.compiler import SQLCompiler
 
 
@@ -75,6 +76,51 @@ def _mssql_unicode_lower(element: UnicodeLower, compiler: Any, **kwargs: Any) ->
     """
     value = _arguments(element, compiler, **kwargs)[0]
     return f"LOWER({value})"
+
+
+class UnicodeStrip(FunctionElement[str]):
+    """Strip Python's Unicode whitespace set using native database expressions."""
+
+    _WHITESPACE: ClassVar[str] = (
+        "\t\n\v\f\r\x1c\x1d\x1e\x1f \x85\xa0\u1680"
+        "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+        "\u2028\u2029\u202f\u205f\u3000"
+    )
+    type = UnicodeText()
+    inherit_cache = True
+
+    def __init__(self, value: ColumnElement[Any]) -> None:
+        """
+        Bind the whitespace set alongside the value to preserve statement caching.
+
+        Args:
+            value (ColumnElement[Any]): Nullable text to strip.
+        """
+        super().__init__(value, literal(self._WHITESPACE, Unicode(len(self._WHITESPACE))))
+
+
+@compiles(UnicodeStrip, "sqlite")
+def _sqlite_unicode_strip(element: UnicodeStrip, compiler: Any, **kwargs: Any) -> str:
+    """
+    Strip the explicit character set instead of SQLite's space-only default.
+
+    Returns:
+        str: A native trim expression preserving NULL.
+    """
+    value, whitespace = _arguments(element, compiler, **kwargs)
+    return f"trim({value}, {whitespace})"
+
+
+@compiles(UnicodeStrip, "mssql")
+def _mssql_unicode_strip(element: UnicodeStrip, compiler: Any, **kwargs: Any) -> str:
+    """
+    Strip exact whitespace code points independently of database collation.
+
+    Returns:
+        str: A native TRIM expression with a bounded Unicode character argument.
+    """
+    value, whitespace = _arguments(element, compiler, **kwargs)
+    return f"TRIM({whitespace} FROM {value} COLLATE Latin1_General_100_BIN2)"
 
 
 class JsonClassNamePresent(FunctionElement[bool]):

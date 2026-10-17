@@ -88,19 +88,21 @@ describe("ChatInputArea", () => {
     expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
   });
 
-  it("should explain a missing target when the disabled composer is clicked", async () => {
+  it("should allow drafting without a target and keep Send disabled without a warning box", async () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <ChatInputArea {...defaultProps} activeTarget={null} disabled />
+        <ChatInputArea {...defaultProps} activeTarget={null} sendDisabled />
       </TestWrapper>
     );
 
-    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("textbox")).toBeEnabled();
     expect(getSendButton()).toBeDisabled();
+    await user.type(screen.getByRole("textbox"), "Unsent draft");
     expect(screen.queryByText(/No target is selected/)).not.toBeInTheDocument();
-    await user.click(screen.getByLabelText("Why the prompt box is disabled"));
-    expect(screen.getByRole("listitem")).toHaveTextContent("No target is selected.");
+    expect(screen.queryByLabelText("Why the prompt box is disabled")).not.toBeVisible();
+    await user.click(getSendButton());
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
   });
 
   it("should show all disabled reasons on hover and keyboard activation", async () => {
@@ -110,7 +112,7 @@ describe("ChatInputArea", () => {
     const composer = screen.getByLabelText("Why the prompt box is disabled");
     await user.hover(composer);
     expect(await screen.findByText("Prompt input is disabled")).toBeInTheDocument();
-    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
     expect(screen.getByText("This conversation contains a target error.")).toBeInTheDocument();
     await user.keyboard("{Escape}");
     composer.focus();
@@ -944,6 +946,28 @@ describe("ChatInputArea", () => {
     expect(withNewCopy.slice(0, 2)).toEqual(restored);
     expect(withNewCopy[2]).toEqual({ ...restored[0], draftId: expect.any(String) });
     expect(new Set(withNewCopy.map((attachment: MessageAttachment) => attachment.draftId)).size).toBe(3);
+  });
+
+  it("should retain restored text metadata on edits and retries and clear it with the draft", async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef<ChatInputAreaHandle>();
+    const metadata = { video_id: "existing-video" };
+    const onSend = jest.fn().mockResolvedValueOnce(retryableOutcome).mockResolvedValue(sentOutcome);
+    render(<TestWrapper><ChatInputArea ref={ref} {...defaultProps} onSend={onSend} /></TestWrapper>);
+    React.act(() => { ref.current?.restoreDraft("Change the background", [], metadata); });
+    await user.type(screen.getByRole("textbox"), " to blue");
+    expect(ref.current?.getTextMetadata()).toEqual(metadata);
+    await user.click(getSendButton());
+    expect(ref.current?.getTextMetadata()).toEqual(metadata);
+    await user.click(getSendButton());
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue(""));
+    expect(ref.current?.getTextMetadata()).toBeUndefined();
+    React.act(() => { ref.current?.restoreDraft("Another remix", [], metadata); });
+    React.act(() => { ref.current?.setText("An unrelated copied prompt"); });
+    expect(ref.current?.getTextMetadata()).toBeUndefined();
+    React.act(() => { ref.current?.restoreDraft("Another remix", [], metadata); });
+    await user.clear(screen.getByRole("textbox"));
+    expect(ref.current?.getTextMetadata()).toBeUndefined();
   });
 
   it("should keep uploaded duplicate filenames distinct and preserve remaining identity on removal and send", async () => {

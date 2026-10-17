@@ -113,7 +113,7 @@ jest.mock("./components/Labels/LabelsBar", () => {
   return {
     __esModule: true,
     default: MockLabelsBar,
-    DEFAULT_GLOBAL_LABELS: { operator: 'roakey', operation: 'op_trash_panda' },
+    DEFAULT_GLOBAL_LABELS: { operator: 'roakey' },
   };
 });
 
@@ -138,7 +138,7 @@ jest.mock("./components/Layout/MainLayout", () => {
         <span data-testid="global-labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="operator-read-only">{String(operatorReadOnly)}</span>
-        <button onClick={() => onLabelsChange({ ...labels, operation: "op_edited", team: "red" })}>
+        <button onClick={() => onLabelsChange({ ...labels, campaign: "op_edited", team: "red" })}>
           Change run labels
         </button>
         <button onClick={() => onLabelsChange(Object.fromEntries(
@@ -564,7 +564,7 @@ describe("App", () => {
     mockGetActiveAccount.mockReturnValue(alice);
     const { rerender } = renderApp();
     await user.click(screen.getByRole("button", { name: "Change run labels" }));
-    expect(readUserPreferences("tenant:alice-id").labels).toEqual({ operation: "op_edited", team: "red" });
+    expect(readUserPreferences("tenant:alice-id").labels).toEqual({ campaign: "op_edited", team: "red" });
     expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operator":"alice"');
     expect(screen.getByTestId("operator-read-only")).toHaveTextContent("true");
 
@@ -574,7 +574,7 @@ describe("App", () => {
     expect(screen.getByTestId("home-labels-json")).not.toHaveTextContent("op_edited");
     mockGetActiveAccount.mockReturnValue(alice);
     rerender(<MemoryRouter><App /></MemoryRouter>);
-    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operation":"op_edited"');
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"campaign":"op_edited"');
     expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"team":"red"');
   });
 
@@ -582,7 +582,7 @@ describe("App", () => {
     const user = userEvent.setup();
     mockedVersionApi.getVersion.mockResolvedValue({
       version: "1.0.0",
-      default_labels: { custom: "backend", operation: "op_backend" },
+      default_labels: { custom: "backend", campaign: "op_backend" },
     });
     const first = renderApp();
     await waitFor(() => expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"custom":"backend"'));
@@ -595,11 +595,11 @@ describe("App", () => {
     renderApp();
     await user.click(screen.getByRole("button", { name: "Change run labels" }));
     await act(async () => {
-      completeVersion({ version: "1.0.0", default_labels: { custom: "backend", operation: "op_backend" } });
+      completeVersion({ version: "1.0.0", default_labels: { custom: "backend", campaign: "op_backend" } });
     });
-    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operation":"op_edited"');
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"campaign":"op_edited"');
     expect(screen.getByTestId("home-labels-json")).not.toHaveTextContent('"custom"');
-    expect(readUserPreferences("local").labels).toEqual({ operation: "op_edited", team: "red", custom: null });
+    expect(readUserPreferences("local").labels).toEqual({ campaign: "op_edited", team: "red", custom: null });
   });
 
   it("restores saved labels ahead of backend defaults for an authenticated account", async () => {
@@ -608,14 +608,14 @@ describe("App", () => {
     });
     writeUserPreferences("tenant:alice-id", {
       ...DEFAULT_USER_PREFERENCES,
-      labels: { operation: "op_saved", team: "red" },
+      labels: { campaign: "op_saved", team: "red" },
     });
     mockedVersionApi.getVersion.mockResolvedValue({
-      version: "1.0.0", default_labels: { operator: "backend_user", operation: "op_backend", custom: "backend" },
+      version: "1.0.0", default_labels: { operator: "backend_user", campaign: "op_backend", custom: "backend" },
     });
     renderApp();
     await waitFor(() => expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"custom":"backend"'));
-    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operation":"op_saved"');
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"campaign":"op_saved"');
     expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operator":"alice"');
   });
 
@@ -828,6 +828,21 @@ describe("App", () => {
     expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
   });
 
+  it("carries the selected operation ID across history tabs", async () => {
+    const operationId = "6f1b2c3d-0000-4000-8000-000000000001";
+    renderApp(`/history/attacks?operation_id=${operationId}&outcome=success`);
+    fireEvent.click(screen.getByRole("tab", { name: "Scanner" }));
+    const scanner = await screen.findByTestId("scenario-history");
+    const url = new URL(scanner.getAttribute("data-location") ?? "", "http://localhost");
+    expect(url.pathname).toBe("/history/scanner");
+    expect(url.searchParams.getAll("operation_id")).toEqual([operationId]);
+    expect(url.searchParams.has("outcome")).toBe(false);
+    fireEvent.click(screen.getByRole("tab", { name: "Attacks" }));
+    const filters = JSON.parse((await screen.findByTestId("history-filters")).textContent ?? "{}");
+    expect(filters.operationId).toEqual([operationId]);
+    expect(filters.outcome).toBe("success");
+  });
+
   it("switches between history tabs", async () => {
     renderApp("/history/attacks");
 
@@ -837,6 +852,30 @@ describe("App", () => {
       "data-location",
       "/history/scanner"
     );
+  });
+
+  it("clears the remembered operation while preserving each tab's other filters", async () => {
+    function HistoryNavigation() {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate("/history/attacks?outcome=success")}>Clear operation via URL</button>;
+    }
+    render(
+      <MemoryRouter initialEntries={["/history/scanner?operation_id=old&operator=alice"]}>
+        <HistoryNavigation />
+        <App />
+      </MemoryRouter>,
+    );
+    await screen.findByTestId("scenario-history");
+    fireEvent.click(screen.getByRole("button", { name: "Clear operation via URL" }));
+    await screen.findByTestId("attack-history");
+    fireEvent.click(screen.getByRole("tab", { name: "Scanner" }));
+    const scanner = await screen.findByTestId("scenario-history");
+    const url = new URL(scanner.getAttribute("data-location") ?? "", "http://localhost");
+    expect(url.searchParams.has("operation_id")).toBe(false);
+    expect(url.searchParams.get("operator")).toBe("alice");
+    fireEvent.click(screen.getByRole("tab", { name: "Attacks" }));
+    expect(await screen.findByTestId("history-filters")).toHaveTextContent("success");
+    expect(screen.getByTestId("history-filters")).not.toHaveTextContent("alice");
   });
 
   it("passes the active target and labels to the scenario detail view", () => {
@@ -1080,6 +1119,23 @@ describe("App", () => {
     expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
   });
 
+  it.each([404, 503])("distinguishes evidence-origin attack load status %s", async (status: number) => {
+    mockGetAttack.mockRejectedValue({ isAxiosError: true, response: { status, data: {} } });
+    renderApp("/attacks/owner/conversations/source?findingEvidenceId=123e4567-e89b-12d3-a456-426614174000");
+    expect(await screen.findByText(status === 404 ? "Evidence unavailable" : "Could not load attack")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
+  });
+
+  it("never redirects a missing evidence conversation to the attack main conversation", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "owner", conversation_id: "main", related_conversation_ids: [],
+      labels: {}, objective: "", outcome: "undetermined",
+    });
+    renderApp("/attacks/owner/conversations/source?findingEvidenceId=123e4567-e89b-12d3-a456-426614174000");
+    expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
+  });
+
   it("shows the error UX (not not-found) when an attack load fails with a non-404", async () => {
     // A 500 / network / timeout is transient and must not claim the attack was deleted.
     mockGetAttack.mockRejectedValue({ isAxiosError: true, response: { status: 500, data: {} } });
@@ -1205,11 +1261,11 @@ describe("App", () => {
   it("prefers the labels you last picked over the backend defaults", async () => {
     window.localStorage.setItem(
       "pyrit.globalLabels",
-      JSON.stringify({ operator: "roakey", operation: "op_i_picked" }),
+      JSON.stringify({ operator: "roakey", campaign: "op_i_picked" }),
     );
     mockedVersionApi.getVersion.mockResolvedValueOnce({
       version: "2.0.0",
-      default_labels: { operation: "op_from_backend", custom: "value" },
+      default_labels: { campaign: "op_from_backend", custom: "value" },
     });
 
     renderApp();
@@ -1219,13 +1275,13 @@ describe("App", () => {
       expect(labels).toContain('"custom":"value"');
     });
     const labels = screen.getByTestId("global-labels-json").textContent ?? "";
-    expect(labels).toContain('"operation":"op_i_picked"');
+    expect(labels).toContain('"campaign":"op_i_picked"');
   });
 
   it("still takes the operator from the signed-in account over a stored one", async () => {
     window.localStorage.setItem(
       "pyrit.globalLabels",
-      JSON.stringify({ operator: "stored_user", operation: "op_i_picked" }),
+      JSON.stringify({ operator: "stored_user", campaign: "op_i_picked" }),
     );
     mockGetActiveAccount.mockReturnValue({ username: "Real.User@contoso.com" });
     mockedVersionApi.getVersion.mockResolvedValueOnce({
@@ -1241,7 +1297,7 @@ describe("App", () => {
     });
     const labels = screen.getByTestId("global-labels-json").textContent ?? "";
     expect(labels).toContain('"operator":"real.user"');
-    expect(labels).toContain('"operation":"op_i_picked"');
+    expect(labels).toContain('"campaign":"op_i_picked"');
   });
 
   it("keeps sends locked until navigation to a created attack commits", async () => {
@@ -1265,7 +1321,8 @@ describe("App", () => {
       mockCreatedAttackRender = null;
       finishRender();
     });
-    expect(screen.getByTestId("route-location")).toHaveTextContent("/attacks/ar-123");
+    expect(screen.getByTestId("route-location").textContent).toBe("/attacks/ar-123/conversations/conv-123");
+    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-123");
     expect(screen.getByRole("button", { name: "Set Conv" })).toBeEnabled();
     expect(mockGetAttack).not.toHaveBeenCalled();
   });

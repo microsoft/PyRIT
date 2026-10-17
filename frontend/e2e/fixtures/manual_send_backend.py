@@ -30,7 +30,7 @@ async def _initialize_offline_async(self: ConfigurationLoader, *, raise_on_initi
 async def _offline_lifespan_async(application: FastAPI) -> AsyncGenerator[None, None]:
     config = ConfigurationLoader(memory_db_type="in_memory", env_files=[], env_akv_ref=[])
     with (
-        patch.dict(os.environ, {"PYRIT_DEV_MODE": "true"}, clear=True),
+        patch.dict(os.environ, {"PYRIT_AUTH_MODE": "local", "PYRIT_DEV_MODE": "true"}, clear=True),
         patch.object(
             ConfigurationFileService,
             "_read_source_async",

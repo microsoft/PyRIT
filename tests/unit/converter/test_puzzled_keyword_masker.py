@@ -239,28 +239,75 @@ def test_mask_prompt_masks_prompts_written_entirely_in_non_ascii_letters(prompt)
         unicodedata.normalize("NFD", "café crème"),
     ],
 )
-def test_mask_prompt_never_selects_fragments_split_by_combining_marks(prompt):
-    # \b falls inside these words, so the letter runs between the marks are fragments, not
-    # words. They are skipped like the letters inside "h4ck3r" instead of being masked.
-    with pytest.raises(ValueError, match="no maskable words"):
-        mask_prompt(prompt)
+def test_mask_prompt_masks_whole_words_written_with_combining_marks(prompt):
+    # Combining marks belong to the whole word rather than acting as token boundaries.
+    result = mask_prompt(prompt)
+    assert result.masked_words
+    for word in result.masked_words:
+        assert word.text not in result.masked_prompt
 
 
 @_no_spacy
-def test_mask_prompt_keeps_nfd_accents_attached_to_their_words():
-    # On the ASCII-only pattern, "cafe" (without its combining acute) was a candidate, so the
-    # placeholder left the accent orphaned after it: "[WORD1]\u0301 crème [WORD2]".
-    prompt = unicodedata.normalize("NFD", "café crème exploit")
+@pytest.mark.parametrize(
+    "prompt, expected, expected_words",
+    [
+        ("שָׁלוֹם עוֹלָם", "[WORD1] [WORD2]", ["שָׁלוֹם", "עוֹלָם"]),
+        ("مَرْحَبًا بِالْعَالَم", "[WORD1] [WORD2]", ["مَرْحَبًا", "بِالْعَالَم"]),
+        ("सिस्टम हैक कैसे करें", "[WORD1] हैक [WORD2] [WORD3]", ["सिस्टम", "कैसे", "करें"]),
+    ],
+)
+def test_mask_prompt_masks_pointed_scripts_as_whole_words(prompt, expected, expected_words):
+    result = mask_prompt(prompt)
+    assert [w.text for w in result.masked_words] == expected_words
+    assert result.masked_prompt == expected
+
+
+@_no_spacy
+def test_mask_prompt_masks_nfd_and_nfc_text_the_same_way():
+    # The accent of an NFD word is a combining mark, so the word used to be skipped while its
+    # NFC spelling was masked. Both spellings are now one word, and the two prompts select the
+    # same words and produce the same masking.
+    nfd = mask_prompt(unicodedata.normalize("NFD", "café crème exploit"), num_to_mask=2)
+    nfc = mask_prompt("café crème exploit", num_to_mask=2)
+    assert [w.text for w in nfc.masked_words] == ["crème", "exploit"]
+    assert nfc.masked_prompt == "café [WORD1] [WORD2]"
+    assert unicodedata.normalize("NFC", nfd.masked_prompt) == nfc.masked_prompt
+
+
+@_no_spacy
+def test_mask_prompt_treats_composed_and_decomposed_spellings_as_one_word():
+    # Case folding alone is not stable across normalization forms, so the two spellings of
+    # "café" would otherwise be two words with two placeholders.
+    prompt = "café " + unicodedata.normalize("NFD", "café") + " crème"
     result = mask_prompt(prompt, num_to_mask=2)
-    assert [w.text for w in result.masked_words] == ["exploit"]
-    assert result.masked_prompt == unicodedata.normalize("NFD", "café crème [WORD1]")
+    assert [w.text for w in result.masked_words] == ["café", "crème"]
+    assert result.masked_prompt == "[WORD1] [WORD1] [WORD2]"
+
+
+@_no_spacy
+def test_mask_prompt_picks_the_same_words_whatever_the_normalization_form():
+    # "système" and "čeština" are both seven letters, so the tie breaks alphabetically. On a
+    # code-point key the decomposed spelling sorts differently and the other word wins.
+    prompt = "exploit système čeština"
+    nfc = mask_prompt(unicodedata.normalize("NFC", prompt), num_to_mask=2)
+    nfd = mask_prompt(unicodedata.normalize("NFD", prompt), num_to_mask=2)
+    assert [w.text for w in nfc.masked_words] == ["exploit", "système"]
+    assert [unicodedata.normalize("NFC", w.text) for w in nfd.masked_words] == ["exploit", "système"]
+
+
+@_no_spacy
+def test_clue_counts_letters_not_combining_marks():
+    # "שָׁלוֹם" is a four-letter word written with seven code points; the clue states letters.
+    result = mask_prompt("שָׁלוֹם", num_to_mask=1)
+    assert len(result.masked_words[0].text) == 7
+    assert result.masked_words[0].clue == "4-letter word"
 
 
 @_no_spacy
 def test_mask_prompt_masks_whole_words_next_to_text_with_combining_marks():
     result = mask_prompt("exploit सिस्टम now", num_to_mask=3)
-    assert [w.text for w in result.masked_words] == ["exploit", "now"]
-    assert result.masked_prompt == "[WORD1] सिस्टम [WORD2]"
+    assert [w.text for w in result.masked_words] == ["exploit", "सिस्टम", "now"]
+    assert result.masked_prompt == "[WORD1] [WORD2] [WORD3]"
 
 
 @_no_spacy
@@ -283,8 +330,8 @@ def test_mask_prompt_preserves_joined_words_beside_maskable_words(joiner: str) -
 @_no_spacy
 @pytest.mark.parametrize("prompt", ["abc²", "² ¼", "x¼ y³"])
 def test_mask_prompt_never_selects_tokens_with_non_decimal_numbers(prompt):
-    # "²" and "¼" are word characters but not decimal digits, so [^\W\d_] admits them; a token
-    # is only a candidate if every character is a letter, as on the ASCII-only pattern.
+    # Non-decimal numbers still belong to the same token. Reject the whole run rather than
+    # exposing any of its letters as candidates.
     with pytest.raises(ValueError, match="no maskable words"):
         mask_prompt(prompt)
 
@@ -294,6 +341,49 @@ def test_mask_prompt_masks_words_next_to_tokens_with_non_decimal_numbers():
     result = mask_prompt("reset the abc² password", num_to_mask=1)
     assert [w.text for w in result.masked_words] == ["password"]
     assert result.masked_prompt == "reset the abc² [WORD1]"
+
+
+@_no_spacy
+@pytest.mark.parametrize("form", ["NFC", "NFD"])
+@pytest.mark.parametrize(
+    "token",
+    [
+        "café2",
+        "café_name",
+        "caféabc2",
+        "caféabc²",
+        "café¼",
+        "2café",
+        "_café",
+        "²café",
+        "ab2\u0301café",
+        "\u0301café",
+        "café\u200dami",
+        "café\u200cami",
+    ],
+)
+def test_mask_prompt_rejects_complete_marked_nonword_tokens(*, form: str, token: str) -> None:
+    token = unicodedata.normalize(form, token)
+    with pytest.raises(ValueError, match="no maskable words"):
+        mask_prompt(token)
+
+    result = mask_prompt(f"garden {token} now", num_to_mask=3)
+    assert [word.text for word in result.masked_words] == ["garden", "now"]
+    assert result.masked_prompt == f"[WORD1] {token} [WORD2]"
+
+
+@_no_spacy
+@pytest.mark.parametrize("form", ["NFC", "NFD"])
+@pytest.mark.parametrize("word", ["μαΐου", "αΐδιος"])
+def test_mask_prompt_masks_every_canonical_greek_case_variant(*, form: str, word: str) -> None:
+    lower = unicodedata.normalize(form, word)
+    upper = unicodedata.normalize(form, word.upper())
+    result = mask_prompt(f"{lower} {upper}", num_to_mask=1)
+    assert len(result.masked_words) == 1
+    assert result.masked_prompt == "[WORD1] [WORD1]"
+
+    preferred = mask_prompt(f"garden {upper}", num_to_mask=1, essential_words=[lower])
+    assert preferred.masked_prompt == "garden [WORD1]"
 
 
 _ACUTE = "\N{COMBINING ACUTE ACCENT}"
@@ -308,9 +398,9 @@ _ACUTE = "\N{COMBINING ACUTE ACCENT}"
     ],
 )
 def test_mask_prompt_does_not_mask_a_skipped_fragment_with_the_same_spelling(prompt, expected):
-    # The second "école" is followed by a combining mark, so it is a fragment the scan skips.
-    # Replacement uses the same scan, so it must not mask it because the whole word "école"
-    # was selected elsewhere (which would leave the accent orphaned on the placeholder).
+    # The second "école" carries a trailing combining mark, so it is a different word from the
+    # bare "école" and has its own key. Masking one must not mask the other, which would
+    # either orphan the accent on a placeholder or swallow one that was never selected.
     result = mask_prompt(prompt, num_to_mask=1)
     assert [w.text for w in result.masked_words] == ["école"]
     assert result.masked_prompt == expected

@@ -10,7 +10,7 @@ initialized without hardcoding tenant-specific values in the JS bundle.
 
 from fastapi import APIRouter, Request
 
-from pyrit.backend.middleware.auth import AuthenticatedUser, authorization_environment
+from pyrit.backend.middleware.auth import AuthenticatedUser, get_authentication_policy
 
 router = APIRouter()
 _GRAPH_SCOPES = ["https://graph.microsoft.com/User.Read"]
@@ -29,18 +29,14 @@ async def get_auth_config_async(request: Request) -> dict[str, str | bool | list
         dict: Auth configuration with enabled state, clientId, tenantId,
             allowedGroupIds, and delegated Microsoft Graph scopes.
     """
-    environment = authorization_environment(request)
-    client_id = environment.get("ENTRA_CLIENT_ID", "").strip()
-    tenant_id = environment.get("ENTRA_TENANT_ID", "").strip()
-    allowed_group_ids = environment.get("ENTRA_ALLOWED_GROUP_IDS", "").strip()
-    enabled = bool(client_id and tenant_id and allowed_group_ids)
+    policy = get_authentication_policy(request)
 
     return {
-        "enabled": enabled,
-        "clientId": client_id,
-        "tenantId": tenant_id,
-        "allowedGroupIds": allowed_group_ids,
-        "scopes": list(_GRAPH_SCOPES) if enabled else [],
+        "enabled": policy.enabled,
+        "clientId": policy.client_id,
+        "tenantId": policy.tenant_id,
+        "allowedGroupIds": policy.allowed_group_ids_csv,
+        "scopes": list(_GRAPH_SCOPES) if policy.enabled else [],
     }
 
 
@@ -50,7 +46,6 @@ async def get_auth_access_async(request: Request) -> dict[str, bool]:
     user = getattr(request.state, "user", None)
     is_admin = isinstance(user, AuthenticatedUser) and user.is_admin
     if user is None:
-        is_admin = (
-            authorization_environment(request).get("PYRIT_ALLOW_UNAUTHENTICATED_ADMIN", "").strip().casefold() == "true"
-        )
+        policy = get_authentication_policy(request)
+        is_admin = policy.mode == "local" and policy.allow_unauthenticated_admin
     return {"isAdmin": is_admin}

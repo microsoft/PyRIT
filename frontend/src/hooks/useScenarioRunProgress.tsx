@@ -12,6 +12,8 @@ import {
 
 export const SCENARIO_RUN_POLL_INTERVAL_MS = 2_500
 const PROGRESS_PAGE_LIMIT = 500
+// Same bounding idea as fetchAllPages: a misbehaving cursor must not page forever.
+export const MAX_PROGRESS_PAGES_PER_CYCLE = 50
 
 export interface UseScenarioRunProgressResult {
   readonly state: ScenarioRunProgressState
@@ -49,7 +51,15 @@ export function useScenarioRunProgress(scenarioResultId: string): UseScenarioRun
       }
     }
 
-    const fetchPage = async (since: string | null): Promise<void> => {
+    let seenCursors = new Set<string>()
+    const schedulePoll = (): void => {
+      clearPollTimer()
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null
+        void beginFetch()
+      }, SCENARIO_RUN_POLL_INTERVAL_MS)
+    }
+    const fetchPage = async (since: string | null, depth: number = 0): Promise<void> => {
       if (!active || pollingStoppedRef.current) {
         return
       }
@@ -71,18 +81,33 @@ export function useScenarioRunProgress(scenarioResultId: string): UseScenarioRun
         dispatch({ type: 'apply-page', page, fresh: since === null })
 
         if (page.has_more) {
-          await fetchPage(appliedCursor)
+          const nextCursor = page.next_cursor
+          const cursorAdvances =
+            nextCursor != null && nextCursor !== since && !seenCursors.has(nextCursor)
+          if (cursorAdvances && depth < MAX_PROGRESS_PAGES_PER_CYCLE) {
+            seenCursors.add(nextCursor!)
+            await fetchPage(nextCursor!, depth + 1)
+            return
+          }
+          if (cursorAdvances) {
+            // The page budget ran out while pages remain. Schedule another bounded
+            // cycle from the saved cursor so the tail of a long or finished run is
+            // still loaded; only a page without has_more ends polling for good.
+            schedulePoll()
+            return
+          }
+          // The cursor did not advance, so refetching would request the same page
+          // forever (the same guard fetchAllPages uses). Schedule the next bounded
+          // poll instead: a finished run only stops after a page without has_more,
+          // and the next response may carry a valid cursor again.
+          schedulePoll()
           return
         }
         if (isTerminalRunState(page.run.status)) {
           pollingStoppedRef.current = true
           return
         }
-        clearPollTimer()
-        timerRef.current = setTimeout(() => {
-          timerRef.current = null
-          void fetchPage(cursorRef.current)
-        }, SCENARIO_RUN_POLL_INTERVAL_MS)
+        schedulePoll()
       } catch (error: unknown) {
         if (!active || controller.signal.aborted) {
           return
@@ -107,6 +132,13 @@ export function useScenarioRunProgress(scenarioResultId: string): UseScenarioRun
       }
     }
 
+    const beginFetch = (): Promise<void> => {
+      // Each cycle gets a fresh cursor budget, so a long run paged to the limit
+      // can continue from the saved cursor on the next scheduled cycle.
+      seenCursors = new Set<string>()
+      return fetchPage(cursorRef.current)
+    }
+
     if (!scenarioResultId.trim()) {
       dispatch({
         type: 'request-failed',
@@ -114,7 +146,7 @@ export function useScenarioRunProgress(scenarioResultId: string): UseScenarioRun
         notFound: true,
       })
     } else {
-      void fetchPage(cursorRef.current)
+      void beginFetch()
     }
 
     return () => {

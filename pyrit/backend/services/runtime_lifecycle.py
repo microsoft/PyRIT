@@ -24,7 +24,7 @@ from pyrit.backend.services.service_lifecycle import (
 )
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.memory import CentralMemory
-from pyrit.registry import InitializerRegistry
+from pyrit.registry import InitializerRegistry, ScenarioPresetRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import validate_reinitialization_memory
@@ -38,15 +38,6 @@ class RuntimeLifecycle:
     def __init__(self, *, app: FastAPI, source: ConfigurationFileService) -> None:
         """Bind lifecycle state to one app and its immutable configuration source."""
         self.app = app
-        self.app.state.auth_environment = {
-            key: os.getenv(key, "")
-            for key in (
-                "ENTRA_CLIENT_ID",
-                "ENTRA_TENANT_ID",
-                "ENTRA_ALLOWED_GROUP_IDS",
-                "PYRIT_ALLOW_UNAUTHENTICATED_ADMIN",
-            )
-        }
         self.source = source
         self.edit_lock = asyncio.Lock()
         self.state = "initializing"
@@ -106,15 +97,20 @@ class RuntimeLifecycle:
         self.app.state.target_upload_directory = config.target_upload_directory
         registry = await asyncio.to_thread(InitializerRegistry.get_registry_singleton)
         registry.configure_custom_scripts_source(config.custom_initializers_source)
+        preset_registry = ScenarioPresetRegistry.get_registry_singleton()
+        # Constructing the storage creates the default preset directory when no source is
+        # configured, and the scan reads every stored document, so both stay off the event loop.
+        await asyncio.to_thread(preset_registry.configure_source, config.scenario_presets_source)
+        await asyncio.to_thread(preset_registry.scan_stored_presets)
 
     def _publish(self, config: ConfigurationLoader) -> None:
         self.app.state.configured_initializers = [
             ConfiguredInitializerSetting(initializer_name=item.name, parameters=item.args, order_index=index)
             for index, item in enumerate(config.initializer_configs)
         ]
-        self.app.state.default_labels = {
-            key: value for key, value in (("operator", config.operator), ("operation", config.operation)) if value
-        }
+        self.app.state.default_labels = {"operator": config.operator} if config.operator else {}
+        # A proposal shown to users, never created or resolved to a saved Operation.
+        self.app.state.default_operation = (config.operation or "").strip() or None
         self.app.state.max_concurrent_scenario_runs = config.max_concurrent_scenario_runs
         self.generation = str(uuid.uuid4())
         self.state, self.outcome, self.message = "ready", "success", "PyRIT is ready."
@@ -126,6 +122,7 @@ class RuntimeLifecycle:
         self.app.state.environment_file_service = None
         self.app.state.configured_initializers = []
         self.app.state.default_labels = {}
+        self.app.state.default_operation = None
         try:
             config = await self._load_async()
             await self._management_async(config)

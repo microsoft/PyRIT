@@ -236,6 +236,7 @@ def main() -> None:
                 "LOCALAPPDATA": str(directory),
                 "XDG_CONFIG_HOME": str(directory),
                 "XDG_DATA_HOME": str(directory),
+                "PYRIT_AUTH_MODE": "local",
                 "PYRIT_CONFIG_FILE": str(config),
                 "PYRIT_DEV_MODE": "true",
             }

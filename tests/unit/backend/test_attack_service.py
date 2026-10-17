@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlencode
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 import pyrit
 import pyrit.backend.services.pagination as backend_pagination
@@ -30,7 +30,9 @@ from pyrit.backend.models.attacks import (
     CreateAttackRequest,
     CreateConversationRequest,
     MessagePieceRequest,
+    MessageRequest,
     PrependedMessageRequest,
+    SaveConversationRequest,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
 )
@@ -53,7 +55,7 @@ from pyrit.backend.services.pagination import (
 )
 from pyrit.common.utils import to_sha256
 from pyrit.memory import CentralMemory, SQLiteMemory
-from pyrit.memory.memory_models import ConversationEntry
+from pyrit.memory.memory_models import AttackResultEntry, ConversationEntry, OperationEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -67,6 +69,7 @@ from pyrit.models import (
     ConversationType,
     Message,
     MessagePiece,
+    Operation,
     PromptDataType,
     PromptResponseError,
     Score,
@@ -81,6 +84,88 @@ from unit.mocks import MockPromptTarget
 @pytest.fixture
 def mock_memory() -> MagicMock:
     return make_mock_memory()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_missing_operation_rejected_before_target_or_media_preparation_async(sqlite_instance) -> None:
+    service = AttackService()
+    with (
+        patch.object(service, "_get_save_target_async", new_callable=AsyncMock) as target,
+        patch.object(service, "_prepare_message_pieces_async", new_callable=AsyncMock) as pieces,
+    ):
+        with pytest.raises(LookupError, match="Operation"):
+            await service.create_attack_async(
+                request=CreateAttackRequest(system_prompt="must not persist", operation_id=uuid.uuid4())
+            )
+        target.assert_not_awaited()
+        pieces.assert_not_awaited()
+    assert await sqlite_instance.get_attack_results_async() == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("name", [" engagement", "missing"])
+async def test_create_attack_keeps_deprecated_name_and_links_a_saved_operation_async(
+    sqlite_instance, name: str
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    with pytest.warns(DeprecationWarning, match="operation_id"):
+        created = await AttackService().create_attack_async(
+            request=CreateAttackRequest(labels={"operation": name, "team": "red"})
+        )
+    stored = (await sqlite_instance.get_attack_results_async(attack_result_ids=[created.attack_result_id]))[0]
+    assert (stored.operation_id, stored.operation, stored.labels) == (
+        operation.id if name == " engagement" else None,
+        name,
+        {"team": "red", "source": "gui"},
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("destination", ["same_attack", "new_attack"])
+async def test_conversation_save_preserves_stored_or_uses_new_operation_async(
+    sqlite_instance, destination: str
+) -> None:
+    original = await sqlite_instance.add_operation_async(Operation(name="Original"))
+    selected = await sqlite_instance.add_operation_async(Operation(name="Selected"))
+    service = AttackService()
+    source = await service.create_attack_async(request=CreateAttackRequest(operation_id=original.id))
+    saved = await service.save_conversation_async(
+        request=SaveConversationRequest(
+            save_id=uuid.uuid4(),
+            destination=destination,
+            attack_result_id=uuid.UUID(source.attack_result_id) if destination == "same_attack" else None,
+            operation_id=selected.id if destination == "new_attack" else None,
+            messages=[MessageRequest(role="user", pieces=[MessagePieceRequest(original_value="draft")])],
+        )
+    )
+    result = (await sqlite_instance.get_attack_results_async(attack_result_ids=[saved.attack.attack_result_id]))[0]
+    assert result.operation_id == (original.id if destination == "same_attack" else selected.id)
+    assert (await sqlite_instance.get_attack_results_async(attack_result_ids=[source.attack_result_id]))[
+        0
+    ].operation_id == original.id
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_list_attacks_filters_by_id_and_shows_current_operation_name_async(sqlite_instance) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Before rename"))
+    service = AttackService()
+    linked = await service.create_attack_async(request=CreateAttackRequest(operation_id=operation.id))
+    legacy = AttackResult(conversation_id="legacy", objective="objective", operation="Before rename")
+    with sqlite_instance._get_session() as session:
+        session.add(AttackResultEntry(entry=legacy))
+        session.execute(update(OperationEntry).where(OperationEntry.id == operation.id).values(name="After rename"))
+        session.commit()
+
+    by_id = await service.list_attacks_async(operation_ids=[operation.id])
+    by_name = await service.list_attacks_async(operation=["Before rename"])
+    assert [(item.attack_result_id, item.operation_name) for item in by_id.items] == [
+        (linked.attack_result_id, "After rename")
+    ]
+    assert [(item.attack_result_id, item.operation_name) for item in by_name.items] == [
+        (legacy.attack_result_id, "Before rename")
+    ]
+    detail = await service.get_attack_async(attack_result_id=linked.attack_result_id)
+    assert detail is not None and detail.operation_name == "After rename"
 
 
 @pytest.fixture
@@ -970,7 +1055,7 @@ class TestCreateAttack:
                     target_registry_name="target-1",
                     name="My Attack",
                     operator="alice",
-                    operation="nightly",
+                    operation_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
                     labels={"team": "red"},
                 )
             )
@@ -981,7 +1066,8 @@ class TestCreateAttack:
             stored_attack = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert stored_attack.metadata["target_registry_name"] == "target-1"
             assert stored_attack.operator == "alice"
-            assert stored_attack.operation == "nightly"
+            assert stored_attack.operation_id == uuid.UUID("00000000-0000-0000-0000-000000000001")
+            assert stored_attack.operation is None
             assert stored_attack.labels == {"team": "red", "source": "gui"}
 
     async def test_create_attack_stores_prepended_conversation(self, attack_service, mock_memory) -> None:
@@ -3396,15 +3482,15 @@ class TestAttackServiceAdditionalCoverage:
 
 
 def test_create_attack_request_normalizes_legacy_attribution_labels() -> None:
-    labels = {"operator": "alice", "operation": "nightly", "team": "red"}
+    labels = {"operator": "alice", "team": "red"}
 
     with pytest.warns(DeprecationWarning, match="removed in 1.4.0"):
         request = CreateAttackRequest(target_registry_name="target", labels=labels)
 
     assert request.operator == "alice"
-    assert request.operation == "nightly"
+    assert request.operation_id is None
     assert request.labels == {"team": "red"}
-    assert labels == {"operator": "alice", "operation": "nightly", "team": "red"}
+    assert labels == {"operator": "alice", "team": "red"}
 
 
 def test_create_attack_request_rejects_overlength_values() -> None:

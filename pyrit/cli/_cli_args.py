@@ -19,15 +19,18 @@ import inspect
 import json
 import logging
 import shlex
+import sys
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
+from uuid import UUID
 
 from pyrit.common.cli_helpers import (
     CONFIG_FILE_HELP,
     validate_log_level,
     validate_log_level_argparse,
 )
+from pyrit.common.deprecation import print_deprecation_message
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -389,6 +392,12 @@ def parse_memory_labels(json_string: str) -> dict[str, str]:
             raise ValueError(f"All label keys and values must be strings. Got: {key}={value}")
         validated_labels[key] = value
 
+    # TODO(PyRIT 1.4): Remove this notice with Operation name attribution.
+    if "operation" in validated_labels:
+        print_deprecation_message(old_item="--memory-labels operation", new_item="--operation-id", removed_in="1.4.0")
+        # DeprecationWarning is suppressed by default in a CLI, so also print a visible note.
+        print("Note: 'operation' in --memory-labels is deprecated; use --operation-id instead.", file=sys.stderr)
+
     return validated_labels
 
 
@@ -707,6 +716,11 @@ _MEMORY_LABELS_ARG = _ArgSpec(
     result_key="memory_labels",
     parser=parse_memory_labels,
 )
+_OPERATION_ID_ARG = _ArgSpec(
+    flags=["--operation-id"],
+    result_key="operation_id",
+    parser=UUID,
+)
 _LOG_LEVEL_ARG = _ArgSpec(
     flags=["--log-level"],
     result_key="log_level",
@@ -739,6 +753,7 @@ _RUN_ARG_SPECS: list[_ArgSpec] = [
     _MAX_CONCURRENCY_ARG,
     _MAX_RETRIES_ARG,
     _MEMORY_LABELS_ARG,
+    _OPERATION_ID_ARG,
     _DATASET_NAMES_ARG,
     _MAX_DATASET_SIZE_ARG,
     _DATASET_FILTERS_ARG,

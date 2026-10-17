@@ -106,5 +106,6 @@ def make_mock_memory() -> MagicMock:
     memory.get_conversation_stats_async.return_value = {}
     memory.get_conversation_metadata_async.return_value = None
     memory.get_prompt_scores_async.return_value = []
+    memory.resolve_operation_id_async.side_effect = lambda *, operation_id, operation_name=None: operation_id
 
     return memory

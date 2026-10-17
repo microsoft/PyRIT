@@ -29,6 +29,7 @@ class BaseImageToImageConverter(Converter, ABC):
 
     When converting images with transparency (alpha channel) to JPEG format, the converter
     automatically composites the transparent areas onto a white background.
+    CMYK images converted to PNG use RGB pixels without the incompatible source ICC profile.
 
     Supported input types:
     File paths to any image that PIL can open (or URLs pointing to such images):
@@ -135,6 +136,9 @@ class BaseImageToImageConverter(Converter, ABC):
 
         if output_format == "JPEG":
             image = self._prepare_image_for_jpeg(image)
+        elif output_format == "PNG" and image.mode == "CMYK":
+            image = self._convert_to_rgb_or_rgba(image)
+            image.info.pop("icc_profile", None)
 
         transformed = self._apply_transform(image)
         buffer = BytesIO()

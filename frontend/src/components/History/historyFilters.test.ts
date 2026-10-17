@@ -28,7 +28,7 @@ describe("historyFilters URL encoding", () => {
       hasConverters: true,
       includeScenarioAttacks: true,
       operator: ["roakey"],
-      operation: ["op_trash_panda"],
+      operationId: ["6f1b2c3d-0000-4000-8000-000000000001"],
       otherLabels: ["env:prod", "team:red"],
       labelSearchText: "prod",
     };
