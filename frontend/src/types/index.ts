@@ -1131,7 +1131,7 @@ export interface SeedExampleListParams {
 // --- Scenarios ---
 
 export type ScenarioDatasetLimit = number | 'all' | 'default'
-export type DatasetFetchPolicy = 'never' | 'if_missing'
+export type DatasetFetchPolicy = 'never' | 'if_missing' | 'always'
 
 export interface ScenarioDatasetSourceInput {
   name: string

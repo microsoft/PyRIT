@@ -40,6 +40,7 @@ from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
+    DatasetFetchPolicy,
     DatasetSource,
     IncompatibleTechniqueError,
     IncompatibleTechniquePolicy,
@@ -1773,10 +1774,11 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
         return DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
-    @pytest.mark.parametrize("resume_state", ["valid", "missing-id", "missing-dataset", "incompatible"])
+    @pytest.mark.parametrize("resume_state", ["valid", "missing-id", "missing-dataset", "incompatible", "refreshed"])
     @pytest.mark.parametrize("configured_provider", [False, True], ids=["registered", "configured"])
+    @pytest.mark.parametrize("refresh", [False, True])
     async def test_named_source_preparation_and_resume(
-        self, *, mock_objective_target: PromptTarget, resume_state: str, configured_provider: bool
+        self, *, mock_objective_target: PromptTarget, resume_state: str, configured_provider: bool, refresh: bool
     ) -> None:
         provider = MagicMock(spec=SeedDatasetProvider)
         provider.dataset_name = "fixture"
@@ -1785,10 +1787,18 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
             seeds=[SeedObjective(value=f"fixture-{index}", dataset_name="fixture") for index in range(10)],
         )
         config = DatasetAttackConfiguration(
-            sources=[DatasetSource(name="fixture", max_size=3, provider=provider if configured_provider else None)]
+            sources=[DatasetSource(name="fixture", max_size=3, provider=provider if configured_provider else None)],
+            fetch=DatasetFetchPolicy.ALWAYS if refresh else DatasetFetchPolicy.IF_MISSING,
         )
         scenario = self._StrategyScenario(name="Named sources", version=1)
         scenario.set_params_from_args(args={"objective_target": mock_objective_target, "dataset_config": config})
+        with patch.object(
+            scenario._memory,
+            "get_seed_dataset_names_async",
+            side_effect=AssertionError("Estimates must not read dataset presence"),
+        ):
+            await scenario.get_run_size_estimate_async()
+        provider.fetch_dataset_async.assert_not_awaited()
         with (
             patch.object(config, "prepare_async", wraps=config.prepare_async) as prepare,
             patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={"fixture": provider}),
@@ -1800,10 +1810,23 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         assert baseline.seed_groups == strategy.seed_groups
         assert len(strategy.seed_groups) == 3
         original_plan = scenario._build_run_plan()
+        if refresh:
+            fresh_run = self._StrategyScenario(name="Named sources", version=1)
+            fresh_run.set_params_from_args(args={"objective_target": mock_objective_target, "dataset_config": config})
+            with patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={"fixture": provider}):
+                await fresh_run.initialize_async()
+            assert provider.fetch_dataset_async.await_count == 2
+            assert provider.fetch_dataset_async.await_args.kwargs == {"cache": False}
         provider.fetch_dataset_async.reset_mock()
 
         if resume_state == "missing-dataset":
             await scenario._memory.remove_seeds_from_memory_async(dataset_name="fixture")
+        elif resume_state == "refreshed":
+            await scenario._memory.replace_seeds_for_dataset_async(
+                dataset_name="fixture",
+                seeds=[SeedObjective(value="Replacement objective", dataset_name="fixture")],
+                added_by="test",
+            )
         result_id = (
             "00000000-0000-0000-0000-000000000000" if resume_state == "missing-id" else scenario._scenario_result_id
         )
