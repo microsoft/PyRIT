@@ -172,8 +172,9 @@ print(f"Reused {len(reused_seeds)} stored objectives without generation.")
 # for that dataset. It also works with registered providers, but a memory-only
 # dataset without a provider cannot refresh.
 #
-# All provider results are fetched and checked before any dataset write. A failed fetch
-# or invalid result keeps every selected dataset unchanged. Storage writes are atomic
+# Before any dataset write, fetched and retained sources pass the configuration's filters,
+# grouping, and validators without sampling. A fetch, grouping, or validation failure keeps
+# every selected dataset unchanged. Storage writes are atomic
 # per dataset, not across all selected datasets: a later write failure does not undo
 # an earlier successful write. Filters and selection limits do not reduce replacement.
 # Refresh removes manual edits and can prevent older runs from resuming if their seed

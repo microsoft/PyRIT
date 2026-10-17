@@ -14,7 +14,7 @@ import type {
 } from '@/types'
 
 import DatasetLimitControl from './DatasetLimitControl'
-import { datasetChoices, datasetFacts, datasetNameWithOrigin, datasetPolicies, datasetSize, parseCaseLimit } from './datasetPresentation'
+import { canEditDatasetLoading, datasetChoices, datasetFacts, datasetNameWithOrigin, datasetPolicies, datasetSize, parseCaseLimit } from './datasetPresentation'
 import { useScenarioDatasetTableStyles } from './ScenarioDatasetTable.styles'
 
 interface ScenarioDatasetTableProps {
@@ -128,9 +128,7 @@ export default function ScenarioDatasetTable({
   const hasMissingRefresh = selected.some((source, index) => policies[index] === 'always'
     && !datasets.some((item) => item.name === source.name && item.loaded))
   const mixedPolicies = policies.some((policy) => policy !== policies[0])
-  const canSetLoading = options.supports_overrides && (canEditSources || (
-    !mixedPolicies && policies.every((policy) => policy === effective.fetch)
-  ))
+  const canSetLoading = canEditDatasetLoading(effective, options)
   const changeLoading = (policy: DatasetFetchPolicy): void => onChange({
     ...request, fetch: policy,
     ...(canEditSources ? { sources: selected.map((source) => ({ ...source, fetch: policy })) } : {}),

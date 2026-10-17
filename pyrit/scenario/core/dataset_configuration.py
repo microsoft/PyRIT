@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import copy
 import random
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
@@ -63,6 +64,10 @@ INLINE_DATASET_NAME = "inline"
 
 # Internal helper TypeVar for size-capping any homogeneous list.
 _ItemT = TypeVar("_ItemT")
+
+_candidate_populations: ContextVar[dict[str, list[Seed[Any]]] | None] = ContextVar(
+    "dataset_candidate_populations", default=None
+)
 
 
 class _Unset(Enum):
@@ -520,6 +525,10 @@ class DatasetConfiguration:
         """
         Check all sources, then load or refresh datasets from configured or registered providers.
 
+        A refresh validates candidate and retained populations through the configuration's
+        normal filters, grouping, and validators before any write. Validation does not sample
+        or replace stored seeds.
+
         Args:
             fetch: Optional policy for this operation only. Source settings remain unchanged.
 
@@ -585,7 +594,10 @@ class DatasetConfiguration:
                 raise DatasetConstraintError(
                     f"Provider for '{name}' must return non-empty seeds with that dataset name."
                 )
+            SeedDataset.group_seed_prompts_by_prompt_group_id(dataset.seeds)
             fetched[name] = dataset
+        if any(policies[name] is DatasetFetchPolicy.ALWAYS for name in fetched):
+            await self._validate_refresh_candidates_async(fetched=fetched)
         for name, dataset in fetched.items():
             refresh = policies[name] is DatasetFetchPolicy.ALWAYS
             if refresh:
@@ -596,6 +608,28 @@ class DatasetConfiguration:
                 await self._memory.add_seed_datasets_to_memory_async(
                     datasets=[dataset], added_by="DatasetConfiguration"
                 )
+
+    async def _validate_refresh_candidates_async(self, *, fetched: dict[str, SeedDataset]) -> None:
+        """Resolve task-local candidate copies without changing stored or reusable state."""
+        candidates: dict[str, list[Seed[Any]]] = {
+            name: [seed.model_copy(deep=True) for seed in dataset.seeds] for name, dataset in fetched.items()
+        }
+        token = _candidate_populations.set(candidates)
+        try:
+            await self.with_overrides()._validate_candidate_population_async()
+        finally:
+            _candidate_populations.reset(token)
+
+    async def _validate_candidate_population_async(self) -> None:
+        """Validate raw configuration populations before replacement."""
+        populations = await self._collect_named_seeds_async()
+        self.validate(
+            ResolvedDataset(
+                seeds=[seed for population in populations.values() for seed in population],
+                source_kind=self.source_kind,
+                dataset_names=tuple(populations),
+            )
+        )
 
     def _default_validators(self) -> list[Callable[[ResolvedDataset], None]]:
         """
@@ -758,9 +792,21 @@ class DatasetConfiguration:
         Raises:
             DatasetConstraintError: If the dataset is absent or its filters match no seeds.
         """
-        found = list(await self._memory.get_seeds_async(dataset_name=dataset_name, **self._get_seeds_filters))
+        candidates = _candidate_populations.get()
+        if candidates is not None and dataset_name in candidates:
+            population = candidates[dataset_name]
+            found = (
+                await self._memory.filter_seed_candidates_async(seeds=population, filters=self._get_seeds_filters)
+                if self._filters
+                else list(population)
+            )
+            unfiltered = population
+        else:
+            found = list(await self._memory.get_seeds_async(dataset_name=dataset_name, **self._get_seeds_filters))
+            unfiltered = (
+                await self._memory.get_seeds_async(dataset_name=dataset_name) if not found and self._filters else []
+            )
         if not found:
-            unfiltered = await self._memory.get_seeds_async(dataset_name=dataset_name) if self._filters else []
             if unfiltered:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' has seeds, but none match the configured filters {self._filters}."
@@ -843,6 +889,10 @@ class DatasetAttackConfiguration(DatasetConfiguration):
     (e.g. synthesizing a per-prompt objective). The default regroups by
     ``prompt_group_id`` via ``group_seeds_into_attack_groups``.
     """
+
+    async def _validate_candidate_population_async(self) -> None:
+        """Reuse unsampled grouping, child shaping, and population validators."""
+        await self.get_attack_groups_by_dataset_async(apply_sampling=False)
 
     def _default_max_total(self) -> ResolvedDatasetLimit:
         return 5 if self._seeds is not None or self._seed_groups is not None else "all"

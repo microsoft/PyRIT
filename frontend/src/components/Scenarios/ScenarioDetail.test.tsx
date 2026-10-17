@@ -1820,7 +1820,8 @@ describe('ScenarioDetail', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument())
   })
 
-  it('allows confirmation with an explicit uncertainty warning when a protected-policy estimate fails', async () => {
+  it.each(['always', 'if_missing'] as const)(
+    'preserves the visible %s draft and allows recovery when a protected-policy estimate fails', async (policy) => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({
       dataset_defaults: {
@@ -1835,13 +1836,27 @@ describe('ScenarioDetail', () => {
     mockEstimateRun.mockRejectedValue(new Error('Estimate unavailable'))
     renderDetail('/scanner/foundry.red_team_agent')
     await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
+      'foundry.red_team_agent', expect.objectContaining({ datasets: { fetch: 'always' } }), expect.any(AbortSignal),
+    ))
+    const failedPreview = await openRunPreview(user)
+    await waitFor(() => expect(within(failedPreview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+    expect(within(failedPreview).getByRole('alert')).toHaveTextContent('Cannot confirm which datasets will refresh')
+    await user.click(within(failedPreview).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument())
+    expect(screen.getByRole('radio', { name: 'Refresh' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: 'Load missing' })).toBeEnabled()
+    if (policy === 'if_missing') {
+      await user.click(screen.getByRole('radio', { name: 'Load missing' }))
+      expect(screen.getByRole('radio', { name: 'Load missing' })).toBeChecked()
+    }
     const preview = await openRunPreview(user)
     const confirm = within(preview).getByRole('button', { name: 'Launch scan' })
     await waitFor(() => expect(confirm).toBeEnabled())
     expect(within(preview).getByRole('alert')).toHaveTextContent('Cannot confirm which datasets will refresh')
     expect(within(preview).queryByRole('status')).not.toBeInTheDocument()
     await user.click(confirm)
-    expect(mockStartRun.mock.calls[0][0].datasets).toEqual({ fetch: 'always' })
+    expect(mockStartRun.mock.calls[0][0].datasets).toEqual({ fetch: policy })
   })
 
   it.each([

@@ -155,8 +155,9 @@
 # ```
 #
 # `always` bypasses the provider cache and replaces the complete stored dataset, not only
-# the filtered or sampled objectives. All fetches and result checks complete before any
-# dataset write. A failed fetch or invalid result keeps every selected dataset unchanged.
+# the filtered or sampled objectives. Before any dataset write, fetched and retained sources
+# pass the configuration's filters, grouping, and validators without sampling. A fetch,
+# grouping, or validation failure keeps every selected dataset unchanged.
 # Replacement can remove manual edits and prevent older runs from resuming. A memory-only
 # dataset cannot refresh without a provider. Storage commits are per dataset: a later write
 # failure does not undo an earlier successful write. Explicit "Load datasets" in the GUI
@@ -271,7 +272,9 @@ MyCustomScenario()
 # # Run it with parameter overrides
 # pyrit_scan run my_custom_scenario --max-concurrency 10
 #
-# ```The scenario name is automatically converted from the class name (e.g., `MyCustomScenario` becomes `my_custom_scenario`).
+# ```
+#
+# The scenario name is automatically converted from the class name (e.g., `MyCustomScenario` becomes `my_custom_scenario`).
 #
 
 # %% [markdown]

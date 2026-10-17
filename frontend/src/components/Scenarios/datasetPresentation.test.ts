@@ -47,6 +47,19 @@ describe('datasetPolicies', () => {
     })).toEqual([{ name: 'stored', fetch: 'never' }, { name: 'fresh', fetch: 'always' }])
   })
 
+  it('shows a permitted global draft instead of a stale protected-source projection', () => {
+    const defaults: ScenarioDatasetSettings = {
+      ...SETTINGS,
+      sources: [{ name: 'stored', max_size: 5, fetch: 'if_missing', configured_provider: false }],
+    }
+    expect(datasetPolicies({ fetch: 'always' }, defaults, defaults, {
+      ...OPTIONS, source_settings: false,
+    })).toEqual([{ name: 'stored', fetch: 'always' }])
+    expect(datasetPolicies({ fetch: 'if_missing' }, defaults, defaults, {
+      ...OPTIONS, source_settings: false,
+    })).toEqual([{ name: 'stored', fetch: 'if_missing' }])
+  })
+
   it('uses retained effective policies and treats default as inheritance', () => {
     expect(datasetPolicies({
       fetch: 'always', sources: [{ name: 'stored', fetch: 'default' }],

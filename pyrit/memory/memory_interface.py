@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, ParamSpec,
 from urllib.parse import urlparse
 
 from sqlalchemy import (
+    Column,
     MetaData,
     String,
     Unicode,
@@ -36,6 +37,7 @@ from sqlalchemy import (
     or_,
     select,
     type_coerce,
+    union_all,
     update,
 )
 from sqlalchemy import cast as sql_cast
@@ -46,6 +48,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
 from sqlalchemy.orm.session import Session
+from sqlalchemy.sql import visitors
+from sqlalchemy.sql.elements import ClauseElement
 
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
@@ -4164,6 +4168,66 @@ class MemoryInterface(abc.ABC):
 
         return conditions
 
+    async def filter_seed_candidates_async(
+        self, *, seeds: Sequence[Seed[Any]], filters: Mapping[str, Any]
+    ) -> list[Seed[Any]]:
+        """
+        Apply the backend's seed predicates to candidate rows without storing them.
+
+        Returns:
+            list[Seed]: Matching candidates in input order, with their original identities.
+        """
+        if not seeds or not filters:
+            return list(seeds)
+        return await self._run_database_operation_async(self._filter_seed_candidates, seeds=seeds, filters=filters)
+
+    def _filter_seed_candidates(self, *, seeds: Sequence[Seed[Any]], filters: Mapping[str, Any]) -> list[Seed[Any]]:
+        if self.engine is None:
+            raise RuntimeError("Memory engine is not initialized.")
+        conditions = self._build_seed_filter_conditions(**filters)
+        referenced = [
+            element
+            for condition in conditions
+            for element in visitors.iterate(condition)
+            if isinstance(element, Column) and element.table is SeedEntry.__table__
+        ]
+        columns = [
+            column for column in SeedEntry.__table__.columns if any(column.shares_lineage(ref) for ref in referenced)
+        ]
+        filter_binds = len(
+            select(literal(1))
+            .where(*conditions)
+            .compile(dialect=self.engine.dialect, compile_kwargs={"render_postcompile": True})
+            .params
+        )
+        chunk_size = min(100, max(1, (self._MAX_BIND_VARS - filter_binds - 1) // (len(columns) + 1)))
+        matched: set[int] = set()
+        with closing(self._get_session()) as session:
+            for start in range(0, len(seeds), chunk_size):
+                rows = []
+                for index in range(start, min(start + chunk_size, len(seeds))):
+                    entry = SeedEntry(entry=seeds[index])
+                    rows.append(
+                        select(
+                            literal(index).label("candidate_index"),
+                            *[
+                                literal(getattr(entry, column.key), type_=column.type).label(column.name)
+                                for column in columns
+                            ],
+                        )
+                    )
+                candidates = union_all(*rows).subquery()
+                replacements = {column: candidates.c[column.name] for column in referenced}
+
+                def replace_column(
+                    element: ClauseElement, *, mapping: Mapping[Column[Any], ClauseElement] = replacements, **kw: Any
+                ) -> ClauseElement | None:
+                    return mapping.get(element) if isinstance(element, Column) else None
+
+                predicates = [visitors.replacement_traverse(condition, {}, replace_column) for condition in conditions]
+                matched.update(session.scalars(select(candidates.c.candidate_index).where(*predicates)).all())
+        return [seed for index, seed in enumerate(seeds) if index in matched]
+
     def _execute_get_seeds(
         self,
         *,
@@ -5118,8 +5182,8 @@ class MemoryInterface(abc.ABC):
             int: The number of ``SeedPromptEntries`` deleted before the new seeds were inserted.
 
         Raises:
-            ValueError: If ``dataset_name`` is empty, ``seeds`` is empty, or any seed's
-                ``dataset_name`` does not match ``dataset_name``.
+            ValueError: If ``dataset_name`` is empty, ``seeds`` is empty, a seed belongs
+                to another dataset, or the seed groups are structurally invalid.
             SQLAlchemyError: If the replacement fails; the transaction is rolled back first.
         """
         if not dataset_name:
@@ -5137,6 +5201,7 @@ class MemoryInterface(abc.ABC):
                 "seeds tagged for another dataset."
             )
 
+        SeedDataset.group_seed_prompts_by_prompt_group_id(seeds)
         current_time = datetime.now(tz=UTC)
         entries: list[SeedEntry] = []
         for prompt in seeds:

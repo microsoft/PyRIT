@@ -7,12 +7,18 @@ function explicitDatasetPolicy(value: ScenarioDatasetRequest['fetch']): DatasetF
   return value === 'never' || value === 'if_missing' || value === 'always' ? value : undefined
 }
 
+export function canEditDatasetLoading(effective: ScenarioDatasetSettings, options: ScenarioDatasetOptions): boolean {
+  return options.supports_overrides && (options.source_settings !== false
+    || effective.sources.every((source) => source.fetch === effective.fetch))
+}
+
 export function datasetPolicies(
   request: ScenarioDatasetRequest, defaults: ScenarioDatasetSettings,
   effective: ScenarioDatasetSettings, options: ScenarioDatasetOptions,
 ): Array<{ name: string; fetch: DatasetFetchPolicy }> {
   const selected: ScenarioDatasetSourceInput[] = request.sources ?? defaults.sources.map((source) => ({ name: source.name }))
   const canEditSources = options.supports_overrides && options.source_settings !== false
+  const globalDraft = canEditDatasetLoading(effective, options) ? explicitDatasetPolicy(request.fetch) : undefined
   return selected.map((source) => {
     const settings = effective.sources.find((item) => item.name === source.name)
       ?? defaults.sources.find((item) => item.name === source.name)
@@ -20,7 +26,7 @@ export function datasetPolicies(
       name: source.name,
       fetch: canEditSources ? explicitDatasetPolicy(source.fetch) ?? settings?.fetch
         ?? explicitDatasetPolicy(request.fetch) ?? defaults.fetch
-        : settings?.fetch ?? defaults.fetch,
+        : globalDraft ?? settings?.fetch ?? defaults.fetch,
     }
   })
 }

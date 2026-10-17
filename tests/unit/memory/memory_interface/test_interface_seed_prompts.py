@@ -15,10 +15,90 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import SeedEntry
-from pyrit.models import MessagePiece, SeedDataset, SeedGroup, SeedObjective, SeedPrompt
+from pyrit.models import MessagePiece, SeedDataset, SeedGroup, SeedObjective, SeedOrigin, SeedPrompt
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {},
+        {"harm_categories": ["hate"]},
+        {"harm_categories": ["HATE%"]},
+        {"harm_categories": ["other", "ä"]},
+        {"data_types": ["text"]},
+        {"data_types": ["audio_path"]},
+        {"harm_categories": ["hate"], "data_types": ["text"]},
+        {"metadata": {"scope.key": "selected"}},
+        {"authors": ["Jones"]},
+        {"origin": SeedOrigin.USER},
+        {"value": "candidate-2"},
+    ],
+)
+async def test_candidate_filters_match_stored_queries_without_writes_async(
+    *, sqlite_instance: MemoryInterface, filters: dict[str, object]
+) -> None:
+    seeds = [
+        SeedObjective(
+            value=f"candidate-{index}",
+            dataset_name="candidate",
+            harm_categories=["Hate_Speech" if index % 2 else "other", "Ä"],
+            authors=["A. Jones"],
+            metadata={"scope.key": "selected" if index % 3 else "other"},
+            origin=SeedOrigin.USER if index % 2 else SeedOrigin.LOCAL,
+        )
+        for index in range(250)
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[seed.model_copy(deep=True) for seed in seeds], added_by="test"
+    )
+    expected = await sqlite_instance.get_seeds_async(dataset_name="candidate", **filters)
+    await sqlite_instance.remove_seeds_from_memory_async(dataset_name="candidate")
+    statements: list[ClauseElement] = []
+
+    def capture(
+        connection: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: "ExecutionContext",
+        executemany: bool,
+    ) -> None:
+        if context.compiled is not None:
+            statements.append(context.compiled.statement)
+
+    event.listen(sqlite_instance.engine, "before_cursor_execute", capture)
+    try:
+        actual = await sqlite_instance.filter_seed_candidates_async(seeds=seeds, filters=filters)
+    finally:
+        event.remove(sqlite_instance.engine, "before_cursor_execute", capture)
+    assert [seed.id for seed in actual] == [seed.id for seed in seeds if seed.id in {item.id for item in expected}]
+    assert await sqlite_instance.get_seeds_async(dataset_name="candidate") == []
+    for statement in statements:
+        compiled = str(statement.compile(dialect=mssql.dialect()))
+        assert "FROM [SeedPromptEntries]" not in compiled
+
+
+async def test_replacement_rejects_invalid_group_without_deleting_old_rows_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    before = SeedObjective(value="Keep me", dataset_name="candidate")
+    await sqlite_instance.add_seeds_to_memory_async(seeds=[before], added_by="user")
+    shared_id = uuid4()
+    candidates = [
+        SeedObjective(value=str(index), dataset_name="candidate", prompt_group_id=shared_id) for index in range(2)
+    ]
+    with pytest.raises(ValueError, match="only have one objective"):
+        await sqlite_instance.replace_seeds_for_dataset_async(
+            dataset_name="candidate", seeds=candidates, added_by="test"
+        )
+    after = await sqlite_instance.get_seeds_async(dataset_name="candidate")
+    assert [(seed.id, seed.value) for seed in after] == [(before.id, before.value)]
+
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Dialect
+    from sqlalchemy.engine.interfaces import ExecutionContext
+    from sqlalchemy.sql.elements import ClauseElement
 
 
 def assert_original_value_in_list(original_value: str, message_pieces: Sequence[MessagePiece]):

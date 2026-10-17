@@ -170,9 +170,10 @@ Options:
   even when data is already stored. A filter miss must never trigger another fetch.
 - With `IF_MISSING`, stored rows win even if a configured provider's inputs change.
   Refresh can remove manual edits and prevent older runs from resuming. All provider results
-  are fetched and checked before any dataset write. A fetch or result-check failure keeps
-  every dataset unchanged. Storage commits remain per dataset: a later write failure does
-  not undo an earlier successful write.
+  are fetched and checked before any dataset write. Candidates and retained sources must
+  pass the same filters, custom grouping, and child/compound validators used by normal reads,
+  without sampling. A fetch, grouping, or validation failure keeps every dataset unchanged.
+  Storage commits remain per dataset: a later write failure does not undo an earlier successful write.
   Generation count and selection limits are separate; filters and limits do not reduce the
   replacement. Use a new dataset name to keep another generated batch.
   Use one writer per name; concurrent runs can generate and store different batches.

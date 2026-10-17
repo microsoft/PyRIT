@@ -4,16 +4,32 @@
 """Named selection, explicit preparation, and durable storage contracts."""
 
 import asyncio
+import sqlite3
+from collections.abc import AsyncIterator
+from contextlib import closing
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import event
 from sqlalchemy.exc import SQLAlchemyError
+from unit.mocks import MockPromptTarget
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.memory.memory_models import SeedEntry
-from pyrit.models import AllAvailableDatasetSize, BoundedDatasetSize, SeedDataset, SeedObjective, SeedOrigin
+from pyrit.models import (
+    AllAvailableDatasetSize,
+    AttackSeedGroup,
+    BoundedDatasetSize,
+    Seed,
+    SeedDataset,
+    SeedObjective,
+    SeedOrigin,
+    SeedPrompt,
+)
 from pyrit.models.dataset_limit import DatasetLimit
 from pyrit.scenario import (
     CompoundDatasetAttackConfiguration,
@@ -21,8 +37,13 @@ from pyrit.scenario import (
     DatasetConfiguration,
     DatasetFetchPolicy,
     DatasetSource,
+    Scenario,
 )
-from pyrit.scenario.core.dataset_configuration import DatasetConstraintError, require_min_size
+from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, ScenarioTechnique
+from pyrit.scenario.core.dataset_configuration import DatasetConstraintError, require_min_size, require_seed_type
+from pyrit.scenario.core.scenario_context import ScenarioContext
+from pyrit.score import SubStringScorer
+from test_support.fixtures import use_sqlite_memory
 
 
 def dataset(name: str, count: int = 12) -> SeedDataset:
@@ -31,6 +52,28 @@ def dataset(name: str, count: int = 12) -> SeedDataset:
         dataset_name=name,
         seeds=[SeedObjective(value=f"{name}-{index}", dataset_name=name) for index in range(count)],
     )
+
+
+def _copy_memory_to_file(*, source: SQLiteMemory, path: Path) -> SQLiteMemory:
+    with closing(source.engine.raw_connection()) as connection, closing(sqlite3.connect(path)) as destination:
+        driver = connection.driver_connection
+        if not isinstance(driver, sqlite3.Connection):
+            raise TypeError("Expected a SQLite connection.")
+        driver.backup(destination)
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    with patch.object(memory, "cleanup"):
+        memory.__init__(db_path=path, skip_schema_migration=True)
+    return memory
+
+
+@pytest.fixture
+async def file_memory(*, sqlite_instance: SQLiteMemory, tmp_path: Path) -> AsyncIterator[SQLiteMemory]:
+    memory = await asyncio.to_thread(_copy_memory_to_file, source=sqlite_instance, path=tmp_path / "refresh.db")
+    try:
+        with use_sqlite_memory(memory):
+            yield memory
+    finally:
+        await memory.dispose_engine_async()
 
 
 @pytest.fixture
@@ -783,3 +826,172 @@ async def test_refresh_checks_all_fetches_before_independent_writes_async(
         "first-0" if failure == "write" else "Original"
     ]
     assert [seed.value for seed in await sqlite_instance.get_seeds_async(dataset_name="last")] == ["Original"]
+
+
+class _CandidateShapingConfiguration(DatasetAttackConfiguration):
+    def _build_attack_groups(self, seeds: list[Seed[Any]]) -> list[AttackSeedGroup]:
+        if any(seed.value.startswith("invalid") for seed in seeds):
+            raise DatasetConstraintError("Candidate shaping failed.")
+        if any(seed.value.startswith("empty") for seed in seeds):
+            return []
+        return super()._build_attack_groups(seeds)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["group", "minimum", "type", "filter", "filtered-minimum", "shaping", "empty", "compound-child", "compound-total"],
+)
+async def test_refresh_invalid_population_preserves_values_and_ids_async(
+    *, file_memory: SQLiteMemory, failure: str, configured_provider: bool
+) -> None:
+    memory = file_memory
+    for name in ("fresh", "retained"):
+        old = dataset(name, 3).seeds
+        for seed in old:
+            seed.harm_categories = ["keep"]
+        await memory.add_seeds_to_memory_async(seeds=old, added_by="user")
+    before = {name: await memory.get_seeds_async(dataset_name=name) for name in ("fresh", "retained")}
+    provider = MagicMock(spec=SeedDatasetProvider)
+    provider.dataset_name = "fresh"
+    candidate = dataset("fresh", 2)
+    if failure == "group":
+        shared_id = uuid4()
+        for seed in candidate.seeds:
+            seed.prompt_group_id = shared_id
+    elif failure in ("shaping", "empty"):
+        for seed in candidate.seeds:
+            seed.value = ("invalid" if failure == "shaping" else "empty") + seed.value
+    elif failure == "type":
+        candidate = SeedDataset(
+            dataset_name="fresh", seeds=[SeedPrompt(value="Not an objective", dataset_name="fresh")]
+        )
+    elif failure == "filtered-minimum":
+        candidate.seeds[0].harm_categories = ["keep"]
+        candidate.seeds[1].harm_categories = ["other"]
+    provider.fetch_dataset_async.return_value = candidate
+    source = DatasetSource(
+        name="fresh", fetch=DatasetFetchPolicy.ALWAYS, provider=provider if configured_provider else None
+    )
+    retained = DatasetSource(name="retained", fetch=DatasetFetchPolicy.NEVER)
+    if failure.startswith("compound"):
+        config = CompoundDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(
+                    sources=[source], validators=[require_min_size(3)] if failure == "compound-child" else []
+                ),
+                DatasetAttackConfiguration(sources=[retained]),
+            ],
+            validators=[require_min_size(6)] if failure == "compound-total" else [],
+            max_total=1,
+        )
+    else:
+        validators = [require_min_size(6)] if failure == "minimum" else []
+        if failure == "filtered-minimum":
+            validators = [require_min_size(5)]
+        elif failure == "type":
+            validators = [require_seed_type(SeedObjective)]
+        filters = {"harm_categories": ["not_present"]} if failure == "filter" else None
+        if failure == "filtered-minimum":
+            filters = {"harm_categories": ["keep"]}
+        config = _CandidateShapingConfiguration(
+            sources=[source] if failure == "empty" else [source, retained],
+            validators=validators,
+            filters=filters,
+            max_total=1,
+        )
+    with (
+        patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={"fresh": provider}),
+        pytest.raises(ValueError),
+    ):
+        await config.prepare_async()
+    for name, old_seeds in before.items():
+        after = await memory.get_seeds_async(dataset_name=name)
+        assert {seed.id: seed.value for seed in after} == {seed.id: seed.value for seed in old_seeds}
+    assert await memory.get_scenario_results_async() == []
+    # The rejected candidates must not remain visible to subsequent reads.
+    if failure != "filter":
+        assert len(await config.get_attack_seed_groups_async(apply_sampling=False)) >= 3
+    else:
+        restored = config.with_overrides(filters={"harm_categories": []})
+        assert len(await restored.get_attack_seed_groups_async(apply_sampling=False)) == 6
+
+
+@pytest.mark.parametrize("compound", [False, True])
+async def test_refresh_validation_includes_retained_sources_before_sampling_async(
+    *, file_memory: SQLiteMemory, compound: bool
+) -> None:
+    for name in ("fresh", "retained"):
+        await file_memory.add_seeds_to_memory_async(seeds=dataset(name, 3).seeds, added_by="user")
+    provider = MagicMock(spec=SeedDatasetProvider)
+    provider.dataset_name = "fresh"
+    provider.fetch_dataset_async.return_value = dataset("fresh", 2)
+    fresh = DatasetSource(name="fresh", fetch=DatasetFetchPolicy.ALWAYS, provider=provider)
+    retained = DatasetSource(name="retained", fetch=DatasetFetchPolicy.NEVER)
+    config = (
+        CompoundDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(sources=[fresh]),
+                DatasetAttackConfiguration(sources=[retained]),
+            ],
+            validators=[require_min_size(5)],
+            max_total=1,
+        )
+        if compound
+        else DatasetAttackConfiguration(sources=[fresh, retained], validators=[require_min_size(5)], max_total=1)
+    )
+    await config.prepare_async()
+    assert len(await file_memory.get_seeds_async(dataset_name="fresh")) == 2
+    assert len(await config.get_attack_seed_groups_async()) == 1
+
+
+class _RefreshTechnique(ScenarioTechnique):
+    ALL = ("all", {"all"})
+    DIRECT = ("direct", set())
+
+    @classmethod
+    def get_aggregate_tags(cls) -> set[str]:
+        return {"all"}
+
+
+class _RefreshValidationScenario(Scenario):
+    BASELINE_ATTACK_POLICY = BaselineAttackPolicy.Forbidden
+
+    def __init__(self, *, config: DatasetAttackConfiguration) -> None:
+        super().__init__(
+            version=1,
+            technique_class=_RefreshTechnique,
+            objective_scorer=SubStringScorer(substring="yes"),
+            default_dataset_config=config,
+        )
+
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        raise AssertionError("Invalid candidates must fail before attack construction.")
+
+
+@pytest.mark.parametrize("failure", ["group", "minimum"])
+async def test_scenario_invalid_refresh_preserves_file_backed_dataset_async(
+    *, file_memory: SQLiteMemory, failure: str
+) -> None:
+    await file_memory.add_seeds_to_memory_async(seeds=dataset("fresh", 3).seeds, added_by="user")
+    before = await file_memory.get_seeds_async(dataset_name="fresh")
+    candidate = dataset("fresh", 2)
+    if failure == "group":
+        shared_id = uuid4()
+        for seed in candidate.seeds:
+            seed.prompt_group_id = shared_id
+    provider = MagicMock(spec=SeedDatasetProvider)
+    provider.dataset_name = "fresh"
+    provider.fetch_dataset_async.return_value = candidate
+    scenario = _RefreshValidationScenario(
+        config=DatasetAttackConfiguration(
+            sources=[DatasetSource(name="fresh", provider=provider)],
+            fetch=DatasetFetchPolicy.ALWAYS,
+            validators=[require_min_size(3)],
+        )
+    )
+    scenario.set_params_from_args(args={"objective_target": MockPromptTarget()})
+    with pytest.raises(ValueError, match="only have one objective|require at least"):
+        await scenario.initialize_async()
+    after = await file_memory.get_seeds_async(dataset_name="fresh")
+    assert {seed.id: seed.value for seed in after} == {seed.id: seed.value for seed in before}
+    assert await file_memory.get_scenario_results_async() == []
