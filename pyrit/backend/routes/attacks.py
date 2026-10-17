@@ -43,6 +43,7 @@ from pyrit.backend.models.common import (
 )
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError, get_attack_service
+from pyrit.backend.services.history_replay import HistoryReplayError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.media_persistence import MediaAccessDeniedError
 from pyrit.common.deprecation import print_deprecation_message
@@ -276,6 +277,8 @@ async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:  
     except LookupError as e:
         raise FileNotFoundError(str(e)) from e
     except MediaAccessDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except HistoryReplayError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ValueError as e:
         raise HTTPException(

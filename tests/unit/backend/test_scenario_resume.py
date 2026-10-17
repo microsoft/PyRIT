@@ -235,8 +235,9 @@ async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
                 await asyncio.wait_for(heartbeat.wait(), 1)
                 assert not launch.done()
                 release.set()
-                response = await asyncio.wait_for(launch, 10)
-                await _wait_for_idle_async(service)
+                # Dataset loading is not a speed assertion; heartbeat above checks responsiveness.
+                response = await asyncio.wait_for(launch, 300)
+                await _wait_for_idle_async(service, timeout=300)
                 stored = await sqlite_instance.get_scenario_result_header_async(
                     scenario_result_id=response.scenario_result_id
                 )

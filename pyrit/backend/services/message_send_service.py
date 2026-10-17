@@ -28,6 +28,7 @@ from pyrit.backend.models.message_sends import (
     RequestConverterMode,
 )
 from pyrit.backend.services.converter_service import get_converter_service
+from pyrit.backend.services.history_replay import validate_history_replay
 from pyrit.backend.services.manual_send_scheduler import (
     ManualSendConflictError,
     ManualSendQueueFullError,
@@ -66,6 +67,7 @@ class _ValidatedMessage:
     request_configurations: list[ConverterConfiguration]
     response_configurations: list[ConverterConfiguration]
     applied_identifiers: dict[int, list[ConverterIdentifier]]
+    replay_target: PromptTarget | None = None
 
 
 @dataclass(kw_only=True)
@@ -305,12 +307,25 @@ class MessageSendService:
         )
         if request.send and target is None:
             raise ValueError(f"Target object for '{target_registry_name}' not found")
+        replay_target = None
+        original_registry_name = ar.metadata.get("target_registry_name")
+        if isinstance(request, MessageSendRequest) and request.count > 1 and isinstance(original_registry_name, str):
+            replay_target = get_target_service().get_target_object(target_registry_name=original_registry_name)
+            if replay_target is None:
+                raise ValueError("The original attack target is unavailable. Choose a new attack.")
+            self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=replay_target)
+        if isinstance(request, MessageSendRequest) and request.count > 1 and target is not None:
+            history = await self._memory.get_conversation_messages_async(conversation_id=msg_conversation_id)
+            if replay_target is not None and replay_target is not target:
+                validate_history_replay(target=replay_target, messages=history)
+            validate_history_replay(target=target, messages=history)
 
         return _ValidatedMessage(
             target=target,
             request_configurations=request_converter_configs,
             response_configurations=response_converter_configs,
             applied_identifiers=resolve_applied_converter_identifiers(request.pieces),
+            replay_target=replay_target,
         )
 
     async def _validate_repeat_history_async(self, *, request: MessageSendRequest, target: PromptTarget | None) -> None:
@@ -441,6 +456,10 @@ class MessageSendService:
         if source.target_identifier is None:
             source.target_identifier = validated.target.get_identifier()
         history = list(await self._memory.get_conversation_messages_async(conversation_id=source.conversation_id))
+        # Recheck after queueing: the source history may have changed since admission.
+        if validated.replay_target is not None and validated.replay_target is not validated.target:
+            validate_history_replay(target=validated.replay_target, messages=history)
+        validate_history_replay(target=validated.target, messages=history)
         sequence = max((message.sequence for message in history), default=-1) + 1
         operation.status.request_turn_number = sequence
         message = await self._prepare_message_async(
