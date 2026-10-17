@@ -13,6 +13,11 @@ jest.mock("axios", () => ({
   })),
 }));
 
+jest.mock("./compatibility", () => {
+  const actual = jest.requireActual<typeof import("./compatibility")>("./compatibility");
+  return { ...actual, compatibility: new actual.CompatibilityStore(`1.2.0.dev0+g${"a".repeat(40)}`) };
+});
+
 import {
   apiClient,
   authApi,
@@ -26,10 +31,62 @@ import {
   attacksApi,
   labelsApi,
   scenariosApi,
+  operationsApi,
   datasetsApi,
+  analyticsApi,
 } from "./api";
+import { compatibility, COMPATIBILITY_HEADER } from "./compatibility";
+import { makeAnalyticsFacets, makeAnalyticsReport, makeAnalyticsResults } from "@/test-utils/analyticsFixtures";
+import { DEFAULT_ANALYTICS_VIEW } from "@/utils/attackAnalytics";
 
 describe("api service", () => {
+  describe("operationsApi", () => {
+    it("reads canonical harm categories without copying the taxonomy into the frontend", async () => {
+      const options = { harm_types: ["Malware", "Other"] };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: options });
+      expect(await operationsApi.getFindingOptions()).toEqual(options);
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/finding-options");
+    });
+    it("encodes evidence scope, searches literally, and preserves duplicate feedback", async () => {
+      const page = { items: [], has_more: false, next_offset: null };
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: page });
+      expect(await operationsApi.listFindings("a/b", { limit: 20, offset: 0, title: "%_" })).toEqual(page);
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/findings", {
+        params: { limit: 20, offset: 0, title: "%_" },
+      });
+      const request = { attack_result_id: "attack", conversation_id: "conversation" };
+      const result = { item: { id: "evidence" }, created: false };
+      (apiClient.post as jest.Mock).mockResolvedValue({ data: result });
+      expect(await operationsApi.attachFindingEvidence("a/b", "c/d", request)).toEqual(result);
+      expect(apiClient.post).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd/evidence", request);
+      expect(await operationsApi.listFindingEvidence("a/b", "c/d", { limit: 20, offset: 20 })).toEqual(page);
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd/evidence", {
+        params: { limit: 20, offset: 20 },
+      });
+      await operationsApi.detachFindingEvidence("a/b", "c/d", "e/f");
+      expect(apiClient.delete).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd/evidence/e%2Ff");
+    });
+    it("nests finding requests under an encoded operation ID", async () => {
+      const request = { title: "Assessment", description: "", severity: "low" as const };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: { name: "Case" } });
+      await operationsApi.create({ name: " Case / α% " });
+      expect(apiClient.post).toHaveBeenCalledWith("/operations", { name: " Case / α% " });
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: request });
+      expect(await operationsApi.createFinding("a/b", request)).toEqual(request);
+      expect(apiClient.post).toHaveBeenCalledWith("/operations/a%2Fb/findings", request);
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { items: [], has_more: false, next_offset: null } });
+      await operationsApi.listFindings("a/b", { limit: 20, offset: 0 });
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/findings", {
+        params: { limit: 20, offset: 0 },
+      });
+      (apiClient.put as jest.Mock).mockResolvedValueOnce({ data: request });
+      expect(await operationsApi.updateFinding("a/b", "c/d", request)).toEqual(request);
+      expect(apiClient.put).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd", request);
+      (apiClient.delete as jest.Mock).mockResolvedValueOnce({ data: undefined });
+      expect(await operationsApi.deleteFinding("a/b", "c/d")).toBeUndefined();
+      expect(apiClient.delete).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd");
+    });
+  });
   // Interceptor functions are registered at module-load time.
   // Capture them before beforeEach's clearAllMocks wipes the call records.
   const requestInterceptor = (apiClient.interceptors.request.use as jest.Mock).mock.calls[0]?.[0];
@@ -157,6 +214,42 @@ describe("api service", () => {
       );
 
       consoleSpy.mockRestore();
+    });
+  });
+
+  describe("analyticsApi", () => {
+    it("should pass SDK payloads and cancellation through the shared client without aggregation", async () => {
+      const controller = new AbortController();
+      const report = makeAnalyticsReport();
+      const results = makeAnalyticsResults();
+      const facets = makeAnalyticsFacets();
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: report })
+        .mockResolvedValueOnce({ data: results }).mockResolvedValueOnce({ data: facets });
+      const query = { filters: DEFAULT_ANALYTICS_VIEW.filters };
+      expect(await analyticsApi.query(query, controller.signal)).toBe(report);
+      expect(apiClient.post).toHaveBeenLastCalledWith("/analytics/attacks/query", query, { signal: controller.signal });
+      const pageQuery = { ...query, cursor: "opaque", limit: 25 };
+      expect(await analyticsApi.results(pageQuery, controller.signal)).toBe(results);
+      expect(apiClient.post).toHaveBeenLastCalledWith("/analytics/attacks/results", pageQuery, { signal: controller.signal });
+      const facetQuery = { ...query, dimension: DEFAULT_ANALYTICS_VIEW.groupBy, offset: 50 };
+      expect(await analyticsApi.facets(facetQuery, controller.signal)).toBe(facets);
+      expect(apiClient.post).toHaveBeenLastCalledWith("/analytics/attacks/facets", facetQuery, { signal: controller.signal });
+      expect(apiClient.post).toHaveBeenCalledTimes(3);
+    });
+
+    it("should attach the packaged compatibility identity to analytics business requests", async () => {
+      await compatibility.verify(async () => ({ compatibility_id: compatibility.bundledId }));
+      for (const operation of ["query", "results", "facets"]) {
+        const headers = new Map<string, string>();
+        await requestInterceptor({ headers, method: "post", url: `/analytics/attacks/${operation}` });
+        expect(headers.get(COMPATIBILITY_HEADER)).toBe(compatibility.bundledId);
+      }
+    });
+
+    it("should surface analytics failures without a success-shaped fallback", async () => {
+      const failure = new Error("Deadline exceeded");
+      (apiClient.post as jest.Mock).mockRejectedValueOnce(failure);
+      await expect(analyticsApi.query({})).rejects.toBe(failure);
     });
   });
 

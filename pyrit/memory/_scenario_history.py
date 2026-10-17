@@ -43,6 +43,7 @@ class _ScenarioHistoryQueries:
         scenario_names: Sequence[str] | None,
         statuses: Sequence[str] | None,
         labels: Mapping[str, str | Sequence[str]] | None,
+        operation_ids: Sequence[uuid.UUID] | None = None,
         cursor: ScenarioHistoryKeysetCursor | None,
         limit: int,
     ) -> tuple[list[ScenarioHistoryRunRecord], bool]:
@@ -53,6 +54,7 @@ class _ScenarioHistoryQueries:
             scenario_names: Filter by scenario name or registry name (exact match after strip).
             statuses: Filter by scenario run state (case-insensitive, normalized to upper).
             labels: Filter by label key-value pairs (exact match; keys restricted to [A-Za-z0-9_.-]+).
+            operation_ids: Saved Operation IDs to match, without legacy name resolution.
             cursor: Keyset cursor for pagination (timestamp DESC, id DESC).
             limit: Page size (1-100).
 
@@ -70,6 +72,8 @@ class _ScenarioHistoryQueries:
             raise ValueError("Scenario history limit must be between 1 and 100.")
 
         conditions: list[Any] = []
+        if operation_ids:
+            conditions.append(ScenarioResultEntry.operation_id.in_(operation_ids))
         effective_names = sorted({name.strip() for name in scenario_names or [] if name.strip()})
         if effective_names:
             conditions.append(
@@ -114,6 +118,7 @@ class _ScenarioHistoryQueries:
             ScenarioResultEntry.objective_target_identifier,
             ScenarioResultEntry.scenario_run_state,
             ScenarioResultEntry.labels,
+            ScenarioResultEntry.operation_id,
             ScenarioResultEntry.timestamp,
             self._memory._get_scenario_started_at_expression().label("started_at"),
             ScenarioResultEntry.completion_time,
@@ -148,6 +153,7 @@ class _ScenarioHistoryQueries:
                 objective_target_identifier=row.objective_target_identifier or {},
                 status=row.scenario_run_state,
                 labels=row.labels or {},
+                operation_id=row.operation_id,
                 created_at=row.timestamp,
                 started_at=_parse_scenario_started_at(raw_value=row.started_at),
                 completed_at=row.completion_time,

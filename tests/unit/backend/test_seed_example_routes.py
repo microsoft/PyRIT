@@ -4,6 +4,7 @@
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -41,7 +42,7 @@ async def client(patch_central_database, compatibility_headers: dict[str, str]) 
     get_dataset_service.cache_clear()
 
 
-async def _store(memory: MemoryInterface, *seeds: Seed) -> None:
+async def _store(memory: MemoryInterface, *seeds: Seed[Any]) -> None:
     async with await memory.get_session_async() as session:
         session.add_all(SeedEntry(entry=seed) for seed in seeds)
         await session.commit()

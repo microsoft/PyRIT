@@ -35,6 +35,9 @@ validate_infra_topology() {
   existing_pip_ip_tags=$(az network public-ip show \
     --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME-egress-pip" \
     --query 'ipTags || `[]`' -o json | jq -c .)
+  existing_sql_subnet_prefix=$(az network vnet show --ids "$expected_vnet_id" \
+    --query "subnets[?name=='$PYRIT_APP_NAME-sql-subnet'].addressPrefix | [0]" -o tsv)
+  [[ "$existing_sql_subnet_prefix" != None && "$existing_sql_subnet_prefix" != null ]] || existing_sql_subnet_prefix=""
 }
 
 build_infra_parameters() {
@@ -50,6 +53,7 @@ build_infra_parameters() {
     "frontDoorPrivateLinkRequestMessage=$private_link_request_message"
     "vnetAddressPrefix=$PYRIT_VNET_ADDRESS_PREFIX"
     "infrastructureSubnetAddressPrefix=$PYRIT_INFRASTRUCTURE_SUBNET_ADDRESS_PREFIX"
+    "sqlSubnetAddressPrefix=${existing_sql_subnet_prefix:-}"
     "egressPublicIpTags=$existing_pip_ip_tags"
     "protectEgressPublicIp=true"
     "tags=$deployment_tags"

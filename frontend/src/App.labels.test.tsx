@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
-import { attacksApi, labelsApi, runtimeApi, scenariosApi, targetsApi, versionApi } from '@/services/api'
+import { attacksApi, labelsApi, operationsApi, runtimeApi, scenariosApi, targetsApi, versionApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { RegisteredScenario } from '@/types'
 import { exportConversation } from '@/utils/conversationExport'
@@ -41,6 +41,7 @@ jest.mock('@/services/api', () => ({
   authApi: { getAccess: jest.fn().mockResolvedValue({ isAdmin: false }) },
   versionApi: { getVersion: jest.fn() },
   labelsApi: { getLabels: jest.fn() },
+  operationsApi: { list: jest.fn(), get: jest.fn(), create: jest.fn() },
   attacksApi: {
     listAttacks: jest.fn(),
     getAttack: jest.fn(),
@@ -92,9 +93,17 @@ const SCENARIO: RegisteredScenario = {
   },
 }
 const TARGET = makeTarget({ target_registry_name: 'test_target', identifier_hash: 'test_hash' })
-const DEFAULT_LABELS = { operator: 'config_user', operation: 'config_op', team: 'config_team' }
+const DEFAULT_LABELS = { operator: 'config_user', team: 'config_team' }
+const DEFAULT_OPERATION = 'config_op'
 const SAVED_LABELS = { operator: 'original_user', operation: 'original_op', team: 'original_team' }
+const SAVED_OPERATIONS = {
+  items: [
+    'config_op', 'config_op_v2', 'config_op_v3', 'new_default', 'original_op', 'test_op', 'remembered_op',
+    'signed_in_op', 'early_choice', 'future_op', 'user_op',
+  ].map(name => ({ id: `operation-${name}`, name, created_at: '2026-10-07T16:00:00Z' })),
+}
 const SCENARIO_PATH = '/scanner/test.scenario'
+const operationId = (name: string): string => `operation-${name}`
 
 function renderApp(path = SCENARIO_PATH) {
   return render(
@@ -109,13 +118,18 @@ function currentLabels(): HTMLElement {
 }
 
 async function chooseOperation(user: ReturnType<typeof userEvent.setup>, operation: string): Promise<void> {
-  await user.click(within(currentLabels()).getByRole('button', { name: /^Edit operation, currently / }))
-  await user.click(screen.getByRole('combobox', { name: 'Operation' }))
+  await user.click(within(currentLabels()).getByRole('combobox', { name: 'Operation' }))
   await user.paste(operation)
   await user.keyboard('{ArrowDown}')
-  await user.click(await screen.findByRole('option', { name: `Create "${operation}"` }))
-  expect(within(currentLabels()).getByRole('button', { name: `Edit operation, currently ${operation}` }))
+  await user.click(await screen.findByRole('option', { name: operation, exact: true }))
+  expect(within(currentLabels()).getByRole('combobox', { name: 'Operation' }))
     .toBeInTheDocument()
+}
+
+/** Picks the saved record for a proposed name from the dropdown, as a user does from the Not registered recovery. */
+async function chooseExisting(user: ReturnType<typeof userEvent.setup>, operation: string): Promise<void> {
+  await user.click(within(currentLabels()).getByRole('combobox', { name: 'Operation' }))
+  await user.click(await screen.findByRole('option', { name: operation, exact: true }))
 }
 
 async function launchScenario(user: ReturnType<typeof userEvent.setup>): Promise<void> {
@@ -133,8 +147,16 @@ describe('Shared new run labels', () => {
     mockGetActiveAccount.mockReturnValue(null)
     jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: true, state: 'ready', generation: '' })
     jest.mocked(versionApi.getVersion).mockReset()
-    jest.mocked(versionApi.getVersion).mockResolvedValue({ version: '1.0.0', default_labels: DEFAULT_LABELS })
+    jest.mocked(versionApi.getVersion).mockResolvedValue({
+      version: '1.0.0', default_labels: DEFAULT_LABELS, default_operation: DEFAULT_OPERATION,
+    })
     jest.mocked(labelsApi.getLabels).mockResolvedValue({ source: 'attacks', labels: {} })
+    jest.mocked(operationsApi.list).mockResolvedValue(SAVED_OPERATIONS)
+    jest.mocked(operationsApi.get).mockImplementation(async (id: string) => {
+      const saved = SAVED_OPERATIONS.items.find(item => item.id === id)
+      if (!saved) throw { isAxiosError: true, response: { status: 404, data: { detail: 'Not found' } } }
+      return saved
+    })
     jest.mocked(targetsApi.listTargets).mockResolvedValue({
       items: [TARGET], pagination: { limit: 200, has_more: false },
     })
@@ -179,8 +201,8 @@ describe('Shared new run labels', () => {
   it('edits operator, operation, and custom labels during scenario setup and sends them on launch', async () => {
     const user = userEvent.setup()
     renderApp()
-    await user.click(await screen.findByRole('button', { name: 'Edit operator, currently config_user' }))
-    const operator = screen.getByRole('textbox', { name: 'Value for operator label' })
+    await user.click(await screen.findByRole('textbox', { name: 'Operator' }))
+    const operator = screen.getByRole('textbox', { name: 'Operator' })
     await user.clear(operator)
     await user.paste('test_user')
     await user.keyboard('{Enter}')
@@ -197,14 +219,15 @@ describe('Shared new run labels', () => {
     await launchScenario(user)
     expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
       scenario_name: 'test.scenario',
-      labels: { operator: 'test_user', operation: 'test_op', team: 'config_team', campaign: 'regression' },
+      labels: { operator: 'test_user', team: 'config_team', campaign: 'regression' },
+      operation_id: operationId('test_op'),
     }))
   })
 
   it('keeps one editor through navigation and restores choices without pinning backend defaults', async () => {
     const user = userEvent.setup()
     const app = renderApp()
-    await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+    await screen.findByRole('combobox', { name: 'Operation' })
     await chooseOperation(user, 'remembered_op')
     const bar = currentLabels()
 
@@ -212,21 +235,22 @@ describe('Shared new run labels', () => {
       await user.click(screen.getByRole('button', { name: destination, exact: true }))
       expect(screen.getAllByTestId('labels-bar')).toHaveLength(1)
       expect(currentLabels()).toBe(bar)
-      expect(within(bar).getByRole('button', { name: /currently remembered_op$/ })).toBeInTheDocument()
+      expect(within(bar).getByRole('combobox', { name: 'Operation' })).toHaveValue('remembered_op')
     }
     await user.click(await screen.findByRole('link', { name: 'test.scenario' }))
     await screen.findByRole('combobox', { name: 'Objective Target' })
     expect(currentLabels()).toBe(bar)
-    expect(readUserPreferences('local').labels)
-      .toEqual({ operation: 'remembered_op' })
+    expect(readUserPreferences('local')).toEqual(expect.objectContaining({
+      labels: {}, operation: { id: operationId('remembered_op') },
+    }))
 
     app.unmount()
     jest.mocked(versionApi.getVersion).mockResolvedValue({
-      version: '1.0.0', default_labels: { ...DEFAULT_LABELS, operation: 'new_default', team: 'new_team' },
+      version: '1.0.0', default_labels: { ...DEFAULT_LABELS, team: 'new_team' }, default_operation: 'new_default',
     })
     renderApp()
     await screen.findByRole('button', { name: 'Edit team label, currently new_team' })
-    expect(screen.getByRole('button', { name: /currently remembered_op$/ })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('remembered_op')
   })
 
   it('uses the signed-in alias ahead of stored and backend operators when launching', async () => {
@@ -239,15 +263,17 @@ describe('Shared new run labels', () => {
       username: 'Signed.In@contoso.com', tenantId: 'tenant', homeAccountId: 'signed-in',
     })
     renderApp()
-    const operator = await screen.findByRole('button', { name: 'Signed-in operator: signed.in' })
-    expect(operator).toHaveAttribute('aria-disabled', 'true')
+    const operator = await screen.findByRole('textbox', { name: 'Signed-in operator' })
+    expect(operator).toHaveValue('signed.in')
+    expect(operator).toHaveAttribute('readonly')
     await user.click(operator)
     expect(screen.queryByRole('textbox', { name: 'Value for operator label' })).not.toBeInTheDocument()
     await chooseOperation(user, 'signed_in_op')
     await launchScenario(user)
     expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
       scenario_name: 'test.scenario',
-      labels: { operator: 'signed.in', operation: 'signed_in_op', team: 'config_team' },
+      labels: { operator: 'signed.in', team: 'config_team' },
+      operation_id: operationId('signed_in_op'),
     }))
   })
 
@@ -280,20 +306,22 @@ describe('Shared new run labels', () => {
 
   it('preserves an edit made before the backend defaults arrive', async () => {
     const user = userEvent.setup()
-    let resolveVersion: (value: { version: string; default_labels: Record<string, string> }) => void = () => {}
+    let resolveVersion: (value: Awaited<ReturnType<typeof versionApi.getVersion>>) => void = () => {}
     jest.mocked(versionApi.getVersion).mockReturnValue(new Promise((resolve) => { resolveVersion = resolve }))
     renderApp()
     await chooseOperation(user, 'early_choice')
-    await act(async () => { resolveVersion({ version: '1.0.0', default_labels: DEFAULT_LABELS }) })
-    await screen.findByRole('button', { name: 'Edit operator, currently config_user' })
-    expect(screen.getByRole('button', { name: /currently early_choice$/ })).toBeInTheDocument()
+    await act(async () => {
+      resolveVersion({ version: '1.0.0', default_labels: DEFAULT_LABELS, default_operation: DEFAULT_OPERATION })
+    })
+    await screen.findByRole('textbox', { name: 'Operator' })
+    expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('early_choice')
   })
 
   it('leaves saved scenario attribution unchanged when future launch labels change', async () => {
     const user = userEvent.setup()
     renderApp('/scanner-history/saved_run')
     const saved = screen.getByRole('region', { name: 'Run configuration' })
-    await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+    await screen.findByRole('combobox', { name: 'Operation' })
     await chooseOperation(user, 'future_op')
     expect(saved).toHaveTextContent('original_user')
     expect(saved).toHaveTextContent('original_op')
@@ -351,7 +379,44 @@ describe('Shared new run labels', () => {
     await user.click(within(toolbar).getByRole('button', { name: 'New Attack' }))
     expect(await screen.findByRole('button', { name: 'New Attack' })).toBeDisabled()
     expect(screen.queryByTestId('operator-locked-banner')).not.toBeInTheDocument()
-    expect(within(currentLabels()).getByRole('button', { name: /currently future_op$/ })).toBeInTheDocument()
+    expect(within(currentLabels()).getByRole('combobox', { name: 'Operation' })).toHaveValue('future_op')
+  })
+
+  it.each(['configured default', 'saved preference'])(
+    'shows a %s as Not registered without creating or clearing it while the table is empty',
+    async (source: string) => {
+      const user = userEvent.setup()
+      jest.mocked(operationsApi.list).mockResolvedValue({ items: [] })
+      if (source === 'saved preference') {
+        writeUserPreferences('local', { ...DEFAULT_USER_PREFERENCES, labels: { operation: 'legacy_pref' } })
+      }
+      const proposed = source === 'saved preference' ? 'legacy_pref' : DEFAULT_OPERATION
+      renderApp()
+      const picker = await within(currentLabels()).findByRole('combobox', { name: 'Operation' })
+      await waitFor(() => expect(picker).toHaveValue(proposed))
+      expect(within(currentLabels()).getByText('Not registered')).toBeInTheDocument()
+      expect(await screen.findByText(/Choose a saved Operation, register, or clear this one/)).toBeInTheDocument()
+      await user.selectOptions(await screen.findByRole('combobox', { name: 'Objective Target' }), 'test_target')
+      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+      expect(operationsApi.create).not.toHaveBeenCalled()
+      expect(picker).toHaveValue(proposed)
+    },
+  )
+
+  it('keeps an explicit clear over the configured default after a reload', async () => {
+    const user = userEvent.setup()
+    const app = renderApp()
+    await waitFor(() => expect(within(currentLabels()).getByRole('combobox', { name: 'Operation' })).toHaveValue(DEFAULT_OPERATION))
+    await user.click(within(currentLabels()).getByRole('button', { name: 'Clear' }))
+    expect(readUserPreferences('local').operation).toBeNull()
+
+    app.unmount()
+    renderApp()
+    await screen.findByRole('textbox', { name: 'Operator' })
+    expect(within(currentLabels()).getByRole('combobox', { name: 'Operation' })).toHaveValue('')
+    expect(within(currentLabels()).queryByText('Not registered')).not.toBeInTheDocument()
+    await launchScenario(user)
+    expect(jest.mocked(scenariosApi.startRun).mock.calls[0][0]).not.toHaveProperty('operation_id')
   })
 
   describe('runtime generation defaults', () => {
@@ -378,40 +443,39 @@ describe('Shared new run labels', () => {
 
       await screen.findByText(/PyRIT runtime: unavailable/)
       expect(screen.getByRole('button', { name: 'Home', exact: true })).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Edit operation, currently config_op' }))
-        .not.toBeInTheDocument()
+      expect(screen.queryByDisplayValue('config_op')).not.toBeInTheDocument()
 
       await pollGeneration('gen-1')
-      expect(await screen.findByRole('button', { name: 'Edit operation, currently config_op' }))
-        .toBeInTheDocument()
+      expect(await screen.findByDisplayValue('config_op')).toBeInTheDocument()
     })
 
     it('refetches once per generation and keeps user overrides on launch', async () => {
       const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
       renderApp()
-      await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+      await screen.findByDisplayValue('config_op')
       await chooseOperation(user, 'user_op')
       const callsAfterFirstLoad = jest.mocked(versionApi.getVersion).mock.calls.length
 
       jest.mocked(versionApi.getVersion).mockResolvedValue({
-        version: '1.0.0', default_labels: { ...DEFAULT_LABELS, operation: 'config_op_v2' },
+        version: '1.0.0', default_labels: DEFAULT_LABELS, default_operation: 'config_op_v2',
       })
       await pollGeneration('gen-2')
       await pollGeneration('gen-2')
 
       expect(versionApi.getVersion).toHaveBeenCalledTimes(callsAfterFirstLoad + 1)
-      expect(screen.getByRole('button', { name: 'Edit operation, currently user_op' })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('user_op')
       await launchScenario(user)
       expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
-        labels: { ...DEFAULT_LABELS, operation: 'user_op' },
+        labels: DEFAULT_LABELS, operation_id: operationId('user_op'),
       }))
     })
 
     it('blocks launches during refresh and records the refreshed default without an override', async () => {
       const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
       let resolveVersion: (value: VersionResponse) => void = () => {}
+      jest.mocked(versionApi.getVersion).mockResolvedValue({ version: '1.0.0', default_labels: DEFAULT_LABELS })
       renderApp()
-      await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+      await screen.findByDisplayValue('config_user')
       await user.selectOptions(screen.getByRole('combobox', { name: 'Objective Target' }), 'test_target')
       expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled()
 
@@ -422,13 +486,16 @@ describe('Shared new run labels', () => {
       expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
       expect(scenariosApi.startRun).not.toHaveBeenCalled()
       await act(async () => {
-        resolveVersion({ version: '1.0.0', default_labels: { ...DEFAULT_LABELS, operation: 'config_op_v2' } })
+        resolveVersion({ version: '1.0.0', default_labels: DEFAULT_LABELS, default_operation: 'config_op_v2' })
       })
 
-      expect(screen.getByRole('button', { name: 'Edit operation, currently config_op_v2' })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('config_op_v2')
+      expect(within(currentLabels()).getByText('Not registered')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+      await chooseExisting(user, 'config_op_v2')
       await launchScenario(user)
       expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
-        labels: { ...DEFAULT_LABELS, operation: 'config_op_v2' },
+        labels: DEFAULT_LABELS, operation_id: operationId('config_op_v2'),
       }))
       const saved = await screen.findByRole('region', { name: 'Run configuration' })
       expect(saved).toHaveTextContent('original_op')
@@ -443,7 +510,7 @@ describe('Shared new run labels', () => {
       }
       renderApp()
       if (phase === 'generation refresh') {
-        await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+        await screen.findByDisplayValue('config_op')
         jest.mocked(versionApi.getVersion).mockRejectedValue(failure)
         await pollGeneration('gen-2')
       }
@@ -464,15 +531,15 @@ describe('Shared new run labels', () => {
       await act(async () => {
         resolveVersion({
           version: '1.0.0',
-          default_labels: { ...DEFAULT_LABELS, operation: 'config_op_v2', team: 'new_team' },
+          default_labels: { ...DEFAULT_LABELS, team: 'new_team' }, default_operation: 'config_op_v2',
         })
       })
 
       expect(screen.queryByText(/Could not load default labels/)).not.toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Edit operation, currently user_op' })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('user_op')
       await launchScenario(user)
       expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
-        labels: { ...DEFAULT_LABELS, operation: 'user_op', team: 'new_team' },
+        labels: { ...DEFAULT_LABELS, team: 'new_team' }, operation_id: operationId('user_op'),
       }))
     })
 
@@ -481,7 +548,7 @@ describe('Shared new run labels', () => {
       let resolveVersion: (value: VersionResponse) => void = () => {}
       let rejectVersion: (error: Error) => void = () => {}
       renderApp()
-      await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+      await screen.findByDisplayValue('config_op')
       jest.mocked(versionApi.getVersion).mockReturnValueOnce(new Promise((resolve, reject) => {
         resolveVersion = resolve
         rejectVersion = reject
@@ -489,22 +556,23 @@ describe('Shared new run labels', () => {
       await pollGeneration('gen-2')
       expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
       jest.mocked(versionApi.getVersion).mockResolvedValue({
-        version: '1.0.0', default_labels: { ...DEFAULT_LABELS, operation: 'config_op_v3' },
+        version: '1.0.0', default_labels: DEFAULT_LABELS, default_operation: 'config_op_v3',
       })
       await pollGeneration('gen-3')
       await act(async () => {
         if (outcome === 'success') {
-          resolveVersion({ version: '1.0.0', default_labels: { ...DEFAULT_LABELS, operation: 'config_op_v2' } })
+          resolveVersion({ version: '1.0.0', default_labels: DEFAULT_LABELS, default_operation: 'config_op_v2' })
         } else {
           rejectVersion(new Error('Obsolete refresh failed'))
         }
       })
 
-      expect(screen.getByRole('button', { name: 'Edit operation, currently config_op_v3' })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('config_op_v3')
       expect(screen.queryByText(/Could not load default labels/)).not.toBeInTheDocument()
+      await chooseExisting(user, 'config_op_v3')
       await launchScenario(user)
       expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
-        labels: { ...DEFAULT_LABELS, operation: 'config_op_v3' },
+        labels: DEFAULT_LABELS, operation_id: operationId('config_op_v3'),
       }))
     })
   })

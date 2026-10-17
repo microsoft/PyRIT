@@ -190,6 +190,7 @@ def test_build_server_launch_plan_constructs_platform_settings(
         startup_timeout=3.5,
         executable="python",
         platform_name=platform_name,
+        environment={},
     )
 
     assert plan.base_url == "http://127.0.0.1:8765"
@@ -201,6 +202,8 @@ def test_build_server_launch_plan_constructs_platform_settings(
         "127.0.0.1",
         "--port",
         "8765",
+        "--auth-mode",
+        "local",
         "--config-file",
         "config.yaml",
         "--log-level",
@@ -209,6 +212,47 @@ def test_build_server_launch_plan_constructs_platform_settings(
     assert plan.creation_flags == expected_creation_flags
     assert plan.start_new_session is expected_start_new_session
     assert plan.startup_timeout == 3.5
+
+
+@pytest.mark.parametrize(
+    "environment, expected_mode",
+    [
+        ({"PYRIT_AUTH_MODE": "entra"}, "entra"),
+        ({"PYRIT_AUTH_MODE": "local"}, "local"),
+    ],
+)
+def test_build_server_launch_plan_preserves_explicit_auth_mode(environment, expected_mode):
+    plan = _server_launcher._build_server_launch_plan(
+        host="localhost",
+        port=8000,
+        config_file=None,
+        log_level=None,
+        startup_timeout=3.5,
+        executable="python",
+        platform_name="posix",
+        environment=environment,
+    )
+
+    assert plan.command[plan.command.index("--auth-mode") + 1] == expected_mode
+
+
+def test_build_server_launch_plan_preserves_complete_entra_inference():
+    plan = _server_launcher._build_server_launch_plan(
+        host="localhost",
+        port=8000,
+        config_file=None,
+        log_level=None,
+        startup_timeout=3.5,
+        executable="python",
+        platform_name="posix",
+        environment={
+            "ENTRA_TENANT_ID": "tenant",
+            "ENTRA_CLIENT_ID": "client",
+            "ENTRA_ALLOWED_GROUP_IDS": "group",
+        },
+    )
+
+    assert "--auth-mode" not in plan.command
 
 
 @pytest.mark.parametrize("startup_timeout", [True, 0, -1, float("inf"), float("nan"), "1"])

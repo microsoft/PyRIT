@@ -4,12 +4,53 @@
 """Request contracts for exact converter preview results."""
 
 from typing import get_args
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
-from pyrit.backend.models.attacks import AddMessageRequest, MessagePieceRequest
+from pyrit.backend.models.attacks import (
+    AddMessageRequest,
+    CreateAttackRequest,
+    MessagePieceRequest,
+    SaveConversationRequest,
+)
 from pyrit.models import PromptDataType
+from pyrit.models.catalog.scenario import RunScenarioRequest
+
+
+def _validate_new_activity(
+    kind: str, attribution: dict
+) -> CreateAttackRequest | SaveConversationRequest | RunScenarioRequest:
+    if kind == "create":
+        return CreateAttackRequest.model_validate(attribution)
+    if kind == "save":
+        return SaveConversationRequest.model_validate(
+            {"save_id": str(uuid4()), "destination": "new_attack", **attribution}
+        )
+    return RunScenarioRequest.model_validate({"scenario_name": "test", "target_name": "target", **attribution})
+
+
+@pytest.mark.parametrize("kind", ["create", "save", "scan"])
+def test_new_activity_rejects_malformed_operation_id(kind: str) -> None:
+    with pytest.raises(ValidationError):
+        _validate_new_activity(kind, {"operation_id": "not-a-uuid"})
+
+
+@pytest.mark.parametrize("kind", ["create", "save"])
+@pytest.mark.parametrize("attribution", [{"operation": "Name"}, {"labels": {"operation": "Name"}}])
+def test_attack_requests_keep_deprecated_operation_name_for_resolution(kind: str, attribution: dict) -> None:
+    request = _validate_new_activity(kind, attribution)
+    assert isinstance(request, CreateAttackRequest | SaveConversationRequest)
+    assert (request.operation, request.labels or {}) == ("Name", {})
+
+
+@pytest.mark.parametrize("kind", ["create", "save", "scan"])
+@pytest.mark.parametrize("assigned", [False, True])
+def test_new_activity_has_typed_optional_operation_id(kind: str, assigned: bool) -> None:
+    operation_id = uuid4() if assigned else None
+    attribution = {"operation_id": str(operation_id)} if assigned else {}
+    assert _validate_new_activity(kind, attribution).operation_id == operation_id
 
 
 def test_add_message_rejects_save_only_source_reference() -> None:

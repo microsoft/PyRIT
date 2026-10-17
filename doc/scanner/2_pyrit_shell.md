@@ -44,6 +44,7 @@ Once starting the shell, you will see the list of commands you have access to. S
 | `list-initializers` | List all available initializers |
 | `list-targets` | List all available targets from the registry |
 | `list-converters` | List all registered converter instances |
+| `list-operations` | List saved Operation names and IDs |
 | `run <scenario> [options]` | Run a scenario with optional parameters |
 | `scenario-history [N]` | List recent scenario runs and their IDs |
 | `scenario-results <id> [options]` | Inspect overview or attack-level results for a scenario run |
@@ -94,6 +95,18 @@ pyrit> run foundry.red_team_agent --target my_target --initializers target --max
 pyrit> run garak.encoding --target my_target --initializers target --memory-labels '{"experiment":"test1","version":"v2"}'
 ```
 
+To select a saved Operation:
+
+```text
+pyrit> list-operations
+pyrit> run garak.encoding --target my_target --operation-id <UUID>
+```
+
+Use an ID returned by `list-operations`. Omitting `--operation-id` leaves the run
+unassigned. `operation` in `--memory-labels` is deprecated and will be removed in 1.4.0.
+Until then it links the run to the saved Operation with that name when one exists,
+and is otherwise kept as a plain name.
+
 ### Override Defaults Per-Run
 
 ```bash
@@ -109,6 +122,7 @@ pyrit> run garak.encoding --target my_target --initializers target --log-level D
 --max-concurrency <N>           Maximum concurrent operations
 --max-retries <N>               Maximum retry attempts
 --memory-labels <JSON>          JSON string of labels
+--operation-id <UUID>          Saved Operation ID for this run
 --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 ```
 
