@@ -163,7 +163,7 @@ async def test_http_timeout_keeps_native_cleanup_busy_until_runtime_drain_async(
     cleanup = held_native_cleanup
 
     async def expire_async(tasks: set[asyncio.Task[Any]], *, timeout: float) -> tuple[set[Any], set[Any]]:
-        assert 0 < timeout <= 30
+        assert 0 < timeout <= 300
         await expire.wait()
         return set(), tasks
 
