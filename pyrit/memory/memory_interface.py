@@ -152,6 +152,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _deprecate_message_labels(*, method: str) -> None:
+    """
+    Warn that message-level label filtering is going away.
+
+    Labels live on attack results, so callers should pick conversations from those results.
+
+    Args:
+        method (str): The memory method that received ``labels``.
+    """
+    print_deprecation_message(
+        old_item=f"MemoryInterface.{method}(labels=...)",
+        new_item=(
+            "MemoryInterface.get_attack_results_async(labels=...), then fetch messages for each result's "
+            "conversation_id, get_active_conversation_ids() or get_all_conversation_ids()"
+        ),
+        removed_in="1.4.0",
+    )
+
+
 class AttackStateConflictError(ValueError):
     """An atomic attack write no longer matches the state read by its caller."""
 
@@ -2473,6 +2492,25 @@ class MemoryInterface(abc.ABC):
         Returns:
             Database-specific SQLAlchemy condition.
         """
+
+    def _get_attack_result_literal_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
+        """
+        Return a condition matching AttackResult label names literally.
+
+        Same semantics as ``_get_attack_result_label_condition``, but each key is compared to the
+        stored label names as a bound value instead of being turned into a JSON path, so any key
+        string is safe. Backends that don't override it can still filter by allowlisted keys.
+
+        Args:
+            labels: Label-name-to-value(s) map.
+
+        Raises:
+            NotImplementedError: If the memory backend does not support literal label keys.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _get_attack_result_literal_label_condition "
+            "to filter attack results by label keys outside [A-Za-z0-9_.-]+."
+        )
 
     def _execute_get_unique_attack_class_names(self) -> list[str]:
         """
@@ -6002,8 +6040,9 @@ class MemoryInterface(abc.ABC):
         Returns:
             list[Any]: The backend-specific label condition, if labels are effective.
 
-        Raises:
-            ValueError: If a label key falls outside the safe allowlist.
+        Keys in the ``[A-Za-z0-9_.-]+`` allowlist use the JSON-path condition. Other keys, such as
+        ones with spaces, quotes or non-ASCII characters, are matched literally against the stored
+        label names with bound parameters, so they never become part of a JSON path or SQL text.
         """
         if not query.labels:
             return []
@@ -6012,14 +6051,14 @@ class MemoryInterface(abc.ABC):
             for key, value in query.labels.items()
             if not (isinstance(value, (list, tuple)) and len(value) == 0)
         }
-        invalid_keys = [key for key in effective_labels if not self._LABEL_KEY_PATTERN.match(key)]
-        if invalid_keys:
-            raise ValueError(
-                f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
-            )
-        if not effective_labels:
-            return []
-        return [self._get_attack_result_label_condition(labels=effective_labels)]
+        path_labels = {key: value for key, value in effective_labels.items() if self._LABEL_KEY_PATTERN.match(key)}
+        literal_labels = {key: value for key, value in effective_labels.items() if key not in path_labels}
+        conditions: list[Any] = []
+        if path_labels:
+            conditions.append(self._get_attack_result_label_condition(labels=path_labels))
+        if literal_labels:
+            conditions.append(self._get_attack_result_literal_label_condition(labels=literal_labels))
+        return conditions
 
     def _build_attack_result_category_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
         """
@@ -8523,7 +8562,9 @@ class MemoryInterface(abc.ABC):
             conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
             prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
                 Defaults to None.
-            labels (dict[str, str] | None, optional): A dictionary of labels. Defaults to None.
+            labels (dict[str, str] | None, optional): Deprecated. Labels live on attack results, so
+                query ``get_attack_results_async(labels=...)`` and fetch their conversations instead.
+                Defaults to None.
             prompt_metadata (dict[str, str | int] | None, optional): The metadata associated with the prompt.
                 Defaults to None.
             sent_after (datetime | None, optional): Filter for prompts sent after this datetime. Defaults to None.
@@ -8539,6 +8580,8 @@ class MemoryInterface(abc.ABC):
         Returns:
             Sequence[Score]: A list of scores extracted from the message pieces.
         """
+        if labels is not None:
+            _deprecate_message_labels(method="get_prompt_scores_async")
         return await self._run_database_operation_async(
             self._execute_get_prompt_scores,
             role=role,
@@ -8699,7 +8742,9 @@ class MemoryInterface(abc.ABC):
             conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
             prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
                 Defaults to None.
-            labels (dict[str, str] | None, optional): A dictionary of labels. Defaults to None.
+            labels (dict[str, str] | None, optional): Deprecated. Labels live on attack results, so
+                query ``get_attack_results_async(labels=...)`` and fetch their conversations instead.
+                Defaults to None.
             prompt_metadata (dict[str, str | int] | None, optional): The metadata associated with the prompt.
                 Defaults to None.
             sent_after (datetime | None, optional): Filter for prompts sent after this datetime. Defaults to None.
@@ -8723,6 +8768,8 @@ class MemoryInterface(abc.ABC):
             Exception: If there is an error retrieving the prompts,
                 an exception is logged and an empty list is returned.
         """
+        if labels is not None:
+            _deprecate_message_labels(method="get_message_pieces_async")
         return await self._run_database_operation_async(
             self._execute_get_message_pieces,
             role=role,
