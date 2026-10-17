@@ -124,6 +124,9 @@ class BinAsciiConverter(WordLevelConverter):
         """
         Join words appropriately based on the encoding type and selection mode.
 
+        Empty words do not emit UU records, since zero-length records terminate
+        stream decoders. Encoded separators still preserve the original spacing.
+
         Args:
             words (list[str]): The list of encoded words to join.
 
@@ -136,8 +139,11 @@ class BinAsciiConverter(WordLevelConverter):
         if all_words_selected:
             if self._encoding_func in ("hex", "quoted-printable"):
                 return self._encoded_separator.join(words)
-            if words == [""]:
-                return ""
-            empty_line = binascii.b2a_uu(b"").decode("ascii").rstrip("\n")
-            return f"\n{self._encoded_separator}\n".join(word or empty_line for word in words)
+            encoded_parts: list[str] = []
+            for index, word in enumerate(words):
+                if index:
+                    encoded_parts.append(self._encoded_separator)
+                if word:
+                    encoded_parts.append(word)
+            return "\n".join(encoded_parts)
         return super().join_words(words=words)

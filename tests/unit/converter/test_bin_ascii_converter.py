@@ -185,6 +185,43 @@ class TestBinAsciiConverterUUencode:
         decoded = b"".join(binascii.a2b_uu(line) for line in result.output_text.splitlines())
         assert decoded.decode("utf-8") == prompt
 
+    @pytest.mark.parametrize("separator", [" ", ",", "::", "\n", "\r\n", "é", "x" * 100])
+    @pytest.mark.parametrize(
+        "words",
+        [
+            ["", "alpha"],
+            ["alpha", "", "beta"],
+            ["alpha", ""],
+            ["", "", ""],
+            ["", "alpha", "", "beta", ""],
+        ],
+    )
+    async def test_uuencode_empty_words_do_not_emit_end_markers_async(
+        self, *, separator: str, words: list[str]
+    ) -> None:
+        prompt = separator.join(words)
+        converter = BinAsciiConverter(encoding_func="UUencode", word_split_separator=separator)
+
+        result = await converter.convert_async(prompt=prompt)
+
+        decoded_lines = [binascii.a2b_uu(line) for line in result.output_text.splitlines()]
+        # A zero-length UU record terminates stream decoders.
+        assert all(decoded_lines)
+        assert b"".join(decoded_lines) == prompt.encode("utf-8")
+
+    @pytest.mark.parametrize(
+        ("prompt", "expected"),
+        [("", ""), (" \t\n ", ""), ("alpha \t\n beta", "alpha beta"), ("\talpha\n", "alpha")],
+    )
+    async def test_uuencode_none_separator_normalizes_whitespace_async(self, *, prompt: str, expected: str) -> None:
+        converter = BinAsciiConverter(encoding_func="UUencode", word_split_separator=None)
+
+        result = await converter.convert_async(prompt=prompt)
+
+        decoded_lines = [binascii.a2b_uu(line) for line in result.output_text.splitlines()]
+        assert all(decoded_lines)
+        assert b"".join(decoded_lines) == expected.encode("utf-8")
+
 
 class TestBinAsciiConverterErrorHandling:
     """Tests for error handling."""
