@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyrit.models import AttackTechniqueIdentifier, ComponentIdentifier, Identifiable, SeedIdentifier
+from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
 if TYPE_CHECKING:
     from pyrit.executor.attack import AttackStrategy
@@ -33,10 +34,12 @@ class AttackTechnique(Identifiable):
         *,
         attack: AttackStrategy[Any, Any],
         seed_technique: AttackTechniqueSeedGroup | None = None,
+        requirements: TechniqueRequirements | None = None,
     ) -> None:
         """Initialize an AttackTechnique."""
         self._attack = attack
         self._seed_technique = seed_technique
+        self._requirements = requirements or TechniqueRequirements()
 
     @property
     def attack(self) -> AttackStrategy[Any, Any]:
@@ -47,6 +50,11 @@ class AttackTechnique(Identifiable):
     def seed_technique(self) -> AttackTechniqueSeedGroup | None:
         """The optional technique seed group."""
         return self._seed_technique
+
+    @property
+    def requirements(self) -> TechniqueRequirements:
+        """The technique's declared target and dataset input requirements."""
+        return self._requirements
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -66,6 +74,12 @@ class AttackTechnique(Identifiable):
                 technique_seeds = list(technique_seed_ids)
             if self._seed_technique.prompt_placement != "preserve":
                 identifier_params = {"prompt_placement": self._seed_technique.prompt_placement}
+
+        if self._requirements.adaptation is not None:
+            identifier_params = {
+                **(identifier_params or {}),
+                "seed_group_adaptation": self._requirements.adaptation,
+            }
 
         return AttackTechniqueIdentifier.of(
             self,

@@ -10,6 +10,8 @@ trigger:
   paths:
     include:
       - pyrit/backend/**
+      - pyrit/memory/**
+      - pyrit/cli/pyrit_migrate.py
       - frontend/**
       - docker/**
       - infra/**
@@ -197,6 +199,7 @@ stages:
               instructions: |
                 Confirm test is healthy, Entra and backend group authorization work,
                 and the static test egress IP is allow-listed.
+                Approval stops the production app, runs the production database migration, and then deploys the production app.
                 Infrastructure deployment requested: ${{ parameters.deployInfra }}.
                 App deployment reconciles application configuration and preserves
                 the existing public/private access mode.

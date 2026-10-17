@@ -447,7 +447,10 @@ def test_smoke_checks_use_real_image_entrypoints_and_cleanup(
         ]
         return
     port, endpoint = (8000, "/api/health") if mode == "gui" else (8888, "/api")
-    assert commands[0] == f"docker create --env PYRIT_MODE={mode} --publish 127.0.0.1::{port} pyrit:{source}-test"
+    auth_argument = " --env PYRIT_AUTH_MODE=local" if mode == "gui" else ""
+    assert commands[0] == (
+        f"docker create --env PYRIT_MODE={mode}{auth_argument} --publish 127.0.0.1::{port} pyrit:{source}-test"
+    )
     assert f"docker port test-container {port}/tcp" in commands
     assert any(command.endswith(f"http://127.0.0.1:49153{endpoint}") for command in commands)
     assert commands[-1] == "docker rm --force test-container"

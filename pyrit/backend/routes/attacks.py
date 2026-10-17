@@ -9,6 +9,7 @@ This is the attack-centric API design.
 """
 
 import logging
+import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -69,8 +70,24 @@ async def save_conversation_async(*, body: SaveConversationRequest, request: Req
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except AttackStateConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise FileNotFoundError(str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/conversations/{conversation_id}", response_model=AddMessageResponse)
+async def get_saved_conversation_async(conversation_id: IdentifierStr) -> AddMessageResponse:
+    """
+    Get a saved chat conversation and its attack for the scanner editor.
+
+    Returns:
+        The stored attack and conversation.
+    """
+    response = await get_attack_service().get_saved_conversation_async(conversation_id=conversation_id)
+    if response is None:
+        raise HTTPException(status_code=404, detail="Saved chat conversation not found")
+    return response
 
 
 @router.get(
@@ -116,6 +133,9 @@ async def list_attacks(  # pyrit-async-suffix-exempt
     ),
     operation: list[Annotated[str, Field(max_length=128)]] | None = Query(
         None, max_length=MAX_ITEMS, description="Filter by dedicated operation values"
+    ),
+    operation_id: list[uuid.UUID] | None = Query(
+        None, max_length=MAX_ITEMS, description="Filter by saved Operation IDs; legacy name-only attacks never match"
     ),
     label: list[LabelFilterStr] | None = Query(
         None,
@@ -182,6 +202,7 @@ async def list_attacks(  # pyrit-async-suffix-exempt
         outcome=outcome,
         operator=operator,
         operation=operation,
+        operation_ids=operation_id,
         labels=labels or None,
         min_turns=min_turns,
         max_turns=max_turns,
@@ -252,6 +273,8 @@ async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:  
 
     try:
         return await service.create_attack_async(request=request)
+    except LookupError as e:
+        raise FileNotFoundError(str(e)) from e
     except MediaAccessDeniedError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ValueError as e:

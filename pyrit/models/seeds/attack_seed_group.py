@@ -10,7 +10,7 @@ Extends SeedGroup to enforce exactly one objective is present.
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pyrit.models.identifiers import SeedIdentifier, compute_seed_group_hash
 from pyrit.models.seeds.adversarial_prompts import AdversarialPrompts
@@ -218,8 +218,8 @@ class AttackSeedGroup(SeedGroup):
     @staticmethod
     def _normalize_prompt_sequences(
         *,
-        base_seeds: Sequence[Seed],
-        technique_seeds: Sequence[Seed],
+        base_seeds: Sequence[Seed[Any]],
+        technique_seeds: Sequence[Seed[Any]],
         prepend_technique: bool,
     ) -> None:
         """Normalize merged prompt sequences while preserving source-relative order."""

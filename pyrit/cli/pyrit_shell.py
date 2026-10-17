@@ -93,6 +93,7 @@ class PyRITShell(cmd.Cmd):
         list-initializers          - List all available initializers
         list-targets               - List all available targets
         list-converters            - List all registered converter instances
+        list-operations            - List saved Operations and their IDs
         add-initializer <file>...  - Register initializer(s) from Python script file(s)
         run <scenario> [opts]      - Run a scenario with optional parameters
         scenario-history [N]       - List the last N (default 10) scenario runs
@@ -373,6 +374,21 @@ class PyRITShell(cmd.Cmd):
         except Exception as e:
             print(f"Error listing converters: {e}")
 
+    def do_list_operations(self, arg: str) -> None:
+        """List saved Operations and their IDs."""
+        if arg.strip():
+            print(f"Error: list-operations does not accept arguments, got: {arg.strip()}")
+            return
+        if not self._ensure_client():
+            return
+        from pyrit.cli import _output
+
+        try:
+            operations = self._run_async(self._api_client.list_operations_async())
+            _output.print_operation_list(items=operations)
+        except Exception as e:
+            print(f"Error listing operations: {e}")
+
     def do_add_initializer(self, arg: str) -> None:
         """
         Register an initializer from a Python script file.
@@ -434,6 +450,7 @@ class PyRITShell(cmd.Cmd):
             --max-concurrency <N>           Maximum concurrent operations
             --max-retries <N>               Maximum retry attempts
             --memory-labels <JSON>          JSON string of labels
+            --operation-id <UUID>           Saved Operation ID (see list-operations)
             --datasets <name[:N|:all]> ...  Select sources and optional caps
             --max-per-dataset <N|all>       Default per-source cap
             --max-total <N|all>             Combined attack-group cap
@@ -528,6 +545,8 @@ class PyRITShell(cmd.Cmd):
             return
         if args.get("memory_labels"):
             request_kwargs["labels"] = args["memory_labels"]
+        if args.get("operation_id") is not None:
+            request_kwargs["operation_id"] = args["operation_id"]
 
         scenario_params = extract_scenario_args(parsed=args)
         if scenario_params:

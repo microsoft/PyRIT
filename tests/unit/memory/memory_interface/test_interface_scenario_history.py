@@ -200,7 +200,9 @@ async def test_history_filters_names_statuses_and_labels_without_hydration(
         state=ScenarioRunState.COMPLETED,
         labels={"operator": "bob", "operation": "nightly", "team.name": "safety"},
     )
-    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[included, excluded]))
+    with sqlite_instance._get_session() as session:
+        session.add_all([ScenarioResultEntry(entry=result) for result in (included, excluded)])
+        session.commit()
     started_at = timestamp + timedelta(seconds=30)
     (
         await sqlite_instance.update_scenario_metadata_fields_async(
@@ -581,7 +583,9 @@ async def test_legacy_label_hook_is_constructible_and_composes_multi_value_seman
         state=ScenarioRunState.COMPLETED,
         labels={"operator": "carol", "operation": "nightly"},
     )
-    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[included, excluded]))
+    with sqlite_instance._get_session() as session:
+        session.add_all([ScenarioResultEntry(entry=result) for result in (included, excluded)])
+        session.commit()
     legacy = object.__new__(_LegacyScenarioLabelMemory)
     condition = legacy._get_scenario_result_labels_condition(
         labels={"operator": ["alice", "bob"], "operation": "nightly"}
@@ -720,7 +724,9 @@ async def test_unique_scenario_labels_are_grouped_for_filter_options(sqlite_inst
         )
         for index, operator in ((20, "alice"), (21, "bob"), (22, "alice"))
     ]
-    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=scenarios))
+    with sqlite_instance._get_session() as session:
+        session.add_all([ScenarioResultEntry(entry=result) for result in scenarios])
+        session.commit()
 
     assert (await sqlite_instance.get_unique_scenario_labels_async()) == {
         "operation": ["nightly"],

@@ -7,9 +7,9 @@ import {
   MessageBarBody,
 } from '@fluentui/react-components'
 import { ArrowSyncRegular, ChatRegular, SettingsRegular } from '@fluentui/react-icons'
-import { attacksApi, labelsApi } from '../../services/api'
+import { attacksApi, labelsApi, operationsApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
-import type { AttackSummary, TargetInstance } from '../../types'
+import type { AttackSummary, FilterOption, TargetInstance } from '../../types'
 import type { ViewName } from '../Sidebar/Navigation'
 import type { HistoryFilters } from './historyFilters'
 import { useAttackHistoryStyles } from './AttackHistory.styles'
@@ -38,7 +38,7 @@ function buildListParams(filters: HistoryFilters, pageCursor: string | undefined
   if (filters.attackTypes.length > 0) params.attack_types = filters.attackTypes
   if (filters.outcome) params.outcome = filters.outcome
   if (filters.operator.length > 0) params.operator = filters.operator
-  if (filters.operation.length > 0) params.operation = filters.operation
+  if (filters.operationId.length > 0) params.operation_id = filters.operationId
   if (filters.converter.length > 0) params.converter_types = filters.converter
   // Match mode is only meaningful with >=2 converters selected.
   if (filters.converter.length >= 2) params.converter_types_match = filters.converterMatchMode
@@ -76,7 +76,7 @@ export default function AttackHistory({
   const [attackTypeOptions, setAttackTypeOptions] = useState<string[]>([])
   const [converterOptions, setConverterOptions] = useState<string[]>([])
   const [operatorOptions, setOperatorOptions] = useState<string[]>([])
-  const [operationOptions, setOperationOptions] = useState<string[]>([])
+  const [operationOptions, setOperationOptions] = useState<FilterOption[]>([])
   const [allOtherLabelOptions, setAllOtherLabelOptions] = useState<string[]>([])
   const [narrowedOtherLabelOptions, setNarrowedOtherLabelOptions] = useState<{
     filterKey: string
@@ -95,17 +95,15 @@ export default function AttackHistory({
     filters.hasConverters,
     filters.includeScenarioAttacks,
     filters.operator,
-    filters.operation,
+    filters.operationId,
     filters.otherLabels,
   ])
   const [settledFilterKey, setSettledFilterKey] = useState<string | null>(null)
   const labelOptionFilterKey = JSON.stringify([
     filters.operator,
-    filters.operation,
     filters.otherLabels,
   ])
   const hasLabelOptionFilters = filters.operator.length > 0
-    || filters.operation.length > 0
     || filters.otherLabels.length > 0
   const otherLabelOptions = hasLabelOptionFilters
     && narrowedOtherLabelOptions?.filterKey === labelOptionFilterKey
@@ -138,9 +136,11 @@ export default function AttackHistory({
       .then(resp => {
         // TODO(PyRIT 1.4): Remove the labels.* fallbacks with legacy attribution aliases.
         setOperatorOptions([...(resp.operators ?? resp.labels.operator ?? [])].sort())
-        setOperationOptions([...(resp.operations ?? resp.labels.operation ?? [])].sort())
         setAllOtherLabelOptions(buildOtherLabelOptions(resp.labels))
       })
+      .catch(() => { /* ignore */ })
+    operationsApi.list()
+      .then(resp => setOperationOptions(resp.items.map(operation => ({ value: operation.id, label: operation.name }))))
       .catch(() => { /* ignore */ })
   }, [])
 
@@ -150,7 +150,6 @@ export default function AttackHistory({
     let cancelled = false
     labelsApi.getLabels('attacks', {
       operator: filters.operator.length > 0 ? filters.operator : undefined,
-      operation: filters.operation.length > 0 ? filters.operation : undefined,
       label: filters.otherLabels.length > 0 ? filters.otherLabels : undefined,
     })
       .then(resp => {
@@ -166,7 +165,6 @@ export default function AttackHistory({
     }
   }, [
     filters.operator,
-    filters.operation,
     filters.otherLabels,
     hasLabelOptionFilters,
     labelOptionFilterKey,
@@ -218,7 +216,7 @@ export default function AttackHistory({
     filters.hasConverters,
     filters.includeScenarioAttacks,
     filters.operator,
-    filters.operation,
+    filters.operationId,
     filters.otherLabels,
     filterKey,
     fetchToken,
@@ -251,7 +249,7 @@ export default function AttackHistory({
     filters.attackTypes.length > 0 || filters.outcome || filters.converter.length > 0 ||
     filters.hasConverters !== undefined ||
     !filters.includeScenarioAttacks ||
-    filters.operator.length > 0 || filters.operation.length > 0 || filters.otherLabels.length > 0
+    filters.operator.length > 0 || filters.operationId.length > 0 || filters.otherLabels.length > 0
   const filtersPending = settledFilterKey !== filterKey
   const displayLoading = loading || filtersPending
   const emptyStateGuidance = activeTarget

@@ -71,9 +71,11 @@ The helper's scenarios can also run directly with
 
 For a narrower run, invoke `pytest` directly. You can invoke pytest if it's in your path or via python; either `pytest` or `python -m pytest`. For the following examples, we will use `pytest`.
 
-Analytics correctness tests use a shared, finite 120-second query budget to allow for
-SQL compilation and scheduling delays on busy CI workers. Deadline and cancellation
-tests use explicit controls and keep their separate timing assertions.
+Correctness tests using the `analytics` fixture in `tests/unit/analytics/` use finite
+300-second query budgets to allow for SQL compilation and scheduling delays on busy
+CI workers. These are deadlock backstops, not expected runtimes. Production deadlines
+are unchanged. Deadline and cancellation tests use explicit controls and keep their
+separate timing assertions.
 
   * To run every test under a subdirectory:
 

@@ -39,6 +39,7 @@ const API_RESPONSES: Record<string, unknown> = {
   '/api/attacks/attack-options': { attack_types: [] },
   '/api/attacks/converter-options': { converter_types: [] },
   '/api/labels': { source: 'attacks', labels: {} },
+  '/api/operations': { items: [] },
   '/api/converters': { items: [] },
   '/api/converters/catalog': { items: [] },
   '/api/scenarios/catalog': EMPTY_PAGE,

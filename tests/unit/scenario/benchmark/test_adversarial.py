@@ -45,6 +45,7 @@ from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import (
     AttackScoringConfig,
+    AttackStrategy,
     RedTeamingAttack,
     RTASystemPromptPaths,
     TreeOfAttacksWithPruningAttack,
@@ -57,10 +58,12 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultSelection,
     AttackSeedGroup,
     ComponentIdentifier,
     MessagePiece,
     ObjectiveTargetEvaluationIdentifier,
+    Operation,
     ScenarioIdentifier,
     ScenarioResult,
     ScenarioRunPlanGroupKind,
@@ -80,10 +83,13 @@ from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core import (
     AtomicAttack,
+    AttackTechnique,
     BaselineAttackPolicy,
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
     DatasetSource,
+    IncompatibleTechniqueError,
+    TechniqueRequirements,
 )
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.scenario import Scenario
@@ -203,12 +209,16 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
     factory.adversarial_chat = None
     factory.technique_tags = tags if tags is not None else ["core", "light"]
     factory.seed_technique = seed_technique
-    technique_instance = MagicMock(name="AttackTechnique")
+    factory.requirements = TechniqueRequirements()
+    technique_instance = MagicMock(spec=AttackTechnique)
+    technique_instance.attack = MagicMock(spec=AttackStrategy)
+    technique_instance.seed_technique = seed_technique
+    technique_instance.requirements = factory.requirements
     technique_instance.get_identifier.return_value = ComponentIdentifier(
         class_name="MockTechnique", class_module="pyrit.test"
     )
     factory.create.return_value = technique_instance
-    factory.attack_class = MagicMock(__name__=name)
+    factory.attack_class = RedTeamingAttack
     # The benchmark derives a prefixed factory explicitly before building; returning
     # the same mock keeps existing `factory.create` assertions valid.
     factory.with_adversarial_system_prompt_prefix.return_value = factory
@@ -598,7 +608,7 @@ class TestAdversarialBenchmarkInit:
         assert "light" not in bench._technique_class.get_aggregate_tags()
         assert bench._default_technique.value == "all"
 
-    async def test_initialize_without_selection_resolves_exact_default(self):
+    async def test_initialize_without_selection_resolves_default_before_empty_build_failure_async(self) -> None:
         """Omitting ``scenario_techniques`` resolves exactly the approved benchmark defaults."""
         objective_target = MagicMock(spec=PromptTarget)
         objective_target.get_identifier.return_value = ComponentIdentifier(
@@ -621,7 +631,8 @@ class TestAdversarialBenchmarkInit:
             patch.object(bench, "_resolve_seed_groups_by_dataset_async", new_callable=AsyncMock, return_value={}),
             patch.object(bench, "_build_atomic_attacks_async", new_callable=AsyncMock, return_value=[]),
         ):
-            await bench.initialize_async()
+            with pytest.raises(IncompatibleTechniqueError, match="no usable selected techniques"):
+                await bench.initialize_async()
 
         assert {technique.value for technique in bench._scenario_techniques} == _DEFAULT_BENCHMARK_TECHNIQUE_NAMES
 
@@ -1067,11 +1078,18 @@ class TestGetAtomicAttacksCrossProduct:
         )
         registered_factory.create.assert_called_once()
 
-    async def test_technique_args_override_factory_still_receives_guidance_prefix(self):
+    async def test_technique_args_override_factory_still_receives_guidance_prefix_async(self) -> None:
         """An overridden factory must still get the shared guidance, or its ASR is not comparable."""
         bench = self._make_bench_with_targets(target_names=["adv_a"])
         registered_factory = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()["red_teaming"]
-        override_factory = registered_factory.with_attack_kwargs.return_value
+        override_factory = MagicMock(
+            spec=AttackTechniqueFactory,
+            attack_class=registered_factory.attack_class,
+            requirements=registered_factory.requirements,
+            seed_technique=registered_factory.seed_technique,
+        )
+        override_factory.create.return_value = registered_factory.create.return_value
+        registered_factory.with_attack_kwargs.return_value = override_factory
         override_factory.with_adversarial_system_prompt_prefix.return_value = override_factory
         bench.params = {**bench.params, "technique_args": ["red_teaming.max_turns=2"]}
 
@@ -1962,6 +1980,22 @@ class TestCollectCachedCompletionPairsWithRealMemory:
 @pytest.mark.usefixtures("patch_central_database")
 class TestRunAsyncCachePersistence:
     """Tests that cache persistence happens before normal scenario execution."""
+
+    @pytest.mark.parametrize("assigned", [False, True])
+    async def test_cached_copy_uses_current_operation_not_source_async(self, sqlite_instance, assigned: bool) -> None:
+        old = await sqlite_instance.add_operation_async(Operation(name="Prior"))
+        current = await sqlite_instance.add_operation_async(Operation(name="Current"))
+        original = AttackResult(conversation_id=str(uuid.uuid4()), objective="cached", operation_id=old.id)
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[original])
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        bench._scenario_result_id = str(uuid.uuid4())
+        bench._operation_id = current.id if assigned else None
+        bench._precomputed_cached_results = {"attack_a": [original]}
+        await bench._persist_precomputed_cached_results_async()
+        rows = await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS)
+        copied = next(row for row in rows if row.attack_result_id != original.attack_result_id)
+        assert copied.operation_id == (current.id if assigned else None)
+        assert next(row for row in rows if row.attack_result_id == original.attack_result_id).operation_id == old.id
 
     async def test_precomputed_results_are_persisted_before_base_run(self):
         bench = AdversarialBenchmark(

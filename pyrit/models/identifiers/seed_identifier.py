@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier, config_hash
 from pyrit.models.identifiers.evaluation_markers import Evaluate
@@ -39,7 +39,7 @@ class SeedIdentifier(ComponentIdentifier):
     is_general_technique: Annotated[bool | None, Evaluate.Include()] = None
 
     @classmethod
-    def from_seed(cls, seed: Seed) -> SeedIdentifier:
+    def from_seed(cls, seed: Seed[Any]) -> SeedIdentifier:
         """
         Build a SeedIdentifier from a seed's behavioral properties.
 

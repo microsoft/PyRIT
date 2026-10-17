@@ -90,7 +90,9 @@ async def test_get_scenario_run_history_page_delegates_to_component_async(sqlite
     ):
         result = await sqlite_instance.get_scenario_run_history_page_async(scenario_names=["Test"], limit=50)
 
-    mock_get_page.assert_called_once_with(scenario_names=["Test"], statuses=None, labels=None, cursor=None, limit=50)
+    mock_get_page.assert_called_once_with(
+        scenario_names=["Test"], statuses=None, labels=None, operation_ids=None, cursor=None, limit=50
+    )
     assert result[0] == records
     assert result[2] is True
 

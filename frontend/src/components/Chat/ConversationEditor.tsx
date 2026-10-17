@@ -163,15 +163,20 @@ interface ConversationEditorProps {
   sameAttackDisabledReason?: string
   newAttackDisabledReason?: string
   onSaved: (response: AddMessageResponse) => void
+  onSave?: (destination: SaveConversationRequest['destination']) => void
+  saveDestination?: SaveConversationRequest['destination']
+  saveLabel?: string
 }
 
 export interface ConversationEditorHandle {
   convertConversation: () => void
   saveToNewAttack: () => void
+  cancel: () => void
 }
 
 export default function ConversationEditor({
-  controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved,
+  controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved, onSave,
+  saveDestination: directSaveDestination, saveLabel = 'Save conversation',
 }: ConversationEditorProps) {
   const styles = useConversationEditorStyles()
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -195,12 +200,22 @@ export default function ConversationEditor({
     setSelected(new Set(messageId ? [messageId] : messages.map((message: ConversationDraftMessage) => message.id)))
     setConvertersOpen(true)
   }
+  const cancel = (): void => {
+    if (saving) return
+    if (dirty) setDiscardOpen(true)
+    else controller.discard()
+  }
+  const save = (destination: SaveConversationRequest['destination']): void => {
+    if (onSave) onSave(destination)
+    else void controller.save(destination, onSaved)
+  }
   useImperativeHandle(ref, () => ({
     convertConversation: () => openConverters(),
     saveToNewAttack: () => {
       setSaveDestination('new_attack')
       setSaveDialogOpen(true)
     },
+    cancel,
   }))
   const removeMessage = (messageId: string): void => {
     controller.removeMessage(messageId)
@@ -301,16 +316,22 @@ export default function ConversationEditor({
         ))}
       </div>
       <div className={styles.footer}>
-        <Button className={styles.button} disabled={saving} onClick={() => { if (dirty) setDiscardOpen(true); else controller.discard() }}>Cancel</Button>
-        <Button className={styles.button} appearance="primary" disabled={saving || Boolean(validationError)} onClick={() => setSaveDialogOpen(true)}>Save conversation</Button>
+        <Button className={styles.button} disabled={saving} onClick={cancel}>Cancel</Button>
+        <Button className={styles.button} appearance="primary"
+          disabled={saving || Boolean(validationError)
+            || Boolean(directSaveDestination && (!messages.length || targetError || newAttackDisabledReason))}
+          onClick={() => { if (directSaveDestination) save(directSaveDestination); else setSaveDialogOpen(true) }}>
+          {saveLabel}
+        </Button>
       </div>
+      {directSaveDestination && error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       </div>
       {saveDialogOpen && <SaveConversationDialog sameAttackDisabledReason={sameAttackDisabledReason}
         newAttackDisabledReason={newAttackDisabledReason}
         validationError={validationError ?? targetError}
         initialDestination={saveDestination}
         objectiveChanged={draft?.objective.trim() !== draft?.initialObjective} saving={saving} error={error}
-        onClose={() => setSaveDialogOpen(false)} onSave={(destination) => { void controller.save(destination, onSaved) }} />}
+        onClose={() => setSaveDialogOpen(false)} onSave={save} />}
       <Dialog open={discardOpen || blocker.state === 'blocked'} onOpenChange={(_event, data) => {
         if (!data.open && !saving) { setDiscardOpen(false); if (blocker.state === 'blocked') blocker.reset() }
       }}>

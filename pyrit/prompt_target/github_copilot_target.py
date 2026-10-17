@@ -37,6 +37,10 @@ class GitHubCopilotTarget(PromptTarget):
     """
     Send text requests through the GitHub Copilot SDK.
 
+    Conversation history lives in the Copilot session, so a conversation can only be continued by the target
+    instance that started it. Continuing one that has earlier turns but no live session raises instead of
+    sending the last turn to a fresh session.
+
     Capture INFO logs for session mapping and SDK/runtime version diagnostics.
     """
 
@@ -196,6 +200,7 @@ class GitHubCopilotTarget(PromptTarget):
                 session = await self._get_or_create_session_async(
                     conversation_id=conversation_id,
                     initial_system_prompt=initial_system_prompt,
+                    has_earlier_turns=any(message.api_role != "system" for message in normalized_conversation[:-1]),
                 )
                 try:
                     reply_text = await self._send_text_async(
@@ -345,6 +350,7 @@ class GitHubCopilotTarget(PromptTarget):
         *,
         conversation_id: str,
         initial_system_prompt: str | None,
+        has_earlier_turns: bool = False,
     ) -> "CopilotSession":
         async with self._lifecycle_condition:
             conversation = self._conversations[conversation_id]
@@ -361,6 +367,14 @@ class GitHubCopilotTarget(PromptTarget):
             existing_session = conversation.session
         if existing_session is not None:
             return existing_session
+        if has_earlier_turns:
+            # The history lives in the Copilot session, not in what we send. A new session would answer the
+            # last turn as if it were the first, e.g. for a copied conversation or after a restart.
+            raise ValueError(
+                f"GitHubCopilotTarget has no Copilot session for conversation '{conversation_id}', which already "
+                "has earlier turns. Copilot keeps the history inside its session, so those turns can't be "
+                "restored; continue in a new conversation."
+            )
 
         client = await self._get_or_start_client_async()
         session_id = str(uuid4())

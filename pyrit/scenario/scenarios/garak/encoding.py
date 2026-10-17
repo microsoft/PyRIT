@@ -4,7 +4,7 @@
 
 import logging
 from collections.abc import Sequence
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.converter import (
@@ -62,7 +62,7 @@ class EncodingDatasetConfiguration(DatasetAttackConfiguration):
     ``DatasetAttackConfiguration``.
     """
 
-    def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
+    def _build_attack_groups(self, seeds: list[Seed[Any]]) -> list[AttackSeedGroup]:
         """
         Shape raw seeds into AttackSeedGroups carrying an encoding objective.
 
@@ -168,7 +168,7 @@ class Encoding(Scenario):
     By default, this uses the same dataset as Garak: slur terms and web XSS payloads.
     """
 
-    VERSION: int = 2
+    VERSION: int = 3
     DATASET_OPTIONS = ScenarioDatasetOptions(
         mode=DatasetSelectionMode.FIXED, per_dataset_limit=False, source_settings=False
     )
