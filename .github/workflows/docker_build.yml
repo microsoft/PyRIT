@@ -69,6 +69,10 @@ jobs:
             }
             Write-Output "${service}: verified 127.0.0.1:${port}:${port}/tcp"
           }
+          if ($services.'pyrit-gui'.environment.PYRIT_AUTH_MODE -ne 'local') {
+            throw "Expected pyrit-gui to select PYRIT_AUTH_MODE=local."
+          }
+          Write-Output "pyrit-gui: verified PYRIT_AUTH_MODE=local"
 
   build-and-test-local:
     name: Build and test (local)

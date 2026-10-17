@@ -26,6 +26,7 @@ const sampleAttacks: AttackSummary[] = [
     related_conversation_ids: ['rel-1'],
     operator: 'alice',
     operation: 'op_one',
+    operation_name: 'op_one',
     labels: { custom: 'val' },
     created_at: '2026-01-15T10:30:00Z',
     updated_at: '2026-01-15T11:00:00Z',

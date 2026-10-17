@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
     import httpx
 
+    from pyrit.backend.authentication_policy import AuthenticationPolicy
     from pyrit.backend.middleware.compatibility import CompatibilityAPI
     from pyrit.memory import SQLiteMemory
     from pyrit.models import (
@@ -97,7 +98,11 @@ async def sqlite_instance(benchmark_directory: Path) -> AsyncGenerator[SQLiteMem
 
 @pytest.fixture
 async def benchmark_app(
-    *, benchmark_directory: Path, sqlite_instance: SQLiteMemory, compatibility_id: str
+    *,
+    benchmark_directory: Path,
+    sqlite_instance: SQLiteMemory,
+    compatibility_id: str,
+    authentication_policy: AuthenticationPolicy,
 ) -> AsyncGenerator[CompatibilityAPI, None]:
     """Exercise production routes, middleware, startup and shutdown with isolated test configuration."""
     from pyrit.backend.main import app as backend_app
@@ -117,6 +122,7 @@ async def benchmark_app(
         app = CompatibilityAPI(routes=list(backend_app.router.routes), middleware=backend_app.user_middleware)
         app.exception_handlers.update(backend_app.exception_handlers)
         app.state.compatibility_id = compatibility_id
+        app.state.authentication_policy = authentication_policy
         source = ConfigurationFileService(config_file_value=str(benchmark_directory / "config.yaml"))
         app.state.configuration_file_service = source
         runtime = RuntimeLifecycle(app=app, source=source)

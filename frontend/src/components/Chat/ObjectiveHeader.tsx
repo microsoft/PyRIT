@@ -21,6 +21,7 @@ import {
   ChevronDownRegular,
   ChevronUpRegular,
   InfoRegular,
+  LinkRegular,
 } from '@fluentui/react-icons'
 
 import OutcomeBadge from '@/components/OutcomeBadge'
@@ -40,6 +41,11 @@ interface ObjectiveHeaderProps {
   onRemoveHumanScore?: () => Promise<void>
   canAdd?: boolean
   onAdd?: (objective: string, expectedObjective: string) => Promise<void>
+  /** Opens the finding dialog for the viewed conversation from Attack Result Details. */
+  onAddFinding?: () => void
+  canAddFinding?: boolean
+  /** Receives the outcome badge button, so a dialog opened from its details can return focus to it. */
+  outcomeButtonRef?: React.Ref<HTMLButtonElement>
 }
 
 function scoreVerdict(score?: BackendScore | null): 'success' | 'failure' | 'undetermined' {
@@ -64,8 +70,12 @@ export default function ObjectiveHeader({
   onRemoveHumanScore,
   canAdd = false,
   onAdd,
+  onAddFinding,
+  canAddFinding = false,
+  outcomeButtonRef,
 }: ObjectiveHeaderProps) {
   const styles = useObjectiveHeaderStyles()
+  const [resultOpen, setResultOpen] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [overflowing, setOverflowing] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -162,8 +172,10 @@ export default function ObjectiveHeader({
       </Badge>
       <Popover
         withArrow
+        open={resultOpen}
         positioning={{ autoSize: 'height' }}
         onOpenChange={(_event, data) => {
+          setResultOpen(data.open)
           if (data.open) {
             const currentHumanVerdict = scoreVerdict(humanScore ?? automatedScore)
             setHumanVerdict(currentHumanVerdict === 'failure' ? 'failure' : 'success')
@@ -175,6 +187,7 @@ export default function ObjectiveHeader({
       >
         <PopoverTrigger disableButtonEnhancement>
           <Button
+            ref={outcomeButtonRef}
             appearance="transparent"
             size="small"
             className={styles.outcomeButton}
@@ -257,6 +270,17 @@ export default function ObjectiveHeader({
           </Field>
           {resultError && <Text role="alert">{resultError}</Text>}
           <div className={styles.resultActions}>
+            {onAddFinding && (
+              <Button
+                appearance="secondary"
+                icon={<LinkRegular />}
+                className={styles.resultAction}
+                disabled={!canAddFinding}
+                onClick={() => { setResultOpen(false); onAddFinding() }}
+              >
+                Add as finding
+              </Button>
+            )}
             {humanScore && onRemoveHumanScore && (
               <Button
                 appearance="secondary"

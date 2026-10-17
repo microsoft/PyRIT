@@ -375,3 +375,18 @@ class TestFilterProperties:
     def test_harm_categories_values(self):
         f = SeedDatasetFilter(harm_categories={"violence", "cybercrime"})
         assert "violence" in f.criteria[0].harm_categories
+
+
+@pytest.mark.parametrize("strict_match", [False, True])
+def test_empty_criteria_raises(strict_match: bool) -> None:
+    with pytest.raises(ValueError, match="at least one criterion"):
+        SeedDatasetFilter(criteria=[], strict_match=strict_match)
+
+
+def test_empty_criteria_with_kwargs_preserves_conflicting_arguments_error() -> None:
+    with pytest.raises(ValueError, match="Cannot pass both"):
+        SeedDatasetFilter(criteria=[], tags={"safety"})
+
+
+def test_unconstrained_criterion_preserves_default_filter() -> None:
+    assert SeedDatasetFilter(criteria=[SeedDatasetMetadata()]).criteria == SeedDatasetFilter().criteria

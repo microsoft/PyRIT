@@ -914,7 +914,13 @@ class AdversarialBenchmark(Scenario):
                             "attack_result_id": str(uuid.uuid4()),
                             "attribution_parent_id": self._scenario_result_id,
                             "attribution_data": attribution_data,
-                            "labels": {**result.labels, **self._memory_labels},
+                            "operation_id": self._operation_id,
+                            "operation": None,
+                            "labels": {
+                                key: value
+                                for key, value in {**result.labels, **self._memory_labels}.items()
+                                if key != "operation"
+                            },
                             "metadata": metadata,
                         },
                     )

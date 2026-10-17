@@ -45,7 +45,7 @@ from pyrit.converter import (
     TranslationConverter,
 )
 from pyrit.converter.converter import get_converter_modalities
-from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.memory import AzureBlobStorageIO, CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.registry.components import ConverterRegistry
@@ -707,6 +707,43 @@ class TestPersistDataUriParams:
             )
         assert upload_service._registry.instances.get_entry("invalid") is None
         assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_blob_results_storage_limits_path_or_str_urls_to_results_container_media(
+        self, upload_service: ConverterService
+    ) -> None:
+        memory = MagicMock(spec=MemoryInterface)
+        memory.results_path = "https://account.blob.core.windows.net/results"
+        memory.results_storage_io = MagicMock(spec=AzureBlobStorageIO)
+        managed = "https://account.blob.core.windows.net/results/prompt-memory-entries/videos/input.mp4"
+
+        with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+            result, owned_paths = await upload_service._persist_data_uri_params_async(
+                converter_type="AddImageVideoConverter", params={"video_path": f"{managed}?sig=caller"}
+            )
+            with pytest.raises(ValueError, match="results container"):
+                await upload_service._persist_data_uri_params_async(
+                    converter_type="AddImageVideoConverter",
+                    params={"video_path": "https://account.blob.core.windows.net/other/input.mp4"},
+                )
+
+        assert result == {"video_path": managed}
+        assert owned_paths == []
+
+    async def test_blob_results_storage_accepts_canonical_urls_when_the_container_names_port_443(
+        self, upload_service: ConverterService
+    ) -> None:
+        memory = MagicMock(spec=MemoryInterface)
+        memory.results_path = "https://account.blob.core.windows.net:443/results"
+        memory.results_storage_io = MagicMock(spec=AzureBlobStorageIO)
+        managed = "https://account.blob.core.windows.net/results/prompt-memory-entries/videos/input.mp4"
+
+        with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+            result, owned_paths = await upload_service._persist_data_uri_params_async(
+                converter_type="AddImageVideoConverter", params={"video_path": managed}
+            )
+
+        assert result == {"video_path": managed}
+        assert owned_paths == []
 
     async def test_plain_string_does_not_enable_upload_handling(self, upload_service: ConverterService) -> None:
         value = _make_data_uri(mime_type="text/plain", content=b"literal suffix")

@@ -13,7 +13,8 @@ const chosenPreferences: UserPreferences = {
     adversarial: { registryName: 'adversarial', identifierHash: 'adversarial-hash' },
   },
   hiddenTargetRegistryNames: ['hidden-target'],
-  labels: { operation: 'op_demo', team: 'red', removed: null },
+  labels: { campaign: 'demo', team: 'red', removed: null },
+  operation: { id: 'operation-demo' },
   theme: 'dark',
   chatMarkdown: true,
 }
@@ -54,7 +55,8 @@ describe('useUserPreferences', () => {
     const { result } = renderHook(() => useUserPreferences(), { wrapper })
     act(() => {
       result.current.updatePreferences((current) => ({ ...current, theme: 'dark' }))
-      result.current.updatePreferences((current) => ({ ...current, labels: { operation: 'op_new' } }))
+      result.current.updatePreferences((current) => ({ ...current, labels: { campaign: 'new' } }))
+      result.current.updatePreferences((current) => ({ ...current, operation: chosenPreferences.operation }))
       result.current.updatePreferences((current) => ({ ...current, targets: chosenPreferences.targets }))
       result.current.updatePreferences((current) => ({
         ...current,
@@ -64,7 +66,7 @@ describe('useUserPreferences', () => {
     })
     expect(readUserPreferences('tenant:alice')).toEqual({
       ...chosenPreferences,
-      labels: { operation: 'op_new' },
+      labels: { campaign: 'new' },
     })
   })
 
@@ -230,7 +232,21 @@ describe('useUserPreferences', () => {
     expect(readUserPreferences('tenant:alice')).toEqual({
       ...chosenPreferences,
       hiddenTargetRegistryNames: [],
+      operation: undefined,
     })
+  })
+
+  it.each([
+    ['a name', 'op_saved_before_operations', { name: 'op_saved_before_operations' }],
+    ['an explicit clear', null, null],
+  ])('moves an operation label saved as %s out of labels without resolving it', (
+    _description: string, legacy: string | null, expected: { name: string } | null,
+  ) => {
+    window.localStorage.setItem('pyrit.userPreferences.v1.tenant:alice', JSON.stringify({
+      ...chosenPreferences, operation: undefined, labels: { ...chosenPreferences.labels, operation: legacy },
+    }))
+
+    expect(readUserPreferences('tenant:alice')).toEqual({ ...chosenPreferences, operation: expected })
   })
 
   it('migrates legacy local settings on the next write without falling back after a clear', () => {
@@ -242,7 +258,8 @@ describe('useUserPreferences', () => {
     expect(preferences).toEqual({
       ...chosenPreferences,
       hiddenTargetRegistryNames: [],
-      labels: { operation: 'op_legacy', team: 'blue' },
+      labels: { team: 'blue' },
+      operation: { name: 'op_legacy' },
     })
     writeUserPreferences('local', DEFAULT_USER_PREFERENCES)
     expect(readUserPreferences('local')).toEqual(DEFAULT_USER_PREFERENCES)
@@ -257,6 +274,8 @@ describe('useUserPreferences', () => {
     JSON.stringify({ ...chosenPreferences, theme: 'unknown' }),
     JSON.stringify({ ...chosenPreferences, chatMarkdown: 'markdown' }),
     JSON.stringify({ ...chosenPreferences, hiddenTargetRegistryNames: [5] }),
+    JSON.stringify({ ...chosenPreferences, operation: { id: '' } }),
+    JSON.stringify({ ...chosenPreferences, operation: { id: 'saved', name: 'both' } }),
   ])('reports invalid stored preferences instead of silently accepting them: %s', (stored: string) => {
     window.localStorage.setItem('pyrit.userPreferences.v1.tenant:alice', stored)
     const { result } = renderHook(() => useUserPreferences(), { wrapper })

@@ -5,7 +5,7 @@ import os
 import uuid
 from collections.abc import AsyncGenerator, MutableSequence, Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -891,12 +891,38 @@ def test_init_prod_connection_runs_check_only_not_migration():
                 connection_string=prod_conn,
                 results_container_url="https://test.blob.core.windows.net/test",
                 results_sas_token="valid_sas_token",
+                skip_schema_migration=False,
             )
             mock_check.assert_called_once()
             mock_migration.assert_not_called()
     finally:
         Singleton._instances.clear()
         Singleton._instances.update(saved)
+
+
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_internal_deployment_checks_schema_without_upgrade(
+    *, uninitialized_memory_interface: AzureSQLMemory, mismatch: bool
+) -> None:
+    from alembic.util.exc import CommandError
+
+    uninitialized_memory_interface._skip_schema_migration = False
+    with (
+        patch.dict(os.environ, {"PYRIT_REQUIRE_CURRENT_SCHEMA": "true"}),
+        patch.object(
+            uninitialized_memory_interface,
+            "_check_schema_migration",
+            side_effect=CommandError("Schema mismatch") if mismatch else None,
+        ) as check,
+        patch.object(uninitialized_memory_interface, "_run_schema_migration") as upgrade,
+    ):
+        if mismatch:
+            with pytest.raises(CommandError, match="Schema mismatch"):
+                uninitialized_memory_interface._initialize_schema()
+        else:
+            uninitialized_memory_interface._initialize_schema()
+        check.assert_called_once()
+        upgrade.assert_not_called()
 
 
 def test_init_prod_connection_warns_on_schema_mismatch():
@@ -940,8 +966,8 @@ def test_init_prod_connection_warns_on_schema_mismatch():
         Singleton._instances.update(saved)
 
 
-def test_init_allows_migration_when_connection_does_not_match_prod():
-    """Migration proceeds normally when the connection string does not match the prod env var."""
+def test_init_allows_explicit_migration_when_connection_does_not_match_prod() -> None:
+    """An explicit migration is allowed when the connection does not match production."""
     saved = Singleton._instances.copy()
     Singleton._instances.clear()
     try:
@@ -963,6 +989,7 @@ def test_init_allows_migration_when_connection_does_not_match_prod():
                 connection_string="Server=tcp:dev.database.windows.net;",
                 results_container_url="https://test.blob.core.windows.net/test",
                 results_sas_token="valid_sas_token",
+                skip_schema_migration=False,
             )
             mock_migration.assert_called_once()
     finally:
@@ -970,8 +997,8 @@ def test_init_allows_migration_when_connection_does_not_match_prod():
         Singleton._instances.update(saved)
 
 
-def test_init_allows_migration_when_prod_env_var_not_set():
-    """Migration proceeds normally when AZURE_SQL_DB_CONNECTION_STRING_PROD is not set."""
+def test_init_allows_explicit_migration_when_prod_env_var_not_set() -> None:
+    """An explicit migration is allowed when no production connection is configured."""
     saved = Singleton._instances.copy()
     Singleton._instances.clear()
     try:
@@ -994,11 +1021,48 @@ def test_init_allows_migration_when_prod_env_var_not_set():
                 connection_string="Server=tcp:dev.database.windows.net;",
                 results_container_url="https://test.blob.core.windows.net/test",
                 results_sas_token="valid_sas_token",
+                skip_schema_migration=False,
             )
             mock_migration.assert_called_once()
     finally:
         Singleton._instances.clear()
         Singleton._instances.update(saved)
+
+
+@pytest.mark.parametrize("defer_initialization", [False, True])
+@pytest.mark.parametrize("prod_connection", ["", "Server=tcp:prod.database.windows.net;"])
+async def test_init_checks_without_migrating_by_default_async(
+    *, defer_initialization: bool, prod_connection: str
+) -> None:
+    with (
+        patch.object(Singleton, "_instances", {}),
+        patch.object(AzureSQLMemory, "_create_engine"),
+        patch.object(AzureSQLMemory, "_create_auth_token"),
+        patch.object(AzureSQLMemory, "_enable_azure_authorization"),
+        patch.object(AzureSQLMemory, "_check_schema_migration") as check,
+        patch.object(AzureSQLMemory, "_run_schema_migration") as migrate,
+        patch.dict(
+            os.environ,
+            {
+                AzureSQLMemory.AZURE_SQL_DB_CONNECTION_STRING_PROD: prod_connection,
+                "PYRIT_REQUIRE_CURRENT_SCHEMA": "",
+            },
+        ),
+    ):
+        memory = cast(
+            "AzureSQLMemory",
+            AzureSQLMemory(
+                connection_string="Server=tcp:dev.database.windows.net;",
+                results_container_url="https://test.blob.core.windows.net/test",
+                results_sas_token="valid_sas_token",
+                _defer_initialization=defer_initialization,
+            ),
+        )
+        if defer_initialization:
+            check.assert_not_called()
+            await memory.initialize_async()
+        check.assert_called_once()
+        migrate.assert_not_called()
 
 
 def test_init_prod_with_skip_schema_migration_still_checks():

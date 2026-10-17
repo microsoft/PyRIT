@@ -14,6 +14,7 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
 
+    from pyrit.backend.authentication_policy import AuthenticationPolicy
     from pyrit.memory import SQLiteMemory
 
 
@@ -38,7 +39,7 @@ def use_sqlite_memory(sqlite_memory: SQLiteMemory) -> Generator[None, None, None
 
 @pytest.fixture(autouse=True)
 def compatibility_id() -> Iterator[str]:
-    """Supply startup provenance and initialize clients that deliberately skip lifespan."""
+    """Supply startup provenance to clients that deliberately skip lifespan."""
     from pyrit import _compatibility
     from pyrit.backend.main import app
 
@@ -48,6 +49,17 @@ def compatibility_id() -> Iterator[str]:
         patch.object(app.state, "compatibility_id", identity, create=True),
     ):
         yield identity
+
+
+@pytest.fixture(autouse=True)
+def authentication_policy() -> Iterator[AuthenticationPolicy]:
+    """Supply local auth policy to backend apps that deliberately skip lifespan."""
+    from pyrit.backend.authentication_policy import AuthenticationPolicy
+    from pyrit.backend.main import app
+
+    policy = AuthenticationPolicy(mode="local")
+    with patch.object(app.state, "authentication_policy", policy, create=True):
+        yield policy
 
 
 @pytest.fixture

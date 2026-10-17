@@ -30,6 +30,7 @@ so Markdown-wrapped and incomplete code snippets can still be scored.
 Reference: [@derczynski2024garak]
 """
 
+import hashlib
 import re
 import sys
 from enum import Enum
@@ -192,6 +193,8 @@ class PackageHallucinationScorer(MessageTrueFalseScorer):
             params={
                 "ecosystem": self._ecosystem.value,
                 "known_package_count": len(self._known_packages),
+                # The reference set decides every verdict, so its content is part of the identity.
+                "known_packages_digest": hashlib.sha256("\0".join(sorted(self._known_packages)).encode()).hexdigest(),
             },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )

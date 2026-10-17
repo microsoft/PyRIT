@@ -4,8 +4,10 @@
 
 import pytest
 
-from pyrit.models import ComponentIdentifier, Score, ScoreStatus
+from pyrit.models import ComponentIdentifier, Score, ScorerEvaluationIdentifier, ScoreStatus
+from pyrit.score import AzureContentFilterScorer, FloatScaleThresholdScorer
 from pyrit.score.float_scale.float_scale_score_aggregator import (
+    FloatScaleAggregatorFunc,
     FloatScaleScoreAggregator,
     FloatScaleScorerAllCategories,
     FloatScaleScorerByCategory,
@@ -537,3 +539,35 @@ def test_generator_of_wrong_type_still_raises():
     )
     with pytest.raises(ValueError, match="must be of type 'float_scale'"):
         FloatScaleScoreAggregator.MAX(s for s in [bad])
+
+
+def test_every_float_scale_aggregator_has_its_own_name() -> None:
+    """Scorer identities record the aggregator name, so two that behave differently must not share one."""
+    aggregators = {
+        f"{namespace.__name__}.{name}": getattr(namespace, name).__name__
+        for namespace in (FloatScaleScoreAggregator, FloatScaleScorerByCategory, FloatScaleScorerAllCategories)
+        for name in ("MAX", "MIN", "AVERAGE")
+    }
+
+    assert len(set(aggregators.values())) == len(aggregators)
+    # Existing names stay put, so stored identities for them don't move.
+    assert aggregators["FloatScaleScoreAggregator.MAX"] == "MAX_"
+    assert aggregators["FloatScaleScorerByCategory.MAX"] == "MAX_by_category_"
+    assert aggregators["FloatScaleScorerAllCategories.MAX"] == "MAX_all_categories_"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_threshold_scorers_with_by_category_and_all_categories_max_differ() -> None:
+    def threshold(aggregator: FloatScaleAggregatorFunc) -> tuple[str, str]:
+        identifier = FloatScaleThresholdScorer(
+            scorer=AzureContentFilterScorer(api_key="key", endpoint="https://example.invalid"),
+            threshold=0.5,
+            float_scale_aggregator=aggregator,
+        ).get_identifier()
+        return identifier.hash, ScorerEvaluationIdentifier(identifier).eval_hash
+
+    by_category = threshold(FloatScaleScorerByCategory.MAX)
+    all_categories = threshold(FloatScaleScorerAllCategories.MAX)
+
+    assert by_category[0] != all_categories[0]
+    assert by_category[1] != all_categories[1]

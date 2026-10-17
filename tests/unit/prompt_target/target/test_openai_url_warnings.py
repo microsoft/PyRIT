@@ -4,6 +4,7 @@
 import logging
 import os
 from unittest.mock import AsyncMock, patch
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -12,10 +13,17 @@ from pyrit.prompt_target import (
     OpenAICompletionTarget,
     OpenAIImageTarget,
     OpenAIResponseTarget,
+    OpenAITarget,
     OpenAITTSTarget,
     OpenAIVideoTarget,
     RealtimeTarget,
 )
+
+
+def _assert_sdk_base_url(*, target: OpenAITarget, endpoint: str) -> None:
+    actual = urlsplit(str(target._client.base_url).rstrip("/"))
+    expected = urlsplit(endpoint.rstrip("/"))
+    assert actual._replace(path=actual.path.rstrip("/")) == expected._replace(path=expected.path.rstrip("/"))
 
 
 @pytest.fixture
@@ -45,7 +53,7 @@ class TestURLWarnings:
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
         assert target._async_client is not None
-        assert str(target._async_client.base_url).rstrip("/") == old_url.rstrip("/")
+        _assert_sdk_base_url(target=target, endpoint=old_url)
 
         # Check that warning was logged
         warning_logs = [record for record in caplog.records if record.levelno == logging.WARNING]
@@ -69,7 +77,7 @@ class TestURLWarnings:
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
-        assert str(target._async_client.base_url).rstrip("/") == old_url.rstrip("/")
+        _assert_sdk_base_url(target=target, endpoint=old_url)
 
         # Model name should be text-davinci-003
         assert target._model_name == "text-davinci-003"
@@ -94,7 +102,7 @@ class TestURLWarnings:
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
-        assert str(target._async_client.base_url).rstrip("/") == old_url.rstrip("/")
+        _assert_sdk_base_url(target=target, endpoint=old_url)
 
         # Model name should be dall-e-3
         assert target._model_name == "dall-e-3"
@@ -119,7 +127,7 @@ class TestURLWarnings:
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
-        assert str(target._async_client.base_url).rstrip("/") == old_url.rstrip("/")
+        _assert_sdk_base_url(target=target, endpoint=old_url)
 
         # Model name should be tts-1
         assert target._model_name == "tts-1"
@@ -144,7 +152,7 @@ class TestURLWarnings:
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
-        assert str(target._async_client.base_url).rstrip("/") == old_url.rstrip("/")
+        _assert_sdk_base_url(target=target, endpoint=old_url)
 
         # Model name should be o1-preview
         assert target._model_name == "o1-preview"
@@ -169,7 +177,7 @@ class TestURLWarnings:
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
-        assert str(target._async_client.base_url).rstrip("/") == old_url.rstrip("/")
+        _assert_sdk_base_url(target=target, endpoint=old_url)
 
         # Model name should be sora-2
         assert target._model_name == "sora-2"
@@ -192,7 +200,7 @@ class TestURLWarnings:
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
-        assert str(target._async_client.base_url).rstrip("/") == old_url.rstrip("/")
+        _assert_sdk_base_url(target=target, endpoint=old_url)
 
         # Check warning
         warning_logs = [record for record in caplog.records if record.levelno == logging.WARNING]
@@ -376,7 +384,7 @@ class TestURLWarnings:
 
         # Check URL was NOT converted - kept as-is
         assert target._endpoint == old_url
-        assert str(target._async_client.base_url).rstrip("/") == old_url.rstrip("/")
+        _assert_sdk_base_url(target=target, endpoint=old_url)
 
         # Check warning was logged
         warning_logs = [record for record in caplog.records if record.levelno == logging.WARNING]
@@ -490,7 +498,7 @@ class TestRealtimeURLWarnings:
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
-        assert str(target._async_client.base_url).rstrip("/") == old_url.rstrip("/")
+        _assert_sdk_base_url(target=target, endpoint=old_url)
         assert "Old Azure URL format" in caplog.text
 
     def test_new_azure_realtime_url_with_v1(self, patch_central_database):
@@ -592,7 +600,7 @@ class TestURLValidation:
 
         # URL should remain unchanged
         assert target._endpoint == old_url
-        assert str(target._async_client.base_url).rstrip("/") == old_url.rstrip("/")
+        _assert_sdk_base_url(target=target, endpoint=old_url)
         # Should have warning about old format
         warning_logs = [record for record in caplog.records if record.levelno == logging.WARNING]
         conversion_warnings = [log for log in warning_logs if "Old Azure URL format" in log.message]
