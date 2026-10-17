@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Text,
   Avatar,
@@ -28,6 +28,7 @@ import {
   OpenRegular,
 } from '@fluentui/react-icons'
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
+import MediaPreview from '@/components/Media/MediaPreview'
 
 import type { DisplayScore, Message, MessageAttachment } from '@/types'
 
@@ -47,51 +48,6 @@ interface MessageListProps {
   isLoading?: boolean
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
-}
-
-/** Image that shows a spinner while loading. */
-function ImageWithSpinner({ src, alt, className, hiddenClassName, containerClassName, spinnerClassName }: {
-  src: string
-  alt: string
-  className: string
-  hiddenClassName: string
-  containerClassName: string
-  spinnerClassName: string
-}) {
-  const [loaded, setLoaded] = useState(false)
-  const [error, setError] = useState(false)
-  const onLoad = useCallback(() => setLoaded(true), [])
-  const onError = useCallback(() => { setError(true); setLoaded(true) }, [])
-
-  return (
-    <div className={containerClassName}>
-      {!loaded && <Spinner size="small" className={spinnerClassName} />}
-      {error
-        ? <Text size={200} italic>Image failed to load</Text>
-        : <img
-            src={src}
-            alt={alt}
-            className={loaded ? className : hiddenClassName}
-            onLoad={onLoad}
-            onError={onError}
-          />
-      }
-    </div>
-  )
-}
-
-function MediaWithFallback({ type, src, className }: { type: 'video' | 'audio'; src: string; className?: string }) {
-  const [error, setError] = useState(false)
-  const handleError = useCallback(() => setError(true), [])
-
-  if (error) {
-    return <Text size={200} italic data-testid={`${type}-error`}>{type === 'video' ? 'Video' : 'Audio'} failed to load</Text>
-  }
-
-  if (type === 'video') {
-    return <video src={src} controls className={className} onError={handleError} data-testid="video-player" />
-  }
-  return <audio src={src} controls className={className} onError={handleError} data-testid="audio-player" />
 }
 
 function scoreDisplayValue(score: DisplayScore): string {
@@ -588,9 +544,9 @@ export default function MessageList({
                     <div className={styles.attachmentsContainer}>
                       {message.originalAttachments.map((att, i) => (
                         <div key={i} className={styles.attachmentItem}>
-                          {att.type === 'image' && <ImageWithSpinner src={att.url} alt={att.name} className={styles.attachmentPreview} hiddenClassName={styles.attachmentPreviewHidden} containerClassName={styles.imageContainer} spinnerClassName={styles.imageSpinner} />}
-                          {att.type === 'video' && <MediaWithFallback type="video" src={att.url} className={styles.videoPreview} />}
-                          {att.type === 'audio' && <MediaWithFallback type="audio" src={att.url} className={styles.audioPreview} />}
+                          {att.type === 'image' && <MediaPreview type="image" src={att.url} alt={att.name} className={styles.attachmentPreview} hiddenClassName={styles.attachmentPreviewHidden} containerClassName={styles.imageContainer} spinnerClassName={styles.imageSpinner} />}
+                          {att.type === 'video' && <MediaPreview type="video" src={att.url} className={styles.videoPreview} />}
+                          {att.type === 'audio' && <MediaPreview type="audio" src={att.url} className={styles.audioPreview} />}
                           {att.type === 'file' && <div className={styles.attachmentFile}><Text size={200}>📄 {att.name}</Text></div>}
                         </div>
                       ))}
@@ -656,7 +612,8 @@ export default function MessageList({
                         data-testid={`message-piece-${index}-${piece.pieceIndex}`}
                       >
                         {att?.type === 'image' && att.url && (
-                          <ImageWithSpinner
+                          <MediaPreview
+                            type="image"
                             src={att.url}
                             alt={att.name}
                             className={styles.attachmentPreview}
@@ -666,10 +623,10 @@ export default function MessageList({
                           />
                         )}
                         {att?.type === 'video' && att.url && (
-                          <MediaWithFallback type="video" src={att.url} className={styles.videoPreview} />
+                          <MediaPreview type="video" src={att.url} className={styles.videoPreview} />
                         )}
                         {att?.type === 'audio' && att.url && (
-                          <MediaWithFallback type="audio" src={att.url} className={styles.audioPreview} />
+                          <MediaPreview type="audio" src={att.url} className={styles.audioPreview} />
                         )}
                         {att?.type === 'file' && (
                           <div className={styles.attachmentFile}>
