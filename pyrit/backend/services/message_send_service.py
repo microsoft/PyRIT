@@ -11,7 +11,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import AsyncGenerator, Callable, Coroutine
-from contextlib import ExitStack, asynccontextmanager
+from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import lru_cache, partial
@@ -155,6 +155,15 @@ class MessageSendService:
         self._accept_lock = asyncio.Lock()
         self._closing = False
         self._shutdown_task: asyncio.Task[None] | None = None
+
+    def reserve_conversation(self, conversation_id: str) -> AbstractContextManager[None]:
+        """
+        Reserve a conversation so a caller can replace unsent history without overlapping a send.
+
+        Returns:
+            The conversation's exclusive manual-operation reservation.
+        """
+        return self._scheduler.reserve(conversation_id=conversation_id)
 
     async def submit_async(self, *, attack_result_id: str, request: MessageSendRequest) -> MessageSendStatus:
         """

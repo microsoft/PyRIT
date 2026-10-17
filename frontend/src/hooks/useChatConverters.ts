@@ -15,6 +15,7 @@ import type {
   ConverterStageResult,
   MessageAttachment,
   PieceConversion,
+  PieceConversionUpdates,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import { fileToBase64 } from '@/utils/messageMapper'
@@ -247,7 +248,7 @@ export function usePieceConverters(
     })
   }, [])
 
-  const editInput = useCallback((pieceId: string, value: string): Record<string, PieceConversion> | void => {
+  const editInput = useCallback((pieceId: string, value: string): PieceConversionUpdates | void => {
     const update = (current: ConversionState): ConversionState => {
       const input = current.inputs.find((candidate: VersionedInput) => candidate.id === pieceId)
       if (!input || input.dataType !== 'text' || (current.workingInputs[pieceId] ?? input.value) === value) return current
@@ -265,13 +266,14 @@ export function usePieceConverters(
     }
     if (!currentState.current) return
     const next = update(currentState.current)
+    if (next === currentState.current) return
     setState(update)
-    return next.applied
+    return { [pieceId]: next.applied[pieceId] ?? null }
   }, [])
 
   const editStageOutput = useCallback((
     pieceId: string, stageId: string, value: string,
-  ): Record<string, PieceConversion> | void => {
+  ): PieceConversionUpdates | void => {
     const update = (current: ConversionState): ConversionState => {
       const stages = current.stageResults[pieceId] ?? []
       const index = stages.findIndex((stage: ConverterStageResult) => stage.stageId === stageId)
@@ -294,8 +296,9 @@ export function usePieceConverters(
     }
     if (!currentState.current) return
     const next = update(currentState.current)
+    if (next === currentState.current) return
     setState(update)
-    return next.applied
+    return { [pieceId]: next.applied[pieceId] ?? null }
   }, [])
 
   const runConversion = async ({
@@ -303,7 +306,7 @@ export function usePieceConverters(
     pieceId,
     afterStageId,
     includeIncomplete = false,
-  }: ConversionScope): Promise<Record<string, PieceConversion> | void> => {
+  }: ConversionScope): Promise<PieceConversionUpdates | void> => {
     if (state.activeRuns.length > 0 && state.activeRuns[state.activeRuns.length - 1] === state.runId) return
     const completed = completedResults(state)
     const selected = state.inputs.flatMap((input: VersionedInput): ConversionJob[] => {
@@ -372,13 +375,13 @@ export function usePieceConverters(
       }
     }))
     const completeRun = (current: ConversionState): {
-      state: ConversionState; applied: Record<string, PieceConversion>; touched: boolean
+      state: ConversionState; updates: PieceConversionUpdates
     } => {
       const activeRuns = current.activeRuns.filter((active: number) => active !== runId)
       const stageResults = { ...current.stageResults }
       const errors = { ...current.errors }
       const accepted = new Set<string>()
-      let touched = false
+      const updates: PieceConversionUpdates = {}
       for (const outcome of outcomes) {
         // A newer run that selected this input owns its outcome slot now.
         if (current.runOwners[outcome.input.id] !== runId) continue
@@ -387,7 +390,7 @@ export function usePieceConverters(
           !input || input.revision !== outcome.input.revision
           || current.pipelineRevisions[input.pieceType] !== outcome.pipelineRevision
         ) continue
-        touched = true
+        updates[input.id] = null
         if (outcome.stages) {
           stageResults[input.id] = outcome.stages
           accepted.add(input.id)
@@ -398,12 +401,15 @@ export function usePieceConverters(
       const applied = buildAppliedConversions(
         next.inputs.filter((input: VersionedInput) => accepted.has(input.id)), completedResults(next),
       )
-      return { state: { ...next, applied: { ...next.applied, ...applied } }, applied, touched }
+      return {
+        state: { ...next, applied: { ...next.applied, ...applied } },
+        updates: { ...updates, ...applied },
+      }
     }
     if (!currentState.current) return
     const completion = completeRun(currentState.current)
     setState((current: ConversionState) => completeRun(current).state)
-    return completion.touched ? completion.state.applied : undefined
+    return Object.keys(completion.updates).length ? completion.updates : undefined
   }
 
   const apply = useCallback((): void => {

@@ -22,7 +22,7 @@ import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
-  ChatConverterController, ConverterInputPiece, ConverterInstance, ConverterPipelineStage, ConverterStageResult, PieceConversion,
+  ChatConverterController, ConverterInputPiece, ConverterInstance, ConverterPipelineStage, ConverterStageResult, PieceConversionUpdates,
 } from '@/types'
 
 import {
@@ -67,7 +67,7 @@ interface ConverterPanelProps {
   onClose: () => void
   controller: ChatConverterController
   selectedMessageCount?: number
-  onApply?: (applied: Record<string, PieceConversion>) => void
+  onApply?: (updates: PieceConversionUpdates) => void
 }
 
 interface SelectedConverter extends ConverterInstance {
@@ -178,7 +178,7 @@ export default function ConverterPanel({
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH)
   const isResizing = useRef(false)
   const draggedConverterIndex = useRef<number | null>(null)
-  const applyResult = (applied: Record<string, PieceConversion> | void): void => {
+  const applyResult = (applied: PieceConversionUpdates | void): void => {
     if (applied) onApply?.(applied)
   }
   const convert = async (pieceType: string): Promise<void> => {

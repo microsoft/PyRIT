@@ -29,6 +29,7 @@ from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendSt
 from pyrit.backend.models.targets import TargetListResponse
 from pyrit.backend.routes.attacks import get_saved_conversation_async as get_saved_conversation_route_async
 from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError
 from pyrit.backend.services.target_service import TargetService
 from pyrit.memory import SQLiteMemory
 from pyrit.memory.memory_interface import AttackStateConflictError
@@ -38,6 +39,7 @@ from pyrit.models import (
     Conversation,
     ConversationReference,
     ConversationType,
+    Message,
     MessagePiece,
     PromptDataType,
     Score,
@@ -108,6 +110,69 @@ def response_target(patch_central_database: None) -> Iterator[OpenAIResponseTarg
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestConversationEditor:
+    async def test_edit_exit_does_not_replace_history_already_read_by_an_inflight_send_async(
+        self, *, editor_target: MockPromptTarget, sqlite_instance: SQLiteMemory
+    ) -> None:
+        service = AttackService()
+        request = draft(value="Context seen by provider")
+        request.messages[0].role = "system"
+        request.target_registry_name = "selected"
+        saved = await service.save_conversation_async(request=request)
+        conversation_id = saved.messages.conversation_id
+        piece = saved.messages.messages[0].message_pieces[0]
+        edit = SaveConversationRequest(
+            save_id=uuid.uuid4(),
+            destination="same_attack",
+            attack_result_id=saved.attack.attack_result_id,
+            source_attack_result_id=saved.attack.attack_result_id,
+            source_conversation_id=conversation_id,
+            operator="owner",
+            target_registry_name="selected",
+            reuse_unsent_conversation=True,
+            expected_source_piece_ids=[piece.id],
+            messages=[
+                ConversationMessageRequest(
+                    role="system",
+                    pieces=[ConversationPieceRequest(original_value="Changed context")],
+                )
+            ],
+        )
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_send = editor_target._send_prompt_to_target_async
+
+        async def blocked_send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            assert normalized_conversation[0].get_piece().converted_value == "Context seen by provider"
+            entered.set()
+            await release.wait()
+            return await original_send(normalized_conversation=normalized_conversation)
+
+        sends = service._message_send_service
+        async with message_send_lifecycle_async(sends):
+            with patch.object(editor_target, "_send_prompt_to_target_async", side_effect=blocked_send_async):
+                status = await sends.submit_async(
+                    attack_result_id=saved.attack.attack_result_id,
+                    request=MessageSendRequest(
+                        submission_id="inflight-edit",
+                        target_conversation_id=conversation_id,
+                        target_registry_name="selected",
+                        pieces=[ConversationPieceRequest(original_value="Next prompt")],
+                    ),
+                )
+                try:
+                    await asyncio.wait_for(entered.wait(), timeout=5)
+                    with pytest.raises(ManualSendConflictError, match="already in progress"):
+                        await service.save_conversation_async(request=edit)
+                    history = await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)
+                    assert [item.id for item in history] == [piece.id]
+                    assert history[0].converted_value == "Context seen by provider"
+                finally:
+                    release.set()
+                assert (await _settle_send_async(service=sends, status=status)).state == MessageSendState.COMPLETED
+            with pytest.raises(AttackStateConflictError, match="conversation changed"):
+                await service.save_conversation_async(request=edit)
+            with sends.reserve_conversation(conversation_id):
+                pass
+
     async def test_same_attack_uses_original_target_capabilities_not_an_alias_async(
         self, sqlite_instance: SQLiteMemory
     ) -> None:

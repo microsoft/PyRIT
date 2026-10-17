@@ -630,6 +630,18 @@ class AttackService:
         Returns:
             The stored attack and conversation.
         """
+        if not request.reuse_unsent_conversation:
+            return await self._save_conversation_async(request=request)
+        with self._message_send_service.reserve_conversation(str(request.source_conversation_id)):
+            return await self._save_conversation_async(request=request)
+
+    async def _save_conversation_async(self, *, request: SaveConversationRequest) -> AddMessageResponse:
+        """
+        Prepare and persist a conversation while the caller holds any required source reservation.
+
+        Returns:
+            The stored attack and conversation.
+        """
         if request.destination == "new_attack":
             operation_id = await self._memory.resolve_operation_id_async(
                 operation_id=request.operation_id, operation_name=request.operation

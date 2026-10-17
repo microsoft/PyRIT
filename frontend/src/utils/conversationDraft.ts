@@ -21,7 +21,9 @@ export function historyReplayDisabledReason(
   const capabilities = target.capabilities
   const systemSetup = history !== undefined && capabilities?.supports_multi_turn && capabilities.supports_system_prompt
     && history.every((message: { readonly role: string }) => message.role === 'system' || message.role === 'developer')
-  if (!systemSetup && (!capabilities?.supports_editable_history || !capabilities.supports_multi_turn)) {
+  const supportsReplay = target.supports_history_replay
+    ?? Boolean(capabilities?.supports_editable_history && capabilities.supports_multi_turn)
+  if (!systemSetup && !supportsReplay) {
     return 'This target does not support editable history.'
   }
   return undefined

@@ -69,8 +69,10 @@ async def save_conversation_async(*, body: SaveConversationRequest, request: Req
         return await get_attack_service().save_conversation_async(request=body)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except AttackStateConflictError as exc:
+    except (AttackStateConflictError, ManualSendConflictError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ManualSendQueueFullError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except LookupError as exc:
         raise FileNotFoundError(str(exc)) from exc
     except ValueError as exc:

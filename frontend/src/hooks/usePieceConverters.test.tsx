@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 
 import { convertersApi } from '@/services/api'
-import type { ConverterInputPiece, ConverterPreviewResponse } from '@/types'
+import type { ConverterInputPiece, ConverterPreviewResponse, PieceConversionUpdates } from '@/types'
 import { buildAppliedConversions } from '@/utils/conversionResults'
 
 import { usePieceConverters } from './useChatConverters'
@@ -57,7 +57,7 @@ describe('usePieceConverters', () => {
       { initialProps: { inputs: first, scope: 'first-message' } },
     )
     act(() => result.current.addConverter('text', 'converter'))
-    let pending: Promise<void>
+    let pending: Promise<PieceConversionUpdates | void>
     act(() => { pending = result.current.convert('text') })
     await waitFor(() => expect(convertersApi.previewConversion).toHaveBeenCalledTimes(1))
     rerender({ inputs: second, scope: 'second-message' })
@@ -115,7 +115,9 @@ describe('usePieceConverters', () => {
     })
     await act(async () => { await result.current.convert('text') })
     const stageId = result.current.stageResults.one[0].stageId
-    act(() => { result.current.editStageOutput('one', stageId, 'manual middle') })
+    let updates: PieceConversionUpdates | void = undefined
+    act(() => { updates = result.current.editStageOutput('one', stageId, 'manual middle') })
+    expect(updates).toEqual({ one: null })
     expect(result.current.stageResults.one).toHaveLength(1)
     expect(result.current.results.one).toBeUndefined()
     await act(async () => { await result.current.convertRemaining('one', stageId) })

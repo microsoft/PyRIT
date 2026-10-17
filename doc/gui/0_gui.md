@@ -213,7 +213,8 @@ separately on each conversation's original inputs when the count is greater than
 The repetition control is disabled after a manual conversion edit or a partial
 conversion, including marked text regions. Hover over the disabled control for
 the reason. Send once, or reset the conversions before repeating.
-Repetitions also require a target that can replay the existing history. A fresh
+Repetitions also require a target that can replay the existing history. Configured
+history adapters and provider restoration count as replay support. A fresh
 request with no history can be repeated without editable-history support.
 Converter order, repeated stages, and original/converted values
 are preserved. API response converters always run independently per conversation.
@@ -368,7 +369,7 @@ the call ID, name, and JSON arguments. **Add tool response** inserts a separate
 unanswered call. Tool content is stored, not executed.
 
 Opening the editor does not require editable-history support. Saving copied
-history requires both multi-turn and editable-history support, including for
+history requires native support, a configured history adapter, or provider restoration, including for
 `assistant`, `simulated_assistant`, and tool turns. Empty history needs neither.
 An initial system/developer setup is also allowed when the target supports
 system prompts and multiple turns. The final user prompt returns to the composer
@@ -409,6 +410,8 @@ If the source conversation has not been sent to a target, this updates the same
 conversation. Repeated edit-and-exit cycles do not create extra branches. Sent
 history always creates a new conversation. A failed save keeps the editor and its
 changes visible. Leaving the page still uses the unsaved-change warning.
+If a send already owns the source conversation, automatic save refuses to replace
+its history. Wait for that send to finish before saving the draft again.
 
 **Save to new attack** in the ribbon creates a separate manual attack immediately,
 without a destination dialog. It works for unsaved drafts and converted conversations.
@@ -432,7 +435,8 @@ The converter icon in a prompt selects only that message. Use the checkboxes in 
 mode, which pairs each **Original message** with its **Converted message**.
 A strong divider separates the converter pipeline from the results; lighter
 dividers separate message pairs. **Select all** and **Clear** control the
-selection. Completed batch results are added to the draft automatically. Structured
+selection. Completed batch results are added to the draft automatically. Editing
+one piece does not clear existing conversions on other pieces. Structured
 tool content is not passed to text converters.
 Single-message conversion keeps editable stage outputs. After a middle-stage
 edit, rerun only the remaining stages. Converter IDs record the stages used,

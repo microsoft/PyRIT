@@ -102,6 +102,21 @@ describe('conversation drafts', () => {
     },
   )
 
+  it.each([false, true])('uses effective replay support for an adapted single-turn=%s target', (singleTurn: boolean) => {
+    const target = makeTarget({
+      target_registry_name: 'adapted',
+      supports_history_replay: true,
+      capabilities: {
+        supports_multi_turn: !singleTurn, supports_editable_history: false, supported_input_modalities: ['text'],
+      },
+    })
+    const history = [{ role: 'user' }, { role: 'assistant' }]
+    expect(historyReplayDisabledReason(target, history)).toBeUndefined()
+    expect(editorTargetDisabledReason(target, ['text'], history)).toBeUndefined()
+    expect(historyReplayDisabledReason({ ...target, supports_history_replay: false }, history)).toBeDefined()
+    expect(editorTargetDisabledReason(target, ['image_path'], history)).toMatch(/image_path/)
+  })
+
   it('allows initial system setup only with system-prompt and multi-turn support', () => {
     const history = [{ role: 'system' }, { role: 'developer' }]
     const target = makeTarget({

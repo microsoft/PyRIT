@@ -31,10 +31,10 @@ export default function MultiSendSettings({ options, disabled, onChange, disable
   return (
     <Popover positioning="above-end" open={open && !disabled && !disabledReason}
       onOpenChange={(_event, data) => setOpen(data.open && !disabled && !disabledReason)}>
-      <PopoverTrigger disableButtonEnhancement>
-        <Tooltip content={disabledReason ?? 'Choose how many conversations receive this prompt'} relationship="description">
-          <span tabIndex={disabledReason ? 0 : undefined} aria-label={disabledReason}
+      <Tooltip content={disabledReason ?? 'Choose how many conversations receive this prompt'} relationship="description">
+        <span tabIndex={disabledReason ? 0 : undefined} aria-label={disabledReason}
             aria-disabled={disabled || Boolean(disabledReason)}>
+          <PopoverTrigger disableButtonEnhancement>
           <Button
             appearance={options.count > 1 ? 'secondary' : 'subtle'}
             size="small"
@@ -45,9 +45,9 @@ export default function MultiSendSettings({ options, disabled, onChange, disable
           >
             n={options.count}
           </Button>
-          </span>
-        </Tooltip>
-      </PopoverTrigger>
+          </PopoverTrigger>
+        </span>
+      </Tooltip>
       <PopoverSurface aria-label="Prompt repetitions">
         <div className={styles.content}>
           <Text weight="semibold">Prompt repetitions</Text>

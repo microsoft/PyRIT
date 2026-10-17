@@ -1268,7 +1268,9 @@ describe("ChatWindow Integration", () => {
       expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(2);
     });
 
-    async function prepareUndoChat(options: { immutable?: boolean; emptyHistory?: boolean; assistantHistory?: boolean } = {}) {
+    async function prepareUndoChat(options: {
+      immutable?: boolean; emptyHistory?: boolean; assistantHistory?: boolean; restorable?: boolean;
+    } = {}) {
       const user = userEvent.setup();
       const prefix: BackendMessage[] = [{
         role: "system", turn_number: 0, created_at: "",
@@ -1295,6 +1297,7 @@ describe("ChatWindow Integration", () => {
       }
       const target = options.immutable ? makeTarget({
         target_registry_name: "immutable",
+        ...(options.restorable ? { supports_history_replay: true } : {}),
         capabilities: buildCapabilities({ supports_editable_history: false, supported_input_modalities: ["text"] }),
       }) : mockTarget;
       let source = { conversation_id: "undo-source", messages: prefix, target_response_status: null as TargetResponseStatus | null };
@@ -1375,7 +1378,7 @@ describe("ChatWindow Integration", () => {
       await user.click(screen.getByRole("button", { name: "Convert Text from stage 2 to end" }));
       await user.click(screen.getByRole("button", { name: "Send message" }));
       await screen.findByText("Accepted result");
-      if (options.immutable && !options.emptyHistory) {
+      if (options.immutable && !options.emptyHistory && !options.restorable) {
         await waitFor(() => expect(screen.queryByRole("button", { name: "Undo last send" })).not.toBeInTheDocument());
       } else {
         await waitFor(() => expect(screen.getByRole("button", { name: "Undo last send" })).toBeEnabled());
@@ -1424,6 +1427,19 @@ describe("ChatWindow Integration", () => {
       await prepareUndoChat({ immutable: true, assistantHistory: true });
       expect(screen.queryByRole("button", { name: "Undo last send" })).not.toBeInTheDocument();
       expect(mockedAttacksApi.createConversation).not.toHaveBeenCalled();
+    });
+
+    it("allows repeats, branching, and Undo when provider restoration supports immutable history", async () => {
+      const { user } = await prepareUndoChat({ immutable: true, assistantHistory: true, restorable: true });
+      expect(screen.getByRole("button", { name: "Repetitions: 1" })).toBeEnabled();
+      await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[1]);
+      expect(screen.getByRole("menuitem", { name: "Branch conversation", exact: true })).toBeEnabled();
+      await user.keyboard("{Escape}");
+      await user.click(screen.getByRole("button", { name: "Undo last send" }));
+      await waitFor(() => expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith("undo-attack", {
+        source_conversation_id: "undo-source", cutoff_index: 2,
+      }));
+      expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("Original prompt");
     });
 
     it("allows first-turn undo for an immutable target when no history needs replay", async () => {
@@ -1613,7 +1629,7 @@ describe("ChatWindow Integration", () => {
     expect(within(screen.getByTestId("conversation-editor")).getByPlaceholderText("Type prompt here")).toHaveValue("Keep these edits");
   });
 
-  it("clears the old composer draft when its pending editor message is deleted", async () => {
+  it.each(["delete", "system"])("clears the old composer draft after pending-message change %s", async (change: string) => {
     const user = userEvent.setup();
     mockedAttacksApi.saveConversation.mockResolvedValue({
       attack: {
@@ -1633,8 +1649,12 @@ describe("ChatWindow Integration", () => {
     const context = within(screen.getByRole("region", { name: "Message 1" }));
     await user.selectOptions(context.getByRole("combobox"), "system");
     await user.type(context.getByPlaceholderText("Type prompt here"), "Keep history");
-    await user.click(screen.getByRole("button", { name: "Delete message 2" }));
-    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    if (change === "delete") {
+      await user.click(screen.getByRole("button", { name: "Delete message 2" }));
+    } else {
+      await user.selectOptions(within(screen.getByRole("region", { name: "Message 2" })).getByRole("combobox"), "system");
+    }
+    await user.click(screen.getByRole("button", { name: "Save to new attack", exact: true }));
     await waitFor(() => expect(screen.queryByTestId("conversation-editor")).not.toBeInTheDocument());
     expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("");
     expect(screen.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();

@@ -72,6 +72,9 @@ export interface PieceConversion {
   convertedDataType: string
 }
 
+/** Only touched pieces are present; null explicitly clears a stale conversion. */
+export type PieceConversionUpdates = Record<string, PieceConversion | null>
+
 export interface ConverterPipelineStage {
   readonly id: string
   readonly converterId: string
@@ -112,10 +115,10 @@ export interface ChatConverterController {
   addConverter: (pieceType: string, converterId: string) => void
   setPipeline: (pieceType: string, update: (stages: ConverterPipelineStage[]) => ConverterPipelineStage[]) => void
   retainConverters: (availableIds: Set<string>) => void
-  convert: (pieceType: string) => Promise<Record<string, PieceConversion> | void>
-  convertRemaining: (pieceId: string, stageId: string) => Promise<Record<string, PieceConversion> | void>
-  editInput: (pieceId: string, value: string) => Record<string, PieceConversion> | void
-  editStageOutput: (pieceId: string, stageId: string, value: string) => Record<string, PieceConversion> | void
+  convert: (pieceType: string) => Promise<PieceConversionUpdates | void>
+  convertRemaining: (pieceId: string, stageId: string) => Promise<PieceConversionUpdates | void>
+  editInput: (pieceId: string, value: string) => PieceConversionUpdates | void
+  editStageOutput: (pieceId: string, stageId: string, value: string) => PieceConversionUpdates | void
   apply: () => void
   clear: (pieceId: string) => void
   clearAll: () => void
@@ -300,6 +303,8 @@ export interface TargetInstance {
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
   capabilities?: TargetCapabilities | null
+  /** Effective replay support, including configured adapters and provider restoration. */
+  supports_history_replay?: boolean
   /** Non-promoted constructor params, curated for display (e.g., RoundRobin weights). */
   target_specific_params?: Record<string, unknown> | null
   /** Inner targets for composite targets like RoundRobinTarget. */

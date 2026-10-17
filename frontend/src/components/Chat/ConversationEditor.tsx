@@ -10,7 +10,7 @@ import { useBeforeUnload, useBlocker } from 'react-router'
 import { usePieceConverters } from '@/hooks/useChatConverters'
 import type { useConversationDraft } from '@/hooks/useConversationDraft'
 import type {
-  AddMessageResponse, ChatConverterSnapshot, ConversationDraftMessage, ConversationDraftPiece, MessageAttachment, PieceConversion, SaveConversationRequest,
+  AddMessageResponse, ChatConverterSnapshot, ConversationDraftMessage, ConversationDraftPiece, MessageAttachment, PieceConversionUpdates, SaveConversationRequest,
 } from '@/types'
 import {
   NEW_MESSAGE_ROLES, draftAttachment, draftConverterInputs, editorTargetDisabledReason, unansweredToolCallId,
@@ -245,13 +245,12 @@ export default function ConversationEditor({
     controller.removeMessage(messageId)
     setSelected((previous: Set<string>) => new Set([...previous].filter((id: string) => id !== messageId)))
   }
-  const applyConversions = (applied: Record<string, PieceConversion>): void => {
-    const inputIds = new Set(converters.inputs.map((input) => input.id))
+  const applyConversions = (updates: PieceConversionUpdates): void => {
     controller.changeMessages((current: ConversationDraftMessage[]) => current.map((message: ConversationDraftMessage) => ({
       ...message,
       pieces: message.pieces.map((piece: ConversationDraftPiece) => {
-        if (!inputIds.has(piece.draftId)) return piece
-        const conversion = applied[piece.draftId]
+        if (!Object.prototype.hasOwnProperty.call(updates, piece.draftId)) return piece
+        const conversion = updates[piece.draftId]
         return {
           ...piece,
           converted_value: conversion?.convertedValue,
