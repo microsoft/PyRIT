@@ -20,10 +20,12 @@ from enum import Enum
 from typing import Any
 
 from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.models.identifiers import TARGET_EVAL_PARAM_FALLBACKS, TARGET_EVAL_PARAMS
 from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import (
     AzureMLChatTarget,
+    LiteLLMDecisionTarget,
     OpenAIChatTarget,
     OpenAICompletionTarget,
     OpenAIImageTarget,
@@ -39,6 +41,19 @@ from pyrit.registry import TargetRegistry
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
+
+
+def _auto_group_enabled(value: object) -> bool:
+    """
+    Normalize direct booleans and YAML string/list auto-group settings.
+
+    Returns:
+        bool: Whether automatic target grouping is enabled.
+    """
+    if isinstance(value, bool):
+        return value
+    scalar = value[0] if isinstance(value, list) else value
+    return str(scalar).lower() not in ("false", "0", "no")
 
 
 class TargetInitializerTags(str, Enum):
@@ -65,6 +80,7 @@ class TargetConfig:
         temperature: Optional temperature override for the target.
         tags: Tags for filtering which targets to register.
         default_objective_target: If True, tags this target as DEFAULT_OBJECTIVE_TARGET in the registry.
+        default_endpoint: Public service endpoint to use when endpoint_var is absent.
     """
 
     registry_name: str
@@ -77,6 +93,7 @@ class TargetConfig:
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
     tags: list[TargetInitializerTags] = field(default_factory=lambda: [TargetInitializerTags.DEFAULT])
     default_objective_target: bool = False
+    default_endpoint: str | None = None
 
 
 # Define all supported target configurations.
@@ -199,6 +216,24 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         temperature=1.2,
     ),
     TargetConfig(
+        registry_name="adversarial_chat2",
+        target_class=OpenAIChatTarget,
+        endpoint_var="ADVERSARIAL_CHAT_ENDPOINT2",
+        key_var="ADVERSARIAL_CHAT_KEY2",
+        model_var="ADVERSARIAL_CHAT_MODEL2",
+        underlying_model_var="ADVERSARIAL_CHAT_UNDERLYING_MODEL2",
+        temperature=1.2,
+    ),
+    TargetConfig(
+        registry_name="adversarial_chat3",
+        target_class=OpenAIChatTarget,
+        endpoint_var="ADVERSARIAL_CHAT_ENDPOINT3",
+        key_var="ADVERSARIAL_CHAT_KEY3",
+        model_var="ADVERSARIAL_CHAT_MODEL3",
+        underlying_model_var="ADVERSARIAL_CHAT_UNDERLYING_MODEL3",
+        temperature=1.2,
+    ),
+    TargetConfig(
         registry_name="adversarial_chat_singleturn",
         target_class=AzureMLChatTarget,
         endpoint_var="ADVERSARIAL_CHAT_SINGLETURN_ENDPOINT",
@@ -265,6 +300,14 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         endpoint_var="OPEN_ROUTER_ENDPOINT",
         key_var="OPEN_ROUTER_KEY",
         model_var="OPEN_ROUTER_CLAUDE_MODEL",
+    ),
+    TargetConfig(
+        registry_name="microsoft_decision",
+        target_class=LiteLLMDecisionTarget,
+        endpoint_var="MICROSOFT_DECISION_ENDPOINT",
+        key_var="MICROSOFT_DECISION_KEY",
+        default_endpoint="https://openrouter.ai/api",
+        extra_kwargs={"model_name": "openrouter/microsoft/microsoft-decision-1"},
     ),
     TargetConfig(
         registry_name="ollama",
@@ -539,6 +582,12 @@ class TargetInitializer(PyRITInitializer):
         await initializer.initialize_async()
     """
 
+    _ADVERSARIAL_CHAT_NAMES: tuple[str, ...] = (
+        "adversarial_chat",
+        "adversarial_chat2",
+        "adversarial_chat3",
+    )
+
     def __init__(self) -> None:
         """Initialize the TargetInitializer."""
         super().__init__()
@@ -588,15 +637,15 @@ class TargetInitializer(PyRITInitializer):
         and target class are automatically grouped into ``RoundRobinTarget``
         instances for rate-limit distribution and fault tolerance.
         """
+        await run_legacy_sync_async(self._register_targets)
+
+    def _register_targets(self) -> None:
+        """Construct and register targets without blocking the caller's event loop."""
         tags = self.params.get("tags", ["default"])
         if TargetInitializerTags.ALL in tags:
             tags = [tag for tag in TargetInitializerTags if tag != TargetInitializerTags.ALL]
 
-        auto_group = self.params.get("auto_group", True)
-        # Normalize: params arrive as bool (direct), str, or list[str] (YAML).
-        if not isinstance(auto_group, bool):
-            value = auto_group[0] if isinstance(auto_group, list) else auto_group
-            auto_group = str(value).lower() not in ("false", "0", "no")
+        auto_group = _auto_group_enabled(self.params.get("auto_group", True))
 
         self._registered_names: list[str] = []
 
@@ -605,6 +654,7 @@ class TargetInitializer(PyRITInitializer):
                 continue
             self._register_target(config)
 
+        self._configure_adversarial_chat()
         if auto_group:
             self._auto_group_targets()
 
@@ -615,7 +665,7 @@ class TargetInitializer(PyRITInitializer):
         Args:
             config: The target configuration specifying env vars and target class.
         """
-        endpoint = os.getenv(config.endpoint_var)
+        endpoint = os.getenv(config.endpoint_var) or config.default_endpoint
         if not endpoint:
             return
 
@@ -678,7 +728,7 @@ class TargetInitializer(PyRITInitializer):
 
         target = config.target_class(**kwargs)
         registry = TargetRegistry.get_registry_singleton()
-        registry.instances.register(target, name=config.registry_name)
+        registry.instances.register(target, name=config.registry_name, replace=True)
         if config.tags:
             registry.instances.add_tags(name=config.registry_name, tags=list(config.tags))
         if config.default_objective_target:
@@ -687,6 +737,46 @@ class TargetInitializer(PyRITInitializer):
             )
         self._registered_names.append(config.registry_name)
         logger.info(f"Registered target: {config.registry_name}")
+
+    def _configure_adversarial_chat(self) -> None:
+        """
+        Publish the configured adversarial endpoints under the canonical target name.
+
+        Raises:
+            ValueError: If multiple adversarial targets have incompatible configurations.
+        """
+        member_names = [name for name in self._ADVERSARIAL_CHAT_NAMES if name in self._registered_names]
+        self._registered_names = [name for name in self._registered_names if name not in self._ADVERSARIAL_CHAT_NAMES]
+        if not member_names:
+            return
+
+        registry = TargetRegistry.get_registry_singleton()
+        targets = [target for name in member_names if (target := registry.instances.get(name)) is not None]
+
+        if len(targets) == 1:
+            canonical_target = targets[0]
+        else:
+            try:
+                canonical_target = RoundRobinTarget(targets=targets)
+            except ValueError as ex:
+                raise ValueError(f"Adversarial chat round-robin targets are incompatible: {ex}") from ex
+
+        if "adversarial_chat" in member_names:
+            primary = registry.instances.get("adversarial_chat")
+            if primary is not None:
+                registry.instances.register(
+                    primary,
+                    name="adversarial_chat_primary",
+                    tags=[TargetInitializerTags.DEFAULT],
+                    replace=True,
+                )
+
+        registry.instances.register(
+            canonical_target,
+            name="adversarial_chat",
+            tags=[TargetInitializerTags.DEFAULT],
+            replace=True,
+        )
 
     def _auto_group_targets(self) -> None:
         """

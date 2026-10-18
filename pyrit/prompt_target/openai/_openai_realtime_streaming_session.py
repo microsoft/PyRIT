@@ -13,6 +13,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from pyrit.common.attack_result_scope import get_current_attack_result_id
 from pyrit.models import Conversation, Message, MessagePiece
 from pyrit.prompt_target.common.realtime_audio import (
     STREAMING_INTERRUPTED_KEY,
@@ -285,7 +286,7 @@ class _OpenAIRealtimeStreamingSession:
             if force_commit_accepted:
                 try:
                     await asyncio.wait_for(self._commit_observed.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(
                         "Forced final commit was accepted but no committed event observed within 5s; "
                         "the final user turn may have been dropped by the server."
@@ -402,8 +403,14 @@ class _OpenAIRealtimeStreamingSession:
         )
 
         target_identifier = target.get_identifier()
-        target._memory.add_conversation_to_memory(
-            conversation=Conversation(conversation_id=self._conversation_id, target_identifier=target_identifier)
+        (
+            await target._memory.add_conversation_to_memory_async(
+                conversation=Conversation(
+                    conversation_id=self._conversation_id,
+                    target_identifier=target_identifier,
+                    attack_result_id=get_current_attack_result_id(),
+                )
+            )
         )
         user_piece = MessagePiece(
             role="user",
@@ -510,15 +517,12 @@ class _OpenAIRealtimeStreamingSession:
         """
         Replace the server's just-committed user audio with converted PCM.
 
-        Inserts ``converted_pcm`` as a new user item then best-effort deletes the
-        original item identified by ``committed_event``. Insert precedes delete so
-        the converted audio is already in place if delete fails or races.
+        Inserts ``converted_pcm`` as a new user item, then deletes the original item
+        identified by ``committed_event``. A deletion failure propagates so response
+        generation cannot continue with both the raw and converted audio in context.
         """
         await self._insert_user_audio_async(converted_pcm)
-        try:
-            await self._delete_conversation_item_async(committed_event.item_id)
-        except Exception as e:
-            logger.warning(f"conversation.item.delete failed for {committed_event.item_id}: {e}")
+        await self._delete_conversation_item_async(committed_event.item_id)
 
     async def _request_response_async(self) -> asyncio.Future[RealtimeTargetResult]:
         """

@@ -9,6 +9,14 @@ from pyrit.models import ComponentIdentifier
 
 logger = logging.getLogger(__name__)
 
+# The England, Scotland and Wales flags are the three RGI emoji tag sequences: U+1F3F4, the subdivision id in tag
+# characters, then U+E007F. They are visible emoji, so the decoder must not read them as hidden text. Only these
+# exact sequences are skipped; any other tag text, including a look-alike flag, is still decoded.
+_SUBDIVISION_FLAG_SEQUENCES = tuple(
+    "\U0001f3f4" + "".join(chr(0xE0000 + ord(char)) for char in subdivision) + "\U000e007f"
+    for subdivision in ("gbeng", "gbsct", "gbwls")
+)
+
 
 class AsciiSmugglerConverter(SmugglerConverter):
     """
@@ -59,26 +67,33 @@ class AsciiSmugglerConverter(SmugglerConverter):
 
         Returns:
             tuple[str, str]: A tuple with a summary of code points and the encoded message.
+
+        Raises:
+            ValueError: If ``message`` contains a character outside the ASCII printable range (0x20-0x7E),
+                which has no Unicode Tag representation. Such characters were previously dropped while the
+                result still reported success; use ``SneakyBitsSmugglerConverter`` or
+                ``VariationSelectorSmugglerConverter`` to smuggle arbitrary Unicode losslessly.
         """
+        invalid_chars = "".join(char for char in message if not 0x20 <= ord(char) <= 0x7E)
+        if invalid_chars:
+            raise ValueError(
+                f"Cannot encode {len(invalid_chars)} character(s) outside the ASCII printable range "
+                f"(0x20-0x7E): {invalid_chars!r}. Use SneakyBitsSmugglerConverter or "
+                f"VariationSelectorSmugglerConverter for lossless Unicode smuggling."
+            )
+
         encoded = ""
         code_points = ""
-        invalid_chars = ""
         if self.unicode_tags:
             encoded += chr(0xE0001)
             code_points += "U+E0001 "
         for char in message:
-            if 0x20 <= ord(char) <= 0x7E:
-                code_point = 0xE0000 + ord(char)
-                encoded += chr(code_point)
-                code_points += f"U+{code_point:X} "
-            else:
-                invalid_chars += char
+            code_point = 0xE0000 + ord(char)
+            encoded += chr(code_point)
+            code_points += f"U+{code_point:X} "
         if self.unicode_tags:
             encoded += chr(0xE007F)
             code_points += "U+E007F"
-
-        if invalid_chars:
-            logger.error(f"Invalid characters detected: {invalid_chars}")
         return code_points, encoded
 
     def decode_message(self, *, message: str) -> str:
@@ -86,7 +101,7 @@ class AsciiSmugglerConverter(SmugglerConverter):
         Decode a message encoded with Unicode Tags.
 
         For each character in the Unicode Tags range, subtracts 0xE0000.
-        Skips control tags if present.
+        Skips control tags if present, and the England, Scotland and Wales flag emoji, which are written with tags.
 
         Args:
             message (str): The encoded message.
@@ -94,17 +109,26 @@ class AsciiSmugglerConverter(SmugglerConverter):
         Returns:
             str: The decoded message.
         """
+        # A space, not an empty string, so that removing one flag cannot join its neighbours into another flag.
+        for flag in _SUBDIVISION_FLAG_SEQUENCES:
+            message = message.replace(flag, " ")
+
         decoded_message = ""
+        found_tag = False
         for char in message:
             code_point = ord(char)
             if 0xE0000 <= code_point <= 0xE007F:
+                found_tag = True
                 decoded_char = chr(code_point - 0xE0000)
                 if not 0x20 <= ord(decoded_char) <= 0x7E:
                     logger.info(f"Potential unicode tag detected: {decoded_char}")
                 else:
                     decoded_message += decoded_char
 
-        if len(decoded_message) != len(message):
+        # A message that is entirely hidden tags decodes to the same length as the input, so
+        # comparing lengths misreports it as having nothing hidden. Track whether a tag code
+        # point was actually seen instead.
+        if found_tag:
             logger.info("Hidden Unicode Tags discovered.")
         else:
             logger.info("No hidden Unicode Tag characters discovered.")

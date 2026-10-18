@@ -2,8 +2,6 @@ name: polaroid_vintage_film
 description: |
   Vintage 35mm found footage film photography. Generates highly realistic, unstaged
   "found footage" physical film photographs with prominent film grain and retro aesthetics.
-authors:
-  - AI Red Team
 groups:
   - AI Red Team
 style_instructions: |

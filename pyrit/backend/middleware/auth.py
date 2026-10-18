@@ -11,7 +11,6 @@ authorization.
 """
 
 import logging
-import os
 from collections import OrderedDict
 from dataclasses import dataclass
 from hashlib import sha256
@@ -19,10 +18,14 @@ from time import monotonic
 from typing import Any, ClassVar
 
 import httpx
+from fastapi import HTTPException, status
+from starlette._utils import get_route_path
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
+
+from pyrit.backend.authentication_policy import AuthenticationPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +48,44 @@ class AuthenticatedUser:
     name: str
     email: str
     groups: list[str]
+    is_admin: bool = False
+
+
+def get_authentication_policy(request: Request) -> AuthenticationPolicy:
+    """Return the validated process-start authentication policy."""
+    state = getattr(request.scope.get("app"), "state", None)
+    policy = getattr(state, "authentication_policy", None)
+    if not isinstance(policy, AuthenticationPolicy):
+        raise RuntimeError("Authentication policy was not initialized during application startup.")
+    return policy
+
+
+def has_admin_access(request: Request) -> bool:
+    """
+    Return whether the caller is an administrator.
+
+    Local mode grants anonymous administrator access only when the immutable
+    process-start policy explicitly enables it.
+
+    Returns:
+        bool: Whether the caller has administrator access.
+    """
+    user = getattr(request.state, "user", None)
+    if isinstance(user, AuthenticatedUser):
+        return user.is_admin
+    if user is None:
+        policy = get_authentication_policy(request)
+        return policy.mode == "local" and policy.allow_unauthenticated_admin
+    return False
+
+
+def require_admin(request: Request) -> None:
+    """Require an administrator when authentication is enabled."""
+    if not has_admin_access(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access is required",
+        )
 
 
 class EntraAuthMiddleware(BaseHTTPMiddleware):
@@ -65,35 +106,9 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
     _AUTH_CACHE_MAX_ENTRIES: ClassVar[int] = 256
 
     def __init__(self, app: ASGIApp) -> None:
-        """Initialize the middleware with Entra ID configuration from environment variables."""
+        """Initialize the middleware cache; policy is supplied by application startup."""
         super().__init__(app)
-        tenant_raw = os.getenv("ENTRA_TENANT_ID", "")
-        client_raw = os.getenv("ENTRA_CLIENT_ID", "")
-        groups_raw = os.getenv("ENTRA_ALLOWED_GROUP_IDS", "")
-        self._tenant_id = tenant_raw.strip()
-        self._client_id = client_raw.strip()
-        self._allowed_group_ids: set[str] = {g.strip() for g in groups_raw.split(",") if g.strip()}
-        self._enabled = any((tenant_raw, client_raw, groups_raw))
         self._auth_cache: OrderedDict[str, tuple[float, AuthenticatedUser]] = OrderedDict()
-
-        if self._enabled:
-            missing_settings = [
-                name
-                for name, value in (
-                    ("ENTRA_TENANT_ID", self._tenant_id),
-                    ("ENTRA_CLIENT_ID", self._client_id),
-                    ("ENTRA_ALLOWED_GROUP_IDS", self._allowed_group_ids),
-                )
-                if not value
-            ]
-            if missing_settings:
-                raise ValueError(f"Incomplete Entra ID configuration: {', '.join(missing_settings)} must be set")
-            logger.info("Entra ID auth middleware enabled (tenant=%s)", self._tenant_id)
-        else:
-            logger.warning(
-                "Entra ID auth middleware DISABLED — ENTRA_TENANT_ID or ENTRA_CLIENT_ID not set. "
-                "All requests will be allowed without authentication."
-            )
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """
@@ -107,19 +122,20 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             Response with 401 if auth fails, otherwise the normal response.
         """
         # Skip auth for public paths and static files
-        path = request.url.path
-        if not self._enabled or path in self._PUBLIC_PATHS or not path.startswith("/api"):
+        path = get_route_path(request.scope)
+        policy = get_authentication_policy(request)
+        if policy.mode == "local" or path in self._PUBLIC_PATHS or not path.startswith("/api"):
             return await call_next(request)
 
         try:
-            user = await self._authenticate_request_async(request)
+            user = await self._authenticate_request_async(request, policy=policy)
         except AuthenticationError as error:
             return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
 
         request.state.user = user
         return await call_next(request)
 
-    async def _authenticate_request_async(self, request: Request) -> AuthenticatedUser:
+    async def _authenticate_request_async(self, request: Request, *, policy: AuthenticationPolicy) -> AuthenticatedUser:
         """
         Extract, validate, and authorize the Bearer token from the request.
 
@@ -143,16 +159,16 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         if cached_user is not None:
             return cached_user
 
-        user = await self._authenticate_with_graph_async(token=token)
+        user = await self._authenticate_with_graph_async(token=token, policy=policy)
 
         # Authorize the user based on group membership
-        if not self._is_authorized(user):
+        if not self._is_authorized(user, policy=policy):
             logger.warning(
                 "User %s (%s) denied — groups=%s, allowed_groups=%s",
                 user.email,
                 user.oid,
                 user.groups,
-                self._allowed_group_ids,
+                policy.allowed_group_ids,
             )
             raise AuthenticationError(
                 status_code=403,
@@ -173,21 +189,34 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             return None
 
         self._auth_cache.move_to_end(cache_key)
-        return AuthenticatedUser(oid=user.oid, name=user.name, email=user.email, groups=list(user.groups))
+        return AuthenticatedUser(
+            oid=user.oid,
+            name=user.name,
+            email=user.email,
+            groups=list(user.groups),
+            is_admin=user.is_admin,
+        )
 
     def _cache_user(self, *, cache_key: str, user: AuthenticatedUser) -> None:
-        cached_user = AuthenticatedUser(oid=user.oid, name=user.name, email=user.email, groups=list(user.groups))
+        cached_user = AuthenticatedUser(
+            oid=user.oid,
+            name=user.name,
+            email=user.email,
+            groups=list(user.groups),
+            is_admin=user.is_admin,
+        )
         self._auth_cache[cache_key] = (monotonic() + self._AUTH_CACHE_TTL_SECONDS, cached_user)
         self._auth_cache.move_to_end(cache_key)
         while len(self._auth_cache) > self._AUTH_CACHE_MAX_ENTRIES:
             self._auth_cache.popitem(last=False)
 
-    async def _authenticate_with_graph_async(self, *, token: str) -> AuthenticatedUser:
+    async def _authenticate_with_graph_async(self, *, token: str, policy: AuthenticationPolicy) -> AuthenticatedUser:
         """
         Authenticate a delegated access token and retrieve the current user.
 
         Args:
             token (str): The opaque Microsoft Graph access token.
+            policy: Validated process-start authentication policy.
 
         Returns:
             AuthenticatedUser: The user returned by Graph.
@@ -216,30 +245,36 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
                     logger.warning("Microsoft Graph returned an invalid user profile")
                     raise self._graph_unavailable_error()
 
-                groups = await self._check_group_memberships_async(client=client, token=token)
+                groups = await self._check_group_memberships_async(client=client, token=token, policy=policy)
                 user.groups = groups
+                user.is_admin = policy.admin_group_id in groups
 
                 return user
         except (httpx.RequestError, ValueError) as error:
             logger.warning("Microsoft Graph authentication failed: %s", type(error).__name__)
             raise self._graph_unavailable_error() from error
 
-    def _is_authorized(self, user: AuthenticatedUser) -> bool:
+    def _is_authorized(self, user: AuthenticatedUser, *, policy: AuthenticationPolicy) -> bool:
         """
         Check if the user is authorized via group membership.
 
         Returns:
             True if the user's groups intersect with the allowed group IDs, False otherwise.
         """
-        return bool(self._allowed_group_ids & set(user.groups))
+        authorized_group_ids = set(policy.allowed_group_ids) | {policy.admin_group_id}
+        authorized_group_ids.discard("")
+        return bool(authorized_group_ids & set(user.groups))
 
-    async def _check_group_memberships_async(self, *, client: httpx.AsyncClient, token: str) -> list[str]:
+    async def _check_group_memberships_async(
+        self, *, client: httpx.AsyncClient, token: str, policy: AuthenticationPolicy
+    ) -> list[str]:
         """
         Check which allowed groups contain the current user through Graph.
 
         Args:
             client (httpx.AsyncClient): The asynchronous Graph HTTP client.
             token (str): The opaque Graph access token.
+            policy: Validated process-start authentication policy.
 
         Returns:
             list[str]: The allowed group IDs containing the current user.
@@ -248,9 +283,11 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             AuthenticationError: If Graph rejects or cannot complete the lookup.
         """
         matched_group_ids: list[str] = []
-        allowed_group_ids = sorted(self._allowed_group_ids)
-        for offset in range(0, len(allowed_group_ids), self._GRAPH_MAX_GROUP_IDS_PER_REQUEST):
-            group_ids = allowed_group_ids[offset : offset + self._GRAPH_MAX_GROUP_IDS_PER_REQUEST]
+        allowed_group_ids = set(policy.allowed_group_ids) | {policy.admin_group_id}
+        allowed_group_ids.discard("")
+        sorted_group_ids = sorted(allowed_group_ids)
+        for offset in range(0, len(sorted_group_ids), self._GRAPH_MAX_GROUP_IDS_PER_REQUEST):
+            group_ids = sorted_group_ids[offset : offset + self._GRAPH_MAX_GROUP_IDS_PER_REQUEST]
             response = await client.post(
                 self._GRAPH_CHECK_MEMBER_GROUPS_URL,
                 headers={

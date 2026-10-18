@@ -11,7 +11,7 @@ from pyrit.datasets.seed_datasets.remote.mask_dataset import (
     MaskQuestionArchetype,
     _MaskDataset,
 )
-from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models import MessagePiece, SeedDataset, SeedObjective, SeedOrigin, SeedPrompt
 
 _CANARY = "TEST FIXTURE CANARY (NOT THE REAL MASK CANARY). canary GUID test:0000:00000000-0000-0000-0000-000000000000"
 
@@ -334,6 +334,7 @@ class TestMaskCommonFetchBehaviour:
         assert sum(1 for s in dataset.seeds if isinstance(s, SeedObjective)) == 1
         prompts = [s for s in dataset.seeds if isinstance(s, SeedPrompt)]
         assert len(prompts) == 2
+        assert all(seed.origin is SeedOrigin.REMOTE for seed in dataset.seeds)
         # All seeds in the row share one prompt_group_id
         assert len({s.prompt_group_id for s in dataset.seeds}) == 1
 
@@ -508,11 +509,16 @@ class TestMaskCommonFetchBehaviour:
 
         expected_metadata = _expected_metadata(row=row, archetype=archetype)
         assert all(seed.metadata == expected_metadata for seed in seeds)
+        for message in [*prepended, next_message]:
+            for piece in message.message_pieces:
+                assert all(piece.prompt_metadata[key] == value for key, value in expected_metadata.items())
+
         assert all(
-            piece.prompt_metadata == expected_metadata
-            for message in [*prepended, next_message]
+            piece.prompt_metadata[MessagePiece.PREPENDED_HISTORY_METADATA_KEY] is True
+            for message in prepended
             for piece in message.message_pieces
         )
+        assert MessagePiece.PREPENDED_HISTORY_METADATA_KEY not in next_message.message_pieces[0].prompt_metadata
 
     @pytest.mark.parametrize("field_name", ["system_prompt", "delivery"])
     def test_missing_required_source_field_raises(

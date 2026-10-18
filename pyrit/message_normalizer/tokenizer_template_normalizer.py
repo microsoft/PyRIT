@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+import json
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Literal, cast
@@ -11,7 +12,7 @@ from pyrit.message_normalizer.message_normalizer import (
     SystemMessageBehavior,
     apply_system_message_behavior_async,
 )
-from pyrit.models import Message
+from pyrit.models import ComponentIdentifier, Message
 
 if TYPE_CHECKING:
     from transformers import PreTrainedTokenizerBase
@@ -126,9 +127,7 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
 
         return cast(
             "PreTrainedTokenizerBase",
-            transformers.AutoTokenizer.from_pretrained(  # ty: ignore[possibly-missing-attribute]
-                model_name, token=token or None
-            ),
+            transformers.AutoTokenizer.from_pretrained(model_name, token=token or None),
         )
 
     @classmethod
@@ -227,4 +226,31 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
                 tokenize=False,
                 add_generation_prompt=True,
             )
+        )
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build an identifier for the tokenizer template and role behavior.
+
+        Returns:
+            The tokenizer formatter's behavioral identifier.
+        """
+        tokenizer_type = f"{type(self.tokenizer).__module__}.{type(self.tokenizer).__qualname__}"
+        return ComponentIdentifier.of(
+            self,
+            params={
+                "system_message_behavior": self.system_message_behavior,
+                "tokenizer_type": tokenizer_type,
+                "tokenizer_name_or_path": str(getattr(self.tokenizer, "name_or_path", "")),
+                "chat_template": json.dumps(
+                    getattr(self.tokenizer, "chat_template", None),
+                    sort_keys=True,
+                    default=str,
+                ),
+                "special_tokens_map": json.dumps(
+                    getattr(self.tokenizer, "special_tokens_map", {}),
+                    sort_keys=True,
+                    default=str,
+                ),
+            },
         )

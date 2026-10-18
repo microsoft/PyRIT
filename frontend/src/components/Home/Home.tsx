@@ -6,20 +6,15 @@ import {
   MessageBarBody,
   Spinner,
   Text,
-  tokens,
 } from '@fluentui/react-components'
 import {
   ArrowRightRegular,
-  CheckmarkCircleRegular,
-  DismissCircleRegular,
-  ErrorCircleRegular,
-  QuestionCircleRegular,
   TagMultipleRegular,
   TargetRegular,
 } from '@fluentui/react-icons'
-import LabelsBar from '../Labels/LabelsBar'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
+import { OutcomeIcon } from '@/components/OutcomeBadge'
 import type { AttackSummary, TargetInstance } from '../../types'
 import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
@@ -30,22 +25,14 @@ const MAX_OPERATIONS = 5
 const MAX_ATTACKS_PER_OPERATION = 3
 const NO_OPERATION_KEY = '__no_operation__'
 
-const OUTCOME_ICONS: Record<string, React.ReactElement> = {
-  success: <CheckmarkCircleRegular style={{ color: tokens.colorPaletteGreenForeground1 }} />,
-  failure: <DismissCircleRegular style={{ color: tokens.colorPaletteRedForeground1 }} />,
-  error: <ErrorCircleRegular style={{ color: tokens.colorPaletteRedForeground1 }} />,
-  undetermined: <QuestionCircleRegular style={{ color: tokens.colorNeutralForeground3 }} />,
-}
-
 interface HomeProps {
-  labels: Record<string, string>
-  onLabelsChange: (labels: Record<string, string>) => void
   activeTarget: TargetInstance | null
   onNavigate: (view: ViewName) => void
   onOpenAttack: (attackResultId: string) => void
 }
 
 interface OperationGroup {
+  key: string
   name: string
   isUnlabeled: boolean
   attacks: AttackSummary[]
@@ -56,9 +43,10 @@ function groupAttacksByOperation(attacks: AttackSummary[]): OperationGroup[] {
   const groups = new Map<string, OperationGroup>()
 
   for (const attack of attacks) {
-    const opLabel = attack.labels?.operation
+    const opLabel = attack.operation_name
     const isUnlabeled = !opLabel
-    const key = isUnlabeled ? NO_OPERATION_KEY : opLabel
+    // Saved Operations group by ID so a rename cannot split them; legacy activity groups by its stored name.
+    const key = isUnlabeled ? NO_OPERATION_KEY : attack.operation_id ? `id:${attack.operation_id}` : `name:${opLabel}`
     const updatedAt = new Date(attack.updated_at).getTime()
 
     const existing = groups.get(key)
@@ -69,6 +57,7 @@ function groupAttacksByOperation(attacks: AttackSummary[]): OperationGroup[] {
       }
     } else {
       groups.set(key, {
+        key,
         name: isUnlabeled ? '(no operation)' : opLabel,
         isUnlabeled,
         attacks: [attack],
@@ -100,8 +89,6 @@ function targetDisplayName(target: TargetInstance): string {
 }
 
 export default function Home({
-  labels,
-  onLabelsChange,
   activeTarget,
   onNavigate,
   onOpenAttack,
@@ -149,26 +136,24 @@ export default function Home({
         </div>
 
         <div className={styles.setupGrid}>
-          <section className={styles.card} data-testid="home-labels-card" data-tour="labels-card">
+          <section className={styles.card} data-testid="home-labels-card">
             <div className={styles.cardHeader}>
               <span className={styles.cardIcon}><TagMultipleRegular /></span>
               <Text as="h2" size={500} weight="semibold">Labels</Text>
             </div>
             <div className={styles.cardBody}>
               <Text size={200} className={styles.heroSubtitle}>
-                Labels (especially <strong>operator</strong> and <strong>operation</strong>) are stored on
-                every attack so you can find them later. Update the placeholders before you run anything real.
+                Use the bar above to set your <strong>operator</strong>,
+                {' '}<strong>operation</strong>, and other labels before starting an attack or scan.
+                Your choices stay with you as you navigate. Existing runs keep their original labels.
               </Text>
-              <div className={styles.labelsRow}>
-                <LabelsBar labels={labels} onLabelsChange={onLabelsChange} />
-              </div>
             </div>
           </section>
 
           <section className={styles.card} data-testid="home-target-card" data-tour="target-card">
             <div className={styles.cardHeader}>
               <span className={styles.cardIcon}><TargetRegular /></span>
-              <Text as="h2" size={500} weight="semibold">Target</Text>
+              <Text as="h2" size={500} weight="semibold">Default objective target</Text>
             </div>
             <div className={styles.cardBody}>
               {activeTarget ? (
@@ -181,7 +166,7 @@ export default function Home({
                 </div>
               ) : (
                 <Text size={300} className={styles.emptyHint} data-testid="home-target-empty">
-                  No target selected. Pick one to send prompts.
+                  No default objective target selected. Choose a target in Chat or set a default in the registry.
                 </Text>
               )}
             </div>
@@ -191,7 +176,7 @@ export default function Home({
                 appearance="primary"
                 icon={<ArrowRightRegular />}
                 iconPosition="after"
-                onClick={() => onNavigate('config')}
+                onClick={() => onNavigate('registry')}
                 data-testid="home-configure-target-btn"
               >
                 {activeTarget ? 'Manage targets' : 'Configure a target'}
@@ -227,7 +212,7 @@ export default function Home({
             <div className={styles.emptyOperations} data-testid="home-empty">
               <Text size={400}>No attacks yet</Text>
               <Text size={200}>
-                Configure a target and start a new attack from the Chat tab.
+                Select a target and start a new attack from the Chat tab.
               </Text>
               <Button
                 className={styles.touchTarget}
@@ -243,10 +228,9 @@ export default function Home({
               {operations.map(op => {
                 const visibleAttacks = op.attacks.slice(0, MAX_ATTACKS_PER_OPERATION)
                 const hiddenCount = op.attacks.length - visibleAttacks.length
-                const key = op.isUnlabeled ? NO_OPERATION_KEY : op.name
                 return (
                   <div
-                    key={key}
+                    key={op.key}
                     className={styles.operationCard}
                     data-testid={`home-operation-${op.isUnlabeled ? 'unlabeled' : op.name}`}
                   >
@@ -271,7 +255,7 @@ export default function Home({
                           data-testid={`home-open-attack-${attack.attack_result_id}`}
                           title={attack.last_message_preview || attack.attack_type}
                         >
-                          {OUTCOME_ICONS[attack.outcome ?? 'undetermined'] ?? OUTCOME_ICONS.undetermined}
+                          <OutcomeIcon outcome={attack.outcome} />
                           <Text size={200} className={styles.attackPreview}>
                             {attack.last_message_preview || attack.attack_type}
                           </Text>

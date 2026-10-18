@@ -215,7 +215,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
         return "msts"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch MSTS examples and return as a SeedDataset.
 

@@ -4,6 +4,7 @@
 import logging
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal
 
 from typing_extensions import override
@@ -173,7 +174,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         return "comic_jailbreak"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch ComicJailbreak dataset and return as SeedDataset of image+text pairs.
 
@@ -362,7 +363,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         from pyrit.converter import AddImageTextConverter
 
         converter = AddImageTextConverter(
-            img_to_add=template_path,
+            img_to_add=Path(template_path),
             bounding_box=bounding_box,
             rotation=float(rotation),
             center_text=True,

@@ -3,10 +3,14 @@
 
 """Tests for the Psychosocial scenario (per-sub-harm simulated crescendo swept across converters)."""
 
+import asyncio
+import threading
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.converter import (
     Converter,
     InsertPunctuationConverter,
@@ -15,12 +19,25 @@ from pyrit.converter import (
     TranslationConverter,
 )
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
-from pyrit.prompt_target import PromptTarget
+from pyrit.models import (
+    AttackSeedGroup,
+    ComponentIdentifier,
+    ScenarioRunSizeEstimateStatus,
+    SeedObjective,
+    SeedPrompt,
+    scenario_dataset_size_from_limit,
+)
+from pyrit.models.dataset_limit import ResolvedDatasetLimit
+from pyrit.models.scenario_dataset import ScenarioDatasetRequest
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry import TargetRegistry
+from pyrit.scenario import IncompatibleTechniqueError
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
+    DatasetConstraintError,
+    DatasetSource,
 )
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.scenarios.airt.psychosocial import (
@@ -30,6 +47,7 @@ from pyrit.scenario.scenarios.airt.psychosocial import (
     _converter_for_technique,
 )
 from pyrit.score import TrueFalseScorer
+from tests.unit.mocks import MockPromptTarget
 
 
 def _mock_id(name: str) -> ComponentIdentifier:
@@ -115,9 +133,253 @@ def register_default_targets():
 FIXTURES = ["patch_central_database"]
 
 
+@pytest.mark.usefixtures(*FIXTURES)
+async def test_crescendo_construction_keeps_initialization_responsive_async(
+    mock_objective_target: PromptTarget,
+) -> None:
+    scenario = _scenario_with_mock_scorers()
+    scenario.set_params_from_args(
+        args={
+            "objective_target": mock_objective_target,
+            "scenario_techniques": [PsychosocialTechnique.Crescendo],
+            "sub_harm": "imminent_crisis",
+            "include_baseline": False,
+        }
+    )
+    loop = asyncio.get_running_loop()
+    backend_thread = threading.get_ident()
+    entered = asyncio.Event()
+    release = threading.Event()
+    original_build = scenario._build_crescendo_technique
+
+    def build(**kwargs: Any) -> AttackTechnique:
+        loop.call_soon_threadsafe(entered.set)
+        assert threading.get_ident() != backend_thread
+        release.wait()
+        return original_build(**kwargs)
+
+    with (
+        patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock),
+        _patch_base_seed_groups(_make_seed_groups()),
+        patch.object(scenario, "_build_crescendo_technique", side_effect=build),
+    ):
+        initialize = asyncio.create_task(scenario.initialize_async())
+        try:
+            # Readiness includes setup and thread scheduling, not just event-loop responsiveness.
+            await asyncio.wait_for(entered.wait(), 30)
+            heartbeat = asyncio.Event()
+            loop.call_soon(heartbeat.set)
+            await asyncio.wait_for(heartbeat.wait(), 5)
+            assert not initialize.done()
+            assert not release.is_set()
+            release.set()
+            await asyncio.wait_for(initialize, 30)
+        finally:
+            release.set()
+            if not initialize.done():
+                initialize.cancel()
+            await asyncio.gather(initialize, return_exceptions=True)
+    assert [attack.atomic_attack_name for attack in scenario._atomic_attacks] == ["imminent_crisis_crescendo"]
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+@pytest.mark.parametrize("total, expected", [(None, 8), (3, 3)])
+async def test_unequal_source_caps_and_total_estimate(total: int | None, expected: int) -> None:
+    scenario = _scenario_with_mock_scorers()
+    scenario.set_params_from_args(
+        args={
+            "dataset_config": DatasetAttackConfiguration(
+                sources=[
+                    DatasetSource(name=_SUB_HARMS[0].dataset_name, max_size=1),
+                    DatasetSource(name=_SUB_HARMS[1].dataset_name, max_size=7),
+                ],
+                max_total=total,
+            ),
+            "scenario_techniques": [PsychosocialTechnique.NoConverter],
+            "include_baseline": True,
+        }
+    )
+    with (
+        patch.object(CentralMemory.get_memory_instance(), "get_seeds_async", side_effect=AssertionError("No reads")),
+        patch.object(DatasetAttackConfiguration, "prepare_async", side_effect=AssertionError("No preparation")),
+    ):
+        estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.estimated_attack_count == expected * 2
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+async def test_compound_sources_require_explicit_migration() -> None:
+    scenario = _scenario_with_mock_scorers()
+    scenario.set_params_from_args(
+        args={
+            "dataset_config": CompoundDatasetAttackConfiguration(
+                configurations=[
+                    DatasetAttackConfiguration(sources=[DatasetSource(name=harm.dataset_name)]) for harm in _SUB_HARMS
+                ]
+            ),
+        }
+    )
+    with pytest.raises(DatasetConstraintError, match="compound children"):
+        await scenario.get_run_size_estimate_async()
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+@pytest.mark.parametrize("outer_limit", [3, None])
+@pytest.mark.parametrize("sub_harm", ["all", "imminent_crisis"])
+@pytest.mark.parametrize("include_baseline", [False, True])
+async def test_total_estimate_uses_initialization_cap_async(
+    *,
+    mock_objective_target: PromptTarget,
+    outer_limit: int | None,
+    sub_harm: str,
+    include_baseline: bool,
+) -> None:
+    seeds_by_dataset = {
+        harm.dataset_name: [
+            SeedObjective(value=f"{harm.name} {index}", harm_categories=[harm.name]) for index in range(6)
+        ]
+        for harm in _SUB_HARMS
+    }
+
+    def get_seeds(*, dataset_name: str, **_: object) -> list[SeedObjective]:
+        return list(seeds_by_dataset[dataset_name])
+
+    config = DatasetAttackConfiguration(
+        sources=[
+            DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS if sub_harm == "all" or harm.name == sub_harm
+        ],
+        max_per_dataset="all",
+        max_total=outer_limit,
+    )
+    scenario = _scenario_with_mock_scorers()
+    scenario.set_params_from_args(
+        args={
+            "objective_target": mock_objective_target,
+            "scenario_techniques": [PsychosocialTechnique.NoConverter],
+            "dataset_config": config,
+            "sub_harm": sub_harm,
+            "include_baseline": include_baseline,
+        }
+    )
+    harm_count = 2 if sub_harm == "all" else 1
+    selected_count = outer_limit if outer_limit is not None else 6 * harm_count
+    expected_count = selected_count * (1 + include_baseline)
+    memory = CentralMemory.get_memory_instance()
+    with patch.object(
+        memory,
+        "get_seeds_async",
+        new_callable=AsyncMock,
+        side_effect=AssertionError("Preview must not read datasets"),
+    ) as read_seeds:
+        estimate = await scenario.get_run_size_estimate_async()
+    read_seeds.assert_not_awaited()
+
+    if outer_limit is None:
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+        assert estimate.estimated_attack_count is None
+        assert estimate.dataset_size == scenario_dataset_size_from_limit("all")
+        assert all(dataset.configured_caps == [] for dataset in estimate.datasets)
+    else:
+        assert estimate.dataset_size == scenario_dataset_size_from_limit(outer_limit)
+        assert estimate.dataset_limit.value == outer_limit
+        assert [dataset.configured_caps[0].count for dataset in estimate.datasets] == [outer_limit] * harm_count
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
+        assert estimate.estimated_attack_count == expected_count
+
+    with (
+        patch.object(memory, "get_seed_dataset_names_async", return_value=list(seeds_by_dataset)),
+        patch.object(memory, "get_seeds_async", new_callable=AsyncMock, side_effect=get_seeds) as read_seeds,
+    ):
+        await scenario.initialize_async()
+    read_seeds.assert_awaited()
+    plan = scenario._build_run_plan()
+    assert len(plan.seed_groups) == selected_count
+    assert sum(len(group.seed_group_ids) for group in plan.atomic_groups) == expected_count
+
+
 # ===========================================================================
 # Sub-harm configuration
 # ===========================================================================
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+@pytest.mark.parametrize("preview", [False, True])
+async def test_backend_total_one_rejects_both_sub_harms_before_reads_async(
+    *, mock_objective_target: PromptTarget, preview: bool
+) -> None:
+    scenario = _scenario_with_mock_scorers()
+    args = ScenarioConfigurationResolver.resolve_configuration(
+        scenario_name="airt.psychosocial",
+        scenario_class=MagicMock(return_value=scenario),
+        objective_target=mock_objective_target,
+        datasets=ScenarioDatasetRequest(max_total=1),
+    )
+    assert args["dataset_overrides"].max_total == 1
+    scenario.set_params_from_args(args=args)
+    with (
+        patch.object(DatasetAttackConfiguration, "prepare_async", side_effect=AssertionError("No preparation")),
+        patch.object(CentralMemory.get_memory_instance(), "get_seeds_async", side_effect=AssertionError("No reads")),
+        pytest.raises(
+            DatasetConstraintError,
+            match=r"max_total \(1\).*Increase the total limit to at least 2, or select one sub-harm\.",
+        ),
+    ):
+        if preview:
+            await scenario.get_run_size_estimate_async()
+        else:
+            await scenario.initialize_async()
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+@pytest.mark.parametrize("total", [2, 3, "all"])
+async def test_total_sampling_preserves_harms_source_caps_and_baselines_async(
+    *, mock_objective_target: PromptTarget, total: ResolvedDatasetLimit
+) -> None:
+    scenario = _scenario_with_mock_scorers()
+    sources = [
+        DatasetSource(name=_SUB_HARMS[0].dataset_name, max_size=1),
+        DatasetSource(name=_SUB_HARMS[1].dataset_name, max_size=7),
+    ]
+    scenario.set_params_from_args(
+        args={
+            "objective_target": mock_objective_target,
+            "scenario_techniques": [PsychosocialTechnique.NoConverter],
+            "dataset_config": DatasetAttackConfiguration(sources=sources, max_total=total),
+        }
+    )
+    populations = {
+        harm.dataset_name: [SeedObjective(value=f"{harm.name}-{index}") for index in range(30)] for harm in _SUB_HARMS
+    }
+    memory = CentralMemory.get_memory_instance()
+    with (
+        patch.object(memory, "get_seed_dataset_names_async", return_value=list(populations)),
+        patch.object(memory, "get_seeds_async", side_effect=lambda *, dataset_name: populations[dataset_name]),
+    ):
+        await scenario.initialize_async()
+    counts = {attack.display_group: len(attack.seed_groups) for attack in _non_baseline(scenario)}
+    assert counts == {"imminent_crisis": 1, "licensed_therapist": 7 if total == "all" else total - 1}
+    assert {attack.display_group: len(attack.seed_groups) for attack in _baselines(scenario)} == counts
+    assert list(scenario._dataset_config.sources) == sources
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+async def test_backend_total_one_allows_one_selected_sub_harm_async(mock_objective_target: PromptTarget) -> None:
+    scenario = _scenario_with_mock_scorers()
+    args = ScenarioConfigurationResolver.resolve_configuration(
+        scenario_name="airt.psychosocial",
+        scenario_class=MagicMock(return_value=scenario),
+        objective_target=mock_objective_target,
+        datasets=ScenarioDatasetRequest(max_total=1),
+    )
+    scenario.set_params_from_args(
+        args={**args, "sub_harm": "imminent_crisis", "scenario_techniques": [PsychosocialTechnique.NoConverter]}
+    )
+    estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.estimated_attack_count == 2
+    with _patch_base_seed_groups(_make_seed_groups()):
+        await scenario.initialize_async()
+    assert {attack.display_group for attack in scenario._atomic_attacks} == {"imminent_crisis"}
+    assert [len(attack.seed_groups) for attack in scenario._atomic_attacks] == [1, 1]
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -255,10 +517,10 @@ class TestConverterMapping:
 class TestPsychosocialConstruction:
     def test_no_arg_construct_works(self):
         """Registry metadata introspection instantiates with no args."""
-        assert Psychosocial() is not None
+        assert Psychosocial().uses_default_adversarial_target is True
 
-    def test_version_is_3(self):
-        assert Psychosocial.VERSION == 3
+    def test_version(self):
+        assert Psychosocial.VERSION == 6
 
     def test_default_technique_is_default(self):
         assert _scenario_with_mock_scorers()._default_technique == PsychosocialTechnique.DEFAULT
@@ -273,7 +535,9 @@ class TestPsychosocialConstruction:
 
     def test_custom_adversarial_chat_stored(self):
         adv = MagicMock(spec=PromptTarget)
-        assert _scenario_with_mock_scorers(adversarial_chat=adv)._adversarial_chat is adv
+        scenario = _scenario_with_mock_scorers(adversarial_chat=adv)
+        assert scenario._adversarial_chat is adv
+        assert scenario.uses_default_adversarial_target is False
 
     def test_passed_in_scorers_stored(self):
         crisis, therapist = _mock_scorer(), _mock_scorer()
@@ -359,6 +623,72 @@ class TestSubHarmSelection:
 
 
 @pytest.mark.usefixtures(*FIXTURES)
+class TestPsychosocialCompatibilityPolicy:
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
+    async def test_live_crescendo_target_mismatch_follows_policy_async(self, *, policy: str) -> None:
+        target = MockPromptTarget(
+            custom_configuration=TargetConfiguration(
+                capabilities=TargetCapabilities(supports_multi_turn=False, supports_editable_history=True)
+            )
+        )
+        scenario = _scenario_with_mock_scorers()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": target,
+                "scenario_techniques": [PsychosocialTechnique.Crescendo, PsychosocialTechnique.NoConverter],
+                "incompatible_technique_policy": policy,
+            }
+        )
+        with (
+            _patch_base_seed_groups(_make_seed_groups()),
+            patch.object(
+                scenario,
+                "_build_crescendo_technique",
+                side_effect=AssertionError("An incompatible attack must not be constructed"),
+            ) as build_live,
+        ):
+            if policy == "raise":
+                with pytest.raises(IncompatibleTechniqueError, match="supports_multi_turn"):
+                    await scenario.initialize_async()
+            else:
+                await scenario.initialize_async()
+                assert len(_baselines(scenario)) == 2
+                assert all(atomic.atomic_attack_name.endswith("_none") for atomic in _non_baseline(scenario))
+            build_live.assert_not_called()
+
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
+    async def test_simulated_dataset_mismatch_preserves_live_and_baseline_populations_async(
+        self, *, policy: str
+    ) -> None:
+        groups = {
+            harm.dataset_name: [
+                AttackSeedGroup(seeds=[SeedObjective(value=harm.name), SeedPrompt(value="context", sequence=99)])
+            ]
+            for harm in _SUB_HARMS
+        }
+        original = {name: [group.model_dump() for group in values] for name, values in groups.items()}
+        scenario = _scenario_with_mock_scorers()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": MockPromptTarget(),
+                "scenario_techniques": [PsychosocialTechnique.NoConverter, PsychosocialTechnique.Crescendo],
+                "incompatible_technique_policy": policy,
+            }
+        )
+        with _patch_base_seed_groups(groups):
+            if policy == "raise":
+                with pytest.raises(IncompatibleTechniqueError, match="only an objective"):
+                    await scenario.initialize_async()
+            else:
+                await scenario.initialize_async()
+                assert len(_baselines(scenario)) == 2
+                assert len(_non_baseline(scenario)) == 2
+                assert all(atomic.atomic_attack_name.endswith("_crescendo") for atomic in _non_baseline(scenario))
+                assert all(len(atomic.seed_groups[0].seeds) == 2 for atomic in scenario._atomic_attacks)
+        assert {name: [group.model_dump() for group in values] for name, values in groups.items()} == original
+
+
+@pytest.mark.usefixtures(*FIXTURES)
 class TestPsychosocialCrossProduct:
     async def test_default_yields_6_attacks_plus_2_baselines(self, mock_objective_target):
         scenario = _scenario_with_mock_scorers()
@@ -416,9 +746,40 @@ class TestPsychosocialCrossProduct:
             await scenario.initialize_async()
         assert list(scenario._dataset_config.dataset_names) == ["airt_licensed_therapist"]
 
-    async def test_max_dataset_size_applied_per_sub_harm_when_hard_binding(self, mock_objective_target):
+    async def test_dataset_subset_narrows_the_sub_harms_async(self, *, mock_objective_target: PromptTarget) -> None:
         scenario = _scenario_with_mock_scorers()
         with _patch_base_seed_groups(_make_seed_groups()):
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": DatasetAttackConfiguration(
+                        sources=[DatasetSource(name="airt_licensed_therapist")]
+                    ),
+                }
+            )
+            estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
+            await scenario.initialize_async()
+        assert list(scenario._dataset_config.dataset_names) == ["airt_licensed_therapist"]
+        assert {a.display_group for a in scenario._atomic_attacks} == {"licensed_therapist"}
+        assert [dataset.name for dataset in estimate.datasets] == ["airt_licensed_therapist"]
+
+    async def test_sub_harm_without_its_dataset_is_rejected_async(self, *, mock_objective_target: PromptTarget) -> None:
+        scenario = _scenario_with_mock_scorers()
+        with pytest.raises(DatasetConstraintError, match="needs 'airt_imminent_crisis'"):
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "sub_harm": "imminent_crisis",
+                    "dataset_config": DatasetAttackConfiguration(
+                        sources=[DatasetSource(name="airt_licensed_therapist")]
+                    ),
+                }
+            )
+            await scenario.initialize_async()
+
+    async def test_unrelated_source_is_rejected(self, mock_objective_target):
+        scenario = _scenario_with_mock_scorers()
+        with pytest.raises(DatasetConstraintError, match="Psychosocial sub_harm 'all' needs"):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -426,18 +787,9 @@ class TestPsychosocialCrossProduct:
                 }
             )
             await scenario.initialize_async()
-        # --max-dataset-size is a PER-sub-harm budget: each child caps at 7 and the parent cap is
-        # 7 x 2 sub-harms (never trims the union, yet stays non-None so resume pinning survives).
-        assert isinstance(scenario._dataset_config, CompoundDatasetAttackConfiguration)
-        assert all(child.max_dataset_size == 7 for child in scenario._dataset_config._configurations)
-        assert scenario._dataset_config.max_dataset_size == 14
-        assert set(scenario._dataset_config.dataset_names) == {
-            "airt_imminent_crisis",
-            "airt_licensed_therapist",
-        }
 
-    async def test_max_dataset_size_one_keeps_both_sub_harms(self, mock_objective_target):
-        """A global budget of 1 starves a sub-harm; the per-sub-harm compound keeps both.
+    async def test_per_dataset_limit_one_keeps_both_sub_harms(self, mock_objective_target):
+        """A cap of one per source keeps both sub-harms.
 
         Patches only the seed source so the REAL dataset resolver/sampler runs -- the starvation
         regression cannot hide behind a mocked base resolver.
@@ -458,29 +810,68 @@ class TestPsychosocialCrossProduct:
 
         memory = CentralMemory.get_memory_instance()
         scenario = _scenario_with_mock_scorers()
-        with patch.object(memory, "get_seeds", side_effect=_get_seeds):
+        with (
+            patch.object(memory, "get_seed_dataset_names_async", return_value=list(seeds_by_dataset)),
+            patch.object(memory, "get_seeds_async", side_effect=_get_seeds),
+        ):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
                     "sub_harm": "all",
                     "scenario_techniques": [PsychosocialTechnique.NoConverter],
                     "dataset_config": DatasetAttackConfiguration(
-                        dataset_names=["ignored"], max_dataset_size=1, auto_fetch=False
+                        sources=[DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS],
+                        max_per_dataset=1,
+                        auto_fetch=False,
                     ),
                 }
             )
             await scenario.initialize_async()
 
-        # Per-sub-harm compound: each child budget is 1, parent cap = 1 x 2 (non-None so the base
-        # still pins the sampled objective subset for resume).
-        assert isinstance(scenario._dataset_config, CompoundDatasetAttackConfiguration)
-        assert scenario._dataset_config.max_dataset_size == 2
-        # Both sub-harms survive the budget-of-1 (the global-budget bug dropped one entirely).
+        assert scenario._dataset_config.max_per_dataset == 1
+        assert scenario._dataset_config.max_total == "all"
         assert {a.display_group for a in _non_baseline(scenario)} == {"imminent_crisis", "licensed_therapist"}
         assert {a.atomic_attack_name for a in _baselines(scenario)} == {
             "imminent_crisis_baseline",
             "licensed_therapist_baseline",
         }
+
+    async def test_unlimited_dataset_size_keeps_all_seeds_async(self, mock_objective_target: PromptTarget) -> None:
+        seeds_by_dataset = {
+            harm.dataset_name: [
+                SeedObjective(value=f"{harm.name} {index}", harm_categories=[harm.name]) for index in range(6)
+            ]
+            for harm in _SUB_HARMS
+        }
+
+        def get_seeds(*, dataset_name: str, **_: object) -> list[SeedObjective]:
+            return list(seeds_by_dataset[dataset_name])
+
+        scenario = _scenario_with_mock_scorers()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_techniques": [PsychosocialTechnique.NoConverter],
+                "dataset_config": DatasetAttackConfiguration(
+                    sources=[DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS],
+                    max_per_dataset="all",
+                ),
+            }
+        )
+        memory = CentralMemory.get_memory_instance()
+        with (
+            patch.object(memory, "get_seed_dataset_names_async", return_value=list(seeds_by_dataset)),
+            patch.object(memory, "get_seeds_async", new_callable=AsyncMock, side_effect=get_seeds) as read_seeds,
+        ):
+            await scenario.initialize_async()
+        read_seeds.assert_awaited()
+
+        assert scenario._dataset_config.max_dataset_size == "all"
+        assert len(scenario._atomic_attacks) == 4
+        assert all(len(attack.seed_groups) == 6 for attack in scenario._atomic_attacks)
+        plan = scenario._build_run_plan()
+        assert len(plan.seed_groups) == 12
+        assert sum(len(group.seed_group_ids) for group in plan.atomic_groups) == 24
 
     async def test_display_group_matches_sub_harm(self, mock_objective_target):
         scenario = _scenario_with_mock_scorers()
@@ -518,8 +909,17 @@ class TestPsychosocialCrossProduct:
             scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             with pytest.raises(
                 ValueError,
-                match="No seed groups were loaded for any selected psychosocial sub-harm",
+                match="No attack groups for required coverage keys",
             ):
+                await scenario.initialize_async()
+
+    async def test_missing_selected_sub_harm_raises(self, mock_objective_target: PromptTarget) -> None:
+        scenario = _scenario_with_mock_scorers()
+        groups = _make_seed_groups()
+        groups.pop("airt_licensed_therapist")
+        with _patch_base_seed_groups(groups):
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+            with pytest.raises(DatasetConstraintError, match="coverage keys.*airt_licensed_therapist"):
                 await scenario.initialize_async()
 
 

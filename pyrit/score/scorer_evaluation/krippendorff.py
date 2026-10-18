@@ -238,10 +238,11 @@ def krippendorff_alpha(
 
     Returns:
         float: Krippendorff's alpha, where 1.0 indicates perfect agreement. The
-        value can be below 0 when agreement is worse than chance. ``np.nan`` is
-        returned when the statistic is undefined (e.g., fewer than two usable
-        ratings or zero expected disagreement with non-zero observed
-        disagreement).
+            value can be below 0 when agreement is worse than chance. ``np.nan`` is
+            returned when the statistic is undefined (e.g., fewer than two usable
+            ratings, no item with two or more ratings to form a pairable
+            coincidence, or zero expected disagreement with non-zero observed
+            disagreement).
 
     Raises:
         ValueError: If ``level_of_measurement`` is not ``"ordinal"``.
@@ -254,11 +255,6 @@ def krippendorff_alpha(
     if len(valid_ratings) < 2:
         return np.nan
 
-    # All ratings identical - perfect agreement
-    num_categories = len(categories)
-    if num_categories == 1:
-        return 1.0
-
     # Build value counts matrix
     value_counts = _build_value_counts_matrix(data, valid_mask, categories)
 
@@ -268,9 +264,18 @@ def krippendorff_alpha(
     # Build expected coincidence matrix
     expected_matrix, n_v, total_n = _build_expected_matrix(coincidence_matrix)
 
-    # Check for degenerate case
+    # Check for degenerate case. This also covers the single-category case where
+    # no item has two or more ratings: with nothing pairable, alpha is undefined
+    # even when every rating happens to be identical, so it must not report 1.0.
     if total_n == 0:
         return np.nan
+
+    # All ratings identical and pairable - perfect agreement. The general path
+    # below would also return 1.0 (every ordinal distance is zero); the early
+    # return just skips building the all-zero distance matrix.
+    num_categories = len(categories)
+    if num_categories == 1:
+        return 1.0
 
     # Build ordinal distance matrix
     distance_matrix = _build_ordinal_distance_matrix(num_categories, n_v)

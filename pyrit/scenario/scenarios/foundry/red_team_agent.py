@@ -17,6 +17,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
 
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.converter import (
     AnsiAttackConverter,
     AsciiArtConverter,
@@ -50,17 +51,23 @@ from pyrit.executor.attack import (
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
-from pyrit.models import AttackSeedGroup
+from pyrit.models import (
+    AttackSeedGroup,
+    BoundedDatasetSize,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+)
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.core.technique_requirements import TechniqueRequirements, check_target_compatibility
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -108,7 +115,7 @@ class FoundryComposite:
     def name(self) -> str:
         """A human-readable name for this composite."""
         if not self.converters:
-            return self.attack.value if self.attack else "baseline"
+            return str(self.attack.value) if self.attack else "baseline"
         if self.attack is None and len(self.converters) == 1:
             return str(self.converters[0].value)
         attack_name = self.attack.value if self.attack else "baseline"
@@ -248,6 +255,7 @@ class RedTeamAgent(Scenario):
     """
 
     VERSION: int = 1
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
     _DEFAULT_ATTACK_SPECIFICATION: ClassVar[_AttackSpecification] = _AttackSpecification(PromptSendingAttack)
     _ATTACK_SPECIFICATIONS: ClassVar[Mapping[FoundryTechnique, _AttackSpecification]] = MappingProxyType(
         {
@@ -337,8 +345,11 @@ class RedTeamAgent(Scenario):
         # Call super().__init__() first to initialize self._memory
         super().__init__(
             version=self.VERSION,
+            uses_default_adversarial_target=adversarial_chat is None,
             technique_class=FoundryTechnique,
-            default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
+            default_dataset_config=DatasetAttackConfiguration(
+                sources=[DatasetSource(name=name) for name in ["harmbench"]], max_per_dataset="all", max_total=4
+            ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
@@ -414,6 +425,36 @@ class RedTeamAgent(Scenario):
         self._scenario_composites = composites
         return flat
 
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
+        """
+        Estimate one selected seed population per resolved Foundry composition.
+
+        Returns:
+            ScenarioRunSizeEstimate: The composition population estimate.
+        """
+        selected_count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
+        components = [
+            ScenarioRunSizeComponent(
+                label=composition.name,
+                count=selected_count,
+            )
+            for composition in self._scenario_composites
+        ]
+        if self._include_baseline:
+            components.append(
+                ScenarioRunSizeComponent(
+                    label="Baseline",
+                    count=selected_count,
+                    is_baseline=True,
+                )
+            )
+        return ScenarioRunSizeEstimate(
+            total_attack_count=sum(component.count for component in components),
+            components=components,
+            datasets=datasets,
+            note="Counts one population per resolved Foundry composite, not per flattened constituent technique.",
+        )
+
     @staticmethod
     def _technique_to_composite(technique: ScenarioTechnique) -> "FoundryComposite":
         """
@@ -442,6 +483,15 @@ class RedTeamAgent(Scenario):
         Returns:
             list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
+        return await run_legacy_sync_async(self._build_atomic_attacks, context=context)
+
+    def _build_atomic_attacks(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        """
+        Build Foundry attacks and converters off the event loop.
+
+        Returns:
+            list[AtomicAttack]: The configured Foundry attacks.
+        """
         seed_groups = list(context.seed_groups)
         atomic_attacks: list[AtomicAttack] = []
         if context.include_baseline:
@@ -453,10 +503,19 @@ class RedTeamAgent(Scenario):
                     memory_labels=context.memory_labels,
                 )
             )
-        atomic_attacks.extend(
-            self._get_attack_from_technique(composite=composition, seed_groups=seed_groups)
-            for composition in self._scenario_composites
-        )
+        for composition in self._scenario_composites:
+            attack_specification = self._ATTACK_SPECIFICATIONS.get(
+                composition.attack, self._DEFAULT_ATTACK_SPECIFICATION
+            )
+            if not check_target_compatibility(
+                target=context.objective_target,
+                attack_class=attack_specification.attack_type,
+                requirements=TechniqueRequirements(),
+                technique_name=composition.name,
+                policy=context.incompatible_technique_policy,
+            ):
+                continue
+            atomic_attacks.append(self._get_attack_from_technique(composite=composition, seed_groups=seed_groups))
         return atomic_attacks
 
     def _get_attack_from_technique(

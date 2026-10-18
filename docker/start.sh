@@ -15,7 +15,7 @@ echo "================================"
 # Check if PYRIT_MODE is set
 if [ -z "$PYRIT_MODE" ]; then
     echo "ERROR: PYRIT_MODE environment variable is not set!"
-    echo "Please set PYRIT_MODE to either 'jupyter' or 'gui'"
+    echo "Please set PYRIT_MODE to 'jupyter', 'gui', or 'migrate'"
     exit 1
 fi
 
@@ -37,30 +37,20 @@ fi
 echo "Checking PyRIT installation..."
 python -c "import pyrit; print(f'Running PyRIT version: {pyrit.__version__}')"
 
-# Write .env file from PYRIT_ENV_CONTENTS (injected as the Container App's
-# inline `env-file` secret; previously a Key Vault secretRef, but ACA isn't on
-# Key Vault's "trusted services" list so SFI-locked-down KVs can't be read at
-# runtime — see infra/main.bicep for details).
+# Write .env when deploy_instance.py supplies inline content. Otherwise the
+# generated PyRIT config uses the Key Vault URL from PYRIT_ENV_AKV_REF so the
+# backend can read and update that environment source through managed identity.
 if [ -n "$PYRIT_ENV_CONTENTS" ]; then
     mkdir -p ~/.pyrit
     echo "$PYRIT_ENV_CONTENTS" > ~/.pyrit/.env
     echo "Wrote .env file from PYRIT_ENV_CONTENTS ($(wc -l < ~/.pyrit/.env) lines)"
 else
-    echo "No PYRIT_ENV_CONTENTS set — using system environment variables only"
+    echo "No inline PYRIT_ENV_CONTENTS set — using configured environment sources"
 fi
 
-# Start the appropriate service based on PYRIT_MODE
-if [ "$PYRIT_MODE" = "jupyter" ]; then
-    echo "Starting JupyterLab on port 8888..."
-    echo "Note: Notebooks are from the local source at build time"
-    echo "JupyterLab will generate an access token. Check the logs for the URL with token."
-    exec jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/app/notebooks
-elif [ "$PYRIT_MODE" = "gui" ]; then
-    echo "Starting PyRIT GUI on port 8000..."
-    # The thin backend only takes --host/--port/--config-file/--log-level.
-    # Translate AZURE_SQL_SERVER and PYRIT_INITIALIZER into a runtime config file
-    # so the FastAPI lifespan (ConfigurationLoader) picks them up on startup.
-    RUNTIME_CONFIG=/tmp/pyrit_runtime.yaml
+write_deployment_config() {
+    local target_file="$1"
+    mkdir -p "$(dirname "$target_file")"
     {
         if [ -n "$AZURE_SQL_SERVER" ]; then
             echo "Using Azure SQL database (server: $AZURE_SQL_SERVER)" >&2
@@ -78,7 +68,45 @@ elif [ "$PYRIT_MODE" = "gui" ]; then
                 echo "  - $(echo "$name" | xargs)"
             done
         fi
-    } >"$RUNTIME_CONFIG"
+        if [ -n "$PYRIT_ENV_AKV_REF" ]; then
+            echo "Using Azure Key Vault environment reference" >&2
+            echo "env_akv_ref:"
+            echo "  - $PYRIT_ENV_AKV_REF"
+        fi
+    } >"$target_file"
+}
+
+prepare_deployment_config() {
+    if [ -n "${PYRIT_CONFIG_FILE:-}" ]; then
+        CONFIG_FILE="$PYRIT_CONFIG_FILE"
+        DEPLOYMENT_BASE_CONFIG="$HOME/.pyrit/.pyrit_conf"
+        if [ "$CONFIG_FILE" = "$DEPLOYMENT_BASE_CONFIG" ]; then
+            echo "ERROR: PYRIT_CONFIG_FILE cannot point to $DEPLOYMENT_BASE_CONFIG in this container" >&2
+            exit 1
+        fi
+        # ConfigurationLoader overlays the explicit source on its default file.
+        # Materialize deployment-derived values there so omitted external keys do
+        # not silently switch Azure SQL to local SQLite or drop the AKV source.
+        write_deployment_config "$DEPLOYMENT_BASE_CONFIG"
+        echo "Using external PyRIT configuration over deployment defaults"
+    else
+        # Translate deployment settings into a runtime config file so the FastAPI
+        # lifespan (ConfigurationLoader) picks them up on startup.
+        RUNTIME_CONFIG=/tmp/pyrit_runtime.yaml
+        write_deployment_config "$RUNTIME_CONFIG"
+        CONFIG_FILE="$RUNTIME_CONFIG"
+    fi
+}
+
+# Start the appropriate service based on PYRIT_MODE
+if [ "$PYRIT_MODE" = "jupyter" ]; then
+    echo "Starting JupyterLab on port 8888..."
+    echo "Note: Notebooks are from the local source at build time"
+    echo "JupyterLab will generate an access token. Check the logs for the URL with token."
+    exec jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/app/notebooks
+elif [ "$PYRIT_MODE" = "gui" ]; then
+    echo "Starting PyRIT GUI on port 8000..."
+    prepare_deployment_config
 
     # Pick the launcher module. PR #1753 moved the launcher from
     # ``pyrit.cli.pyrit_backend`` to ``pyrit.backend.pyrit_backend``. The PyPI
@@ -99,8 +127,13 @@ elif [ "$PYRIT_MODE" = "gui" ]; then
     exec python -m "$BACKEND_MODULE" \
         --host 0.0.0.0 \
         --port 8000 \
-        --config-file "$RUNTIME_CONFIG"
+        --config-file "$CONFIG_FILE"
+elif [ "$PYRIT_MODE" = "migrate" ]; then
+    echo "Running PyRIT database migration..."
+    prepare_deployment_config
+    exec python -m pyrit.cli.pyrit_migrate --config-file "$CONFIG_FILE" \
+        --expected-server "$AZURE_SQL_SERVER" --expected-database "$AZURE_SQL_DATABASE" "$@"
 else
-    echo "ERROR: Invalid PYRIT_MODE '$PYRIT_MODE'. Must be 'jupyter' or 'gui'"
+    echo "ERROR: Invalid PYRIT_MODE '$PYRIT_MODE'. Must be 'jupyter', 'gui', or 'migrate'"
     exit 1
 fi

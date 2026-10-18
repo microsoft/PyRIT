@@ -67,8 +67,12 @@
 #      Matrix-shaped scenarios delegate to `build_matrix_atomic_attacks(context=...)` in one line.
 #
 # 3. **Default Dataset**: Pass `default_dataset_config=` to `super().__init__()` to specify the datasets your scenario uses out of the box.
-#    - Returns a `DatasetConfiguration` with one or more named datasets (e.g., `DatasetConfiguration(dataset_names=["my_dataset"])`)
-#    - Users can override this at runtime via `--dataset-names` in the CLI or by passing a custom `dataset_config` programmatically
+#    - Returns a `DatasetAttackConfiguration` with named sources (e.g., `sources=[DatasetSource(name="my_dataset")]`)
+#    - Users select sources with `--datasets name[:N|:all]`, or pass `dataset_overrides=ScenarioDatasetRequest(...)` in `set_params_from_args`. A custom `dataset_config` replaces the default; overrides apply on top.
+#    - Named sources select at most 5 attack groups per dataset by default; `max_total` caps the union. For any limit, omitted/`None`/empty/`"default"` uses the default; `"all"` removes that limit.
+#    - The deprecated `max_dataset_size` is an exact alias for `max_total`, not a way to disable source caps. To keep the old total-only selection, use `max_per_dataset="all", max_total=10`; to remove both caps, set both to `"all"`. `None` now uses the default, not unlimited selection.
+#    - New runs prepare missing registered datasets once; reads, estimates, and resume never fetch
+#    - Scenarios declare allowed source selections and limit controls. Estimates return resolved `dataset_defaults` and `effective_datasets` separately from requested edits. Name-only selection preserves existing source caps and fetch policies.
 #
 # 4. **Constructor**: Use `@apply_defaults` decorator and call `super().__init__()` with scenario metadata:
 #    - `name`: Descriptive name for your scenario
@@ -85,7 +89,7 @@
 #    - `max_retries`: Number of retry attempts on failure (default: 0)
 #    - `memory_labels`: Optional labels for tracking (optional)
 #    - `include_baseline`: Whether to prepend a baseline attack (defaults to the scenario type's
-#      `BASELINE_ATTACK_POLICY`; most scenarios default it on, `Jailbreak` defaults it off)
+#      `BASELINE_ATTACK_POLICY`; most scenarios, including `Jailbreak`, default it on)
 #
 # ### Example Structure
 #
@@ -96,7 +100,8 @@
 # %%
 from pyrit.common import apply_defaults
 from pyrit.scenario import (
-    DatasetConfiguration,
+    DatasetAttackConfiguration,
+    DatasetSource,
     Scenario,
     ScenarioTechnique,
 )
@@ -142,7 +147,9 @@ class MyScenario(Scenario):
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
             technique_class=MyTechnique,
-            default_dataset_config=DatasetConfiguration(dataset_names=["dataset_name"], max_dataset_size=4),
+            default_dataset_config=DatasetAttackConfiguration(
+                sources=[DatasetSource(name="dataset_name")], max_total=4
+            ),
             scenario_result_id=scenario_result_id,
         )
 
@@ -180,8 +187,8 @@ print_scenario_list(items=response.items)
 # each objective directly to the target without any converters or multi-turn techniques. This is
 # controlled by the `include_baseline` scenario parameter, supplied through the CLI, config, or
 # `set_params_from_args` before `initialize_async`; when omitted, each scenario falls back to its
-# own `BASELINE_ATTACK_POLICY` class attribute (most scenarios default it on; `Jailbreak` defaults
-# it off). See
+# own `BASELINE_ATTACK_POLICY` class attribute (most scenarios, including `Jailbreak`, default it
+# on). See
 # [Common Scenario Parameters](./1_common_scenario_parameters.ipynb) for a worked example.
 #
 # Custom scenarios should choose their `BASELINE_ATTACK_POLICY` based on whether an unmodified
@@ -190,8 +197,7 @@ print_scenario_list(items=response.items)
 # - **`Enabled`** — the baseline is prepended by default and the caller can opt out. Use when an
 #   unmodified-prompt run is a meaningful comparison point (most scenarios).
 # - **`Disabled`** — the baseline is supported but omitted by default; the caller must opt in. Use
-#   when the scenario is already dominated by a large set of templates/techniques that already
-#   exercise the unmodified surface (e.g., `Jailbreak`).
+#   when an unmodified-prompt comparison is valid but not useful enough to run by default.
 # - **`Forbidden`** — the baseline is unavailable and passing `include_baseline=True` raises. Use
 #   when the scenario's semantics make a single-shot unmodified prompt meaningless as a comparator
 #   (e.g., benchmarks comparing across adversarial models, or multi-turn-only scenarios).

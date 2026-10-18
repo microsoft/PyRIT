@@ -11,6 +11,7 @@ from openai.types.chat.chat_completion import Choice
 from openai.types.responses import Response, ResponseOutputMessage, ResponseOutputRefusal, ResponseOutputText
 
 from pyrit.exceptions import ScenarioPartialFailureException
+from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -23,10 +24,9 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, PromptTarget
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
-from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
+from pyrit.scenario.core import AtomicAttack, AttackTechnique, BaselineAttackPolicy, Scenario, ScenarioTechnique
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.score import ScorerPromptValidator, TrueFalseScorer
+from pyrit.score import MessageTrueFalseScorer, ScorerPromptValidator, TrueFalseScorer
 
 _ATOMIC_ATTACK_NAME = "structured_refusal"
 _REFUSAL = "I cannot assist with that request."
@@ -43,7 +43,7 @@ class _RefusalScenarioTechnique(ScenarioTechnique):
         return {"all"}
 
 
-class _RecordingObjectiveScorer(TrueFalseScorer):
+class _RecordingObjectiveScorer(MessageTrueFalseScorer):
     def __init__(self) -> None:
         super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
         self.scored_pieces: list[MessagePiece] = []
@@ -188,10 +188,14 @@ def _build_scenario(
     scorer = _RecordingObjectiveScorer()
     objectives = [f"{response_kind} objective {index}" for index, response_kind in enumerate(response_kinds)]
     seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value=objective)]) for objective in objectives]
-    atomic_attack = build_baseline_atomic_attack(
-        objective_target=target,
-        objective_scorer=scorer,
+    atomic_attack = AtomicAttack(
+        attack_technique=AttackTechnique(
+            attack=PromptSendingAttack(
+                objective_target=target, attack_scoring_config=AttackScoringConfig(objective_scorer=scorer)
+            )
+        ),
         seed_groups=seed_groups,
+        objective_scorer=scorer,
         atomic_attack_name=_ATOMIC_ATTACK_NAME,
     )
     scenario = _RefusalScenario(atomic_attacks=[atomic_attack], objective_scorer=scorer)
@@ -263,8 +267,10 @@ async def test_scenario_counts_refusal_as_completed_when_another_objective_error
     assert len(scorer.scored_pieces) == 1
     assert scorer.scored_pieces[0].converted_value == _REFUSAL
 
-    stored_result = CentralMemory.get_memory_instance().get_scenario_results(
-        scenario_result_ids=[scenario._scenario_result_id]
+    stored_result = (
+        await CentralMemory.get_memory_instance().get_scenario_results_async(
+            scenario_result_ids=[scenario._scenario_result_id]
+        )
     )[0]
     stored_attack_results = stored_result.attack_results[_ATOMIC_ATTACK_NAME]
     refusal_results = [

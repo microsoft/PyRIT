@@ -6,15 +6,13 @@
 import ast
 import json
 import re
-import sys
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parent))
-import validate_docs
+from build_scripts import validate_docs
 
 
 @dataclass(frozen=True)

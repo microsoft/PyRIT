@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT license.
+Artwork newly authored for PyRIT with Copilot assistance, not adapted from third-party art.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" fill="none">
+  <g stroke="#55748b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.72">
+    <path d="M-20 715C33 701 57 737 41 765S64 796 96 783
+      128 818 121 843 169 830 217 848 211 879 253 890
+      295 887 324 921 353 931 384 918 408 945 426 962"/>
+    <path d="M-18 749C7 746 15 758 9 779S46 822 77 813
+      91 855 145 872 177 863 188 899 224 919 254 916"/>
+    <path d="M1439-20C1434 25 1480 31 1461 65S1482 98 1521 99
+      C1534 135 1510 155 1544 178 1509 207 1532 235 1563 237
+      1554 270 1587 297 1625 291"/>
+    <path d="M1491-17C1488 16 1513 31 1501 53S1531 76 1554 76
+      1571 111 1549 143 1582 160 1559 193 1588 212 1619 205"/>
+    <path d="M741 951C757 932 794 936 798 957
+      825 951 844 968 835 982 806 996 772 982 752 987Z"/>
+  </g>
+  <g stroke="#d9b773" stroke-width="2.5" stroke-linecap="round">
+    <path d="M138 891C218 882 266 825 334 850S442 940 518 927
+      622 827 715 863C804 896 875 834 917 789" stroke-dasharray="1 12" opacity="0.8"/>
+    <circle cx="138" cy="891" r="5"/>
+    <path d="m908 780 18 18m0-18-18 18"/>
+  </g>
+  <g stroke="#55748b" stroke-width="1.5" opacity="0.5">
+    <path d="M1304 455v77m0 423v45m-294-252h77m434 0h79"/>
+    <path d="m1091 535 59 59m306 306 64 64m-429 0 63-63m303-304 70-70"/>
+    <path d="M93 580h18m-9-9v18m1319-198h18m-9-9v18m-831 537h18m-9-9v18"/>
+  </g>
+  <g transform="translate(1304 748)">
+    <g stroke="#d9b773">
+      <circle r="171" stroke-width="2.5"/>
+      <circle r="155" stroke-width="1.5" opacity="0.7"/>
+      <circle r="125" stroke-width="2" stroke-dasharray="1 15" opacity="0.55"/>
+      <path d="M0-181v20M181 0h-20M0 181v-20M-181 0h20
+        m-8-88 10 6m64-70 6 10m82 0 6-10m64 70 10-6
+        m0 176-10-6m-64 70-6-10m-82 0-6 10m-64-70-10 6" stroke-width="2"/>
+    </g>
+    <g fill="#d9b773" opacity="0.72">
+      <path d="M-105-105-10-25 0 0-25-10ZM105-105 25-10 0 0 10-25Z"/>
+      <path d="m105 105-95-80L0 0l25 10ZM-105 105-25 10 0 0-10 25Z"/>
+    </g>
+    <path d="M0-151 20-21 0 0ZM151 0 21 20 0 0ZM0 151-20 21 0 0ZM-151 0-21-20 0 0Z"
+      fill="#d9b773"/>
+    <path d="M0-151 0 0-20-21ZM151 0 0 0 21-20ZM0 151 0 0 20 21ZM-151 0 0 0-21 20Z"
+      fill="#55748b"/>
+    <circle r="9" fill="#d9b773"/>
+    <circle r="3.5" fill="#55748b"/>
+  </g>
+</svg>

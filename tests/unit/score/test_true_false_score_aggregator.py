@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import pytest
+
 from pyrit.models import ComponentIdentifier, Score
 from pyrit.score import TrueFalseScoreAggregator
 
@@ -23,6 +25,12 @@ def _mk_score(val: bool, *, prr_id: str, rationale: str = "") -> Score:
         scorer_class_identifier=_TEST_SCORER_ID,
         objective=None,
     )
+
+
+def test_aggregator_accepts_a_generator():
+    scores = (_mk_score(True, prr_id="1") for _ in range(2))
+    res = TrueFalseScoreAggregator.AND(scores)
+    assert res.value is True
 
 
 def test_and_aggregator_all_true():
@@ -236,3 +244,72 @@ def test_aggregator_single_score():
     res = TrueFalseScoreAggregator.OR(scores)
     assert res.value is True
     assert res.rationale == "Single score rationale"
+
+
+def test_aggregators_accept_generators():
+    """
+    Aggregators are typed to take an Iterable, so a generator must aggregate the same
+    as the equivalent list. Validating by iterating before materializing exhausted the
+    generator and silently produced the empty-input result (False).
+    """
+    values = [False, True, False]
+
+    for aggregator in (TrueFalseScoreAggregator.OR, TrueFalseScoreAggregator.AND):
+        from_list = aggregator([_mk_score(v, prr_id="1") for v in values])
+        from_generator = aggregator(_mk_score(v, prr_id="1") for v in values)
+        assert from_generator.value == from_list.value
+        assert from_generator.description == from_list.description
+
+
+def test_generator_of_wrong_type_still_raises():
+    """Materializing first must not weaken type validation."""
+    bad = Score(
+        score_value="0.5",
+        score_value_description="",
+        score_type="float_scale",
+        score_category=["test"],
+        score_rationale="",
+        score_metadata=None,
+        message_piece_id="1",
+        scorer_class_identifier=_TEST_SCORER_ID,
+        objective=None,
+    )
+    with pytest.raises(ValueError, match="must be of type 'true_false'"):
+        TrueFalseScoreAggregator.OR(s for s in [bad])
+
+
+# Tests for raise_on_empty behavior
+def test_and_raise_on_empty_with_scores():
+    """Test that AND_RAISE_ON_EMPTY works normally when scores are present."""
+    scores = [_mk_score(True, prr_id="1"), _mk_score(False, prr_id="1")]
+    res = TrueFalseScoreAggregator.AND_RAISE_ON_EMPTY(scores)
+    assert res.value is False
+
+
+def test_or_raise_on_empty_with_scores():
+    """Test that OR_RAISE_ON_EMPTY works normally when scores are present."""
+    scores = [_mk_score(True, prr_id="1"), _mk_score(False, prr_id="1")]
+    res = TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY(scores)
+    assert res.value is True
+
+
+def test_majority_raise_on_empty_with_scores():
+    """Test that MAJORITY_RAISE_ON_EMPTY works normally when scores are present."""
+    scores = [_mk_score(True, prr_id="1"), _mk_score(True, prr_id="1"), _mk_score(False, prr_id="1")]
+    res = TrueFalseScoreAggregator.MAJORITY_RAISE_ON_EMPTY(scores)
+    assert res.value is True
+
+
+@pytest.mark.parametrize("aggregator_name", ["AND_RAISE_ON_EMPTY", "OR_RAISE_ON_EMPTY", "MAJORITY_RAISE_ON_EMPTY"])
+def test_raise_on_empty_aggregators_raise_with_no_scores(aggregator_name):
+    """The strict-empty variants must not answer an empty input with a verdict."""
+    aggregator = getattr(TrueFalseScoreAggregator, aggregator_name)
+    with pytest.raises(ValueError, match="No scores available for aggregation"):
+        aggregator([])
+
+
+def test_raise_on_empty_aggregator_accepts_generators():
+    """A generator with scores must not trip the empty-input guard."""
+    values = [True, False, True]
+    res = TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY(_mk_score(v, prr_id="1") for v in values)
+    assert res.value is True

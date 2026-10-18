@@ -36,7 +36,7 @@ class TargetIdentifier(ComponentIdentifier):
     unwrapped so a multi-target hashes the same as its inner target.
     """
 
-    component_type: ClassVar[ComponentType] = ComponentType.TARGET
+    component_type: ClassVar[ComponentType | None] = ComponentType.TARGET
 
     #: Target endpoint URL.
     endpoint: Annotated[str | None, Evaluate.Exclude()] = None
@@ -62,3 +62,23 @@ class TargetIdentifier(ComponentIdentifier):
         Evaluate.Exclude(),
         Param.ClassAttr(attr_name="supported_auth_modes"),
     ] = None
+
+    @classmethod
+    def get_multiline_parameter_names(cls) -> frozenset[str]:
+        """
+        Get target constructor parameters whose values require multiline controls.
+
+        Returns:
+            frozenset[str]: Multiline target constructor parameter names.
+        """
+        return super().get_multiline_parameter_names() | frozenset({"http_request"})
+
+    @classmethod
+    def get_identity_conflicting_parameter_names(cls) -> frozenset[str]:
+        """
+        Get target constructor parameters that override identity-based authentication.
+
+        Returns:
+            frozenset[str]: Identity-conflicting target constructor parameter names.
+        """
+        return super().get_identity_conflicting_parameter_names() | frozenset({"sas_token"})

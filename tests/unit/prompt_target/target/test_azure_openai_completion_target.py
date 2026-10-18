@@ -11,6 +11,7 @@ from openai.types.completion_choice import CompletionChoice
 from openai.types.completion_usage import CompletionUsage
 from unit.mocks import get_image_message_piece, get_sample_conversations
 
+from pyrit.exceptions import PyritException
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAICompletionTarget
@@ -200,3 +201,55 @@ async def test_completion_target_clears_pieces_without_a_matching_choice(
     azure_completion_target._capture_response_metadata(response=response, pieces=pieces)
 
     assert [piece.prompt_metadata.get("finish_reason") for piece in pieces] == ["stop", None]
+
+
+def test_invalid_temperature_raises(patch_central_database):
+    """Test that invalid temperature values raise PyritException, as on the chat target."""
+    with pytest.raises(PyritException, match="temperature must be between 0 and 2"):
+        OpenAICompletionTarget(
+            model_name="gpt-35-turbo",
+            endpoint="https://mock.azure.com/",
+            api_key="mock-api-key",
+            temperature=-0.1,
+        )
+
+    with pytest.raises(PyritException, match="temperature must be between 0 and 2"):
+        OpenAICompletionTarget(
+            model_name="gpt-35-turbo",
+            endpoint="https://mock.azure.com/",
+            api_key="mock-api-key",
+            temperature=2.1,
+        )
+
+
+def test_invalid_top_p_raises(patch_central_database):
+    """Test that invalid top_p values raise PyritException, as on the chat target."""
+    with pytest.raises(PyritException, match="top_p must be between 0 and 1"):
+        OpenAICompletionTarget(
+            model_name="gpt-35-turbo",
+            endpoint="https://mock.azure.com/",
+            api_key="mock-api-key",
+            top_p=-0.1,
+        )
+
+    with pytest.raises(PyritException, match="top_p must be between 0 and 1"):
+        OpenAICompletionTarget(
+            model_name="gpt-35-turbo",
+            endpoint="https://mock.azure.com/",
+            api_key="mock-api-key",
+            top_p=1.1,
+        )
+
+
+def test_boundary_temperature_and_top_p_are_accepted(patch_central_database):
+    """The inclusive bounds are valid values, not missing values."""
+    target = OpenAICompletionTarget(
+        model_name="gpt-35-turbo",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        temperature=0.0,
+        top_p=1.0,
+    )
+
+    assert target._temperature == 0.0
+    assert target._top_p == 1.0

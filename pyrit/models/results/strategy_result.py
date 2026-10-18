@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, TypeVar
 from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
-    from typing_extensions import Self
+    from typing import Self
 
 StrategyResultT = TypeVar("StrategyResultT", bound="StrategyResult")
 

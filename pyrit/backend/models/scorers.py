@@ -1,0 +1,42 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+"""Request and response models for scorer registry endpoints."""
+
+from pydantic import BaseModel, Field
+
+from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
+from pyrit.models import JSONValue, Parameter
+from pyrit.models.catalog.scorer import ScorerInstance
+
+
+class ScorerTypeEntry(BaseModel):
+    """A registered scorer class and its shared constructor contract."""
+
+    scorer_type: str = Field(..., description="Scorer class name")
+    parameters: list[Parameter] = Field(default_factory=list, description="Constructor parameters from ScorerRegistry")
+    is_llm_based: bool = Field(False, description="Whether this scorer references a target")
+    description: str | None = Field(None, description="Short description from the scorer class docstring")
+
+
+class ScorerTypeResponse(BaseModel):
+    """Available scorer classes."""
+
+    items: list[ScorerTypeEntry]
+
+
+class ScorerListResponse(BaseModel):
+    """Paginated registered scorer instances."""
+
+    items: list[ScorerInstance]
+    pagination: PaginationInfo
+
+
+class CreateScorerRequest(BaseModel):
+    """Request to construct and register a named scorer."""
+
+    name: str = Field(..., min_length=1, pattern=REGISTRY_INSTANCE_NAME_PATTERN, description="Unique registry name")
+    type: IdentifierStr = Field(..., description="Scorer class name")
+    params: dict[IdentifierStr, JSONValue] = Field(
+        default_factory=dict, max_length=MAX_ITEMS, description="Scorer constructor parameters"
+    )

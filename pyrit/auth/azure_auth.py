@@ -206,11 +206,33 @@ def ensure_async_token_provider(
             str: The token string from the synchronous provider.
         """
         result = api_key()
-        if inspect.isawaitable(result):
-            return await result  # type: ignore[ty:invalid-return-type]
-        return result
+        if isinstance(result, str):
+            return result
+        return await result
 
     return async_token_provider
+
+
+class AsyncAzureAuth:
+    """Own an async Azure credential for one event loop."""
+
+    def __init__(self, token_scope: str) -> None:
+        """Configure the scope without retrieving a token."""
+        self._token_scope = token_scope
+        self._credential = AsyncDefaultAzureCredential()
+
+    async def get_access_token_async(self) -> AccessToken:
+        """
+        Retrieve or refresh the credential's cached token.
+
+        Returns:
+            AccessToken: The token for the configured scope.
+        """
+        return await self._credential.get_token(self._token_scope)
+
+    async def close_async(self) -> None:
+        """Close the credential before its event loop stops."""
+        await self._credential.close()
 
 
 class AzureAuth(Authenticator):

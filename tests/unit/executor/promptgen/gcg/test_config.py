@@ -89,6 +89,7 @@ def test_minimal_config_constructs_with_defaults() -> None:
     assert config.algorithm.loss is None
     assert config.algorithm.candidate_filter is None
     assert config.algorithm.suffix_init is None
+    assert config.algorithm.use_prefix_cache is False
     assert config.strategy.transfer is False
     assert config.output.verbose is True
     assert config.hf_token is None
@@ -211,7 +212,13 @@ def test_to_json_round_trip_preserves_all_fields() -> None:
             GCGModelConfig(name="mistralai/Mistral-7B-Instruct-v0.2"),
         ],
         test_models=[GCGModelConfig(name="lmsys/vicuna-7b-v1.5")],
-        algorithm=GCGAlgorithmConfig(n_steps=42, batch_size=64, target_weight=0.5, control_weight=0.5),
+        algorithm=GCGAlgorithmConfig(
+            n_steps=42,
+            batch_size=64,
+            target_weight=0.5,
+            control_weight=0.5,
+            use_prefix_cache=True,
+        ),
         strategy=GCGStrategyConfig(transfer=True, progressive_goals=True, anneal=True),
         output=GCGOutputConfig(result_prefix="results/run1", verbose=False),
         hf_token="hf_secrettoken",

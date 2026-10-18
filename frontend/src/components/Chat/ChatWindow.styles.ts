@@ -1,5 +1,7 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
-import { mobileTouchTarget } from '../../styles/touchTargets'
+import { mobileTouchTarget, NARROW_VIEWPORT_QUERY } from '../../styles/touchTargets'
+
+import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
 
 export const useChatWindowStyles = makeStyles({
   root: {
@@ -24,8 +26,30 @@ export const useChatWindowStyles = makeStyles({
     flexDirection: 'column',
     flex: 1,
     minWidth: 0,
-    backgroundColor: tokens.colorNeutralBackground2,
+    backgroundColor: WORKSPACE_CANVAS_BACKGROUND,
     overflow: 'hidden',
+  },
+  breadcrumbBar: {
+    display: 'flex',
+    alignItems: 'center',
+    flexShrink: 0,
+    minHeight: '36px',
+    paddingInline: tokens.spacingHorizontalL,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground3,
+    overflowX: 'auto',
+  },
+  breadcrumbLink: {
+    color: tokens.colorBrandForegroundLink,
+    textDecorationLine: 'none',
+    whiteSpace: 'nowrap',
+    ':hover': {
+      textDecorationLine: 'underline',
+    },
+    ':focus-visible': {
+      outline: `2px solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: '2px',
+    },
   },
   conversationDrawer: {
     width: '280px',
@@ -38,8 +62,8 @@ export const useChatWindowStyles = makeStyles({
     maxWidth: '100vw',
   },
   ribbon: {
-    height: '48px',
     minHeight: '48px',
+    flexWrap: 'wrap',
     flexShrink: 0,
     backgroundColor: tokens.colorNeutralBackground3,
     borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
@@ -55,9 +79,33 @@ export const useChatWindowStyles = makeStyles({
     gap: tokens.spacingHorizontalS,
     color: tokens.colorNeutralForeground2,
     fontSize: tokens.fontSizeBase300,
-    flex: '1 1 auto',
+    flex: '0 1 auto',
     minWidth: 0,
     overflow: 'hidden',
+  },
+  sharedToolbar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexGrow: 1,
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalM,
+    maxWidth: '100%',
+  },
+  editActions: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginRight: 'auto',
+    gap: tokens.spacingHorizontalXS,
+  },
+  sharedTarget: {
+    maxWidth: '240px',
+    [NARROW_VIEWPORT_QUERY]: {
+      flexBasis: '100%',
+      maxWidth: '100%',
+      justifyContent: 'flex-start',
+    },
   },
   noTarget: {
     color: tokens.colorNeutralForeground3,
@@ -70,11 +118,20 @@ export const useChatWindowStyles = makeStyles({
     gap: tokens.spacingHorizontalS,
     flexShrink: 0,
   },
+  sharedActions: {
+    flexShrink: 1,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    minWidth: 0,
+  },
   ribbonAction: {
     ...mobileTouchTarget,
   },
   newAttackButton: {
     flexShrink: 0,
+    [NARROW_VIEWPORT_QUERY]: {
+      minWidth: '32px',
+    },
     ...mobileTouchTarget,
   },
   newAttackLabel: {

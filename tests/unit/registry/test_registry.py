@@ -11,7 +11,9 @@ accessors, and the filter wiring. These tests drive a minimal subclass that keep
 every base default.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from threading import Event
 from types import ModuleType
 from unittest.mock import MagicMock
 
@@ -43,6 +45,13 @@ class UnregisteredWidget:
         self.size = size
 
 
+class PluginWidget:
+    """A widget registered after discovery."""
+
+    def __init__(self, *, size: int = 1) -> None:
+        self.size = size
+
+
 class WidgetRegistry(Registry[object, RegistryMetadata]):
     """Minimal Registry subclass that keeps every base default."""
 
@@ -57,6 +66,44 @@ class WidgetRegistry(Registry[object, RegistryMetadata]):
 
     def _metadata_class(self) -> type[RegistryMetadata]:
         return RegistryMetadata
+
+
+class CoordinatedWidgetRegistry(WidgetRegistry):
+    """Widget registry whose first metadata build can be held for concurrency tests."""
+
+    def __init__(self) -> None:
+        self.metadata_started = Event()
+        self.metadata_release = Event()
+        self.metadata_build_calls = 0
+        super().__init__()
+
+    def _build_metadata(self, name: str, cls: type[object]) -> RegistryMetadata:
+        self.metadata_build_calls += 1
+        if self.metadata_build_calls == 1:
+            self.metadata_started.set()
+            if not self.metadata_release.wait(timeout=5):
+                raise TimeoutError("Metadata test release was not signaled.")
+        return super()._build_metadata(name, cls)
+
+
+class SlowConstructingRegistry(WidgetRegistry):
+    """Registry subclass whose constructor pauses so singleton construction concurrency
+    can be tested. Uses class-level events because ``get_registry_singleton`` calls
+    ``cls()`` with no arguments."""
+
+    construction_started = Event()
+    construction_release = Event()
+
+    def __init__(self) -> None:
+        self.construction_started.set()
+        if not self.construction_release.wait(timeout=5):
+            raise TimeoutError("Slow-construction test release was not signaled.")
+        super().__init__()
+
+
+class OtherSlowConstructingRegistry(WidgetRegistry):
+    """A distinct Registry subclass with an independent singleton key, used to prove
+    that constructing SlowConstructingRegistry's singleton does not block this one."""
 
 
 @dataclass(frozen=True)
@@ -168,6 +215,120 @@ def test_get_all_metadata_no_filters_returns_all():
     all_meta = registry.get_all_registered_class_metadata()
 
     assert {m.registry_name for m in all_meta} == {"SampleWidget", "UndocumentedWidget"}
+
+
+def test_concurrent_metadata_callers_share_one_cache_build() -> None:
+    registry = CoordinatedWidgetRegistry()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(registry.get_all_registered_class_metadata)
+        assert registry.metadata_started.wait(timeout=5)
+        second = executor.submit(registry.get_all_registered_class_metadata)
+        registry.metadata_release.set()
+
+        assert first.result(timeout=5) == second.result(timeout=5)
+
+    assert registry.metadata_build_calls == 2
+
+
+def test_class_registration_does_not_block_behind_metadata_build_and_converges() -> None:
+    """
+    A concurrent metadata build must not park a fast catalog mutation like
+    ``register_class`` behind its (potentially slow) work. The build must instead
+    detect, via the catalog version stamp, that the catalog changed mid-build and
+    retry so the returned metadata converges on a snapshot that includes the new
+    class rather than caching a stale one.
+    """
+    registry = CoordinatedWidgetRegistry()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        initial_metadata = executor.submit(registry.get_all_registered_class_metadata)
+        assert registry.metadata_started.wait(timeout=5)
+
+        registration = executor.submit(registry.register_class, PluginWidget)
+        # Registration only needs the (uncontended) catalog lock, so it must
+        # complete promptly even though the metadata build is still paused.
+        registration.result(timeout=1)
+
+        registry.metadata_release.set()
+        assert {item.class_name for item in initial_metadata.result(timeout=5)} == {
+            "PluginWidget",
+            "SampleWidget",
+            "UndocumentedWidget",
+        }
+
+    refreshed = registry.get_all_registered_class_metadata()
+    assert {item.class_name for item in refreshed} == {
+        "PluginWidget",
+        "SampleWidget",
+        "UndocumentedWidget",
+    }
+    assert registry.metadata_build_calls == 5
+
+
+def test_contains_and_get_class_do_not_block_behind_metadata_build() -> None:
+    """
+    ``__contains__`` and ``get_class`` must return promptly even while a metadata
+    build is in flight and paused on another thread: they must never be parked
+    behind the lock that guards the (slow) metadata build.
+    """
+    registry = CoordinatedWidgetRegistry()
+    registry.get_class_names()  # Trigger discovery up front to isolate the build pause.
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        metadata_future = executor.submit(registry.get_all_registered_class_metadata)
+        assert registry.metadata_started.wait(timeout=5)
+
+        contains_future = executor.submit(lambda: "SampleWidget" in registry)
+        get_class_future = executor.submit(registry.get_class, "SampleWidget")
+
+        assert contains_future.result(timeout=1) is True
+        assert get_class_future.result(timeout=1) is SampleWidget
+
+        registry.metadata_release.set()
+        metadata_future.result(timeout=5)
+
+
+def test_get_registry_singleton_converges_for_same_class() -> None:
+    """Concurrent callers requesting the same registry class's singleton must
+    converge onto a single construction."""
+    SlowConstructingRegistry.construction_started.clear()
+    SlowConstructingRegistry.construction_release.clear()
+    SlowConstructingRegistry.reset_registry_singleton()
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(SlowConstructingRegistry.get_registry_singleton)
+            assert SlowConstructingRegistry.construction_started.wait(timeout=5)
+            second = executor.submit(SlowConstructingRegistry.get_registry_singleton)
+            SlowConstructingRegistry.construction_release.set()
+
+            assert first.result(timeout=5) is second.result(timeout=5)
+    finally:
+        SlowConstructingRegistry.reset_registry_singleton()
+
+
+def test_get_registry_singleton_does_not_block_unrelated_registry_class() -> None:
+    """A slow, in-flight singleton construction for one registry class must not
+    block singleton construction of an unrelated registry class."""
+    SlowConstructingRegistry.construction_started.clear()
+    SlowConstructingRegistry.construction_release.clear()
+    SlowConstructingRegistry.reset_registry_singleton()
+    OtherSlowConstructingRegistry.reset_registry_singleton()
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            slow = executor.submit(SlowConstructingRegistry.get_registry_singleton)
+            assert SlowConstructingRegistry.construction_started.wait(timeout=5)
+
+            # Must complete promptly: different registry classes must not share a
+            # construction lock.
+            other = executor.submit(OtherSlowConstructingRegistry.get_registry_singleton)
+            assert isinstance(other.result(timeout=1), OtherSlowConstructingRegistry)
+
+            SlowConstructingRegistry.construction_release.set()
+            assert isinstance(slow.result(timeout=5), SlowConstructingRegistry)
+    finally:
+        SlowConstructingRegistry.reset_registry_singleton()
+        OtherSlowConstructingRegistry.reset_registry_singleton()
 
 
 def test_get_all_metadata_include_filter_matches_subset():

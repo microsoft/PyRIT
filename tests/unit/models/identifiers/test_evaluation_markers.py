@@ -37,10 +37,12 @@ class TestEvaluateNamespace:
         plain = Include()
         assert plain.fallback is None
         assert plain.only_params is None
+        assert plain.unordered_when is None
 
         configured = Include(fallback="model_name", only_params=frozenset({"temperature"}))
         assert configured.fallback == "model_name"
         assert configured.only_params == frozenset({"temperature"})
+        assert Include(unordered_when="commutative").unordered_when == "commutative"
 
     def test_markers_are_frozen(self):
         marker = Include()
@@ -78,6 +80,11 @@ class TestMarkersAttachedToFields:
         assert marker.only_params == frozenset({"temperature"})
 
         assert isinstance(self._marker(AttackIdentifier, "objective_scorer"), Exclude)
+
+    def test_scorer_child_order_marker(self) -> None:
+        marker = self._marker(ScorerIdentifier, "sub_scorers")
+        assert isinstance(marker, Include)
+        assert marker.unordered_when == "sub_scorers_order_independent"
 
 
 def _field_marker(model_cls, field_name):

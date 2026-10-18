@@ -15,18 +15,20 @@
 #
 # ## Overview
 #
-# This notebook covers two categories of image converters:
+# This notebook covers the following image transformations:
 #
-# - **[Text to Image](#text-to-image)**: Convert text into images (QR codes, text overlays)
+# - **[Text to Image](#text-to-image)**: Convert text into images (grid composite, QR codes, text overlays, LSB steganography)
+# - **[Image to Text](#lsb-image-steganography)**: Recover text encoded by the LSB steganography converter
 # - **[Image to Image](#image-to-image)**: Modify or transform existing images
 
 # %% [markdown]
 # (text-to-image)=
 # ## Text to Image
 #
-# ### QRCodeConverter
 #
-# The `QRCodeConverter` converts text into QR code images:
+# ### GridCompositeConverter
+#
+# The `GridCompositeConverter` renders the prompt text into a composite grid where one cell carries the text payload and the remaining cells are innocuous images, targeting weaknesses in a model's ability to reason across multiple regions of an image at once and accurately evaluate overall safety when a majority of the image is benign.
 
 # %%
 import pathlib
@@ -34,13 +36,34 @@ import pathlib
 from IPython.display import display
 from PIL import Image
 
-from pyrit.converter import QRCodeConverter
+from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.converter import GridCompositeConverter
 from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-prompt = "https://github.com/microsoft/PyRIT"
+prompt = "harmful objective"
+# This directory contains example innocuous images used for the grid composite converter.
+images = list(CONVERTER_SEED_PROMPT_PATH.glob("grid_composite/*.png"))
+
+# Defaults to a 2 x 2 grid
+gc_converter = GridCompositeConverter(innocuous_images=images)
+gc_result = await gc_converter.convert_async(prompt=prompt)  # type: ignore
+
+print(f"Grid composite saved to: {gc_result.output_text}")
+
+# Display the grid composite image
+gc_image = Image.open(gc_result.output_text)
+display(gc_image)
+
+# %% [markdown]
+# ### QRCodeConverter
+#
+# The `QRCodeConverter` encodes the prompt text into a QR code image, moving the payload off the text channel so it must be decoded from the image.
+
+# %%
+from pyrit.converter import QRCodeConverter
 
 qr_converter = QRCodeConverter()
 qr_result = await qr_converter.convert_async(prompt=prompt)  # type: ignore
@@ -50,6 +73,45 @@ print(f"QR code saved to: {qr_result.output_text}")
 # Display the QR code
 qr_image = Image.open(qr_result.output_text)
 display(qr_image)
+
+# %% [markdown]
+# (lsb-image-steganography)=
+# ### LSBImageStegoConverter and LSBImageStegoDecodeConverter
+#
+# `LSBImageStegoConverter` encodes UTF-8 text in the least significant bits of
+# RGB or RGBA pixel channels and returns a lossless PNG. It generates a carrier
+# sized to fit the payload by default. Set `carrier_image_path` to use an existing
+# image instead; the image must have enough channel capacity for the text and
+# delimiter.
+#
+# `LSBImageStegoDecodeConverter` reverses this transformation (`image_path` to
+# `text`). The encoder and decoder must use the same `channels` and `delimiter`.
+# The example below uses their defaults (`"RGBA"` and `"====EOF===="`) and runs
+# locally without a model or external service.
+#
+# Keep the PNG bytes intact between encoding and decoding. Resizing, lossy
+# compression, or alpha-channel removal can destroy the payload. Encoding text
+# this way does not mean a vision model can read it without a decoding tool.
+# Prompts containing the delimiter or an overlapping suffix are rejected; choose
+# a different delimiter when needed.
+
+# %%
+from pyrit.converter import LSBImageStegoConverter, LSBImageStegoDecodeConverter
+
+lsb_prompt = "The secret ingredient is cinnamon."
+lsb_encoder = LSBImageStegoConverter()
+lsb_decoder = LSBImageStegoDecodeConverter()
+
+lsb_encoded = await lsb_encoder.convert_async(prompt=lsb_prompt)  # type: ignore
+with Image.open(lsb_encoded.output_text) as lsb_image:
+    print(f"Encoded image: {lsb_image.format}, {lsb_image.mode}, {lsb_image.size}")
+    display(lsb_image)
+
+lsb_decoded = await lsb_decoder.convert_async(  # type: ignore
+    prompt=lsb_encoded.output_text, input_type=lsb_encoded.output_type
+)
+assert lsb_decoded.output_text == lsb_prompt
+print(f"Decoded text: {lsb_decoded.output_text}")
 
 # %% [markdown]
 # ### AddImageTextConverter

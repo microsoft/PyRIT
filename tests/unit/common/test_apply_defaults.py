@@ -10,6 +10,7 @@ from pyrit.common.apply_defaults import (
     apply_defaults,
     get_global_default_values,
     reset_default_values,
+    resolve_constructor_defaults,
     set_default_value,
     set_global_variable,
 )
@@ -37,6 +38,45 @@ class _WithRequired:
     @apply_defaults
     def __init__(self, *, target: str = REQUIRED_VALUE) -> None:
         self.target = target
+
+
+class _Undecorated:
+    def __init__(self, *, count: int | None = None) -> None:
+        self.count = count
+
+
+@pytest.mark.parametrize("class_type", [_Base, _Child])
+@pytest.mark.parametrize("arguments", [{}, {"name": None}, {"name": "explicit", "count": 0}])
+def test_deferred_defaults_match_decorated_constructor(
+    *, class_type: type[_Base], arguments: dict[str, object]
+) -> None:
+    set_default_value(class_type=_Base, parameter_name="name", value="configured")
+    set_default_value(class_type=_Base, parameter_name="count", value=42)
+    original = arguments.copy()
+    resolved = resolve_constructor_defaults(class_type=class_type, arguments=arguments, excluded_parameters=set())
+    direct = class_type(**arguments)
+    assert resolved == {"name": direct.name, "count": direct.count}
+    assert arguments == original
+
+
+def test_deferred_defaults_skip_execution_inputs() -> None:
+    resolved = resolve_constructor_defaults(
+        class_type=_WithRequired, arguments={"target": None}, excluded_parameters={"target"}
+    )
+    assert resolved == {}
+
+
+def test_deferred_defaults_reject_unresolved_required_placeholder() -> None:
+    with pytest.raises(ValueError, match="target is required"):
+        resolve_constructor_defaults(class_type=_WithRequired, arguments={}, excluded_parameters=set())
+
+
+def test_deferred_defaults_do_not_apply_to_undecorated_constructor() -> None:
+    set_default_value(class_type=_Undecorated, parameter_name="count", value=42)
+    resolved = resolve_constructor_defaults(
+        class_type=_Undecorated, arguments={"count": None}, excluded_parameters=set()
+    )
+    assert resolved == {"count": _Undecorated(count=None).count}
 
 
 # --- _RequiredValueSentinel ---
@@ -96,6 +136,26 @@ def test_global_default_values_no_subclass_when_disabled():
     registry.set_default_value(class_type=_Base, parameter_name="name", value="no-inherit", include_subclasses=False)
     found, val = registry.get_default_value(class_type=_Child, parameter_name="name")
     assert found is False
+
+
+def test_global_default_values_no_subclass_still_applies_to_base():
+    registry = GlobalDefaultValues()
+    registry.set_default_value(class_type=_Base, parameter_name="name", value="no-inherit", include_subclasses=False)
+    found, val = registry.get_default_value(class_type=_Base, parameter_name="name")
+    assert found is True
+    assert val == "no-inherit"
+    child = _Child()
+    assert child.name is None
+
+
+def test_global_default_values_mixed_flags_same_param():
+    registry = GlobalDefaultValues()
+    registry.set_default_value(class_type=_Base, parameter_name="name", value="base-only", include_subclasses=False)
+    registry.set_default_value(class_type=_Child, parameter_name="name", value="child-default")
+    found, val = registry.get_default_value(class_type=_Base, parameter_name="name")
+    assert found is True and val == "base-only"
+    found, val = registry.get_default_value(class_type=_Child, parameter_name="name")
+    assert found is True and val == "child-default"
 
 
 def test_global_default_values_reset():

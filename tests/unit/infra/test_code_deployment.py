@@ -1,0 +1,1056 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+"""Check deployment inputs, phase parameters, and bounded HTTP readiness without Azure."""
+
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+PIPELINES = REPO_ROOT / "infra" / "pipelines"
+SUBSCRIPTION = "11111111-1111-1111-1111-111111111111"
+RESOURCE_GROUP = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/copyrit-test"
+IMAGE = f"copyritacr.azurecr.io/pyrit@sha256:{'a' * 64}"
+COMMON_INPUTS = {
+    "PYRIT_SLOT": "test",
+    "PYRIT_BUILD_ID": "42",
+    "PYRIT_SOURCE_DIRECTORY": REPO_ROOT.as_posix(),
+    "PYRIT_AGENT_TEMP_DIRECTORY": REPO_ROOT.as_posix(),
+    "PYRIT_DEPLOYMENT_RESOURCE_GROUP": "copyrit-test",
+    "PYRIT_APP_NAME": "copyrit-test",
+    "PYRIT_MANAGED_IDENTITY_RESOURCE_ID": (
+        f"{RESOURCE_GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/copyrit-id"
+    ),
+    "PYRIT_ACR_RESOURCE_ID": f"{RESOURCE_GROUP}/providers/Microsoft.ContainerRegistry/registries/copyritacr",
+    "PYRIT_ENABLE_OTEL": "false",
+}
+INFRA_INPUTS = {
+    "PYRIT_VNET_ADDRESS_PREFIX": "10.20.0.0/16",
+    "PYRIT_INFRASTRUCTURE_SUBNET_ADDRESS_PREFIX": "10.20.0.0/23",
+}
+APP_INPUTS = {
+    "PYRIT_CONTAINER_IMAGE": IMAGE,
+    "PYRIT_ENTRA_TENANT_ID": SUBSCRIPTION,
+    "PYRIT_ENTRA_CLIENT_ID": SUBSCRIPTION,
+    "PYRIT_ALLOWED_GROUP_OBJECT_IDS": SUBSCRIPTION,
+    "PYRIT_ADMIN_GROUP_OBJECT_ID": SUBSCRIPTION,
+    "PYRIT_SQL_SERVER_FQDN": "copyrit.database.windows.net",
+    "PYRIT_SQL_DATABASE_NAME": "copyrit",
+    "PYRIT_KEY_VAULT_RESOURCE_ID": f"{RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/copyrit-kv",
+    "PYRIT_ENV_SECRET_NAME": "pyrit-env",
+}
+
+
+def _find_bash() -> str | None:
+    if os.name != "nt":
+        return shutil.which("bash")
+    candidates = [
+        Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Git" / "bin" / "bash.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Git" / "bin" / "bash.exe",
+    ]
+    return next((str(candidate) for candidate in candidates if candidate.is_file()), None)
+
+
+BASH = _find_bash()
+JQ = shutil.which("jq")
+
+
+@unittest.skipIf(BASH is None, "Native Bash is not installed")
+class TestLocalDockerBuild(unittest.TestCase):
+    def test_migration_entrypoint_forwards_check_only_argument(self) -> None:
+        assert BASH is not None
+        startup = (REPO_ROOT / "docker/start.sh").read_text(encoding="utf-8")
+        migration = startup.split('elif [ "$PYRIT_MODE" = "migrate" ]; then\n', 1)[1].split("\nelse\n", 1)[0]
+        result = subprocess.run(
+            [BASH, "--noprofile", "--norc", "-s", "--", "--check-only"],
+            input=(
+                "set -eu\nprepare_deployment_config() { CONFIG_FILE=runtime.yaml; }\n"
+                "python() { printf '<%s>\\n' \"$@\"; }\n"
+                "AZURE_SQL_SERVER=copyrit.database.windows.net AZURE_SQL_DATABASE=airtdev\n"
+                + migration.replace("exec python", "python")
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout.splitlines()[-1] == "<--check-only>"
+        assert "<--expected-server>" in result.stdout and "<--expected-database>" in result.stdout
+
+    def test_compose_setup_exports_source_provenance_and_fails_on_git_errors(self) -> None:
+        assert BASH is not None
+        commit = "a" * 40
+        git_stub = (
+            'git() { case "$*" in\n'
+            '"rev-parse --verify HEAD") printf "%s\\n" "$TEST_COMMIT";;\n'
+            '"status --porcelain") printf "%s" "$TEST_STATUS"; return "$TEST_STATUS_EXIT";;\n'
+            "*) return 97;; esac; }\n"
+        )
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("PYRIT_SOURCE_")}
+        environment.pop("BASH_ENV", None)
+        for path in ("docker/README.md", "doc/getting_started/install_docker.md"):
+            text = (REPO_ROOT / path).read_text(encoding="utf-8")
+            blocks = [section.split("```", 1)[0] for section in text.split("```bash\n")[1:]]
+            setup = [block for block in blocks if "PYRIT_SOURCE_COMMIT=" in block]
+            assert len(setup) == 1, f"{path} must include one runnable source provenance setup"
+            for status, status_exit, expected in (
+                ("", "0", "false"),
+                (" M pyrit/example.py", "0", "true"),
+                ("?? new-file", "0", "true"),
+                ("", "128", None),
+            ):
+                with self.subTest(path=path, status=status, status_exit=status_exit):
+                    result = subprocess.run(
+                        [BASH, "--noprofile", "--norc", "-s"],
+                        input=git_stub
+                        + setup[0]
+                        + '\nsh -c \'printf "%s\\n%s\\n" "$PYRIT_SOURCE_COMMIT" "$PYRIT_SOURCE_DIRTY"\'\n',
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                        timeout=30,
+                        env={
+                            **environment,
+                            "TEST_COMMIT": commit,
+                            "TEST_STATUS": status,
+                            "TEST_STATUS_EXIT": status_exit,
+                        },
+                    )
+                    if expected is None:
+                        assert result.returncode != 0
+                        assert not result.stdout
+                    else:
+                        assert result.returncode == 0, result.stdout + result.stderr
+                        assert result.stdout.splitlines() == [commit, expected]
+
+    def test_only_dirty_local_builds_use_development_preparation(self) -> None:
+        assert BASH is not None
+        dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+        local_build = dockerfile.split('elif [ "$PYRIT_SOURCE" = "local" ]; then', 1)[1].split("\n    else", 1)[0]
+        script = (
+            'set -eu\nuv() { :; }\npython() { printf "prepare:%s\\n" "$*"; }\n'
+            + local_build.replace("/opt/venv/bin/python", "python")
+            + "\n"
+        )
+
+        for dirty in ("true", "false"):
+            with self.subTest(dirty=dirty):
+                result = subprocess.run(
+                    [BASH, "--noprofile", "--norc", "-s"],
+                    input=script,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=30,
+                    env={**os.environ, "GIT_COMMIT": "a" * 40, "GIT_MODIFIED": dirty},
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                preparation = [line for line in result.stdout.splitlines() if line.startswith("prepare:")]
+                expected = "prepare:-m build_scripts.prepare_package" + (" --development" if dirty == "true" else "")
+                assert preparation == [expected]
+
+
+@unittest.skipIf(BASH is None, "Native Bash is not installed")
+class TestPypiBuild(unittest.TestCase):
+    def test_pypi_builds_preserve_installed_package_provenance_and_remove_local_sources(self) -> None:
+        dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+        pypi_build = dockerfile.split('if [ "$PYRIT_SOURCE" = "pypi" ]; then', 1)[1].split(
+            'elif [ "$PYRIT_SOURCE" = "local" ]; then', 1
+        )[0]
+        assert "==$PYRIT_VERSION" in pypi_build
+        assert "rm -rf /app/pyrit /app/frontend /app/build_scripts" in pypi_build
+        assert "stamp" not in pypi_build
+        assert "prepare_package" not in pypi_build
+
+    def test_pypi_compatibility_validation_fails_closed_with_a_release_diagnostic(self) -> None:
+        assert BASH is not None
+        dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+        validation = dockerfile.split("    cd /tmp && \\\n", 1)[1].split('    echo "Creating build info..."', 1)[0]
+        validation = validation.replace("/opt/venv/bin/python", shlex.quote(Path(sys.executable).as_posix()))
+        version = "9.9.9"
+        identity = f"{version}+g{'a' * 40}"
+
+        for state in ("legacy", "missing-stamp", "malformed-stamp", "stamped"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                package = root / "pyrit"
+                package.mkdir()
+                (package / "__init__.py").write_text("from ._version import __version__\n", encoding="utf-8")
+                (package / "_version.py").write_text(f"__version__ = {version!r}\n", encoding="utf-8")
+                if state != "legacy":
+                    shutil.copyfile(REPO_ROOT / "pyrit/_compatibility.py", package / "_compatibility.py")
+                if state in ("malformed-stamp", "stamped"):
+                    stamp = {
+                        "version": version if state == "stamped" else "9.9.8",
+                        "commit": "a" * 40,
+                        "compatibility_id": identity,
+                        "dirty": False,
+                    }
+                    (package / "_compatibility.json").write_text(json.dumps(stamp), encoding="utf-8")
+                environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+                result = subprocess.run(
+                    [BASH, "--noprofile", "--norc", "-s"],
+                    input="set -eu\n" + validation + "true\n",
+                    cwd=root,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=30,
+                    env={**environment, "PYRIT_SOURCE": "pypi", "PYRIT_VERSION": version},
+                )
+                if state == "stamped":
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    assert result.stdout.strip() == identity
+                    assert result.stderr == ""
+                else:
+                    assert result.returncode != 0
+                    assert f"Selected PyPI release {version} lacks valid compatibility metadata" in result.stderr
+                    assert "Wheels published before compatibility stamping are unsupported" in result.stderr
+                    assert "matching Python and frontend stamps is required" in result.stderr
+
+
+@unittest.skipIf(BASH is None or JQ is None, "Native Bash and jq are required")
+class TestCodeDeployment(unittest.TestCase):
+    def _run(
+        self, *, script: str, command: str = "", inputs: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        assert BASH is not None and JQ is not None
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("PYRIT_")}
+        environment.update(COMMON_INPUTS | (inputs or {}))
+        environment["MSYS2_ARG_CONV_EXCL"] = "*"
+        environment.pop("BASH_ENV", None)
+        jq_flags = "-b" if os.name == "nt" else ""
+        prelude = (
+            "set -euo pipefail\n"
+            "az() { echo 'Unexpected Azure call' >&2; exit 97; }\n"
+            "curl() { echo 'Unexpected network call' >&2; exit 97; }\n"
+            "sleep() { echo 'Unexpected wait' >&2; exit 97; }\n"
+            f'python3() {{ {shlex.quote(Path(sys.executable).as_posix())} "$@"; }}\n'
+            f'jq() {{ {shlex.quote(Path(JQ).as_posix())} {jq_flags} "$@"; }}\n'
+            "before_options=$(set +o); before_traps=$(trap -p); before_directory=$PWD\n"
+            f"source {shlex.quote((PIPELINES / script).as_posix())}\n"
+            '[[ "$(set +o)" == "$before_options" && "$(trap -p)" == "$before_traps" '
+            '&& "$PWD" == "$before_directory" ]]\n'
+        )
+        result = subprocess.run(
+            [BASH, "--noprofile", "--norc", "-s"],
+            input=prelude + command + "\n",
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+            timeout=30,
+        )
+        assert "Unexpected " not in result.stderr, result.stderr
+        return result
+
+    def test_source_defines_helpers_without_initializing_deployment(self) -> None:
+        for script in ("deployment_common.sh", "deploy_infra.sh", "deploy_app.sh"):
+            with self.subTest(script=script):
+                result = self._run(
+                    script=script,
+                    inputs={"PYRIT_SLOT": ""},
+                    command="[[ -z ${deployment_name+x} && -z ${parameters+x} && -z ${cutover_in_progress+x} ]]",
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert result.stdout == ""
+
+    def test_infra_parameters_exclude_app_settings_and_preserve_rollback_scope(self) -> None:
+        result = self._run(
+            script="deploy_infra.sh",
+            inputs=INFRA_INPUTS,
+            command="""
+validate_infra_inputs
+deployment_tags='{"owner":"copyrit"}'
+existing_pip_ip_tags='[]'
+build_infra_parameters
+printf '%s\\n' "$template_file" "$deployment_name" "${parameters[@]}" --rollback "${rollback_parameters[@]}"
+""",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        template, name, *values = result.stdout.splitlines()
+        assert template.endswith("/infra/infrastructure.bicep")
+        assert name == "pyrit-test-42-infra"
+        separator = values.index("--rollback")
+        parameters = dict(value.split("=", 1) for value in values[:separator])
+        rollback = dict(value.split("=", 1) for value in values[separator + 1 :])
+        assert set(parameters) == {
+            "appName",
+            "acrResourceId",
+            "existingManagedIdentityResourceId",
+            "enableOtel",
+            "enableFrontDoor",
+            "enableFrontDoorPrivateLink",
+            "frontDoorPrivateLinkRequestMessage",
+            "disableContainerAppsPublicAccess",
+            "vnetAddressPrefix",
+            "infrastructureSubnetAddressPrefix",
+            "sqlSubnetAddressPrefix",
+            "egressPublicIpTags",
+            "protectEgressPublicIp",
+            "tags",
+        }
+        assert parameters["vnetAddressPrefix"] == INFRA_INPUTS["PYRIT_VNET_ADDRESS_PREFIX"]
+        assert parameters["protectEgressPublicIp"] == "true"
+        assert parameters["enableFrontDoorPrivateLink"] == "true"
+        assert parameters["disableContainerAppsPublicAccess"] == "true"
+        assert rollback == parameters | {
+            "enableFrontDoorPrivateLink": "false",
+            "disableContainerAppsPublicAccess": "false",
+        }
+
+    def test_app_parameters_exclude_network_inputs_and_cutover_flags(self) -> None:
+        for front_door in ("true", "false"):
+            with self.subTest(front_door=front_door):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=APP_INPUTS,
+                    command=f"""
+validate_app_inputs
+deployment_tags='{{"owner":"copyrit"}}'
+enable_front_door={front_door}
+build_app_parameters
+printf '%s\\n' "$template_file" "$deployment_name" "${{parameters[@]}}"
+""",
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                template, name, *values = result.stdout.splitlines()
+                assert template.endswith("/infra/application.bicep")
+                assert name == "pyrit-test-42-app"
+                parameters = dict(value.split("=", 1) for value in values)
+                assert set(parameters) == {
+                    "appName",
+                    "containerImage",
+                    "entraTenantId",
+                    "entraClientId",
+                    "allowedGroupObjectIds",
+                    "adminGroupObjectId",
+                    "allowedCidr",
+                    "sqlServerFqdn",
+                    "sqlDatabaseName",
+                    "keyVaultResourceId",
+                    "acrResourceId",
+                    "existingManagedIdentityResourceId",
+                    "enableOtel",
+                    "envSecretName",
+                    "pyritConfigFileUri",
+                    "enableFrontDoor",
+                    "requireCurrentSchema",
+                    "tags",
+                }
+                assert parameters["containerImage"] == IMAGE
+                assert parameters["sqlDatabaseName"] == "copyrit"
+                assert parameters["enableFrontDoor"] == front_door
+                assert parameters["requireCurrentSchema"] == "true"
+                assert parameters["allowedCidr"] == parameters["pyritConfigFileUri"] == ""
+
+    def _run_migration(
+        self, *, statuses: list[str], attempts: int = 3, check_only: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        command = (
+            "if schema_is_current; then echo current; else echo migration-needed; fi"
+            if check_only
+            else "run_database_migration"
+        )
+        return self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS | {"PYRIT_MIGRATION_POLL_ATTEMPTS": str(attempts)},
+            command=f"""
+immutable_image={shlex.quote(IMAGE)}
+deployment_name=pyrit-test-42-app
+deployment_tags='{{"owner":"copyrit"}}'
+statuses=({" ".join(statuses)})
+poll_file=$(mktemp)
+trap 'rm -f "$poll_file"' EXIT
+preview_deployment() {{ echo "preview $1 $deployment_name ${{2##*/}}"; }}
+sleep() {{ :; }}
+az() {{
+  case "$1 $2 $3" in
+    "deployment group create") echo "create $3 $5" ;;
+    "containerapp job start") echo "start $*" >&2; echo execution-1 ;;
+    "containerapp job execution") echo poll >> "$poll_file"; echo "${{statuses[$(($(wc -l < "$poll_file") - 1))]}}" ;;
+    *) echo "Unexpected az $*" >&2; exit 97 ;;
+  esac
+}}
+prepare_database_migration
+{command}
+echo done
+""",
+        )
+
+    def test_database_migration_waits_for_success(self) -> None:
+        result = self._run_migration(statuses=["Running", "Succeeded"])
+        assert result.returncode == 0, result.stdout + result.stderr
+        lines = result.stdout.splitlines()
+        assert lines[0] == "preview job pyrit-test-42-app-migrate migration.bicep"
+        assert lines[1] == "create create pyrit-test-42-app-migrate"
+        assert "Database migration execution-1: Succeeded" in lines
+        assert lines[-1] == "done"
+
+    def test_database_migration_failure_stops_deployment(self) -> None:
+        result = self._run_migration(statuses=["Running", "Failed"])
+        assert result.returncode == 1
+        assert "ended with status Failed; the app is stopped and was not deployed" in result.stdout
+        assert "done" not in result.stdout
+
+    def test_database_migration_timeout_stops_deployment(self) -> None:
+        result = self._run_migration(statuses=["Running", "Running"], attempts=2)
+        assert result.returncode == 1
+        assert "did not finish in time" in result.stdout
+        assert "done" not in result.stdout
+
+    def test_schema_check_uses_execution_only_arguments(self) -> None:
+        for status in ("Succeeded", "Failed"):
+            with self.subTest(status=status):
+                result = self._run_migration(statuses=["Running", status], check_only=True)
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert "--container-name pyrit-migrate --args=--check-only" in result.stderr
+                assert ("migration-needed" in result.stdout) == (status == "Failed")
+                assert ("current" in result.stdout) == (status == "Succeeded")
+        result = self._run_migration(statuses=["Succeeded"])
+        assert "--args" not in result.stderr
+
+    def test_schema_check_timeout_or_interruption_aborts_deployment(self) -> None:
+        for status in ("Running", "Stopped", "Degraded"):
+            with self.subTest(status=status):
+                result = self._run_migration(statuses=[status], attempts=1, check_only=True)
+                assert result.returncode == 1
+                assert "deployment was not continued" in result.stdout
+                assert "migration-needed" not in result.stdout
+                assert "done" not in result.stdout
+
+    def test_schema_check_azure_errors_do_not_fall_through_to_migration(self) -> None:
+        for command in ("start", "execution"):
+            with self.subTest(command=command):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=APP_INPUTS,
+                    command=f"""
+az() {{ if [[ "$3" == {command} ]]; then return 1; else echo execution-1; fi; }}
+if schema_is_current; then echo current; else echo migration-needed; fi
+""",
+                )
+                assert result.returncode == 1
+                assert "migration-needed" not in result.stdout
+
+    def test_app_deployment_migrates_only_when_schema_check_fails(self) -> None:
+        for check_exit in (0, 1):
+            with self.subTest(check_exit=check_exit):
+                self._assert_app_deployment_order(check_exit=check_exit)
+
+    def _assert_app_deployment_order(self, *, check_exit: int) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS,
+            command=f"""
+for step in validate_app_inputs initialize_deployment_scope read_existing_topology read_app_access_mode \
+  build_app_parameters prepare_database_migration stop_app run_database_migration start_unchanged_revision \
+  verify_readiness wait_for_runtime_readiness warn_if_sql_public; do
+  eval "$step() {{ echo $step; }}"
+done
+schema_is_current() {{ echo schema-check; return {check_exit}; }}
+preview_deployment() {{ echo "preview $1"; }}
+az() {{ echo "az $1 $2 $3"; }}
+revision=r health_url=h egress_ip=e expected_public_access=Enabled immutable_image=i
+template_file=t deployment_name=d parameters=(appName=test)
+main
+""",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        lines = result.stdout.splitlines()
+        assert lines[4:] == [
+            "build_app_parameters",
+            "preview app",
+            "prepare_database_migration",
+            "schema-check",
+            *(
+                ["stop_app", "run_database_migration"]
+                if check_exit
+                else ["Schema is current; deploying without stopping the app"]
+            ),
+            "az deployment group create",
+            "start_unchanged_revision",
+            "verify_readiness",
+            "wait_for_runtime_readiness",
+            "warn_if_sql_public",
+            "Deployment healthy: r; verified h; ACA public access: Enabled; egress IPv4: e",
+        ]
+
+    def test_stop_app_deactivates_active_revision_not_latest_and_waits_for_replicas(self) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS,
+            command="""current_revision=app--failed
+poll_file=$(mktemp)
+list_file=$(mktemp)
+trap 'rm -f "$poll_file" "$list_file"' EXIT
+sleep() { echo poll >> "$poll_file"; }
+wc() { printf '%8d\\n' "$(command wc "$@")"; }
+az() {
+  case "$2 $3" in
+    "revision list")
+      [[ "$*" == *"--all"* ]] || exit 96
+      echo list >> "$list_file"
+      if [[ $(wc -l < "$list_file") -eq 1 ]]; then
+        echo '[{"name":"app--old","properties":{"active":true,"replicas":1}},
+          {"name":"app--failed","properties":{"active":false,"replicas":1}}]'
+      elif [[ -s "$poll_file" ]]; then
+        echo '[{"name":"app--old","properties":{"active":false,"replicas":0}},
+          {"name":"app--failed","properties":{"active":false,"replicas":0}}]'
+      else echo '[{"name":"app--old","properties":{"active":false,"replicas":0}},
+        {"name":"app--failed","properties":{"active":false,"replicas":1}}]'
+      fi ;;
+    "revision deactivate") echo "az $*" ;;
+    *) exit 97 ;;
+  esac
+}
+stop_app
+echo "revision-lists $(($(wc -l < "$list_file")))"
+echo stopped""",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Waiting for app shutdown: 0 active revisions, 1 replicas" in result.stdout
+        assert "--revision app--old" in result.stdout
+        assert "--revision app--failed" not in result.stdout
+        assert "revision-lists 3" in result.stdout
+        assert result.stdout.splitlines()[-1] == "stopped"
+
+    def test_stop_app_rejects_missing_revisions(self) -> None:
+        result = self._run(script="deploy_app.sh", inputs=APP_INPUTS, command="az() { echo '[]'; }\nstop_app")
+        assert result.returncode == 1
+        assert "No revisions found" in result.stderr
+
+    def test_stop_app_timeout_does_not_start_migration(self) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS | {"PYRIT_STOP_POLL_ATTEMPTS": "2"},
+            command="""
+sleep() { :; }
+az() {
+  case "$2 $3" in
+    "revision list") echo '[{"name":"app--old","properties":{"active":false,"replicas":1}}]' ;;
+    *) exit 97 ;;
+  esac
+}
+stop_app
+echo migration-started
+""",
+        )
+        assert result.returncode == 1
+        assert "shutdown was not confirmed" in result.stdout
+        assert "migration-started" not in result.stdout
+
+    def test_stop_app_accepts_already_stopped_revision(self) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS,
+            command="""
+az() {
+  case "$2 $3" in
+    "revision list") [[ "$*" == *"--all"* ]] || exit 96
+      echo '[{"name":"app--old","properties":{"active":false,"replicas":0}}]' ;;
+    *) exit 97 ;;
+  esac
+}
+stop_app
+echo stopped
+""",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout.strip() == "stopped"
+
+    def test_stop_app_rejects_incomplete_or_invalid_poll_state(self) -> None:
+        for state in (
+            "[]",
+            "null",
+            "not-json",
+            '[{"name":"r","properties":{"active":false}}]',
+            '[{"name":"r","properties":{"active":false,"replicas":null}}]',
+            '[{"name":"r","properties":{"active":false,"replicas":"0"}}]',
+            '[{"name":"r","properties":{"active":false,"replicas":-1}}]',
+            '[{"name":"r","properties":{"active":false,"replicas":0.5}}]',
+            '[{"name":"r","properties":{"active":"false","replicas":0}}]',
+        ):
+            with self.subTest(state=state):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=APP_INPUTS,
+                    command=f"""
+list_file=$(mktemp)
+trap 'rm -f "$list_file"' EXIT
+az() {{
+  if [[ -s "$list_file" ]]; then printf '%s\\n' {shlex.quote(state)}
+  else echo list > "$list_file"; echo '[{{"name":"r","properties":{{"active":false,"replicas":0}}}}]'; fi
+}}
+stop_app
+echo migration-started
+""",
+                )
+                assert result.returncode == 1
+                assert "Could not confirm replica shutdown" in result.stdout
+                assert "migration-started" not in result.stdout
+
+    def test_migration_job_name_is_checked_before_azure_calls(self) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS | {"PYRIT_APP_NAME": "a" * 25},
+            command="validate_app_inputs",
+        )
+        assert result.returncode == 1
+        assert "24 characters or fewer" in result.stdout
+
+    def test_job_preparation_failure_does_not_stop_app(self) -> None:
+        for failure in ("preview", "create"):
+            with self.subTest(failure=failure):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=APP_INPUTS | {"PYRIT_TEST_PREPARATION_FAILURE": failure},
+                    command="""
+for step in validate_app_inputs initialize_deployment_scope read_existing_topology read_app_access_mode; do
+  eval "$step() { :; }"
+done
+build_app_parameters() {
+  template_file=t deployment_name=d parameters=(appName=test); immutable_image=i; deployment_tags='{}'
+}
+preview_deployment() {
+  if [[ "$1" == job && "$PYRIT_TEST_PREPARATION_FAILURE" == preview ]]; then
+    deployment_error "Job preparation failed"
+  fi
+}
+az() { deployment_error "Job preparation failed"; }
+stop_app() { echo app-stopped; }
+main
+""",
+                )
+                assert result.returncode == 1
+                assert "Job preparation failed" in result.stdout
+                assert "app-stopped" not in result.stdout
+
+    def test_unchanged_revision_is_started_again(self) -> None:
+        for latest, activates in (("app--old", True), ("app--new", False)):
+            with self.subTest(latest=latest):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=APP_INPUTS,
+                    command=f"""current_revision=app--old
+az() {{ if [[ "$2" == show ]]; then echo {latest}; else echo "az $*"; fi; }}
+start_unchanged_revision""",
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert ("az containerapp revision activate" in result.stdout) == activates
+
+    def test_public_sql_server_only_warns(self) -> None:
+        for access, warns in (("Enabled", True), ("", True), ("Disabled", False)):
+            with self.subTest(access=access):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=APP_INPUTS,
+                    command=f"az() {{ printf '%s\\n' {shlex.quote(access)}; }}\nwarn_if_sql_public",
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert ("##vso[task.logissue type=warning]" in result.stdout) == warns
+
+    def test_common_inputs_reject_missing_unresolved_and_noncanonical_values(self) -> None:
+        cases = [
+            ("PYRIT_SLOT", "$(slot)", "Required deployment value"),
+            ("PYRIT_BUILD_ID", "", "Required deployment value"),
+            ("PYRIT_SLOT", "staging", "Invalid slot"),
+            ("PYRIT_BUILD_ID", "42;echo unsafe", "Invalid slot or build ID"),
+            ("PYRIT_APP_NAME", "Copyrit", "Invalid deployment resource group or app name"),
+            ("PYRIT_DEPLOYMENT_RESOURCE_GROUP", "copyrit.", "Invalid deployment resource group or app name"),
+            ("PYRIT_ENABLE_OTEL", "yes", "Invalid enableOtel"),
+            ("PYRIT_ACR_RESOURCE_ID", COMMON_INPUTS["PYRIT_ACR_RESOURCE_ID"] + "/", "not canonical"),
+            (
+                "PYRIT_ACR_RESOURCE_ID",
+                COMMON_INPUTS["PYRIT_ACR_RESOURCE_ID"].replace(SUBSCRIPTION, "bad"),
+                "not canonical",
+            ),
+            ("PYRIT_MANAGED_IDENTITY_RESOURCE_ID", "copyrit-id", "not canonical"),
+            (
+                "PYRIT_MANAGED_IDENTITY_RESOURCE_ID",
+                COMMON_INPUTS["PYRIT_MANAGED_IDENTITY_RESOURCE_ID"].replace(
+                    SUBSCRIPTION, "22222222-2222-2222-2222-222222222222"
+                ),
+                "another subscription",
+            ),
+        ]
+        for key, value, message in cases:
+            with self.subTest(key=key, value=value):
+                result = self._run(script="deployment_common.sh", inputs={key: value}, command="validate_common_inputs")
+                assert result.returncode != 0
+                assert message in result.stdout, result.stdout + result.stderr
+
+    def test_active_subscription_must_match_configured_acr(self) -> None:
+        result = self._run(
+            script="deployment_common.sh",
+            command="""
+validate_common_inputs
+az() { printf '%s\\n' 22222222-2222-2222-2222-222222222222; }
+initialize_deployment_scope
+""",
+        )
+        assert result.returncode != 0
+        assert "Azure subscription does not match ACR" in result.stdout
+
+    def test_infra_rejects_invalid_network_prefixes(self) -> None:
+        for subnet in ("$(subnet)", "10.30.0.0/23", "10.20.0.1/23", "10.20.0.0/28", "2001:db8::/64"):
+            with self.subTest(subnet=subnet):
+                result = self._run(
+                    script="deploy_infra.sh",
+                    inputs=INFRA_INPUTS | {"PYRIT_INFRASTRUCTURE_SUBNET_ADDRESS_PREFIX": subnet},
+                    command="validate_infra_inputs",
+                )
+                assert result.returncode != 0
+                assert "deployment value" in result.stdout or "Invalid network prefix" in result.stdout
+
+    def test_app_rejects_invalid_auth_configuration_and_optional_values(self) -> None:
+        cases = [
+            ("PYRIT_ENTRA_TENANT_ID", "not-a-guid", "Invalid Entra"),
+            ("PYRIT_ALLOWED_GROUP_OBJECT_IDS", " , ", "Invalid Entra"),
+            ("PYRIT_SQL_SERVER_FQDN", "copyrit.example.com", "Invalid SQL"),
+            ("PYRIT_ENV_SECRET_NAME", "invalid/secret", "Invalid SQL"),
+            ("PYRIT_ALLOWED_CLIENT_CIDR", "$(allowed)", "Optional deployment value"),
+            ("PYRIT_CONFIG_FILE_URI", "$(config)", "Optional deployment value"),
+            ("PYRIT_ALLOWED_CLIENT_CIDR", "192.0.2.0/24", "leave PYRIT_ALLOWED_CLIENT_CIDR empty"),
+            ("PYRIT_CONFIG_FILE_URI", "https://example.com/container/config", "Invalid Entra"),
+            ("PYRIT_CONFIG_FILE_URI", "https://account.blob.core.windows.net/container/config?sas=1", "Invalid Entra"),
+            (
+                "PYRIT_KEY_VAULT_RESOURCE_ID",
+                APP_INPUTS["PYRIT_KEY_VAULT_RESOURCE_ID"].replace(SUBSCRIPTION, "22222222-2222-2222-2222-222222222222"),
+                "another subscription",
+            ),
+        ]
+        for key, value, message in cases:
+            with self.subTest(key=key, value=value):
+                result = self._run(
+                    script="deploy_app.sh", inputs=APP_INPUTS | {key: value}, command="validate_app_inputs"
+                )
+                assert result.returncode != 0
+                assert message in result.stdout, result.stdout + result.stderr
+
+    def test_shared_image_validation_requires_registry_digest_and_valid_repository(self) -> None:
+        for image, message in (
+            ("copyritacr.azurecr.io/pyrit:latest", "immutable registry digest"),
+            (IMAGE[:-1], "immutable registry digest"),
+            (IMAGE.replace("copyritacr", "otheracr"), "registry does not match"),
+            (IMAGE.replace("/pyrit@", "/../pyrit@"), "repository is invalid"),
+            (IMAGE.replace("/pyrit@", "/Pyrit@"), "repository is invalid"),
+        ):
+            with self.subTest(image=image):
+                result = self._run(
+                    script="deployment_common.sh",
+                    inputs={"PYRIT_CONTAINER_IMAGE": image},
+                    command='validate_common_inputs; validate_immutable_image "$PYRIT_CONTAINER_IMAGE"',
+                )
+                assert result.returncode != 0
+                assert message in result.stdout, result.stdout + result.stderr
+
+    def test_http_readiness_accepts_only_successful_200(self) -> None:
+        for response, code in (("200", 0), ("302", 0), ("504", 0), ("200", 28)):
+            with self.subTest(response=response, code=code):
+                result = self._run(
+                    script="deployment_common.sh",
+                    command=f"""
+curl() {{ printf '%s' {response}; return {code}; }}
+sleep() {{ SECONDS=$((SECONDS + $1)); }}
+wait_for_http_health https://copyrit.example.azurefd.net/api/health 60
+""",
+                )
+                assert (result.returncode == 0) == (response == "200" and code == 0), result.stdout + result.stderr
+                assert result.stdout.count("Application health at ") <= 2
+                if result.returncode:
+                    assert "Application endpoint did not return a healthy response" in result.stdout
+
+    def test_http_readiness_caps_requests_and_sleep_to_remaining_budget(self) -> None:
+        result = self._run(
+            script="deployment_common.sh",
+            command="""
+curl() { printf 'request:%s\\n' "$*" >&2; printf '504'; }
+sleep() { printf 'sleep:%s\\n' "$1" >&2; SECONDS=$((SECONDS + $1)); }
+wait_for_http_health https://copyrit.example.azurefd.net/api/health 31
+""",
+        )
+        assert result.returncode != 0
+        requests = [
+            shlex.split(line.removeprefix("request:"))
+            for line in result.stderr.splitlines()
+            if line.startswith("request:")
+        ]
+        sleeps = [int(line.removeprefix("sleep:")) for line in result.stderr.splitlines() if line.startswith("sleep:")]
+        assert 1 <= len(requests) <= 2
+        assert 30 <= sum(sleeps) <= 31
+        for request in requests:
+            assert "--location" not in request and "--insecure" not in request
+            assert 0 < int(request[request.index("--max-time") + 1]) <= 30
+        if len(requests) == 2:
+            assert requests[1][requests[1].index("--max-time") + 1] == "1"
+
+    def test_runtime_readiness_requires_expected_revision_and_consistent_status(self) -> None:
+        revision = "copyrit-test--new"
+        legacy_health = {"status": "healthy", "timestamp": "2026-10-12T17:28:40+00:00", "service": "pyrit-backend"}
+        ready = legacy_health | {"revision": revision, "state": "ready", "ready": True}
+        cases = [
+            ("200", ready, 0, True, False),
+            ("200", ready | {"state": "initializing", "ready": False}, 0, False, False),
+            ("200", ready | {"state": "failed", "ready": False}, 0, False, True),
+            ("200", ready | {"state": "restart-required", "ready": False}, 0, False, True),
+            ("200", ready | {"state": "stopping", "ready": False}, 0, False, True),
+            ("200", ready | {"revision": "copyrit-test--old"}, 0, False, False),
+            (
+                "200",
+                ready | {"revision": "copyrit-test--old", "state": "failed", "ready": False},
+                0,
+                False,
+                False,
+            ),
+            ("200", ready | {"state": "failed"}, 0, False, False),
+            ("200", ready | {"ready": "true"}, 0, False, False),
+            ("200", ready | {"revision": None}, 0, False, False),
+            ("200", ready | {"revision": ""}, 0, False, False),
+            ("200", {"revision": revision, "state": "ready"}, 0, False, False),
+            ("200", legacy_health, 0, False, False),
+            ("503", ready, 0, False, False),
+            ("503", ready | {"state": "failed", "ready": False}, 0, False, False),
+            ("200", "private malformed response", 0, False, False),
+            ("200", json.dumps(ready) + "\n" + json.dumps(ready), 0, False, False),
+            ("404", ready, 0, False, False),
+            ("302", ready, 0, False, False),
+            ("200", ready, 28, False, False),
+            (
+                "200",
+                ready | {"state": "failed", "ready": False, "message": "private exception details"},
+                0,
+                False,
+                True,
+            ),
+        ]
+        for status, payload, curl_exit, succeeds, terminal in cases:
+            body = payload if isinstance(payload, str) else json.dumps(payload)
+            with self.subTest(status=status, payload=payload, curl_exit=curl_exit):
+                result = self._run(
+                    script="deployment_common.sh",
+                    command=f"""
+curl() {{
+  printf 'request:' >&2; printf '%q ' "$@" >&2; printf '\\n' >&2
+  printf '%s\\n%s' {shlex.quote(body)} {status}
+  return {curl_exit}
+}}
+sleep() {{ SECONDS=$((SECONDS + $1)); }}
+wait_for_runtime_readiness https://copyrit.example.azurefd.net/api/health {revision} 6
+""",
+                )
+                assert (result.returncode == 0) == succeeds, result.stdout + result.stderr
+                requests = [line for line in result.stderr.splitlines() if line.startswith("request:")]
+                assert len(requests) <= 2
+                if terminal:
+                    assert len(requests) == 1
+                    assert "Runtime state is " in result.stdout
+                    assert "Timed out" not in result.stdout
+                if not succeeds:
+                    assert f"PyRIT runtime readiness failed for revision {revision}" in result.stdout
+                    assert f"--revision {revision}" in result.stdout
+                    assert "az containerapp logs show" in result.stdout
+                    assert "Azure Portal -> Container App copyrit-test -> Monitoring -> Log stream" in result.stdout
+                    assert f"select revision {revision} and console logs" in result.stdout
+                    assert "Monitoring -> Logs" in result.stdout
+                assert "private malformed response" not in result.stdout
+                assert "private exception details" not in result.stdout
+
+    def test_runtime_readiness_waits_for_new_revision_and_initialization(self) -> None:
+        responses = [
+            {"revision": "copyrit-test--old", "state": "ready", "ready": True},
+            {"revision": "copyrit-test--new", "state": "initializing", "ready": False},
+            {"revision": "copyrit-test--new", "state": "ready", "ready": True},
+        ]
+        result = self._run(
+            script="deployment_common.sh",
+            command=f"""
+curl() {{
+  printf 'request:' >&2; printf '%q ' "$@" >&2; printf '\\n' >&2
+  case "$attempt" in
+    1) printf '%s\\n200' {shlex.quote(json.dumps(responses[0]))};;
+    2) printf '%s\\n200' {shlex.quote(json.dumps(responses[1]))};;
+    *) printf '%s\\n200' {shlex.quote(json.dumps(responses[2]))};;
+  esac
+}}
+sleep() {{ SECONDS=$((SECONDS + $1)); }}
+wait_for_runtime_readiness https://copyrit.example.azurefd.net/api/health copyrit-test--new 20
+""",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stderr.count("request:") == 3
+        assert "received copyrit-test--old" in result.stdout
+        assert "Runtime state is initializing" in result.stdout
+        assert "PyRIT runtime is ready on revision copyrit-test--new." in result.stdout
+
+    def test_runtime_readiness_caps_requests_and_sleep_to_remaining_budget(self) -> None:
+        result = self._run(
+            script="deployment_common.sh",
+            command="""
+curl() { printf 'request:' >&2; printf '%q ' "$@" >&2; printf '\\n' >&2; printf '\\n504'; }
+sleep() { printf 'sleep:%s\\n' "$1" >&2; SECONDS=$((SECONDS + $1)); }
+wait_for_runtime_readiness https://copyrit.example.azurefd.net/api/health copyrit-test--new 31
+""",
+        )
+        assert result.returncode != 0
+        requests = [
+            shlex.split(line.removeprefix("request:"))
+            for line in result.stderr.splitlines()
+            if line.startswith("request:")
+        ]
+        sleeps = [int(line.removeprefix("sleep:")) for line in result.stderr.splitlines() if line.startswith("sleep:")]
+        assert 1 <= len(requests) <= 7
+        assert 30 <= sum(sleeps) <= 31
+        assert all(0 < duration <= 5 for duration in sleeps)
+        for request in requests:
+            assert "--location" not in request and "--insecure" not in request
+            assert 0 < int(request[request.index("--max-time") + 1]) <= 30
+            assert request[request.index("--header") + 1] == "Cache-Control: no-cache"
+        assert "Timed out after 31s" in result.stdout
+
+    def test_app_deployment_requires_runtime_readiness_before_reporting_success(self) -> None:
+        for runtime_exit in (0, 1):
+            with self.subTest(runtime_exit=runtime_exit):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=APP_INPUTS,
+                    command=f"""
+validate_app_inputs() {{ :; }}
+initialize_deployment_scope() {{ :; }}
+read_existing_topology() {{ :; }}
+read_app_access_mode() {{ expected_public_access=Disabled; }}
+build_app_parameters() {{
+  deployment_name=test
+  template_file=test
+  parameters=("testParameter=testValue")
+  immutable_image=test
+}}
+preview_deployment() {{ :; }}
+prepare_database_migration() {{ :; }}
+schema_is_current() {{ return 0; }}
+stop_app() {{ :; }}
+run_database_migration() {{ :; }}
+start_unchanged_revision() {{ :; }}
+warn_if_sql_public() {{ :; }}
+az() {{ :; }}
+verify_readiness() {{
+  health_url=https://copyrit.example.azurefd.net/api/health
+  revision=copyrit-test--new
+  egress_ip=192.0.2.1
+  printf 'liveness-check\\n'
+}}
+wait_for_runtime_readiness() {{ printf 'runtime-check:%s:%s:%s\\n' "$@"; return {runtime_exit}; }}
+main
+""",
+                )
+                assert (result.returncode == 0) == (runtime_exit == 0), result.stdout + result.stderr
+                expected_check = "runtime-check:https://copyrit.example.azurefd.net/api/health:copyrit-test--new:300"
+                assert expected_check in result.stdout
+                assert ("Deployment healthy:" in result.stdout) == (runtime_exit == 0)
+
+    def _run_cancellation_rollback(
+        self, *, removed: bool, signal: str
+    ) -> tuple[subprocess.CompletedProcess[str], list[list[str]], list[int]]:
+        environment_id = f"{RESOURCE_GROUP}/providers/Microsoft.App/managedEnvironments/copyrit-test-env"
+        connection = json.dumps(
+            [
+                {
+                    "id": f"{environment_id}/privateEndpointConnections/connection-1",
+                    "properties": {
+                        "privateLinkServiceConnectionState": {
+                            "description": "Azure Front Door private access to copyrit-test",
+                            "status": "Pending",
+                        }
+                    },
+                }
+            ]
+        )
+        result = self._run(
+            script="deploy_infra.sh",
+            inputs=INFRA_INPUTS
+            | {
+                "TEST_ENVIRONMENT_ID": environment_id,
+                "TEST_INITIAL_CONNECTION": connection,
+                "TEST_REMOVAL_RESULT": "[]" if removed else connection,
+                "TEST_SIGNAL": signal,
+            },
+            command="""
+validate_infra_inputs
+deployment_tags='{}'
+existing_pip_ip_tags='[]'
+build_infra_parameters
+normalized_expected_environment_id=$(lowercase "$TEST_ENVIRONMENT_ID")
+exec 3<<< "$(
+  printf '%s\\n' "$TEST_INITIAL_CONNECTION"
+  for attempt in {1..20}; do printf '%s\\n' "$TEST_REMOVAL_RESULT"; done
+)"
+az() {
+  printf 'az:' >&2; printf '%s\\t' "$@" >&2; printf '\\n' >&2
+  case "$1 $2" in
+    'containerapp show') printf '%s\\n' copyrit-test.example.azurecontainerapps.io ;;
+    'network private-endpoint-connection') local response; IFS= read -r response <&3; printf '%s\\n' "$response" ;;
+    'deployment group'|'rest --method') : ;;
+    *) echo 'Unexpected Azure call' >&2; exit 97 ;;
+  esac
+}
+sleep() { printf 'sleep:%s\\n' "$1" >&2; SECONDS=$((SECONDS + 3600)); }
+trap rollback_public_origin EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+cutover_in_progress=true
+kill -"$TEST_SIGNAL" $$
+""",
+        )
+        calls = [
+            line.removeprefix("az:").rstrip("\t").split("\t")
+            for line in result.stderr.splitlines()
+            if line.startswith("az:")
+        ]
+        sleeps = [int(line.removeprefix("sleep:")) for line in result.stderr.splitlines() if line.startswith("sleep:")]
+        return result, calls, sleeps
+
+    def test_cancellation_keeps_public_access_disabled_until_connection_removal(self) -> None:
+        for signal, exit_code in (("TERM", 143), ("INT", 130)):
+            with self.subTest(signal=signal):
+                result, calls, sleeps = self._run_cancellation_rollback(removed=False, signal=signal)
+                assert result.returncode == exit_code, result.stdout + result.stderr
+                assert "private endpoint connection deletion was not confirmed" in result.stdout
+                assert any(call[:3] == ["rest", "--method", "delete"] for call in calls)
+                deployments = [call for call in calls if call[:3] == ["deployment", "group", "create"]]
+                assert len(deployments) == 1
+                assert deployments[0][deployments[0].index("--name") + 1].endswith("-rollback-origin")
+                assert not any("disableContainerAppsPublicAccess=false" in call for call in calls)
+                assert result.stdout.count("Waiting for ACA private endpoint connection removal") == 1
+                assert sleeps == [15]
+
+    def test_cancellation_rolls_back_only_infrastructure_after_connection_removal(self) -> None:
+        for signal, exit_code in (("TERM", 143), ("INT", 130)):
+            with self.subTest(signal=signal):
+                result, calls, sleeps = self._run_cancellation_rollback(removed=True, signal=signal)
+                assert result.returncode == exit_code, result.stdout + result.stderr
+                assert "Public ACA origin rollback completed" in result.stdout
+                assert sleeps == []
+                assert any(call[:3] == ["rest", "--method", "delete"] for call in calls)
+                deployments = [call for call in calls if call[:3] == ["deployment", "group", "create"]]
+                assert len(deployments) == 2
+                rollback = deployments[-1]
+                assert rollback[rollback.index("--template-file") + 1].endswith("/infra/infrastructure.bicep")
+                assert "disableContainerAppsPublicAccess=false" in rollback
+                assert "enableFrontDoorPrivateLink=false" in rollback
+                for deployment in deployments:
+                    assert deployment[deployment.index("--mode") + 1] == "Incremental"
+                    assert not any(
+                        argument.startswith(("containerImage=", "deployApp=", "deployInfra="))
+                        for argument in deployment
+                    )
+
+
+if __name__ == "__main__":
+    unittest.main()

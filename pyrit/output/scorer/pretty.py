@@ -5,10 +5,14 @@ from typing import Any
 
 from colorama import Fore, Style
 
-from pyrit.models import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, ScorerIdentifier, project_behavioral_identity
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.scorer.base import ScorerPrinterBase
 from pyrit.output.sink import Sink
+
+# The evaluator zeroes differences below this as floating-point noise, so a scorer whose MAE
+# matches the constant-guess baseline to within it is treated as a tie, not as beating it.
+_BASELINE_TIE_TOLERANCE = 1e-10
 
 
 class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
@@ -19,8 +23,7 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
     and _get_harm_metrics for data fetching.
     """
 
-    _SCORER_DISPLAY_PARAMS = frozenset({"scorer_type", "score_aggregator"})
-    _TARGET_DISPLAY_PARAMS = frozenset({"model_name", "temperature"})
+    _MAX_PARAM_VALUE_LENGTH = 40
 
     def __init__(self, *, sink: Sink | None = None, indent_size: int = 2, enable_colors: bool = True) -> None:
         """
@@ -67,13 +70,30 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
             return str(Fore.RED)
         return str(Fore.CYAN)
 
-    def _render_scorer_info(self, scorer_identifier: ComponentIdentifier, *, indent_level: int = 2) -> str:
+    def _render_scored_responses(self, *, metrics: Any) -> str:
+        if not metrics.num_input_responses:
+            return ""
+        coverage = metrics.num_responses / metrics.num_input_responses
+        return self._format_colored(
+            f"{self._indent * 3}• Scored Responses: {metrics.num_responses}/{metrics.num_input_responses}"
+            f" ({coverage:.1%} coverage)",
+            Fore.CYAN,
+        )
+
+    def _render_scorer_info(
+        self,
+        scorer_identifier: ComponentIdentifier,
+        *,
+        indent_level: int = 2,
+        label: str = "Scorer Type",
+    ) -> str:
         """
         Render scorer information including nested sub-scorers.
 
         Args:
             scorer_identifier (ComponentIdentifier): The scorer identifier.
             indent_level (int): Current indentation level.
+            label (str): Label describing the component's role.
 
         Returns:
             str: The rendered scorer info text.
@@ -81,26 +101,50 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
         lines: list[str] = []
         indent = self._indent * indent_level
 
-        lines.append(self._format_colored(f"{indent}• Scorer Type: {scorer_identifier.class_name}", Fore.CYAN))
-
-        for key, value in scorer_identifier.params.items():
-            if key in self._SCORER_DISPLAY_PARAMS and value is not None:
-                lines.append(self._format_colored(f"{indent}• {key}: {value}", Fore.CYAN))
-
-        prompt_target = scorer_identifier.get_child("prompt_target")
-        if prompt_target:
-            for key, value in prompt_target.params.items():
-                if key in self._TARGET_DISPLAY_PARAMS and value is not None:
-                    lines.append(self._format_colored(f"{indent}• {key}: {value}", Fore.CYAN))
-
-        sub_scorers = scorer_identifier.get_child_list("sub_scorers")
-        if sub_scorers:
-            lines.append(self._format_colored(f"{indent}  └─ Composite of {len(sub_scorers)} scorer(s):", Fore.CYAN))
-            lines.extend(
-                self._render_scorer_info(sub_scorer_id, indent_level=indent_level + 3) for sub_scorer_id in sub_scorers
+        lines.append(self._format_colored(f"{indent}• {label}: {scorer_identifier.class_name}", Fore.CYAN))
+        if scorer_identifier.params:
+            summary = self._summarize_params(
+                params=scorer_identifier.params,
+                parameter_indent=f"{indent}    ",
             )
+            lines.append(self._format_colored(f"{indent}  {summary}", Fore.CYAN))
+
+        for child_name, child_value in scorer_identifier.children.items():
+            child_identifiers = child_value if isinstance(child_value, list) else [child_value]
+            if isinstance(child_value, list):
+                lines.append(
+                    self._format_colored(
+                        f"{indent}  ▸ {child_name} ({len(child_identifiers)} components)",
+                        Fore.CYAN,
+                    )
+                )
+            for index, child_identifier in enumerate(child_identifiers, start=1):
+                child_label = f"Component {index}" if isinstance(child_value, list) else child_name
+                child_indent_level = indent_level + (2 if isinstance(child_value, list) else 1)
+                lines.append(
+                    self._render_scorer_info(
+                        child_identifier,
+                        indent_level=child_indent_level,
+                        label=child_label,
+                    )
+                )
 
         return "".join(lines)
+
+    @classmethod
+    def _summarize_params(cls, *, params: dict[str, Any], parameter_indent: str) -> str:
+        """Return a compact, deterministic summary of behavioral parameters."""
+        rendered_params: list[tuple[int, str]] = []
+        for key, value in params.items():
+            rendered_value = str(value).replace("\n", " ")
+            display_value = (
+                f"<{len(rendered_value)} chars>"
+                if len(rendered_value) > cls._MAX_PARAM_VALUE_LENGTH
+                else rendered_value
+            )
+            rendered_params.append((len(rendered_value), f"{key}={display_value}"))
+        parameter_lines = "\n".join(f"{parameter_indent}{token}" for _, token in sorted(rendered_params))
+        return f"Configuration:\n{parameter_lines}"
 
     def _render_objective_metrics(self, metrics: Any | None) -> str:
         """
@@ -132,6 +176,8 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
             metrics.accuracy, higher_is_better=True, good_threshold=0.9, bad_threshold=0.7
         )
         lines.append(self._format_colored(f"{self._indent * 3}• Accuracy: {metrics.accuracy:.2%}", accuracy_color))
+
+        lines.append(self._render_scored_responses(metrics=metrics))
 
         if metrics.accuracy_standard_error is not None:
             lines.append(
@@ -207,9 +253,43 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
             )
         )
 
+        lines.append(self._render_scored_responses(metrics=metrics))
+
         if metrics.mae_standard_error is not None:
             lines.append(
                 self._format_colored(f"{self._indent * 3}• MAE Std Error: ±{metrics.mae_standard_error:.4f}", Fore.CYAN)
+            )
+
+        if metrics.mean_absolute_error_unanimous is not None:
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• MAE on unanimous rows: {metrics.mean_absolute_error_unanimous:.4f}"
+                    f" (n={metrics.num_unanimous_responses})",
+                    Fore.CYAN,
+                )
+            )
+
+        if metrics.mean_absolute_error_contested is not None:
+            contested_color = self._get_quality_color(
+                metrics.mean_absolute_error_contested, higher_is_better=False, good_threshold=0.1, bad_threshold=0.25
+            )
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• MAE on contested rows: {metrics.mean_absolute_error_contested:.4f}"
+                    f" (n={metrics.num_contested_responses})",
+                    contested_color,
+                )
+            )
+
+        baseline_mae = getattr(metrics, "baseline_mean_absolute_error", None)
+        if baseline_mae is not None:
+            beats_baseline = metrics.mean_absolute_error < baseline_mae - _BASELINE_TIE_TOLERANCE
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Constant-Guess Baseline MAE: {baseline_mae:.4f}"
+                    + ("" if beats_baseline else " (scorer does not beat it)"),
+                    Fore.CYAN if beats_baseline else Fore.RED,
+                )
             )
 
         if metrics.krippendorff_alpha_combined is not None:
@@ -261,10 +341,14 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
             str: The rendered scorer information text.
         """
         lines: list[str] = []
+        behavioral_identifier = project_behavioral_identity(
+            scorer_identifier,
+            identifier_type=ScorerIdentifier,
+        )
         lines.append("\n")
         lines.append(self._format_colored(f"{self._indent}📊 Scorer Information", Style.BRIGHT))
         lines.append(self._format_colored(f"{self._indent * 2}▸ Scorer Identifier", Fore.WHITE))
-        lines.append(self._render_scorer_info(scorer_identifier, indent_level=3))
+        lines.append(self._render_scorer_info(behavioral_identifier, indent_level=3))
 
         if harm_category is not None:
             metrics = self._get_harm_metrics(scorer_identifier=scorer_identifier, harm_category=harm_category)

@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import random
 import re
 from typing import Literal
 
@@ -132,6 +131,7 @@ class UnicodeConfusableConverter(Converter):
             str: A perturbed prompt with character-level substitutions.
         """
         perturbed_words = []
+        rng = self._get_random_generator(stream="homoglyphs")
 
         # Split the prompt into words and non-word tokens
         word_list = re.findall(r"\w+|\W+", prompt)
@@ -142,7 +142,7 @@ class UnicodeConfusableConverter(Converter):
                 homoglyph_variants = self._get_homoglyph_variants(char)
                 if homoglyph_variants:
                     # Randomly choose a homoglyph variant
-                    variant = random.choice(homoglyph_variants) if not self._deterministic else homoglyph_variants[-1]
+                    variant = rng.choice(homoglyph_variants) if not self._deterministic else homoglyph_variants[-1]
                     logger.debug(f"Replacing character '{char}' with '{variant}'")
                     perturbed_chars.append(variant)
                 else:
@@ -170,4 +170,4 @@ class UnicodeConfusableConverter(Converter):
             return char
         if self._deterministic or len(confusable_options) == 1:
             return str(confusable_options[-1])
-        return str(random.choice(confusable_options))
+        return str(self._get_random_generator(stream="confusables").choice(confusable_options))

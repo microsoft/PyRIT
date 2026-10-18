@@ -38,6 +38,9 @@
 # - a **`AttackTechniqueSeedGroup`** (`seed_technique`) of general-technique seeds, which can carry a
 #   **system prompt**, a **prepended_conversation**, a **simulated_conversation**
 #   (`SeedSimulatedConversation`), and a **next_message**;
+# - a **score-feedback override** (`use_score_as_feedback`): the scenario still supplies the scorer,
+#   but the technique can decide whether its attacker sees the scorer's rationale each turn (the
+#   `goat` technique turns this off to match its paper);
 # - the selection metadata that lets a scenario pick it: its `name` and `technique_tags`.
 #
 # The objective is *not* part of the technique — it stays separate and is supplied by the dataset at
@@ -58,7 +61,7 @@
 #   any scenario can use (the `role_play_*` variants, `many_shot`, `tap`, the `crescendo_*` variants, `red_teaming`,
 #   `context_compliance`). Registered by default.
 # - [`extra.py`](../../../pyrit/setup/initializers/techniques/extra.py) — opt-in techniques that are
-#   not part of the default set (`pair`, `violent_durian`, `skeleton_key`).
+#   not part of the default set (`pair`, `violent_durian`, `skeleton_key`, `best_of_n`).
 # - [`airt.py`](../../../pyrit/setup/initializers/techniques/airt.py) — source-owned techniques that
 #   belong to a specific AIRT scenario. Unlike `core`/`extra`, these are imported directly by their
 #   owning scenario and are *not* part of the default aggregation.
@@ -113,6 +116,42 @@ rows = [
 pd.set_option("display.max_rows", None)
 pd.set_option("display.max_colwidth", None)
 print(pd.DataFrame(rows).to_string(index=False))
+
+# %% [markdown]
+# ## Target and dataset requirements
+#
+# Declare `TechniqueRequirements` on a factory. The attack class's `TARGET_REQUIREMENTS` also apply.
+#
+# ```python
+# from pyrit.executor.attack import PromptSendingAttack
+# from pyrit.models import SeedGroupRequirements
+# from pyrit.prompt_target import CapabilityName, TargetRequirements
+# from pyrit.scenario import AttackTechniqueFactory, TechniqueRequirements
+#
+# factory = AttackTechniqueFactory(
+#     name="native_history",
+#     attack_class=PromptSendingAttack,
+#     requirements=TechniqueRequirements(
+#         objective_target=TargetRequirements(native_required=frozenset({CapabilityName.MULTI_TURN})),
+#         seed_group=SeedGroupRequirements(objective_only=True),
+#     ),
+# )
+# ```
+#
+# | Requirement | Behavior |
+# |-------------|----------|
+# | `required` | Native target support, or an `ADAPT` policy with a configured adapter. |
+# | `native_required` | Native target support only. |
+# | `objective_only=True` | Only the objective before technique seeds are added. |
+# | `objective_only=True, try_adapt=True` | Permit removal of extra dataset seeds from an execution copy. |
+#
+# Required modality combinations must be supported together. Simulated-conversation factories
+# default to objective-only input. Source groups stay unchanged; applied adaptation is recorded
+# in result metadata.
+#
+# Incompatible inputs raise `IncompatibleTechniqueError`. Scenarios can
+# [skip them](./1_common_scenario_parameters.ipynb#incompatible-techniques).
+# Changes to requirements or permitted adaptation can prevent older runs from resuming.
 
 # %% [markdown]
 # ## Executing a single technique
@@ -208,6 +247,11 @@ for result in results.completed_results:
 # different seed groups. When you find yourself reaching for a one-off single-turn attack subclass,
 # consider whether it would be better expressed as a registered technique so scenarios can select it
 # by name and tag.
+#
+# `best_of_n` is another example. Its factory configures a
+# `PromptSendingAttack` with a 20-sample retry budget and stochastic character-swap, capitalization,
+# and ASCII-noise converters. `PromptSendingAttack` already re-runs the converters for each attempt
+# and stops when the objective scorer succeeds, so this technique does not need a separate attack class.
 #
 # ## Defining your own
 #

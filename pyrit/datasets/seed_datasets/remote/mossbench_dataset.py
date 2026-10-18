@@ -185,7 +185,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         return "mossbench"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch MOSSBench examples and return them as a ``SeedDataset``.
 

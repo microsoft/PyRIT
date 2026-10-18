@@ -4,21 +4,26 @@
 """Tests for the AttackTechniqueRegistry class."""
 
 import inspect
-from unittest.mock import MagicMock
+from collections.abc import Iterator
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier
-from pyrit.prompt_target import PromptTarget
-from pyrit.registry import TargetRegistry
+from pyrit.prompt_target import PromptTarget, TargetRequirements
+from pyrit.registry import Registry, TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.scenario import ScenarioTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 
 class _StubAttack:
     """Minimal stub for testing the registry without real AttackStrategy weight."""
+
+    TARGET_REQUIREMENTS: TargetRequirements = TargetRequirements()
 
     def __init__(self, *, objective_target, attack_scoring_config=None, max_turns: int = 5):
         self.objective_target = objective_target
@@ -36,6 +41,8 @@ class _StubAttack:
 class _StubAttackNoScorer:
     """Stub attack that does NOT accept attack_scoring_config."""
 
+    TARGET_REQUIREMENTS: TargetRequirements = TargetRequirements()
+
     def __init__(self, *, objective_target):
         self.objective_target = objective_target
 
@@ -44,6 +51,93 @@ class _StubAttackNoScorer:
             class_name="_StubAttackNoScorer",
             class_module="tests.unit.registry.test_attack_technique_registry",
             params={},
+        )
+
+
+@pytest.fixture
+def scenario_selection_registry(patch_central_database: object) -> Iterator[AttackTechniqueRegistry]:
+    with patch.dict(Registry._singletons, {}, clear=True):
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        registry.register_from_factories([AttackTechniqueFactory(name="base", attack_class=_StubAttack)])
+        yield registry
+
+
+@AttackTechniqueRegistry.cache_scenario_technique_class
+def _build_selection_enum() -> type[ScenarioTechnique]:
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    return registry.build_technique_class_from_factories(
+        class_name="RegistrySelectionTechnique", factories=list(registry.get_factories_or_raise().values())
+    )
+
+
+@pytest.mark.parametrize("registration", ["registry", "runtime", "direct"])
+def test_scenario_selection_cache_refreshes_after_registration(
+    *, scenario_selection_registry: AttackTechniqueRegistry, registration: str
+) -> None:
+    before = _build_selection_enum()
+    assert _build_selection_enum() is before
+    factory = AttackTechniqueFactory(name="new", attack_class=_StubAttack)
+    if registration == "registry":
+        scenario_selection_registry.register_technique(name="new", factory=factory)
+    elif registration == "runtime":
+        scenario_selection_registry.instances.register_runtime(factory)
+    else:
+        scenario_selection_registry.instances.register(factory, name="new")
+
+    current = _build_selection_enum()
+    assert current is not before
+    assert current("new").value == "new"
+    assert _build_selection_enum() is current
+    assert "new" not in {technique.value for technique in before.get_all_techniques()}
+    _build_selection_enum.cache_clear()
+    assert _build_selection_enum() is not current
+    assert _build_selection_enum()("new").value == "new"
+
+
+@pytest.mark.parametrize("mutation", ["removal", "reset"])
+def test_scenario_selection_cache_refreshes_after_removal_or_registry_reset(
+    *, scenario_selection_registry: AttackTechniqueRegistry, mutation: str
+) -> None:
+    scenario_selection_registry.register_from_factories([AttackTechniqueFactory(name="new", attack_class=_StubAttack)])
+    before = _build_selection_enum()
+    revision = scenario_selection_registry.catalog_revision
+    if mutation == "removal":
+        scenario_selection_registry.instances.unregister("new")
+        expected_names = {"base"}
+    else:
+        AttackTechniqueRegistry.reset_registry_singleton()
+        replacement = AttackTechniqueRegistry.get_registry_singleton()
+        replacement.register_from_factories(list(scenario_selection_registry.get_factories().values()))
+        assert replacement.catalog_revision[1] == revision[1]
+        assert replacement.catalog_revision != revision
+        expected_names = {"base", "new"}
+
+    current = _build_selection_enum()
+    assert current is not before
+    assert {technique.value for technique in current.get_all_techniques()} == expected_names
+    assert {technique.value for technique in before.get_all_techniques()} == {"base", "new"}
+    assert _build_selection_enum() is current
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["get_all_techniques", "get_aggregate_tags", "resolve", "expand", "tags", "description", "name", "value", "mro"],
+)
+def test_inherited_enum_attributes_fail_before_runtime_registration(
+    *, scenario_selection_registry: AttackTechniqueRegistry, name: str
+) -> None:
+    before = _build_selection_enum()
+    revision = scenario_selection_registry.catalog_revision
+    factory = AttackTechniqueFactory(name=name, attack_class=_StubAttack)
+    with pytest.raises(ValueError, match="inherited ScenarioTechnique attribute"):
+        scenario_selection_registry.instances.register_runtime(factory)
+    assert scenario_selection_registry.catalog_revision == revision
+    assert scenario_selection_registry.instances.get_names() == ["base"]
+    assert _build_selection_enum() is before
+    assert [technique.value for technique in before.get_all_techniques()] == ["base"]
+    with pytest.raises(ValueError, match="inherited ScenarioTechnique attribute"):
+        scenario_selection_registry.build_technique_class_from_factories(
+            class_name="InvalidTechnique", factories=[factory]
         )
 
 
@@ -476,7 +570,7 @@ class TestScorerOverrideTypeInference:
         generic_config = self._make_generic_scoring_config()
         target = MagicMock(spec=PromptTarget)
 
-        mock_memory = MagicMock()
+        mock_memory = MagicMock(spec=MemoryInterface)
         CentralMemory.set_memory_instance(mock_memory)
         try:
             # Should NOT raise — PromptSendingAttack accepts base AttackScoringConfig
@@ -506,7 +600,7 @@ class TestScorerOverrideTypeInference:
         tap_config = TAPAttackScoringConfig(objective_scorer=mock_scorer)
         target = MagicMock(spec=PromptTarget)
 
-        mock_memory = MagicMock()
+        mock_memory = MagicMock(spec=MemoryInterface)
         CentralMemory.set_memory_instance(mock_memory)
         try:
             # TAPAttackScoringConfig is-a AttackScoringConfig, so it passes isinstance check

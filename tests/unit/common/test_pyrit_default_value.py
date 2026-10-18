@@ -214,6 +214,47 @@ class TestInheritance:
         assert child_obj.param2 == 50
         assert child_obj.param3 == 3.14
 
+    def test_reregistering_true_then_false_replaces_previous(self) -> None:
+        """True-then-False re-registration must replace the old scope, not shadow it."""
+
+        class TargetClass:
+            @apply_defaults
+            def __init__(self, *, param1: str | None = None) -> None:
+                self.param1 = param1
+
+        class ChildClass(TargetClass):
+            @apply_defaults
+            def __init__(self, *, param1: str | None = None) -> None:
+                super().__init__(param1=param1)
+
+        set_default_value(class_type=TargetClass, parameter_name="param1", value="broad", include_subclasses=True)
+        set_default_value(class_type=TargetClass, parameter_name="param1", value="exact", include_subclasses=False)
+
+        # The newer registration wins for the registered class itself...
+        assert TargetClass().param1 == "exact"
+        # ...and subclasses no longer inherit the removed True-scope default.
+        assert ChildClass().param1 is None
+
+    def test_reregistering_false_then_true_replaces_previous(self) -> None:
+        """False-then-True re-registration restores subclass inheritance."""
+
+        class TargetClass:
+            @apply_defaults
+            def __init__(self, *, param1: str | None = None) -> None:
+                self.param1 = param1
+
+        class ChildClass(TargetClass):
+            @apply_defaults
+            def __init__(self, *, param1: str | None = None) -> None:
+                super().__init__(param1=param1)
+
+        set_default_value(class_type=TargetClass, parameter_name="param1", value="exact", include_subclasses=False)
+        set_default_value(class_type=TargetClass, parameter_name="param1", value="broad", include_subclasses=True)
+
+        assert TargetClass().param1 == "broad"
+        # Subclass inheritance comes back with the restored True scope.
+        assert ChildClass().param1 == "broad"
+
     def test_parent_not_affected_by_child_defaults(self) -> None:
         """Test that setting defaults on child class doesn't affect parent instances."""
 

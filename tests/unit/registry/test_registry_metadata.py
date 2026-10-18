@@ -46,6 +46,38 @@ class TestDescriptionFromDocstring:
         assert result == ""
 
 
+class TestMarkdownFromDocstring:
+    """Tests for structurally preserved catalog descriptions."""
+
+    def test_preserves_markdown_and_untrusted_html_as_source_text(self) -> None:
+        class MarkdownDoc:
+            """
+            First paragraph with ``literal`` text.
+
+            - First item
+            - [Split link](
+              https://example.com)
+
+            <script>alert("untrusted")</script>
+            """
+
+        result = RegistryMetadata.markdown_from_docstring(MarkdownDoc)
+
+        assert result == (
+            "First paragraph with ``literal`` text.\n\n"
+            "- First item\n"
+            "- [Split link](\n"
+            "  https://example.com)\n\n"
+            '<script>alert("untrusted")</script>'
+        )
+
+    def test_returns_fallback_for_missing_docstring(self) -> None:
+        class NoDoc:
+            pass
+
+        assert RegistryMetadata.markdown_from_docstring(NoDoc, fallback="fallback") == "fallback"
+
+
 class TestMatchesFilters:
     """Tests for the _matches_filters function."""
 

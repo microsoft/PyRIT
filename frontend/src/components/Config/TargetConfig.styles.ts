@@ -6,6 +6,8 @@ import {
   mobileTouchTarget,
 } from '../../styles/touchTargets'
 
+import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
+
 export const useTargetConfigStyles = makeStyles({
   root: {
     display: 'flex',
@@ -17,7 +19,7 @@ export const useTargetConfigStyles = makeStyles({
     padding: tokens.spacingVerticalXXL,
     overflowX: 'hidden',
     overflowY: 'auto',
-    backgroundColor: tokens.colorNeutralBackground2,
+    backgroundColor: WORKSPACE_CANVAS_BACKGROUND,
     '@media (max-width: 600px)': {
       padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalM}`,
     },

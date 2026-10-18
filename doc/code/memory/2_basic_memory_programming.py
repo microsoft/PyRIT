@@ -38,11 +38,11 @@ message_list = [
 
 memory = SQLiteMemory(db_path=":memory:")
 
-memory.add_message_to_memory(request=message_list[0].to_message())
-memory.add_message_to_memory(request=message_list[1].to_message())
-memory.add_message_to_memory(request=message_list[2].to_message())
+(await memory.add_message_to_memory_async(request=message_list[0].to_message()))
+(await memory.add_message_to_memory_async(request=message_list[1].to_message()))
+(await memory.add_message_to_memory_async(request=message_list[2].to_message()))
 
-entries = memory.get_conversation_messages(conversation_id=conversation_id)
+entries = await memory.get_conversation_messages_async(conversation_id=conversation_id)
 
 for entry in entries:
     print(entry)

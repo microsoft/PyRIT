@@ -413,7 +413,7 @@ def is_content_filter_response(response: Any) -> bool:
         bool: True if ``finish_reason == "content_filter"``, False otherwise.
     """
     try:
-        return bool(response.choices) and response.choices[0].finish_reason == "content_filter"
+        return bool(response.choices) and bool(response.choices[0].finish_reason == "content_filter")
     except (AttributeError, IndexError):
         return False
 
@@ -429,9 +429,9 @@ def extract_partial_content(response: Any) -> str | None:
         str | None: The partial text, or None if none was generated.
     """
     try:
-        choice = response.choices[0]
-        if choice.message and choice.message.content:
-            return choice.message.content
+        content = response.choices[0].message.content
+        if isinstance(content, str) and content:
+            return content
     except (AttributeError, IndexError):
         pass
     return None
@@ -448,8 +448,8 @@ def build_content_filter_message(
 
     Rather than raising, blocked responses are surfaced as an error Message so attacks can
     continue. When ``partial_content`` is available it is attached to each piece as
-    ``prompt_metadata["partial_content"]`` so scorers with ``score_blocked_content=True`` can
-    still evaluate what the model produced.
+    ``prompt_metadata["partial_content"]`` so scorers can still evaluate what the model
+    produced before the block.
 
     Args:
         response (Any): The Chat Completions response object (or an object exposing

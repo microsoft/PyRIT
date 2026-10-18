@@ -19,6 +19,7 @@ class AudioFrequencyConverter(Converter):
     """
     Shifts the frequency of an audio file by a specified value.
     By default, it will shift it above the human hearing range (=20 kHz).
+    Floating-point WAV input retains its sample dtype and amplitude scale.
     """
 
     SUPPORTED_INPUT_TYPES = ("audio_path",)
@@ -87,17 +88,23 @@ class AudioFrequencyConverter(Converter):
             phase = np.exp(1j * 2 * np.pi * self._shift_value * np.arange(len(data)) / sample_rate)
             if data.ndim > 1:
                 phase = phase[:, np.newaxis]
-            shifted_data = data * phase
+            # 8-bit PCM is unsigned and centred on 128, so shift around that midpoint.
+            midpoint = 128 if data.dtype == np.uint8 else 0
+            shifted_data = (data.astype(np.float64) - midpoint) * phase
 
-            # Convert the real part of the shifted data to int16
-            shifted_data_int16 = shifted_data.real.astype(np.int16)
+            # Keep the input sample format so integer audio isn't rescaled or wrapped.
+            output_data = shifted_data.real + midpoint
+            if np.issubdtype(data.dtype, np.integer):
+                info = np.iinfo(data.dtype)
+                output_data = np.clip(output_data, info.min, info.max)
+            output_data = output_data.astype(data.dtype)
 
-            # Reset buffer and write shifted data as a new WAV file
-            bytes_io.seek(0)
-            wavfile.write(bytes_io, sample_rate, shifted_data_int16)
+            # Write to a fresh buffer so a shorter output cannot retain input bytes.
+            output_bytes_io = io.BytesIO()
+            wavfile.write(output_bytes_io, sample_rate, output_data)
 
             # Retrieve the WAV bytes and save them using the serializer
-            converted_bytes = bytes_io.getvalue()
+            converted_bytes = output_bytes_io.getvalue()
             await audio_serializer.save_data_async(data=converted_bytes)
             audio_serializer_file = str(audio_serializer.value)
             logger.info(f"Speech synthesized for text [{prompt}], and the audio was saved to [{audio_serializer_file}]")

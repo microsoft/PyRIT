@@ -10,7 +10,9 @@ from pyrit.memory import CentralMemory
 from pyrit.models import (
     Message,
     MessagePiece,
+    MessageScorable,
     Score,
+    ScoringExpectation,
     group_message_pieces_into_conversations,
 )
 from pyrit.score.scorer import Scorer
@@ -85,7 +87,7 @@ class BatchScorer:
             ValueError: If no entries match the provided filters.
         """
         message_pieces: Sequence[MessagePiece] = []
-        message_pieces = self._memory.get_message_pieces(
+        message_pieces = await self._memory.get_message_pieces_async(
             conversation_id=conversation_id,
             prompt_ids=prompt_ids,
             labels=labels,
@@ -111,8 +113,10 @@ class BatchScorer:
         for conversation in conversations:
             responses.extend(conversation)
 
-        return await scorer.score_prompts_batch_async(
-            messages=responses, objectives=[objective] * len(responses), batch_size=self._batch_size
+        return await scorer.score_batch_async(
+            scorables=[MessageScorable.from_message(response) for response in responses],
+            expectations=[ScoringExpectation(objective=objective) for _ in responses],
+            batch_size=self._batch_size,
         )
 
     def _remove_duplicates(self, messages: Sequence[MessagePiece]) -> list[MessagePiece]:

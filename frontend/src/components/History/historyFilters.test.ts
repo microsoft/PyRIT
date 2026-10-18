@@ -26,8 +26,9 @@ describe("historyFilters URL encoding", () => {
       converter: ["Base64Converter", "ROT13Converter"],
       converterMatchMode: "all",
       hasConverters: true,
+      includeScenarioAttacks: true,
       operator: ["roakey"],
-      operation: ["op_trash_panda"],
+      operationId: ["6f1b2c3d-0000-4000-8000-000000000001"],
       otherLabels: ["env:prod", "team:red"],
       labelSearchText: "prod",
     };
@@ -55,6 +56,17 @@ describe("historyFilters URL encoding", () => {
     const unset = filtersToSearchParams(DEFAULT_HISTORY_FILTERS);
     expect(unset.has("hasConverters")).toBe(false);
     expect(filtersFromSearchParams(unset).hasConverters).toBeUndefined();
+  });
+
+  it("only stores explicit scanner attack exclusion", () => {
+    const excluded = filtersToSearchParams({
+      ...DEFAULT_HISTORY_FILTERS,
+      includeScenarioAttacks: false,
+    });
+
+    expect(excluded.get("includeScannerAttacks")).toBe("false");
+    expect(filtersFromSearchParams(excluded).includeScenarioAttacks).toBe(false);
+    expect(filtersToSearchParams(DEFAULT_HISTORY_FILTERS).has("includeScannerAttacks")).toBe(false);
   });
 
   it("repeats multi-value keys for list filters", () => {

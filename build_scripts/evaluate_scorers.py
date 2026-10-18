@@ -8,10 +8,10 @@ This is a long-running process that should be run occasionally to benchmark
 scorer performance. Results are saved to the scorer_evals directory and checked in.
 
 Usage:
-    python build_scripts/evaluate_scorers.py
-    python build_scripts/evaluate_scorers.py --tags refusal
-    python build_scripts/evaluate_scorers.py --tags refusal,default
-    python build_scripts/evaluate_scorers.py --max-concurrency 3
+    python -m build_scripts.evaluate_scorers
+    python -m build_scripts.evaluate_scorers --tags refusal
+    python -m build_scripts.evaluate_scorers --tags refusal,default
+    python -m build_scripts.evaluate_scorers --max-concurrency 3
 """
 
 import argparse

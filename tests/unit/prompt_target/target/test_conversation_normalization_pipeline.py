@@ -152,6 +152,28 @@ def test_from_capabilities_uses_override_normalizer():
     assert pipeline.normalizers[0] is mock_normalizer
 
 
+def test_explicit_editable_history_override_works_with_sparse_raise_policy():
+    mock_normalizer = MagicMock(spec=MessageListNormalizer)
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_editable_history=False,
+        supports_system_prompt=True,
+        supports_json_schema=True,
+    )
+    sparse_policy = CapabilityHandlingPolicy(
+        behaviors={CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.RAISE}
+    )
+
+    pipeline = ConversationNormalizationPipeline.from_capabilities(
+        capabilities=caps,
+        policy=sparse_policy,
+        normalizer_overrides={CapabilityName.EDITABLE_HISTORY: mock_normalizer},
+    )
+
+    assert pipeline.normalizers == (mock_normalizer,)
+    assert pipeline.has_normalizer_for(capability=CapabilityName.EDITABLE_HISTORY)
+
+
 # ---------------------------------------------------------------------------
 # normalize_async — pass-through
 # ---------------------------------------------------------------------------

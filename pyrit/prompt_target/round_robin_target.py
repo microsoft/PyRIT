@@ -189,10 +189,9 @@ class RoundRobinTarget(PromptTarget):
                 responses = await target._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
 
                 inner_id_hash = target.get_identifier().hash
-                if inner_id_hash is not None:
-                    for response in responses:
-                        for piece in response.message_pieces:
-                            piece.prompt_metadata["inner_target_identifier"] = inner_id_hash
+                for response in responses:
+                    for piece in response.message_pieces:
+                        piece.prompt_metadata["inner_target_identifier"] = inner_id_hash
 
                 return responses
             except Exception as ex:

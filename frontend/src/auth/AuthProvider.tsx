@@ -78,6 +78,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setAuthConfig(config)
 
         if (!config.clientId || !config.tenantId) {
+          setApiMsalInstance(null)
           setAuthDisabled(true)
           return
         }
@@ -119,6 +120,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       <div style={{ padding: '2rem', textAlign: 'center', color: 'red' }}>
         <h2>Authentication Error</h2>
         <p>{error}</p>
+        <p>Reload the page to try again.</p>
       </div>
     )
   }

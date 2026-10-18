@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 
-from pyrit.converter.text_selection_strategy import WordSelectionStrategy
+from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy, WordSelectionStrategy
 from pyrit.converter.word_level_converter import WordLevelConverter
 from pyrit.models import ComponentIdentifier
 
@@ -31,15 +31,23 @@ class StringJoinConverter(WordLevelConverter):
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
-        Build the converter identifier with join parameters.
+        Build the converter identifier with join and word-selection parameters.
 
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        base_identifier = super()._build_identifier()
+
+        # Preserve the legacy identifier for the default all-words configuration.
+        # Non-default selection strategies must include their parameters because
+        # they can change the converter's output.
+        if type(self._word_selection_strategy) is AllWordsSelectionStrategy:
+            return self._create_identifier(
+                params={"join_value": self._join_value},
+            )
+
         return self._create_identifier(
-            params={
-                "join_value": self._join_value,
-            },
+            params={**base_identifier.params, "join_value": self._join_value},
         )
 
     async def convert_word_async(self, word: str) -> str:

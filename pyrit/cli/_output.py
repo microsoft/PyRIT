@@ -16,14 +16,16 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pyrit.cli._results import AttacksTablePayload
-    from pyrit.models import ScenarioResult
+    from pyrit.cli.api_client import PyRITApiClient
+    from pyrit.models import Operation, ScenarioResult
     from pyrit.models.catalog import (
         RegisteredInitializer,
         RegisteredScenario,
+        ScenarioRunListItem,
         ScenarioRunSummary,
         TargetInstance,
     )
+    from pyrit.output.sink import OutputFormat, Sink
 
 try:
     import termcolor
@@ -49,6 +51,16 @@ def _cprint(text: str, *, color: str | None = None, bold: bool = False) -> None:
 
 def _header(text: str) -> None:
     _cprint(f"\n  {text}", color="cyan", bold=True)
+
+
+def print_operation_list(*, items: list[Operation]) -> None:
+    """Print readable directory names alongside the IDs accepted by --operation-id."""
+    if not items:
+        print("No Operations found.")
+        return
+    _header("Operations")
+    for item in items:
+        print(f"  {item.name}  {item.id}")
 
 
 def _truncate_text(text: str, max_length: int) -> str:
@@ -121,6 +133,17 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
         if sc.default_datasets:
             print(f"    Default Datasets ({len(sc.default_datasets)}):")
             print(_wrap(text=", ".join(sc.default_datasets), indent="      "))
+        options = sc.dataset_options
+        print(f"    Dataset selection: {options.mode.value}; overrides: {options.supports_overrides}")
+        if options.allowed_names:
+            print(_wrap(text="Options: " + ", ".join(options.allowed_names), indent="      "))
+        defaults = sc.dataset_defaults
+        print(
+            f"    Dataset defaults: per-source={defaults.max_per_dataset}, "
+            f"total={defaults.max_total}, fetch={defaults.fetch.value}"
+        )
+        for source in defaults.sources:
+            print(f"      {source.name}: limit={source.max_size}, fetch={source.fetch.value}")
         if sc.supported_parameters:
             print("    Supported Parameters:")
             for p in sc.supported_parameters:
@@ -162,7 +185,7 @@ def print_initializer_list(*, items: list[RegisteredInitializer]) -> None:
         if init.supported_parameters:
             print("    Supported Parameters:")
             for p in init.supported_parameters:
-                default_str = f" [default: {p.default}]" if p.default else ""
+                default_str = f" [default: {p.default}]" if p.default is not None else ""
                 print(f"      - {p.name}{default_str}: {p.description}")
         if init.description:
             print("    Description:")
@@ -187,7 +210,7 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
         print("\nNo targets found in registry.")
         print(
             "\nTargets are registered by initializers. Include an initializer that "
-            "registers targets, for example:\n  --initializers target\n"
+            "registers targets in your config file"
         )
         return
 
@@ -323,36 +346,26 @@ def print_scenario_retry_warnings(*, run: ScenarioRunSummary, seen_attack_ids: s
             )
 
 
-def print_scenario_run_progress(*, run: ScenarioRunSummary, total_techniques: int = 0) -> None:
+def print_scenario_run_progress(*, run: ScenarioRunSummary) -> None:
     """
     Print a single-line progress update (overwrites the current line).
 
     Args:
         run: ``ScenarioRunSummary`` from ``GET /api/scenarios/runs/{id}``.
-        total_techniques: Total number of techniques expected (0 if unknown).
     """
-    techniques_done = len(run.techniques_used)
-    # Techniques the user passed may be aggregates that expand on the server
-    # (e.g. `single_turn` -> N concrete techniques). Trust whichever count is larger.
-    effective_total = max(total_techniques, techniques_done)
-
     parts: list[str] = []
-
-    # The bar tracks techniques completed / total, which is the only ratio we can
-    # honestly compute mid-run: the server only knows about attacks already persisted,
-    # so an attacks-based bar would always read 100%.
-    if effective_total > 0:
-        pct = int((techniques_done / effective_total) * 100)
+    if run.total_attacks > 0:
+        pct = run.completed_attacks * 100 // run.total_attacks
         bar_width = 30
-        filled = int(bar_width * techniques_done / effective_total)
+        filled = int(bar_width * run.completed_attacks / run.total_attacks)
         bar = "█" * filled + "░" * (bar_width - filled)
         try:
             bar.encode(sys.stdout.encoding or "utf-8")
         except (LookupError, UnicodeEncodeError):
             bar = "#" * filled + "-" * (bar_width - filled)
-        parts.append(f"[{bar}] techniques: {techniques_done}/{effective_total} ({pct}%)")
+        parts.append(f"[{bar}] units: {run.completed_attacks}/{run.total_attacks} ({pct}%)")
     else:
-        parts.append(f"techniques: {techniques_done}")
+        parts.append(f"units: {run.completed_attacks}")
 
     parts.append(f"success rate: {run.objective_achieved_rate}%")
     parts.append(run.status.value)
@@ -402,17 +415,23 @@ def print_scenario_run_summary(*, run: ScenarioRunSummary) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def print_scenario_result_async(*, result: ScenarioResult) -> None:
+async def print_scenario_result_async(
+    *,
+    result: ScenarioResult,
+    format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
+) -> None:
     """
-    Print scenario overview using the output module.
+    Print the scenario overview — the CLI's entry to the framework ``output_scenario_async`` helper.
 
     Args:
         result: Deserialized ``ScenarioResult`` from the REST API.
+        format: Output format — "pretty" or "json". Defaults to "pretty".
+        sink: Output sink. Defaults to None (the helper's default destination).
     """
-    from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
+    from pyrit.output.helpers import output_scenario_async
 
-    printer = PrettyScenarioResultMemoryPrinter()
-    await printer.write_async(result)
+    await output_scenario_async(result, format=format, sink=sink)
 
 
 # Outcome -> color, mirroring the pretty printer's inverted palette (a
@@ -425,35 +444,204 @@ _OUTCOME_COLORS = {
 }
 
 
-def print_attacks_table(*, payload: AttacksTablePayload) -> None:
+async def _write_json_document_async(document: str, *, sink: Sink | None = None) -> None:
     """
-    Print the per-attack table for a scenario run.
+    Write an assembled JSON document to *sink* (stdout by default).
+
+    Routes through a sink (not ``print``) for its encoding-safe fallback, since the JSON
+    is emitted with ``ensure_ascii=False`` and may contain non-ASCII text.
 
     Args:
-        payload (AttacksTablePayload): The rows to render plus the pre-limit total.
+        document (str): The serialized JSON document.
+        sink (Sink | None): Destination sink. Defaults to StdoutSink.
     """
-    if not payload.rows:
-        print(f"\nNo attack results found for scenario {payload.scenario_result_id}.")
+    from pyrit.output.sink import StdoutSink
+
+    await (sink or StdoutSink()).write_async(document)
+
+
+async def _collect_conversation_entries_async(
+    *,
+    result: ScenarioResult,
+    client: PyRITApiClient,
+    attack_result_ids: list[str] | None,
+    limit: int | None,
+) -> list[tuple[str, Any, list[dict[str, Any]]]]:
+    """
+    Fetch and JSON-build each selected attack's conversation.
+
+    Shared by the ``conversations`` and ``full`` JSON documents so both fetch and
+    structure transcripts identically. The CLI owns this per-attack REST loop;
+    ``pyrit.output`` owns the resulting document shape.
+
+    Args:
+        result (ScenarioResult): The scenario result whose attacks to inspect.
+        client (PyRITApiClient): Client used to fetch each conversation's messages.
+        attack_result_ids (list[str] | None): Restrict to these attack ids.
+        limit (int | None): Maximum number of attacks to fetch.
+
+    Returns:
+        list[tuple[str, Any, list[dict[str, Any]]]]: ``(name, attack, structured_messages)`` triples.
+    """
+    from pyrit.cli._sources import RestApiConversationSource
+    from pyrit.output._derivation import select_attacks
+    from pyrit.output.conversation.json import JsonConversationPrinter
+
+    selected = select_attacks(result, attack_result_ids=attack_result_ids)
+    if limit is not None:
+        selected = selected[:limit]
+    objective_scorer_identifier = result.objective_scorer_identifier
+
+    entries: list[tuple[str, Any, list[dict[str, Any]]]] = []
+    for atomic_attack_name, attack_result in selected:
+        source = RestApiConversationSource(client=client, attack_result_id=attack_result.attack_result_id)
+        messages = await source.get_messages_async(conversation_id=attack_result.conversation_id)
+        structured = await JsonConversationPrinter(source=source).build_async(
+            messages,
+            include_scores=objective_scorer_identifier is not None,
+            objective_scorer_identifier=objective_scorer_identifier,
+        )
+        entries.append((atomic_attack_name, attack_result, structured))
+    return entries
+
+
+async def print_conversations_async(
+    *,
+    result: ScenarioResult,
+    client: PyRITApiClient,
+    scenario_result_id: str,
+    format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
+    attack_result_ids: list[str] | None = None,
+    limit: int | None = None,
+) -> None:
+    """
+    Print each attack's summary and main-conversation transcript, rendered by the framework.
+
+    Reuses ``pyrit.output``'s conversation printer via a REST-backed source, so the
+    CLI transcript matches the framework's own conversation output. The per-attack
+    fetch loop is gated by *limit* (network calls, not just rendered rows).
+
+    Args:
+        result (ScenarioResult): The scenario result whose attacks to inspect.
+        client (PyRITApiClient): Client used to fetch each conversation's messages.
+        scenario_result_id (str): The run id, echoed in the header.
+        format (OutputFormat): Output format — "pretty" (streamed per-attack) or "json"
+            (one combined document). Defaults to "pretty".
+        sink (Sink | None): Destination for the json document. Defaults to stdout. Ignored for pretty.
+        attack_result_ids (list[str] | None): Restrict to these attack ids. Defaults to None.
+        limit (int | None): Maximum number of attacks to fetch and render. Defaults to None.
+    """
+    if format == "json":
+        from pyrit.output.scenario_result.json import build_scenario_conversations_document
+
+        entries = await _collect_conversation_entries_async(
+            result=result, client=client, attack_result_ids=attack_result_ids, limit=limit
+        )
+        document = build_scenario_conversations_document(result=result, entries=entries)
+        await _write_json_document_async(document, sink=sink)
         return
 
-    _header(f"Attack Results — scenario {payload.scenario_result_id}")
-    for index, row in enumerate(payload.rows, start=1):
-        outcome = row.outcome.upper()
-        score = row.score_value if row.score_value is not None else "—"
+    from pyrit.cli._sources import RestApiConversationSource
+    from pyrit.output._derivation import attack_score_display, select_attacks
+    from pyrit.output.conversation.pretty import PrettyConversationPrinter
+
+    selected = select_attacks(result, attack_result_ids=attack_result_ids)
+    total = len(selected)
+    if limit is not None:
+        selected = selected[:limit]
+
+    if not selected:
+        print(f"\nNo conversations found for scenario {scenario_result_id}.")
+        return
+
+    objective_scorer_identifier = result.objective_scorer_identifier
+    _header(f"Conversations — scenario {scenario_result_id}")
+    for index, (atomic_attack_name, attack_result) in enumerate(selected, start=1):
         _cprint(
-            f"  {index}. [{outcome}] turns={row.executed_turns}  score={score}",
-            color=_OUTCOME_COLORS.get(row.outcome),
+            f"  {index}. [{attack_result.outcome.value.upper()}] {atomic_attack_name}  "
+            f"turns={attack_result.executed_turns}  score={attack_score_display(attack_result, none_value='-')}",
+            color=_OUTCOME_COLORS.get(attack_result.outcome.value),
             bold=True,
         )
-        print(f"       id:        {row.attack_result_id}")
-        print(f"       technique: {row.atomic_attack_name}")
-        print(f"       objective: {row.objective}")
+        print(f"       id:        {attack_result.attack_result_id}")
+        print(f"       objective: {attack_result.objective}")
+        source = RestApiConversationSource(client=client, attack_result_id=attack_result.attack_result_id)
+        messages = await source.get_messages_async(conversation_id=attack_result.conversation_id)
+        printer = PrettyConversationPrinter(source=source)
+        print(
+            await printer.render_async(
+                messages,
+                include_scores=objective_scorer_identifier is not None,
+                objective_scorer_identifier=objective_scorer_identifier,
+            )
+        )
 
-    shown = len(payload.rows)
-    if shown < payload.total:
-        print(f"\nShowing {shown} of {payload.total} attacks (use --limit to change).")
+    shown = len(selected)
+    if shown < total:
+        print(f"\nShowing {shown} of {total} attacks (use --limit or --attack-result-ids to change).")
     else:
-        print(f"\nTotal attacks: {payload.total}")
+        print(f"\nTotal attacks: {total}")
+
+
+async def print_full_async(
+    *,
+    result: ScenarioResult,
+    client: PyRITApiClient,
+    scenario_result_id: str,
+    format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
+    attack_result_ids: list[str] | None = None,
+    limit: int | None = None,
+) -> None:
+    """
+    Print the ``full`` view: the scenario overview plus every attack's conversation.
+
+    ``full`` is the complete report — the aggregate scorecard the transcripts lack,
+    combined with the transcripts. Pretty streams the overview then the transcripts;
+    JSON emits one ``{overview, conversations}`` document.
+
+    Args:
+        result (ScenarioResult): The scenario result to render.
+        client (PyRITApiClient): Client used to fetch each conversation's messages.
+        scenario_result_id (str): The run id, echoed in the transcript header.
+        format (OutputFormat): Output format — "pretty" or "json". Defaults to "pretty".
+        sink (Sink | None): Destination for the json document. Defaults to stdout. Ignored for pretty.
+        attack_result_ids (list[str] | None): Restrict to these attack ids. Defaults to None.
+        limit (int | None): Maximum number of attacks to fetch and render. Defaults to None.
+    """
+    if format == "json":
+        from pyrit.output.scenario_result.json import JsonScenarioResultMemoryPrinter, build_scenario_full_document
+
+        entries = await _collect_conversation_entries_async(
+            result=result, client=client, attack_result_ids=attack_result_ids, limit=limit
+        )
+        overview = JsonScenarioResultMemoryPrinter().build(result, view="overview")
+        document = build_scenario_full_document(result=result, overview=overview, entries=entries)
+        await _write_json_document_async(document, sink=sink)
+        return
+
+    if format == "html":
+        from pyrit.output.scenario_result.html import HtmlScenarioReportPrinter
+        from pyrit.output.scenario_result.json import JsonScenarioResultMemoryPrinter, build_scenario_full_payload
+
+        entries = await _collect_conversation_entries_async(
+            result=result, client=client, attack_result_ids=attack_result_ids, limit=limit
+        )
+        overview = JsonScenarioResultMemoryPrinter().build(result, view="overview")
+        payload = build_scenario_full_payload(result=result, overview=overview, entries=entries)
+        await HtmlScenarioReportPrinter(sink=sink).write_async(payload)
+        return
+
+    await print_scenario_result_async(result=result, format="pretty")
+    await print_conversations_async(
+        result=result,
+        client=client,
+        scenario_result_id=scenario_result_id,
+        format="pretty",
+        attack_result_ids=attack_result_ids,
+        limit=limit,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +649,7 @@ def print_attacks_table(*, payload: AttacksTablePayload) -> None:
 # ---------------------------------------------------------------------------
 
 
-def print_scenario_runs_list(*, runs: list[ScenarioRunSummary]) -> None:
+def print_scenario_runs_list(*, runs: list[ScenarioRunListItem]) -> None:
     """
     Print a list of scenario run summaries.
 
@@ -476,9 +664,12 @@ def print_scenario_runs_list(*, runs: list[ScenarioRunSummary]) -> None:
     print("=" * 80)
     for idx, run in enumerate(runs, start=1):
         created = run.created_at.isoformat() if run.created_at else "?"
+        planned_attacks = (
+            f"{run.total_attacks} planned attacks" if run.total_attacks is not None else "planned attacks unknown"
+        )
         print(
             f"  {idx}) [{run.status.value}] {run.scenario_name} (id: {run.scenario_result_id}) — "
-            f"{run.total_attacks} attacks, {run.objective_achieved_rate}% success — {created}"
+            f"{planned_attacks} — {created}"
         )
     print("=" * 80)
     print(f"\nTotal runs: {len(runs)}")

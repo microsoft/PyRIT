@@ -8,19 +8,43 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from fastapi import FastAPI, HTTPException
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from pyrit.backend.middleware.auth import AuthenticatedUser, AuthenticationError, EntraAuthMiddleware
+from pyrit.backend.authentication_policy import AuthenticationPolicy
+from pyrit.backend.middleware.auth import AuthenticatedUser, AuthenticationError, EntraAuthMiddleware, require_admin
 
 
-def _make_middleware(*, allowed_group_ids: str = "allowed-group") -> EntraAuthMiddleware:
-    environment = {
-        "ENTRA_TENANT_ID": "test-tenant",
-        "ENTRA_CLIENT_ID": "test-client",
-        "ENTRA_ALLOWED_GROUP_IDS": allowed_group_ids,
-    }
-    with patch.dict("os.environ", environment, clear=False):
-        return EntraAuthMiddleware(MagicMock())
+def _make_middleware() -> EntraAuthMiddleware:
+    return EntraAuthMiddleware(MagicMock())
+
+
+def _entra_policy(
+    *, allowed_group_ids: tuple[str, ...] = ("allowed-group",), admin_group_id: str = ""
+) -> AuthenticationPolicy:
+    return AuthenticationPolicy(
+        mode="entra",
+        tenant_id="test-tenant",
+        client_id="test-client",
+        allowed_group_ids=allowed_group_ids,
+        admin_group_id=admin_group_id,
+    )
+
+
+def _request_with_policy(policy: AuthenticationPolicy) -> Request:
+    app = FastAPI()
+    app.state.authentication_policy = policy
+    return Request(
+        {
+            "type": "http",
+            "app": app,
+            "path": "/api/targets",
+            "root_path": "",
+            "method": "GET",
+            "headers": [],
+        }
+    )
 
 
 def _response(*, status_code: int, data: dict[str, object]) -> MagicMock:
@@ -37,33 +61,26 @@ def _client_context(client: AsyncMock) -> MagicMock:
     return context
 
 
-@pytest.mark.parametrize(
-    "environment",
-    [
-        {"ENTRA_TENANT_ID": "test-tenant", "ENTRA_CLIENT_ID": "", "ENTRA_ALLOWED_GROUP_IDS": ""},
-        {"ENTRA_TENANT_ID": "", "ENTRA_CLIENT_ID": "test-client", "ENTRA_ALLOWED_GROUP_IDS": ""},
-        {"ENTRA_TENANT_ID": "", "ENTRA_CLIENT_ID": "", "ENTRA_ALLOWED_GROUP_IDS": "allowed-group"},
-        {"ENTRA_TENANT_ID": "test-tenant", "ENTRA_CLIENT_ID": "test-client", "ENTRA_ALLOWED_GROUP_IDS": ""},
-        {"ENTRA_TENANT_ID": " ", "ENTRA_CLIENT_ID": " ", "ENTRA_ALLOWED_GROUP_IDS": " , "},
-    ],
-)
-def test_init_rejects_incomplete_auth_configuration(environment: dict[str, str]) -> None:
-    with patch.dict("os.environ", environment, clear=False):
-        with pytest.raises(ValueError, match="Incomplete Entra ID configuration"):
-            EntraAuthMiddleware(MagicMock())
+def test_require_admin_rejects_anonymous_request_by_default() -> None:
+    request = _request_with_policy(AuthenticationPolicy(mode="local"))
+    request.state.user = None
+
+    with pytest.raises(HTTPException) as error:
+        require_admin(request)
+
+    assert error.value.status_code == 403
 
 
-def test_init_allows_auth_disabled_when_configuration_is_absent() -> None:
-    environment = {"ENTRA_TENANT_ID": "", "ENTRA_CLIENT_ID": "", "ENTRA_ALLOWED_GROUP_IDS": ""}
+def test_require_admin_allows_explicit_local_development_override() -> None:
+    request = _request_with_policy(AuthenticationPolicy(mode="local", allow_unauthenticated_admin=True))
+    request.state.user = None
 
-    with patch.dict("os.environ", environment, clear=False):
-        middleware = EntraAuthMiddleware(MagicMock())
-
-    assert middleware._enabled is False
+    require_admin(request)
 
 
 async def test_authenticate_with_graph_resolves_groups_when_restricted() -> None:
-    middleware = _make_middleware(allowed_group_ids="group-1")
+    middleware = _make_middleware()
+    policy = _entra_policy(allowed_group_ids=("group-1",))
     client = AsyncMock(spec=httpx.AsyncClient)
     client.get.return_value = _response(
         status_code=200,
@@ -77,13 +94,31 @@ async def test_authenticate_with_graph_resolves_groups_when_restricted() -> None
     client.post.return_value = _response(status_code=200, data={"value": ["group-1"]})
 
     with patch("pyrit.backend.middleware.auth.httpx.AsyncClient", return_value=_client_context(client)):
-        result = await middleware._authenticate_with_graph_async(token="graph-token")
+        result = await middleware._authenticate_with_graph_async(token="graph-token", policy=policy)
 
     assert isinstance(result, AuthenticatedUser)
     assert result.email == "test@example.com"
     assert result.groups == ["group-1"]
     assert client.post.call_args.args[0] == EntraAuthMiddleware._GRAPH_CHECK_MEMBER_GROUPS_URL
     assert client.post.call_args.kwargs["json"] == {"groupIds": ["group-1"]}
+
+
+async def test_authenticate_with_graph_marks_admin_membership() -> None:
+    middleware = _make_middleware()
+    policy = _entra_policy(admin_group_id="admin-group")
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get.return_value = _response(
+        status_code=200,
+        data={"id": "admin-1", "displayName": "Admin User", "mail": "admin@example.com"},
+    )
+    client.post.return_value = _response(status_code=200, data={"value": ["admin-group"]})
+
+    with patch("pyrit.backend.middleware.auth.httpx.AsyncClient", return_value=_client_context(client)):
+        result = await middleware._authenticate_with_graph_async(token="graph-token", policy=policy)
+
+    assert result.is_admin is True
+    assert middleware._is_authorized(result, policy=policy) is True
+    assert client.post.call_args.kwargs["json"] == {"groupIds": ["admin-group", "allowed-group"]}
 
 
 @pytest.mark.parametrize(
@@ -97,7 +132,7 @@ async def test_authenticate_with_graph_maps_profile_errors(graph_status: int, ex
 
     with patch("pyrit.backend.middleware.auth.httpx.AsyncClient", return_value=_client_context(client)):
         with pytest.raises(AuthenticationError) as error:
-            await middleware._authenticate_with_graph_async(token="graph-token")
+            await middleware._authenticate_with_graph_async(token="graph-token", policy=_entra_policy())
 
     assert error.value.status_code == expected_status
 
@@ -109,7 +144,7 @@ async def test_authenticate_with_graph_returns_service_unavailable_on_network_er
 
     with patch("pyrit.backend.middleware.auth.httpx.AsyncClient", return_value=_client_context(client)):
         with pytest.raises(AuthenticationError) as error:
-            await middleware._authenticate_with_graph_async(token="graph-token")
+            await middleware._authenticate_with_graph_async(token="graph-token", policy=_entra_policy())
 
     assert error.value.status_code == 503
 
@@ -122,21 +157,22 @@ async def test_authenticate_with_graph_rejects_non_object_profile() -> None:
 
     with patch("pyrit.backend.middleware.auth.httpx.AsyncClient", return_value=_client_context(client)):
         with pytest.raises(AuthenticationError) as error:
-            await middleware._authenticate_with_graph_async(token="graph-token")
+            await middleware._authenticate_with_graph_async(token="graph-token", policy=_entra_policy())
 
     assert error.value.status_code == 503
 
 
 async def test_check_group_memberships_batches_allowed_group_ids() -> None:
     allowed_group_ids = [f"group-{index:02}" for index in range(21)]
-    middleware = _make_middleware(allowed_group_ids=",".join(reversed(allowed_group_ids)))
+    middleware = _make_middleware()
+    policy = _entra_policy(allowed_group_ids=tuple(reversed(allowed_group_ids)))
     client = AsyncMock(spec=httpx.AsyncClient)
     client.post.side_effect = [
         _response(status_code=200, data={"value": ["group-00"]}),
         _response(status_code=200, data={"value": ["group-20"]}),
     ]
 
-    result = await middleware._check_group_memberships_async(client=client, token="graph-token")
+    result = await middleware._check_group_memberships_async(client=client, token="graph-token", policy=policy)
 
     assert result == ["group-00", "group-20"]
     assert client.post.await_count == 2
@@ -151,7 +187,11 @@ async def test_check_group_memberships_maps_graph_errors(graph_status: int, expe
     client.post.return_value = _response(status_code=graph_status, data={})
 
     with pytest.raises(AuthenticationError) as error:
-        await middleware._check_group_memberships_async(client=client, token="graph-token")
+        await middleware._check_group_memberships_async(
+            client=client,
+            token="graph-token",
+            policy=_entra_policy(),
+        )
 
     assert error.value.status_code == expected_status
 
@@ -168,13 +208,14 @@ async def test_authenticate_with_graph_rejects_non_object_membership_data() -> N
 
     with patch("pyrit.backend.middleware.auth.httpx.AsyncClient", return_value=_client_context(client)):
         with pytest.raises(AuthenticationError) as error:
-            await middleware._authenticate_with_graph_async(token="graph-token")
+            await middleware._authenticate_with_graph_async(token="graph-token", policy=_entra_policy())
 
     assert error.value.status_code == 503
 
 
 async def test_authenticate_request_denies_and_does_not_cache_unauthorized_user() -> None:
-    middleware = _make_middleware(allowed_group_ids="allowed-group")
+    middleware = _make_middleware()
+    policy = _entra_policy()
     request = MagicMock()
     request.headers = {"Authorization": "Bearer graph-token"}
     user = AuthenticatedUser(oid="user-1", name="Test User", email="test@example.com", groups=["other-group"])
@@ -186,9 +227,9 @@ async def test_authenticate_request_denies_and_does_not_cache_unauthorized_user(
         return_value=user,
     ) as authenticate:
         with pytest.raises(AuthenticationError) as first_error:
-            await middleware._authenticate_request_async(request)
+            await middleware._authenticate_request_async(request, policy=policy)
         with pytest.raises(AuthenticationError):
-            await middleware._authenticate_request_async(request)
+            await middleware._authenticate_request_async(request, policy=policy)
 
     assert first_error.value.status_code == 403
     assert first_error.value.detail == "You are not authorized to access this application"
@@ -197,9 +238,16 @@ async def test_authenticate_request_denies_and_does_not_cache_unauthorized_user(
 
 async def test_authenticate_request_caches_successful_authorization() -> None:
     middleware = _make_middleware()
+    policy = _entra_policy(admin_group_id="admin-group")
     request = MagicMock()
     request.headers = {"Authorization": "bearer graph-token"}
-    user = AuthenticatedUser(oid="user-1", name="Test User", email="test@example.com", groups=["allowed-group"])
+    user = AuthenticatedUser(
+        oid="user-1",
+        name="Test User",
+        email="test@example.com",
+        groups=["allowed-group", "admin-group"],
+        is_admin=True,
+    )
 
     with patch.object(
         middleware,
@@ -207,20 +255,23 @@ async def test_authenticate_request_caches_successful_authorization() -> None:
         new_callable=AsyncMock,
         return_value=user,
     ) as authenticate:
-        first_result = await middleware._authenticate_request_async(request)
-        second_result = await middleware._authenticate_request_async(request)
+        first_result = await middleware._authenticate_request_async(request, policy=policy)
+        second_result = await middleware._authenticate_request_async(request, policy=policy)
 
     assert first_result == user
     assert second_result == user
-    authenticate.assert_awaited_once_with(token="graph-token")
+    assert second_result.is_admin is True
+    authenticate.assert_awaited_once_with(token="graph-token", policy=policy)
 
 
 def test_auth_cache_expires_and_evicts_oldest_entry() -> None:
     middleware = _make_middleware()
-    middleware._AUTH_CACHE_MAX_ENTRIES = 2
     user = AuthenticatedUser(oid="user-1", name="Test User", email="test@example.com", groups=["allowed-group"])
 
-    with patch("pyrit.backend.middleware.auth.monotonic", return_value=100.0):
+    with (
+        patch.object(EntraAuthMiddleware, "_AUTH_CACHE_MAX_ENTRIES", 2),
+        patch("pyrit.backend.middleware.auth.monotonic", return_value=100.0),
+    ):
         middleware._cache_user(cache_key="first", user=user)
         middleware._cache_user(cache_key="second", user=user)
         middleware._cache_user(cache_key="third", user=user)
@@ -243,15 +294,14 @@ async def test_authenticate_request_rejects_malformed_authorization_header(autho
     request.headers = {"Authorization": authorization}
 
     with pytest.raises(AuthenticationError) as error:
-        await middleware._authenticate_request_async(request)
+        await middleware._authenticate_request_async(request, policy=_entra_policy())
 
     assert error.value.status_code == 401
 
 
 async def test_dispatch_maps_authentication_error_to_json_response() -> None:
     middleware = _make_middleware()
-    request = MagicMock()
-    request.url.path = "/api/targets"
+    request = _request_with_policy(_entra_policy())
     error = AuthenticationError(status_code=401, detail="Invalid or expired token")
 
     with patch.object(middleware, "_authenticate_request_async", new_callable=AsyncMock, side_effect=error):

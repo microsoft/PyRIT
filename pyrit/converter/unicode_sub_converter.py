@@ -20,7 +20,12 @@ class UnicodeSubstitutionConverter(Converter):
 
         Args:
             start_value (int): The unicode starting point to use for encoding.
+
+        Raises:
+            ValueError: If ``start_value`` is outside the Unicode code point range.
         """
+        if not 0 <= start_value <= 0x10FFFF:
+            raise ValueError("start_value must be a valid Unicode code point between 0 and 0x10FFFF")
         self.startValue = start_value
 
     def _build_identifier(self) -> ComponentIdentifier:

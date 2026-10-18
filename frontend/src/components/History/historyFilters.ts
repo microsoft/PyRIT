@@ -6,8 +6,9 @@ export interface HistoryFilters {
   converter: string[]
   converterMatchMode: ConverterMatchMode
   hasConverters: boolean | undefined
+  includeScenarioAttacks: boolean
   operator: string[]
-  operation: string[]
+  operationId: string[]
   otherLabels: string[]
   labelSearchText: string
 }
@@ -18,8 +19,9 @@ export const DEFAULT_HISTORY_FILTERS: HistoryFilters = {
   converter: [],
   converterMatchMode: 'any',
   hasConverters: undefined,
+  includeScenarioAttacks: true,
   operator: [],
-  operation: [],
+  operationId: [],
   otherLabels: [],
   labelSearchText: '',
 }
@@ -33,8 +35,9 @@ export function filtersFromSearchParams(params: URLSearchParams): HistoryFilters
     converter: params.getAll('converter'),
     converterMatchMode: params.get('converterMatch') === 'all' ? 'all' : 'any',
     hasConverters: hasConverters === null ? undefined : hasConverters === 'true',
+    includeScenarioAttacks: params.get('includeScannerAttacks') !== 'false',
     operator: params.getAll('operator'),
-    operation: params.getAll('operation'),
+    operationId: params.getAll('operation_id'),
     otherLabels: params.getAll('label'),
     labelSearchText: params.get('labelSearch') ?? '',
   }
@@ -48,8 +51,9 @@ export function filtersToSearchParams(filters: HistoryFilters): URLSearchParams 
   for (const converter of filters.converter) params.append('converter', converter)
   if (filters.converterMatchMode === 'all') params.set('converterMatch', 'all')
   if (filters.hasConverters !== undefined) params.set('hasConverters', String(filters.hasConverters))
+  if (!filters.includeScenarioAttacks) params.set('includeScannerAttacks', 'false')
   for (const operator of filters.operator) params.append('operator', operator)
-  for (const operation of filters.operation) params.append('operation', operation)
+  for (const operationId of filters.operationId) params.append('operation_id', operationId)
   for (const label of filters.otherLabels) params.append('label', label)
   if (filters.labelSearchText) params.set('labelSearch', filters.labelSearchText)
   return params

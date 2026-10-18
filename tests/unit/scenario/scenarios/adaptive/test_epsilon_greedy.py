@@ -13,7 +13,7 @@ from pyrit.scenario.scenarios.adaptive.selectors import (
 
 TECHNIQUES = ["a", "b", "c", "d"]
 
-_COMPUTE_PATH = "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats"
+_COMPUTE_PATH = "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats_async"
 
 
 def _seeded_selector(*, epsilon: float = 0.0, random_seed: int = 0) -> EpsilonGreedyTechniqueSelector:
@@ -66,7 +66,7 @@ class TestEpsilonGreedyTechniqueSelectorInit:
 
 class TestEpsilonGreedyTechniqueSelectorSelect:
     @patch(
-        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats",
+        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats_async",
         side_effect=_empty_rates,
     )
     async def test_select_empty_techniques_raises(self, _mock):
@@ -75,7 +75,7 @@ class TestEpsilonGreedyTechniqueSelectorSelect:
             await selector.select_async(technique_identifiers=[], objective="obj")
 
     @patch(
-        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats",
+        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats_async",
         side_effect=_empty_rates,
     )
     async def test_select_all_unseen_ties_resolved_randomly(self, _mock):
@@ -88,7 +88,7 @@ class TestEpsilonGreedyTechniqueSelectorSelect:
         assert winners.issubset(set(TECHNIQUES))
 
     @patch(
-        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats",
+        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats_async",
         side_effect=_rates_with_winner("b"),
     )
     async def test_select_exploits_clear_winner(self, _mock):
@@ -98,7 +98,7 @@ class TestEpsilonGreedyTechniqueSelectorSelect:
             assert result[0] == "b"
 
     @patch(
-        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats",
+        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats_async",
         side_effect=_empty_rates,
     )
     async def test_select_epsilon_one_is_pure_random(self, _mock):
@@ -110,7 +110,7 @@ class TestEpsilonGreedyTechniqueSelectorSelect:
         assert picks == set(TECHNIQUES)
 
     @patch(
-        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats",
+        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats_async",
         side_effect=_empty_rates,
     )
     async def test_select_returns_multiple_techniques(self, _mock):
@@ -120,7 +120,7 @@ class TestEpsilonGreedyTechniqueSelectorSelect:
         assert len(set(result)) == 3  # no duplicates
 
     @patch(
-        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats",
+        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats_async",
         side_effect=_empty_rates,
     )
     async def test_select_caps_at_available_techniques(self, _mock):

@@ -28,6 +28,46 @@
 # of capability flags.
 
 # %% [markdown]
+# ## Tool-call history
+#
+# Tool history is declared through the `function_call` and `function_call_output`
+# input modalities. Support describes the configured adapter and AI endpoint together.
+# To probe it, use `discover_target_capabilities_async` with `capabilities=[]` and
+# `test_modalities={frozenset({"function_call"}), frozenset({"function_call_output"})}`.
+# Discovery does not apply its result unless `apply=True`. An unsuccessful history
+# probe retains existing declarations rather than treating a timeout as no support.
+#
+# The probe sends synthetic function-call history with a matching result. It
+# disables local execution and removes configured tool declarations for supported
+# adapters. It cannot control tools inside an opaque remote agent. OpenAI Responses
+# declares support by default; OpenAI Chat and LiteLLM use known model support
+# or model metadata. Unknown deployments use conservative defaults.
+#
+# For example, these are the structured payloads for a synthetic history pair:
+#
+# ```python
+# from pyrit.models import MessagePiece
+#
+# call = MessagePiece(
+#     role="simulated_assistant",
+#     original_value='{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"}',
+#     original_value_data_type="function_call",
+# )
+# result = MessagePiece(
+#     role="simulated_tool",
+#     original_value='{"type":"function_call_output","call_id":"call_1","output":"synthetic value"}',
+#     original_value_data_type="function_call_output",
+# )
+# ```
+#
+# Supply both pieces as prior messages in the same conversation before the next
+# user message. Require both input modalities and native `MULTI_TURN` and
+# `EDITABLE_HISTORY` when the attack needs structured history. Otherwise, an ADAPT
+# policy can turn history into text placeholders; memory keeps the original pieces.
+# Default message scorers exclude both simulated roles. Tool execution scoring
+# requires trace evidence, not fake call or result messages.
+
+# %% [markdown]
 # ## 1. Inspect a real target's configuration
 #
 # We use `OpenAIChatTarget` throughout this notebook. Constructing the target does not make any network

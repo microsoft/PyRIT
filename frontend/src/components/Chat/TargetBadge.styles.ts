@@ -2,6 +2,7 @@ import { makeStyles, tokens } from '@fluentui/react-components'
 
 export const useTargetBadgeStyles = makeStyles({
   badge: {
+    position: 'relative',
     display: 'inline-flex',
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
@@ -12,6 +13,10 @@ export const useTargetBadgeStyles = makeStyles({
     cursor: 'help',
     minWidth: 0,
     maxWidth: '100%',
+    ':focus-within': {
+      outline: `2px solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: '2px',
+    },
   },
   badgeText: {
     overflow: 'hidden',

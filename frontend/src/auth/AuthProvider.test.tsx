@@ -161,6 +161,7 @@ describe("AuthProvider", () => {
     await waitFor(() => {
       expect(screen.getByText("Authentication Error")).toBeVisible();
       expect(screen.getByText("Config fetch failed")).toBeVisible();
+      expect(screen.getByText("Reload the page to try again.")).toBeVisible();
     });
   });
 

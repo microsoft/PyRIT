@@ -4,6 +4,7 @@
 
 import logging
 from collections.abc import Sequence
+from typing import Any, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.converter import (
@@ -24,11 +25,24 @@ from pyrit.converter.ecoji_converter import EcojiConverter
 from pyrit.converter.nato_converter import NatoConverter
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import AttackSeedGroup, Seed, SeedObjective, SeedPrompt
+from pyrit.models import (
+    AttackSeedGroup,
+    BoundedDatasetSize,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+    Seed,
+    SeedObjective,
+    SeedPrompt,
+)
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import (
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
+    DatasetSource,
+)
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -48,7 +62,7 @@ class EncodingDatasetConfiguration(DatasetAttackConfiguration):
     ``DatasetAttackConfiguration``.
     """
 
-    def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
+    def _build_attack_groups(self, seeds: list[Seed[Any]]) -> list[AttackSeedGroup]:
         """
         Shape raw seeds into AttackSeedGroups carrying an encoding objective.
 
@@ -154,7 +168,11 @@ class Encoding(Scenario):
     By default, this uses the same dataset as Garak: slur terms and web XSS payloads.
     """
 
-    VERSION: int = 2
+    VERSION: int = 3
+    DATASET_OPTIONS = ScenarioDatasetOptions(
+        mode=DatasetSelectionMode.FIXED, per_dataset_limit=False, source_settings=False
+    )
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @apply_defaults
     def __init__(
@@ -172,21 +190,32 @@ class Encoding(Scenario):
                 successfully decoded the payload. Defaults to DecodingScorer with encoding_scenario
                 category.
             encoding_templates (Sequence[str] | None): Templates used to construct the decoding
-                prompts. Defaults to AskToDecodeConverter.garak_templates.
+                prompts. An empty list is supported and will pass the raw encoded prompts.
+                Defaults to AskToDecodeConverter.garak_templates if None.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
         objective_scorer = objective_scorer or DecodingScorer(categories=["encoding_scenario"])
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
 
-        self._encoding_templates = encoding_templates or AskToDecodeConverter.garak_templates
+        self._encoding_templates = (
+            AskToDecodeConverter.garak_templates if encoding_templates is None else encoding_templates
+        )
 
         super().__init__(
             version=self.VERSION,
             technique_class=EncodingTechnique,
             default_dataset_config=CompoundDatasetAttackConfiguration(
                 configurations=[
-                    EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=10),
-                    EncodingDatasetConfiguration(dataset_names=["garak_web_html_js"], max_dataset_size=10),
+                    EncodingDatasetConfiguration(
+                        sources=[DatasetSource(name=name) for name in ["garak_slur_terms_en"]],
+                        max_per_dataset="all",
+                        max_total=10,
+                    ),
+                    EncodingDatasetConfiguration(
+                        sources=[DatasetSource(name=name) for name in ["garak_web_html_js"]],
+                        max_per_dataset="all",
+                        max_total=10,
+                    ),
                 ]
             ),
             objective_scorer=objective_scorer,
@@ -220,6 +249,71 @@ class Encoding(Scenario):
         atomic_attacks.extend(self._get_converter_attacks(context=context))
         return atomic_attacks
 
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
+        """
+        Estimate converter variants crossed with raw and decode-template prompt configurations.
+
+        Returns:
+            ScenarioRunSizeEstimate: Configured converter-variant budget.
+        """
+        seed_group_count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
+        selected_encoding_names = {technique.value for technique in self._scenario_techniques}
+        variant_count = sum(1 for _, name, _ in self._converter_variants() if name in selected_encoding_names)
+        prompt_configuration_count = 1 + len(self._encoding_templates)
+        components = [
+            ScenarioRunSizeComponent(
+                label="Encoding converter variants",
+                count=seed_group_count * variant_count * prompt_configuration_count,
+                note=(
+                    f"{seed_group_count} selected seed groups x {variant_count} concrete converter variants x "
+                    f"{prompt_configuration_count} prompt configurations. Base64 and ASCII85 each map to two "
+                    "converter variants."
+                ),
+            )
+        ]
+        if self._include_baseline:
+            components.append(
+                ScenarioRunSizeComponent(
+                    label="Baseline",
+                    count=seed_group_count,
+                    is_baseline=True,
+                )
+            )
+        return ScenarioRunSizeEstimate(
+            total_attack_count=sum(component.count for component in components),
+            components=components,
+            datasets=datasets,
+            note=(
+                "Each visible encoding technique can expand into converter variants and raw or decode-template "
+                "prompt configurations. Retries are excluded."
+            ),
+        )
+
+    @staticmethod
+    def _converter_variants() -> list[tuple[list[Converter], str, str]]:
+        """Return the canonical converter implementations and their catalog technique names."""
+        return [
+            ([Base64Converter()], "base64", "base64"),
+            ([Base64Converter(encoding_func="urlsafe_b64encode")], "base64", "base64_urlsafe"),
+            ([Base2048Converter()], "base2048", "base2048"),
+            ([Base64Converter(encoding_func="b16encode")], "base16", "base16"),
+            ([Base64Converter(encoding_func="b32encode")], "base32", "base32"),
+            ([Base64Converter(encoding_func="a85encode")], "ascii85", "ascii85_a85"),
+            ([Base64Converter(encoding_func="b85encode")], "ascii85", "ascii85_b85"),
+            ([BinAsciiConverter(encoding_func="hex")], "hex", "hex"),
+            ([BinAsciiConverter(encoding_func="quoted-printable")], "quoted_printable", "quoted_printable"),
+            ([BinAsciiConverter(encoding_func="UUencode")], "uuencode", "uuencode"),
+            ([ROT13Converter()], "rot13", "rot13"),
+            ([BrailleConverter()], "braille", "braille"),
+            ([AtbashConverter()], "atbash", "atbash"),
+            ([MorseConverter()], "morse_code", "morse_code"),
+            ([NatoConverter()], "nato", "nato"),
+            ([EcojiConverter()], "ecoji", "ecoji"),
+            ([ZalgoConverter()], "zalgo", "zalgo"),
+            ([LeetspeakConverter()], "leet_speak", "leet_speak"),
+            ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
+        ]
+
     # These are the same as Garak encoding attacks
     def _get_converter_attacks(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
@@ -242,33 +336,11 @@ class Encoding(Scenario):
         # (``standard_b64encode`` is byte-identical to the default ``b64encode``; ``b2a_base64``
         # only appends a trailing newline). We keep the default encoding plus the url-safe alphabet,
         # which is a genuinely distinct representation.
-        all_converters_with_encodings: list[tuple[list[Converter], str, str]] = [
-            ([Base64Converter()], "base64", "base64"),
-            ([Base64Converter(encoding_func="urlsafe_b64encode")], "base64", "base64_urlsafe"),
-            ([Base2048Converter()], "base2048", "base2048"),
-            ([Base64Converter(encoding_func="b16encode")], "base16", "base16"),
-            ([Base64Converter(encoding_func="b32encode")], "base32", "base32"),
-            ([Base64Converter(encoding_func="a85encode")], "ascii85", "ascii85_a85"),
-            ([Base64Converter(encoding_func="b85encode")], "ascii85", "ascii85_b85"),
-            ([BinAsciiConverter(encoding_func="hex")], "hex", "hex"),
-            ([BinAsciiConverter(encoding_func="quoted-printable")], "quoted_printable", "quoted_printable"),
-            ([BinAsciiConverter(encoding_func="UUencode")], "uuencode", "uuencode"),
-            ([ROT13Converter()], "rot13", "rot13"),
-            ([BrailleConverter()], "braille", "braille"),
-            ([AtbashConverter()], "atbash", "atbash"),
-            ([MorseConverter()], "morse_code", "morse_code"),
-            ([NatoConverter()], "nato", "nato"),
-            ([EcojiConverter()], "ecoji", "ecoji"),
-            ([ZalgoConverter()], "zalgo", "zalgo"),
-            ([LeetspeakConverter()], "leet_speak", "leet_speak"),
-            ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
-        ]
-
         # Filter to only include selected techniques
         selected_encoding_names = {s.value for s in context.scenario_techniques}
         converters_with_encodings = [
             (conv, name, variant_slug)
-            for conv, name, variant_slug in all_converters_with_encodings
+            for conv, name, variant_slug in self._converter_variants()
             if name in selected_encoding_names
         ]
 

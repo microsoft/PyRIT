@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
+import math
 from typing import Literal
 
 from PIL import Image
@@ -40,13 +41,16 @@ class ImageRotationConverter(BaseImageToImageConverter):
                 Must be one of 'JPEG', 'PNG', or 'WEBP'.
                 If None, keeps original format (if supported).
             angle (float): The rotation angle in degrees (counter-clockwise).
-                Defaults to 90.0.
+                Must be finite. Defaults to 90.0.
             fill_color (tuple[int, int, int]): The RGB color to fill exposed background areas
                 after rotation. Defaults to (255, 255, 255) (white).
 
         Raises:
-            ValueError: If unsupported output format is specified, or if the fill color is out of range.
+            ValueError: If unsupported output format is specified, if the angle is non-finite,
+                or if the fill color is out of range.
         """
+        if not math.isfinite(angle):
+            raise ValueError(f"Angle must be finite, got {angle}")
         if (
             not isinstance(fill_color, tuple)
             or len(fill_color) != 3
@@ -82,4 +86,6 @@ class ImageRotationConverter(BaseImageToImageConverter):
         Returns:
             PIL.Image.Image: The rotated image.
         """
+        # The fill color is an RGB tuple, which grayscale and other single-band modes reject.
+        image = self._convert_to_rgb_or_rgba(image)
         return image.rotate(self._angle, expand=True, fillcolor=self._fill_color)

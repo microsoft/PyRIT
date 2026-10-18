@@ -106,6 +106,16 @@ def test_find_orphaned_files_skips_py_companion_files(tmp_path: Path) -> None:
     assert not any("notebook.py" in o for o in orphaned)
 
 
+def test_find_orphaned_files_skips_python_supporting_assets(tmp_path: Path) -> None:
+    supporting_assets = tmp_path / "code" / "supporting_assets"
+    supporting_assets.mkdir(parents=True)
+    (supporting_assets / "server.py").write_text("# executable example")
+
+    orphaned = find_orphaned_files(set(), tmp_path)
+
+    assert not any("server.py" in orphan for orphan in orphaned)
+
+
 def test_find_orphaned_files_detects_orphaned_api_pages_when_dir_exists(tmp_path: Path) -> None:
     # Post-build: doc/api/ exists. Any generated page that isn't in the TOC
     # is flagged so stale or unlisted modules surface immediately instead of

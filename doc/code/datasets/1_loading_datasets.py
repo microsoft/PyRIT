@@ -22,17 +22,21 @@
 # Aegis [@ghosh2025aegis],
 # Agent Threat Rules [@atr2026],
 # ALERT [@tedeschi2024alert],
+# Anthropic Model-Written Evals [@perez2022modelwritten],
 # BeaverTails [@ji2023beavertails],
 # CBT-Bench [@zhang2024cbtbench],
 # CategoricalHarmfulQA (CatQA) [@bhardwaj2024homer],
 # CoCoNot [@brahman2024coconot],
+# CyberSecEval [@bhatt2023cyberseceval],
 # DarkBench [@darkbench2025],
 # DecodingTrust [@wang2023decodingtrust],
 # Do Anything Now [@shen2023donotanything],
 # Do-Not-Answer [@wang2023donotanswer],
 # EquityMedQA [@pfohl2024equitymedqa],
 # FigStep [@gong2025figstep],
+# FORTRESS [@knight2025fortress],
 # HarmBench [@mazeika2024harmbench],
+# HarmEval [@banerjee2025safeinfer],
 # HarmfulQA [@bhardwaj2023harmfulqa],
 # JailbreakBench [@chao2024jailbreakbench],
 # JailbreakV-28K [@luo2024jailbreakv],
@@ -47,6 +51,7 @@
 # OR-Bench [@cui2024orbench],
 # PKU-SafeRLHF [@ji2024pkusaferlhf],
 # SALAD-Bench [@li2024saladbench],
+# SemGuard [@abughallous2026semguard],
 # SimpleSafetyTests [@vidgen2023simplesafetytests],
 # SIUO [@wang2025siuo],
 # SORRY-Bench [@xie2024sorrybench],
@@ -69,8 +74,14 @@
 # (`garak_pypi_packages`, `garak_npm_packages`, `garak_crates_packages`,
 # `garak_rubygems_packages`, `garak_dart_packages`, `garak_perl_packages`,
 # `garak_raku_packages`), system-prompt libraries (`garak_drh_system_prompts`,
-# `garak_tm_system_prompts`), and an audio jailbreak set
-# (`garak_audio_achilles_heel`).
+# `garak_tm_system_prompts`), exploitation echo corpora (`garak_exploitation_sql_injection`,
+# `garak_exploitation_python_code_execution`), PromptInject context and technique templates
+# (`prompt_inject_contexts`, `prompt_inject_techniques`), API-key probe corpora (`garak_api_key_services`,
+# `garak_api_key_templates`, `garak_api_key_partial_keys`, `garak_api_key_safe_placeholders`),
+# the API-key service-to-pattern map (`garak_api_key_service_patterns`),
+# ProPILE PII records and prompt templates (`garak_propile_pii`, `garak_propile_templates`),
+# an audio jailbreak set
+# (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
@@ -111,4 +122,48 @@ memory = CentralMemory().get_memory_instance()
 await memory.add_seed_datasets_to_memory_async(datasets=datasets, added_by="pyrit")
 
 # Memory has flexible querying capabilities
-memory.get_seeds(harm_categories=["illegal"], seed_type="objective")
+(await memory.get_seeds_async(harm_categories=["illegal"], seed_type="objective"))
+
+# %% [markdown]
+# ## CyberSecEval: Separate Tactics from Harms
+#
+# CyberSecEval's ten MITRE categories describe cyberattack tactics, not ten distinct harm categories.
+# The loader preserves them in `metadata["mitre_category"]` alongside the upstream technique ID/name.
+# All prompts receive `COORDINATION_HARM`. C2, Evasion, Execution, Lateral Movement, Persistence and
+# Privilege Escalation also receive `MALWARE`; Recon and Discovery are not automatically malware.
+# Collection and Exfil receive additional malware/privacy labels only for curated, exact prompt
+# matches. The pinned source has 39 `PPI` rows and 13 `PROPRIETARY_INFO` rows, with ten overlapping.
+# Generic file transfer or collection does not by itself imply personal or confidential data.
+# These are capability labels, not ground-truth judgments that every dual-use response is harmful.
+#
+# Load the complete dataset into memory first. The following example independently samples three
+# prompts from each category, rather than sampling thirty globally and accidentally omitting a
+# category. Keep selection in the calling workflow, not in the dataset loader.
+
+# %%
+import random
+
+from pyrit.datasets.seed_datasets.remote import CyberSecEvalMitreCategory
+
+mitre_datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["cyberseceval_mitre"])
+await memory.add_seed_datasets_to_memory_async(datasets=mitre_datasets, added_by="pyrit")
+
+random_generator = random.Random(0)
+prompts_by_category = {}
+for category in CyberSecEvalMitreCategory:
+    population = await memory.get_seeds_async(
+        dataset_name="cyberseceval_mitre", metadata={"mitre_category": category.value}
+    )
+    population = sorted(population, key=lambda seed: seed.value_sha256 or seed.value)
+    prompts_by_category[category.value] = random_generator.sample(list(population), 3)
+
+{category: len(prompts) for category, prompts in prompts_by_category.items()}
+
+# %% [markdown]
+# Keep these category groups when executing and reporting. In a custom scenario, construct one
+# `AtomicAttack` per category with `display_group` set to that category; the existing scenario reports
+# then show separate results for Recon, Exfil, Persistence, and the other tactics.
+# Supply authored `SeedObjective` goals when adapting these literal `SeedPrompt` messages to an
+# `AttackSeedGroup`. Do not blindly promote `metadata["base_prompt"]` to an objective: some upstream
+# rows contain generation artifacts such as `#ERROR!`. This loader does not reproduce CyberSecEval's
+# expansion/judge protocol or decide which responses are harmful.

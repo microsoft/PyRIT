@@ -1,0 +1,22 @@
+{
+  "component": "Agency Enterprise/PromptInject",
+  "license": "MIT",
+  "repository": "https://github.com/agencyenterprise/PromptInject",
+  "revision": "2928a719d5de62d3766226f1b44c51d9570bc530",
+  "license_file": "LICENSES/PromptInject-MIT.txt",
+  "notice_file": "THIRD_PARTY_NOTICES.txt",
+  "redistributed_files": [
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/prompt_inject_contexts.prompt",
+      "sources": ["promptinject/prompt_data.py"]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/prompt_inject_techniques.prompt",
+      "sources": ["promptinject/prompt_data.py"]
+    },
+    {
+      "path": "pyrit/scenario/scenarios/garak/prompt_inject.py",
+      "sources": ["promptinject/prompt_data.py", "promptinject/prompting.py"]
+    }
+  ]
+}

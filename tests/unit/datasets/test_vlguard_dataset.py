@@ -12,6 +12,7 @@ from pyrit.datasets.seed_datasets.remote.vlguard_dataset import (
     VLGuardCategory,
     VLGuardSubcategory,
     VLGuardSubset,
+    _load_metadata,
     _VLGuardDataset,
 )
 from pyrit.models import SeedDataset, SeedPrompt
@@ -397,12 +398,20 @@ class TestVLGuardDataset:
         json_path.write_text(json.dumps(test_metadata), encoding="utf-8")
 
         loader = _VLGuardDataset()
+        to_thread_mock = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
 
-        with patch("pyrit.datasets.seed_datasets.remote.vlguard_dataset.DB_DATA_PATH", tmp_path):
+        with (
+            patch("pyrit.datasets.seed_datasets.remote.vlguard_dataset.DB_DATA_PATH", tmp_path),
+            patch(
+                "pyrit.datasets.seed_datasets.remote.vlguard_dataset.asyncio.to_thread",
+                new=to_thread_mock,
+            ),
+        ):
             metadata, result_dir = await loader._download_dataset_files_async(cache=True)
 
         assert metadata == test_metadata
         assert result_dir == image_dir
+        assert any(thread_call.args == (_load_metadata, json_path) for thread_call in to_thread_mock.await_args_list)
 
     async def test_download_dataset_files_downloads_when_no_cache(self, tmp_path):
         """Test that _download_dataset_files_async downloads and extracts when cache is empty."""

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
+import math
 from typing import Literal
 
 from PIL import Image, ImageEnhance
@@ -41,13 +42,14 @@ class ImageColorSaturationConverter(BaseImageToImageConverter):
                 0.0 produces a grayscale image (black and white).
                 1.0 preserves the original colors.
                 Values greater than 1.0 oversaturate the colors.
-                Defaults to 0.0 (grayscale image).
+                Must be finite. Defaults to 0.0 (grayscale image).
 
         Raises:
-            ValueError: If unsupported output format is specified, or if level is negative.
+            ValueError: If unsupported output format is specified, or if level is non-finite
+                or negative.
         """
-        if level < 0:
-            raise ValueError(f"Level must be non-negative, got {level}")
+        if not math.isfinite(level) or level < 0:
+            raise ValueError(f"Level must be finite and non-negative, got {level}")
         self._level = level
         super().__init__(output_format=output_format)
 
@@ -75,4 +77,7 @@ class ImageColorSaturationConverter(BaseImageToImageConverter):
         Returns:
             PIL.Image.Image: The adjusted image.
         """
+        # ImageEnhance.Color rejects palette, bilevel and 16-bit images.
+        if image.mode not in ("L", "LA"):
+            image = self._convert_to_rgb_or_rgba(image)
         return ImageEnhance.Color(image).enhance(self._level)

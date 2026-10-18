@@ -33,7 +33,8 @@ Set up a PyRIT development environment on your local machine.
    wget -qO- https://astral.sh/uv/install.sh | sh
    ```
 
-2. **Python 3.12**: uv will automatically download and use the correct Python version based on `.python-version`
+2. **Python 3.11-3.14**: PyRIT supports these versions, and CI tests all of them. The repository does
+   not pin an interpreter, so `uv` selects a compatible one for you (downloading it if needed).
 
 3. **Git**. Git is required to clone the repo locally. It is available to download [here](https://git-scm.com/downloads).
     ```bash
@@ -46,7 +47,7 @@ Set up a PyRIT development environment on your local machine.
 
 1. Navigate to the directory where you cloned the PyRIT repo.
 
-2. The repository includes a `.python-version` file that pins Python 3.12. Run:
+2. From the root of your clone, run:
 
 ```bash
 uv sync
@@ -54,10 +55,13 @@ uv sync
 
 This command will:
 - Create a `.venv` directory with a virtual environment
-- Install Python 3.12 if not already available
+- Download a supported Python version if none is already available
 - Install PyRIT in editable mode; `uv sync` by default installs in editable mode so no extra flag is necessary
 - Install all dependencies including dev tools (pytest, ruff, etc.) via the `dev` dependency group
 - Create a `uv.lock` file for reproducible builds
+
+To pin your checkout to a single version, run `uv python pin 3.12`. That writes a
+`.python-version` file, which is local to your working copy and not tracked by the repository.
 
 
 3. Verify Installation
@@ -110,6 +114,15 @@ Use `uv run` to execute Python with the virtual environment:
 uv run python your_script.py
 ```
 
+Remote dataset loaders use `HF_DATASETS_CACHE` when it is set. Otherwise they cache
+Hugging Face data under `dbdata/huggingface`. On Windows, a long worktree path can
+cause `WinError 206` when Hugging Face creates a cache lock file. Set a shorter
+cache path before you start the server or script:
+
+```powershell
+$env:HF_DATASETS_CACHE = Join-Path $env:TEMP "pyrit-hf"
+```
+
 #### Running Tests
 
 ```bash
@@ -152,6 +165,28 @@ uv sync --extra playwright --extra gcg
 
 ### Development Workflow
 
+#### Keep the backend, CLI, and frontend in lockstep
+
+The backend, CLI, and browser bundle must have exactly the same
+`<Python package version>+g<full source commit>` compatibility identity. Editable
+installation stamps the checkout; Vite stamps its bundle from the same source.
+After changing commits, refresh the stamp and restart the backend and Vite:
+
+```bash
+python -m build_scripts.stamp_compatibility --development
+```
+
+For locally packaged frontend assets, run
+`python -m build_scripts.prepare_package --development`. Dirty local changes warn
+but do not change the identity. These assets cannot be published. Wheel and sdist
+build hooks reject dirty sources and build matching assets automatically; installed
+clients read their packaged stamp, never local Git or the connected backend.
+
+A compatibility failure requires matching artifacts, not bypassing the header.
+Reload the browser only after matching artifacts are deployed; mounted UI state is
+retained when a later mismatch blocks work. Do not automatically replay mutations.
+See [the protocol and API example](../../pyrit/backend/README.md#strict-lockstep-compatibility).
+
 #### Adding New Dependencies
 
 Edit `pyproject.toml` to add dependencies, then run:
@@ -176,9 +211,35 @@ uv run ruff check --fix .
 
 #### Running Type Checker
 
-```bash
-uv run ty check pyrit/
+Run checks from the repository root using its own uv environment. Install all optional
+dependencies so guarded imports have the same dependency coverage as the production
+pre-commit hook:
+
+```powershell
+uv sync --frozen --extra all
+uv run --frozen --no-sync ty check pyrit
+uv run --frozen --no-sync ty check pyrit tests\unit
 ```
+
+The first check covers production code, matching the CI typing hook. The second also
+checks unit tests and is the scope of `make ty`. Pytest and ty both resolve test helpers
+from the `tests` directory; use tier-root imports such as `from unit.mocks import MockPromptTarget`.
+
+CI runs `make ty` once in the Ubuntu pre-commit job with all extras and Python 3.11,
+the minimum supported version. It runs for every pull request, merge-queue entry, and
+push to `main`, including test-only changes. The existing production-only typing hook
+still runs on all three operating systems.
+
+Checking all test tiers and build scripts is a separate, wider diagnostic scope:
+
+```powershell
+uv run --frozen --no-sync ty check pyrit tests build_scripts
+```
+
+That wider scope is not the CI typing hook and may still report errors outside unit tests.
+The lock file pins the checker version. Record the environment's Python version separately
+from ty's target version, which defaults to the minimum supported Python version unless
+overridden with `--python-version`.
 
 #### Pre-commit Hooks
 

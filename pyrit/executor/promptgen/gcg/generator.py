@@ -37,6 +37,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, overload
@@ -55,6 +56,7 @@ from pyrit.executor.promptgen.core.prompt_generator_strategy import (
 from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
     IndividualPromptAttack,
     ProgressiveMultiPromptAttack,
+    RngBundle,
     get_workers,
 )
 from pyrit.executor.promptgen.gcg.config import (
@@ -97,6 +99,7 @@ class GCGContext(PromptGeneratorStrategyContext):
     test_workers: list[Any] = field(default_factory=list)
     attack: Any | None = None
     logfile_path: str | None = None
+    rng_bundle: RngBundle | None = None
 
 
 class GCGResult(PromptGeneratorStrategyResult):
@@ -260,16 +263,20 @@ class GCGGenerator(
         self._ensure_spawn_start_method()
         context.memory_labels = combine_dict({}, context.memory_labels)
 
-        context.targets, context.test_targets = self._apply_target_augmentation(
-            train_targets=context.targets,
-            test_targets=context.test_targets,
-        )
-
         log_gpu_memory(step=0)
         log_train_goals(train_goals=context.goals)
 
         params = self._to_attack_params(context=context)
         context.workers, context.test_workers = await asyncio.to_thread(get_workers, params)
+
+        context.rng_bundle = RngBundle.from_seed(
+            base_seed=self._algorithm.random_seed,
+            workers=context.workers,
+        )
+
+        context.targets, context.test_targets = self._apply_target_augmentation(
+            train_targets=context.targets, test_targets=context.test_targets, np_rng=context.rng_bundle.np_rng
+        )
 
     async def _perform_async(self, *, context: GCGContext) -> GCGResult:
         """
@@ -289,6 +296,7 @@ class GCGGenerator(
                 sampling=self._algorithm.sampling,
                 loss=self._algorithm.loss,
                 candidate_filter=self._algorithm.candidate_filter,
+                use_prefix_cache=self._algorithm.use_prefix_cache,
             ),
         }
         context.attack = self._create_attack(
@@ -302,6 +310,8 @@ class GCGGenerator(
             test_workers=context.test_workers,
             logfile_path=context.logfile_path,
         )
+
+        context.attack._rng_bundle = context.rng_bundle
 
         await asyncio.to_thread(
             context.attack.run,
@@ -318,6 +328,7 @@ class GCGGenerator(
             verbose=self._output.verbose,
             filter_cand=self._algorithm.filter_cand,
             allow_non_ascii=self._algorithm.allow_non_ascii,
+            random_seed=self._algorithm.random_seed,
         )
 
         return self._read_result(logfile_path=context.logfile_path, memory_labels=context.memory_labels)
@@ -371,16 +382,19 @@ class GCGGenerator(
         return await super().execute_async(**kwargs)
 
     def _build_logfile_path(self) -> str:
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
         if self._output.logfile:
             return self._output.logfile
-        return f"{self._output.result_prefix}_{timestamp}.json"
+        # Second-resolution timestamps collide for concurrent runs sharing a
+        # prefix; both would then read/modify/write the same JSON log.
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        return f"{self._output.result_prefix}_{timestamp}_{uuid.uuid4().hex[:8]}.json"
 
     @staticmethod
     def _apply_target_augmentation(
         *,
         train_targets: list[str],
         test_targets: list[str],
+        np_rng: np.random.Generator | None = None,
     ) -> tuple[list[str], list[str]]:
         """
         Randomly substitute equivalent target phrasings for diversity.
@@ -388,6 +402,8 @@ class GCGGenerator(
         Returns:
             tuple[list[str], list[str]]: Augmented training and held-out targets.
         """
+        if np_rng is None:
+            np_rng = np.random.default_rng()
 
         def _shorten(s: str) -> str:
             return s.replace("Sure, h", "H")
@@ -395,8 +411,8 @@ class GCGGenerator(
         def _contract(s: str) -> str:
             return s.replace("Sure, here is", "Sure, here's")
 
-        train_targets = [_shorten(t) if np.random.random() < 0.5 else _contract(t) for t in train_targets]
-        test_targets = [_shorten(t) if np.random.random() < 0.5 else _contract(t) for t in test_targets]
+        train_targets = [_shorten(t) if np_rng.random() < 0.5 else _contract(t) for t in train_targets]
+        test_targets = [_shorten(t) if np_rng.random() < 0.5 else _contract(t) for t in test_targets]
         return train_targets, test_targets
 
     def _to_attack_params(self, *, context: GCGContext) -> Any:

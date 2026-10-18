@@ -11,9 +11,27 @@ import pytest
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.models import MessagePiece
-from pyrit.prompt_target import OpenAIResponseTarget
+from pyrit.prompt_target import OpenAIResponseTarget, discover_target_capabilities_async
 
 _AZURE_KEY_AUTH_DISABLED_REASON = "Azure key-based (local) auth is disabled in our tenant."
+
+
+@pytest.mark.run_only_if_all_tests
+async def test_openai_responses_accepts_synthetic_tool_history(sqlite_instance, gpt5_args) -> None:
+    target = OpenAIResponseTarget(**gpt5_args)
+    target.apply_capabilities(
+        capabilities=target.capabilities.model_copy(
+            update={
+                "input_modalities": frozenset({frozenset({"text"})}),
+            }
+        )
+    )
+    capabilities = await discover_target_capabilities_async(
+        target=target,
+        capabilities=[],
+        test_modalities={frozenset({"function_call"}), frozenset({"function_call_output"})},
+    )
+    assert {"function_call", "function_call_output"} <= set(capabilities.supported_input_modalities)
 
 
 @pytest.fixture(
@@ -47,7 +65,7 @@ async def test_openai_responses_gpt5(sqlite_instance, gpt5_args):
         original_value_data_type="text",
         conversation_id=conv_id,
     )
-    sqlite_instance.add_message_to_memory(request=developer_piece.to_message())
+    (await sqlite_instance.add_message_to_memory_async(request=developer_piece.to_message()))
 
     user_piece = MessagePiece(
         role="user",
@@ -79,7 +97,7 @@ async def test_openai_responses_gpt5_json_schema(sqlite_instance, gpt5_args):
         original_value_data_type="text",
         conversation_id=conv_id,
     )
-    sqlite_instance.add_message_to_memory(request=developer_piece.to_message())
+    (await sqlite_instance.add_message_to_memory_async(request=developer_piece.to_message()))
 
     cat_schema = {
         "type": "object",
@@ -132,7 +150,7 @@ async def test_openai_responses_gpt5_json_object(sqlite_instance, gpt5_args):
         conversation_id=conv_id,
     )
 
-    sqlite_instance.add_message_to_memory(request=developer_piece.to_message())
+    (await sqlite_instance.add_message_to_memory_async(request=developer_piece.to_message()))
 
     prompt = "Create a JSON object that describes a mystical cat "
     prompt += "with the following properties: name, age, fur_rgb."

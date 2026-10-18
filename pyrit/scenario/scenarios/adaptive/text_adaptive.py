@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common import apply_defaults
 from pyrit.models.parameter import Parameter
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario
 
 if TYPE_CHECKING:
@@ -76,11 +76,9 @@ def _build_text_adaptive_technique() -> type[ScenarioTechnique]:
 
 class TextAdaptive(AdaptiveScenario):
     """
-    Adaptive text-attack scenario.
-
-    Selects techniques per-objective via an epsilon-greedy selector over the
-    set of selected techniques. ``prompt_sending`` runs as the baseline
-    comparison and is excluded from the adaptive technique pool.
+    Selects an attack technique for each objective using an epsilon-greedy
+    strategy informed by prior success rates. The scenario stops after a
+    successful attack or after ``max_attempts_per_objective`` attempts.
     """
 
     _cached_technique_class: ClassVar[type[ScenarioTechnique] | None] = None
@@ -115,7 +113,9 @@ class TextAdaptive(AdaptiveScenario):
     @classmethod
     def default_dataset_config(cls) -> DatasetAttackConfiguration:
         """Return the default dataset config (required datasets, capped at 4 per dataset)."""
-        return CompoundDatasetAttackConfiguration.per_dataset(dataset_names=cls.required_datasets(), max_dataset_size=4)
+        return DatasetAttackConfiguration(
+            sources=[DatasetSource(name=name) for name in cls.required_datasets()], max_per_dataset=4
+        )
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:

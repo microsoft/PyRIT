@@ -2,14 +2,80 @@
 # Licensed under the MIT license.
 
 
+import asyncio
 import os
 import tempfile
+from pathlib import Path
 
 import numpy as np
 import pytest
 from scipy.io import wavfile
 
 from pyrit.converter.audio_frequency_converter import AudioFrequencyConverter
+
+
+@pytest.mark.usefixtures("sqlite_instance")
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("stereo", [False, True])
+@pytest.mark.parametrize("shift_value", [0, 2000])
+async def test_frequency_preserves_float_waveform_async(
+    tmp_path: Path, dtype: type[np.floating], stereo: bool, shift_value: int
+) -> None:
+    """A floating-point WAV must keep its amplitude instead of truncating to silence."""
+    samples = np.array([0.5, 0.25, -0.5, -0.25], dtype=dtype)
+    expected = samples if shift_value == 0 else np.array([0.5, 0.0, 0.5, 0.0], dtype=dtype)
+    if stereo:
+        samples = np.column_stack((samples, -samples))
+        expected = np.column_stack((expected, -expected))
+    source = tmp_path / "float.wav"
+    await asyncio.to_thread(wavfile.write, source, 8000, samples)
+
+    result = await AudioFrequencyConverter(shift_value=shift_value).convert_async(prompt=str(source))
+    rate, output = await asyncio.to_thread(wavfile.read, result.output_text)
+
+    assert rate == 8000
+    assert output.dtype == samples.dtype
+    np.testing.assert_allclose(output, expected, atol=1e-7)
+
+
+@pytest.mark.usefixtures("sqlite_instance")
+@pytest.mark.parametrize(
+    ("dtype", "samples", "expected_shifted"),
+    [
+        (np.int16, [1 << 14, 1 << 13, -(1 << 14), -(1 << 13)], [1 << 14, 0, 1 << 14, 0]),
+        (np.int32, [1 << 30, 1 << 29, -(1 << 30), -(1 << 29)], [1 << 30, 0, 1 << 30, 0]),
+        (np.uint8, [192, 160, 64, 96], [192, 128, 192, 128]),
+    ],
+)
+@pytest.mark.parametrize("stereo", [False, True])
+@pytest.mark.parametrize("shift_value", [0, 2000])
+async def test_frequency_preserves_integer_waveform_async(
+    *,
+    tmp_path: Path,
+    dtype: type[np.integer],
+    samples: list[int],
+    expected_shifted: list[int],
+    stereo: bool,
+    shift_value: int,
+) -> None:
+    """Integer WAVs keep their sample format and midpoint instead of being cast to int16."""
+    midpoint = 128 if dtype is np.uint8 else 0
+    data = np.array(samples, dtype=dtype)
+    expected = data if shift_value == 0 else np.array(expected_shifted, dtype=dtype)
+    if stereo:
+        # Mirror the second channel around the format's midpoint.
+        data = np.column_stack((data, (2 * midpoint - data.astype(np.int64)).astype(dtype)))
+        expected = np.column_stack((expected, (2 * midpoint - expected.astype(np.int64)).astype(dtype)))
+    source = tmp_path / "int.wav"
+    await asyncio.to_thread(wavfile.write, source, 8000, data)
+
+    result = await AudioFrequencyConverter(shift_value=shift_value).convert_async(prompt=str(source))
+    rate, output = await asyncio.to_thread(wavfile.read, result.output_text)
+
+    assert rate == 8000
+    assert output.dtype == data.dtype
+    assert output.shape == data.shape
+    np.testing.assert_allclose(output, expected, atol=1)
 
 
 async def test_convert_async_success(sqlite_instance):

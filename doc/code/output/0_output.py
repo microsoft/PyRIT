@@ -137,7 +137,7 @@ await output_attack_async(image_result, format="markdown", blur_images=True, blu
 from pyrit.output import output_conversation_async
 
 # get the conversation from memory using the conversation id from the attack result
-conversation = memory.get_conversation_messages(conversation_id=attack_result.conversation_id)
+conversation = await memory.get_conversation_messages_async(conversation_id=attack_result.conversation_id)
 
 # print the conversation using the print conversation helper
 await output_conversation_async(messages=conversation)  # type: ignore
@@ -201,6 +201,32 @@ await output_attack_async(result, include_reasoning_summaries=True)
 from pyrit.output import output_score_async
 
 await output_score_async([attack_result.last_score])
+
+# %% [markdown]
+# ## Printing Scenario Reports
+#
+# `output_scenario_async` prints a scenario's overview. To get every attack's conversation in one
+# document, use `output_scenario_conversations_async` (JSON) or `output_scenario_full_async` (the
+# overview plus every conversation, as JSON or a standalone HTML report). The documents have the same
+# format as `pyrit_scan scenario-results --view conversations` / `--view full` with `--format json` or
+# `--format html`. Each conversation is read from memory, and each response keeps only the scenario's
+# objective score.
+#
+# - Both include every attack by default, unlike the CLI's JSON views, which show 5 unless you pass
+#   `--limit` or `--attack-result-ids`. Pass `attack_result_ids` or `limit` to choose which
+#   conversations are included; the `full` overview always covers the whole scenario.
+# - `format="html"` writes a text-only report and needs a sink, such as `FileSink`.
+#
+# ```python
+# from pathlib import Path
+#
+# from pyrit.output import FileSink, output_scenario_conversations_async, output_scenario_full_async
+#
+# await output_scenario_conversations_async(scenario_result, limit=5)
+# await output_scenario_full_async(scenario_result, format="html", sink=FileSink(path=Path("report.html")))
+# ```
+#
+# [Common Scenario Parameters](../scenarios/1_common_scenario_parameters.ipynb) shows both on a real run.
 
 # %% [markdown]
 # ## Sinks — Redirecting Output
@@ -341,10 +367,13 @@ await conversation_printer.write_async(conversation)  # type: ignore
 # | Function | Domain | Formats |
 # |----------|--------|---------|
 # | `output_attack_async` | Attack results | `pretty`, `markdown` |
-# | `output_scenario_async` | Scenario results | `pretty` |
-# | `output_scorer_async` | Scorer info/metrics | `pretty` |
-# | `output_conversation_async` | Conversation history | `pretty` |
-# | `output_score_async` | Score list | `pretty` |
+# | `output_scenario_async` | Scenario results | `pretty`, `json` |
+# | `output_scenario_attacks_async` | Scenario attack table | `pretty`, `json` |
+# | `output_scenario_conversations_async` | Scenario conversations | `json` |
+# | `output_scenario_full_async` | Scenario overview + conversations | `json`, `html` |
+# | `output_scorer_async` | Scorer info/metrics | `pretty`, `json` |
+# | `output_conversation_async` | Conversation history | `pretty`, `json` |
+# | `output_score_async` | Score list | `pretty`, `json` |
 #
 # All accept `format=` and `sink=` keyword arguments with sensible defaults.
 

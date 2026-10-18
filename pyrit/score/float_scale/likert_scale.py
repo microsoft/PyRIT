@@ -6,10 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pyrit.common import verify_and_resolve_path
+from pyrit.common.yaml_helper import safe_load_yaml
 
 
 @dataclass(frozen=True)
@@ -98,7 +98,7 @@ class LikertScale(BaseModel):
             ValueError: If the YAML does not contain a mapping or fails model validation.
         """
         resolved_path = verify_and_resolve_path(path)
-        loaded = yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
+        loaded = safe_load_yaml(resolved_path.read_text(encoding="utf-8"))
         if not isinstance(loaded, Mapping):
             raise ValueError(f"Likert scale YAML file '{resolved_path}' must contain a mapping.")
         scale = cls.model_validate(loaded)

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from dataclasses import dataclass
+from typing import Generic, TypeVar, assert_type
 
 import pytest
 
@@ -10,7 +11,13 @@ from pyrit.exceptions import (
     clear_execution_context,
     execution_context,
 )
-from pyrit.executor.core.strategy import Strategy, StrategyContext
+from pyrit.executor.core.strategy import (
+    Strategy,
+    StrategyContext,
+    StrategyEvent,
+    StrategyEventData,
+    StrategyEventHandler,
+)
 from pyrit.models import ComponentIdentifier
 
 
@@ -21,14 +28,65 @@ class MockContext(StrategyContext):
     value: str = "test"
 
 
+_ValueT = TypeVar("_ValueT")
+
+
+@dataclass
+class GenericContext(StrategyContext, Generic[_ValueT]):
+    value: _ValueT
+
+
+def test_duplicate_preserves_context_subclass() -> None:
+    context = MockContext(value="original")
+
+    duplicate = context.duplicate()
+
+    assert_type(duplicate, MockContext)
+    assert type(duplicate) is MockContext
+    assert duplicate == context
+    assert duplicate is not context
+
+
+def test_duplicate_preserves_generic_context_and_copies_nested_values() -> None:
+    context = GenericContext[list[int]](value=[1, 2])
+
+    duplicate = context.duplicate()
+
+    assert_type(duplicate, GenericContext[list[int]])
+    assert type(duplicate) is GenericContext
+    assert duplicate == context
+    assert duplicate is not context
+    duplicate.value.append(3)
+    assert context.value == [1, 2]
+    assert duplicate.value == [1, 2, 3]
+
+
+class RaisingEventHandler(StrategyEventHandler[MockContext, str]):
+    """An event handler that fails on one configured lifecycle event."""
+
+    def __init__(self, *, event: StrategyEvent) -> None:
+        self._event = event
+
+    async def on_event_async(self, event_data: StrategyEventData[MockContext, str]) -> None:
+        if event_data.event is self._event:
+            raise RuntimeError(f"{self._event.value} observer failed")
+
+
 class MockStrategy(Strategy[MockContext, str]):
     """A mock strategy for testing."""
 
-    def __init__(self, perform_result: str = "success", perform_exception: Exception = None):
+    def __init__(
+        self,
+        *,
+        perform_result: str = "success",
+        perform_exception: Exception | None = None,
+        event_handler: StrategyEventHandler[MockContext, str] | None = None,
+    ) -> None:
         # Initialize base class with the context type
-        super().__init__(context_type=MockContext)
+        super().__init__(context_type=MockContext, event_handler=event_handler)
         self._perform_result = perform_result
         self._perform_exception = perform_exception
+        self.teardown_calls = 0
 
     async def _setup_async(self, *, context: MockContext) -> None:
         pass
@@ -39,7 +97,7 @@ class MockStrategy(Strategy[MockContext, str]):
         return self._perform_result
 
     async def _teardown_async(self, *, context: MockContext) -> None:
-        pass
+        self.teardown_calls += 1
 
     def _validate_context(self, *, context: MockContext) -> None:
         pass
@@ -114,6 +172,28 @@ class TestStrategyExecutionContext:
             await strategy.execute_with_context_async(context=context)
 
         # The __cause__ should be the original exception
+        assert exc_info.value.__cause__ is original_error
+
+    async def test_pre_teardown_observer_failure_does_not_skip_teardown(self):
+        """Observer failures must not interrupt lifecycle cleanup."""
+        strategy = MockStrategy(event_handler=RaisingEventHandler(event=StrategyEvent.ON_PRE_TEARDOWN))
+
+        result = await strategy.execute_with_context_async(context=MockContext())
+
+        assert result == "success"
+        assert strategy.teardown_calls == 1
+
+    async def test_error_observer_failure_does_not_mask_original_error(self):
+        """Observer failures must not replace the strategy's root cause."""
+        original_error = ValueError("perform failed")
+        strategy = MockStrategy(
+            perform_exception=original_error,
+            event_handler=RaisingEventHandler(event=StrategyEvent.ON_ERROR),
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await strategy.execute_with_context_async(context=MockContext())
+
         assert exc_info.value.__cause__ is original_error
 
     async def test_execute_with_context_extracts_root_cause(self):

@@ -8,10 +8,12 @@ import uuid
 from enum import Enum
 from typing import Any
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedObjective, SeedPrompt, SeedUnion
+from pyrit.models import Modality, SeedDataset, SeedObjective, SeedPrompt, SeedUnion
 from pyrit.models.literals import ChatMessageRole
 
 logger = logging.getLogger(__name__)
@@ -128,9 +130,9 @@ class _MaskDataset(_RemoteDatasetLoader):
     should_register = True
 
     # Class-level dataset metadata for SeedDatasetMetadata discovery.
-    modalities: list[str] = ["text"]
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "large"
-    tags: set[str] = {"safety", "honesty"}
+    tags: frozenset[str] = frozenset({"safety", "honesty"})
 
     def __init__(
         self,
@@ -159,11 +161,13 @@ class _MaskDataset(_RemoteDatasetLoader):
         self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
 
     @property
+    @override
     def dataset_name(self) -> str:
         """The dataset name."""
         return "mask"
 
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    @override
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the MASK dataset from HuggingFace and return as a SeedDataset.
 

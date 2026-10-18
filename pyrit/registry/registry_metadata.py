@@ -67,6 +67,20 @@ class RegistryMetadata:
         return cleaned or fallback
 
     @staticmethod
+    def markdown_from_docstring(cls: type, *, fallback: str = "") -> str:
+        """
+        Extract a dedented description while preserving Markdown structure.
+
+        Returns:
+            str: The dedented docstring or the fallback value.
+        """
+        doc = cls.__doc__
+        if not doc:
+            return fallback
+        cleaned = inspect.cleandoc(doc)
+        return cleaned or fallback
+
+    @staticmethod
     def summary_from_docstring(cls: type) -> str:
         """
         Extract a short summary from the first paragraph of a class docstring.

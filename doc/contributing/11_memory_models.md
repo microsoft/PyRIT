@@ -41,7 +41,7 @@ Make your changes in `pyrit/memory/memory_models.py`. Follow these conventions:
 ### 2. Generate a migration
 
 ```bash
-python build_scripts/memory_migrations.py generate -m "short description of change"
+python -m build_scripts.memory_migrations generate -m "short description of change"
 ```
 
 This creates a new revision file under `pyrit/memory/alembic/versions/`. **Review the generated file carefully** — auto-generated migrations may need manual adjustments (e.g. for data migrations or default values).
@@ -49,7 +49,7 @@ This creates a new revision file under `pyrit/memory/alembic/versions/`. **Revie
 ### 3. Validate the migration
 
 ```bash
-python build_scripts/memory_migrations.py check
+python -m build_scripts.memory_migrations check
 ```
 
 This verifies the schema produced by running all migrations matches the current models. Both pre-commit hooks (see below) and CI run this check.
@@ -60,7 +60,24 @@ If you changed the schema in a meaningful way (added a table, added a foreign ke
 
 ## How Migrations Run at Startup
 
-Schema migrations are triggered inside each memory class constructor (`SQLiteMemory.__init__` and `AzureSQLMemory.__init__`). When `skip_schema_migration=False` (the default), the inherited `_run_schema_migration()` method on `MemoryInterface` runs:
+SQLite keeps automatic schema initialization (`skip_schema_migration=False`). Azure SQL defaults to `skip_schema_migration=True`: construction and `initialize_pyrit_async("AzureSQL")` check the schema without changing it. Granting SQL DDL permission does not enable automatic migrations.
+
+For Azure SQL, run the explicit deployment migration command:
+
+```bash
+uv run --no-sync python -m pyrit.cli.pyrit_migrate \
+  --config-file /path/to/.pyrit_conf \
+  --expected-server <server>.database.windows.net \
+  --expected-database <database>
+```
+
+The command validates the database target, applies migrations, and checks the resulting schema. It can migrate production because the command is an explicit action. It does not run PyRIT initializers.
+
+Add `--check-only` to validate the target and check the schema without applying migrations. The command returns a nonzero exit code if the check fails. Internal deployments use this check to avoid stopping the app when the schema is already current.
+
+For non-production Azure SQL initialization, callers can instead explicitly pass `skip_schema_migration=False` to `AzureSQLMemory` or `initialize_pyrit_async`. The production connection guard and `PYRIT_REQUIRE_CURRENT_SCHEMA=true` still prevent initialization from migrating, even with this opt-in.
+
+When initialization runs a migration, the inherited `_run_schema_migration()` method on `MemoryInterface` runs:
 
 ```
 SQLiteMemory.__init__() / AzureSQLMemory.__init__()
@@ -81,17 +98,154 @@ Both SQLite and AzureSQL follow the same migration path: first `run_schema_migra
 
 Migrations run inside a transaction (`engine.begin()`), so a failed migration rolls back cleanly. The version tracking table is `pyrit_memory_alembic_version`.
 
-Users can skip migrations by passing `skip_schema_migration=True` to the memory class constructor. When using `initialize_pyrit_async()`, this can be forwarded via `**memory_instance_kwargs`:
+Users can skip SQLite migrations by passing `skip_schema_migration=True` to the memory class constructor. When using `initialize_pyrit_async()`, this can be forwarded via `**memory_instance_kwargs`:
 
 ```python
 await initialize_pyrit_async("SQLite", skip_schema_migration=True)
 ```
 
+Azure SQL check-only initialization logs a warning on schema mismatch. Internal deployments set `PYRIT_REQUIRE_CURRENT_SCHEMA=true` to fail startup on a mismatch. SQLite behavior is unchanged.
+
 ## Important Rules
+
+### Stored-result analytics queries
+
+`pyrit.memory.attack_analytics.AttackAnalyticsReader` reads raw saved-outcome
+counts, grouped metadata, lightweight result pages, and bounded facets through
+`report_async`, `results_async`, and `facets_async` on native async sessions.
+`AttackAnalyticsQueryCompiler` builds the SQLite or SQL Server statements;
+`analytics_sql` supplies dialect-specific JSON expressions. These internal memory
+modules do not import an analytics SDK, calculate success rates, rescore outcomes,
+or load scores, conversations, media, or complete `AttackResult` objects.
+
+The query grain is a distinct stored `AttackResultEntry.id`. Different result IDs
+sharing a conversation remain different results. For callers that need full result
+objects, `MemoryInterface.get_attack_results_async` accepts the opt-in
+`result_selection=AttackResultSelection.ALL_RESULTS` mode. The deprecated sync
+method also accepts this mode. Both still default to `LATEST_PER_CONVERSATION`.
+The backend's Attack History listing explicitly requests `ALL_RESULTS` and
+fingerprints that mode in its cursor; unrelated SDK and scenario callers keep
+their existing selection. Turn bounds apply after selection, and neither mode
+deletes or rewrites stored duplicates.
+
+Revision `901e6c7bf9d4` follows the published `main` head `34a18645c7e9`. It
+bounds `outcome` to 16 characters and adds the computed
+`resolved_atomic_attack_identifier_hash` lookup. The lookup
+prefers the canonical reference and falls back to the saved legacy JSON hash.
+SQLite indexes the relevant JSON text with the scalar facts; SQL Server uses
+bounded scalar index keys and includes the JSON columns. The migration rejects
+oversized existing outcomes before altering the schema. It does not generate
+result IDs or repair historical metadata.
+
+The same revision also adds `AttackResultEntries.objective_target_eval_hash_v1`,
+indexed alongside outcome. Only this one analytics revision is added to `main`.
+New writes compute it from the recorded objective target; a bounded migration
+backfills supported historical result JSON, including the older direct-attack
+layout, and normalized target identifiers where the result JSON is absent.
+Replacing an atomic attack identifier updates its normalized graph/reference
+and frozen v1 target evaluation key in the same transaction. Clearing the
+identifier clears both derived keys; updating either derived key directly is
+rejected.
+Unsupported target metadata is logged during backfill, and records without a
+supported target remain in the typed missing group; the saved result and its
+outcome are still counted.
+Objective-target groups, facets, and their filters use this v1 evaluation key.
+Lightweight result rows retain the target *content* hash for exact inspection,
+while scenario groups retain their saved run IDs and class/model groups retain
+their names. The frozen v1 evaluation rules match
+`ObjectiveTargetEvaluationIdentifier` at introduction. Do not change them
+in place when evaluation rules evolve: add a new versioned column, backfill,
+and explicit selection policy instead of silently changing historical groups.
+
+v1 had one pre-release correction before it shipped in a release. Targets
+without a model name (HTTP, Gandalf and other non-LLM targets) carry no
+behavioral settings, so the original rules merged every such target of a
+class into one group. v1 now keys a target with no nonempty
+`underlying_model_name` or `model_name` by its content hash, after unwrapping
+a wrapper to its first inner target. Targets with a model name keep their
+original key. Revision `3f6a9d2c8b1e` recomputes stored keys for databases
+that already applied `901e6c7bf9d4`, so existing databases, fresh installs, and
+new writes agree. Its downgrade keeps the corrected keys. Objective-target
+labels skip blank model names and fall back to the class name, which the SDK
+suffixes with a short key. With this correction the v1 definition is frozen
+again.
+
+Filters OR values within each predicate (converter `ALL` is the exception) and AND
+separate predicates, including repeated dimensions. Missing metadata, recorded
+empty converter pipelines, and real empty strings retain different typed keys.
+Request and response converter membership remains separate. Repeated members
+contribute once per result to a group or cell; different groups may overlap.
+Attack types, converter names, and harm categories use Unicode-aware lowercase
+keys on SQLite memory connections and SQL Server's `LOWER` for grouping and
+matching. Display text and case-sensitive dimensions retain their recorded
+spelling.
+
+Analytics keys and requested values are limited to 4,096 characters. Older or
+custom results may contain longer metadata: they stay stored, contribute to
+totals and unrelated groupings, and appear unchanged in result pages. Grouping
+or opening a facet with an oversized key raises an explicit
+`AnalyticsDataException` instead of truncating it or returning incomplete
+counts. Use another dimension or inspect the saved result; long keys are not
+supported for exact analytics drill-down.
+
+Canonical identifier tables and supported legacy JSON layouts remain queryable.
+Where a converter pipeline is retained in identifier JSON, that recorded list
+takes precedence over normalized edges: the published identifier backfill can
+omit edges for individual hashless converters without removing those converters
+from the saved list. Edges supply names only when no retained list exists.
+Legacy `__type__` names are read when the canonical `class_name` key is absent.
+Indexed fact compaction omits a result's embedded identifier only when doing so
+preserves the requested metadata keys and display labels; incomplete normalized
+documents continue to use the embedded fallback.
+
+SQL Server uses full-width `OPENJSON` scalar projections before grouping, preserving
+the shared 4096-character metadata contract. Derived scalar facet and array
+membership keys, including mixed array/scalar matrix keys, are projected before
+`GROUP BY` so positional parameter binding cannot change the grouped expression.
+Filter values use bound sets rather than one copied metadata expression per
+choice. Array sources with missing or empty pipeline options are projected once
+before their membership checks, keeping accepted requests under SQL Server's
+2,100-parameter limit without dropping or sampling values.
+
+A raw report and its first result page share a short consistent read transaction.
+Later pages and facets use fresh reads. Cursors are bound to the current filters
+and result-ID selection; updated bounds use a half-open UTC interval. Each request
+is copied and revalidated before acquiring a session, so changes to the caller's
+query during execution cannot mix different filters or axes in one report.
+`QueryControl` supplies a monotonic deadline and request-local cancellation signal.
+Async session acquisition is bounded by that budget. SQLite's native busy
+sleeps are disabled on the request-owned connection because they accumulate
+requested sleep durations rather than enforcing an absolute deadline. Analytics
+retries only plain `SQLITE_BUSY` reads and report setup operations with paced
+asynchronous waits against the shared budget, without restarting the read
+transaction. Other database errors, including `SQLITE_BUSY_SNAPSHOT`, propagate.
+The original busy timeout is restored and the request's progress handler removed
+before releasing the connection, even under repeated task cancellation. A failed
+reset discards the connection and propagates the error. Deadline
+checks remain cooperative; OS scheduling can delay when a task observes expiry.
+SQL Server pool acquisition remains subject to its pool; aioodbc configures
+pyodbc query timeouts in its executor before statement cursors are created and
+restores them when the session closes. SQL Server reports require SNAPSHOT
+support; analytics never changes server isolation settings or enables SQLite
+WAL automatically. Query errors propagate rather than returning empty reports.
+
+The optional SQLite compact-profile probe returns typed raw `RawAnalyticsProfile`
+dictionaries with `source0` and optional `source1`/display fields, stored
+`outcome`, and result-ID `weight` for a caller to aggregate, not statistics.
+For converter axes, the bounded probe emits canonical name arrays so supported
+legacy converter objects have the same memberships as SQL grouping.
+Its row and per-value limits bound returned metadata, not SQL scans or
+intermediate work. The combined-text cap is checked
+after fetching the bounded probe, so it is not a peak-memory or network-byte
+guarantee. Any overflow uses complete SQL aggregation, never partial counts.
+Live Azure SQL validation, malformed legacy converter-name policy, and SQL Server
+trailing-space comparison policy remain separate follow-ups.
 
 ### Migration revisions are immutable
 
 Once a migration revision is committed, it **must not be modified or deleted**. This is enforced by a pre-commit hook (`enforce_alembic_revision_immutability`). If you need to fix a migration, create a new revision instead.
+
+A release branch is the one exception. A patch release cherry-picks a fix onto a branch cut from an earlier tag, and that fix may legitimately amend a revision that has already shipped, so the hook does not compare history on a release branch. Review is the control there.
 
 ### Pre-commit hooks
 

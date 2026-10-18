@@ -73,4 +73,4 @@ async def test_md_injection_adds_to_memory():
         scorer = MarkdownInjectionScorer()
         await scorer.score_text_async(text="string")
 
-        memory.add_scores_to_memory.assert_called_once()
+        memory.add_scores_to_memory_async.assert_called_once()

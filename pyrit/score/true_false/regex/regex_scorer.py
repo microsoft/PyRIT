@@ -4,16 +4,29 @@
 import re
 from typing import cast
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, config_hash
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
-class RegexScorer(TrueFalseScorer):
+def _patterns_digest(patterns: dict[str, str]) -> str:
+    """
+    Digest named regex patterns so different pattern sets get different identities.
+
+    Args:
+        patterns (dict[str, str]): Pattern names mapped to regex strings.
+
+    Returns:
+        str: A SHA-256 hex digest over canonical JSON that preserves name and pattern boundaries.
+    """
+    return config_hash(patterns)
+
+
+class RegexScorer(MessageTrueFalseScorer):
     """
     A scorer that evaluates text against a set of named regex patterns.
 
@@ -81,10 +94,12 @@ class RegexScorer(TrueFalseScorer):
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
+        params: dict[str, object] = {"pattern_count": len(self._patterns)}
+        # Default pattern sets keep their existing identity; anything else is told apart by content.
+        if self._patterns != type(self)._DEFAULT_PATTERNS:
+            params["patterns_digest"] = _patterns_digest(self._patterns)
         return self._create_identifier(
-            params={
-                "pattern_count": len(self._patterns),
-            },
+            params=params,
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )
 
@@ -102,22 +117,36 @@ class RegexScorer(TrueFalseScorer):
         text = message_piece.converted_value
         matched: list[str] = [name for name, pattern in self._compiled.items() if pattern.search(text)]
 
+        return [self._build_match_score(message_piece=message_piece, matched=matched, objective=objective)]
+
+    def _build_match_score(
+        self,
+        *,
+        message_piece: MessagePiece,
+        matched: list[str],
+        objective: str | None,
+        description: str = "True if any pattern matched, else False.",
+    ) -> Score:
+        """
+        Build a score from named regex matches without selecting the evidence.
+
+        Returns:
+            Score: The verdict and matching pattern names.
+        """
         detected = bool(matched)
         rationale = f"Matched: {', '.join(matched)}" if detected else ""
 
-        return [
-            Score(
-                score_value=str(detected).lower(),
-                score_value_description="True if any pattern matched, else False.",
-                score_metadata=None,
-                score_type="true_false",
-                score_category=self._score_categories,
-                score_rationale=rationale,
-                scorer_class_identifier=self.get_identifier(),
-                message_piece_id=message_piece.id,
-                objective=objective,
-            )
-        ]
+        return Score(
+            score_value=str(detected).lower(),
+            score_value_description=description,
+            score_metadata=None,
+            score_type="true_false",
+            score_category=self._score_categories,
+            score_rationale=rationale,
+            scorer_class_identifier=self.get_identifier(),
+            message_piece_id=message_piece.id,
+            objective=objective,
+        )
 
 
 class _RegexScorerDefaultsMixin:

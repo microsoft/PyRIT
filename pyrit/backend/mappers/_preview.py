@@ -42,11 +42,12 @@ def _derive_basename(value: str) -> str | None:
         The basename (filename portion) of *value*, or ``None`` if one can't
         be derived (e.g. data URI, empty value).
     """
-    if not value or value.startswith("data:"):
+    url_value = value.lstrip()
+    if not url_value or url_value.lower().startswith("data:"):
         return None
-    if value.startswith(("http://", "https://")):
-        # Strip query string (e.g. SAS tokens) before taking the basename.
-        parsed = urlparse(value)
+    if url_value.lower().startswith(("http://", "https://")):
+        # Use only the URL path, excluding authority, query, and fragment credentials.
+        parsed = urlparse(url_value)
         name = PureWindowsPath(parsed.path).name
         return name or None
     # Local path — PureWindowsPath treats both ``/`` and ``\`` as separators,
@@ -66,9 +67,12 @@ def format_last_message_preview(
 
     Media-path data types are rendered as ``[Image: <basename>]`` (and
     variants) so the absolute filesystem path of memory artifacts is never
-    exposed through API responses or UI previews. Text-like data types pass
-    through with truncation and an ellipsis suffix when they exceed
-    *max_len*.
+    exposed through API responses or UI previews. HTTP(S) URL recognition
+    ignores scheme case and leading whitespace, and only the path contributes
+    to the filename. Error values are replaced
+    with a generic status so persisted exception tracebacks are not exposed.
+    Text-like data types pass through with truncation and an ellipsis suffix
+    when they exceed *max_len*.
 
     Args:
         value: Raw ``converted_value`` for the last piece (or ``None``).
@@ -86,6 +90,9 @@ def format_last_message_preview(
         label = _MEDIA_LABEL[data_type]
         basename = _derive_basename(value or "")
         return f"[{label}: {basename}]" if basename else f"[{label}]"
+
+    if data_type == "error":
+        return "Target response error"
 
     if not value:
         return None

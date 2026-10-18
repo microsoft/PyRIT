@@ -3,12 +3,13 @@
 
 """Tests for Scenario custom parameter declaration, coercion, and validation (Stage 1b)."""
 
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 from unittest.mock import MagicMock
 
 import pytest
 
 from pyrit.models import ComponentIdentifier, Parameter
+from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.core import BaselineAttackPolicy, Scenario, ScenarioTechnique
 from pyrit.score import Scorer
@@ -56,6 +57,9 @@ def _make_scenario(
             return {}
 
         async def _build_atomic_attacks_async(self, *, context):
+            return []
+
+        def _resolve_scenario_techniques(self, *, scenario_techniques: Any) -> list[ScenarioTechnique]:
             return []
 
     mock_scorer = MagicMock(spec=Scorer)
@@ -455,7 +459,7 @@ class TestResumeParameterValidation:
     @classmethod
     def _make_stored_result(cls, *, scenario_name: str, version: int, params):
         """Build a minimal ScenarioResult with a controlled scenario identifier for resume tests."""
-        from tests.unit.mocks import make_scenario_result
+        from unit.mocks import make_scenario_result
 
         return make_scenario_result(
             scenario_name=scenario_name,
@@ -471,7 +475,7 @@ class TestResumeParameterValidation:
     @classmethod
     def _current_identifier(cls, *, scenario, version: int = 1, params):
         """Build the identifier that mirrors the current run for the given scenario."""
-        from tests.unit.mocks import make_scenario_identifier
+        from unit.mocks import make_scenario_identifier
 
         return make_scenario_identifier(
             scenario_name=type(scenario).__name__,
@@ -558,7 +562,7 @@ class TestParamPersistenceJsonSafety:
 
     @staticmethod
     def _mock_target() -> MagicMock:
-        target = MagicMock()
+        target = MagicMock(spec=PromptTarget)
         target.get_identifier.return_value = ComponentIdentifier(class_name="MockTarget", class_module="test")
         return target
 
@@ -571,7 +575,9 @@ class TestParamPersistenceJsonSafety:
 
         await scenario.initialize_async()
 
-        stored = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])[0]
+        stored = (
+            await scenario._memory.get_scenario_results_async(scenario_result_ids=[scenario._scenario_result_id])
+        )[0]
         assert stored.scenario_identifier.params["max_turns"] == 10
 
     async def test_non_json_safe_value_raises(self) -> None:
@@ -592,7 +598,7 @@ class TestParamPersistenceJsonSafety:
 
 
 def _mock_objective_target() -> MagicMock:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = ComponentIdentifier(class_name="MockTarget", class_module="test")
     return target
 
@@ -666,6 +672,40 @@ class TestObjectiveTargetResolution:
                 await scenario.initialize_async()
         finally:
             TargetRegistry.reset_registry_singleton()
+
+    async def test_resolved_non_target_value_raises_type_error(self) -> None:
+        """A supplied value that isn't a string name and isn't a PromptTarget raises TypeError."""
+        scenario = _make_scenario(declared_params=[], include_common_params=True)
+        scenario.set_params_from_args(args={"objective_target": object()})
+        with pytest.raises(TypeError, match="Resolved objective_target must be a PromptTarget"):
+            await scenario.initialize_async()
+
+    async def test_default_non_target_value_raises_type_error(self) -> None:
+        """A registered default that isn't a PromptTarget raises TypeError."""
+        from pyrit.common import reset_default_values, set_default_value
+
+        scenario = _make_scenario(declared_params=[], include_common_params=True)
+        set_default_value(class_type=type(scenario), parameter_name="objective_target", value=object())
+        try:
+            scenario.set_params_from_args(args={})
+            with pytest.raises(TypeError, match="Default objective_target must be a PromptTarget"):
+                await scenario.initialize_async()
+        finally:
+            reset_default_values()
+
+    async def test_valid_default_target_is_used_when_no_value_supplied(self) -> None:
+        """A registered default that is a valid PromptTarget is used when no value is supplied."""
+        from pyrit.common import reset_default_values, set_default_value
+
+        default_target = _mock_objective_target()
+        scenario = _make_scenario(declared_params=[], include_common_params=True)
+        set_default_value(class_type=type(scenario), parameter_name="objective_target", value=default_target)
+        try:
+            scenario.set_params_from_args(args={})
+            await scenario.initialize_async()
+            assert scenario._objective_target is default_target
+        finally:
+            reset_default_values()
 
 
 @pytest.mark.usefixtures("patch_central_database")

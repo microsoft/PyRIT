@@ -81,7 +81,7 @@ class _StrongRejectDataset(_RemoteDatasetLoader):
         """The dataset name."""
         return "strong_reject"
 
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the StrongREJECT dataset and return it as a SeedDataset.
 

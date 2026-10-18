@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 import pathlib
 import shutil
 import subprocess
@@ -11,7 +10,7 @@ import time
 import pytest
 import requests
 
-from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH, HOME_PATH
+from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH, DB_DATA_PATH, HOME_PATH
 from pyrit.converter import PDFConverter
 from pyrit.exceptions import PyritException
 from pyrit.executor.core import StrategyConverterConfig
@@ -20,15 +19,11 @@ from pyrit.models import Message
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import HTTPXAPITarget, OpenAIChatTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
-from pyrit.setup import SQLITE, initialize_pyrit_async
 
 AI_RECRUITER_REPO = "https://github.com/KutalVolkan/ai_recruiter.git"
 AI_RECRUITER_COMMIT = "2e4a5b6"
 FASTAPI_URL = "http://localhost:8000"
 MAX_WAIT_SECONDS = 300
-
-# Initialize PyRIT
-asyncio.run(initialize_pyrit_async(memory_db_type=SQLITE))
 
 
 async def evaluate_candidate_selection(final_result: str, expected_candidate: str) -> bool:
@@ -193,6 +188,7 @@ async def test_ai_recruiter_workflow():
     upload_target = HTTPXAPITarget(
         http_url="http://localhost:8000/upload/",
         method="POST",
+        allowed_upload_directory=DB_DATA_PATH,
         timeout=180,
     )
 

@@ -1,0 +1,499 @@
+# Manually triggered prototype for comparing adversarial models and technique sets.
+# Completed results and reusable SQLite state are retained as pipeline artifacts.
+
+trigger: none
+pr: none
+
+parameters:
+  - name: objectiveTarget
+    displayName: Objective target registry name
+    type: string
+    default: openai_chat
+  - name: adversarialTargets
+    displayName: Space-separated adversarial target registry names
+    type: string
+    default: azure_openai_gpt4o azure_gpt4o_unsafe_chat
+  - name: techniques
+    displayName: Space-separated technique names
+    type: string
+    default: role_play_video_game crescendo_simulated tap
+  - name: datasetName
+    displayName: Dataset name
+    type: string
+    default: adversarial_benchmark_v1
+  - name: benchmarkProfile
+    displayName: Benchmark profile
+    type: string
+    default: quick
+    values:
+      - quick
+      - full
+  - name: maxDatasetSize
+    displayName: Maximum objectives override (0 uses profile)
+    type: number
+    default: 0
+  - name: tapTreeWidth
+    displayName: TAP tree width override (0 uses profile)
+    type: number
+    default: 0
+  - name: tapTreeDepth
+    displayName: TAP tree depth override (0 uses profile)
+    type: number
+    default: 0
+  - name: tapBranchingFactor
+    displayName: TAP branching factor override (0 uses profile)
+    type: number
+    default: 0
+  - name: tapBatchSize
+    displayName: TAP node batch size override (0 uses profile)
+    type: number
+    default: 0
+  - name: maxConcurrency
+    displayName: Maximum concurrency
+    type: number
+    default: 1
+  - name: maxRetries
+    displayName: Maximum scenario retries
+    type: number
+    default: 0
+  - name: useCached
+    displayName: Reuse compatible results from prior runs
+    type: boolean
+    default: true
+  - name: logLevel
+    displayName: Log level
+    type: string
+    default: INFO
+    values:
+      - DEBUG
+      - INFO
+      - WARNING
+      - ERROR
+
+jobs:
+  - job: AdversarialBenchmark
+    displayName: Run adversarial model benchmark
+    timeoutInMinutes: 360
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+      - checkout: self
+        fetchDepth: 1
+
+      - ${{ if eq(parameters.useCached, true) }}:
+          - task: DownloadPipelineArtifact@2
+            displayName: Restore prior benchmark database
+            continueOnError: true
+            inputs:
+              buildType: specific
+              project: $(System.TeamProject)
+              definition: $(System.DefinitionId)
+              buildVersionToDownload: latestFromBranch
+              branchName: $(Build.SourceBranch)
+              allowPartiallySucceededBuilds: true
+              allowFailedBuilds: true
+              artifactName: adversarial-benchmark-db
+              targetPath: $(Build.SourcesDirectory)/dbdata
+
+      - task: UsePythonVersion@0
+        displayName: Use Python 3.12
+        inputs:
+          versionSpec: "3.12"
+          addToPath: true
+
+      - bash: |
+          mkdir -p ~/.pyrit
+          mkdir -p "$(Build.ArtifactStagingDirectory)/adversarial-benchmark"
+          echo "initialize" > "$(Build.ArtifactStagingDirectory)/adversarial-benchmark/phase.txt"
+        displayName: Create configuration and artifact directories
+
+      - task: AzureKeyVault@2
+        displayName: Retrieve PyRIT test environment
+        inputs:
+          azureSubscription: integration-test-service-connection
+          KeyVaultName: pyrit-environment
+          SecretsFilter: env-global
+          RunAsPreJob: false
+
+      - bash: |
+          set -euo pipefail
+          echo "configure-environment" > "$(Build.ArtifactStagingDirectory)/adversarial-benchmark/phase.txt"
+          python -c "
+          import os
+          from pathlib import Path
+
+          secret = os.environ.get('PYRIT_TEST_SECRET')
+          if not secret:
+              raise ValueError('PYRIT_TEST_SECRET is not set')
+          config_dir = Path.home() / '.pyrit'
+          config_dir.mkdir(parents=True, exist_ok=True)
+          (config_dir / '.env').write_text(secret, encoding='utf-8')
+          "
+          cp build_scripts/env_local_integration_test ~/.pyrit/.env.local
+        displayName: Configure PyRIT environment
+        env:
+          PYRIT_TEST_SECRET: $(env-global)
+
+      - bash: |
+          set -euo pipefail
+          echo "install-uv" > "$(Build.ArtifactStagingDirectory)/adversarial-benchmark/phase.txt"
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "##vso[task.prependpath]$HOME/.local/bin"
+        displayName: Install uv
+
+      - bash: |
+          set -euo pipefail
+          echo "install-pyrit" > "$(Build.ArtifactStagingDirectory)/adversarial-benchmark/phase.txt"
+          uv sync
+        displayName: Install PyRIT
+
+      - bash: |
+          set -euo pipefail
+
+          case "$BENCHMARK_PROFILE_INPUT" in
+            quick)
+              profile_max_dataset_size=24
+              profile_tap_tree_width=2
+              profile_tap_tree_depth=3
+              profile_tap_branching_factor=2
+              profile_tap_batch_size=2
+              ;;
+            full)
+              profile_max_dataset_size=120
+              profile_tap_tree_width=3
+              profile_tap_tree_depth=5
+              profile_tap_branching_factor=2
+              profile_tap_batch_size=10
+              ;;
+            *)
+              echo "Unknown benchmark profile: $BENCHMARK_PROFILE_INPUT" >&2
+              exit 2
+              ;;
+          esac
+
+          resolve_override() {
+            local override="$1"
+            local profile_value="$2"
+            if [[ "$override" -gt 0 ]]; then
+              echo "$override"
+            else
+              echo "$profile_value"
+            fi
+          }
+
+          echo "##vso[task.setvariable variable=benchmarkMaxDatasetSize]$(resolve_override "$MAX_DATASET_SIZE_OVERRIDE" "$profile_max_dataset_size")"
+
+          # TAP search parameters reach the scenario through its technique-agnostic
+          # --technique-args flag, so the scenario itself stays free of per-technique knobs.
+          technique_args=(
+            "tap.tree_width=$(resolve_override "$TAP_TREE_WIDTH_OVERRIDE" "$profile_tap_tree_width")"
+            "tap.tree_depth=$(resolve_override "$TAP_TREE_DEPTH_OVERRIDE" "$profile_tap_tree_depth")"
+            "tap.branching_factor=$(resolve_override "$TAP_BRANCHING_FACTOR_OVERRIDE" "$profile_tap_branching_factor")"
+            "tap.batch_size=$(resolve_override "$TAP_BATCH_SIZE_OVERRIDE" "$profile_tap_batch_size")"
+          )
+          echo "##vso[task.setvariable variable=benchmarkTechniqueArgs]${technique_args[*]}"
+        displayName: Resolve benchmark profile
+        env:
+          BENCHMARK_PROFILE_INPUT: "${{ parameters.benchmarkProfile }}"
+          MAX_DATASET_SIZE_OVERRIDE: "${{ parameters.maxDatasetSize }}"
+          TAP_TREE_WIDTH_OVERRIDE: "${{ parameters.tapTreeWidth }}"
+          TAP_TREE_DEPTH_OVERRIDE: "${{ parameters.tapTreeDepth }}"
+          TAP_BRANCHING_FACTOR_OVERRIDE: "${{ parameters.tapBranchingFactor }}"
+          TAP_BATCH_SIZE_OVERRIDE: "${{ parameters.tapBatchSize }}"
+        condition: always()
+
+      - task: AzureCLI@2
+        displayName: Run benchmark and capture result snapshot
+        inputs:
+          azureSubscription: integration-test-service-connection
+          scriptType: bash
+          scriptLocation: inlineScript
+          inlineScript: |
+            set -euo pipefail
+
+            artifact_dir="$BUILD_ARTIFACTSTAGINGDIRECTORY/adversarial-benchmark"
+            config_file="$artifact_dir/benchmark.pyrit_conf"
+            execution_log="$artifact_dir/execution.log"
+            scenario_log="$artifact_dir/scenario.log"
+            mkdir -p "$artifact_dir"
+            exec > >(tee -a "$execution_log") 2>&1
+
+            server_started=false
+            stop_server() {
+              if [[ "$server_started" == "true" ]]; then
+                uv run pyrit_scan stop-server >/dev/null 2>&1 || true
+              fi
+            }
+            record_exit() {
+              exit_code=$?
+              echo "$exit_code" > "$artifact_dir/execution-exit-code.txt"
+              stop_server
+            }
+            trap record_exit EXIT
+
+            echo "write-config" > "$artifact_dir/phase.txt"
+            cat > "$config_file" <<'EOF'
+            memory_db_type: sqlite
+            silent: false
+            initializers:
+              - name: target
+                args:
+                  tags:
+                    - default
+                    - scorer
+              - name: scorer
+              - name: technique
+            EOF
+
+            echo "authenticate" > "$artifact_dir/phase.txt"
+            az account get-access-token \
+              --scope https://cognitiveservices.azure.com/.default \
+              --output none
+            az account get-access-token \
+              --scope https://ml.azure.com/.default \
+              --output none
+
+            if [[ "$DATASET_NAME_INPUT" == "harmbench-balanced-14-v1" ]]; then
+              echo "prepare-dataset" > "$artifact_dir/phase.txt"
+              uv run python -m build_scripts.prepare_adversarial_benchmark_dataset
+            fi
+
+            echo "start-server" > "$artifact_dir/phase.txt"
+            uv run pyrit_scan \
+              --start-server \
+              --config-file "$config_file" \
+              --log-level "$LOG_LEVEL_INPUT" \
+              --startup-timeout 180
+            server_started=true
+
+            if [[ -z "${TECHNIQUES_INPUT// }" ]]; then
+              echo "At least one technique is required." >&2
+              exit 2
+            fi
+
+            read -r -a adversarial_targets <<< "$ADVERSARIAL_TARGETS_INPUT"
+            read -r -a techniques <<< "$TECHNIQUES_INPUT"
+            memory_labels="$(printf '{"pipeline_build_id":"%s"}' "$BUILD_BUILDID")"
+
+            read -r -a technique_args <<< "$TECHNIQUE_ARGS_INPUT"
+
+            echo "run-benchmark" > "$artifact_dir/phase.txt"
+            set +e
+            uv run pyrit_scan run benchmark.adversarial \
+              --log-level "$LOG_LEVEL_INPUT" \
+              --target "$OBJECTIVE_TARGET_INPUT" \
+              --adversarial-targets "${adversarial_targets[@]}" \
+              --techniques "${techniques[@]}" \
+              --dataset-names "$DATASET_NAME_INPUT" \
+              --max-dataset-size "$MAX_DATASET_SIZE_INPUT" \
+              --max-concurrency "$MAX_CONCURRENCY_INPUT" \
+              --max-retries "$MAX_RETRIES_INPUT" \
+              --use-cached "$USE_CACHED_INPUT" \
+              --technique-args "${technique_args[@]}" \
+              --memory-labels "$memory_labels" \
+              2>&1 | tee "$scenario_log"
+            benchmark_exit_code=${PIPESTATUS[0]}
+            set -e
+            echo "$benchmark_exit_code" > "$artifact_dir/benchmark-exit-code.txt"
+
+            echo "read-result" > "$artifact_dir/phase.txt"
+            export PIPELINE_BUILD_ID="$BUILD_BUILDID"
+            export SCENARIO_RESULT_OUTPUT="$artifact_dir/scenario-result.json"
+            uv run python - <<'PY'
+            import asyncio
+            import json
+            import os
+            from pathlib import Path
+
+            from pyrit.memory import CentralMemory
+            from pyrit.setup import SQLITE, initialize_pyrit_async
+
+
+            async def main_async() -> None:
+                await initialize_pyrit_async(
+                    memory_db_type=SQLITE,
+                    load_defaults=False,
+                    env_files=[],
+                    silent=True,
+                )
+                results = CentralMemory.get_memory_instance().get_scenario_results(
+                    labels={"pipeline_build_id": os.environ["PIPELINE_BUILD_ID"]},
+                    limit=1,
+                )
+                result = results[0] if results else None
+                payload = {
+                    "scenario_result_id": str(result.id) if result else None,
+                    "status": result.scenario_run_state.value if result else None,
+                }
+                Path(os.environ["SCENARIO_RESULT_OUTPUT"]).write_text(
+                    json.dumps(payload, indent=2),
+                    encoding="utf-8",
+                )
+
+
+            asyncio.run(main_async())
+            PY
+
+            result_id="$(
+              python -c \
+                'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["scenario_result_id"] or "")' \
+                "$artifact_dir/scenario-result.json"
+            )"
+            run_status="$(
+              python -c \
+                'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["status"] or "")' \
+                "$artifact_dir/scenario-result.json"
+            )"
+
+            export_exit_code=0
+            if [[ -n "$result_id" ]]; then
+              echo "export-results" > "$artifact_dir/phase.txt"
+              set +e
+              uv run python -m build_scripts.export_adversarial_benchmark_result \
+                --scenario-result-id "$result_id" \
+                --output-dir "$artifact_dir"
+              export_exit_code=$?
+              set -e
+              echo "$export_exit_code" > "$artifact_dir/export-exit-code.txt"
+            fi
+
+            if [[ "$benchmark_exit_code" -eq 0 ]]; then
+              if [[ -z "$result_id" || "$run_status" != "COMPLETED" ]]; then
+                echo "Benchmark exited successfully without a completed persisted scenario result." >&2
+                exit 3
+              fi
+              if [[ "$export_exit_code" -ne 0 ]]; then
+                echo "Failed to export completed benchmark result." >&2
+                exit "$export_exit_code"
+              fi
+            fi
+
+            if [[ "$benchmark_exit_code" -eq 0 ]]; then
+              echo "complete" > "$artifact_dir/phase.txt"
+            else
+              echo "benchmark-failed" > "$artifact_dir/phase.txt"
+            fi
+            exit "$benchmark_exit_code"
+        env:
+          OBJECTIVE_TARGET_INPUT: "${{ parameters.objectiveTarget }}"
+          ADVERSARIAL_TARGETS_INPUT: "${{ parameters.adversarialTargets }}"
+          TECHNIQUES_INPUT: "${{ parameters.techniques }}"
+          DATASET_NAME_INPUT: "${{ parameters.datasetName }}"
+          MAX_DATASET_SIZE_INPUT: "$(benchmarkMaxDatasetSize)"
+          MAX_CONCURRENCY_INPUT: "${{ parameters.maxConcurrency }}"
+          MAX_RETRIES_INPUT: "${{ parameters.maxRetries }}"
+          USE_CACHED_INPUT: "${{ parameters.useCached }}"
+          TECHNIQUE_ARGS_INPUT: "$(benchmarkTechniqueArgs)"
+          LOG_LEVEL_INPUT: "${{ parameters.logLevel }}"
+
+      - bash: |
+          set -euo pipefail
+          artifact_dir="$(Build.ArtifactStagingDirectory)/adversarial-benchmark"
+          mkdir -p "$artifact_dir"
+
+          if [[ -f dbdata/pyrit.db ]]; then
+            cp dbdata/pyrit.db "$artifact_dir/pyrit.db"
+          fi
+          if [[ -f /tmp/pyrit_backend.log ]]; then
+            cp /tmp/pyrit_backend.log "$artifact_dir/backend.log"
+          fi
+
+          export ARTIFACT_DIR="$artifact_dir"
+          export JOB_STATUS="${AGENT_JOBSTATUS:-unknown}"
+
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          artifact_dir = Path(os.environ["ARTIFACT_DIR"])
+
+
+          def read_text(name: str) -> str | None:
+              path = artifact_dir / name
+              return path.read_text(encoding="utf-8").strip() if path.exists() else None
+
+
+          result_path = artifact_dir / "scenario-result.json"
+          result = json.loads(result_path.read_text(encoding="utf-8")) if result_path.exists() else {}
+
+          manifest = {
+              "pipeline_build_id": os.environ.get("BUILD_BUILDID"),
+              "source_branch": os.environ.get("BUILD_SOURCEBRANCH"),
+              "source_commit": os.environ.get("BUILD_SOURCEVERSION"),
+              "created_at": datetime.now(timezone.utc).isoformat(),
+              "scenario": "benchmark.adversarial",
+              "scenario_result_id": result.get("scenario_result_id"),
+              "scenario_status": result.get("status"),
+              "job_status": os.environ["JOB_STATUS"],
+              "last_phase": read_text("phase.txt"),
+              "execution_exit_code": read_text("execution-exit-code.txt"),
+              "benchmark_exit_code": read_text("benchmark-exit-code.txt"),
+              "export_exit_code": read_text("export-exit-code.txt"),
+              "objective_target": os.environ["OBJECTIVE_TARGET_INPUT"],
+              "adversarial_targets": os.environ["ADVERSARIAL_TARGETS_INPUT"].split(),
+              "techniques": os.environ["TECHNIQUES_INPUT"].split(),
+              "dataset_name": os.environ["DATASET_NAME_INPUT"],
+              "benchmark_profile": os.environ["BENCHMARK_PROFILE_INPUT"],
+              "max_dataset_size": int(os.environ["MAX_DATASET_SIZE_INPUT"]),
+              "max_concurrency": int(os.environ["MAX_CONCURRENCY_INPUT"]),
+              "max_retries": int(os.environ["MAX_RETRIES_INPUT"]),
+              "use_cached": os.environ["USE_CACHED_INPUT"].lower() == "true",
+              "technique_args": os.environ["TECHNIQUE_ARGS_INPUT"].split(),
+              "log_level": os.environ["LOG_LEVEL_INPUT"],
+          }
+          (artifact_dir / "run-manifest.json").write_text(
+              json.dumps(manifest, indent=2),
+              encoding="utf-8",
+          )
+          PY
+        displayName: Collect benchmark diagnostics
+        condition: always()
+        env:
+          OBJECTIVE_TARGET_INPUT: "${{ parameters.objectiveTarget }}"
+          ADVERSARIAL_TARGETS_INPUT: "${{ parameters.adversarialTargets }}"
+          TECHNIQUES_INPUT: "${{ parameters.techniques }}"
+          DATASET_NAME_INPUT: "${{ parameters.datasetName }}"
+          BENCHMARK_PROFILE_INPUT: "${{ parameters.benchmarkProfile }}"
+          MAX_DATASET_SIZE_INPUT: "$(benchmarkMaxDatasetSize)"
+          MAX_CONCURRENCY_INPUT: "${{ parameters.maxConcurrency }}"
+          MAX_RETRIES_INPUT: "${{ parameters.maxRetries }}"
+          USE_CACHED_INPUT: "${{ parameters.useCached }}"
+          TECHNIQUE_ARGS_INPUT: "$(benchmarkTechniqueArgs)"
+          LOG_LEVEL_INPUT: "${{ parameters.logLevel }}"
+
+      - bash: |
+          set -euo pipefail
+          db_artifact_dir="$(Build.ArtifactStagingDirectory)/adversarial-benchmark-db"
+          mkdir -p "$db_artifact_dir"
+          if [[ -f dbdata/pyrit.db ]]; then
+            cp dbdata/pyrit.db "$db_artifact_dir/pyrit.db"
+            echo "##vso[task.setvariable variable=hasBenchmarkDatabase]true"
+          else
+            echo "No benchmark database was created."
+            echo "##vso[task.setvariable variable=hasBenchmarkDatabase]false"
+          fi
+        displayName: Stage reusable benchmark database
+        condition: always()
+
+      - task: PublishPipelineArtifact@1
+        displayName: Publish reusable benchmark database
+        condition: and(always(), eq(variables['hasBenchmarkDatabase'], 'true'))
+        inputs:
+          targetPath: $(Build.ArtifactStagingDirectory)/adversarial-benchmark-db
+          artifactName: adversarial-benchmark-db
+          publishLocation: pipeline
+
+      - task: PublishPipelineArtifact@1
+        displayName: Publish benchmark snapshot
+        condition: always()
+        inputs:
+          targetPath: $(Build.ArtifactStagingDirectory)/adversarial-benchmark
+          artifactName: adversarial-benchmark-$(Build.BuildId)
+          publishLocation: pipeline
+
+      - bash: rm -f ~/.pyrit/.env ~/.pyrit/.env.local
+        displayName: Remove local credential files
+        condition: always()

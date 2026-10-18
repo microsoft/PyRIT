@@ -8,6 +8,7 @@ import pytest
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import SelfAskGeneralTrueFalseScorer
 
 
@@ -29,7 +30,7 @@ def general_scorer_response() -> Message:
 
 
 async def test_general_scorer_score_async(patch_central_database, general_scorer_response: Message):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_scorer_response])
 
@@ -53,7 +54,7 @@ async def test_general_scorer_score_async(patch_central_database, general_scorer
 async def test_general_scorer_score_async_with_prompt_f_string(
     general_scorer_response: Message, patch_central_database
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_scorer_response])
 
@@ -78,7 +79,7 @@ async def test_general_scorer_score_async_with_prompt_f_string(
 
 
 async def test_general_scorer_score_async_handles_custom_keys(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     assert chat_target
 
@@ -121,7 +122,7 @@ def test_true_false_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch
         SelfAskTrueFalseScorer,
     )
 
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskTrueFalseScorer(chat_target=chat_target)
@@ -140,7 +141,7 @@ def test_true_false_get_scorer_metrics_returns_metrics_when_eval_hash_is_set(pat
         SelfAskTrueFalseScorer,
     )
 
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskTrueFalseScorer(chat_target=chat_target)
@@ -170,3 +171,43 @@ def test_true_false_get_scorer_metrics_returns_metrics_when_eval_hash_is_set(pat
 def test_general_true_false_no_chat_target_raises():
     with pytest.raises(ValueError, match="A chat_target must be provided"):
         SelfAskGeneralTrueFalseScorer(chat_target=None, system_prompt_format_string="prompt")
+
+
+def _response(body: str) -> Message:
+    return Message(message_pieces=[MessagePiece(role="assistant", original_value=body)])
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("body", "configured_category", "expected_category"),
+    [
+        ('{"score_value": "true", "rationale": "r", "category": "violence"}', "harm", ["harm"]),
+        ('{"score_value": "true", "rationale": "r", "category": "harm"}', "harm", ["harm"]),
+        ('{"score_value": "true", "rationale": "r"}', "harm", ["harm"]),
+        ('{"score_value": "true", "rationale": "r", "category": null}', "harm", ["harm"]),
+        ('{"score_value": "true", "rationale": "r", "category": "violence"}', None, ["violence"]),
+    ],
+    ids=[
+        "configured_category_wins",
+        "matching_categories",
+        "no_response_category",
+        "null_response_category",
+        "no_configured_category",
+    ],
+)
+async def test_general_scorer_category_precedence_async(
+    body: str, configured_category: str | None, expected_category: list[str]
+) -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.set_system_prompt_async = AsyncMock()
+    chat_target.send_prompt_async = AsyncMock(return_value=[_response(body)])
+    scorer = SelfAskGeneralTrueFalseScorer(
+        chat_target=chat_target, system_prompt_format_string="Prompt.", category=configured_category
+    )
+
+    score = await scorer.score_text_async(text="prompt", objective="obj")
+
+    assert score[0].score_category == expected_category
+    assert score[0].score_value == "true"
+    chat_target.send_prompt_async.assert_awaited_once()

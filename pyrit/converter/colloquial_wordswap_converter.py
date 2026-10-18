@@ -1,13 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import pathlib
-import random
 import re
+from pathlib import Path
 
 import yaml
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
 
@@ -28,7 +28,7 @@ class ColloquialWordswapConverter(Converter):
         *,
         deterministic: bool = False,
         custom_substitutions: dict[str, list[str]] | None = None,
-        wordswap_path: str | None = None,
+        wordswap_path: Path | None = None,
     ) -> None:
         """
         Initialize the converter with optional deterministic mode and substitutions source.
@@ -38,7 +38,7 @@ class ColloquialWordswapConverter(Converter):
                 If False, randomly choose a substitution for each wordswap. Defaults to False.
             custom_substitutions (dict[str, list[str]] | None): A dictionary of custom substitutions
                 to override the defaults. Defaults to None.
-            wordswap_path (str | None): Path to a YAML file containing word substitutions.
+            wordswap_path (Path | None): Path to a YAML file containing word substitutions.
                 Can be a filename within the built-in colloquial_wordswaps directory (e.g., "filipino.yaml")
                 or an absolute path to a custom YAML file. Defaults to None (uses singaporean.yaml).
 
@@ -50,7 +50,8 @@ class ColloquialWordswapConverter(Converter):
         if custom_substitutions is not None and wordswap_path is not None:
             raise ValueError("Provide either custom_substitutions or wordswap_path, not both.")
 
-        self._wordswap_path = wordswap_path
+        self._wordswap_path = str(wordswap_path) if wordswap_path is not None else None
+        self._colloquial_substitutions: dict[str, list[str]]
 
         if custom_substitutions is not None and len(custom_substitutions) > 0:
             self._colloquial_substitutions = custom_substitutions
@@ -58,7 +59,7 @@ class ColloquialWordswapConverter(Converter):
             wordswap_directory = CONVERTER_SEED_PROMPT_PATH / "colloquial_wordswaps"
 
             if wordswap_path is not None:
-                file_path = pathlib.Path(wordswap_path)
+                file_path = Path(wordswap_path)
                 if not file_path.is_absolute():
                     file_path = wordswap_directory / wordswap_path
             else:
@@ -69,7 +70,7 @@ class ColloquialWordswapConverter(Converter):
 
             try:
                 with file_path.open("r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f)
+                    data = safe_load_yaml(f)
             except yaml.YAMLError as exc:
                 raise ValueError(f"Invalid YAML format in wordswap file: {file_path}") from exc
 
@@ -119,28 +120,21 @@ class ColloquialWordswapConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        # Tokenize the prompt into words and non-words
-        words = re.findall(r"\w+|\S+", prompt)
-        converted_prompt = []
+        rng = self._get_random_generator(stream="word-substitutions")
 
-        for word in words:
+        def substitute(match: re.Match[str]) -> str:
+            word = match.group(0)
             lower_word = word.lower()
-            if lower_word in self._colloquial_substitutions:
-                if self._deterministic:
-                    # Use the first substitution for deterministic mode
-                    converted_prompt.append(self._colloquial_substitutions[lower_word][0])
-                else:
-                    # Randomly select a substitution for each wordswap
-                    converted_prompt.append(random.choice(self._colloquial_substitutions[lower_word]))
-            else:
+            if lower_word not in self._colloquial_substitutions:
                 # If word not in substitutions, keep it as is
-                converted_prompt.append(word)
+                return word
+            if self._deterministic:
+                # Use the first substitution for deterministic mode
+                return self._colloquial_substitutions[lower_word][0]
+            # Randomly select a substitution for each wordswap
+            return rng.choice(self._colloquial_substitutions[lower_word])
 
-        # Join all words and punctuation with spaces
-        final_prompt = " ".join(converted_prompt)
-
-        # Clean up spaces for final prompt
-        final_prompt = re.sub(r'\s([?.!,\'"])', r"\1", final_prompt)
-        final_prompt = final_prompt.strip()
+        # Replace whole words in place so adjoining punctuation stays attached, then collapse whitespace
+        final_prompt = " ".join(re.sub(r"\w+", substitute, prompt).split())
 
         return ConverterResult(output_text=final_prompt, output_type="text")

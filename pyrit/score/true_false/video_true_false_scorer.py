@@ -2,14 +2,15 @@
 # Licensed under the MIT license.
 
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoreStatus, ScoringExpectation
+from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseScoreAggregator
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 from pyrit.score.video_scorer import VideoHelper
 
 
-class VideoTrueFalseScorer(TrueFalseScorer):
+class VideoTrueFalseScorer(MessageTrueFalseScorer):
     """
     A scorer that processes videos by extracting frames and scoring them using a true/false image scorer.
 
@@ -28,8 +29,8 @@ class VideoTrueFalseScorer(TrueFalseScorer):
     def __init__(
         self,
         *,
-        image_capable_scorer: TrueFalseScorer,
-        audio_scorer: TrueFalseScorer | None = None,
+        image_capable_scorer: MessageTrueFalseScorer,
+        audio_scorer: MessageTrueFalseScorer | None = None,
         num_sampled_frames: int | None = None,
         validator: ScorerPromptValidator | None = None,
         image_objective_template: str | None = VideoHelper._DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,
@@ -91,7 +92,25 @@ class VideoTrueFalseScorer(TrueFalseScorer):
             sub_scorers=sub_scorer_ids,
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    def _get_child_scorers(self) -> tuple[Scorer, ...]:
+        """Return the frame scorer and the optional audio scorer."""
+        image_scorer = self._video_helper.image_scorer
+        return (image_scorer, self.audio_scorer) if self.audio_scorer is not None else (image_scorer,)
+
+    def _get_child_expectations(
+        self, *, expectation: ScoringExpectation | None
+    ) -> tuple[tuple[Scorer, ScoringExpectation | None], ...]:
+        """
+        Prepare the same transformed contexts that frame and audio judges receive.
+
+        Returns:
+            tuple: Child scorers and their effective inputs.
+        """
+        return self._video_helper.get_child_expectations(expectation=expectation, audio_scorer=self.audio_scorer)
+
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score a single video piece by extracting frames and optionally audio, then aggregating their scores.
 
@@ -101,25 +120,31 @@ class VideoTrueFalseScorer(TrueFalseScorer):
 
         Args:
             message_piece: The message piece containing the video.
-            objective: Optional objective description for scoring.
+            expectation: Criteria forwarded to the frame and audio scorers.
 
         Returns:
             List containing a single aggregated score for the video.
         """
-        piece_id = message_piece.id if message_piece.id is not None else message_piece.original_prompt_id
+        objective = expectation.objective if expectation else None
+        piece_id = message_piece.id
 
         # Get scores for all frames and aggregate with OR (True if ANY frame matches)
-        frame_scores = await self._video_helper._score_frames_async(message_piece=message_piece, objective=objective)
+        frame_scores, num_frames = await self._video_helper._score_frames_async(
+            message_piece=message_piece, expectation=expectation
+        )
         frame_result = TrueFalseScoreAggregator.OR(frame_scores)
 
         # Create a Score from the frame aggregation result
         frame_score = Score(
-            score_value=str(frame_result.value).lower(),
+            score_value=str(frame_result.value).lower() if frame_result.value is not None else None,
+            status=ScoreStatus.UNDETERMINED if frame_result.value is None else ScoreStatus.COMPLETE,
             score_value_description=frame_result.description,
             score_type="true_false",
             score_category=frame_result.category,
             score_metadata=frame_result.metadata,
-            score_rationale=f"Frames ({len(frame_scores)}): {frame_result.rationale}",
+            # num_frames, not len(frame_scores): a true/false scorer returns one
+            # score per frame today, but the count should not depend on that.
+            score_rationale=f"Frames ({num_frames}): {frame_result.rationale}",
             scorer_class_identifier=self.get_identifier(),
             message_piece_id=piece_id,
             objective=objective,
@@ -128,7 +153,7 @@ class VideoTrueFalseScorer(TrueFalseScorer):
         # Score audio if audio_scorer is provided
         if self.audio_scorer:
             audio_scores = await self._video_helper._score_video_audio_async(
-                message_piece=message_piece, audio_scorer=self.audio_scorer, objective=objective
+                message_piece=message_piece, audio_scorer=self.audio_scorer, expectation=expectation
             )
             if audio_scores:
                 # AND: both frame and audio must be true
@@ -136,7 +161,8 @@ class VideoTrueFalseScorer(TrueFalseScorer):
                 final_result = TrueFalseScoreAggregator.AND(all_scores)
                 return [
                     Score(
-                        score_value=str(final_result.value).lower(),
+                        score_value=str(final_result.value).lower() if final_result.value is not None else None,
+                        status=ScoreStatus.UNDETERMINED if final_result.value is None else ScoreStatus.COMPLETE,
                         score_value_description=final_result.description,
                         score_type="true_false",
                         score_category=final_result.category,

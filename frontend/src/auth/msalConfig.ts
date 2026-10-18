@@ -24,17 +24,26 @@ export interface AuthConfig {
 }
 
 export async function fetchAuthConfig(): Promise<AuthConfig> {
+  let response: Response
   try {
-    const response = await fetch('/api/auth/config')
-    if (!response.ok) {
-      // Auth endpoint not available — treat as auth disabled
-      return { clientId: '', tenantId: '', allowedGroupIds: '' }
-    }
-    return (await response.json()) as AuthConfig
-  } catch {
-    // Network error (e.g., backend not running yet) — treat as auth disabled
-    return { clientId: '', tenantId: '', allowedGroupIds: '' }
+    response = await fetch('/api/auth/config')
+  } catch (error) {
+    // A network error (e.g., backend not running yet) is a transient
+    // infrastructure failure, not proof that auth is disabled. Surface it so
+    // AuthProvider can show its error state instead of rendering the shell
+    // while protected APIs return 401.
+    const fetchError = new Error(
+      `Failed to reach /api/auth/config: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    // ErrorOptions requires ES2022, while this project targets ES2020.
+    Object.defineProperty(fetchError, 'cause', { value: error })
+    throw fetchError
   }
+  if (!response.ok) {
+    // HTTP-level failures on the config endpoint are equally inconclusive.
+    throw new Error(`/api/auth/config returned ${response.status} ${response.statusText}`)
+  }
+  return (await response.json()) as AuthConfig
 }
 
 export function buildMsalConfig(authConfig: AuthConfig): Configuration {

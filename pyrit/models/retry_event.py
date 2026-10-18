@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
@@ -20,7 +20,7 @@ class RetryEvent(BaseModel):
     attached to AttackResult objects for persistence and REST API exposure.
     """
 
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     attempt_number: int = 0
     function_name: str = ""
     exception_type: str = ""
@@ -28,4 +28,5 @@ class RetryEvent(BaseModel):
     component_role: str = ""
     component_name: str | None = None
     endpoint: str | None = None
+    status_code: int | None = None
     elapsed_seconds: float = 0.0

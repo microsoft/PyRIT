@@ -2,9 +2,11 @@
 # Licensed under the MIT license.
 
 import uuid
+from typing import assert_type
 
 import pytest
 
+from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_dataset import SeedDataset
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
@@ -60,6 +62,29 @@ def test_seed_dataset_with_metadata():
     assert ds.name == "test_ds"
     assert ds.dataset_name == "ds1"
     assert ds.authors == ["author1"]
+
+
+@pytest.mark.parametrize("metadata_key", ["harm_categories", "authors", "groups"])
+@pytest.mark.parametrize(
+    ("defaults", "seed_value", "expected"),
+    [
+        (None, "", []),
+        ([], "", []),
+        (["dataset"], "", ["dataset"]),
+        (None, [""], [""]),
+        (["dataset"], [""], ["dataset", ""]),
+        ([""], "", [""]),
+        ([""], [""], [""]),
+        (["dataset", ""], ["", "seed", "dataset"], ["dataset", "", "seed"]),
+    ],
+)
+def test_seed_dataset_list_metadata_empty_strings(
+    *, metadata_key: str, defaults: list[str] | None, seed_value: str | list[str], expected: list[str]
+) -> None:
+    ds = SeedDataset.model_validate({metadata_key: defaults, "seeds": [{"value": "hello", metadata_key: seed_value}]})
+
+    assert getattr(ds.seeds[0], metadata_key) == expected
+    assert getattr(ds, metadata_key) == defaults
 
 
 def test_seed_dataset_objective_seeds():
@@ -166,3 +191,19 @@ def test_seed_dataset_group_without_group_id():
     p2.prompt_group_id = None
     groups = SeedDataset.group_seed_prompts_by_prompt_group_id([p1, p2])
     assert len(groups) == 2
+
+
+def test_seed_dataset_group_rejects_unsupported_seed_type():
+    with pytest.raises(ValueError, match="Unsupported seed type: Seed"):
+        SeedDataset.group_seed_prompts_by_prompt_group_id([Seed(value="unsupported")])
+
+
+def test_seed_dataset_from_dict_preserves_subclass_type():
+    class CustomSeedDataset(SeedDataset):
+        pass
+
+    ds = CustomSeedDataset.from_dict({"seeds": [{"value": "hello"}]})
+
+    assert_type(ds, CustomSeedDataset)
+    assert type(ds) is CustomSeedDataset
+    assert isinstance(ds.seeds[0], SeedPrompt)

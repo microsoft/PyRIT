@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import pathlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.common.path import DATASETS_PATH
 from pyrit.converter import (
     CharSwapConverter,
@@ -30,8 +32,16 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     CrescendoAttack,
 )
-from pyrit.models import SeedPrompt
+from pyrit.models import (
+    AttackSeedGroup,
+    BoundedDatasetSize,
+    ScenarioDatasetSizeEstimate,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+    SeedPrompt,
+)
 from pyrit.models.parameter import Parameter
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -39,13 +49,20 @@ from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import (
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
+    DatasetConstraintError,
+    DatasetSource,
 )
+from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.core.technique_requirements import (
+    TechniqueRequirements,
+    check_target_compatibility,
+    filter_seed_groups,
+)
 from pyrit.score import (
-    FloatScaleScorer,
     FloatScaleThresholdScorer,
     NumericRange,
     SelfAskGeneralFloatScaleScorer,
@@ -55,10 +72,9 @@ from pyrit.score import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from pyrit.models import AttackSeedGroup
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.score import TrueFalseScorer
+    from pyrit.score import FloatScaleScorer, TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
@@ -287,6 +303,27 @@ _DETERMINISTIC_CONVERTER_BUILDERS: dict[PsychosocialTechnique, Callable[[], Conv
 }
 
 
+def _build_simulated_base_factory(*, harm: _SubHarm, max_turns: int) -> AttackTechniqueFactory:
+    """
+    Build the simulated-conversation base factory for a sub-harm.
+
+    Reads the sub-harm's escalation prompt from disk, so async callers must run it through
+    ``asyncio.to_thread``.
+
+    Args:
+        harm: The sub-harm whose escalation prompt drives the simulated conversation.
+        max_turns: Number of simulated conversation turns.
+
+    Returns:
+        AttackTechniqueFactory: The base factory every converter technique layers onto.
+    """
+    return AttackTechniqueFactory.with_simulated_conversation(
+        name=f"psychosocial_{harm.name}",
+        adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(harm.escalation_prompt_path),
+        num_turns=max_turns,
+    )
+
+
 def _converter_for_technique(technique: PsychosocialTechnique, *, adversarial_chat: PromptTarget) -> Converter | None:
     """
     Map a converter technique to its converter instance.
@@ -333,12 +370,13 @@ class Psychosocial(Scenario):
     (``all`` only) swaps the simulated base for a real ``CrescendoAttack``. One baseline per sub-harm
     is emitted (toggle with ``include_baseline``).
 
-    Dataset selection is bound to the sub-harms: the ``dataset_config`` parameter still tunes
-    ``max_dataset_size`` and sampling, but the dataset names are always the selected sub-harms'
-    datasets (``--dataset-names`` is ignored).
+    Dataset selection is bound to the selected sub-harms. Source caps apply independently,
+    then ``max_total`` caps the combined population while keeping every selected sub-harm.
+    The total must cover each selected sub-harm. Unrelated dataset names are rejected.
     """
 
-    VERSION: int = 3
+    VERSION: int = 6
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:
@@ -414,9 +452,10 @@ class Psychosocial(Scenario):
 
         super().__init__(
             version=self.VERSION,
+            uses_default_adversarial_target=adversarial_chat is None,
             technique_class=PsychosocialTechnique,
             default_dataset_config=DatasetAttackConfiguration(
-                dataset_names=[harm.dataset_name for harm in _SUB_HARMS],
+                sources=[DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS],
             ),
             # No single scenario objective scorer -- each sub-harm scores itself. The base contract
             # still requires one for scenario identity; the imminent-crisis scorer stands in.
@@ -428,60 +467,140 @@ class Psychosocial(Scenario):
         """
         Resolve the ``sub_harm`` run parameter into the ordered list of sub-harm configs.
 
-        Accepts ``None`` / ``"all"`` (both sub-harms) or a single sub-harm name. Order follows
-        ``_SUB_HARMS`` for deterministic results.
+        Accepts ``None`` / ``"all"`` (both sub-harms) or a single sub-harm name. Only sub-harms whose
+        dataset is in the dataset configuration are kept, so selecting a subset of the datasets also
+        narrows the run. Order follows ``_SUB_HARMS`` for deterministic results.
 
         Returns:
             list[_SubHarm]: The selected sub-harms.
 
         Raises:
             ValueError: If an unknown sub-harm name is requested.
+            DatasetConstraintError: If none of the requested sub-harms has its dataset configured.
         """
         requested = self.params.get("sub_harm")
         if not requested or requested == "all":
-            return list(_SUB_HARMS)
-        name = str(requested)
-        if name not in _SUB_HARMS_BY_NAME:
-            raise ValueError(
-                f"Unknown psychosocial sub_harm '{name}'. Valid values: {sorted(_SUB_HARMS_BY_NAME)} (or 'all')."
+            requested_harms = list(_SUB_HARMS)
+        else:
+            name = str(requested)
+            if name not in _SUB_HARMS_BY_NAME:
+                raise ValueError(
+                    f"Unknown psychosocial sub_harm '{name}'. Valid values: {sorted(_SUB_HARMS_BY_NAME)} (or 'all')."
+                )
+            requested_harms = [_SUB_HARMS_BY_NAME[name]]
+        configured = set(self._dataset_config.dataset_names)
+        selected = [harm for harm in requested_harms if harm.dataset_name in configured]
+        if not selected:
+            raise DatasetConstraintError(
+                f"Psychosocial sub_harm '{requested or 'all'}' needs "
+                f"{', '.join(repr(harm.dataset_name) for harm in requested_harms)}, but the selected datasets are "
+                f"{sorted(configured)}."
             )
-        return [_SUB_HARMS_BY_NAME[name]]
+        return selected
+
+    def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
+        config = self._default_dataset_config
+        by_name = {source.name: source for source in config.sources}
+        return config.with_overrides(
+            sources=[
+                by_name.get(harm.dataset_name, DatasetSource(name=harm.dataset_name))
+                for harm in self._selected_sub_harms()
+            ]
+        )
+
+    def get_dataset_options(self) -> ScenarioDatasetOptions:
+        """
+        Describe named datasets allowed for the selected sub-harm parameter.
+
+        Returns:
+            ScenarioDatasetOptions: Parameter-aware source selection capabilities.
+        """
+        return ScenarioDatasetOptions(
+            mode=DatasetSelectionMode.SUBSET,
+            allowed_names=[harm.dataset_name for harm in self._selected_sub_harms()],
+        )
+
+    def _effective_sub_harms(self) -> list[_SubHarm]:
+        return [harm for harm in self._selected_sub_harms() if harm.dataset_name in self._dataset_config.dataset_names]
+
+    def _validate_runtime_configuration(self) -> None:
+        if isinstance(self._dataset_config, CompoundDatasetAttackConfiguration):
+            raise DatasetConstraintError("Psychosocial requires flat sources, not compound children.")
+        if set(self._dataset_config.dataset_names) - set(self.get_dataset_options().allowed_names):
+            raise DatasetConstraintError("Psychosocial sources must match the selected sub-harm datasets.")
+        super()._validate_runtime_configuration()
+        cap = self._dataset_config.max_total
+        if cap != "all" and cap < len(self._effective_sub_harms()):
+            raise DatasetConstraintError(
+                f"Psychosocial max_total ({cap}) must cover every selected sub-harm "
+                f"({len(self._effective_sub_harms())}). Increase the total limit to at least "
+                f"{len(self._effective_sub_harms())}, or select one sub-harm."
+            )
 
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:
         """
-        Hard-bind the dataset names to the selected sub-harms before resolving seeds.
-
-        Forces the dataset names to the selected sub-harms' (so ``--dataset-names`` cannot repoint
-        the scenario at unrelated data) and applies any ``max_dataset_size`` budget *per sub-harm*
-        rather than as one global budget. A single ``DatasetAttackConfiguration`` spends one budget
-        across the union of sub-harm datasets, so a small cap (e.g. ``1``) can starve a sub-harm of
-        every seed; a per-sub-harm compound caps each independently. Any run-time ``filters`` on the
-        active ``dataset_config`` are preserved.
-
-        Args:
-            apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling. On
-                resume the base passes False so the full deterministic dataset is resolved.
+        Apply source caps, then sample the total while keeping every selected sub-harm.
 
         Returns:
-            dict[str, list[AttackSeedGroup]]: Seed groups keyed by originating dataset name.
+            dict[str, list[AttackSeedGroup]]: Selected groups keyed by sub-harm dataset.
         """
-        dataset_names = [harm.dataset_name for harm in self._selected_sub_harms()]
-        per_subharm_cap = self._dataset_config.max_dataset_size
-        filters = self._dataset_config.filters
-        if per_subharm_cap is None:
-            self._dataset_config = DatasetAttackConfiguration(dataset_names=dataset_names, filters=filters)
-        else:
-            rebuilt = CompoundDatasetAttackConfiguration.per_dataset(
-                dataset_names=dataset_names, max_dataset_size=per_subharm_cap, filters=filters
+        populations = await super()._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+        if not apply_sampling:
+            return populations
+        selected = {
+            harm.dataset_name: self._dataset_config._sample_source_groups(
+                name=harm.dataset_name, groups=populations.get(harm.dataset_name, [])
             )
-            # Parent cap = per-sub-harm cap x sub-harm count: each child already caps at the
-            # per-sub-harm budget so the parent never trims the union, yet it stays non-None so the
-            # base still pins the sampled objective subset into the scenario metadata for resume.
-            rebuilt.max_dataset_size = per_subharm_cap * len(dataset_names)
-            self._dataset_config = rebuilt
-        return await super()._resolve_seed_groups_by_dataset_async(apply_sampling=apply_sampling)
+            for harm in self._effective_sub_harms()
+        }
+        return sample_with_coverage(
+            groups_by_dataset=selected,
+            cap=self._dataset_config.max_total,
+            required_keys=list(selected),
+            key=lambda name, _: name,
+        )
+
+    def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
+        """
+        Use the source and total limits applied by seed resolution.
+
+        Returns:
+            ScenarioDatasetSizeEstimate: Combined sub-harm cap or all available finite data.
+        """
+        return self._dataset_config.get_size_budget()
+
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
+        """
+        Estimate the independent sub-harm technique sweeps and per-harm baselines.
+
+        Returns:
+            ScenarioRunSizeEstimate: Combined selected-population budget.
+        """
+        count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
+        technique_count = len(self._scenario_techniques)
+        components = [
+            ScenarioRunSizeComponent(
+                label="Sub-harm technique sweeps",
+                count=count * technique_count,
+            )
+        ]
+        if self._include_baseline:
+            components.append(
+                ScenarioRunSizeComponent(
+                    label="Sub-harm baselines",
+                    count=count,
+                    is_baseline=True,
+                    note="Each selected objective has one baseline with its sub-harm scorer.",
+                )
+            )
+        return ScenarioRunSizeEstimate(
+            total_attack_count=sum(component.count for component in components),
+            components=components,
+            datasets=datasets,
+            note="Each default sub-harm is planned independently; retries and internal turns are excluded.",
+        )
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
@@ -505,17 +624,17 @@ class Psychosocial(Scenario):
             per-sub-harm baselines prepended when enabled.
 
         Raises:
-            ValueError: If no seed groups were loaded for any selected sub-harm.
+            ValueError: If a selected sub-harm has no seed groups.
         """
         # Resolved lazily so a no-arg ``Psychosocial()`` works for registry metadata introspection.
         adversarial_chat = self._adversarial_chat or get_default_adversarial_target()
 
-        sub_harms = self._selected_sub_harms()
+        sub_harms = self._effective_sub_harms()
         techniques = [t for t in context.scenario_techniques if isinstance(t, PsychosocialTechnique)]
         max_turns = int(self.params.get("max_turns", 5))
         seed_groups_by_dataset = context.seed_groups_by_dataset
 
-        if not any(seed_groups_by_dataset.get(harm.dataset_name) for harm in sub_harms):
+        if all(not seed_groups_by_dataset.get(harm.dataset_name) for harm in sub_harms):
             harm_names = ", ".join(f"'{harm.dataset_name}'" for harm in sub_harms)
             raise ValueError(
                 "No seed groups were loaded for any selected psychosocial sub-harm. Ensure the "
@@ -527,8 +646,7 @@ class Psychosocial(Scenario):
         for harm in sub_harms:
             seed_groups = seed_groups_by_dataset.get(harm.dataset_name)
             if not seed_groups:
-                logger.warning(f"No seed groups loaded for dataset '{harm.dataset_name}'; skipping sub-harm.")
-                continue
+                raise ValueError(f"No seed groups loaded for selected sub-harm dataset '{harm.dataset_name}'.")
 
             scorer = self._scorers_by_harm[harm.name]
             scoring_config = AttackScoringConfig(objective_scorer=scorer)
@@ -545,15 +663,34 @@ class Psychosocial(Scenario):
                     )
                 )
 
-            base_factory = AttackTechniqueFactory.with_simulated_conversation(
-                name=f"psychosocial_{harm.name}",
-                adversarial_chat_system_prompt_path=harm.escalation_prompt_path,
-                num_turns=max_turns,
-            )
+            # Building the base factory reads the sub-harm's escalation prompt from disk, so keep
+            # it off the event loop.
+            base_factory = await asyncio.to_thread(_build_simulated_base_factory, harm=harm, max_turns=max_turns)
 
             for technique in techniques:
+                live = technique is PsychosocialTechnique.Crescendo
+                requirements = TechniqueRequirements() if live else base_factory.requirements
+                if not check_target_compatibility(
+                    target=context.objective_target,
+                    attack_class=CrescendoAttack if live else base_factory.attack_class,
+                    requirements=requirements,
+                    technique_name=technique.value,
+                    policy=context.incompatible_technique_policy,
+                ):
+                    continue
+                compatible_groups = filter_seed_groups(
+                    seed_groups=seed_groups,
+                    requirements=requirements.seed_group,
+                    seed_technique=None if live else base_factory.seed_technique,
+                    technique_name=technique.value,
+                    dataset_name=harm.dataset_name,
+                    policy=context.incompatible_technique_policy,
+                )
+                if not compatible_groups:
+                    continue
                 if technique is PsychosocialTechnique.Crescendo:
-                    attack_technique = self._build_crescendo_technique(
+                    attack_technique = await asyncio.to_thread(
+                        self._build_crescendo_technique,
                         harm=harm,
                         objective_target=context.objective_target,
                         adversarial_chat=adversarial_chat,
@@ -561,11 +698,14 @@ class Psychosocial(Scenario):
                         max_turns=max_turns,
                     )
                 else:
-                    converter = _converter_for_technique(technique, adversarial_chat=adversarial_chat)
+                    converter = await run_legacy_sync_async(
+                        _converter_for_technique, technique, adversarial_chat=adversarial_chat
+                    )
                     extra_converters = (
                         ConverterConfiguration.from_converters(converters=[converter]) if converter else None
                     )
-                    attack_technique = base_factory.create(
+                    attack_technique = await run_legacy_sync_async(
+                        base_factory.create,
                         objective_target=context.objective_target,
                         attack_scoring_config=scoring_config,
                         adversarial_chat=adversarial_chat,
@@ -576,7 +716,7 @@ class Psychosocial(Scenario):
                     AtomicAttack(
                         atomic_attack_name=f"{harm.name}_{technique.value}",
                         attack_technique=attack_technique,
-                        seed_groups=list(seed_groups),
+                        seed_groups=compatible_groups,
                         adversarial_chat=adversarial_chat,
                         objective_scorer=scorer,
                         memory_labels=context.memory_labels,

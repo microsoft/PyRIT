@@ -10,6 +10,7 @@ import pytest
 from pyrit.converter import Base64Converter
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
+from pyrit.models.scenario_dataset import DatasetFetchPolicy
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration, DatasetConfiguration
 from pyrit.scenario.garak import Encoding, EncodingTechnique  # type: ignore[ty:unresolved-import]
@@ -62,6 +63,12 @@ def mock_attack_seed_groups(mock_memory_seeds):
 def mock_dataset_config(mock_attack_seed_groups):
     """Create a mock dataset config that returns the seed attack groups."""
     mock_config = MagicMock(spec=EncodingDatasetConfiguration)
+    mock_config.with_overrides.return_value = mock_config
+    mock_config.sources = ()
+    mock_config.max_total = "all"
+    mock_config.max_per_dataset = "all"
+    mock_config.fetch = DatasetFetchPolicy.IF_MISSING
+    mock_config._filters = {}
     mock_config.get_attack_seed_groups_async = AsyncMock(return_value=mock_attack_seed_groups)
     mock_config.dataset_names = ["garak_slur_terms_en", "garak_web_html_js"]
     return mock_config
@@ -103,7 +110,7 @@ class TestEncodingInitialization:
             )
 
             assert scenario.name == "Encoding"
-            assert scenario.VERSION == 2
+            assert scenario.VERSION == 3
 
     def test_init_with_custom_scorer(self, mock_objective_target, mock_objective_scorer, mock_memory_seeds):
         """Test initialization with custom objective scorer."""
@@ -137,7 +144,7 @@ class TestEncodingInitialization:
         # Disable the provider fallback so memory stays empty and the scenario raises.
         scenario = Encoding(objective_scorer=mock_objective_scorer)
 
-        with patch.object(EncodingDatasetConfiguration, "_fetch_dataset_async", new_callable=AsyncMock):
+        with patch.object(DatasetConfiguration, "prepare_async", new_callable=AsyncMock):
             # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed prompts
             scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             with pytest.raises(DatasetConstraintError, match="could not be loaded"):
@@ -456,6 +463,39 @@ class TestEncodingAtomicAttacks:
                 assert isinstance(run.attack_technique.attack, PromptSendingAttack)
                 assert len(run._seed_groups) == len(mock_attack_seed_groups)
 
+    async def test_get_prompt_attacks_with_empty_templates(
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
+    ):
+        """Test that an explicitly empty template list creates only the raw attack."""
+        from unittest.mock import patch
+
+        with patch.object(
+            Encoding,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_attack_seed_groups},
+        ):
+            scenario = Encoding(
+                objective_scorer=mock_objective_scorer,
+                encoding_templates=[],
+            )
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
+
+            attack_runs = scenario._get_prompt_attacks(
+                converters=[Base64Converter()],
+                encoding_name="base64",
+                variant_slug="base64",
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups}),
+            )
+
+            assert [attack.atomic_attack_name for attack in attack_runs] == ["base64_raw"]
+
     async def test_attack_runs_include_objectives(
         self,
         mock_objective_target,
@@ -642,7 +682,7 @@ class TestEncodingDatasetConfigurationBuildAttackGroups:
             max_dataset_size=5,
         )
 
-        assert config._dataset_names == ["garak_slur_terms_en", "garak_web_html_js"]
+        assert config.dataset_names == ["garak_slur_terms_en", "garak_web_html_js"]
         assert config.max_dataset_size == 5
 
 

@@ -5,16 +5,21 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import functools
 import inspect
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, cast, get_args
 
 from pyrit import converter
+from pyrit.common.random_context import get_random_generator, random_execution
 from pyrit.models import ComponentIdentifier, ConverterIdentifier, Identifiable, PromptDataType
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
+    import random
+    from collections.abc import Awaitable, Callable
+
     from pyrit.prompt_target import PromptTarget
 
 
@@ -46,6 +51,9 @@ class Converter(Identifiable):
     - SUPPORTED_OUTPUT_TYPES: tuple of PromptDataType values that the converter produces
 
     These attributes are enforced at class definition time for all non-abstract subclasses.
+    Concrete ``convert_async`` implementations are also wrapped at class definition time so
+    named random streams are scoped to one input. Stochastic subclasses should obtain randomness
+    through ``_get_random_generator`` and store an optional explicit constructor seed in ``_seed``.
     """
 
     #: Tuple of input modalities supported by this converter. Subclasses must override this.
@@ -59,11 +67,11 @@ class Converter(Identifiable):
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     _identifier: ComponentIdentifier | None = None
+    _seed: int | None = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
-        Validate that concrete subclasses define required class attributes
-        and follow the keyword-only ``__init__`` contract.
+        Validate subclass contracts and scope concrete conversions for named randomness.
 
         Args:
             **kwargs: Additional keyword arguments passed to the superclass.
@@ -90,6 +98,34 @@ class Converter(Identifiable):
                     f"{cls.__name__} must define non-empty SUPPORTED_OUTPUT_TYPES tuple. "
                     f"Declare the output modalities this converter produces."
                 )
+
+        convert_async = cast(
+            "Callable[..., Awaitable[ConverterResult]] | None",
+            cls.__dict__.get("convert_async"),
+        )
+        if convert_async and not getattr(convert_async, "__isabstractmethod__", False):
+
+            @functools.wraps(convert_async)
+            async def convert_with_random_context_async(
+                self: Converter,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ConverterResult:
+                namespace = f"{type(self).__module__}.{type(self).__qualname__}"
+                prompt = kwargs.get("prompt")
+                input_type = kwargs.get("input_type", "text")
+                if isinstance(prompt, str) and self._is_conversion_dispatch(prompt):
+                    return await convert_async(self, *args, **kwargs)
+                operation_key = f"{input_type}\x1f{prompt}" if isinstance(prompt, str) else None
+                with random_execution(
+                    namespace=namespace,
+                    seed=self._get_random_seed_override(),
+                    owner=self,
+                    operation_key=operation_key,
+                ):
+                    return await convert_async(self, *args, **kwargs)
+
+            cls.convert_async = cast("Any", convert_with_random_context_async)
 
     def __init__(self, *, converter_target: PromptTarget | None = None) -> None:
         """
@@ -140,12 +176,60 @@ class Converter(Identifiable):
         """
         return output_type in self.SUPPORTED_OUTPUT_TYPES
 
+    def _get_random_generator(self, *, stream: str) -> random.Random:
+        """
+        Return this conversion's generator for a named child stream.
+
+        Args:
+            stream (str): Stable name for the converter's independent random stream.
+
+        Returns:
+            random.Random: An operation-local generator.
+        """
+        return get_random_generator(stream=stream)
+
+    def _get_random_seed_override(self) -> int | None:
+        """
+        Return the explicit seed that replaces the configured root for this converter.
+
+        Stochastic converters that expose a ``seed`` constructor argument store it in
+        ``self._seed``. Subclasses with another seed source can override this method.
+
+        Returns:
+            int | None: The converter-specific seed, or None to inherit the configured root.
+        """
+        return self._seed
+
+    def _is_conversion_dispatch(self, prompt: str) -> bool:
+        """
+        Identify inputs dispatched to separately scoped conversion calls.
+
+        Args:
+            prompt (str): The input prompt.
+
+        Returns:
+            bool: Whether this call delegates selection without transforming the input itself.
+        """
+        return False
+
     async def convert_tokens_async(
-        self, *, prompt: str, input_type: PromptDataType = "text", start_token: str = "⟪", end_token: str = "⟫"
+        self,
+        *,
+        prompt: str,
+        input_type: PromptDataType = "text",
+        start_token: str = "⟪",
+        end_token: str = "⟫",
+        keep_tokens: bool = False,
     ) -> ConverterResult:
         """
-        Convert substrings within a prompt that are enclosed by specified start and end tokens. If there are no tokens
-        present, the entire prompt is converted.
+        Convert innermost marked regions, optionally retaining their delimiters.
+
+        Regions may be empty, span multiple lines, and nest. Each call converts all
+        innermost regions and retains their outer delimiters for later calls. With
+        keep_tokens=True, the selected pairs are retained too. Identical
+        start and end delimiters form flat pairs. Without delimiters, the entire prompt
+        is converted, including non-text inputs. Selected regions require text input
+        and text output. All delimiters are validated before any conversion is invoked.
 
         Args:
             prompt (str): The input prompt containing text to be converted.
@@ -154,37 +238,102 @@ class Converter(Identifiable):
                 relatively distinct.
             end_token (str): The token indicating the end of a substring to be converted. Defaults to "⟫" which is
                 relatively distinct.
+            keep_tokens (bool): Retain each selected pair around its converted text. With no markers,
+                wrap the whole text result. Non-text results are unchanged. Defaults to False.
 
         Returns:
-            str: The prompt with specified substrings converted.
+            ConverterResult: The prompt with specified substrings converted.
 
         Raises:
-            ValueError: If the input is inconsistent.
+            ValueError: If delimiters are empty, regions are malformed, or selected
+                regions cannot be converted from text to text.
         """
+        return await self._convert_token_regions_async(
+            prompt=prompt,
+            input_type=input_type,
+            start_token=start_token,
+            end_token=end_token,
+            keep_tokens=keep_tokens,
+        )
+
+    async def _convert_token_regions_async(
+        self,
+        *,
+        prompt: str,
+        input_type: PromptDataType,
+        start_token: str,
+        end_token: str,
+        keep_tokens: bool,
+        convert_text_async: Callable[[str], Awaitable[ConverterResult]] | None = None,
+    ) -> ConverterResult:
+        if not start_token or not end_token:
+            raise ValueError("Start and end tokens must be non-empty.")
         if input_type != "text" and (start_token in prompt or end_token in prompt):
             raise ValueError("Input type must be text when start or end tokens are present.")
 
-        # Find all matches between start_token and end_token
-        pattern = re.escape(start_token) + "(.*?)" + re.escape(end_token)
-        matches = re.findall(pattern, prompt)
+        spans = self._get_token_spans(prompt=prompt, start_token=start_token, end_token=end_token)
+        if not spans:
+            result = (
+                await convert_text_async(prompt)
+                if convert_text_async
+                else await self.convert_async(prompt=prompt, input_type=input_type)
+            )
+            if keep_tokens and result.output_type == "text":
+                return ConverterResult(output_text=f"{start_token}{result.output_text}{end_token}", output_type="text")
+            return result
 
-        if not matches:
-            # No tokens found, convert the entire prompt
-            return await self.convert_async(prompt=prompt, input_type=input_type)
+        if not self.input_supported("text") or not self.output_supported("text"):
+            raise ValueError("Selected-region conversion requires a converter supporting text input and text output.")
 
-        if prompt.count(start_token) != prompt.count(end_token):
-            raise ValueError("Uneven number of start tokens and end tokens.")
-
-        tasks = [self._replace_text_match_async(match) for match in matches]
+        convert_region_async = convert_text_async or self._replace_text_match_async
+        tasks = [convert_region_async(prompt[start + len(start_token) : end - len(end_token)]) for start, end in spans]
         converted_parts = await asyncio.gather(*tasks)
 
-        for original, converted in zip(matches, converted_parts, strict=False):
-            prompt = prompt.replace(f"{start_token}{original}{end_token}", converted.output_text, 1)
-
-        return ConverterResult(output_text=prompt, output_type="text")
+        parts: list[str] = []
+        previous_end = 0
+        for (start, end), converted in zip(spans, converted_parts, strict=True):
+            text = f"{start_token}{converted.output_text}{end_token}" if keep_tokens else converted.output_text
+            parts.extend((prompt[previous_end:start], text))
+            previous_end = end
+        parts.append(prompt[previous_end:])
+        return ConverterResult(output_text="".join(parts), output_type="text")
 
     async def _replace_text_match_async(self, match: str) -> ConverterResult:
-        return await self.convert_async(prompt=match, input_type="text")
+        result = await self.convert_async(prompt=match, input_type="text")
+        if result.output_type != "text":
+            raise ValueError(f"Selected-region conversion requires text output, but received {result.output_type}.")
+        return result
+
+    def _get_token_spans(self, *, prompt: str, start_token: str, end_token: str) -> list[tuple[int, int]]:
+        """
+        Validate all delimiters and return innermost marked spans in source order.
+
+        Returns:
+            The start and end offsets for each marked region.
+
+        Raises:
+            ValueError: If the marker sequence is unmatched.
+        """
+        tokens = sorted({start_token, end_token}, key=len, reverse=True)
+        pattern = "|".join(re.escape(token) for token in tokens)
+        spans: list[tuple[int, int]] = []
+        open_regions: list[tuple[int, bool]] = []
+        for token in re.finditer(pattern, prompt):
+            is_start = token.group() == start_token and (start_token != end_token or not open_regions)
+            if is_start:
+                if open_regions:
+                    parent_start, _ = open_regions[-1]
+                    open_regions[-1] = (parent_start, True)
+                open_regions.append((token.start(), False))
+            else:
+                if not open_regions:
+                    raise ValueError(f"Unmatched end token at position {token.start()}.")
+                region_start, has_children = open_regions.pop()
+                if not has_children:
+                    spans.append((region_start, token.end()))
+        if open_regions:
+            raise ValueError(f"Unmatched start token at position {open_regions[-1][0]}.")
+        return spans
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -284,6 +433,10 @@ def get_converter_modalities() -> list[tuple[str, list[PromptDataType], list[Pro
 
         # Skip if not a class or not a subclass of Converter
         if not isinstance(converter_class, type) or not issubclass(converter_class, Converter):
+            continue
+
+        # Skip abstract base classes (they cannot be instantiated or used directly)
+        if getattr(converter_class, "__abstractmethods__", None):
             continue
 
         # Read the class attributes

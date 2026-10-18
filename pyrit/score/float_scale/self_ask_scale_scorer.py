@@ -9,14 +9,23 @@ from pyrit.models import (
     ComponentIdentifier,
     JsonSchemaDefinition,
     MessagePiece,
+    Observation,
     Score,
+    ScoringExpectation,
     SeedPrompt,
+    UnvalidatedScore,
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.numeric_scale import NumericRubric
-from pyrit.score.llm_scoring import _run_llm_scoring_async
-from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
+from pyrit.score.llm_scoring import _parse_judgment_observation
+from pyrit.score.observation.execution import _ObservationEvidence
+from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
+from pyrit.score.response_handler import (
+    JsonSchemaResponseHandler,
+    NumericRangeResponseHandler,
+    ResponseHandler,
+)
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
 
@@ -51,7 +60,7 @@ def render_scale_system_prompt(
     )
 
 
-class SelfAskScaleScorer(FloatScaleScorer):
+class SelfAskScaleScorer(MessageFloatScaleScorer):
     """
     A "self-ask" scorer for text scoring on a customizable numeric scale.
 
@@ -108,8 +117,9 @@ class SelfAskScaleScorer(FloatScaleScorer):
         if chat_target is None:
             raise ValueError("A chat_target must be provided.")
 
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
         self._prompt_target = chat_target
+        self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
 
         self._system_prompt, schema = self._resolve_system_prompt(system_prompt)
         self._scale = scale
@@ -117,9 +127,13 @@ class SelfAskScaleScorer(FloatScaleScorer):
         # When the caller does not supply a response handler, the default JSON handler carries the
         # schema (if any) declared by the system prompt and enforces the numeric score contract, so
         # the round-trip forwards the schema to the scoring target. A caller-supplied handler owns
-        # its own response contract.
-        self._response_handler = response_handler or JsonSchemaResponseHandler(
-            response_schema=schema, numeric_value=True
+        # its own wire format.
+        wire_format_handler = response_handler or JsonSchemaResponseHandler(response_schema=schema, numeric_value=True)
+        # Keep score-domain validation in the parser callback so out-of-range values retry.
+        self._response_handler = NumericRangeResponseHandler(
+            response_handler=wire_format_handler,
+            minimum_value=scale.minimum_value,
+            maximum_value=scale.maximum_value,
         )
 
     @classmethod
@@ -192,21 +206,16 @@ class SelfAskScaleScorer(FloatScaleScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
-        Scores the given message_piece using "self-ask" for the chat target.
-
-        Args:
-            message_piece (MessagePiece): The message piece containing the content to be scored.
-                Supports text and non-text types (e.g., image_path). For non-text content,
-                the objective context is sent as a prepended text piece alongside the raw content.
-            objective (str): The objective based on which the content should be scored (the original
-                attacker model's objective).
+        Render the judge request and convert the result.
 
         Returns:
-            list[Score]: The message piece's score.
-                         The score_value is a value from [0,1] that is scaled based on the scorer's scale.
+            list[Score]: The scorer's verdict.
         """
+        objective = expectation.objective if expectation else None
         # For non-text content (images, audio, etc.), send the raw content with its original
         # data type and prepend the objective as a text piece. This allows multimodal LLMs
         # to evaluate the content directly (e.g., viewing an image to assess it).
@@ -220,28 +229,61 @@ class SelfAskScaleScorer(FloatScaleScorer):
             scoring_value = f"objective: {objective}\nresponse: {message_piece.converted_value}"
             scoring_data_type = "text"
 
-        unvalidated_score = await _run_llm_scoring_async(
-            chat_target=self._prompt_target,
-            system_prompt=self._system_prompt,
+        unvalidated_score = await self._judge.judge_async(
             response_handler=self._response_handler,
-            value=scoring_value,
-            data_type=scoring_data_type,
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            prepended_text=prepended_text,
-            category=self._scale.category,
-            objective=objective,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=self._system_prompt,
+                    value=scoring_value,
+                    data_type=scoring_data_type,
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                    prepended_text=prepended_text,
+                    category=self._scale.category,
+                )
+            ),
         )
 
-        score = unvalidated_score.to_score(
+        return [self._convert_score(unvalidated_score)]
+
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared scale conversion contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained numeric-scale judgment evidence.
+
+        Returns:
+            list[Score]: The normalized replay score.
+        """
+        unvalidated = _parse_judgment_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
+            expectation=expectation,
+            category=self._scale.category,
+        )
+        return [self._convert_score(unvalidated)]
+
+    def _convert_score(self, unvalidated: UnvalidatedScore) -> Score:
+        return unvalidated.to_score(
             score_value=str(
                 self.scale_value_float(
-                    float(unvalidated_score.raw_score_value),
+                    float(unvalidated.raw_score_value),
                     self._scale.minimum_value,
                     self._scale.maximum_value,
                 )
             ),
             score_type="float_scale",
         )
-
-        return [score]

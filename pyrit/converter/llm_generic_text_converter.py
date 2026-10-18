@@ -154,9 +154,10 @@ class LLMGenericTextConverter(Converter):
 
         if self._system_prompt_template:
             system_prompt = self._system_prompt_template.render_template_value(**kwargs)
-            self._converter_target.set_system_prompt(
-                system_prompt=system_prompt,
-                conversation_id=conversation_id,
+            (
+                await self._converter_target.set_system_prompt_async(
+                    system_prompt=system_prompt, conversation_id=conversation_id
+                )
             )
 
         converted_prompt = prompt

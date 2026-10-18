@@ -80,7 +80,7 @@ def sample_attack_result() -> AttackResult:
         outcome=AttackOutcome.SUCCESS,
         outcome_reason="Test completed successfully",
     )
-    result.last_score = mock_score
+    result.automated_score = mock_score
     return result
 
 
@@ -205,6 +205,17 @@ class TestFairnessBiasBenchmark:
         assert "Give the engineer a first and last name" in formatted_prompt
         assert "use pronouns to refer to the engineer" in formatted_prompt
 
+    async def test_format_story_prompt_separates_sentences(self, mock_prompt_target: MagicMock) -> None:
+        """The three sentences must not glue together at the f-string joins (#3226)."""
+        benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+
+        formatted_prompt = benchmark._format_story_prompt(subject="engineer", story_type="biography")
+
+        assert "engineer. Give the engineer" in formatted_prompt
+        assert "in the first line of the text and use pronouns" in formatted_prompt
+        assert ".G" not in formatted_prompt
+        assert "textand" not in formatted_prompt
+
     @pytest.mark.skipif(not is_spacy_installed(), reason="spacy is not installed")
     async def test_extract_name_successful(self, mock_prompt_target: MagicMock) -> None:
         """Test successful name extraction."""
@@ -256,7 +267,7 @@ class TestFairnessBiasBenchmark:
 
             with patch("pyrit.executor.benchmark.fairness_bias.CentralMemory") as mock_memory_class:
                 mock_memory_instance = MagicMock()
-                mock_memory_instance.get_conversation_messages.return_value = mock_conversation_pieces
+                mock_memory_instance.get_conversation_messages_async = AsyncMock(return_value=mock_conversation_pieces)
                 mock_memory_class.get_memory_instance.return_value = mock_memory_instance
 
                 benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
@@ -387,7 +398,7 @@ class TestFairnessBiasBenchmarkExecuteAsync:
 
             with patch("pyrit.executor.benchmark.fairness_bias.CentralMemory") as mock_memory_class:
                 mock_memory_instance = MagicMock()
-                mock_memory_instance.get_conversation_messages.return_value = mock_conversation_pieces
+                mock_memory_instance.get_conversation_messages_async = AsyncMock(return_value=mock_conversation_pieces)
                 mock_memory_class.get_memory_instance.return_value = mock_memory_instance
 
                 benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
@@ -416,7 +427,7 @@ class TestFairnessBiasBenchmarkExecuteAsync:
 
             with patch("pyrit.executor.benchmark.fairness_bias.CentralMemory") as mock_memory_class:
                 mock_memory_instance = MagicMock()
-                mock_memory_instance.get_conversation_messages.return_value = mock_conversation_pieces
+                mock_memory_instance.get_conversation_messages_async = AsyncMock(return_value=mock_conversation_pieces)
                 mock_memory_class.get_memory_instance.return_value = mock_memory_instance
 
                 benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
@@ -454,7 +465,7 @@ class TestFairnessBiasBenchmarkExecuteAsync:
 
             with patch("pyrit.executor.benchmark.fairness_bias.CentralMemory") as mock_memory_class:
                 mock_memory_instance = MagicMock()
-                mock_memory_instance.get_conversation_messages.return_value = mock_conversation_pieces
+                mock_memory_instance.get_conversation_messages_async = AsyncMock(return_value=mock_conversation_pieces)
                 mock_memory_class.get_memory_instance.return_value = mock_memory_instance
 
                 benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
@@ -508,7 +519,7 @@ class TestFairnessBiasBenchmarkIntegration:
 
             with patch("pyrit.executor.benchmark.fairness_bias.CentralMemory") as mock_memory_class:
                 mock_memory_instance = MagicMock()
-                mock_memory_instance.get_conversation_messages.return_value = mock_conversation_pieces
+                mock_memory_instance.get_conversation_messages_async = AsyncMock(return_value=mock_conversation_pieces)
                 mock_memory_class.get_memory_instance.return_value = mock_memory_instance
 
                 benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
@@ -550,7 +561,7 @@ class TestFairnessBiasBenchmarkIntegration:
 
             with patch("pyrit.executor.benchmark.fairness_bias.CentralMemory") as mock_memory_class:
                 mock_memory_instance = MagicMock()
-                mock_memory_instance.get_conversation_messages.return_value = mock_conversation_pieces
+                mock_memory_instance.get_conversation_messages_async = AsyncMock(return_value=mock_conversation_pieces)
                 mock_memory_class.get_memory_instance.return_value = mock_memory_instance
 
                 benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)

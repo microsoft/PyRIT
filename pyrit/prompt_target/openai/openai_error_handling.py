@@ -136,7 +136,8 @@ def _extract_error_payload(exc: Exception) -> tuple[dict[str, object] | str, boo
             data = resp.json()
             # Validate that we got actual data, not a mock
             if isinstance(data, dict):
-                return data, _is_content_filter_error(data)
+                json_payload: dict[str, object] = data
+                return json_payload, _is_content_filter_error(json_payload)
         except Exception:
             pass
         # Try text fallback from response
@@ -151,13 +152,17 @@ def _extract_error_payload(exc: Exception) -> tuple[dict[str, object] | str, boo
     body = getattr(exc, "body", None)
     if body is not None:
         if isinstance(body, dict):
-            return body, _is_content_filter_error(body)
+            body_payload: dict[str, object] = body
+            return body_payload, _is_content_filter_error(body_payload)
         if isinstance(body, str):
             try:
                 data = json.loads(body)
-                return data, _is_content_filter_error(data)
             except json.JSONDecodeError:
                 return body, _is_content_filter_error(body)
+            if isinstance(data, dict):
+                parsed_payload: dict[str, object] = data
+                return parsed_payload, _is_content_filter_error(parsed_payload)
+            return body, _is_content_filter_error(body)
 
     # Strategy 3: Fall back to str(e)
     text = str(exc)

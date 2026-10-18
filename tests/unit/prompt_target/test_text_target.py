@@ -94,3 +94,10 @@ async def test_cleanup_target_does_nothing():
     target = TextTarget(text_stream=io.StringIO())
     # Should not raise
     await target.cleanup_target_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_reset_conversation_does_nothing_for_stateless_target():
+    target = TextTarget(text_stream=io.StringIO())
+    # A target that keeps no per-conversation state inherits the base no-op.
+    await target.reset_conversation_async(conversation_id="some-conversation-id")

@@ -13,7 +13,11 @@ import httpx
 import websockets
 from websockets.exceptions import InvalidStatus
 
-from pyrit.auth import CopilotAuthenticator, ManualCopilotAuthenticator
+from pyrit.auth import (
+    BrowserSessionCopilotAuthenticator,
+    CopilotAuthenticator,
+    ManualCopilotAuthenticator,
+)
 from pyrit.common import get_mime_type
 from pyrit.exceptions import (
     EmptyResponseException,
@@ -24,11 +28,13 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    RequestTraceContext,
     construct_response_from_request,
 )
 from pyrit.prompt_target import PromptTarget, limit_requests_per_minute
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -53,19 +59,28 @@ class WebSocketCopilotTarget(PromptTarget):
     A WebSocket-based prompt target for integrating with Microsoft Copilot.
 
     This class facilitates communication with Microsoft Copilot over a WebSocket connection.
-    Authentication can be handled in two ways:
+    Authentication can be handled in three ways:
 
-    1. **Automated (default)**: Via ``CopilotAuthenticator``, which uses Playwright to automate
-       browser login and obtain the required access tokens. Requires ``COPILOT_USERNAME`` and
-       ``COPILOT_PASSWORD`` environment variables as well as Playwright installed.
+    1. **Credential automation (default)**: ``CopilotAuthenticator`` reads
+        ``COPILOT_USERNAME`` and ``COPILOT_PASSWORD``, automates the login form with
+        Playwright, and caches the captured token.
 
-    2. **Manual**: Via ``ManualCopilotAuthenticator``, which accepts a pre-obtained access token.
+    2. **Interactive browser session**: ``BrowserSessionCopilotAuthenticator`` opens
+        a persistent Edge profile for user-driven sign-in, including MFA and
+        Conditional Access. It keeps captured tokens in memory and refreshes them
+        through the retained browser session.
+
+    3. **Manual**: Via ``ManualCopilotAuthenticator``, which accepts a pre-obtained access token.
        This is useful for situations where browser automation is not possible.
 
     Once authenticated, the target supports multi-turn conversations through server-side
     state management. For each PyRIT conversation, it automatically generates consistent
     ``session_id`` and ``conversation_id`` values, enabling Copilot to preserve conversational
     context across multiple turns.
+
+    Request tracing is off by default. With ``TargetTraceConfig(enabled=True)``, each send records
+    a fresh trace context, carries its trace ID in the prompt payload's ``traceId`` field, and sends
+    the ``traceparent`` header on the WebSocket handshake.
 
     Because conversation state is managed entirely on the Copilot server, this target does
     not resend conversation history with each request and does not support programmatic
@@ -95,27 +110,36 @@ class WebSocketCopilotTarget(PromptTarget):
     def __init__(
         self,
         *,
-        websocket_base_url: str = "wss://substrate.office.com/m365Copilot/Chathub",
+        websocket_base_url: str = "wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub",
         max_requests_per_minute: int | None = None,
         model_name: str = "copilot",
         response_timeout_seconds: int = RESPONSE_TIMEOUT_SECONDS,
-        authenticator: CopilotAuthenticator | ManualCopilotAuthenticator | None = None,
+        authenticator: (
+            BrowserSessionCopilotAuthenticator | CopilotAuthenticator | ManualCopilotAuthenticator | None
+        ) = None,
         custom_configuration: TargetConfiguration | None = None,
+        trace_config: TargetTraceConfig | None = None,
     ) -> None:
         """
         Initialize the WebSocketCopilotTarget.
 
         Args:
             websocket_base_url (str): Base URL for the Copilot WebSocket endpoint.
-                Defaults to ``wss://substrate.office.com/m365Copilot/Chathub``.
+                Defaults to ``wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub``.
             max_requests_per_minute (int | None): Maximum number of requests per minute.
             model_name (str): The model name. Defaults to "copilot".
-            response_timeout_seconds (int): Timeout for receiving responses in seconds. Defaults to 60s.
-            authenticator (CopilotAuthenticator | ManualCopilotAuthenticator | None): Authenticator
-                instance. Supports both ``CopilotAuthenticator`` and ``ManualCopilotAuthenticator``.
-                If None, a new ``CopilotAuthenticator`` instance will be created with default settings.
+            response_timeout_seconds (int): Timeout in seconds for each receive loop. The user-response
+                loop shares one overall budget across streamed messages rather than resetting between
+                messages. The handshake has its own budget. Defaults to 60s.
+            authenticator (Authenticator | None): Copilot authentication strategy. Supported
+                implementations are ``BrowserSessionCopilotAuthenticator``,
+                ``CopilotAuthenticator``, and ``ManualCopilotAuthenticator``. If None, a new
+                ``CopilotAuthenticator`` is created.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+            trace_config (TargetTraceConfig | None): Request tracing configuration. Tracing is
+                disabled by default. Enable it only for an endpoint that is known to accept the
+                propagated context.
 
         Raises:
             ValueError: If ``response_timeout_seconds`` is not a positive integer.
@@ -139,6 +163,7 @@ class WebSocketCopilotTarget(PromptTarget):
             endpoint=self._websocket_base_url,
             model_name=model_name,
             custom_configuration=custom_configuration,
+            trace_config=trace_config,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -367,6 +392,7 @@ class WebSocketCopilotTarget(PromptTarget):
         session_id: str,
         copilot_conversation_id: str,
         is_start_of_session: bool,
+        trace_context: RequestTraceContext | None = None,
     ) -> dict[str, Any]:
         """
         Construct the prompt message payload for Copilot WebSocket API.
@@ -379,11 +405,14 @@ class WebSocketCopilotTarget(PromptTarget):
             session_id (str): Copilot session identifier.
             copilot_conversation_id (str): Copilot conversation identifier.
             is_start_of_session (bool): Whether this is the first message in the conversation.
+            trace_context (RequestTraceContext | None): The recorded request trace context. When
+                present, its trace ID is sent as the payload's ``traceId``.
 
         Returns:
             dict: The complete message payload ready to be sent via WebSocket.
         """
-        request_id = trace_id = uuid.uuid4().hex
+        request_id = uuid.uuid4().hex
+        trace_id = trace_context.trace_id if trace_context else request_id
 
         text_parts: list[str] = []
         message_annotations: list[dict[str, Any]] = []
@@ -483,24 +512,29 @@ class WebSocketCopilotTarget(PromptTarget):
         session_id: str,
         copilot_conversation_id: str,
         is_start_of_session: bool,
+        trace_context: RequestTraceContext | None = None,
     ) -> str:
         """
         Establish WebSocket connection, send prompt, and await response.
 
         The method polls for messages, ignoring PARTIAL_RESPONSE streaming updates
         until it receives either FINAL_CONTENT (success), STREAM_END, or UNKNOWN (error).
+        Each input has one receive timeout budget; streaming messages do not reset the
+        response deadline.
 
         Args:
             message_pieces (list[MessagePiece]): List of message pieces containing text and/or images.
             session_id (str): Copilot session identifier.
             copilot_conversation_id (str): Copilot conversation identifier.
             is_start_of_session (bool): Whether this is the first message in the conversation.
+            trace_context (RequestTraceContext | None): The recorded request trace context. When
+                present, it is sent in the payload and as the handshake ``traceparent`` header.
 
         Returns:
             str: The final response text from Copilot.
 
         Raises:
-            TimeoutError: If no response received within the specified timeout period.
+            TimeoutError: If receiving a complete response exceeds the overall timeout period.
             RuntimeError: If WebSocket connection closes unexpectedly, protocol violation occurs,
                 or maximum message iterations exceeded.
         """
@@ -515,73 +549,82 @@ class WebSocketCopilotTarget(PromptTarget):
                 session_id=session_id,
                 copilot_conversation_id=copilot_conversation_id,
                 is_start_of_session=is_start_of_session,
+                trace_context=trace_context,
             ),
         ]
         response = ""
+        connect_options: dict[str, Any] = {}
+        if trace_context:
+            connect_options["additional_headers"] = {"traceparent": trace_context.traceparent}
 
         async with websockets.connect(
             websocket_url,
             open_timeout=self.CONNECTION_TIMEOUT_SECONDS,
             close_timeout=self.CONNECTION_TIMEOUT_SECONDS,
+            **connect_options,
         ) as websocket:
             for input_msg in inputs:
                 payload = self._dict_to_websocket(input_msg)
-                await websocket.send(payload)
-
                 is_user_input = input_msg.get("type") == CopilotMessageType.USER_PROMPT
+                await websocket.send(payload)
 
                 max_message_iterations = 1000
                 iteration_count = 0
                 stop_polling = False
+                timeout_message = (
+                    f"Timed out waiting for Copilot response after {self._response_timeout_seconds} seconds."
+                )
+                timeout_scope = asyncio.timeout(self._response_timeout_seconds)
 
-                while not stop_polling:
-                    # Prevent infinite loops (e.g. if Copilot somehow never sends a terminating message)
-                    iteration_count += 1
-                    if iteration_count > max_message_iterations:
-                        raise RuntimeError(
-                            f"Exceeded maximum message iterations ({max_message_iterations}) "
-                            "while waiting for Copilot response."
-                        )
+                try:
+                    async with timeout_scope:
+                        while not stop_polling:
+                            # Prevent infinite loops (e.g. if Copilot somehow never sends a terminating message)
+                            iteration_count += 1
+                            if iteration_count > max_message_iterations:
+                                raise RuntimeError(
+                                    f"Exceeded maximum message iterations ({max_message_iterations}) "
+                                    "while waiting for Copilot response."
+                                )
 
-                    try:
-                        raw_message = await asyncio.wait_for(
-                            websocket.recv(),
-                            timeout=self._response_timeout_seconds,
-                        )
-                    except asyncio.TimeoutError:
-                        raise TimeoutError(
-                            f"Timed out waiting for Copilot response after {self._response_timeout_seconds} seconds."
-                        ) from None
+                            try:
+                                raw_message = await websocket.recv()
+                            except TimeoutError:
+                                raise TimeoutError(timeout_message) from None
 
-                    if raw_message is None:
-                        raise RuntimeError(
-                            "WebSocket connection closed unexpectedly: received None from websocket.recv()"
-                        )
+                            if raw_message is None:
+                                raise RuntimeError(
+                                    "WebSocket connection closed unexpectedly: received None from websocket.recv()"
+                                )
 
-                    message_str = raw_message if isinstance(raw_message, str) else raw_message.decode("utf-8")
-                    parsed_messages = self._parse_raw_message(message_str)
+                            message_str = raw_message if isinstance(raw_message, str) else raw_message.decode("utf-8")
+                            parsed_messages = self._parse_raw_message(message_str)
 
-                    for msg_type, content in parsed_messages:
-                        if msg_type in (
-                            CopilotMessageType.UNKNOWN,
-                            CopilotMessageType.FINAL_CONTENT,
-                            CopilotMessageType.STREAM_END,
-                        ):
-                            stop_polling = True
-                            # Not breaking here to process all messages in this batch,
-                            # possibly including FINAL_CONTENT
+                            for msg_type, content in parsed_messages:
+                                if msg_type in (
+                                    CopilotMessageType.UNKNOWN,
+                                    CopilotMessageType.FINAL_CONTENT,
+                                    CopilotMessageType.STREAM_END,
+                                ):
+                                    stop_polling = True
+                                    # Not breaking here to process all messages in this batch,
+                                    # possibly including FINAL_CONTENT
 
-                            if msg_type == CopilotMessageType.FINAL_CONTENT:
-                                response = content
-                            elif msg_type == CopilotMessageType.UNKNOWN:
-                                logger.debug("Received unknown or empty message type.")
+                                    if msg_type == CopilotMessageType.FINAL_CONTENT:
+                                        response = content
+                                    elif msg_type == CopilotMessageType.UNKNOWN:
+                                        logger.debug("Received unknown or empty message type.")
 
-                        # PING is Copilot's acknowledgment of the protocol handshake (first message in inputs[])
-                        # It should arrive after the handshake, not after a user prompt
-                        # If we're processing a user prompt and receive PING, something is wrong - ignore it
-                        # and keep polling for the actual FINAL_CONTENT response
-                        elif msg_type == CopilotMessageType.PING and not is_user_input:
-                            stop_polling = True
+                                # PING is Copilot's acknowledgment of the protocol handshake (first message in inputs[])
+                                # It should arrive after the handshake, not after a user prompt
+                                # If we're processing a user prompt and receive PING, something is wrong - ignore it
+                                # and keep polling for the actual FINAL_CONTENT response
+                                elif msg_type == CopilotMessageType.PING and not is_user_input:
+                                    stop_polling = True
+                except TimeoutError:
+                    if timeout_scope.expired():
+                        raise TimeoutError(timeout_message) from None
+                    raise
 
             return response
 
@@ -608,7 +651,7 @@ class WebSocketCopilotTarget(PromptTarget):
                         f"Detected MIME type: {mime_type}."
                     )
 
-    def _is_start_of_session(self, *, conversation_id: str) -> bool:
+    async def _is_start_of_session_async(self, *, conversation_id: str) -> bool:
         """
         Determine if this is the first message in a PyRIT conversation.
 
@@ -621,7 +664,7 @@ class WebSocketCopilotTarget(PromptTarget):
         Returns:
             bool: True if no prior messages exist in this conversation, False otherwise.
         """
-        conversation_history = self._memory.get_conversation_messages(conversation_id=conversation_id)
+        conversation_history = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
         return len(conversation_history) == 0
 
     def _generate_consistent_copilot_ids(self, *, pyrit_conversation_id: str) -> tuple[str, str]:
@@ -644,8 +687,8 @@ class WebSocketCopilotTarget(PromptTarget):
 
         return session_id, copilot_conversation_id
 
-    @limit_requests_per_minute
     @pyrit_target_retry
+    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to Microsoft Copilot using WebSocket.
@@ -673,7 +716,7 @@ class WebSocketCopilotTarget(PromptTarget):
         pyrit_conversation_id = message.message_pieces[0].conversation_id
         if not pyrit_conversation_id:
             raise ValueError("WebSocketCopilotTarget requires a conversation_id on the message being sent.")
-        is_start_of_session = self._is_start_of_session(conversation_id=pyrit_conversation_id)
+        is_start_of_session = await self._is_start_of_session_async(conversation_id=pyrit_conversation_id)
 
         session_id, copilot_conversation_id = self._generate_consistent_copilot_ids(
             pyrit_conversation_id=pyrit_conversation_id
@@ -691,6 +734,7 @@ class WebSocketCopilotTarget(PromptTarget):
                 session_id=session_id,
                 copilot_conversation_id=copilot_conversation_id,
                 is_start_of_session=is_start_of_session,
+                trace_context=RequestTraceContext.from_metadata(message.get_piece().prompt_metadata),
             )
 
             if not response_text or not response_text.strip():

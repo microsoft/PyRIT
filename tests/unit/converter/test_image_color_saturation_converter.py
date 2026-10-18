@@ -53,7 +53,7 @@ def test_image_color_saturation_converter_initialization_output_format_validatio
 def test_image_color_saturation_converter_initialization_level_validation():
     """Test validation of level parameter."""
     for invalid_level in [-0.1, -1.0, -100.0]:
-        with pytest.raises(ValueError, match="Level must be non-negative"):
+        with pytest.raises(ValueError, match="Level must be finite and non-negative"):
             ImageColorSaturationConverter(level=invalid_level)
 
     for valid_level in [0.0, 0.5, 1.0, 2.0, 10.0]:
@@ -213,3 +213,54 @@ async def test_image_color_saturation_converter_output_format_fallback():
         mock_serializer.read_data_async.return_value = img_bytes
         await converter.convert_async(prompt="test.tiff", input_type="image_path")
         assert mock_serializer.file_extension == "jpeg"
+
+
+@pytest.mark.parametrize("level", [float("nan"), float("inf"), float("-inf")])
+def test_invalid_level_non_finite(level: float) -> None:
+    """Non-finite saturation levels should fail during converter construction."""
+    with pytest.raises(ValueError, match="Level must be finite"):
+        ImageColorSaturationConverter(level=level)
+
+
+@pytest.mark.parametrize("mode", ["P", "1", "I;16", "L", "LA"])
+def test_image_color_saturation_converter_handles_non_rgb_png_modes(mode: str) -> None:
+    converter = ImageColorSaturationConverter(level=0.5)
+
+    adjusted_io, output_format = converter._transform_image(Image.new(mode, (40, 30)), "PNG")
+
+    assert output_format == "PNG"
+    assert Image.open(adjusted_io).size == (40, 30)
+
+
+@pytest.mark.parametrize(
+    "mode, transparency, expected_alpha",
+    [
+        ("P", 0, [0, 255, 255]),
+        ("P", bytes([0, 128, 255]), [0, 128, 255]),
+        ("LA", None, [0, 128, 255]),
+        ("RGBA", None, [0, 128, 255]),
+    ],
+)
+@pytest.mark.parametrize("level", [0.0, 0.5, 2.0])
+def test_image_color_saturation_converter_preserves_png_alpha(
+    *, mode: str, transparency: int | bytes | None, expected_alpha: list[int], level: float
+) -> None:
+    image = Image.new(mode, (3, 1))
+    if mode == "P":
+        image.putpalette([200, 40, 20, 40, 200, 20, 40, 20, 200])
+        image.putdata([0, 1, 2])
+        image.info["transparency"] = transparency
+    else:
+        image.putdata([(60, alpha) if mode == "LA" else (200, 40, 20, alpha) for alpha in expected_alpha])
+    image_bytes = BytesIO()
+    image.save(image_bytes, format="PNG")
+    converter = ImageColorSaturationConverter(level=level)
+
+    with Image.open(image_bytes) as source:
+        adjusted_io, output_format = converter._transform_image(source, "PNG")
+
+    assert output_format == "PNG"
+    with Image.open(adjusted_io) as adjusted:
+        assert adjusted.size == (3, 1)
+        assert adjusted.mode in ("LA", "RGBA")
+        assert adjusted.getchannel("A").tobytes() == bytes(expected_alpha)

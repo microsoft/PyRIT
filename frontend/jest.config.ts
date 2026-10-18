@@ -52,10 +52,10 @@ const config: Config = {
   testPathIgnorePatterns: ["/node_modules/", "/dist/", "/e2e/"],
   // By default Jest never transforms node_modules. react-markdown and its
   // remark/micromark/unified/mdast/hast/unist dependencies are ESM-only, as are
-  // react-router and its cookie-es dependency, so they must be transformed.
-  // Everything else in node_modules stays ignored.
+  // react-router and its cookie-es and @remix-run/route-pattern dependencies.
+  // They must be transformed; everything else in node_modules stays ignored.
   transformIgnorePatterns: [
-    "/node_modules/(?!(@fluentui|axios|react-markdown|react-router|cookie-es|remark-.*|rehype-.*|micromark.*|mdast-.*|hast-.*|unist-.*|unified|bail|trough|vfile.*|is-plain-obj|trim-lines|property-information|comma-separated-tokens|space-separated-tokens|decode-named-character-reference|character-entities.*|html-url-attributes|devlop|zwitch|longest-streak|markdown-table|ccount|escape-string-regexp|estree-util-.*|hastscript|web-namespaces|stringify-entities|inline-style-parser|style-to-object)/)",
+    "/node_modules/(?!(@fluentui|axios|react-markdown|react-router|@remix-run/route-pattern|cookie-es|remark-.*|rehype-.*|micromark.*|mdast-.*|hast-.*|unist-.*|unified|bail|trough|vfile.*|is-plain-obj|trim-lines|property-information|comma-separated-tokens|space-separated-tokens|decode-named-character-reference|character-entities.*|html-url-attributes|devlop|zwitch|longest-streak|markdown-table|ccount|escape-string-regexp|estree-util-.*|hastscript|web-namespaces|stringify-entities|inline-style-parser|style-to-object)/)",
   ],
   globals: {},
 };

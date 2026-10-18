@@ -2,8 +2,10 @@
 # Licensed under the MIT license.
 
 
+import re
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,6 +16,21 @@ from reportlab.pdfgen import canvas
 from pyrit.converter import ConverterResult, PDFConverter
 from pyrit.memory import DataTypeSerializer
 from pyrit.models import SeedPrompt
+from pyrit.registry import ConverterRegistry
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("prompt", [None, 123, {"prompt": "hello"}])
+def test_prepare_content_rejects_non_text_without_template(prompt):
+    with pytest.raises(ValueError, match="Prompt must be a string"):
+        PDFConverter()._prepare_content(prompt)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("prompt", [{"prompt": "hello"}, "{'prompt': 'hello'}"])
+def test_prepare_content_accepts_raw_and_serialized_template_data(prompt):
+    template = SeedPrompt(value="Input: {{ prompt }}", data_type="text", parameters=["prompt"])
+    assert PDFConverter(prompt_template=template)._prepare_content(prompt) == "Input: hello"
 
 
 @pytest.fixture
@@ -178,6 +195,7 @@ def mock_pdf_path(tmp_path):
     return pdf_path
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_injection_into_mock_pdf(mock_pdf_path):
     """Test injecting text into a generic mock PDF."""
     # Define injection items
@@ -213,6 +231,7 @@ async def test_injection_into_mock_pdf(mock_pdf_path):
     modified_pdf_path.unlink()  # Clean up after the test
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_multiple_injections_into_mock_pdf(mock_pdf_path):
     """Test injecting text into multiple pages of a generic mock PDF."""
     # Define multiple injection items
@@ -360,6 +379,7 @@ async def test_empty_injection_items(mock_pdf_path):
         await converter.convert_async(prompt="")
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_injection_items_non_existent_page_number(mock_pdf_path):
     """
     Test the PDFConverter's handling of injection items with a non-existent page number.
@@ -394,6 +414,7 @@ async def test_injection_items_non_existent_page_number(mock_pdf_path):
     modified_pdf_path.unlink()
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_non_standard_font_usage():
     """
     Test the ability to use a non-standard font (Times) in PDF generation.
@@ -422,6 +443,7 @@ async def test_non_standard_font_usage():
     output_path.unlink()
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_injection_on_last_page(mock_pdf_path):
     """
     Test injecting text on the last page of a multi-page PDF
@@ -555,3 +577,158 @@ async def test_existing_pdf_output_preserves_source_stem(sqlite_instance):
     suffix = "_Jonathon_Sanchez.pdf"
     assert output_name.endswith(suffix)
     assert output_name[: -len(suffix)].isdigit()
+
+
+_FILL_COLOR_OP = re.compile(rb"([\d.]+) ([\d.]+) ([\d.]+) rg")
+
+
+def _page_fill_colors(pdf_path: Path) -> list[set[tuple[int, int, int]]]:
+    """Return the RGB fill colors (0-255) each page's content stream sets."""
+    reader = PdfReader(pdf_path)
+    return [
+        {
+            (round(float(red) * 255), round(float(green) * 255), round(float(blue) * 255))
+            for red, green, blue in _FILL_COLOR_OP.findall(page.get_contents().get_data())
+        }
+        for page in reader.pages
+    ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("font_color", "expected"),
+    [(None, (0, 0, 0)), ((255, 0, 0), (255, 0, 0)), ((255, 255, 255), (255, 255, 255))],
+)
+async def test_convert_async_generated_pdf_uses_font_color_on_every_page_async(
+    *, font_color: tuple[int, int, int] | None, expected: tuple[int, int, int]
+) -> None:
+    converter = PDFConverter(font_color=font_color)
+
+    result = await converter.convert_async(prompt="\n".join(f"line {index}" for index in range(120)))
+
+    page_colors = _page_fill_colors(Path(result.output_text))
+    assert len(page_colors) > 1
+    assert all(colors == {expected} for colors in page_colors)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("converter_color", "item_color", "expected"),
+    [
+        (None, None, (255, 255, 255)),
+        ((0, 0, 255), None, (0, 0, 255)),
+        ((0, 0, 255), (255, 0, 0), (255, 0, 0)),
+        (None, (255, 0, 0), (255, 0, 0)),
+    ],
+)
+async def test_convert_async_injected_text_color_async(
+    *,
+    mock_pdf_path: Path,
+    converter_color: tuple[int, int, int] | None,
+    item_color: tuple[int, int, int] | None,
+    expected: tuple[int, int, int],
+) -> None:
+    item: dict[str, Any] = {"page": 0, "x": 50, "y": 700, "text": "Injected Text"}
+    if item_color is not None:
+        item["font_color"] = item_color
+    converter = PDFConverter(existing_pdf=mock_pdf_path, injection_items=[item], font_color=converter_color)
+
+    result = await converter.convert_async(prompt="")
+
+    assert expected in _page_fill_colors(Path(result.output_text))[0]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_distinguishes_font_color() -> None:
+    default = PDFConverter().get_identifier()
+    red = PDFConverter(font_color=(255, 0, 0)).get_identifier()
+    white = PDFConverter(font_color=(255, 255, 255)).get_identifier()
+
+    assert "font_color" not in default.params
+    assert red.params["font_color"] == [255, 0, 0]
+    assert len({default.hash, red.hash, white.hash}) == 3
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_distinguishes_layout() -> None:
+    default = PDFConverter().get_identifier()
+    narrow = PDFConverter(column_width=80).get_identifier()
+    tall = PDFConverter(row_height=20).get_identifier()
+    auto_height = PDFConverter(row_height=0).get_identifier()
+
+    assert "column_width" not in default.params
+    assert "row_height" not in default.params
+    assert narrow.params["column_width"] == 80
+    assert tall.params["row_height"] == 20
+    assert auto_height.params["row_height"] == 0
+    assert len({default.hash, narrow.hash, tall.hash, auto_height.hash}) == 4
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_distinguishes_injection_items(mock_pdf_path: Path) -> None:
+    def injecting(text: str) -> PDFConverter:
+        return PDFConverter(existing_pdf=mock_pdf_path, injection_items=[{"page": 0, "x": 50, "y": 700, "text": text}])
+
+    first = injecting("first payload")
+    second = injecting("second payload")
+
+    assert "injection_items_hash" not in PDFConverter(existing_pdf=mock_pdf_path).get_identifier().params
+    assert first.get_identifier().hash != second.get_identifier().hash
+    assert injecting("first payload").get_identifier().hash == first.get_identifier().hash
+
+    # Both configurations get their own default registry name instead of colliding.
+    instances = ConverterRegistry().instances
+    instances.register(first)
+    instances.register(second)
+    assert instances.get(second.get_identifier().unique_name) is second
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("text", ["hello", "caf\u00e9"])
+async def test_identifier_normalizes_injected_byte_text_async(*, mock_pdf_path: Path, text: str) -> None:
+    byte_text = text.encode("utf-8")
+    converters = [
+        PDFConverter(existing_pdf=mock_pdf_path, injection_items=[{"text": value}])
+        for value in (byte_text, text, str(byte_text))
+    ]
+    identifiers = [converter.get_identifier() for converter in converters]
+
+    assert identifiers[0].hash == identifiers[1].hash
+    assert identifiers[0].hash != identifiers[2].hash
+
+    instances = ConverterRegistry().instances
+    instances.register(converters[0])
+    instances.register(converters[2])
+    assert instances.get(identifiers[2].unique_name) is converters[2]
+
+    for converter, expected in zip(converters, (text, text, str(byte_text)), strict=True):
+        result = await converter.convert_async(prompt="")
+        assert PdfReader(result.output_text).pages[0].extract_text() == f"Page 1 content\n{expected}\n"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_rejects_unsupported_injection_values() -> None:
+    converter = PDFConverter(injection_items=[{"text": object()}])
+
+    with pytest.raises(TypeError, match="Unsupported injection item value type: object"):
+        converter.get_identifier()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_rejects_invalid_utf8_injection_text() -> None:
+    converter = PDFConverter(injection_items=[{"text": b"\xff"}])
+
+    with pytest.raises(UnicodeDecodeError):
+        converter.get_identifier()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_keeps_default_hash() -> None:
+    assert PDFConverter().get_identifier().hash == "a05b4cf1482efac3adbc73fd088af40021f1ec3e8f08da575101410595aacf96"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("font_color", [(256, 0, 0), (0, 0), [0, 0, 0]])
+def test_init_rejects_invalid_font_color(font_color: Any) -> None:
+    with pytest.raises(ValueError, match="Invalid font_color"):
+        PDFConverter(font_color=font_color)

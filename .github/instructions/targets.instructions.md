@@ -34,14 +34,17 @@ class MyTarget(PromptTarget):
         )
         self._api_key = api_key
 
-    async def _send_prompt_to_target_async(
-        self, *, normalized_conversation: list[Message]
-    ) -> list[Message]:
-        ...
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]: ...
 ```
 
 ``send_prompt_async`` (the public entry point) is ``@final`` and MUST NOT
 be overridden. Override ``_send_prompt_to_target_async`` instead.
+
+Targets that hold external state keyed by conversation (a websocket
+connection, browser page, or upstream session) SHOULD override
+``reset_conversation_async``. It must be safe to call more than once and for
+unknown conversation IDs. Whole-target cleanup stays in
+``cleanup_target_async``.
 
 ## Keyword-only ``__init__`` is enforced
 
@@ -55,13 +58,14 @@ The check is satisfied by either of:
 ```python
 def __init__(self, *, endpoint: str, api_key: str) -> None: ...
 
+
 def __init__(self, *args: Any, **kwargs: Any) -> None: ...  # *args after self
 ```
 
 It rejects:
 
 ```python
-def __init__(self, endpoint: str, api_key: str) -> None: ...    # missing *
+def __init__(self, endpoint: str, api_key: str) -> None: ...  # missing *
 ```
 
 > [!NOTE]
@@ -78,6 +82,11 @@ def __init__(self, endpoint: str, api_key: str) -> None: ...    # missing *
   ``__init__`` and forward it to ``super().__init__`` so callers can
   override capabilities per-instance (this is required for HTTP / Playwright
   targets whose capabilities depend on deployment configuration).
+- ``supports_editable_history`` describes native support for caller-supplied
+  history changes, not whether the target stores state. Callers use
+  ``validate_history_replay()`` before branching stored history. Targets with
+  an explicit restoration path can override this check without claiming
+  editable history. Live session and context checks remain at send time.
 
 ## Identifiable Pattern
 

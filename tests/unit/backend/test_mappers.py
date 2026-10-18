@@ -11,7 +11,7 @@ without any database or service dependencies.
 import os
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,7 +28,7 @@ from pyrit.backend.mappers.attack_mappers import (
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models._media import build_filename, infer_mime_type
-from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models.attacks import AddMessageRequest, MessagePieceRequest, ScoreView
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -36,6 +36,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    PromptDataType,
     Score,
 )
 from pyrit.models.conversation_stats import ConversationStats
@@ -56,7 +57,7 @@ def _make_attack_result(
     outcome: AttackOutcome = AttackOutcome.UNDETERMINED,
 ) -> AttackResult:
     """Create an AttackResult for mapper tests."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     effective_target_identifier = None
     if has_target:
@@ -157,6 +158,21 @@ class TestAttackResultToSummary:
         assert summary.attack_type == "My Attack"
         assert summary.target is not None
         assert summary.target.target_type == "TextTarget"
+
+    async def test_mapping_keeps_attribution_out_of_labels(self) -> None:
+        ar = _make_attack_result(name="My Attack")
+        ar.operator = "alice"
+        ar.operation = "nightly"
+        stats = ConversationStats(
+            message_count=1,
+            labels={"operator": "legacy", "operation": "legacy", "environment": "test"},
+        )
+
+        summary = await attack_result_to_summary_async(ar, stats=stats)
+
+        assert summary.operator == "alice"
+        assert summary.operation == "nightly"
+        assert summary.labels == {"test_ar_label": "test_ar_value", "environment": "test"}
 
     async def test_round_robin_target_includes_canonical_identifier_hash(self) -> None:
         """Composite targets retain their full identity even when root display fields are absent."""
@@ -262,8 +278,8 @@ class TestAttackResultToSummary:
 
         assert summary.labels == {"env": "prod", "team": "red", "test_ar_label": "test_ar_value"}
 
-    async def test_labels_passed_through_without_normalization(self) -> None:
-        """Test that labels are passed through as-is (DB stores canonical keys after migration)."""
+    async def test_legacy_attribution_keys_are_not_merged_into_labels(self) -> None:
+        """Conversation-level legacy attribution keys do not leak into canonical labels."""
         ar = _make_attack_result()
         stats = ConversationStats(
             message_count=1,
@@ -273,8 +289,6 @@ class TestAttackResultToSummary:
         summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.labels == {
-            "operator": "alice",
-            "operation": "op_red",
             "env": "prod",
             "test_ar_label": "test_ar_value",
         }
@@ -318,9 +332,57 @@ class TestAttackResultToSummary:
 
         assert summary.attack_specific_params == {"source": "gui"}
 
+    async def test_explicit_objective_is_preserved(self) -> None:
+        """A user-supplied objective passes through unchanged."""
+        ar = _make_attack_result()
+        stats = ConversationStats(message_count=0)
+
+        summary = await attack_result_to_summary_async(ar, stats=stats)
+
+        assert summary.objective == ar.objective
+
+    async def test_empty_objective_is_preserved(self) -> None:
+        """An unnamed manual attack remains represented by an empty objective."""
+        ar = _make_attack_result()
+        ar.objective = ""
+        stats = ConversationStats(message_count=0)
+
+        summary = await attack_result_to_summary_async(ar, stats=stats)
+
+        assert summary.objective == ""
+
+    async def test_legacy_placeholder_objective_is_normalized_to_empty(self) -> None:
+        """Historical unnamed manual attacks are normalized at the API boundary."""
+        ar = _make_attack_result(name="ManualAttack")
+        ar.objective = "Manual attack via GUI"
+        stats = ConversationStats(message_count=0)
+
+        summary = await attack_result_to_summary_async(ar, stats=stats)
+
+        assert summary.objective == ""
+
+    async def test_legacy_placeholder_metadata_is_normalized_to_empty(self) -> None:
+        """The former placeholder metadata flag remains supported."""
+        ar = _make_attack_result(name="LegacyNamedAttack")
+        ar.objective = "Manual attack via GUI"
+        ar.metadata["objective_is_placeholder"] = True
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.objective == ""
+
+    async def test_non_manual_attack_preserves_placeholder_text_as_explicit_objective(self) -> None:
+        """A non-manual attack may legitimately use the legacy placeholder text."""
+        ar = _make_attack_result(name="CrescendoAttack")
+        ar.objective = "Manual attack via GUI"
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.objective == "Manual attack via GUI"
+
     async def test_converters_extracted_from_identifier(self) -> None:
         """Test that converter class names are extracted into converters list."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ar = AttackResult(
             conversation_id="attack-conv",
             objective="test",
@@ -407,9 +469,35 @@ class TestAttackResultToSummary:
 
         assert summary.message_count == 5
 
+    async def test_last_score_is_marked_as_objective(self) -> None:
+        """The summary identifies ``last_score`` as the canonical objective score."""
+        ar = _make_attack_result()
+        ar.automated_score = _make_score()
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.automated_score is not None
+        assert summary.last_score is not None
+        assert summary.last_score.is_objective_score is True
+        assert summary.model_dump()["last_score"]["is_objective_score"] is True
+
+    async def test_human_score_takes_last_score_precedence(self) -> None:
+        """Both attack scores are objective scores while the human score takes precedence."""
+        ar = _make_attack_result()
+        ar.automated_score = _make_score()
+        ar.human_score = _make_score()
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.automated_score is not None
+        assert summary.automated_score.is_objective_score is True
+        assert summary.human_score is not None
+        assert summary.human_score.is_objective_score is True
+        assert summary.last_score is summary.human_score
+
     async def test_created_at_prefers_ar_timestamp_when_metadata_absent(self) -> None:
         """When metadata['created_at'] is absent but ar.timestamp is set, use ar.timestamp."""
-        persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=UTC)
         ar = AttackResult(
             conversation_id="attack-1",
             objective="test",
@@ -423,8 +511,8 @@ class TestAttackResultToSummary:
 
     async def test_created_at_metadata_still_wins_over_ar_timestamp(self) -> None:
         """When both metadata['created_at'] and ar.timestamp are set, metadata wins (backward compat)."""
-        metadata_ts = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        metadata_ts = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=UTC)
         ar = AttackResult(
             conversation_id="attack-1",
             objective="test",
@@ -438,8 +526,8 @@ class TestAttackResultToSummary:
 
     async def test_updated_at_uses_ar_timestamp_ignoring_metadata_updated_at(self) -> None:
         """``updated_at`` is the persisted ``ar.timestamp``; a stale ``metadata['updated_at']`` is ignored."""
-        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
-        stale = datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=UTC)
+        stale = datetime(2020, 1, 1, 0, 0, 0, tzinfo=UTC)
         ar = AttackResult(
             conversation_id="attack-1",
             objective="test",
@@ -461,9 +549,9 @@ class TestAttackResultToSummary:
         )
         ar.timestamp = None  # type: ignore[assignment]
 
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         assert before <= summary.created_at <= after
 
@@ -471,7 +559,7 @@ class TestAttackResultToSummary:
         """Test that retry events on an AttackResult are inherited by the AttackSummary."""
         from pyrit.models.retry_event import RetryEvent
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ar = _make_attack_result()
         ar.retry_events = [
             RetryEvent(
@@ -546,7 +634,7 @@ class TestPyritMessagesToDto:
         from pyrit.memory import CentralMemory
 
         stub = MagicMock()
-        stub.get_prompt_scores = MagicMock(return_value=[])
+        stub.get_prompt_scores_async = AsyncMock(return_value=[])
         with patch.object(CentralMemory, "get_memory_instance", return_value=stub):
             yield stub
 
@@ -620,7 +708,7 @@ class TestPyritMessagesToDto:
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        # Python 3.10 returns "audio/wav", 3.11+ returns "audio/x-wav"
+        # The MIME database varies by platform.
         assert result[0].message_pieces[0].original_value_mime_type in ("audio/wav", "audio/x-wav")
         assert result[0].message_pieces[0].converted_value_mime_type == "audio/mpeg"
 
@@ -791,7 +879,7 @@ class TestPyritMessagesToDtoRealObjects:
         from pyrit.models import Score as RealPyritScore
 
         piece = RealPyritMessagePiece(role="user", original_value="hi", conversation_id="real-conv-scores")
-        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
+        (await sqlite_instance.add_message_to_memory_async(request=RealPyritMessage(message_pieces=[piece])))
 
         score = RealPyritScore(
             score_value="0.75",
@@ -800,9 +888,9 @@ class TestPyritMessagesToDtoRealObjects:
             score_rationale="example rationale",
             message_piece_id=piece.id,
         )
-        sqlite_instance.add_scores_to_memory(scores=[score])
+        (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
 
-        reloaded = sqlite_instance.get_conversation_messages(conversation_id=piece.conversation_id)
+        reloaded = await sqlite_instance.get_conversation_messages_async(conversation_id=piece.conversation_id)
         result = await pyrit_messages_to_dto_async(list(reloaded))
 
         assert len(result) == 1
@@ -821,9 +909,9 @@ class TestPyritMessagesToDtoRealObjects:
         from pyrit.models import MessagePiece as RealPyritMessagePiece
 
         piece = RealPyritMessagePiece(role="user", original_value="hi", conversation_id="real-conv-empty")
-        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
+        (await sqlite_instance.add_message_to_memory_async(request=RealPyritMessage(message_pieces=[piece])))
 
-        reloaded = sqlite_instance.get_conversation_messages(conversation_id=piece.conversation_id)
+        reloaded = await sqlite_instance.get_conversation_messages_async(conversation_id=piece.conversation_id)
         result = await pyrit_messages_to_dto_async(list(reloaded))
 
         assert result[0].message_pieces[0].scores == []
@@ -836,28 +924,30 @@ class TestPyritMessagesToDtoRealObjects:
 
         conv_id = "real-conv-1"
         user_piece = RealPyritMessagePiece(role="user", original_value="ask", conversation_id=conv_id)
-        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[user_piece]))
+        (await sqlite_instance.add_message_to_memory_async(request=RealPyritMessage(message_pieces=[user_piece])))
         assistant_piece = RealPyritMessagePiece(role="assistant", original_value="reply", conversation_id=conv_id)
-        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[assistant_piece]))
+        (await sqlite_instance.add_message_to_memory_async(request=RealPyritMessage(message_pieces=[assistant_piece])))
 
-        sqlite_instance.add_scores_to_memory(
-            scores=[
-                RealPyritScore(
-                    score_value="true",
-                    score_type="true_false",
-                    score_rationale="refusal detected",
-                    message_piece_id=assistant_piece.id,
-                ),
-                RealPyritScore(
-                    score_value="0.1",
-                    score_type="float_scale",
-                    score_rationale="low severity",
-                    message_piece_id=assistant_piece.id,
-                ),
-            ]
+        (
+            await sqlite_instance.add_scores_to_memory_async(
+                scores=[
+                    RealPyritScore(
+                        score_value="true",
+                        score_type="true_false",
+                        score_rationale="refusal detected",
+                        message_piece_id=assistant_piece.id,
+                    ),
+                    RealPyritScore(
+                        score_value="0.1",
+                        score_type="float_scale",
+                        score_rationale="low severity",
+                        message_piece_id=assistant_piece.id,
+                    ),
+                ]
+            )
         )
 
-        reloaded = sqlite_instance.get_conversation_messages(conversation_id=conv_id)
+        reloaded = await sqlite_instance.get_conversation_messages_async(conversation_id=conv_id)
         result = await pyrit_messages_to_dto_async(list(reloaded))
 
         by_role = {msg.role: msg for msg in result}
@@ -865,6 +955,59 @@ class TestPyritMessagesToDtoRealObjects:
         assistant_scores = by_role["assistant"].message_pieces[0].scores
         assert len(assistant_scores) == 2
         assert {s.score_value for s in assistant_scores} == {"true", "0.1"}
+
+    async def test_multi_piece_scores_preserve_provenance_and_objective_flag(self, sqlite_instance) -> None:
+        """Scores stay on their source pieces and only the selected score is objective."""
+        conversation_id = "real-conv-score-provenance"
+        text_piece = MessagePiece(
+            role="assistant",
+            original_value="caption",
+            conversation_id=conversation_id,
+            sequence=1,
+        )
+        media_piece = MessagePiece(
+            role="assistant",
+            original_value="/tmp/nonexistent-score-provenance.png",
+            original_value_data_type="image_path",
+            conversation_id=conversation_id,
+            sequence=1,
+        )
+        (await sqlite_instance.add_message_to_memory_async(request=Message(message_pieces=[text_piece, media_piece])))
+
+        text_score_one = Score(score_value="true", score_type="true_false", message_piece_id=text_piece.id)
+        text_score_two = Score(score_value="0.8", score_type="float_scale", message_piece_id=text_piece.id)
+        media_score = Score(score_value="blocked", score_type="unknown", message_piece_id=media_piece.id)
+        scores = [text_score_one, text_score_two, media_score]
+        (await sqlite_instance.add_scores_to_memory_async(scores=scores))
+
+        reloaded = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
+        expected_score_ids_by_piece = {
+            str(text_piece.id): {str(text_score_one.id), str(text_score_two.id)},
+            str(media_piece.id): {str(media_score.id)},
+        }
+
+        for objective_score_id in (media_score.id, None):
+            result = await pyrit_messages_to_dto_async(
+                list(reloaded),
+                objective_score_id=objective_score_id,
+            )
+
+            assert len(result) == 1
+            actual_scores_by_piece = {
+                str(piece.id): {str(score.id): score for score in piece.scores} for piece in result[0].message_pieces
+            }
+            assert {
+                piece_id: set(piece_scores) for piece_id, piece_scores in actual_scores_by_piece.items()
+            } == expected_score_ids_by_piece
+
+            objective_score_ids = {
+                score_id
+                for piece_scores in actual_scores_by_piece.values()
+                for score_id, score in piece_scores.items()
+                if score.is_objective_score
+            }
+            expected_objective_score_ids = {str(media_score.id)} if objective_score_id is not None else set()
+            assert objective_score_ids == expected_objective_score_ids
 
 
 class TestIsAzureBlobUrl:
@@ -894,6 +1037,15 @@ class TestIsAzureBlobUrl:
 class TestSignBlobUrlAsync:
     """Tests for _sign_blob_url_async helper."""
 
+    RESULTS_CONTAINER = "https://acct.blob.core.windows.net/c"
+
+    @pytest.fixture(autouse=True)
+    def results_container(self):
+        with patch(
+            "pyrit.backend.mappers.attack_mappers.results_container_url", return_value=self.RESULTS_CONTAINER
+        ) as mock_container:
+            yield mock_container
+
     async def test_non_blob_url_unchanged(self) -> None:
         """Non-Azure URLs pass through without signing."""
         result = await _sign_blob_url_async(blob_url="http://example.com/img.png")
@@ -901,18 +1053,18 @@ class TestSignBlobUrlAsync:
 
     async def test_already_signed_url_is_re_signed(self) -> None:
         """URLs with existing query params (expired SAS) are stripped and re-signed."""
-        url = "https://acct.blob.core.windows.net/c/b.png?sv=2024&sig=old"
+        url = "https://acct.blob.core.windows.net/c/prompt-memory-entries/b.png?sv=2024&sig=old"
         with patch(
             "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async",
             new_callable=AsyncMock,
             return_value="sv=2024&sig=fresh",
         ):
             result = await _sign_blob_url_async(blob_url=url)
-        assert result == "https://acct.blob.core.windows.net/c/b.png?sv=2024&sig=fresh"
+        assert result == "https://acct.blob.core.windows.net/c/prompt-memory-entries/b.png?sv=2024&sig=fresh"
 
     async def test_appends_sas_token(self) -> None:
         """SAS token is appended to unsigned blob URLs."""
-        url = "https://acct.blob.core.windows.net/container/path/blob.png"
+        url = "https://acct.blob.core.windows.net/c/prompt-memory-entries/images/blob.png"
         with patch(
             "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async",
             new_callable=AsyncMock,
@@ -921,11 +1073,11 @@ class TestSignBlobUrlAsync:
             result = await _sign_blob_url_async(blob_url=url)
 
         assert result == f"{url}?sv=2024&sig=test"
-        mock_sas.assert_called_once_with(container_url="https://acct.blob.core.windows.net/container")
+        mock_sas.assert_called_once_with(container_url="https://acct.blob.core.windows.net/c")
 
     async def test_sas_failure_returns_original(self) -> None:
         """SAS generation failure falls back to the unsigned URL."""
-        url = "https://acct.blob.core.windows.net/c/b.png"
+        url = "https://acct.blob.core.windows.net/c/prompt-memory-entries/b.png"
         with patch(
             "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async",
             new_callable=AsyncMock,
@@ -941,6 +1093,60 @@ class TestSignBlobUrlAsync:
         with patch("pyrit.backend.mappers.attack_mappers._is_azure_blob_url", return_value=True):
             result = await _sign_blob_url_async(blob_url=url)
         assert result == url
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://acct.blob.core.windows.net/other/prompt-memory-entries/b.png",
+            "https://other.blob.core.windows.net/c/prompt-memory-entries/b.png",
+            "https://acct.blob.core.windows.net/c/config/settings.yaml",
+        ],
+    )
+    async def test_urls_outside_results_container_media_are_not_signed(self, url: str) -> None:
+        with patch(
+            "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async", new_callable=AsyncMock
+        ) as mock_sas:
+            result = await _sign_blob_url_async(blob_url=url)
+
+        assert result == url
+        mock_sas.assert_not_called()
+
+    async def test_blob_urls_are_not_signed_with_local_results_storage(self, results_container) -> None:
+        results_container.return_value = None
+        url = "https://acct.blob.core.windows.net/c/prompt-memory-entries/b.png"
+        with patch(
+            "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async", new_callable=AsyncMock
+        ) as mock_sas:
+            result = await _sign_blob_url_async(blob_url=url)
+
+        assert result == url
+        mock_sas.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("configured_container", "url"),
+        [
+            (
+                "https://acct.blob.core.windows.net:443/c",
+                "https://acct.blob.core.windows.net/c/prompt-memory-entries/b.png",
+            ),
+            (
+                "https://acct.blob.core.windows.net/c",
+                "https://acct.blob.core.windows.net:443/c/prompt-memory-entries/b.png",
+            ),
+        ],
+    )
+    async def test_media_is_signed_when_only_the_443_port_spelling_differs(
+        self, results_container, configured_container: str, url: str
+    ) -> None:
+        results_container.return_value = configured_container
+        with patch(
+            "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async",
+            new_callable=AsyncMock,
+            return_value="sv=2024&sig=fresh",
+        ):
+            result = await _sign_blob_url_async(blob_url=url)
+
+        assert result == f"{url}?sv=2024&sig=fresh"
 
 
 class TestResolveMediaUrl:
@@ -1005,14 +1211,10 @@ class TestRequestToPyritMessage:
 
     def test_converts_request_to_domain(self) -> None:
         """Test that DTO request is correctly converted to domain message."""
-        request = MagicMock()
-        request.role = "user"
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.original_prompt_id = None
-        request.pieces = [piece]
+        request = AddMessageRequest(
+            pieces=[MessagePieceRequest(original_value="hello")],
+            target_conversation_id="conv-1",
+        )
 
         result = request_to_pyrit_message(
             request=request,
@@ -1029,14 +1231,24 @@ class TestRequestToPyritMessage:
 class TestRequestPieceToPyritMessagePiece:
     """Tests for request_piece_to_pyrit_message_piece function."""
 
+    def test_preserves_blank_original_with_explicit_preview(self) -> None:
+        request = MessagePieceRequest(
+            original_value="",
+            converted_value="Manually edited preview",
+            converted_value_data_type="text",
+        )
+
+        piece = request_piece_to_pyrit_message_piece(piece=request, role="user", conversation_id="conv-1", sequence=0)
+
+        assert piece.original_value == ""
+        assert piece.original_value_data_type == "text"
+        assert piece.converted_value == "Manually edited preview"
+        assert piece.converted_value_data_type == "text"
+        assert piece.converter_identifiers == []
+
     def test_uses_converted_value_when_present(self) -> None:
         """Test that converted_value is used when provided."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "original"
-        piece.converted_value = "converted"
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
+        piece = MessagePieceRequest(original_value="original", converted_value="converted")
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,
@@ -1050,14 +1262,57 @@ class TestRequestPieceToPyritMessagePiece:
         assert result.api_role == "assistant"
         assert result.sequence == 5
 
+    @pytest.mark.parametrize(
+        ("original_type", "converted_type", "converted_value"),
+        [
+            ("text", "text", ""),
+            ("text", "image_path", "https://example.com/preview.png"),
+            ("image_path", "text", "Exact image description"),
+            ("image_path", "audio_path", "https://example.com/preview.wav"),
+            ("text", "function_call_output", '{"result": 1}'),
+        ],
+    )
+    def test_preserves_explicit_converted_value_and_type(
+        self, *, original_type: PromptDataType, converted_type: PromptDataType, converted_value: str
+    ) -> None:
+        original_value = "https://example.com/source.png" if original_type == "image_path" else "Original prompt"
+        original_id = str(uuid.uuid4())
+        request = MessagePieceRequest(
+            data_type=original_type,
+            original_value=original_value,
+            converted_value=converted_value,
+            converted_value_data_type=converted_type,
+            prompt_metadata={"source": "preview", "nested": {"preserved": True}},
+            original_prompt_id=original_id,
+        )
+
+        piece = request_piece_to_pyrit_message_piece(piece=request, role="user", conversation_id="conv-1", sequence=2)
+
+        assert isinstance(piece, MessagePiece)
+        assert piece.original_value == original_value
+        assert piece.original_value_data_type == original_type
+        assert piece.converted_value == converted_value
+        assert piece.converted_value_data_type == converted_type
+        assert piece.prompt_metadata == request.prompt_metadata
+        assert piece.original_prompt_id == uuid.UUID(original_id)
+        assert piece.converter_identifiers == []
+
+    @pytest.mark.parametrize("converted_value", [None, "https://example.com/converted.png"])
+    def test_omitted_converted_type_defaults_to_original(self, converted_value: str | None) -> None:
+        request = MessagePieceRequest(
+            data_type="image_path",
+            original_value="https://example.com/source.png",
+            converted_value=converted_value,
+        )
+
+        piece = request_piece_to_pyrit_message_piece(piece=request, role="user", conversation_id="conv-1", sequence=0)
+
+        assert piece.converted_value_data_type == "image_path"
+        assert piece.converted_value == (converted_value if converted_value is not None else request.original_value)
+
     def test_falls_back_to_original_when_no_converted(self) -> None:
         """Test that original_value is used when converted_value is None."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "fallback"
-        piece.converted_value = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
+        piece = MessagePieceRequest(original_value="fallback")
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,
@@ -1070,13 +1325,7 @@ class TestRequestPieceToPyritMessagePiece:
 
     def test_passes_mime_type_through_prompt_metadata(self) -> None:
         """Test that mime_type is stored in prompt_metadata."""
-        piece = MagicMock()
-        piece.data_type = "image_path"
-        piece.original_value = "base64data"
-        piece.converted_value = None
-        piece.mime_type = "image/png"
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
+        piece = MessagePieceRequest(data_type="image_path", original_value="base64data", mime_type="image/png")
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,
@@ -1089,13 +1338,12 @@ class TestRequestPieceToPyritMessagePiece:
 
     def test_prompt_metadata_takes_precedence_over_mime_type(self) -> None:
         """Test that prompt_metadata is used when provided, ignoring mime_type."""
-        piece = MagicMock()
-        piece.data_type = "video_path"
-        piece.original_value = "base64data"
-        piece.converted_value = None
-        piece.prompt_metadata = {"video_id": "abc-123"}
-        piece.mime_type = "video/mp4"
-        piece.original_prompt_id = None
+        piece = MessagePieceRequest(
+            data_type="video_path",
+            original_value="base64data",
+            prompt_metadata={"video_id": "abc-123"},
+            mime_type="video/mp4",
+        )
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,
@@ -1108,13 +1356,7 @@ class TestRequestPieceToPyritMessagePiece:
 
     def test_no_metadata_when_mime_type_absent(self) -> None:
         """Test that prompt_metadata is empty when mime_type is None."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
+        piece = MessagePieceRequest(original_value="hello")
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,
@@ -1127,12 +1369,7 @@ class TestRequestPieceToPyritMessagePiece:
 
     def test_original_prompt_id_forwarded_when_provided(self) -> None:
         """Test that original_prompt_id is passed through for lineage tracking."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.original_prompt_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        piece = MessagePieceRequest(original_value="hello", original_prompt_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,
@@ -1147,12 +1384,7 @@ class TestRequestPieceToPyritMessagePiece:
 
     def test_original_prompt_id_defaults_to_self_when_absent(self) -> None:
         """Test that original_prompt_id defaults to the piece's own id when not provided."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.original_prompt_id = None
+        piece = MessagePieceRequest(original_value="hello")
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,
@@ -1806,13 +2038,19 @@ class TestConverterObjectToInstance:
         )
         converter_obj.get_identifier.return_value = identifier
 
-        result = converter_object_to_instance("c-1", converter_obj)
+        result = converter_object_to_instance(
+            converter_id="c-1",
+            converter_obj=converter_obj,
+            is_llm_based=False,
+            description="Base64 converter",
+        )
 
         assert result.converter_id == "c-1"
         assert result.identifier.class_name == "Base64Converter"
         assert result.identifier.supported_input_types == ["text"]
         assert result.identifier.supported_output_types == ["text"]
         assert result.identifier.params["param1"] == "value1"
+        assert result.description == "Base64 converter"
 
     def test_none_input_output_types_stay_none(self) -> None:
         """Test that absent supported types stay None on the identifier."""
@@ -1823,7 +2061,12 @@ class TestConverterObjectToInstance:
         )
         converter_obj.get_identifier.return_value = identifier
 
-        result = converter_object_to_instance("c-1", converter_obj)
+        result = converter_object_to_instance(
+            converter_id="c-1",
+            converter_obj=converter_obj,
+            is_llm_based=False,
+            description=None,
+        )
 
         assert result.identifier.supported_input_types is None
         assert result.identifier.supported_output_types is None

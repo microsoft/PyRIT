@@ -2,10 +2,9 @@
 # Licensed under the MIT license.
 
 import logging
-import random
 from typing import ClassVar
 
-from pyrit.converter.text_selection_strategy import WordSelectionStrategy
+from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy, WordSelectionStrategy
 from pyrit.converter.word_level_converter import WordLevelConverter
 from pyrit.models import ComponentIdentifier
 
@@ -34,7 +33,9 @@ class ZalgoConverter(WordLevelConverter):
 
         Args:
             intensity (int): Number of combining marks per character (higher = more cursed). Default is 10.
-            seed (int | None): Optional seed for reproducible output.
+            seed (int | None): Optional root seed for this conversion. Nested components inherit
+                independent child streams unless they provide their own seed. If omitted, the converter
+                inherits the root configured by ``initialize_pyrit_async(seed=...)``.
             word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, all words will be converted.
         """
@@ -49,8 +50,14 @@ class ZalgoConverter(WordLevelConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        selection_params = (
+            {}
+            if type(self._word_selection_strategy) is AllWordsSelectionStrategy
+            else super()._build_identifier().params
+        )
         return self._create_identifier(
             params={
+                **selection_params,
                 "intensity": self._intensity,
             },
         )
@@ -82,13 +89,9 @@ class ZalgoConverter(WordLevelConverter):
         if self._intensity <= 0:
             return word
 
+        rng = self._get_random_generator(stream="combining-marks")
+
         def glitch(char: str) -> str:
-            return char + "".join(random.choice(self.ZALGO_MARKS) for _ in range(random.randint(1, self._intensity)))
+            return char + "".join(rng.choice(self.ZALGO_MARKS) for _ in range(rng.randint(1, self._intensity)))
 
         return "".join(glitch(c) if c.isalnum() else c for c in word)
-
-    def validate_input(self, prompt: str) -> None:
-        """Validate the input prompt before conversion."""
-        # Initialize the random seed before processing any words
-        if self._seed is not None:
-            random.seed(self._seed)

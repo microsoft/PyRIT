@@ -1,12 +1,60 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+# ruff: noqa: F401
 
-__name__ = "pyrit"
-# Remove dev suffix when releasing and keep in sync with pyproject.toml
-# NOTE: __version__ must be set before imports below to avoid circular import issues.
-# Submodules (e.g., component_identifier, memory_models) reference pyrit.__version__
-# and get imported transitively during the .common import chain.
-__version__ = "1.1.0.dev0"
+"""PyRIT public package API."""
 
-from .common import turn_off_transformers_warning  # noqa: F401
-from .show_versions import show_versions  # noqa: F401
+import os
+import sys
+from types import ModuleType
+from typing import TYPE_CHECKING
+
+from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
+
+if TYPE_CHECKING:
+    import pyrit.common.turn_off_transformers_warning as turn_off_transformers_warning
+    from pyrit._version import __version__
+    from pyrit.show_versions import show_versions
+
+# Most people install PyRIT without torch, so suppress the transformers advisory
+# before any PyRIT submodule can import transformers.
+os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "True"
+
+_LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "__version__": "pyrit._version",
+    "show_versions": "pyrit.show_versions",
+    "turn_off_transformers_warning": ("pyrit.common.turn_off_transformers_warning", None),
+}
+
+__all__ = list(_LAZY_EXPORTS)
+
+
+class _LazyPyRITModule(ModuleType):
+    """Resolve exports that share a name with an imported child module."""
+
+    def __getattribute__(self, name: str) -> object:
+        if name == "show_versions":
+            module_globals = ModuleType.__getattribute__(self, "__dict__")
+            return resolve_lazy_export(
+                name=name,
+                module_name=__name__,
+                module_globals=module_globals,
+                exports=_LAZY_EXPORTS,
+            )
+        return ModuleType.__getattribute__(self, name)
+
+
+sys.modules[__name__].__class__ = _LazyPyRITModule
+
+
+def __getattr__(name: str) -> object:
+    return resolve_lazy_export(
+        name=name,
+        module_name=__name__,
+        module_globals=globals(),
+        exports=_LAZY_EXPORTS,
+    )
+
+
+def __dir__() -> list[str]:
+    return get_lazy_dir(module_globals=globals(), exports=_LAZY_EXPORTS)

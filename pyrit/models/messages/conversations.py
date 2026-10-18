@@ -30,7 +30,8 @@ class Conversation(BaseModel):
 
     A ``Conversation`` records state that belongs to the conversation as a whole
     rather than to any individual ``MessagePiece`` -- most importantly the target
-    the conversation is held with, plus the record of any turns that were retried.
+    the conversation is held with, the attack execution that owns it, and the record
+    of any turns that were retried.
     Persisting the per-conversation identifiers once here (instead of stamping them
     onto every piece/row) is what keeps ``MessagePiece`` small.
     """
@@ -43,6 +44,9 @@ class Conversation(BaseModel):
 
     conversation_id: str
     target_identifier: ComponentIdentifierField | None = None
+
+    # ID of the owning execution's result, supplied by the conversation creator.
+    attack_result_id: str | None = None
 
     # Turns that were retried (rolled back out of memory and resent) in this conversation.
     retries: list[ConversationRetry] = Field(default_factory=list)

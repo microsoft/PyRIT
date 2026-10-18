@@ -70,7 +70,7 @@ class _GarakAudioAchillesHeelDataset(_GarakRemoteDataset):
         return category or None
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the garak audio dataset and return it as a ``SeedDataset``.
 

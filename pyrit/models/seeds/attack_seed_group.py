@@ -10,8 +10,9 @@ Extends SeedGroup to enforce exactly one objective is present.
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from pyrit.models.identifiers import SeedIdentifier, compute_seed_group_hash
 from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
@@ -85,6 +86,17 @@ class AttackSeedGroup(SeedGroup):
         if obj is None:
             raise ValueError("AttackSeedGroup should always have an objective")
         return obj
+
+    @property
+    def logical_id(self) -> str:
+        """
+        The deterministic identity of this original logical seed group.
+
+        The ordered seed identifiers contain behavioral seed values but omit
+        random ``prompt_group_id`` values. Call this before technique seeds are
+        merged so the same ID is recoverable from an enriched attack result.
+        """
+        return compute_seed_group_hash([SeedIdentifier.from_seed(seed) for seed in self.seeds])
 
     def is_compatible_with_technique(self, *, technique: AttackTechniqueSeedGroup) -> bool:
         """
@@ -184,8 +196,8 @@ class AttackSeedGroup(SeedGroup):
     @staticmethod
     def _normalize_prompt_sequences(
         *,
-        base_seeds: Sequence[Seed],
-        technique_seeds: Sequence[Seed],
+        base_seeds: Sequence[Seed[Any]],
+        technique_seeds: Sequence[Seed[Any]],
         prepend_technique: bool,
     ) -> None:
         """Normalize merged prompt sequences while preserving source-relative order."""

@@ -6,10 +6,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pyrit.common import verify_and_resolve_path
+from pyrit.common.yaml_helper import safe_load_yaml
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -86,7 +86,7 @@ class LlamaGuardPolicy(BaseModel):
             ValueError: If the YAML does not contain a mapping or fails validation.
         """
         resolved_path = verify_and_resolve_path(path)
-        loaded = yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
+        loaded = safe_load_yaml(resolved_path.read_text(encoding="utf-8"))
         if not isinstance(loaded, Mapping):
             raise ValueError(f"LlamaGuard policy YAML file '{resolved_path}' must contain a mapping.")
         return cls.model_validate(loaded)

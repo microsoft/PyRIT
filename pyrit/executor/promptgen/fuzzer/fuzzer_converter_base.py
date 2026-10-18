@@ -82,9 +82,10 @@ class FuzzerConverter(Converter):
 
         conversation_id = str(uuid.uuid4())
 
-        self.converter_target.set_system_prompt(
-            system_prompt=self.system_prompt,
-            conversation_id=conversation_id,
+        (
+            await self.converter_target.set_system_prompt_async(
+                system_prompt=self.system_prompt, conversation_id=conversation_id
+            )
         )
 
         formatted_prompt = f"===={self.template_label} BEGINS====\n{prompt}\n===={self.template_label} ENDS===="

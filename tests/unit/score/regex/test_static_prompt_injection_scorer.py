@@ -169,4 +169,4 @@ async def test_static_prompt_injection_scorer_adds_to_memory():
         scorer = StaticPromptInjectionScorer()
         await scorer.score_text_async(text="normal question here")
 
-        memory.add_scores_to_memory.assert_called_once()
+        memory.add_scores_to_memory_async.assert_called_once()

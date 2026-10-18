@@ -2,14 +2,35 @@
 # Licensed under the MIT license.
 
 import os
+from threading import get_ident
 from unittest.mock import patch
 
 import pytest
 
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.prompt_target import LiteLLMDecisionTarget, OpenAIChatTarget
 from pyrit.registry import TargetRegistry
 from pyrit.setup.initializers import TargetInitializer
-from pyrit.setup.initializers.targets import TARGET_CONFIGS, generate_rr_name, get_behavioral_key
+from pyrit.setup.initializers.targets import TARGET_CONFIGS, _auto_group_enabled, generate_rr_name, get_behavioral_key
+
+
+async def test_target_registration_runs_off_loop_async() -> None:
+    initializer = TargetInitializer()
+    backend_thread = get_ident()
+
+    def register() -> None:
+        assert get_ident() != backend_thread
+
+    with patch.object(initializer, "_register_targets", side_effect=register) as registration:
+        await initializer.initialize_async()
+    registration.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(False, False), (True, True), ("false", False), ("YES", True), (["no"], False), (["true"], True)],
+)
+def test_auto_group_enabled_accepts_direct_and_yaml_values(value, expected):
+    assert _auto_group_enabled(value) is expected
 
 
 class TestTargetInitializerBasic:
@@ -83,6 +104,53 @@ class TestTargetInitializerInitialize:
 
         registry = TargetRegistry.get_registry_singleton()
         assert "platform_openai_chat" not in registry.instances
+
+    @pytest.mark.parametrize("endpoint", [None, "https://router.example.com/api"])
+    async def test_decision_target_needs_only_key_async(self, endpoint: str | None) -> None:
+        env_vars = {"MICROSOFT_DECISION_KEY": "test-decision-key"}
+        if endpoint:
+            env_vars["MICROSOFT_DECISION_ENDPOINT"] = endpoint
+
+        with patch.dict("os.environ", env_vars):
+            await TargetInitializer().initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        target = registry.instances.get("microsoft_decision")
+        assert isinstance(target, LiteLLMDecisionTarget)
+        assert target.get_identifier().params["model_name"] == "openrouter/microsoft/microsoft-decision-1"
+        assert target.get_identifier().params["endpoint"] == (endpoint or "https://openrouter.ai/api")
+        assert "open_router" not in registry.instances
+        assert len(registry.instances) == 1
+
+    async def test_decision_target_skipped_without_key_async(self) -> None:
+        with patch.dict("os.environ", {"OPEN_ROUTER_ENDPOINT": "https://openrouter.ai/api/v1"}):
+            await TargetInitializer().initialize_async()
+
+        assert "microsoft_decision" not in TargetRegistry.get_registry_singleton().instances
+
+    async def test_decision_target_does_not_use_old_openrouter_variables_async(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"OPENROUTER_KEY": "old-key", "OPEN_ROUTER_DECISION_ENDPOINT": "https://openrouter.ai/api"},
+        ):
+            await TargetInitializer().initialize_async()
+
+        assert "microsoft_decision" not in TargetRegistry.get_registry_singleton().instances
+
+    async def test_existing_openrouter_chat_configuration_unchanged_async(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "OPEN_ROUTER_ENDPOINT": "https://openrouter.ai/api/v1",
+                "OPEN_ROUTER_KEY": "test-chat-key",
+                "OPEN_ROUTER_CLAUDE_MODEL": "anthropic/claude-3.7-sonnet",
+            },
+        ):
+            await TargetInitializer().initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert isinstance(registry.instances.get("open_router"), OpenAIChatTarget)
+        assert "microsoft_decision" not in registry.instances
 
     async def test_does_not_register_target_without_api_key(self):
         """Test that target is not registered if api_key env var is missing."""
@@ -629,6 +697,149 @@ class TestTargetInitializerAdversarialChatVariants:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+class TestTargetInitializerAdversarialRoundRobin:
+    """Tests for explicit adversarial endpoint composition."""
+
+    SLOTS: tuple[tuple[str, str], ...] = (
+        ("adversarial_chat", ""),
+        ("adversarial_chat2", "2"),
+        ("adversarial_chat3", "3"),
+    )
+
+    def setup_method(self) -> None:
+        """Reset the registry and adversarial endpoint environment."""
+        TargetRegistry.reset_registry_singleton()
+        self._clear_env()
+
+    def teardown_method(self) -> None:
+        """Reset the registry and adversarial endpoint environment."""
+        TargetRegistry.reset_registry_singleton()
+        self._clear_env()
+
+    def _clear_env(self) -> None:
+        for _, slot_suffix in self.SLOTS:
+            for variable in ("ENDPOINT", "KEY", "MODEL", "UNDERLYING_MODEL"):
+                os.environ.pop(f"ADVERSARIAL_CHAT_{variable}{slot_suffix}", None)
+
+    def _set_slots(self, *slot_indexes: int, underlying_model: str = "grok-4.3") -> None:
+        for index in slot_indexes:
+            _, slot_suffix = self.SLOTS[index]
+            os.environ[f"ADVERSARIAL_CHAT_ENDPOINT{slot_suffix}"] = (
+                f"https://grok-{index + 1}.openai.azure.com/openai/v1"
+            )
+            os.environ[f"ADVERSARIAL_CHAT_KEY{slot_suffix}"] = f"key-{index + 1}"
+            os.environ[f"ADVERSARIAL_CHAT_MODEL{slot_suffix}"] = f"grok-deployment-{index + 1}"
+            os.environ[f"ADVERSARIAL_CHAT_UNDERLYING_MODEL{slot_suffix}"] = underlying_model
+
+    @pytest.mark.parametrize("slot_index", [0, 1, 2])
+    async def test_single_slot_publishes_direct_canonical_target(self, slot_index: int) -> None:
+        """Any single configured slot is directly available as ``adversarial_chat``."""
+        self._set_slots(slot_index)
+
+        await TargetInitializer().initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        member_name, _ = self.SLOTS[slot_index]
+        member = registry.instances.get(member_name)
+        assert isinstance(member, OpenAIChatTarget)
+        assert registry.instances.get("adversarial_chat") is member
+        if slot_index == 0:
+            assert registry.instances.get("adversarial_chat_primary") is member
+
+    @pytest.mark.parametrize("slot_count", [2, 3])
+    async def test_multiple_slots_publish_ordered_round_robin(self, slot_count: int) -> None:
+        """Two or three configured slots publish one ordered canonical round-robin."""
+        from pyrit.prompt_target import RoundRobinTarget
+
+        self._set_slots(*range(slot_count))
+
+        await TargetInitializer().initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        round_robin = registry.instances.get("adversarial_chat")
+        assert isinstance(round_robin, RoundRobinTarget)
+        assert len(round_robin.inner_targets) == slot_count
+        assert registry.instances.get("adversarial_chat_primary") is round_robin.inner_targets[0]
+        for index in range(1, slot_count):
+            member_name, _ = self.SLOTS[index]
+            assert registry.instances.get(member_name) is round_robin.inner_targets[index]
+
+    async def test_repeated_initialization_replaces_primary_alias(self) -> None:
+        """Repeated initialization refreshes the canonical and primary targets."""
+        from pyrit.prompt_target import RoundRobinTarget
+
+        self._set_slots(0, 1)
+        initializer = TargetInitializer()
+
+        await initializer.initialize_async()
+        await initializer.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        round_robin = registry.instances.get("adversarial_chat")
+        assert isinstance(round_robin, RoundRobinTarget)
+        assert registry.instances.get("adversarial_chat_primary") is round_robin.inner_targets[0]
+
+    async def test_noncontiguous_slots_publish_round_robin_without_inferred_duplicate(self) -> None:
+        """Secondary slots compose directly without producing a generic inferred group."""
+        from pyrit.prompt_target import RoundRobinTarget
+
+        self._set_slots(1, 2)
+
+        await TargetInitializer().initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        round_robin = registry.instances.get("adversarial_chat")
+        assert isinstance(round_robin, RoundRobinTarget)
+        assert round_robin.inner_targets == [
+            registry.instances.get("adversarial_chat2"),
+            registry.instances.get("adversarial_chat3"),
+        ]
+        assert registry.instances.get("adversarial_chat_primary") is None
+        assert registry.instances.get("OpenAIChatTarget_grok-4.3_temperature1.2_rr") is None
+
+    async def test_explicit_round_robin_ignores_auto_group_setting(self) -> None:
+        """The configured adversarial pool is independent of inferred auto-grouping."""
+        from pyrit.prompt_target import RoundRobinTarget
+
+        self._set_slots(0, 1)
+        initializer = TargetInitializer()
+        initializer.params = {"tags": ["default"], "auto_group": False}
+
+        await initializer.initialize_async()
+
+        assert isinstance(
+            TargetRegistry.get_registry_singleton().instances.get("adversarial_chat"),
+            RoundRobinTarget,
+        )
+
+    async def test_canonical_and_member_targets_have_default_tag(self) -> None:
+        """The canonical pool and directly addressable members retain the default tag."""
+        from pyrit.setup.initializers.targets import TargetInitializerTags
+
+        self._set_slots(0, 1, 2)
+        await TargetInitializer().initialize_async()
+
+        default_names = {
+            entry.name
+            for entry in TargetRegistry.get_registry_singleton().instances.get_by_tag(tag=TargetInitializerTags.DEFAULT)
+        }
+        assert {
+            "adversarial_chat",
+            "adversarial_chat_primary",
+            "adversarial_chat2",
+            "adversarial_chat3",
+        } <= default_names
+
+    async def test_incompatible_members_fail_clearly(self) -> None:
+        """Different underlying models cannot form the configured adversarial pool."""
+        self._set_slots(0)
+        self._set_slots(1, underlying_model="different-model")
+
+        with pytest.raises(ValueError, match="Adversarial chat round-robin targets are incompatible"):
+            await TargetInitializer().initialize_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
 class TestTargetInitializerAutoGroup:
     """Tests for automatic round-robin grouping in TargetInitializer."""
 
@@ -863,12 +1074,13 @@ class TestTargetInitializerAutoGroup:
         assert len(rr._targets) == 3
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestGetBehavioralKey:
     """Tests for _get_behavioral_key helper function."""
 
     def test_key_includes_class_name(self) -> None:
         """Test that the behavioral key includes the target's class name."""
-        from tests.unit.mocks import MockPromptTarget
+        from unit.mocks import MockPromptTarget
 
         target = MockPromptTarget()
         key = get_behavioral_key(target)

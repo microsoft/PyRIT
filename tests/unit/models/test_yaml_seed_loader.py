@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pathlib import Path
+
 import pytest
 
 from pyrit.models.seeds import (
     SeedDataset,
     SeedObjective,
+    SeedOrigin,
     SeedPrompt,
     load_seed_dataset_from_yaml,
     load_seed_from_yaml,
@@ -38,6 +41,55 @@ def test_load_seed_from_yaml_supports_objective(tmp_path):
     assert isinstance(loaded, SeedObjective)
     assert loaded.value == "stop the attacker"
     assert loaded.is_jinja_template is True
+
+
+@pytest.mark.parametrize("origin", [None, "local"])
+@pytest.mark.parametrize("seed_type", [SeedPrompt, SeedObjective])
+def test_yaml_seed_accepts_local_or_missing_origin(
+    *, tmp_path: Path, origin: str | None, seed_type: type[SeedPrompt] | type[SeedObjective]
+) -> None:
+    content = "value: hello\n"
+    if origin is not None:
+        content += f"origin: {origin}\n"
+    path = _write(tmp_path, "seed.yaml", content)
+
+    seed = load_seed_from_yaml(path, cls=seed_type)
+
+    assert seed.origin is SeedOrigin.LOCAL
+    assert seed.is_jinja_template
+
+
+@pytest.mark.parametrize("origin", [origin for origin in SeedOrigin if origin is not SeedOrigin.LOCAL])
+@pytest.mark.parametrize("seed_type", [SeedPrompt, SeedObjective])
+def test_yaml_seed_rejects_conflicting_origin(
+    *, tmp_path: Path, origin: SeedOrigin, seed_type: type[SeedPrompt] | type[SeedObjective]
+) -> None:
+    path = _write(tmp_path, "seed.yaml", f"value: hello\norigin: {origin.value}\n")
+
+    with pytest.raises(ValueError, match=f"declares origin '{origin.value}'") as error:
+        load_seed_from_yaml(path, cls=seed_type)
+    assert str(path) in str(error.value)
+
+
+@pytest.mark.parametrize("origin", [None, "local", "remote", "generated", "user", "unknown"])
+@pytest.mark.parametrize("seed_type", ["prompt", "objective", "simulated_conversation"])
+def test_yaml_dataset_validates_each_seed_origin(*, tmp_path: Path, origin: str | None, seed_type: str) -> None:
+    content = f"seeds:\n  - value: first\n  - seed_type: {seed_type}\n"
+    if seed_type == "simulated_conversation":
+        content += "    adversarial_chat_system_prompt:\n      value: Generate a conversation.\n"
+    else:
+        content += "    value: second\n"
+    if origin is not None:
+        content += f"    origin: {origin}\n"
+    path = _write(tmp_path, "dataset.yaml", content)
+
+    if origin not in (None, "local"):
+        with pytest.raises(ValueError, match=f"declares origin '{origin}'"):
+            load_seed_dataset_from_yaml(path)
+    else:
+        dataset = load_seed_dataset_from_yaml(path)
+        assert len(dataset.seeds) == 2
+        assert all(seed.origin is SeedOrigin.LOCAL for seed in dataset.seeds)
 
 
 def test_load_seed_from_yaml_overrides_in_file_value(tmp_path):

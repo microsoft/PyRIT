@@ -13,11 +13,13 @@ from pyrit.datasets.seed_datasets.remote.figstep_dataset import (
     FigStepCategory,
     FigStepVariant,
     _FigStepDataset,
+    _FigStepProDataset,
 )
+from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
 
 
-def _make_row(**overrides) -> dict[str, str]:
+def _make_row(**overrides: str) -> dict[str, str]:
     base = {
         "dataset": "ForbidQI",
         "category_id": "1",
@@ -134,6 +136,30 @@ class TestFigStepDataset:
         assert image_prompt.sequence == 0
         assert text_prompt.sequence == 0
         assert objective.prompt_group_id == image_prompt.prompt_group_id == text_prompt.prompt_group_id
+
+    async def test_fetch_figstep_offloads_synchronous_row_loading(self):
+        loader = _FigStepDataset()
+        to_thread_mock = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+        with (
+            patch.object(loader, "_fetch_from_url", return_value=[_make_row()]) as fetch_mock,
+            patch.object(
+                loader,
+                "_fetch_figstep_image_async",
+                new=AsyncMock(return_value="/fake/figstep.png"),
+            ),
+            patch(
+                "pyrit.datasets.seed_datasets.remote.figstep_dataset.asyncio.to_thread",
+                new=to_thread_mock,
+            ),
+        ):
+            await loader.fetch_dataset_async(cache=False)
+
+        to_thread_mock.assert_awaited_once_with(
+            fetch_mock,
+            source=loader.source,
+            source_type=loader.source_type,
+            cache=False,
+        )
 
     async def test_fetch_figstep_preserves_question_as_objective(self):
         rows = [_make_row(question="Custom harmful question")]
@@ -418,7 +444,23 @@ class TestFigStepProDataset:
 
     def test_pro_dataset_name(self):
         loader = _FigStepDataset(variant=FigStepVariant.FIGSTEP_PRO)
-        assert loader.dataset_name == "figstep"
+        assert loader.dataset_name == "figstep_pro"
+
+
+class TestFigStepProProvider:
+    """Unit tests for the registered FigStep-Pro provider entry."""
+
+    def test_provider_defaults_to_figstep_pro_tiny(self):
+        loader = _FigStepProDataset()
+
+        assert loader.dataset_name == "figstep_pro"
+        assert loader.variant is FigStepVariant.FIGSTEP_PRO
+        assert loader.use_tiny is True
+
+    def test_provider_is_registered(self):
+        providers = SeedDatasetProvider.get_all_providers()
+
+        assert providers["_FigStepProDataset"] is _FigStepProDataset
 
 
 class TestFigStepProSubImageDiscovery:

@@ -9,7 +9,7 @@ authors: |
   - Vitaly Neyman https://github.com/vitaly-ps
 groups: |
   - Prompt Security
-source: github.com/prompt-security/ps-fuzz/ethical_compliance.py
+source: https://github.com/prompt-security/ps-fuzz/blob/main/ps_fuzz/attacks/ethical_compliance.py
 data_type: text
 value: >
   # Instructions:

@@ -9,27 +9,39 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.converter import TextJailbreakConverter
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import AttackTechniqueSeedGroup, Parameter
+from pyrit.models import (
+    AttackTechniqueSeedGroup,
+    BoundedDatasetSize,
+    Parameter,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+)
 from pyrit.prompt_target import CapabilityName
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
     MatrixAtomicAttackBuilder,
     build_baseline_atomic_attack,
     resolve_technique_factories,
 )
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
+from pyrit.scenario.core.technique_requirements import (
+    IncompatibleTechniquePolicy,
+    TechniqueRequirements,
+    check_target_compatibility,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from pyrit.converter import Converter
     from pyrit.models import AttackSeedGroup
-    from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -71,6 +83,7 @@ def _prompt_sending_factory() -> AttackTechniqueFactory:
     return AttackTechniqueFactory(
         name=_PROMPT_SENDING,
         attack_class=PromptSendingAttack,
+        description="Renders each jailbreak template around the objective and sends it as the user message.",
         technique_tags=["single_turn"],
     )
 
@@ -92,7 +105,16 @@ def _jailbreak_system_prompt_factory() -> AttackTechniqueFactory:
     return AttackTechniqueFactory(
         name=_JAILBREAK_SYSTEM_PROMPT,
         attack_class=PromptSendingAttack,
+        description=(
+            "Uses the jailbreak template as the system prompt and sends the objective as the user message. "
+            "This technique requires editable history and system-prompt support."
+        ),
         technique_tags=["single_turn"],
+        requirements=TechniqueRequirements(
+            objective_target=TargetRequirements(
+                native_required=frozenset({CapabilityName.EDITABLE_HISTORY, CapabilityName.SYSTEM_PROMPT})
+            )
+        ),
     )
 
 
@@ -107,23 +129,14 @@ def _extra_default_factories() -> dict[str, AttackTechniqueFactory]:
 @cache
 def _build_jailbreak_technique() -> type[ScenarioTechnique]:
     """
-    Build the Jailbreak technique class dynamically from every registered factory plus the
-    scenario-local defaults.
-
-    The technique axis is the set of *attack techniques* a jailbreak is delivered through: the two
-    default deliveries (``prompt_sending`` and ``jailbreak_system_prompt``) plus whatever techniques
-    are registered (``role_play_*``, ``many_shot``, ``tap``, …). Jailbreak templates are a separate
-    selector (``num_jailbreaks`` / ``jailbreak_names``), so only the two deliveries are on by default
-    — crossing every template with every registered technique explodes quickly.
+    Build the Jailbreak technique class from its two scenario-owned delivery methods.
 
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
-    registry = AttackTechniqueRegistry.get_registry_singleton()
-    factories = list(registry.get_factories_or_raise().values()) + list(_extra_default_factories().values())
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
         class_name="JailbreakTechnique",
-        factories=factories,
+        factories=list(_extra_default_factories().values()),
         default_names=set(_DEFAULT_TECHNIQUES),
     )
 
@@ -136,24 +149,23 @@ class Jailbreak(Scenario):
     selectors:
 
     - **dataset** — the harmful objectives (HarmBench).
-    - **techniques** — the *attack techniques* each jailbreak is delivered through. Two deliveries
-      are on by default: ``prompt_sending`` (the template rendered inline into the user message) and
+    - **techniques** — two delivery methods for each jailbreak: ``prompt_sending`` (the template
+      rendered inline into the user message) and
       ``jailbreak_system_prompt`` (the template set as the system prompt with the objective sent as
-      the user turn). The registry techniques (``role_play_*``, ``many_shot``, ``tap``, …) are
-      opt-in.
+      the user turn).
     - **jailbreaks** — which jailbreak templates to run (a random ``num_jailbreaks`` sample or an
       explicit ``jailbreak_names`` set).
 
     ``prompt_sending`` applies each template as a ``TextJailbreakConverter`` on the outgoing request,
-    so the objective is rendered inline into the template's ``{{prompt}}`` slot; this keeps that
-    delivery target-agnostic and lets it compose with every technique. ``jailbreak_system_prompt``
-    instead sets the template as a native system prompt and sends the objective as its own user turn,
-    so it is only built for targets that natively support editable history and system prompts (it is
-    skipped for incapable targets, or raises if it is the only selected technique). Responses are
-    scored to determine whether the jailbreak succeeded (non-refusal).
+    so the objective is rendered inline into the template's ``{{prompt}}`` slot.
+    ``jailbreak_system_prompt`` instead sets the template as a native system prompt and sends the
+    objective as its own user turn, so it is only built for targets that natively support editable
+    history and system prompts (it is skipped for incapable targets, or raises if it is the only
+    selected technique). Responses are scored to determine whether the jailbreak succeeded
+    (non-refusal).
     """
 
-    VERSION: int = 3
+    VERSION: int = 4
 
     #: Baseline (an un-jailbroken prompt-send over the objectives) is included by default: a model
     #: that complies with the bare objective is itself interesting signal. Callers opt out per run
@@ -200,6 +212,21 @@ class Jailbreak(Scenario):
             ),
         ]
 
+    def set_params_from_args(self, *, args: dict[str, Any]) -> None:
+        """
+        Resolve run parameters and reject non-positive repeat counts.
+
+        Args:
+            args (dict[str, Any]): Raw scenario run parameters.
+
+        Raises:
+            ValueError: If ``num_jailbreak_attempts`` is less than one.
+        """
+        super().set_params_from_args(args=args)
+        num_attempts = self.params["num_jailbreak_attempts"]
+        if num_attempts < 1:
+            raise ValueError("num_jailbreak_attempts must be at least 1")
+
     @apply_defaults
     def __init__(
         self,
@@ -227,12 +254,38 @@ class Jailbreak(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=technique_class,
-            default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
+            default_dataset_config=DatasetAttackConfiguration(
+                sources=[DatasetSource(name=name) for name in ["harmbench"]], max_per_dataset="all", max_total=4
+            ),
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )
 
-    def _resolve_templates(self) -> list[str]:
+    def _resolve_scenario_techniques(self, *, scenario_techniques: Any) -> list[ScenarioTechnique]:
+        """
+        Resolve techniques while rejecting stale or incompatible enum members.
+
+        Args:
+            scenario_techniques (Any): Requested Jailbreak technique members.
+
+        Returns:
+            list[ScenarioTechnique]: Compatible concrete techniques.
+
+        Raises:
+            ValueError: If a caller supplies members from an older or different
+                technique enum.
+        """
+        if scenario_techniques:
+            incompatible = [item for item in scenario_techniques if not isinstance(item, self._technique_class)]
+            if incompatible:
+                values = [getattr(item, "value", repr(item)) for item in incompatible]
+                raise ValueError(
+                    "Jailbreak received stale or incompatible techniques "
+                    f"{values}. Select 'prompt_sending' or 'jailbreak_system_prompt'."
+                )
+        return super()._resolve_scenario_techniques(scenario_techniques=scenario_techniques)
+
+    async def _resolve_templates_async(self) -> list[str]:
         """
         Resolve the jailbreak templates for this run, replaying the persisted set on resume.
 
@@ -249,7 +302,7 @@ class Jailbreak(Scenario):
                 ``jailbreak_names`` contains an unknown template.
         """
         if self._scenario_result_id is not None:
-            stored = self._memory.get_scenario_results(scenario_result_ids=[self._scenario_result_id])
+            stored = await self._memory.get_scenario_results_async(scenario_result_ids=[self._scenario_result_id])
             if stored:
                 persisted = (stored[0].metadata or {}).get(_JAILBREAK_TEMPLATES_METADATA_KEY)
                 if persisted:
@@ -264,12 +317,14 @@ class Jailbreak(Scenario):
                 " or `jailbreak_names` (specific selection)."
             )
         if jailbreak_names:
-            available = set(TextJailBreak.get_jailbreak_templates())
+            available = set(await run_legacy_sync_async(TextJailBreak.get_jailbreak_templates))
             diff = set(jailbreak_names) - available
             if diff:
                 raise ValueError(f"Error: could not find templates `{diff}`!")
             return list(jailbreak_names)
-        return TextJailBreak.get_jailbreak_templates(num_templates=num_jailbreaks or _DEFAULT_NUM_JAILBREAKS)
+        return await run_legacy_sync_async(
+            TextJailBreak.get_jailbreak_templates, num_templates=num_jailbreaks or _DEFAULT_NUM_JAILBREAKS
+        )
 
     def _build_initial_scenario_metadata(self) -> dict[str, Any]:
         """
@@ -282,17 +337,133 @@ class Jailbreak(Scenario):
         metadata[_JAILBREAK_TEMPLATES_METADATA_KEY] = list(self._resolved_jailbreaks)
         return metadata
 
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
+        """
+        Estimate the template and attempt axes, preserving the target capability caveat.
+
+        Returns:
+            ScenarioRunSizeEstimate: Conditional target-aware estimate.
+
+        Raises:
+            ValueError: If native system-prompt delivery is the only selected
+                technique but the selected target cannot support it.
+        """
+        seed_group_count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
+        template_count = len(self.params.get("jailbreak_names") or []) or (
+            self.params.get("num_jailbreaks") or _DEFAULT_NUM_JAILBREAKS
+        )
+        attempt_count = self.params["num_jailbreak_attempts"]
+        technique_names = {technique.value for technique in self._scenario_techniques}
+        converter_count = len(technique_names - {_JAILBREAK_SYSTEM_PROMPT})
+        system_delivery_selected = _JAILBREAK_SYSTEM_PROMPT in technique_names
+        system_delivery_supported = (
+            not _jailbreak_system_prompt_factory().requirements.check_target(
+                target=self._objective_target, attack_class=PromptSendingAttack
+            )
+            if system_delivery_selected and self._objective_target is not None
+            else None
+        )
+        if (
+            system_delivery_selected
+            and system_delivery_supported is False
+            and (converter_count == 0 or self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE)
+        ):
+            raise ValueError(
+                "Technique 'jailbreak_system_prompt' requires an objective target with editable history "
+                "and system-prompt support."
+            )
+
+        components: list[ScenarioRunSizeComponent] = []
+        if self._include_baseline:
+            components.append(
+                ScenarioRunSizeComponent(
+                    label="Baseline",
+                    count=seed_group_count,
+                    is_baseline=True,
+                )
+            )
+        components.append(
+            ScenarioRunSizeComponent(
+                label="Inline jailbreak delivery",
+                count=seed_group_count * template_count * attempt_count * converter_count,
+                note=(
+                    "Each planned unit is one template, one selected delivery technique, and one logical seed group. "
+                    "num_jailbreaks selects templates; it is not a persisted result or attempt count."
+                ),
+            )
+        )
+        if system_delivery_selected and system_delivery_supported is not False:
+            components.append(
+                ScenarioRunSizeComponent(
+                    label="Native system-prompt jailbreak delivery",
+                    count=seed_group_count * template_count * attempt_count,
+                    note=(
+                        "The selected objective target supports native system-prompt delivery."
+                        if system_delivery_supported is True
+                        else "Included only when the objective target supports editable history and system prompts."
+                    ),
+                )
+            )
+
+        target_agnostic_count = sum(
+            component.count for component in components if component.label != "Native system-prompt jailbreak delivery"
+        )
+        planned_count = sum(component.count for component in components)
+        baseline_explanation = (
+            f" Baseline adds one unit per selected seed group ({seed_group_count} units)."
+            if self._include_baseline
+            else " Baseline is disabled."
+        )
+        formula = (
+            f"{template_count} template(s) x {seed_group_count} selected logical seed group(s) x "
+            f"{converter_count} selected target-agnostic technique(s) x {attempt_count} configured attempt(s) "
+            f"= {seed_group_count * template_count * attempt_count * converter_count} planned unit(s)."
+        )
+        estimated_attack_count = (
+            None if system_delivery_selected and system_delivery_supported is None else planned_count
+        )
+        if estimated_attack_count is None:
+            capability_note = (
+                " The selected technique requires native system-prompt delivery; incompatible targets cannot run it."
+                if converter_count == 0
+                else (
+                    f" Budget: up to {target_agnostic_count} planned units for target-agnostic delivery; "
+                    f"{planned_count} when native system-prompt delivery is supported."
+                )
+            )
+        elif system_delivery_selected and system_delivery_supported is True:
+            capability_note = " The selected target supports the native system-prompt component."
+        elif system_delivery_selected:
+            capability_note = " The selected target does not support native system-prompt delivery, so it is omitted."
+        else:
+            capability_note = ""
+        jailbreak_names = self.params.get("jailbreak_names") or []
+        effective_parameters: dict[str, int | list[str]] = {
+            "num_jailbreak_attempts": attempt_count,
+        }
+        if jailbreak_names:
+            effective_parameters["jailbreak_names"] = list(jailbreak_names)
+        else:
+            effective_parameters["num_jailbreaks"] = template_count
+        return ScenarioRunSizeEstimate(
+            total_attack_count=estimated_attack_count,
+            maximum_attack_count=planned_count if estimated_attack_count is None else None,
+            components=components,
+            datasets=datasets,
+            effective_parameters=effective_parameters,
+            note=f"{formula}{baseline_explanation}{capability_note}",
+        )
+
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
         Build one atomic attack per (technique x jailbreak template x dataset x attempt).
 
-        ``prompt_sending`` (and any opt-in registry techniques) deliver each jailbreak template as a
-        ``TextJailbreakConverter`` appended to that technique's request converters, so the objective
-        is rendered inline into the template's ``{{prompt}}`` slot on the wire — target-agnostic and
-        composable with every technique. ``jailbreak_system_prompt`` instead delivers the template as
-        a native system prompt (no converter) with the objective sent as its own user turn, so it is
-        only built when the objective target natively supports editable history and system prompts.
-        Results group by jailbreak template so per-template ASR rolls up naturally.
+        ``prompt_sending`` delivers each jailbreak template as a ``TextJailbreakConverter`` so the
+        objective is rendered inline into the template's ``{{prompt}}`` slot on the wire.
+        ``jailbreak_system_prompt`` instead delivers the template as a native system prompt (no
+        converter) with the objective sent as its own user turn, so it is only built when the
+        objective target natively supports editable history and system prompts. Results group by
+        jailbreak template so per-template ASR rolls up naturally.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.
@@ -310,34 +481,42 @@ class Jailbreak(Scenario):
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
 
-        self._resolved_jailbreaks = self._resolve_templates()
-        num_attempts = self.params.get("num_jailbreak_attempts", 1)
+        self._resolved_jailbreaks = await self._resolve_templates_async()
+        return await run_legacy_sync_async(self._build_atomic_attacks, context=context)
+
+    def _build_atomic_attacks(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        """
+        Build the synchronous template and delivery matrix off-loop.
+
+        Returns:
+            list[AtomicAttack]: The attacks for the selected templates and delivery methods.
+
+        Raises:
+            ValueError: If only system-prompt delivery is selected for an incompatible target.
+        """
+        num_attempts = self.params["num_jailbreak_attempts"]
 
         technique_factories = resolve_technique_factories(context=context, extra_factories=_extra_default_factories())
-
-        # ``jailbreak_system_prompt`` is delivered separately (native system prompt, no converter);
-        # every other technique goes through the inline converter path.
-        system_selected = _JAILBREAK_SYSTEM_PROMPT in technique_factories
-        converter_factories = {
-            name: factory for name, factory in technique_factories.items() if name != _JAILBREAK_SYSTEM_PROMPT
+        technique_factories = {
+            name: factory
+            for name, factory in technique_factories.items()
+            if check_target_compatibility(
+                target=context.objective_target,
+                attack_class=factory.attack_class,
+                requirements=factory.requirements,
+                technique_name=name,
+                policy=context.incompatible_technique_policy,
+            )
         }
 
-        build_system_delivery = system_selected and self._target_supports_system_delivery(self._objective_target)
-        if system_selected and not build_system_delivery:
-            if not converter_factories:
-                raise ValueError(
-                    "The 'jailbreak_system_prompt' technique needs a target that natively supports "
-                    "editable history and system prompts. Choose a capable target or a different technique."
-                )
-            logger.warning(
-                "Skipping 'jailbreak_system_prompt' delivery: target does not natively support "
-                "editable history and system prompts. Running the remaining techniques."
-            )
+        prompt_sending_factory = technique_factories.get(_PROMPT_SENDING)
+        system_selected = _JAILBREAK_SYSTEM_PROMPT in technique_factories
 
         builder = MatrixAtomicAttackBuilder(
-            objective_target=self._objective_target,
+            objective_target=context.objective_target,
             objective_scorer=self._objective_scorer,
             memory_labels=context.memory_labels,
+            incompatible_technique_policy=context.incompatible_technique_policy,
         )
 
         atomic_attacks: list[AtomicAttack] = []
@@ -353,22 +532,21 @@ class Jailbreak(Scenario):
         for template_file_name in self._resolved_jailbreaks:
             template_stem = Path(template_file_name).stem
 
-            if converter_factories:
+            if prompt_sending_factory is not None:
                 jailbreak_converter = TextJailbreakConverter(
                     jailbreak_template=TextJailBreak(template_file_name=template_file_name)
                 )
-                # Within the extra-converter stack, apply the jailbreak first (wrap the raw objective
-                # in the template), then any per-technique converters the caller layered on via
-                # ``--techniques <name>:converter.*``. (A technique's own built-in converters, if any,
-                # still run ahead of this extra stack inside the factory.)
+                # Apply the jailbreak before any caller-supplied prompt_sending converters.
                 technique_converters = {
-                    technique_name: [jailbreak_converter, *self._technique_converters.get(technique_name, [])]
-                    for technique_name in converter_factories
+                    _PROMPT_SENDING: [
+                        jailbreak_converter,
+                        *self._technique_converters.get(_PROMPT_SENDING, []),
+                    ]
                 }
                 atomic_attacks.extend(
                     self._build_delivery_attacks(
                         builder=builder,
-                        technique_factories=converter_factories,
+                        technique_factories={_PROMPT_SENDING: prompt_sending_factory},
                         technique_converters=technique_converters,
                         dataset_groups=context.seed_groups_by_dataset,
                         template_stem=template_stem,
@@ -376,7 +554,7 @@ class Jailbreak(Scenario):
                     )
                 )
 
-            if build_system_delivery:
+            if system_selected:
                 system_factory = self._build_system_prompt_factory(template_file_name=template_file_name)
                 atomic_attacks.extend(
                     self._build_delivery_attacks(
@@ -456,24 +634,5 @@ class Jailbreak(Scenario):
             attack_class=PromptSendingAttack,
             technique_tags=["single_turn"],
             seed_technique=seed_technique,
-        )
-
-    @staticmethod
-    def _target_supports_system_delivery(target: PromptTarget) -> bool:
-        """
-        Return whether ``target`` can carry the ``jailbreak_system_prompt`` delivery natively.
-
-        System-prompt delivery sets a system prompt and relies on the objective staying a separate
-        live user turn; on a target without native editable history that turn is squashed into the
-        framing and the objective is silently dropped. Both capabilities must therefore be native.
-
-        Args:
-            target (PromptTarget): The objective target for this run.
-
-        Returns:
-            bool: ``True`` when the target natively supports editable history and system prompts.
-        """
-        configuration = target.configuration
-        return configuration.includes(capability=CapabilityName.EDITABLE_HISTORY) and configuration.includes(
-            capability=CapabilityName.SYSTEM_PROMPT
+            requirements=_jailbreak_system_prompt_factory().requirements,
         )

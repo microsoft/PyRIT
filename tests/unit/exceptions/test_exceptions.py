@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from contextlib import suppress
+from typing import assert_type
 
 import pytest
 from tenacity import RetryError
@@ -14,6 +15,7 @@ from pyrit.exceptions import (
     BadRequestException,
     EmptyResponseException,
     InvalidJsonException,
+    KeyVaultInitializationException,
     MissingPromptPlaceholderException,
     PyritException,
     RateLimitException,
@@ -21,6 +23,26 @@ from pyrit.exceptions import (
     pyrit_custom_result_retry,
 )
 from pyrit.models import MessagePiece
+
+
+def test_custom_result_retry_preserves_signature_and_result() -> None:
+    @pyrit_custom_result_retry(retry_function=lambda result: result == 0)
+    def calculate(*, value: int) -> int:
+        return value
+
+    result = calculate(value=42)
+    assert_type(result, int)
+    assert result == 42
+
+
+async def test_custom_result_retry_preserves_async_signature_and_result_async() -> None:
+    @pyrit_custom_result_retry(retry_function=lambda result: result == 0)
+    async def calculate_async(*, value: int) -> int:
+        return value
+
+    result = await calculate_async(value=42)
+    assert_type(result, int)
+    assert result == 42
 
 
 def test_pyrit_exception_initialization():
@@ -57,6 +79,14 @@ def test_empty_response_exception_initialization():
     assert ex.status_code == 204
     assert ex.message == "No Content"
     assert str(ex) == "Status Code: 204, Message: No Content"
+
+
+def test_key_vault_initialization_exception_is_value_error_compatible():
+    ex = KeyVaultInitializationException(status_code=403, message="Key Vault access denied")
+
+    assert isinstance(ex, ValueError)
+    assert ex.status_code == 403
+    assert ex.message == "Key Vault access denied"
 
 
 def test_invalid_json_exception_initialization():
@@ -115,21 +145,26 @@ def _make_request_piece() -> MessagePiece:
 def test_content_filter_markers_exported_from_pyrit_exceptions():
     """The marker set must be importable from ``pyrit.exceptions`` as the single source of truth."""
     assert "content_filter" in CONTENT_FILTER_MARKERS
+    assert "cyber_policy" in CONTENT_FILTER_MARKERS
     assert "moderation_blocked" in CONTENT_FILTER_MARKERS
     assert "policy_violation" in CONTENT_FILTER_MARKERS
     assert "content_safety_violation" in CONTENT_FILTER_MARKERS
+    assert "bio_policy" in CONTENT_FILTER_MARKERS
 
 
 @pytest.mark.parametrize(
     "marker_response_text",
     [
         "content_filter",
+        '{"error": {"code": "cyber_policy"}}',
         '{"error": {"code": "moderation_blocked"}}',
         '{"error": {"code": "content_policy_violation"}}',
         '{"error": {"code": "content_safety_violation"}}',
+        '{"error": {"code": "bio_policy", "message": "This content was flagged for possible biological risk."}}',
+        '{"error": {"code": "cyber_policy", "message": "This request was flagged for possible cybersecurity risk."}}',
     ],
 )
-def test_handle_bad_request_exception_returns_blocked_for_any_marker(marker_response_text):
+def test_handle_bad_request_exception_returns_blocked_for_any_marker(marker_response_text: str) -> None:
     """The substring fallback must trigger for every marker in ``CONTENT_FILTER_MARKERS``."""
     try:
         raise RuntimeError("simulated upstream error")
@@ -140,6 +175,10 @@ def test_handle_bad_request_exception_returns_blocked_for_any_marker(marker_resp
         )
 
     assert response.message_pieces[0].response_error == "blocked"
+    assert json.loads(response.message_pieces[0].converted_value) == {
+        "status_code": 400,
+        "message": marker_response_text,
+    }
 
 
 def test_handle_bad_request_exception_reraises_when_no_marker_and_not_content_filter():

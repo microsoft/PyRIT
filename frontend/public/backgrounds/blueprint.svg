@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT license.
+Artwork newly authored for PyRIT with Copilot assistance, not adapted from third-party art.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" fill="none">
+  <g stroke="#8ec9f0">
+    <path d="M0 100h1600M0 200h1600M0 300h1600M0 400h1600M0 500h1600
+      M0 600h1600M0 700h1600M0 800h1600M0 900h1600
+      M100 0v1000M200 0v1000M300 0v1000M400 0v1000M500 0v1000
+      M600 0v1000M700 0v1000M800 0v1000M900 0v1000M1000 0v1000
+      M1100 0v1000M1200 0v1000M1300 0v1000M1400 0v1000M1500 0v1000"
+      stroke-width="1" opacity="0.14"/>
+    <g stroke-width="2.5" stroke-linejoin="round">
+      <path d="M1092 768v-69q0-28 28-28h70l31-38h141q21 0 36 17
+        l55 66v132q0 26-26 26h-67l-32 38h-155q-20 0-35-18l-46-56Z"/>
+      <circle cx="1268" cy="772" r="65"/>
+      <circle cx="1268" cy="772" r="44"/>
+      <circle cx="1142" cy="715" r="13"/>
+      <circle cx="1406" cy="714" r="13"/>
+      <circle cx="1167" cy="863" r="13"/>
+      <circle cx="1407" cy="842" r="13"/>
+      <path d="M1149 778v35l36 37m169-147 29 34v36" opacity="0.7"/>
+    </g>
+    <g stroke-width="1.5" opacity="0.65">
+      <path d="M1070 772h407M1268 609v327" stroke-dasharray="17 6 3 6"/>
+      <path d="M1123 715h38m-19-19v38m245-20h38m-19-19v38
+        m-258 110h38m-19-19v38m221-21h38m-19-19v38"/>
+      <path d="M1092 861v109m361-96v96m-361-19h361M1391 633h128m-167 279h167m-19-279v279"/>
+      <path d="m1351 724 33-34h63"/>
+    </g>
+    <g stroke-width="2" stroke-linejoin="round" opacity="0.65">
+      <path d="m1418 107 90-34 58 45-90 35Zm0 0v96l58 44 90-34v-95m-90 35v94"/>
+      <path d="m1418 203 89-34 59 44m-59-44V73" stroke-dasharray="9 7" opacity="0.6"/>
+      <path d="M143 921v-63h39v-34h76l41 42v55Zm39-63h49l27 27v36"/>
+      <circle cx="171" cy="895" r="9"/>
+      <circle cx="277" cy="895" r="9"/>
+    </g>
+    <g stroke-width="1.5" opacity="0.5">
+      <path d="M143 938v30m156-30v30m-156-15h156M124 824H98m26 97H98m13-97v97"/>
+      <path d="M783 931h29m-14-14v29M1514 383h26m-13-13v26"/>
+    </g>
+  </g>
+  <g fill="#8ec9f0">
+    <path d="m1092 951 13-4v8Zm361 0-13-4v8ZM1500 633l-4 13h8Zm0 279-4-13h8Z"/>
+    <path d="m1384 690-5 11-6-6Z"/>
+    <path d="m143 953 10-3v6Zm156 0-10-3v6ZM111 824l-3 10h6Zm0 97-3-10h6Z" opacity="0.65"/>
+  </g>
+</svg>

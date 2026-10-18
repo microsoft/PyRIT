@@ -9,10 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, overload
 
-import yaml
-
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.common.utils import combine_dict, get_kwarg_param
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.executor.core.config import StrategyConverterConfig
 from pyrit.executor.promptgen.core import (
     PromptGeneratorStrategy,
@@ -215,9 +214,10 @@ class AnecdoctorGenerator(
         system_prompt = self._system_prompt_template.format(language=context.language, type=context.content_type)
 
         # Configure the target with the system prompt
-        self._objective_target.set_system_prompt(
-            system_prompt=system_prompt,
-            conversation_id=context.conversation_id,
+        (
+            await self._objective_target.set_system_prompt_async(
+                system_prompt=system_prompt, conversation_id=context.conversation_id
+            )
         )
 
     async def _perform_async(self, *, context: AnecdoctorContext) -> AnecdoctorResult:
@@ -331,7 +331,7 @@ class AnecdoctorGenerator(
         """
         prompt_path = Path(EXECUTOR_SEED_PROMPT_PATH, self._ANECDOCTOR_PROMPT_PATH, yaml_filename)
         prompt_data = prompt_path.read_text(encoding="utf-8")
-        yaml_data = yaml.safe_load(prompt_data)
+        yaml_data = safe_load_yaml(prompt_data)
         return str(yaml_data["value"])
 
     def _format_few_shot_examples(self, *, evaluation_data: list[str]) -> str:
@@ -374,9 +374,10 @@ class AnecdoctorGenerator(
         kg_conversation_id = str(uuid.uuid4())
 
         # Set system prompt on processing model
-        self._processing_model.set_system_prompt(
-            system_prompt=kg_system_prompt,
-            conversation_id=kg_conversation_id,
+        (
+            await self._processing_model.set_system_prompt_async(
+                system_prompt=kg_system_prompt, conversation_id=kg_conversation_id
+            )
         )
 
         # Format examples for knowledge graph extraction using few-shot format

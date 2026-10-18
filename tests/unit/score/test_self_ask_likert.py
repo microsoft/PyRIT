@@ -8,11 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 from pydantic import ValidationError
-from unit.mocks import get_mock_target_identifier
+from unit.mocks import MockPromptTarget, get_mock_target_identifier, store_message_async
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Message, MessagePiece, SeedPrompt
+from pyrit.models import Message, MessagePiece, MessageScorable, Score, ScoringExpectation, SeedPrompt
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import LikertScale, LikertScaleEntry, LikertScalePaths, SelfAskLikertScorer
 
 
@@ -44,7 +45,7 @@ def scorer_likert_response() -> Message:
 
 
 def _mock_target(*, response: Message | None = None) -> MagicMock:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     if response is not None:
         target.send_prompt_async = AsyncMock(return_value=[response])
@@ -74,6 +75,16 @@ def _write_likert_yaml(
     return path
 
 
+def test_likert_harm_scorer_does_not_match_objective(likert_scale: LikertScale):
+    scorer = SelfAskLikertScorer.from_likert_scale(
+        chat_target=_mock_target(),
+        likert_scale=likert_scale,
+    )
+
+    assert scorer.condition_type is None
+    assert scorer.get_condition_types() == frozenset()
+
+
 async def test_likert_scorer_sets_system_prompt_and_scores(
     patch_central_database,
     scorer_likert_response: Message,
@@ -84,7 +95,7 @@ async def test_likert_scorer_sets_system_prompt_and_scores(
 
     scores = await scorer.score_text_async("No harm")
 
-    target.set_system_prompt.assert_called_once()
+    target.set_system_prompt_async.assert_called_once()
     assert likert_scale.category in scorer._system_prompt
     assert "No harm" in scorer._system_prompt
     assert scores[0].score_value == "0.0"
@@ -118,6 +129,78 @@ async def test_likert_scorer_accepts_float_string_score_value(patch_central_data
 
     assert score[0].score_metadata["likert_value"] == 4
     assert score[0].get_value() == pytest.approx(0.75)
+
+
+async def test_likert_scorer_keeps_response_handler_metadata(patch_central_database):
+    # The judge may report its own metadata alongside the verdict, and the
+    # response handler parses and carries it through to the Score. This scorer
+    # overwrote that dict with `{"likert_value": ...}`, dropping those keys;
+    # the sibling SelfAskScaleScorer keeps them for the same payload.
+    response = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value=(
+                    '{"score_value": "3", "description": "Severe harm", "rationale": "Reason",'
+                    ' "metadata": {"verdict_confidence": 0.9, "raw_judge_output": "level 3"}}'
+                ),
+            )
+        ]
+    )
+    scale = LikertScale(
+        category="harm",
+        scale_descriptions=[
+            LikertScaleEntry(score_value=0, description="None"),
+            LikertScaleEntry(score_value=3, description="Severe"),
+            LikertScaleEntry(score_value=4, description="Worse"),
+        ],
+    )
+
+    score = await SelfAskLikertScorer.from_likert_scale(
+        chat_target=_mock_target(response=response),
+        likert_scale=scale,
+    ).score_text_async("text")
+
+    assert score[0].score_metadata == {
+        "verdict_confidence": 0.9,
+        "raw_judge_output": "level 3",
+        "likert_value": 3,
+    }
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("raw_value, expected_value", [(0, 0.0), (3, 1.0)])
+async def test_likert_metadata_mutation_round_trips_async(
+    *, sqlite_instance: MemoryInterface, likert_scale: LikertScale, raw_value: int, expected_value: float
+) -> None:
+    target = MockPromptTarget()
+    scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=likert_scale)
+    message = await store_message_async(MessagePiece(role="assistant", original_value="scored content").to_message())
+    expectation = ScoringExpectation(objective="Assess harmful content")
+    response = MessagePiece(
+        role="assistant",
+        original_value=(
+            f'{{"score_value": {raw_value}, "description": "Harm level", "rationale": "Judge explanation",'
+            ' "metadata": {"confidence": 0.9, "source": "judge", "likert_value": "untrusted"}}'
+        ),
+    ).to_message()
+    with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=[response]):
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message), expectation=expectation)
+
+    assert len(scores) == 1
+    stored = await sqlite_instance.get_scores_async(score_ids=[str(scores[0].id)])
+    assert len(stored) == 1
+    score = stored[0]
+    assert score.get_value() == expected_value
+    assert score.score_type == "float_scale"
+    assert score.score_category == ["test_harm"]
+    assert score.score_value_description == "Harm level"
+    assert score.score_rationale == "Judge explanation"
+    assert score.score_metadata == {"confidence": 0.9, "source": "judge", "likert_value": raw_value}
+    assert score.scored_expectation == expectation
+    assert score.message_piece_id == message.get_piece().id
+    assert len(score.observation_ids) == 1
+    assert score == Score.model_validate_json(scores[0].model_dump_json())
 
 
 @pytest.mark.parametrize("raw_score", ["4", "4.5"])
@@ -156,7 +239,7 @@ async def test_likert_scorer_adds_to_memory(scorer_likert_response: Message, lik
         scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=likert_scale)
         await scorer.score_text_async(text="string")
 
-    memory.add_scores_to_memory.assert_called_once()
+    memory.add_scores_to_memory_async.assert_called_once()
 
 
 async def test_likert_scorer_bad_json_retries(patch_central_database, likert_scale: LikertScale):
@@ -311,6 +394,17 @@ def test_likert_factory_applies_evaluation_metadata(patch_central_database):
 
     assert scorer.evaluation_file_mapping is not None
     assert scorer.evaluation_file_mapping.harm_category == scale.evaluation_files.harm_category
+
+
+@pytest.mark.parametrize(
+    "preset",
+    [preset for preset in LikertScalePaths if preset.evaluation_files is not None],
+)
+def test_likert_presets_use_canonical_harm_categories(preset: LikertScalePaths) -> None:
+    scale = preset.load()
+    assert scale.evaluation_files is not None
+    assert scale.evaluation_files == preset.evaluation_files
+    assert scale.category == scale.evaluation_files.harm_category
 
 
 @pytest.mark.parametrize(

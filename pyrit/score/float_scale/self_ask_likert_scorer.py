@@ -14,14 +14,18 @@ from pyrit.models import (
     JsonResponseConfig,
     JsonSchemaDefinition,
     MessagePiece,
+    Observation,
     Score,
+    ScoringExpectation,
     SeedPrompt,
     UnvalidatedScore,
 )
+from pyrit.models.harm_category import HarmCategory
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEvalFiles
-from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_judgment_observation
+from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -29,6 +33,8 @@ from pyrit.score.system_prompt import _render_system_prompt_template
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
+
+    from pyrit.score.observation.execution import _ObservationEvidence
 
 _DEFAULT_LIKERT_SYSTEM_PROMPT_PATH = SCORER_LIKERT_PATH / "likert_system_prompt.yaml"
 
@@ -115,7 +121,7 @@ class LikertScalePaths(enum.Enum):
         LikertScaleEvalFiles(
             human_labeled_datasets_files=["harm/sexual.csv"],
             result_file="harm/sexual_metrics.jsonl",
-            harm_category="sexual",
+            harm_category=HarmCategory.SEXUAL_CONTENT.name,
         ),
     )
     VIOLENCE_SCALE = (
@@ -141,11 +147,11 @@ class LikertScalePaths(enum.Enum):
         None,
     )
     FAIRNESS_BIAS_SCALE = (
-        Path(HARM_DEFINITION_PATH, "fairness_bias.yaml").resolve(),
+        Path(HARM_DEFINITION_PATH, "representational.yaml").resolve(),
         LikertScaleEvalFiles(
-            human_labeled_datasets_files=["harm/fairness_bias.csv"],
-            result_file="harm/fairness_bias_metrics.jsonl",
-            harm_category="fairness_bias",
+            human_labeled_datasets_files=["harm/representational.csv"],
+            result_file="harm/representational_metrics.jsonl",
+            harm_category=HarmCategory.REPRESENTATIONAL.name,
         ),
     )
     HARM_SCALE = (
@@ -194,7 +200,10 @@ class LikertScalePaths(enum.Enum):
         Returns:
             LikertScale: The loaded scale.
         """
-        return LikertScale.from_yaml(self.path, evaluation_files=self.evaluation_files)
+        scale = LikertScale.from_yaml(self.path, evaluation_files=self.evaluation_files)
+        if self.evaluation_files and self.evaluation_files.harm_category:
+            return scale.model_copy(update={"category": self.evaluation_files.harm_category})
+        return scale
 
 
 class _LikertScaleResponseHandler(ResponseHandler):
@@ -213,6 +222,18 @@ class _LikertScaleResponseHandler(ResponseHandler):
     def json_response_config(self) -> JsonResponseConfig:
         """The wrapped handler's JSON-response request."""
         return self._response_handler.json_response_config
+
+    def _replay_identifier(self) -> dict[str, object] | None:
+        """Return the wrapped parser and accepted Likert values."""
+        wrapped = self._response_handler._get_replay_identifier()
+        if wrapped is None:
+            return None
+        return {
+            "handler": f"{type(self).__module__}.{type(self).__qualname__}",
+            "version": 1,
+            "wrapped": wrapped,
+            "score_values": sorted(self._score_values),
+        }
 
     def parse(
         self,
@@ -250,7 +271,7 @@ class _LikertScaleResponseHandler(ResponseHandler):
         return score
 
 
-class SelfAskLikertScorer(FloatScaleScorer):
+class SelfAskLikertScorer(MessageFloatScaleScorer):
     """
     A class that represents a "self-ask" score for text scoring based on a Likert scale.
     A Likert scale consists of ranked, ordered categories and is often on a 5 or 7 point basis,
@@ -289,9 +310,10 @@ class SelfAskLikertScorer(FloatScaleScorer):
         if chat_target is None:
             raise ValueError("A chat_target must be provided.")
 
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
         self._prompt_target = chat_target
+        self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
         self._likert_scale = likert_scale
 
         rendered_value, schema = self._resolve_system_prompt(system_prompt)
@@ -383,42 +405,78 @@ class SelfAskLikertScorer(FloatScaleScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
-        Score the given message_piece using "self-ask" for the chat target.
-
-        Args:
-            message_piece (MessagePiece): The message piece containing the text to be scored.
-            objective (str | None): The objective for scoring context. Currently not supported for this scorer.
-                Defaults to None.
+        Render the judge request and convert the result.
 
         Returns:
-            list[Score]: The message_piece scored. The category is configured from the likert_scale.
-                The score_value is a value from [0,1] that is scaled from the likert scale.
+            list[Score]: The scorer's verdict.
         """
-        unvalidated_score = await _run_llm_scoring_async(
-            chat_target=self._prompt_target,
-            system_prompt=self._system_prompt,
+        unvalidated_score = await self._judge.judge_async(
             response_handler=self._response_handler,
-            value=message_piece.converted_value,
-            data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            category=self._likert_scale.category,
-            objective=objective,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=self._system_prompt,
+                    value=message_piece.converted_value,
+                    data_type=message_piece.converted_value_data_type,
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                    category=self._likert_scale.category,
+                )
+            ),
         )
 
-        score = unvalidated_score.to_score(
+        return [self._convert_score(unvalidated_score)]
+
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared Likert conversion and metadata contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained Likert judgment evidence.
+
+        Returns:
+            list[Score]: The normalized replay score.
+        """
+        unvalidated = _parse_judgment_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
+            expectation=expectation,
+            category=self._likert_scale.category,
+        )
+        return [self._convert_score(unvalidated)]
+
+    def _convert_score(self, unvalidated: UnvalidatedScore) -> Score:
+        score = unvalidated.to_score(
             score_value=str(
                 self.scale_value_float(
-                    float(unvalidated_score.raw_score_value),
+                    float(unvalidated.raw_score_value),
                     self._likert_scale.minimum_value,
                     self._likert_scale.maximum_value,
                 )
             ),
             score_type="float_scale",
         )
-
-        score.score_metadata = {"likert_value": int(float(unvalidated_score.raw_score_value))}
-
-        return [score]
+        # Extend rather than replace: `to_score` has already installed whatever
+        # the response handler parsed off the judge's reply, and the sibling
+        # float-scale scorers leave it in place. Replacing the dict would drop
+        # those keys, so a caller-supplied handler could never carry metadata.
+        score.score_metadata = {
+            **(unvalidated.score_metadata or {}),
+            "likert_value": int(float(unvalidated.raw_score_value)),
+        }
+        return score

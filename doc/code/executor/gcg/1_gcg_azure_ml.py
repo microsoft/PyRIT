@@ -177,10 +177,11 @@ print(f"Studio URL: {returned_job.studio_url}")
 # The next cell polls the job until it reaches a terminal state (~20-30
 # minutes for the small 5-step baseline above), then downloads the named
 # `results` output and prints the final suffix. The runner writes its
-# result file as `<result_prefix>_<timestamp>.json` (with `result_prefix`
+# result file as `<result_prefix>_<timestamp>_<id>.json` (with `result_prefix`
 # coming from the `GCGConfig` we built above, plus the AML output mount
-# prepended by `--output-dir`). For our config, that resolves to
-# `gcg_suffix_<timestamp>.json` under
+# prepended by `--output-dir`; `<id>` is a short random suffix so concurrent
+# runs never share a file). For our config, that resolves to
+# `gcg_suffix_<timestamp>_<id>.json` under
 # `<download_dir>/named-outputs/results/` once we download. The
 # `controls` array in that file contains one entry per training step, and
 # the last entry is the final adversarial suffix that, appended to the user

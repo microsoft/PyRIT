@@ -2,6 +2,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import HistoryFiltersBar from './HistoryFiltersBar'
 import { DEFAULT_HISTORY_FILTERS } from './historyFilters'
+import type { FilterOption } from '@/types'
 
 jest.mock('./AttackHistory.styles', () => ({
   useAttackHistoryStyles: () => new Proxy({}, { get: () => '' }),
@@ -18,7 +19,7 @@ describe('HistoryFiltersBar', () => {
     attackTypeOptions: [] as string[],
     converterOptions: [] as string[],
     operatorOptions: [] as string[],
-    operationOptions: [] as string[],
+    operationOptions: [] as FilterOption[],
     otherLabelOptions: [] as string[],
   }
 
@@ -26,32 +27,36 @@ describe('HistoryFiltersBar', () => {
     jest.clearAllMocks()
   })
 
-  it('should render all filter dropdowns', () => {
+  it('should render all filters with scanner inclusion on a second row', () => {
     render(
       <TestWrapper>
         <HistoryFiltersBar {...defaultProps} />
       </TestWrapper>
     )
 
-    expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
     expect(screen.getByTestId('outcome-filter')).toBeInTheDocument()
-    expect(screen.getByTestId('converter-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operator-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operation-filter')).toBeInTheDocument()
     expect(screen.getByTestId('label-filter')).toBeInTheDocument()
+    expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
+    expect(screen.getByTestId('converter-filter')).toBeInTheDocument()
+    expect(screen.getByTestId('scanner-attack-filter-row')).toContainElement(
+      screen.getByRole('switch', { name: 'Include scanner attacks' }),
+    )
+    expect(screen.queryByTestId('advanced-filters-btn')).not.toBeInTheDocument()
   })
 
-  it('should not show reset button when no filters are active', () => {
+  it('should disable reset when no filters are active', () => {
     render(
       <TestWrapper>
         <HistoryFiltersBar {...defaultProps} />
       </TestWrapper>
     )
 
-    expect(screen.queryByTestId('reset-filters-btn')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('should show reset button when a filter is active', () => {
+  it('should enable reset when a filter is active', () => {
     const activeFilters = { ...DEFAULT_HISTORY_FILTERS, outcome: 'success' }
 
     render(
@@ -60,7 +65,7 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
-    expect(screen.getByTestId('reset-filters-btn')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).not.toHaveAttribute('aria-disabled')
   })
 
   it('should call onFiltersChange with defaults when reset is clicked', () => {
@@ -75,6 +80,22 @@ describe('HistoryFiltersBar', () => {
 
     fireEvent.click(screen.getByTestId('reset-filters-btn'))
     expect(onFiltersChange).toHaveBeenCalledWith(DEFAULT_HISTORY_FILTERS)
+  })
+
+  it('should exclude scanner attacks when the switch is disabled', () => {
+    const onFiltersChange = jest.fn()
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...defaultProps} onFiltersChange={onFiltersChange} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Include scanner attacks' }))
+
+    expect(onFiltersChange).toHaveBeenCalledWith({
+      ...DEFAULT_HISTORY_FILTERS,
+      includeScenarioAttacks: false,
+    })
   })
 
   it('should call onFiltersChange when attack type filter is selected', async () => {
@@ -172,12 +193,12 @@ describe('HistoryFiltersBar', () => {
     )
   })
 
-  it('should call onFiltersChange when operation filter is selected', async () => {
+  it('should select a saved operation by name and filter by its ID', async () => {
     const onFiltersChange = jest.fn()
     const props = {
       ...defaultProps,
       onFiltersChange,
-      operationOptions: ['op_alpha', 'op_beta'],
+      operationOptions: [{ value: 'id-alpha', label: 'op_alpha' }, { value: 'id-beta', label: 'op_beta' }],
     }
 
     render(
@@ -193,7 +214,7 @@ describe('HistoryFiltersBar', () => {
     fireEvent.click(option)
 
     expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ operation: ['op_beta'] })
+      expect.objectContaining({ operationId: ['id-beta'] })
     )
   })
 
@@ -211,9 +232,7 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
-    const inputs = screen.getAllByRole('combobox')
-    const labelInput = inputs[inputs.length - 1]
-    fireEvent.change(labelInput, { target: { value: 'team' } })
+    fireEvent.change(screen.getByTestId('label-filter'), { target: { value: 'team' } })
 
     expect(onFiltersChange).toHaveBeenCalledWith(
       expect.objectContaining({ labelSearchText: 'team' })

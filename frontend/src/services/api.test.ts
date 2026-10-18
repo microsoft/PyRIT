@@ -5,6 +5,7 @@ jest.mock("axios", () => ({
     post: jest.fn(),
     put: jest.fn(),
     delete: jest.fn(),
+    getUri: jest.fn((config: { url: string }) => config.url),
     interceptors: {
       request: { use: jest.fn() },
       response: { use: jest.fn() },
@@ -12,15 +13,80 @@ jest.mock("axios", () => ({
   })),
 }));
 
+jest.mock("./compatibility", () => {
+  const actual = jest.requireActual<typeof import("./compatibility")>("./compatibility");
+  return { ...actual, compatibility: new actual.CompatibilityStore(`1.2.0.dev0+g${"a".repeat(40)}`) };
+});
+
 import {
   apiClient,
+  authApi,
   healthApi,
+  initializersApi,
   versionApi,
+  configurationApi,
   targetsApi,
+  techniquesApi,
+  convertersApi,
   attacksApi,
+  labelsApi,
+  scenariosApi,
+  operationsApi,
+  datasetsApi,
+  analyticsApi,
 } from "./api";
+import { compatibility, COMPATIBILITY_HEADER } from "./compatibility";
+import { makeAnalyticsFacets, makeAnalyticsReport, makeAnalyticsResults } from "@/test-utils/analyticsFixtures";
+import { DEFAULT_ANALYTICS_VIEW } from "@/utils/attackAnalytics";
 
 describe("api service", () => {
+  describe("operationsApi", () => {
+    it("reads canonical harm categories without copying the taxonomy into the frontend", async () => {
+      const options = { harm_types: ["Malware", "Other"] };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: options });
+      expect(await operationsApi.getFindingOptions()).toEqual(options);
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/finding-options");
+    });
+    it("encodes evidence scope, searches literally, and preserves duplicate feedback", async () => {
+      const page = { items: [], has_more: false, next_offset: null };
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: page });
+      expect(await operationsApi.listFindings("a/b", { limit: 20, offset: 0, title: "%_" })).toEqual(page);
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/findings", {
+        params: { limit: 20, offset: 0, title: "%_" },
+      });
+      const request = { attack_result_id: "attack", conversation_id: "conversation" };
+      const result = { item: { id: "evidence" }, created: false };
+      (apiClient.post as jest.Mock).mockResolvedValue({ data: result });
+      expect(await operationsApi.attachFindingEvidence("a/b", "c/d", request)).toEqual(result);
+      expect(apiClient.post).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd/evidence", request);
+      expect(await operationsApi.listFindingEvidence("a/b", "c/d", { limit: 20, offset: 20 })).toEqual(page);
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd/evidence", {
+        params: { limit: 20, offset: 20 },
+      });
+      await operationsApi.detachFindingEvidence("a/b", "c/d", "e/f");
+      expect(apiClient.delete).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd/evidence/e%2Ff");
+    });
+    it("nests finding requests under an encoded operation ID", async () => {
+      const request = { title: "Assessment", description: "", severity: "low" as const };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: { name: "Case" } });
+      await operationsApi.create({ name: " Case / α% " });
+      expect(apiClient.post).toHaveBeenCalledWith("/operations", { name: " Case / α% " });
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: request });
+      expect(await operationsApi.createFinding("a/b", request)).toEqual(request);
+      expect(apiClient.post).toHaveBeenCalledWith("/operations/a%2Fb/findings", request);
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { items: [], has_more: false, next_offset: null } });
+      await operationsApi.listFindings("a/b", { limit: 20, offset: 0 });
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/findings", {
+        params: { limit: 20, offset: 0 },
+      });
+      (apiClient.put as jest.Mock).mockResolvedValueOnce({ data: request });
+      expect(await operationsApi.updateFinding("a/b", "c/d", request)).toEqual(request);
+      expect(apiClient.put).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd", request);
+      (apiClient.delete as jest.Mock).mockResolvedValueOnce({ data: undefined });
+      expect(await operationsApi.deleteFinding("a/b", "c/d")).toBeUndefined();
+      expect(apiClient.delete).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd");
+    });
+  });
   // Interceptor functions are registered at module-load time.
   // Capture them before beforeEach's clearAllMocks wipes the call records.
   const requestInterceptor = (apiClient.interceptors.request.use as jest.Mock).mock.calls[0]?.[0];
@@ -31,9 +97,54 @@ describe("api service", () => {
     jest.clearAllMocks();
   });
 
+  describe("authApi", () => {
+    it("should read current administrator access", async () => {
+      const response = { data: { isAdmin: true } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(authApi.getAccess()).resolves.toEqual(response.data);
+      expect(apiClient.get).toHaveBeenCalledWith("/auth/access");
+    });
+  });
+
   describe("apiClient", () => {
     it("should be defined", () => {
       expect(apiClient).toBeDefined();
+    });
+
+    describe("single message sends", () => {
+      it("submits one message and reads progress with bounded waiting and cancellation", async () => {
+        const progress = { send_id: "send/id", state: "queued" };
+        const request = {
+          submission_id: "submission", role: "user", pieces: [{ original_value: "hello", data_type: "text" }],
+          send: true as const, target_registry_name: "target", target_conversation_id: "conversation",
+        };
+        const controller = new AbortController();
+        (apiClient.post as jest.Mock).mockResolvedValue({ data: progress });
+        (apiClient.get as jest.Mock).mockResolvedValue({ data: progress });
+        expect(await attacksApi.submitMessageSend("attack/id", request)).toEqual(progress);
+        expect(apiClient.post).toHaveBeenCalledWith("/attacks/attack%2Fid/message-sends", request);
+        expect(await attacksApi.getMessageSend("attack/id", "send/id", controller.signal)).toEqual(progress);
+        expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/message-sends/send%2Fid", {
+          params: { wait_ms: 1000 }, signal: controller.signal,
+        });
+      });
+
+      it("does not automatically retry an unauthorized submission", async () => {
+        const error = {
+          isAxiosError: true,
+          config: { method: "post", url: "/attacks/attack/message-sends", headers: {} },
+          response: { status: 401, data: { detail: "Unauthorized" } },
+        };
+        const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+        try {
+          await expect(responseOnError(error)).rejects.toBe(error);
+          expect(error.config).not.toHaveProperty("_retried");
+          expect(apiClient.post).not.toHaveBeenCalled();
+        } finally {
+          consoleSpy.mockRestore();
+        }
+      });
     });
 
     it("should have correct methods", () => {
@@ -53,7 +164,7 @@ describe("api service", () => {
         {} as Record<string, string>,
         { set(k: string, v: string) { this[k] = v; } }
       );
-      const config = { headers };
+      const config = { headers, url: '/health' };
       const result = await requestInterceptor(config);
       expect(result.headers["X-Request-ID"]).toBeDefined();
       expect(typeof result.headers["X-Request-ID"]).toBe("string");
@@ -65,7 +176,7 @@ describe("api service", () => {
         {} as Record<string, string>,
         { set(k: string, v: string) { this[k] = v; } }
       );
-      const config = { headers };
+      const config = { headers, url: '/health' };
       const result = await requestInterceptor(config);
       // UUID v4 pattern: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
       expect(result.headers["X-Request-ID"]).toMatch(
@@ -103,6 +214,42 @@ describe("api service", () => {
       );
 
       consoleSpy.mockRestore();
+    });
+  });
+
+  describe("analyticsApi", () => {
+    it("should pass SDK payloads and cancellation through the shared client without aggregation", async () => {
+      const controller = new AbortController();
+      const report = makeAnalyticsReport();
+      const results = makeAnalyticsResults();
+      const facets = makeAnalyticsFacets();
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: report })
+        .mockResolvedValueOnce({ data: results }).mockResolvedValueOnce({ data: facets });
+      const query = { filters: DEFAULT_ANALYTICS_VIEW.filters };
+      expect(await analyticsApi.query(query, controller.signal)).toBe(report);
+      expect(apiClient.post).toHaveBeenLastCalledWith("/analytics/attacks/query", query, { signal: controller.signal });
+      const pageQuery = { ...query, cursor: "opaque", limit: 25 };
+      expect(await analyticsApi.results(pageQuery, controller.signal)).toBe(results);
+      expect(apiClient.post).toHaveBeenLastCalledWith("/analytics/attacks/results", pageQuery, { signal: controller.signal });
+      const facetQuery = { ...query, dimension: DEFAULT_ANALYTICS_VIEW.groupBy, offset: 50 };
+      expect(await analyticsApi.facets(facetQuery, controller.signal)).toBe(facets);
+      expect(apiClient.post).toHaveBeenLastCalledWith("/analytics/attacks/facets", facetQuery, { signal: controller.signal });
+      expect(apiClient.post).toHaveBeenCalledTimes(3);
+    });
+
+    it("should attach the packaged compatibility identity to analytics business requests", async () => {
+      await compatibility.verify(async () => ({ compatibility_id: compatibility.bundledId }));
+      for (const operation of ["query", "results", "facets"]) {
+        const headers = new Map<string, string>();
+        await requestInterceptor({ headers, method: "post", url: `/analytics/attacks/${operation}` });
+        expect(headers.get(COMPATIBILITY_HEADER)).toBe(compatibility.bundledId);
+      }
+    });
+
+    it("should surface analytics failures without a success-shaped fallback", async () => {
+      const failure = new Error("Deadline exceeded");
+      (apiClient.post as jest.Mock).mockRejectedValueOnce(failure);
+      await expect(analyticsApi.query({})).rejects.toBe(failure);
     });
   });
 
@@ -147,7 +294,98 @@ describe("api service", () => {
     });
   });
 
+  describe("initializersApi", () => {
+    it("should list stored custom initializers", async () => {
+      const response = { data: { source: "C:/custom", items: [] } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(initializersApi.listCustom()).resolves.toEqual(response.data);
+      expect(apiClient.get).toHaveBeenCalledWith("/initializers/custom");
+    });
+
+    it("should register and unregister through existing endpoints", async () => {
+      const request = { name: "custom", script_content: "class Custom: pass\n" };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ status: 201 });
+      (apiClient.delete as jest.Mock).mockResolvedValueOnce({ status: 204 });
+
+      await initializersApi.register(request);
+      await initializersApi.unregister("custom/name");
+
+      expect(apiClient.post).toHaveBeenCalledWith("/initializers", request);
+      expect(apiClient.delete).toHaveBeenCalledWith("/initializers/custom%2Fname");
+    });
+  });
+
+  describe("configurationApi", () => {
+    it("should read configuration content", async () => {
+      const response = {
+        data: {
+          content: "operator: alice\n",
+          source: "C:/Users/test/.pyrit/config.yaml",
+          version: "config-v1",
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(configurationApi.getContent()).resolves.toEqual(response.data);
+      expect(apiClient.get).toHaveBeenCalledWith("/config");
+    });
+
+    it("should update configuration content", async () => {
+      const request = { content: "operator: bob\n", version: "config-v1" };
+      const response = {
+        data: { ...request, source: "https://account.blob.core.windows.net/config/config.yaml" },
+      };
+      (apiClient.put as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(configurationApi.updateContent(request)).resolves.toEqual(response.data);
+      expect(apiClient.put).toHaveBeenCalledWith("/config", request);
+    });
+
+    it("should list environment files", async () => {
+      const response = { data: { items: [] } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(configurationApi.listEnvironmentFiles()).resolves.toEqual(response.data);
+      expect(apiClient.get).toHaveBeenCalledWith("/config/env-files");
+    });
+
+    it("should get an environment file", async () => {
+      const response = { data: { id: "akv:0", content: "KEY=value\n" } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(configurationApi.getEnvironmentFile("akv:0")).resolves.toEqual(response.data);
+      expect(apiClient.get).toHaveBeenCalledWith("/config/env-files/akv%3A0");
+    });
+
+    it("should update an environment file", async () => {
+      const request = { content: "KEY=value\n", version: "version-1" };
+      const response = {
+        data: {
+          id: "akv:0",
+          name: "AKV: bootstrap",
+          path: "https://vault.vault.azure.net/secrets/bootstrap",
+          exists: true,
+          ...request,
+        },
+      };
+      (apiClient.put as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(configurationApi.updateEnvironmentFile("akv:0", request)).resolves.toEqual(response.data);
+      expect(apiClient.put).toHaveBeenCalledWith("/config/env-files/akv%3A0", request);
+    });
+  });
+
   describe("targetsApi", () => {
+    it("should list target types from registry metadata", async () => {
+      const response = { data: { items: [] } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(targetsApi.listTargetTypes()).resolves.toEqual(response.data);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/targets/types");
+    });
+
     it("should list targets with default params", async () => {
       const mockResponse = {
         data: {
@@ -225,6 +463,80 @@ describe("api service", () => {
       (apiClient.get as jest.Mock).mockRejectedValueOnce(error);
 
       await expect(targetsApi.listTargets()).rejects.toThrow("Server error");
+    });
+  });
+
+  describe("techniquesApi", () => {
+    it("should list techniques with the default page limit", async () => {
+      const response = { data: { items: [], pagination: { limit: 50, has_more: false } } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(techniquesApi.listTechniques()).resolves.toEqual(response.data);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/techniques", { params: { limit: 50 } });
+    });
+
+    it("should forward the page limit and cursor", async () => {
+      const response = { data: { items: [], pagination: { limit: 10, has_more: false } } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(techniquesApi.listTechniques(10, "last_technique")).resolves.toEqual(response.data);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/techniques", {
+        params: { limit: 10, cursor: "last_technique" },
+      });
+    });
+  });
+
+  describe("convertersApi", () => {
+    it("should list converter types from registry metadata", async () => {
+      const response = { data: { items: [] } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(convertersApi.listConverterTypes()).resolves.toEqual(response.data);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/converters/types");
+    });
+
+    it("should list configured converter instances", async () => {
+      const response = { data: { items: [] } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(convertersApi.listConverters()).resolves.toEqual(response.data);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/converters");
+    });
+
+    it("should create a named converter instance", async () => {
+      const request = {
+        name: "caesar-custom",
+        type: "CaesarConverter",
+        params: { caesar_offset: "5" },
+      };
+      const response = {
+        data: {
+          converter_id: "caesar-custom",
+          identifier: {
+            class_name: "CaesarConverter",
+            class_module: "pyrit.converter",
+            hash: "hash",
+            pyrit_version: "0.0.0",
+          },
+        },
+      };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(convertersApi.createConverter(request)).resolves.toEqual(response.data);
+
+      expect(apiClient.post).toHaveBeenCalledWith("/converters", request);
+    });
+
+    it("should delete an encoded converter registry name", async () => {
+      (apiClient.delete as jest.Mock).mockResolvedValueOnce({ status: 204 });
+
+      await expect(convertersApi.deleteConverter("custom/name")).resolves.toBeUndefined();
+
+      expect(apiClient.delete).toHaveBeenCalledWith("/converters/custom%2Fname");
     });
   });
 
@@ -452,6 +764,34 @@ describe("api service", () => {
       });
     });
 
+    it("should get narrowed labels with repeated query parameters", async () => {
+      const mockResponse = {
+        data: {
+          source: "attacks",
+          labels: { team: ["red"] },
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await labelsApi.getLabels("attacks", {
+        operator: ["alice", "bob"],
+        operation: ["nightly"],
+        label: ["team:red"],
+      });
+
+      expect(apiClient.get).toHaveBeenCalledWith("/labels", {
+        params: {
+          source: "attacks",
+          operator: ["alice", "bob"],
+          operation: ["nightly"],
+          label: ["team:red"],
+        },
+        paramsSerializer: {
+          indexes: null,
+        },
+      });
+    });
+
     it("should handle add message error", async () => {
       const error = new Error("Target not found");
       (apiClient.post as jest.Mock).mockRejectedValueOnce(error);
@@ -465,6 +805,364 @@ describe("api service", () => {
           target_registry_name: "test-target",
         })
       ).rejects.toThrow("Target not found");
+    });
+  });
+
+  describe("scenariosApi", () => {
+    it("lists the scenario catalog with default params", async () => {
+      const mockResponse = {
+        data: {
+          items: [],
+          pagination: { limit: 50, has_more: false },
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await scenariosApi.listCatalog();
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/catalog", {
+        params: { limit: 50 },
+      });
+    });
+
+    it("lists the scenario catalog with a custom limit and cursor", async () => {
+      const mockResponse = {
+        data: { items: [], pagination: { limit: 10, has_more: true, next_cursor: "next" } },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await scenariosApi.listCatalog(10, "cursor-abc");
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/catalog", {
+        params: { limit: 10, cursor: "cursor-abc" },
+      });
+    });
+
+    it("can request scenario metadata without estimates", async () => {
+      const mockResponse = {
+        data: { items: [], pagination: { limit: 50, has_more: false } },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await scenariosApi.listCatalog(50, undefined, false);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/catalog", {
+        params: { limit: 50, include_estimates: false },
+      });
+    });
+
+    it("encodes a dotted scenario registry name as a single path segment", async () => {
+      const mockResponse = {
+        data: {
+          scenario_name: "foundry.red_team_agent",
+          scenario_type: "RedTeamAgentScenario",
+          description: "desc",
+          default_technique: "prompt_injection",
+          aggregate_techniques: [],
+          all_techniques: ["prompt_injection"],
+          technique_summaries: [],
+          default_datasets: [],
+          baseline_policy: "enabled",
+          include_baseline_by_default: true,
+          supported_parameters: [],
+          supported_parameter_names: [],
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const result = await scenariosApi.getScenario("foundry.red_team_agent");
+
+      expect(apiClient.get).toHaveBeenCalledWith(
+        "/scenarios/catalog/foundry.red_team_agent"
+      );
+      expect(result.scenario_name).toBe("foundry.red_team_agent");
+    });
+
+    it("encodes a slash-bearing scenario registry name as a single %2F-escaped segment", async () => {
+      const mockResponse = { data: { scenario_name: "foundry/red_team_agent" } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await scenariosApi.getScenario("foundry/red_team_agent");
+
+      expect(apiClient.get).toHaveBeenCalledWith(
+        "/scenarios/catalog/foundry%2Fred_team_agent"
+      );
+    });
+
+    it("posts the exact estimate request and forwards cancellation", async () => {
+      const mockResponse = {
+        data: {
+          dataset_size: { kind: 'bounded', value: 4 },
+          dataset_limit: { state: 'scenario_default' },
+          estimated_attack_count: 8,
+          components: [],
+          datasets: [],
+          note: null,
+        },
+      };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce(mockResponse);
+      const controller = new AbortController();
+      const request = {
+        target_name: "my-target",
+        techniques: ["prompt_sending"],
+        dataset_names: ["harmbench"],
+        max_dataset_size: 4,
+        dataset_filters: { harm_categories: ["violence"] },
+        include_baseline: false,
+        scenario_params: { num_jailbreaks: 2, num_attempts_per_template: 1 },
+      };
+
+      const result = await scenariosApi.estimateRun(
+        "airt.jailbreak",
+        request,
+        controller.signal
+      );
+
+      expect(apiClient.post).toHaveBeenCalledWith(
+        "/scenarios/catalog/airt.jailbreak/estimate",
+        request,
+        { signal: controller.signal }
+      );
+      expect(result.estimated_attack_count).toBe(8);
+    });
+
+    it("posts the exact RunScenarioRequest payload to start a run", async () => {
+      const mockResponse = {
+        data: {
+          scenario_result_id: "sr-1",
+          scenario_name: "foundry.red_team_agent",
+          scenario_version: 0,
+          status: "CREATED",
+          created_at: "2026-02-15T00:00:00Z",
+          updated_at: "2026-02-15T00:00:00Z",
+          techniques_used: [],
+          total_attacks: 0,
+          completed_attacks: 0,
+          objective_achieved_rate: 0,
+          failed_attacks: [],
+          attack_retries: [],
+          total_retries: 0,
+          labels: {},
+        },
+      };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const request = {
+        scenario_name: "foundry.red_team_agent",
+        target_name: "my-target",
+        techniques: ["prompt_injection"],
+        max_concurrency: 10,
+        max_retries: 0,
+        include_baseline: true,
+        labels: { operator: "roakey" },
+      };
+      const result = await scenariosApi.startRun(request);
+
+      expect(apiClient.post).toHaveBeenCalledWith("/scenarios/runs", request);
+      expect(result.scenario_result_id).toBe("sr-1");
+    });
+
+    it("gets a scenario run by id", async () => {
+      const mockResponse = {
+        data: {
+          scenario_result_id: "sr-1",
+          scenario_name: "foundry.red_team_agent",
+          scenario_version: 0,
+          status: "IN_PROGRESS",
+          created_at: "2026-02-15T00:00:00Z",
+          updated_at: "2026-02-15T00:00:00Z",
+          techniques_used: [],
+          total_attacks: 0,
+          completed_attacks: 0,
+          objective_achieved_rate: 0,
+          failed_attacks: [],
+          attack_retries: [],
+          total_retries: 0,
+          labels: {},
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const result = await scenariosApi.getRun("sr-1");
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs/sr-1");
+      expect(result.status).toBe("IN_PROGRESS");
+    });
+
+    it("lists scenario history with repeated array query parameters", async () => {
+      const mockResponse = {
+        data: { items: [], pagination: { limit: 10, has_more: false } },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await scenariosApi.listRuns({
+        limit: 10,
+        cursor: "history-cursor",
+        scenario_names: ["first.scenario", "second.scenario"],
+        run_statuses: ["IN_PROGRESS", "FAILED"],
+        label: ["operator:alice", "operator:bob", "team:safety"],
+      });
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs", {
+        params: {
+          limit: 10,
+          cursor: "history-cursor",
+          scenario_names: ["first.scenario", "second.scenario"],
+          run_statuses: ["IN_PROGRESS", "FAILED"],
+          label: ["operator:alice", "operator:bob", "team:safety"],
+        },
+        paramsSerializer: { indexes: null },
+      });
+    });
+
+    it("gets scenario run progress with since/limit query params", async () => {
+      const mockResponse = {
+        data: {
+          run: {
+            scenario_result_id: "sr-1",
+            scenario_name: "foundry.red_team_agent",
+            scenario_version: 0,
+            status: "IN_PROGRESS",
+            created_at: "2026-02-15T00:00:00Z",
+          },
+          results: [],
+          has_more: false,
+          plan_complete: false,
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const controller = new AbortController();
+      await scenariosApi.getRunProgress(
+        "sr-1",
+        { since: "cursor-1", limit: 50 },
+        controller.signal,
+      );
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs/sr-1/progress", {
+        params: { since: "cursor-1", limit: 50 },
+        signal: controller.signal,
+      });
+    });
+
+    it("cancels a scenario run by id", async () => {
+      const mockResponse = {
+        data: {
+          scenario_result_id: "sr-1",
+          status: "CANCELLED",
+        },
+      };
+      const controller = new AbortController();
+      (apiClient.post as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const result = await scenariosApi.cancelRun("sr/1", controller.signal);
+
+      expect(apiClient.post).toHaveBeenCalledWith(
+        "/scenarios/runs/sr%2F1/cancel",
+        undefined,
+        { signal: controller.signal },
+      );
+      expect(result.status).toBe("CANCELLED");
+    });
+
+    it("resumes the same scenario run without sending configuration or a request body", async () => {
+      const summary = { scenario_result_id: "sr/1", status: "QUEUED", completed_attacks: 2 };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ status: 202, data: summary });
+
+      await expect(scenariosApi.resumeRun("sr/1")).resolves.toEqual(summary);
+
+      expect(apiClient.post).toHaveBeenCalledTimes(1);
+      expect(apiClient.post).toHaveBeenCalledWith("/scenarios/runs/sr%2F1/resume");
+      expect(apiClient.get).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("datasetsApi", () => {
+    it("lists dataset summaries with loaded_only and does not send a selection key", async () => {
+      const mockResponse = {
+        data: {
+          items: [],
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await expect(datasetsApi.listDatasets({ loaded_only: true })).resolves.toEqual({ items: [] });
+
+      expect(apiClient.get).toHaveBeenCalledTimes(1);
+      expect(apiClient.get).toHaveBeenCalledWith("/datasets", {
+        params: { loaded_only: true },
+        signal: undefined,
+      });
+    });
+
+    it("lists one seed page with repeated singular filters and a capped search", async () => {
+      const payload = {
+        items: [],
+        pagination: { limit: 20, has_more: false, next_cursor: null, prev_cursor: null },
+        total: 0,
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: payload });
+
+      await expect(datasetsApi.listSeedExamples({
+        selection_key: "dataset:named:a&b",
+        limit: 20,
+        cursor: "cursor-2",
+        search: `${"p".repeat(1000)}EXTRA`,
+        modality: ["text", "image_path"],
+        seed_type: ["simulated_conversation"],
+        harm_category: ["hate"],
+      })).resolves.toEqual(payload);
+
+      const config = (apiClient.get as jest.Mock).mock.calls[0][1];
+      expect(apiClient.get).toHaveBeenCalledWith("/datasets/seeds", expect.objectContaining({
+        paramsSerializer: { indexes: null },
+      }));
+      expect(config.params.search).toHaveLength(1000);
+      expect(config.params.search.endsWith("EXTRA")).toBe(false);
+      expect(config.params).not.toHaveProperty("q");
+      expect(config.params).not.toHaveProperty("sort");
+      expect(config.params).not.toHaveProperty("unlabeled");
+      const axios = jest.requireActual<typeof import("axios")>("axios").default;
+      const wire = axios.getUri({
+        url: "/datasets/seeds",
+        params: config.params,
+        paramsSerializer: config.paramsSerializer,
+      });
+      expect(wire).toContain("modality=text&modality=image_path");
+      expect(wire).toContain("seed_type=simulated_conversation");
+      expect(wire).toContain("harm_category=hate");
+      expect(wire).not.toContain("modality[]");
+      expect(wire).not.toContain("modality[0]");
+      expect(wire).not.toContain("q=");
+    });
+
+    it("refuses to list or read seeds without a selection key", async () => {
+      await expect(datasetsApi.listSeedExamples({ selection_key: "" })).rejects.toThrow(/selection key/);
+      await expect(datasetsApi.getSeedExample("example-1", "")).rejects.toThrow(/selection key/);
+      expect(apiClient.get).not.toHaveBeenCalled();
+    });
+
+    it("reads one example with the dataset key and an encoded id", async () => {
+      const detail = { example_id: "example/1", members: [] };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: detail });
+
+      await expect(datasetsApi.getSeedExample("example/1", "dataset:unnamed")).resolves.toEqual(detail);
+      expect(apiClient.get).toHaveBeenCalledWith("/datasets/seeds/example%2F1", {
+        params: { selection_key: "dataset:unnamed" },
+        signal: undefined,
+      });
+    });
+
+    it("forwards an abort signal and still does not send a selection key", async () => {
+      const controller = new AbortController();
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { items: [] } });
+
+      await datasetsApi.listDatasets({ loaded_only: true }, controller.signal);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/datasets", {
+        params: { loaded_only: true },
+        signal: controller.signal,
+      });
     });
   });
 });

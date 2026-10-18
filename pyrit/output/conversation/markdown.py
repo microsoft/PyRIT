@@ -6,8 +6,9 @@ import logging
 import os
 from pathlib import Path
 
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.output.conversation.base import ConversationPrinterBase
+from pyrit.output.conversation.source import ConversationSource, MemoryConversationSource
 from pyrit.output.score.markdown import MarkdownScorePrinter
 from pyrit.output.sink import Sink
 
@@ -25,6 +26,7 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
     def __init__(
         self,
         *,
+        source: ConversationSource,
         sink: Sink | None = None,
         score_printer: MarkdownScorePrinter | None = None,
         blur_images: bool = False,
@@ -35,6 +37,7 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         Initialize the markdown conversation printer.
 
         Args:
+            source (ConversationSource): Data source used to fetch inline scores.
             sink (Sink | None): Output sink. Defaults to StdoutSink().
             score_printer (MarkdownScorePrinter | None): Score printer for inline score rendering.
                 Defaults to a new MarkdownScorePrinter with matching sink.
@@ -52,6 +55,7 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
                 directory using the original basename plus ``_blurred.png``.
         """
         super().__init__(sink=sink)
+        self._source = source
         self._score_printer = score_printer or MarkdownScorePrinter(sink=sink)
         self._blur_images = blur_images
         self._blur_radius = blur_radius
@@ -63,6 +67,7 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         *,
         include_scores: bool = False,
         include_reasoning_summaries: bool = False,
+        objective_scorer_identifier: ComponentIdentifier | None = None,
     ) -> str:
         """
         Render a list of messages as markdown and return as a string.
@@ -71,6 +76,8 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
             messages (list[Message]): The messages to render.
             include_scores (bool): Whether to include scores. Defaults to False.
             include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
+            objective_scorer_identifier (ComponentIdentifier | None): With ``include_scores``, show only
+                this scorer's score on each piece. Defaults to None (every score).
 
         Returns:
             str: The rendered conversation markdown text.
@@ -78,6 +85,13 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         if not messages:
             return "*No messages to display*\n"
 
+        objective_scores = (
+            await self._select_objective_scores_async(
+                messages=messages, objective_scorer_identifier=objective_scorer_identifier
+            )
+            if include_scores
+            else None
+        )
         markdown_lines: list[str] = []
         turn_number = 0
 
@@ -105,7 +119,9 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
                 markdown_lines.extend(await self._format_assistant_message_async(pieces=pieces))
 
             if include_scores:
-                markdown_lines.extend(await self._format_message_scores_async(pieces=pieces))
+                markdown_lines.extend(
+                    await self._format_message_scores_async(pieces=pieces, objective_scores=objective_scores)
+                )
 
         return "\n".join(markdown_lines)
 
@@ -159,7 +175,9 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         """
         lines: list[str] = []
         piece = pieces[0]
-        role_name = "Assistant (Simulated)" if piece.is_simulated else piece.api_role.capitalize()
+        role_name = piece.api_role.capitalize()
+        if piece.is_simulated:
+            role_name += " (Simulated)"
 
         lines.append(f"\n#### {role_name}\n")
 
@@ -418,19 +436,26 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         lines.append("```\n")
         return lines
 
-    async def _format_message_scores_async(self, *, pieces: list[MessagePiece]) -> list[str]:
+    async def _format_message_scores_async(
+        self,
+        *,
+        pieces: list[MessagePiece],
+        objective_scores: dict[str, Score] | None,
+    ) -> list[str]:
         """
         Format scores for all pieces in a message as markdown.
 
         Args:
             pieces (list[MessagePiece]): The filtered pieces whose scores should be formatted.
+            objective_scores (dict[str, Score] | None): Objective scores selected for the conversation
+                keyed by piece id, or None to show every score.
 
         Returns:
             list[str]: Markdown strings for the scores.
         """
         lines: list[str] = []
         for piece in pieces:
-            scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
+            scores = await self._get_piece_scores_async(piece=piece, objective_scores=objective_scores)
             if scores:
                 lines.append("\n##### Scores\n")
                 lines.extend(self._score_printer._format_score(score, indent="") for score in scores)
@@ -469,15 +494,13 @@ class MarkdownConversationMemoryPrinter(MarkdownConversationPrinter):
                 Defaults to None (sibling of the original).
         """
         super().__init__(
+            source=MemoryConversationSource(),
             sink=sink,
             score_printer=score_printer,
             blur_images=blur_images,
             blur_radius=blur_radius,
             blurred_dir=blurred_dir,
         )
-        from pyrit.memory import CentralMemory
-
-        self._memory = CentralMemory.get_memory_instance()
 
     async def render_async(
         self,
@@ -485,6 +508,7 @@ class MarkdownConversationMemoryPrinter(MarkdownConversationPrinter):
         *,
         include_scores: bool = False,
         include_reasoning_summaries: bool = False,
+        objective_scorer_identifier: ComponentIdentifier | None = None,
     ) -> str:
         """
         Render a list of messages as markdown and return as a string.
@@ -493,19 +517,15 @@ class MarkdownConversationMemoryPrinter(MarkdownConversationPrinter):
             messages (list[Message]): The messages to render.
             include_scores (bool): Whether to include scores. Defaults to False.
             include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
+            objective_scorer_identifier (ComponentIdentifier | None): With ``include_scores``, show only
+                this scorer's score on each piece. Defaults to None (every score).
 
         Returns:
             str: The rendered conversation markdown text.
         """
         return await super().render_async(
-            messages, include_scores=include_scores, include_reasoning_summaries=include_reasoning_summaries
+            messages,
+            include_scores=include_scores,
+            include_reasoning_summaries=include_reasoning_summaries,
+            objective_scorer_identifier=objective_scorer_identifier,
         )
-
-    async def _get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
-        """
-        Fetch scores from CentralMemory.
-
-        Returns:
-            list[Score]: The scores.
-        """
-        return list(self._memory.get_prompt_scores(prompt_ids=prompt_ids))

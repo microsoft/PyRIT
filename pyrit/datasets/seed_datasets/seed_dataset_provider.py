@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import importlib
 import inspect
 import logging
 from abc import ABC, abstractmethod
@@ -103,7 +104,33 @@ class SeedDatasetProvider(ABC):
         Returns:
             dict[str, type[SeedDatasetProvider]]: Dictionary mapping class names to provider classes.
         """
+        cls._materialize_builtin_providers()
         return cls._registry.copy()
+
+    @classmethod
+    async def get_providers_by_name_async(cls, *, dataset_names: list[str]) -> dict[str, "SeedDatasetProvider"]:
+        """
+        Resolve registered providers by name without parsing metadata or fetching seeds.
+
+        Returns:
+            dict[str, SeedDatasetProvider]: Matching providers; missing names are omitted.
+        """
+        return await asyncio.to_thread(cls._get_providers_by_name, dataset_names=dataset_names)
+
+    @classmethod
+    def _get_providers_by_name(cls, *, dataset_names: list[str]) -> dict[str, "SeedDatasetProvider"]:
+        cls._materialize_builtin_providers()
+        requested = set(dataset_names)
+        providers: dict[str, SeedDatasetProvider] = {}
+        for provider_class in cls._registry.values():
+            provider = provider_class()
+            name = provider.dataset_name
+            if name not in requested:
+                continue
+            if name in providers:
+                raise ValueError(f"Multiple registered providers have dataset name '{name}'.")
+            providers[name] = provider
+        return providers
 
     @classmethod
     async def get_all_dataset_names_async(cls, filters: SeedDatasetFilter | None = None) -> list[str]:
@@ -123,6 +150,7 @@ class SeedDatasetProvider(ABC):
             >>> names = await SeedDatasetProvider.get_all_dataset_names_async()
             >>> print(f"Available datasets: {', '.join(names)}")
         """
+        cls._materialize_builtin_providers()
         dataset_names = set()
         for provider_class in cls._registry.values():
             try:
@@ -219,8 +247,12 @@ class SeedDatasetProvider(ABC):
             filter_vals = getattr(criterion, field.name)
             meta_vals = getattr(metadata, field.name)
 
-            if filter_vals is None or meta_vals is None:
+            if filter_vals is None:
                 continue
+
+            # A requested axis cannot match metadata that does not declare it.
+            if meta_vals is None:
+                return False
 
             if strict_match:
                 if filter_vals - meta_vals:
@@ -268,6 +300,8 @@ class SeedDatasetProvider(ABC):
             ...     dataset_names=["harmbench", "DarkBench"]
             ... )
         """
+        cls._materialize_builtin_providers()
+
         # Validate dataset names if specified
         if dataset_names is not None:
             available_names = await cls.get_all_dataset_names_async()
@@ -291,7 +325,11 @@ class SeedDatasetProvider(ABC):
                 logger.debug(f"Skipping {provider_name} - not in filter list")
                 return None
 
-            dataset = await provider.fetch_dataset_async(cache=cache)
+            try:
+                dataset = await provider.fetch_dataset_async(cache=cache)
+            except Exception as exc:
+                exc.add_note(f"Failed to fetch dataset {provider.dataset_name!r} using provider {provider_name}.")
+                raise
             return (provider.dataset_name, dataset)
 
         # Create semaphore to limit concurrency
@@ -344,3 +382,14 @@ class SeedDatasetProvider(ABC):
 
         logger.info(f"Successfully fetched {len(datasets)} unique datasets from {len(cls._registry)} providers")
         return list(datasets.values())
+
+    @classmethod
+    def _materialize_builtin_providers(cls) -> None:
+        """Import every built-in dataset provider into the provider registry."""
+        for package_name in (
+            "pyrit.datasets.seed_datasets.local",
+            "pyrit.datasets.seed_datasets.remote",
+        ):
+            package = importlib.import_module(package_name)
+            for export_name in package.__all__:
+                getattr(package, export_name)

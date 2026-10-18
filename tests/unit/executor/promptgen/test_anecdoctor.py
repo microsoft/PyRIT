@@ -5,6 +5,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_prompt_normalizer
 
 from pyrit.executor.core.config import StrategyConverterConfig
 from pyrit.executor.promptgen.anecdoctor import (
@@ -26,27 +27,27 @@ def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
 
 
 @pytest.fixture
-def mock_objective_target() -> PromptTarget:
+def mock_objective_target() -> MagicMock:
     """Create a mock objective target for testing."""
     mock_target = MagicMock(spec=PromptTarget)
-    mock_target.set_system_prompt = MagicMock()
+    mock_target.set_system_prompt_async = AsyncMock()
     mock_target.get_identifier.return_value = _mock_target_id("mock_objective_target")
     return mock_target
 
 
 @pytest.fixture
-def mock_processing_model() -> PromptTarget:
+def mock_processing_model() -> MagicMock:
     """Create a mock processing model for testing."""
     mock_model = MagicMock(spec=PromptTarget)
-    mock_model.set_system_prompt = MagicMock()
+    mock_model.set_system_prompt_async = AsyncMock()
     mock_model.get_identifier.return_value = _mock_target_id("MockProcessingModel")
     return mock_model
 
 
 @pytest.fixture
-def mock_prompt_normalizer() -> PromptNormalizer:
+def mock_prompt_normalizer() -> MagicMock:
     """Create a mock prompt normalizer for testing."""
-    mock_normalizer = MagicMock(spec=PromptNormalizer)
+    mock_normalizer = get_mock_prompt_normalizer()
     mock_normalizer.send_prompt_async = AsyncMock()
     return mock_normalizer
 
@@ -73,7 +74,7 @@ def sample_context(sample_evaluation_data) -> AnecdoctorContext:
 
 
 @pytest.fixture
-def mock_response() -> Message:
+def mock_response() -> MagicMock:
     """Create a mock response for testing."""
     mock_response = MagicMock(spec=Message)
     mock_response.get_piece.return_value = "Generated misinformation content"
@@ -237,7 +238,7 @@ class TestAnecdoctorGeneratorSetup:
         """Test setup formats system prompt with language and content type."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target)
 
-        with patch.object(generator._objective_target, "set_system_prompt") as mock_set:
+        with patch.object(generator._objective_target, "set_system_prompt_async") as mock_set:
             await generator._setup_async(context=sample_context)
 
             mock_set.assert_called_once()
@@ -356,7 +357,7 @@ class TestAnecdoctorGeneratorHelperMethods:
 
         with (
             patch("pathlib.Path.read_text", return_value="value: 'Test prompt template: {language} {type}'"),
-            patch("yaml.safe_load", return_value=mock_yaml_content),
+            patch("pyrit.executor.promptgen.anecdoctor.safe_load_yaml", return_value=mock_yaml_content),
         ):
             result = generator._load_prompt_from_yaml(yaml_filename="anecdoctor_use_fewshot.yaml")
             assert result == "Test prompt template: {language} {type}"

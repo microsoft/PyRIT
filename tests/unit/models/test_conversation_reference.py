@@ -9,6 +9,7 @@ from pyrit.models import ConversationReference, ConversationType
 
 def test_conversation_type_values():
     assert ConversationType.ADVERSARIAL.value == "adversarial"
+    assert ConversationType.PREPARATION.value == "preparation"
     assert ConversationType.PRUNED.value == "pruned"
     assert ConversationType.SCORE.value == "score"
     assert ConversationType.CONVERTER.value == "converter"

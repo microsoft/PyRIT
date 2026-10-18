@@ -240,6 +240,24 @@ class TestGetKwargParam:
         with pytest.raises(ValueError, match="Parameter 'param1' must be provided and non-empty"):
             get_kwarg_param(kwargs=kwargs, param_name="param1", expected_type=str, required=True)
 
+    def test_get_kwarg_param_falsy_wrong_type_optional_raises(self):
+        """A falsy value of the wrong type raises TypeError instead of returning the default."""
+        kwargs = {"param1": ""}
+        with pytest.raises(TypeError, match="Parameter 'param1' must be of type int, got str"):
+            get_kwarg_param(kwargs=kwargs, param_name="param1", expected_type=int, required=False, default_value=1)
+
+    def test_get_kwarg_param_empty_collection_wrong_type_optional_raises(self):
+        """An empty collection of the wrong type raises TypeError rather than falling back."""
+        kwargs = {"param1": []}
+        with pytest.raises(TypeError, match="Parameter 'param1' must be of type dict, got list"):
+            get_kwarg_param(kwargs=kwargs, param_name="param1", expected_type=dict, required=False, default_value={})
+
+    def test_get_kwarg_param_falsy_wrong_type_required_raises_type_error(self):
+        """A required falsy value of the wrong type reports the type, not emptiness."""
+        kwargs = {"param1": 0}
+        with pytest.raises(TypeError, match="Parameter 'param1' must be of type str, got int"):
+            get_kwarg_param(kwargs=kwargs, param_name="param1", expected_type=str, required=True)
+
     def test_get_kwarg_param_wrong_type(self):
         """Test that TypeError is raised when parameter is wrong type."""
         kwargs = {"param1": 123}

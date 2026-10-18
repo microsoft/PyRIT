@@ -3,8 +3,9 @@
 
 import asyncio
 import logging
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Awaitable, Callable, Coroutine
+from functools import wraps
+from typing import Any, ParamSpec, TypeVar
 
 from pyrit.exceptions import PyritException
 from pyrit.models import (
@@ -16,6 +17,22 @@ from pyrit.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+
+def _get_rate_limit_lock(target: Any) -> asyncio.Lock:
+    """Return the target's pacing lock, rebuilding it when the event loop changes."""
+    loop = asyncio.get_running_loop()
+    target_vars = vars(target)
+    lock = target_vars.get("_rate_limit_lock")
+    if lock is None or target_vars.get("_rate_limit_lock_loop") is not loop:
+        lock = asyncio.Lock()
+        target_vars["_rate_limit_lock"] = lock
+        target_vars["_rate_limit_lock_loop"] = loop
+    assert isinstance(lock, asyncio.Lock)
+    return lock
 
 
 def validate_temperature(temperature: float | None) -> None:
@@ -46,23 +63,33 @@ def validate_top_p(top_p: float | None) -> None:
         raise PyritException(message="top_p must be between 0 and 1 (inclusive).")
 
 
-def limit_requests_per_minute(func: Callable[..., Any]) -> Callable[..., Any]:
+def limit_requests_per_minute(
+    func: Callable[_P, Awaitable[_T]],
+) -> Callable[_P, Coroutine[Any, Any, _T]]:
     """
-    Enforce rate limit of the target through setting requests per minute.
-    This should be applied to all send_prompt_async() functions on PromptTarget.
+    Enforce a target's request rate by serializing the delay before each request.
+
+    The per-target lock prevents concurrent callers from serving the same delay
+    simultaneously. It is released before the request starts so slow provider calls
+    can still overlap.
+
+    Apply it directly to the provider-call method. When combined with a retry
+    decorator, this decorator must be innermost so every attempt is paced.
 
     Args:
         func (Callable): The function to be decorated.
 
     Returns:
-        Callable: The decorated function with a sleep introduced.
+        Callable: The decorated function with serialized request pacing.
     """
 
-    async def set_max_rpm_async(*args: Any, **kwargs: Any) -> Any:
+    @wraps(func)
+    async def set_max_rpm_async(*args: _P.args, **kwargs: _P.kwargs) -> _T:
         self = args[0]
         rpm = getattr(self, "_max_requests_per_minute", None)
         if rpm and rpm > 0:
-            await asyncio.sleep(60 / rpm)
+            async with _get_rate_limit_lock(self):
+                await asyncio.sleep(60 / rpm)
 
         return await func(*args, **kwargs)
 
