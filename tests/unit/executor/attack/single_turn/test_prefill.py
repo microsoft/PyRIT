@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import get_mock_prompt_normalizer, get_mock_scorer_identifier, get_mock_target_identifier
 
-from pyrit.converter import Base64Converter
+from pyrit.converter import Base64Converter, QRCodeConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackParameters,
@@ -19,7 +19,13 @@ from pyrit.executor.attack import (
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, Message, MessagePiece, Score, construct_response_from_request
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target import CapabilityName, PromptTarget, TargetCapabilities, TargetConfiguration
+from pyrit.prompt_target import (
+    CapabilityName,
+    HuggingFaceChatTarget,
+    PromptTarget,
+    TargetCapabilities,
+    TargetConfiguration,
+)
 from pyrit.score import TrueFalseScorer
 
 
@@ -209,6 +215,29 @@ class _RecordingTarget(PromptTarget):
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPrefillAttackEndToEnd:
+    async def test_different_prefills_have_distinct_identifiers_and_persisted_evaluation_hashes(self):
+        target = _RecordingTarget()
+        first = PrefillAttack(objective_target=target, prefill_text="Sure:")
+        second = PrefillAttack(objective_target=target, prefill_text="Absolutely:")
+
+        first_identifier = first.get_identifier()
+        second_identifier = second.get_identifier()
+        assert first_identifier.params["prefill_text"] == "Sure:"
+        assert second_identifier.params["prefill_text"] == "Absolutely:"
+        assert first_identifier.hash != second_identifier.hash
+
+        first_result = await first.execute_async(objective="Test objective")
+        second_result = await second.execute_async(objective="Test objective")
+        stored = await CentralMemory.get_memory_instance().get_attack_results_async(
+            attack_result_ids=[first_result.attack_result_id, second_result.attack_result_id]
+        )
+        assert len(stored) == 2
+        hashes = {result.atomic_attack_identifier.eval_hash for result in stored if result.atomic_attack_identifier}
+        assert None not in hashes
+        assert len(hashes) == 2
+        assert first_result.get_attack_strategy_identifier() == first_identifier
+        assert second_result.get_attack_strategy_identifier() == second_identifier
+
     async def test_target_receives_user_objective_then_trailing_assistant_prefill(self):
         target = _RecordingTarget()
         attack = PrefillAttack(objective_target=target, prefill_text="Sure, here are the steps:")
@@ -250,6 +279,30 @@ class TestPrefillAttackEndToEnd:
         user_turn, prefill_turn = target.received[0]
         assert user_turn[1] == "VGVzdCBvYmplY3RpdmU="
         assert prefill_turn == ("assistant", "Sure, here are the steps:")
+
+    async def test_converted_objective_history_is_validated_before_huggingface_generation(self):
+        pytest.importorskip("torch")
+        with patch.object(HuggingFaceChatTarget, "load_model_and_tokenizer_async", new_callable=AsyncMock):
+            target = HuggingFaceChatTarget(model_path="unused-model")
+
+        attack = PrefillAttack(
+            objective_target=target,
+            prefill_text="Sure:",
+            attack_converter_config=AttackConverterConfig(
+                request_converters=[ConverterConfiguration(converters=[QRCodeConverter()])]
+            ),
+        )
+
+        with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock) as generate:
+            with pytest.raises(RuntimeError, match="image_path") as error_info:
+                await attack.execute_async(objective="Test objective")
+
+        root_cause = error_info.value
+        while root_cause.__cause__ is not None:
+            root_cause = root_cause.__cause__
+        assert isinstance(root_cause, ValueError)
+        assert "image_path" in str(root_cause)
+        generate.assert_not_awaited()
 
     async def test_continuation_is_scored_and_drives_outcome(self, mock_true_false_scorer, success_score):
         target = _RecordingTarget()

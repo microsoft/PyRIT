@@ -13,7 +13,7 @@ from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
     SingleTurnAttackContext,
 )
-from pyrit.models import Message
+from pyrit.models import ComponentIdentifier, Message
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget, TargetRequirements
 
@@ -104,6 +104,15 @@ class PrefillAttack(PromptSendingAttack):
             raise ValueError("prefill_text must be provided and non-empty")
 
         self._prefill_text = prefill_text
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Include the assistant prefix in the attack's behavioral identity.
+
+        Returns:
+            ComponentIdentifier: The identifier including the prefill text.
+        """
+        return self._create_identifier(params={"prefill_text": self._prefill_text})
 
     async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """
