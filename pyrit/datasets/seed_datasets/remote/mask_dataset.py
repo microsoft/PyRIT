@@ -6,6 +6,7 @@ import os
 import re
 import uuid
 from enum import Enum
+from typing import Any
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -82,8 +83,8 @@ class _MaskDataset(_RemoteDatasetLoader):
       misleading numerical value). Its per-row metadata carries the original
       ``proposition``, ``task_id``, ``archetype``, proposition ``type``
       (``binary`` or ``numerical``), the ``ground_truth`` and
-      ``formatted_ground_truth`` fields, all ``belief_elicit_*`` prompts, and
-      the canary contamination marker.
+      ``formatted_ground_truth`` fields, the source ``delivery`` value, all
+      ``belief_elicit_*`` prompts, and the canary contamination marker.
     * One ``SeedPrompt`` with ``role="system"`` at sequence ``0`` holding the
       pressured ``system_prompt``.
     * For doubling-down rows only, a ``role="user"`` / ``role="assistant"``
@@ -92,6 +93,10 @@ class _MaskDataset(_RemoteDatasetLoader):
     * A final ``SeedPrompt`` with ``role="user"`` holding the pressured
       ``user_prompt`` (at sequence ``1`` for non-doubling-down rows, at
       sequence ``3`` for doubling-down rows).
+
+    Every role-bearing ``SeedPrompt`` carries the same per-row metadata as the
+    objective so the benchmark fields remain attached when the prompts are
+    converted to execution-time ``MessagePiece`` objects.
 
     The belief-elicitation conversations are not modelled as additional
     SeedPrompts in the group: the loader carries ``belief_elicit_1``,
@@ -239,7 +244,7 @@ class _MaskDataset(_RemoteDatasetLoader):
     def _row_to_seeds(
         self,
         *,
-        row: dict,
+        row: dict[str, Any],
         archetype: MaskQuestionArchetype,
     ) -> list[SeedUnion]:
         """
@@ -259,7 +264,8 @@ class _MaskDataset(_RemoteDatasetLoader):
         """
         group_id = uuid.uuid4()
         archetype_value = archetype.value
-        task_id = str(row.get("task_id", ""))
+        metadata = self._build_row_metadata(row=row, archetype=archetype)
+        task_id = metadata["task_id"]
 
         objective = SeedObjective(
             value=self._build_objective_value(row=row),
@@ -271,25 +277,68 @@ class _MaskDataset(_RemoteDatasetLoader):
             groups=_GROUPS,
             source=_DATASET_URL,
             prompt_group_id=group_id,
-            metadata={
-                "task_id": task_id,
-                "archetype": archetype_value,
-                "proposition": str(row.get("proposition", "")),
-                "proposition_type": str(row.get("type", "")),
-                "ground_truth": str(row.get("ground_truth", "")),
-                "formatted_ground_truth": str(row.get("formatted_ground_truth", "")),
-                "belief_elicit_1": row.get("belief_elicit_1") or "",
-                "belief_elicit_2": row.get("belief_elicit_2") or "",
-                "belief_elicit_3": row.get("belief_elicit_3") or "",
-                "canary": str(row.get("canary", "")),
-            },
+            metadata=dict(metadata),
         )
 
-        prompts = self._build_conversation_prompts(row=row, group_id=group_id, archetype=archetype)
+        prompts = self._build_conversation_prompts(
+            row=row,
+            group_id=group_id,
+            archetype=archetype,
+            metadata=metadata,
+        )
         return [objective, *prompts]
 
     @staticmethod
-    def _build_objective_value(*, row: dict) -> str:
+    def _build_row_metadata(
+        *,
+        row: dict[str, Any],
+        archetype: MaskQuestionArchetype,
+    ) -> dict[str, Any]:
+        """
+        Build the complete per-row MASK metadata shared by every seed.
+
+        Args:
+            row: A single row from the HuggingFace dataset.
+            archetype: The archetype config from which the row was loaded.
+
+        Returns:
+            dict[str, Any]: Source metadata plus the derived archetype.
+
+        Raises:
+            ValueError: If a metadata field present in every MASK config is
+                missing from the row.
+        """
+        required_fields = (
+            "task_id",
+            "type",
+            "proposition",
+            "ground_truth",
+            "delivery",
+            "formatted_ground_truth",
+            "canary",
+        )
+        missing_fields = [field for field in required_fields if field not in row]
+        if missing_fields:
+            raise ValueError(
+                f"MASK {archetype.value} row is missing required metadata fields: {', '.join(missing_fields)}"
+            )
+
+        return {
+            "task_id": str(row["task_id"]),
+            "archetype": archetype.value,
+            "proposition": str(row["proposition"]),
+            "proposition_type": str(row["type"]),
+            "ground_truth": str(row["ground_truth"]),
+            "formatted_ground_truth": str(row["formatted_ground_truth"]),
+            "delivery": row["delivery"],
+            "belief_elicit_1": row.get("belief_elicit_1") or "",
+            "belief_elicit_2": row.get("belief_elicit_2") or "",
+            "belief_elicit_3": row.get("belief_elicit_3") or "",
+            "canary": str(row["canary"]),
+        }
+
+    @staticmethod
+    def _build_objective_value(*, row: dict[str, Any]) -> str:
         """
         Build the attacker-facing behavioral objective for one MASK row.
 
@@ -345,9 +394,10 @@ class _MaskDataset(_RemoteDatasetLoader):
     def _build_conversation_prompts(
         self,
         *,
-        row: dict,
+        row: dict[str, Any],
         group_id: uuid.UUID,
         archetype: MaskQuestionArchetype,
+        metadata: dict[str, Any],
     ) -> list[SeedPrompt]:
         """
         Build the pressured-conversation SeedPrompts for a MASK row.
@@ -356,6 +406,7 @@ class _MaskDataset(_RemoteDatasetLoader):
             row: A single row from the HuggingFace dataset.
             group_id: Shared ``prompt_group_id`` for all seeds in the row.
             archetype: The MASK archetype used for conversation shape and naming.
+            metadata: Complete per-row metadata to attach to every prompt.
 
         Returns:
             list[SeedPrompt]: Roled SeedPrompts for the pressured conversation.
@@ -366,31 +417,43 @@ class _MaskDataset(_RemoteDatasetLoader):
                 row=row,
                 group_id=group_id,
                 archetype=archetype_value,
+                metadata=metadata,
             )
 
         return [
             self._make_prompt(
-                value=row.get("system_prompt", ""),
+                value=self._get_required_prompt_text(
+                    row=row,
+                    field_name="system_prompt",
+                    archetype=archetype_value,
+                ),
                 role="system",
                 sequence=0,
                 group_id=group_id,
                 archetype=archetype_value,
+                metadata=metadata,
             ),
             self._make_prompt(
-                value=row.get("user_prompt", ""),
+                value=self._get_required_prompt_text(
+                    row=row,
+                    field_name="user_prompt",
+                    archetype=archetype_value,
+                ),
                 role="user",
                 sequence=1,
                 group_id=group_id,
                 archetype=archetype_value,
+                metadata=metadata,
             ),
         ]
 
     def _build_doubling_down_prompts(
         self,
         *,
-        row: dict,
+        row: dict[str, Any],
         group_id: uuid.UUID,
         archetype: str,
+        metadata: dict[str, Any],
     ) -> list[SeedPrompt]:
         """
         Build the four-piece pressured conversation for doubling-down rows.
@@ -399,40 +462,87 @@ class _MaskDataset(_RemoteDatasetLoader):
             row: A doubling-down row from HuggingFace.
             group_id: Shared ``prompt_group_id`` for the row.
             archetype: The archetype name used in prompt metadata.
+            metadata: Complete per-row metadata to attach to every prompt.
 
         Returns:
             list[SeedPrompt]: System, user, assistant, and follow-up user prompts.
         """
         return [
             self._make_prompt(
-                value=row.get("system_prompt", ""),
+                value=self._get_required_prompt_text(
+                    row=row,
+                    field_name="system_prompt",
+                    archetype=archetype,
+                ),
                 role="system",
                 sequence=0,
                 group_id=group_id,
                 archetype=archetype,
+                metadata=metadata,
             ),
             self._make_prompt(
-                value=row.get("dd_turn_1_prompt", ""),
+                value=self._get_required_prompt_text(
+                    row=row,
+                    field_name="dd_turn_1_prompt",
+                    archetype=archetype,
+                ),
                 role="user",
                 sequence=1,
                 group_id=group_id,
                 archetype=archetype,
+                metadata=metadata,
             ),
             self._make_prompt(
-                value=row.get("dd_turn_1_response", ""),
+                value=self._get_required_prompt_text(
+                    row=row,
+                    field_name="dd_turn_1_response",
+                    archetype=archetype,
+                ),
                 role="assistant",
                 sequence=2,
                 group_id=group_id,
                 archetype=archetype,
+                metadata=metadata,
             ),
             self._make_prompt(
-                value=row.get("user_prompt", ""),
+                value=self._get_required_prompt_text(
+                    row=row,
+                    field_name="user_prompt",
+                    archetype=archetype,
+                ),
                 role="user",
                 sequence=3,
                 group_id=group_id,
                 archetype=archetype,
+                metadata=metadata,
             ),
         ]
+
+    @staticmethod
+    def _get_required_prompt_text(
+        *,
+        row: dict[str, Any],
+        field_name: str,
+        archetype: str,
+    ) -> str:
+        """
+        Get a required MASK conversation field without silently dropping it.
+
+        Args:
+            row: A single row from the HuggingFace dataset.
+            field_name: Conversation field to retrieve.
+            archetype: Archetype name used in the validation error.
+
+        Returns:
+            str: Non-empty prompt text from the source row.
+
+        Raises:
+            ValueError: If the field is missing, non-string, or empty.
+        """
+        value = row.get(field_name)
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"MASK {archetype} row requires a non-empty {field_name!r} field")
+        return value
 
     def _make_prompt(
         self,
@@ -442,6 +552,7 @@ class _MaskDataset(_RemoteDatasetLoader):
         sequence: int,
         group_id: uuid.UUID,
         archetype: str,
+        metadata: dict[str, Any],
     ) -> SeedPrompt:
         """
         Construct a single ``SeedPrompt`` for one turn of the pressured
@@ -454,6 +565,7 @@ class _MaskDataset(_RemoteDatasetLoader):
             sequence: Conversation sequence index within the SeedGroup.
             group_id: Shared ``prompt_group_id`` for all seeds in the row.
             archetype: The MASK archetype string (used for harm_categories).
+            metadata: Complete per-row metadata to attach to the prompt.
 
         Returns:
             SeedPrompt: Configured SeedPrompt for the turn.
@@ -470,6 +582,7 @@ class _MaskDataset(_RemoteDatasetLoader):
             groups=_GROUPS,
             source=_DATASET_URL,
             prompt_group_id=group_id,
+            metadata=dict(metadata),
         )
 
     @property

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -26,6 +27,7 @@ def _binary_row(
     belief_elicit_1: str,
     belief_elicit_2: str | None = None,
     belief_elicit_3: str | None = None,
+    delivery: int | float = 1,
 ) -> dict:
     """Build a non-doubling-down binary row mirroring the HF schema."""
     return {
@@ -39,7 +41,25 @@ def _binary_row(
         "belief_elicit_1": belief_elicit_1,
         "belief_elicit_2": belief_elicit_2,
         "belief_elicit_3": belief_elicit_3,
+        "delivery": delivery,
         "canary": _CANARY,
+    }
+
+
+def _expected_metadata(*, row: dict[str, Any], archetype: MaskQuestionArchetype) -> dict[str, Any]:
+    """Build the metadata expected on every seed created from a MASK row."""
+    return {
+        "task_id": row["task_id"],
+        "archetype": archetype.value,
+        "proposition": row["proposition"],
+        "proposition_type": row["type"],
+        "ground_truth": row["ground_truth"],
+        "formatted_ground_truth": row["formatted_ground_truth"],
+        "delivery": row["delivery"],
+        "belief_elicit_1": row.get("belief_elicit_1") or "",
+        "belief_elicit_2": row.get("belief_elicit_2") or "",
+        "belief_elicit_3": row.get("belief_elicit_3") or "",
+        "canary": row["canary"],
     }
 
 
@@ -171,6 +191,7 @@ def mock_provided_facts_data() -> list[dict]:
             belief_elicit_1="",  # PF has no belief elicitation
             belief_elicit_2=None,
             belief_elicit_3=None,
+            delivery=2.0,
         ),
     ]
 
@@ -192,6 +213,7 @@ def mock_statistics_data() -> list[dict]:
             "belief_elicit_1": ("By what percentage did Steelbridge's population grow between 2010 and 2020?"),
             "belief_elicit_2": None,
             "belief_elicit_3": None,
+            "delivery": 40,
             "canary": _CANARY,
         },
     ]
@@ -364,10 +386,15 @@ class TestMaskCommonFetchBehaviour:
         assert meta["proposition_type"] == "binary"
         assert meta["ground_truth"] == row["ground_truth"]
         assert meta["formatted_ground_truth"] == row["formatted_ground_truth"]
+        assert meta["delivery"] == row["delivery"]
         assert meta["belief_elicit_1"] == row["belief_elicit_1"]
         assert meta["belief_elicit_2"] == row["belief_elicit_2"]
         assert meta["belief_elicit_3"] == row["belief_elicit_3"]
         assert meta["canary"] == _CANARY
+        assert meta == _expected_metadata(row=row, archetype=MaskQuestionArchetype.CONTINUATIONS)
+
+        prompts = [seed for seed in dataset.seeds if isinstance(seed, SeedPrompt)]
+        assert all(prompt.metadata == meta for prompt in prompts)
 
     @pytest.mark.parametrize(
         ("fixture_name", "archetype", "pressured_claim"),
@@ -441,6 +468,66 @@ class TestMaskCommonFetchBehaviour:
         assert prompts[1].value == row["user_prompt"]
         # SeedPrompts mirror the row's harm_categories
         assert all(p.harm_categories == ["honesty", "disinformation"] for p in prompts)
+
+    @pytest.mark.parametrize(
+        ("fixture_name", "archetype", "expected_prepended_roles"),
+        [
+            ("mock_continuations_data", MaskQuestionArchetype.CONTINUATIONS, ["system"]),
+            ("mock_disinformation_data", MaskQuestionArchetype.DISINFORMATION, ["system"]),
+            (
+                "mock_doubling_down_data",
+                MaskQuestionArchetype.DOUBLING_DOWN_KNOWN_FACTS,
+                ["system", "user", "simulated_assistant"],
+            ),
+            ("mock_known_facts_data", MaskQuestionArchetype.KNOWN_FACTS, ["system"]),
+            ("mock_provided_facts_data", MaskQuestionArchetype.PROVIDED_FACTS, ["system"]),
+            ("mock_statistics_data", MaskQuestionArchetype.STATISTICS, ["system"]),
+        ],
+    )
+    def test_seed_group_preserves_system_prompt_and_metadata(
+        self,
+        request: pytest.FixtureRequest,
+        fixture_name: str,
+        archetype: MaskQuestionArchetype,
+        expected_prepended_roles: list[str],
+    ):
+        row = request.getfixturevalue(fixture_name)[0]
+        seeds = _MaskDataset()._row_to_seeds(row=row, archetype=archetype)
+        dataset = SeedDataset(seeds=seeds, dataset_name="mask")
+        seed_group = dataset.seed_groups[0]
+
+        prepended = seed_group.prepended_conversation
+        assert prepended is not None
+        assert [message.message_pieces[0].role for message in prepended] == expected_prepended_roles
+        assert prepended[0].get_value() == row["system_prompt"]
+
+        next_message = seed_group.next_message
+        assert next_message is not None
+        assert next_message.message_pieces[0].role == "user"
+        assert next_message.get_value() == row["user_prompt"]
+
+        expected_metadata = _expected_metadata(row=row, archetype=archetype)
+        assert all(seed.metadata == expected_metadata for seed in seeds)
+        assert all(
+            piece.prompt_metadata == expected_metadata
+            for message in [*prepended, next_message]
+            for piece in message.message_pieces
+        )
+
+    @pytest.mark.parametrize("field_name", ["system_prompt", "delivery"])
+    def test_missing_required_source_field_raises(
+        self,
+        mock_continuations_data,
+        field_name: str,
+    ):
+        row = dict(mock_continuations_data[0])
+        row.pop(field_name)
+
+        with pytest.raises(ValueError, match=field_name):
+            _MaskDataset()._row_to_seeds(
+                row=row,
+                archetype=MaskQuestionArchetype.CONTINUATIONS,
+            )
 
 
 class TestMaskDoublingDown:
