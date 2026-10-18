@@ -15,7 +15,6 @@ import pytest
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from pyrit.memory import MemoryInterface, SQLiteMemory
@@ -49,9 +48,15 @@ async def file_memory(*, tmp_path: Path) -> AsyncGenerator[SQLiteMemory, None]:
     memory.engine.dispose()
     memory.engine = create_engine(memory.engine.url, connect_args={"timeout": 30})
     memory.SessionFactory = sessionmaker(bind=memory.engine, class_=MemorySession)
-    memory._async_engines[asyncio.get_running_loop()] = create_async_engine(
-        memory.engine.url.set(drivername="sqlite+aiosqlite"), connect_args={"timeout": 30}
-    )
+
+    def configure_busy_timeout(*, dbapi_connection: Any, **kwargs: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA busy_timeout=30000")
+        finally:
+            cursor.close()
+
+    event.listen(memory._get_async_engine().sync_engine, "connect", configure_busy_timeout, named=True)
     try:
         Base.metadata.create_all(memory.engine)
         yield memory
@@ -500,9 +505,10 @@ class TestAtomicConversationBranching:
             else (primary, [*pruned, branch.conversation_id])
         )
 
+    @pytest.mark.parametrize("cancel", [False, True])
     @pytest.mark.parametrize("promote", [False, True])
-    async def test_cancelled_contended_write_does_not_change_membership(
-        self, *, file_memory: SQLiteMemory, promote: bool
+    async def test_contended_write_waits_or_cancels_without_losing_committed_membership(
+        self, *, file_memory: SQLiteMemory, promote: bool, cancel: bool
     ) -> None:
         attack, source = await _store_attack_async(file_memory)
         branch = Conversation(conversation_id=str(uuid.uuid4()))
@@ -511,20 +517,36 @@ class TestAtomicConversationBranching:
                 attack_result_id=attack.attack_result_id, conversations=[branch], message_pieces=[]
             )
         [before] = await file_memory.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        holder_branch = Conversation(conversation_id=str(uuid.uuid4()), attack_result_id=attack.attack_result_id)
+        before.related_conversations.add(
+            ConversationReference(
+                conversation_id=holder_branch.conversation_id, conversation_type=ConversationType.PRUNED
+            )
+        )
+        loop = asyncio.get_running_loop()
         started = asyncio.Event()
+        statements: list[str] = []
 
-        def mark_guard_started(*, statement: str, **kwargs: Any) -> None:
+        def trace_statement(statement: str) -> None:
+            statements.append(statement)
             if statement.startswith('UPDATE "AttackResultEntries"'):
-                started.set()
+                loop.call_soon_threadsafe(started.set)
+
+        def install_trace(*, dbapi_connection: Any, **kwargs: Any) -> None:
+            dbapi_connection.run_async(lambda driver: driver.set_trace_callback(trace_statement))
 
         engine = file_memory._get_async_engine().sync_engine
         async with await file_memory.get_session_async() as holder:
-            await holder.run_sync(
+            entry = await holder.run_sync(
                 lambda session: file_memory._get_locked_attack_result(
                     session=session, attack_result_id=attack.attack_result_id
                 )
             )
-            event.listen(engine, "before_cursor_execute", mark_guard_started, named=True)
+            assert entry is not None
+            entry.pruned_conversation_ids = [*(entry.pruned_conversation_ids or []), holder_branch.conversation_id]
+            holder.add(ConversationEntry(conversation=holder_branch))
+            await holder.flush()
+            event.listen(engine, "checkout", install_trace, named=True)
             task = asyncio.create_task(
                 _change_attack_async(memory=file_memory, attack=attack, source=source, branch=branch, promote=promote)
             )
@@ -532,20 +554,34 @@ class TestAtomicConversationBranching:
             try:
                 await wait_for_completion_async(future=ready)
                 assert not task.done()
-                task.cancel("cancel branch mutation")
-                await holder.rollback()
-                with pytest.raises(asyncio.CancelledError, match="cancel branch mutation"):
-                    await wait_for_completion_async(future=task)
+                assert not any(statement.startswith("SELECT") for statement in statements)
+                if cancel:
+                    task.cancel("cancel branch mutation")
+                await holder.commit()
+                if cancel:
+                    with pytest.raises(asyncio.CancelledError, match="cancel branch mutation"):
+                        await wait_for_completion_async(future=task)
+                else:
+                    assert await wait_for_completion_async(future=task)
+                assert (
+                    sum('SET timestamp="AttackResultEntries".timestamp' in statement for statement in statements) == 1
+                )
             finally:
-                event.remove(engine, "before_cursor_execute", mark_guard_started)
+                event.remove(engine, "checkout", install_trace)
                 await holder.rollback()
                 for pending in (task, ready):
                     if not pending.done():
                         pending.cancel()
                 await asyncio.gather(task, ready, return_exceptions=True)
         [after] = await file_memory.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
-        assert after == before
-        if not promote:
+        if cancel:
+            assert after == before
+        else:
+            assert after.get_active_conversation_ids() == before.get_active_conversation_ids() | {
+                branch.conversation_id
+            }
+            assert after.conversation_id == (branch.conversation_id if promote else source.conversation_id)
+        if cancel and not promote:
             assert await file_memory.get_conversation_metadata_async(conversation_id=branch.conversation_id) is None
         assert await _change_attack_async(
             memory=file_memory, attack=attack, source=source, branch=branch, promote=promote
