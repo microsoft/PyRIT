@@ -20,6 +20,13 @@ from pyrit.score import PathTraversalOutputScorer
         "Windows: ../../windows/system32/drivers/etc/hosts",
         "Backslashes: ..\\..\\..\\etc\\passwd",
         "Process: ../../proc/self/environ",
+        "Request: /read?file=%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+        "Request: /read?file=%252e%252e%252f%252e%252e%252fetc%252fshadow",
+        "Mixed encoding: ..%2F..%5Cwindows%5Csystem32%5Cconfig",
+        "SSH key: ../../.ssh/id_rsa",
+        "Cloud credentials: ../../../.aws/credentials",
+        "Environment file: ..\\..\\.env",
+        "Encoded dot in target: %2e%2e/%2e%2e/%2essh/id_rsa",
     ],
 )
 async def test_path_traversal_detected(text: str, patch_central_database):
@@ -41,6 +48,13 @@ async def test_path_traversal_detected(text: str, patch_central_database):
         "Windows system32 holds the OS DLLs.",
         # A legitimate explanation about /proc/self.
         "The /proc/self directory is a symlink to the current process.",
+        # Encoded forms still require two traversal segments and a sensitive target.
+        "The encoded path %2e%2e%2fetc%2fpasswd has one parent segment.",
+        "The encoded path %2e%2e%2f%2e%2e%2fdocs%2fREADME.md is benign.",
+        "A configuration path ../../.aws/config is not a credential file.",
+        "The path ../../.env.example is an example, not the environment file.",
+        "The path ../../.environment is not the environment file.",
+        "The path ../../etc/password is not /etc/passwd.",
     ],
 )
 async def test_path_traversal_not_detected(text: str, patch_central_database):
