@@ -179,7 +179,7 @@ def _png(image: np.ndarray) -> bytes:
 
     success, encoded = cv2.imencode(".png", image)
     assert success
-    return encoded.tobytes()
+    return bytes(encoded)
 
 
 def _first_frame_and_fps(video_bytes: bytes, path: Path) -> tuple[np.ndarray, float]:
