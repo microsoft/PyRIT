@@ -274,8 +274,9 @@ Closing the converter pane discards temporary settings, but keeps content that
 you already applied and the identifiers of the converters that produced it.
 Temporary converters are built for each preview operation, not retained in a
 second registry. A runtime change clears temporary settings and preview results.
-Apply temporary converter results with **Add converted value** before repeating
-a message. Independent repeated conversion supports registered stages only.
+Completed results appear in the converted prompt automatically. Shared repeated
+sends reuse these results; independent repeated conversion supports registered
+stages only.
 
 The top text box is an editable working copy: changing it does not change the original
 chat message. The top **Convert** button runs the active tab's configured pipeline
@@ -288,7 +289,7 @@ the **Convert** button below it to run **all remaining stages** from that value,
 without rerunning earlier stages. Empty and whitespace-only intermediate values can
 also be passed to the remaining stages. Editing a value invalidates its downstream results
 until you convert again. The final output has no Convert or selection-only button;
-you can edit it directly before applying it.
+edits to the final output take effect immediately.
 
 To convert only part of a text value, select it and click **Convert selection only**.
 This wraps the selection in `⟪` and `⟫`. The next converter transforms only the marked
