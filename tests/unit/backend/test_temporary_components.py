@@ -7,6 +7,7 @@ import asyncio
 import threading
 import uuid
 from collections.abc import Iterator
+from types import ModuleType
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -105,6 +106,7 @@ class TestTemporaryComponents:
             return target
 
         with (
+            patch.dict("sys.modules", {"torch": ModuleType("torch")}),
             patch.object(HuggingFaceChatTarget, "load_model_and_tokenizer_async", new_callable=AsyncMock) as load,
             patch.object(registry, "create_instance_from_external_input", side_effect=create),
         ):
@@ -113,7 +115,7 @@ class TestTemporaryComponents:
                     name="local-model" if register else None,
                     type="HuggingFaceChatTarget",
                     register=register,
-                    params={"model_path": "test-model"},
+                    params={"model_path": "test-model", "use_cuda": False},
                 )
             )
             [target] = constructed
@@ -237,7 +239,6 @@ class TestTemporaryComponents:
             )
         registry = TargetRegistry.get_registry_singleton()
         registry.instances.register(source, name="source")
-        private = None
         try:
             with patch(
                 "pyrit.auth.openai_auth.get_azure_openai_auth",
@@ -248,12 +249,13 @@ class TestTemporaryComponents:
                         source_name="source", source_hash=source.get_identifier().hash, params={"temperature": 0.8}
                     )
                 )
-            assert private._api_key is source._api_key
-            assert await private._api_key() == "test-token"
-            assert private.get_identifier().temperature == 0.8
-        finally:
-            if private is not None:
+            try:
+                assert private._api_key is source._api_key
+                assert await private._api_key() == "test-token"
+                assert private.get_identifier().temperature == 0.8
+            finally:
                 await private.cleanup_target_async()
+        finally:
             await source.cleanup_target_async()
 
     async def test_two_temperature_variants_are_isolated_async(self) -> None:
