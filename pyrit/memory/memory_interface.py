@@ -231,6 +231,20 @@ def _check_operation_name_change(*, existing: AttackResultEntry | ScenarioResult
     )
 
 
+def _operation_ids(items: Sequence[object]) -> set[uuid.UUID]:
+    """
+    Collect the Operation IDs that attacks or scenario runs refer to, ignoring anything else.
+
+    Returns:
+        set[uuid.UUID]: The referenced Operation IDs.
+    """
+    return {
+        item.operation_id
+        for item in items
+        if isinstance(item, (AttackResult, AttackResultEntry, ScenarioResultEntry)) and item.operation_id is not None
+    }
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _PreparedScorableContent:
     """A loose-content value prepared for durable database persistence."""
@@ -2434,6 +2448,8 @@ class MemoryInterface(abc.ABC):
                 session.commit()
             except SQLAlchemyError as e:
                 session.rollback()
+                if isinstance(e, IntegrityError):
+                    self._raise_if_operations_missing(session=session, operation_ids=_operation_ids([entry]), error=e)
                 logger.exception(f"Error updating entry in the table: {e}")
                 raise
 
@@ -5412,8 +5428,12 @@ class MemoryInterface(abc.ABC):
                 ]
                 self._recheck_activity_operations(session=session, entries=entries)
                 session.commit()
-            except SQLAlchemyError:
+            except SQLAlchemyError as error:
                 session.rollback()
+                if isinstance(error, IntegrityError):
+                    self._raise_if_operations_missing(
+                        session=session, operation_ids=_operation_ids(attack_results), error=error
+                    )
                 raise
 
     def _add_attack_result_to_session(self, *, session: Session, attack_result: AttackResult) -> AttackResultEntry:
@@ -5470,18 +5490,28 @@ class MemoryInterface(abc.ABC):
         Raises:
             LookupError: If an Operation was deleted after the first check.
         """
-        operation_ids = {
-            entry.operation_id
-            for entry in entries
-            if isinstance(entry, (AttackResultEntry, ScenarioResultEntry)) and entry.operation_id is not None
-        }
-        if not operation_ids:
-            return
         # SQLite does not enforce foreign keys, so a concurrent delete would otherwise orphan the activity.
         session.flush()
+        MemoryInterface._raise_if_operations_missing(session=session, operation_ids=_operation_ids(entries))
+
+    @staticmethod
+    def _raise_if_operations_missing(
+        *, session: Session, operation_ids: set[uuid.UUID], error: Exception | None = None
+    ) -> None:
+        """
+        Report activity whose Operation no longer exists as a missing Operation.
+
+        After a rolled-back insert, this separates a foreign-key failure from a deleted Operation, which
+        SQL Server raises before the post-insert check runs, from unrelated integrity errors.
+
+        Raises:
+            LookupError: If one of the Operations does not exist.
+        """
+        if not operation_ids:
+            return
         saved = set(session.scalars(select(OperationEntry.id).where(OperationEntry.id.in_(operation_ids))))
         if missing := operation_ids - saved:
-            raise LookupError(f"Operation {next(iter(missing))} not found")
+            raise LookupError(f"Operation {next(iter(missing))} not found") from error
 
     def _execute_add_conversation_branches_to_attack(
         self,
@@ -5572,7 +5602,7 @@ class MemoryInterface(abc.ABC):
                 if new_attack is not None:
                     self._recheck_activity_operations(session=session, entries=[entry])
             return True
-        except IntegrityError:
+        except IntegrityError as error:
             # A concurrent retry may have committed the same new attack before our insert.
             with closing(self._get_session()) as session:
                 existing = session.get(AttackResultEntry, uuid.UUID(attack_result_id))
@@ -5582,6 +5612,9 @@ class MemoryInterface(abc.ABC):
                     and (existing.attack_metadata or {}).get(receipt_key) == request_fingerprint
                 ):
                     return False
+                self._raise_if_operations_missing(
+                    session=session, operation_ids=_operation_ids([new_attack]), error=error
+                )
             raise
 
     def _execute_update_attack_result_conditionally(
@@ -6452,8 +6485,12 @@ class MemoryInterface(abc.ABC):
                 session.add_all(entries)
                 self._recheck_activity_operations(session=session, entries=entries)
                 session.commit()
-            except SQLAlchemyError:
+            except SQLAlchemyError as error:
                 session.rollback()
+                if isinstance(error, IntegrityError):
+                    self._raise_if_operations_missing(
+                        session=session, operation_ids=_operation_ids(entries), error=error
+                    )
                 raise
 
     @classmethod

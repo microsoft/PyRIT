@@ -71,7 +71,10 @@ export default function OperationDeleteDialog({ operation, onInUse, onDeleted }:
         <DialogBody>
           <DialogTitle>Delete operation?</DialogTitle>
           <DialogContent className={styles.form}>
-            <Text>Permanently delete “<span translate="no">{operation.name}</span>”? This cannot be undone.</Text>
+            <Text>
+              Delete “<span translate="no">{operation.name}</span>”? This removes only its name and description.
+              Nothing is linked to it, and older history recorded under its name stays as it is. This cannot be undone.
+            </Text>
             {error && <MessageBar intent="error" aria-live="polite"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
             <div className={styles.actions}>
               <DialogTrigger disableButtonEnhancement>
