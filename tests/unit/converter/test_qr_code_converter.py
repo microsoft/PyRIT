@@ -12,6 +12,7 @@ import segno
 
 from pyrit.converter import QRCodeConverter
 from pyrit.memory import DataTypeSerializer
+from pyrit.registry import ConverterRegistry
 
 
 def test_qr_code_converter_initialization():
@@ -98,3 +99,44 @@ def test_text_image_converter_input_supported():
     converter = QRCodeConverter()
     assert converter.input_supported("text") is True
     assert converter.input_supported("image_path") is False
+
+
+@pytest.mark.parametrize(
+    ("color_param", "converter"),
+    [
+        pytest.param("data_dark_color", QRCodeConverter(data_dark_color=(255, 0, 0)), id="data_dark_color"),
+        pytest.param("data_light_color", QRCodeConverter(data_light_color=(255, 0, 0)), id="data_light_color"),
+        pytest.param("finder_dark_color", QRCodeConverter(finder_dark_color=(255, 0, 0)), id="finder_dark_color"),
+        pytest.param("finder_light_color", QRCodeConverter(finder_light_color=(255, 0, 0)), id="finder_light_color"),
+        pytest.param("border_color", QRCodeConverter(border_color=(255, 0, 0)), id="border_color"),
+    ],
+)
+def test_qr_code_identifier_distinguishes_module_colors(color_param: str, converter: QRCodeConverter) -> None:
+    default = QRCodeConverter()
+    assert converter.get_identifier().params[color_param] == [255, 0, 0]
+    assert converter.get_identifier().hash != default.get_identifier().hash
+
+    # Both configurations get their own default registry name instead of colliding.
+    instances = ConverterRegistry().instances
+    instances.register(default)
+    instances.register(converter)
+    assert instances.get(converter.get_identifier().unique_name) is converter
+
+
+def test_qr_code_identifier_ignores_colors_equal_to_their_fallback() -> None:
+    dark, light = (10, 20, 30), (200, 210, 220)
+    implicit = QRCodeConverter(dark_color=dark, light_color=light)
+    explicit = QRCodeConverter(
+        dark_color=dark,
+        light_color=light,
+        data_dark_color=dark,
+        data_light_color=light,
+        finder_dark_color=dark,
+        finder_light_color=light,
+        border_color=light,
+    )
+    assert explicit.get_identifier().hash == implicit.get_identifier().hash
+
+
+def test_qr_code_identifier_keeps_default_hash() -> None:
+    assert QRCodeConverter().get_identifier().hash == "4466678813b329b72a65ac7f1985ffbf60e1f29da83af759b59720eea274bbe4"

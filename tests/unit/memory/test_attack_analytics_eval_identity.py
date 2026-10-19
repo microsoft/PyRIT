@@ -9,6 +9,7 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import text
@@ -43,9 +44,20 @@ from pyrit.models import (
     TargetIdentifier,
 )
 from pyrit.prompt_target import GandalfLevel, GandalfTarget, HTTPTarget
+from unit.mocks import add_legacy_attack_results_async
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pyrit.memory import SQLiteMemory
+
+
+@pytest.fixture(autouse=True)
+def _freeze_query_clock() -> Iterator[None]:
+    started = time.monotonic()
+    with patch("pyrit.memory.query_control.time", spec=time) as clock:
+        clock.monotonic.return_value = started
+        yield
 
 
 def _target(*, deployment: str, endpoint: str, temperature: float = 0.3) -> TargetIdentifier:
@@ -79,6 +91,14 @@ def _result(*, index: int, target: TargetIdentifier, outcome: AttackOutcome, ope
 
 def _control() -> QueryControl:
     return QueryControl(deadline=time.monotonic() + 20)
+
+
+def test_identity_query_deadline_does_not_follow_runner_clock() -> None:
+    control = _control()
+    remaining = control.remaining
+    with patch.object(time, "monotonic", return_value=control.deadline + 1):
+        control.check()
+        assert control.remaining == remaining
 
 
 def test_target_evaluation_v1_is_frozen_to_the_current_marker_rules() -> None:
@@ -195,7 +215,7 @@ async def test_evaluation_groups_filters_facets_and_pages_share_result_identity(
         _result(index=2, target=second, outcome=AttackOutcome.FAILURE, operation="day"),
         _result(index=3, target=different, outcome=AttackOutcome.UNDETERMINED, operation="night"),
     ]
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=results)
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=results)
 
     shared = ObjectiveTargetAnalyticsIdentityV1.hash(identifier=first)
     distinct = ObjectiveTargetAnalyticsIdentityV1.hash(identifier=different)
@@ -263,7 +283,7 @@ async def test_replacing_atomic_identifier_updates_evaluation_groups_and_graph(
         update={"conversation_id": "updated-conversation"}
     )
     other_result = _result(index=2, target=equivalent, outcome=AttackOutcome.FAILURE, operation="day")
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[changed_result, other_result])
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[changed_result, other_result])
 
     replacement = AtomicAttackIdentifier.build(
         attack_identifier=AttackIdentifier(
@@ -374,8 +394,9 @@ async def test_replacing_atomic_identifier_updates_evaluation_groups_and_graph(
 
 async def test_evaluation_filter_uses_a_bounded_indexed_result_key(sqlite_instance: SQLiteMemory) -> None:
     target = _target(deployment="deploy-a", endpoint="https://one.example")
-    await sqlite_instance.add_attack_results_to_memory_async(
-        attack_results=[_result(index=1, target=target, outcome=AttackOutcome.SUCCESS, operation="night")]
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[_result(index=1, target=target, outcome=AttackOutcome.SUCCESS, operation="night")],
     )
     eval_hash = ObjectiveTargetAnalyticsIdentityV1.hash(identifier=target)
     axis = AttackAnalyticsDimension(name="objective_target")

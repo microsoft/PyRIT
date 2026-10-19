@@ -1385,17 +1385,23 @@ describe('ScenarioRunPage', () => {
   })
 
   it('opens attempt details from a direct link and returns to the scanner on close', async () => {
-    const user = userEvent.setup()
-    renderPage(`/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`)
+    jest.useFakeTimers()
+    try {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      renderPage(`/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`)
 
-    expect(screen.getByRole('dialog', { name: 'attack-technique' })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Close' }))
-    expect(screen.queryByRole('dialog', { name: 'attack-technique' })).not.toBeInTheDocument()
-    expect(screen.getByTestId('scanner-route')).toHaveAttribute(
-      'data-location',
-      `/scanner-history/${SCENARIO_RESULT_ID}`,
-    )
-    expect(screen.getByRole('button', { name: 'Collapse atomic attack groups', expanded: true })).toBeVisible()
+      expect(screen.getByRole('dialog', { name: 'attack-technique' })).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Close' }))
+      expect(screen.queryByRole('dialog', { name: 'attack-technique' })).not.toBeInTheDocument()
+      expect(screen.getByTestId('scanner-route')).toHaveAttribute(
+        'data-location',
+        `/scanner-history/${SCENARIO_RESULT_ID}`,
+      )
+      expect(await screen.findByRole('button', { name: 'Collapse atomic attack groups', expanded: true })).toBeVisible()
+    } finally {
+      act(() => { jest.runOnlyPendingTimers() })
+      jest.useRealTimers()
+    }
   })
 
   it('falls back when no score rationale was persisted', async () => {

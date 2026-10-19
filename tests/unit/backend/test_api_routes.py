@@ -147,6 +147,7 @@ class TestAttackRoutes:
                 outcome="success",
                 operator=None,
                 operation=None,
+                operation_ids=None,
                 labels=None,
                 min_turns=None,
                 max_turns=None,
@@ -1688,6 +1689,12 @@ class TestVersionRoutes:
         data = response.json()
         assert "version" in data
         assert "display" in data
+
+    def test_get_version_exposes_default_operation_proposal(self, client: TestClient) -> None:
+        with patch.object(app.state, "default_operation", "op_proposed", create=True):
+            response = client.get("/api/version")
+
+        assert response.json()["default_operation"] == "op_proposed"
 
     def test_get_version_with_build_info(self, client: TestClient) -> None:
         """Test getting version with build info from Docker."""

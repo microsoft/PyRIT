@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import hashlib
 import logging
 import random
 
@@ -98,6 +99,8 @@ class MathObfuscationConverter(Converter):
             params={
                 "min_n": self._min_n,
                 "max_n": self._max_n,
+                "hint_hash": hashlib.sha256(self._hint.encode("utf-8")).hexdigest()[:16],
+                "suffix_hash": hashlib.sha256(self._suffix.encode("utf-8")).hexdigest()[:16],
             }
         )
 

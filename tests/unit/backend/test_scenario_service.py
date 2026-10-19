@@ -8,7 +8,7 @@ Tests for backend scenario service and routes.
 import asyncio
 import threading
 from collections import OrderedDict
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -83,6 +83,14 @@ def clear_service_cache():
     get_scenario_service.cache_clear()
     yield
     get_scenario_service.cache_clear()
+
+
+@pytest.fixture
+def estimate_watchdog_seconds() -> Iterator[float]:
+    """Keep concurrency assertions independent of the production estimate latency budget."""
+    watchdog = 300.0
+    with patch("pyrit.backend.services.scenario_service._DEFAULT_ESTIMATE_TIMEOUT_SECONDS", watchdog):
+        yield watchdog
 
 
 def _make_scenario_metadata(
@@ -626,7 +634,7 @@ class TestScenarioServiceListScenarios:
         assert result == estimate
         prepare.assert_not_awaited()
 
-    async def test_concurrent_estimate_reads_share_one_task(self) -> None:
+    async def test_concurrent_estimate_reads_share_one_task_async(self, *, estimate_watchdog_seconds: float) -> None:
         """Concurrent catalog readers share one atomic single-flight estimate."""
         metadata = _make_scenario_metadata()
         estimate = ScenarioRunSizeEstimate(
@@ -641,23 +649,29 @@ class TestScenarioServiceListScenarios:
             await release.wait()
             return estimate
 
-        scenario = MagicMock()
+        scenario = MagicMock(spec=Scenario)
         scenario.get_default_run_size_estimate_async = AsyncMock(side_effect=estimate_async)
 
-        with patch.object(ScenarioService, "__init__", lambda self: None):
-            service = ScenarioService()
-            service._registry = MagicMock()
-            service._registry.create_instance.return_value = scenario
+        service = ScenarioService()
+        service._registry = MagicMock(spec=ScenarioRegistry)
+        service._registry.create_instance.return_value = scenario
+        first = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
+        second = None
+        try:
+            async with asyncio.timeout(estimate_watchdog_seconds):
+                await started.wait()
+                second = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
+                await asyncio.sleep(0)
+                assert service._registry.create_instance.call_count == 1
 
-            first = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
-            await started.wait()
-            second = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
-            await asyncio.sleep(0)
-            assert service._registry.create_instance.call_count == 1
-
+                release.set()
+                assert await asyncio.gather(first, second) == [estimate, estimate]
+                await asyncio.sleep(0)
+        finally:
             release.set()
-            assert await asyncio.gather(first, second) == [estimate, estimate]
-            await asyncio.sleep(0)
+            async with asyncio.timeout(estimate_watchdog_seconds):
+                await asyncio.gather(*get_defined_tasks(first, second), return_exceptions=True)
+                await service.close_async()
 
         assert service._estimate_tasks == {}
 
@@ -676,7 +690,9 @@ class TestScenarioServiceListScenarios:
             service._clear_estimate_task(task=replacement_task, cache_key=cache_key)
             assert service._estimate_tasks == {}
 
-    async def test_cancelled_estimate_waiter_does_not_cancel_shared_task(self) -> None:
+    async def test_cancelled_estimate_waiter_does_not_cancel_shared_task_async(
+        self, *, estimate_watchdog_seconds: float
+    ) -> None:
         """Cancelling one waiter leaves the shared estimate available to other readers."""
         metadata = _make_scenario_metadata()
         estimate = ScenarioRunSizeEstimate(
@@ -691,27 +707,80 @@ class TestScenarioServiceListScenarios:
             await release.wait()
             return estimate
 
-        scenario = MagicMock()
+        scenario = MagicMock(spec=Scenario)
         scenario.get_default_run_size_estimate_async = AsyncMock(side_effect=estimate_async)
 
-        with patch.object(ScenarioService, "__init__", lambda self: None):
-            service = ScenarioService()
-            service._registry = MagicMock()
-            service._registry.create_instance.return_value = scenario
+        service = ScenarioService()
+        service._registry = MagicMock(spec=ScenarioRegistry)
+        service._registry.create_instance.return_value = scenario
+        cancelled_waiter = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
+        surviving_waiter = None
+        try:
+            async with asyncio.timeout(estimate_watchdog_seconds):
+                await started.wait()
+                cancelled_waiter.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await cancelled_waiter
 
-            cancelled_waiter = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
-            await started.wait()
-            cancelled_waiter.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await cancelled_waiter
-
-            surviving_waiter = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
+                surviving_waiter = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
+                release.set()
+                assert await surviving_waiter == estimate
+                await asyncio.sleep(0)
+        finally:
             release.set()
-            assert await surviving_waiter == estimate
-            await asyncio.sleep(0)
+            async with asyncio.timeout(estimate_watchdog_seconds):
+                await asyncio.gather(*get_defined_tasks(cancelled_waiter, surviving_waiter), return_exceptions=True)
+                await service.close_async()
 
         assert service._registry.create_instance.call_count == 1
         assert service._estimate_tasks == {}
+
+    async def test_catalog_constructor_timeout_does_not_start_estimate_async(
+        self, *, estimate_watchdog_seconds: float
+    ) -> None:
+        metadata = _make_scenario_metadata()
+        loop = asyncio.get_running_loop()
+        constructor_started = asyncio.Event()
+        release_constructor = threading.Event()
+        scenario = MagicMock(spec=Scenario)
+        scenario.get_default_run_size_estimate_async = AsyncMock()
+
+        def create_instance(name: str) -> MagicMock:
+            assert name == metadata.registry_name
+            loop.call_soon_threadsafe(constructor_started.set)
+            if not release_constructor.wait(timeout=estimate_watchdog_seconds):
+                raise TimeoutError("The test did not release the scenario constructor.")
+            return scenario
+
+        async def expire_async(
+            tasks: Collection[asyncio.Task[ScenarioRunSizeEstimate]], *, timeout: float
+        ) -> tuple[set[asyncio.Task[ScenarioRunSizeEstimate]], set[asyncio.Task[ScenarioRunSizeEstimate]]]:
+            assert timeout == estimate_watchdog_seconds
+            await constructor_started.wait()
+            return set(), set(tasks)
+
+        service = ScenarioService()
+        service._registry = MagicMock(spec=ScenarioRegistry)
+        service._registry.create_instance.side_effect = create_instance
+        with patch("pyrit.backend.services.scenario_service.asyncio.wait", side_effect=expire_async):
+            request = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
+            try:
+                async with asyncio.timeout(estimate_watchdog_seconds):
+                    result = await request
+                    assert result.estimated_attack_count is None
+                    assert result.note is not None and "timed out" in result.note
+                    assert len(service._timed_out_estimate_workers) == 1
+                    scenario.get_default_run_size_estimate_async.assert_not_awaited()
+            finally:
+                release_constructor.set()
+                async with asyncio.timeout(estimate_watchdog_seconds):
+                    await asyncio.gather(request, return_exceptions=True)
+                    await service.close_async()
+
+        scenario.get_default_run_size_estimate_async.assert_not_awaited()
+        assert service.outstanding_estimates() == 0
+        assert service._estimate_tasks == {}
+        assert service._timed_out_estimate_workers == set()
 
     async def test_failed_estimate_task_is_removed_and_retryable(self) -> None:
         """A failed single-flight task is removed so the next caller can retry."""

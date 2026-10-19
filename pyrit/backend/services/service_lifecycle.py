@@ -37,10 +37,14 @@ def has_active_analytics_work() -> bool:
 async def close_services_async() -> None:
     """Close existing resources, then invalidate cached registry and memory references."""
     errors: list[BaseException] = []
-    for close in (_close_cached_services_async, close_analytics_service_async):
+    for operation_name, close in (
+        ("cached backend services", _close_cached_services_async),
+        ("analytics service", close_analytics_service_async),
+    ):
         try:
             await close()
         except (Exception, asyncio.CancelledError) as error:
+            error.add_note(f"Failed to close {operation_name}.")
             errors.append(error)
     if len(errors) == 1:
         raise errors[0]
