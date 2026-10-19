@@ -1756,7 +1756,9 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     mockStartRun.mockResolvedValueOnce({ scenario_result_id: 'sr-1' })
 
-    renderDetail('/scanner/foundry.red_team_agent', { labels: { operator: 'roakey', operation: 'op1' } })
+    renderDetail('/scanner/foundry.red_team_agent', {
+      labels: { operator: 'roakey', team: 'red' }, operationId: 'operation-1',
+    })
     await screen.findByTestId('scenario-target-select')
 
     await confirmRunPreview(user)
@@ -1769,7 +1771,8 @@ describe('ScenarioDetail', () => {
       max_concurrency: 10,
       max_retries: 0,
       include_baseline: true,
-      labels: { operator: 'roakey', operation: 'op1' },
+      labels: { operator: 'roakey', team: 'red' },
+      operation_id: 'operation-1',
     })
   })
 

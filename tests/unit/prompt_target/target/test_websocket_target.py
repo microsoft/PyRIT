@@ -18,6 +18,7 @@ from pyrit.executor.attack.component.prepended_history_send_context import (
 )
 from pyrit.memory import SQLiteMemory
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import WebsocketTarget
 
 
@@ -66,6 +67,58 @@ def create_message(*, value: str = "Hello", conversation_id: str = "conversation
         role="user",
         conversation_id=conversation_id,
     ).to_message()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_validate_history_replay_requires_a_restore_path(websocket_target: WebsocketTarget) -> None:
+    with pytest.raises(ValueError, match="supports_editable_history"):
+        websocket_target.validate_history_replay()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_validate_history_replay_allows_restoration_on_a_new_conversation_async(
+    *,
+    response_parser: Callable[[str | bytes], str | None],
+    message_builder: Callable[[str], str | bytes],
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    restore_callback = AsyncMock()
+    target = WebsocketTarget(
+        endpoint="wss://example.com",
+        protocol_identifier="test-protocol",
+        initialization_strings=[],
+        response_parser=response_parser,
+        message_builder=message_builder,
+        conversation_restore_callback=restore_callback,
+        discard_initial_messages=0,
+    )
+    history = [
+        create_message(value="Earlier request"),
+        MessagePiece(role="assistant", original_value="Earlier reply", conversation_id="conversation").to_message(),
+    ]
+    for message in history:
+        await sqlite_instance.add_message_to_memory_async(request=message)
+    connection = AsyncMock(spec=ClientConnection)
+    connection.state = State.OPEN
+    connection.__aiter__.return_value = ['{"message": "Restored reply"}']
+
+    target.validate_history_replay()
+    assert not target.capabilities.supports_editable_history
+    restore_callback.assert_not_awaited()
+    with patch.object(target, "_connect_async", return_value=connection):
+        try:
+            response = await PromptNormalizer().send_prompt_async(
+                message=create_message(value="Follow-up"), conversation_id="conversation", target=target
+            )
+        finally:
+            await target.cleanup_target_async()
+
+    assert response.get_piece().converted_value == "Restored reply"
+    restore_callback.assert_awaited_once()
+    restored_connection, restored_history = restore_callback.call_args.args
+    assert restored_connection is connection
+    assert [message.get_piece().converted_value for message in restored_history] == ["Earlier request", "Earlier reply"]
+    connection.send.assert_awaited_once_with('{"message": "Follow-up"}')
 
 
 def test_init_invalid_endpoint_raises(
@@ -683,6 +736,83 @@ async def test_initialize_connection_async_timeout_raises(
     with patch.object(target, "_receive_message_async", side_effect=wait_forever):
         with pytest.raises(TimeoutError, match="Timed out waiting for an initial WebSocket message"):
             await target._initialize_connection_async(websocket=connection)
+
+
+async def test_initialize_connection_async_uses_one_timeout_for_discarded_messages(
+    response_parser: Callable[[str | bytes], str | None],
+    message_builder: Callable[[str], str | bytes],
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    target = WebsocketTarget(
+        endpoint="wss://example.com",
+        protocol_identifier="test-protocol",
+        initialization_strings=[],
+        response_parser=response_parser,
+        message_builder=message_builder,
+        discard_initial_messages=2,
+        response_timeout_seconds=0.5,
+    )
+    connection = AsyncMock(spec=ClientConnection)
+    loop = asyncio.get_running_loop()
+    current_time = loop.time()
+
+    async def receive_message_async(*, websocket: ClientConnection) -> str:
+        nonlocal current_time
+        current_time += 0.35
+        # Let the loop dispatch any deadline reached by the simulated receive.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        return "initial message"
+
+    with (
+        patch.object(loop, "time", side_effect=lambda: current_time),
+        patch.object(target, "_receive_message_async", side_effect=receive_message_async) as receive,
+    ):
+        with pytest.raises(TimeoutError, match="Timed out waiting for an initial WebSocket message"):
+            await target._initialize_connection_async(websocket=connection)
+
+    assert receive.await_count == 2
+
+
+async def test_get_or_create_connection_async_cancellation_during_initialization_closes_connection(
+    response_parser: Callable[[str | bytes], str | None],
+    message_builder: Callable[[str], str | bytes],
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    target = WebsocketTarget(
+        endpoint="wss://example.com",
+        protocol_identifier="test-protocol",
+        initialization_strings=[],
+        response_parser=response_parser,
+        message_builder=message_builder,
+        discard_initial_messages=1,
+    )
+    connection = AsyncMock(spec=ClientConnection)
+    receive_started = asyncio.Event()
+
+    async def wait_for_message(*, websocket: ClientConnection) -> str:
+        receive_started.set()
+        await asyncio.Event().wait()
+        return "unreachable"
+
+    with (
+        patch.object(target, "_connect_async", new_callable=AsyncMock, return_value=connection),
+        patch.object(target, "_receive_message_async", side_effect=wait_for_message),
+    ):
+        task = asyncio.create_task(
+            target._get_or_create_connection_async(
+                conversation_id="conversation",
+                conversation_history=[],
+            )
+        )
+        await receive_started.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    connection.close.assert_awaited_once()
+    assert target._existing_conversation == {}
 
 
 async def test_reset_conversation_async_removes_connection(websocket_target: WebsocketTarget) -> None:

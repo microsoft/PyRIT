@@ -2,10 +2,11 @@
 # Licensed under the MIT license.
 
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageCms
 
 from pyrit.converter import ImageCompressionConverter
 
@@ -379,3 +380,53 @@ async def test_image_compression_converter_output_format_fallback(sample_image_b
         mock_serializer.read_data_async.return_value = img_bytes
         await converter.convert_async(prompt="test.tiff", input_type="image_path")
         assert mock_serializer.file_extension == "jpeg"
+
+
+@pytest.mark.parametrize("icc_profile", [None, b"source CMYK ICC profile"])
+def test_image_compression_converter_cmyk_to_png_conversion(icc_profile: bytes | None) -> None:
+    """Test that compressing a CMYK image with output_format='PNG' succeeds and converts to RGB."""
+    converter = ImageCompressionConverter(output_format="PNG")
+    with Image.new("CMYK", (40, 40), (100, 50, 0, 0)) as cmyk_image:
+        if icc_profile is not None:
+            cmyk_image.info["icc_profile"] = icc_profile
+
+        compressed_io, output_format = converter._compress_image(cmyk_image, "JPEG", 500)
+        assert output_format == "PNG"
+        assert cmyk_image.info.get("icc_profile") == icc_profile
+
+        with compressed_io, Image.open(compressed_io) as result_img:
+            assert result_img.format == "PNG"
+            assert result_img.mode == "RGB"
+            assert result_img.getpixel((0, 0)) == (155, 205, 255)
+            assert "icc_profile" not in result_img.info
+
+
+@pytest.mark.usefixtures("sqlite_instance")
+async def test_image_compression_converter_cmyk_profile_removed_from_saved_png(tmp_path: Path) -> None:
+    converter = ImageCompressionConverter(output_format="PNG", min_compression_threshold=0, fallback_to_original=False)
+    input_path = tmp_path / "cmyk.jpeg"
+    with Image.new("CMYK", (40, 40), (100, 50, 0, 0)) as image:
+        image.save(input_path, "JPEG", icc_profile=b"source CMYK ICC profile")
+
+    result = await converter.convert_async(prompt=str(input_path), input_type="image_path")
+
+    assert result.output_type == "image_path"
+    assert Path(result.output_text).suffix == ".png"
+    with Image.open(result.output_text) as output:
+        assert output.format == "PNG"
+        assert output.mode == "RGB"
+        assert "icc_profile" not in output.info
+
+
+@pytest.mark.parametrize("mode", ["RGB", "RGBA"])
+def test_image_compression_converter_preserves_rgb_icc_profile(mode: str) -> None:
+    converter = ImageCompressionConverter(output_format="PNG")
+    icc_profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    with Image.new(mode, (40, 40)) as image:
+        image.info["icc_profile"] = icc_profile
+
+        compressed_io, _ = converter._compress_image(image, "PNG", 500)
+
+        with compressed_io, Image.open(compressed_io) as output:
+            assert output.mode == mode
+            assert output.info["icc_profile"] == icc_profile

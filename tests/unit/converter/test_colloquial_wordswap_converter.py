@@ -8,6 +8,7 @@ import pytest
 from pyrit.converter.colloquial_wordswap_converter import (
     ColloquialWordswapConverter,
 )
+from pyrit.registry import ConverterRegistry
 
 
 # Test for deterministic mode
@@ -219,3 +220,36 @@ def test_init_malformed_yaml(tmp_path):
     malformed.write_text("{{invalid yaml::", encoding="utf-8")
     with pytest.raises(ValueError, match="Invalid YAML format"):
         ColloquialWordswapConverter(wordswap_path=str(malformed))
+
+
+def test_identifier_distinguishes_custom_substitution_values() -> None:
+    # Same keys, different substitutions: the converters produce different output.
+    papa = ColloquialWordswapConverter(deterministic=True, custom_substitutions={"father": ["papa"]})
+    bapa = ColloquialWordswapConverter(deterministic=True, custom_substitutions={"father": ["bapa"]})
+    assert papa.get_identifier().hash != bapa.get_identifier().hash
+
+    # Both configurations get their own default registry name instead of colliding.
+    instances = ConverterRegistry().instances
+    instances.register(papa)
+    instances.register(bapa)
+    assert instances.get(papa.get_identifier().unique_name) is papa
+    assert instances.get(bapa.get_identifier().unique_name) is bapa
+
+
+def test_identifier_is_stable_for_equal_custom_substitutions() -> None:
+    first = ColloquialWordswapConverter(custom_substitutions={"father": ["papa", "pa"], "mother": ["mama"]})
+    second = ColloquialWordswapConverter(custom_substitutions={"mother": ["mama"], "father": ["papa", "pa"]})
+    assert first.get_identifier().hash == second.get_identifier().hash
+    assert len(first.get_identifier().params["custom_substitutions_hash"]) == 16
+
+
+def test_identifier_identifies_wordswap_files_by_path() -> None:
+    # Built-in and file-based substitutions keep their path-based identity.
+    assert "custom_substitutions_hash" not in ColloquialWordswapConverter().get_identifier().params
+    assert (
+        "custom_substitutions_hash" not in ColloquialWordswapConverter(custom_substitutions={}).get_identifier().params
+    )
+    assert (
+        "custom_substitutions_hash"
+        not in ColloquialWordswapConverter(wordswap_path="filipino.yaml").get_identifier().params
+    )

@@ -37,6 +37,7 @@ export function useConversationSave(newAttackContext?: NewAttackContext) {
         throw new Error('Runtime or default labels changed while preparing this conversation. Your draft is preserved. Retry after default labels finish loading.')
       }
       const labels = currentContext ? currentContext.labels : input.labels
+      const operationId = currentContext?.operationId ?? undefined
       const payload = {
         destination,
         attack_result_id: destination === 'same_attack' ? input.sourceAttackId ?? undefined : undefined,
@@ -46,7 +47,7 @@ export function useConversationSave(newAttackContext?: NewAttackContext) {
         objective: destination === 'new_attack' || updatesObjective ? objective : undefined,
         target_registry_name: input.target?.target_registry_name,
         operator: labels?.operator,
-        operation: labels?.operation,
+        operation_id: operationId,
         labels,
         messages,
       }

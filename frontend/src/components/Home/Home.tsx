@@ -32,6 +32,7 @@ interface HomeProps {
 }
 
 interface OperationGroup {
+  key: string
   name: string
   isUnlabeled: boolean
   attacks: AttackSummary[]
@@ -42,9 +43,10 @@ function groupAttacksByOperation(attacks: AttackSummary[]): OperationGroup[] {
   const groups = new Map<string, OperationGroup>()
 
   for (const attack of attacks) {
-    const opLabel = attack.operation
+    const opLabel = attack.operation_name
     const isUnlabeled = !opLabel
-    const key = isUnlabeled ? NO_OPERATION_KEY : opLabel
+    // Saved Operations group by ID so a rename cannot split them; legacy activity groups by its stored name.
+    const key = isUnlabeled ? NO_OPERATION_KEY : attack.operation_id ? `id:${attack.operation_id}` : `name:${opLabel}`
     const updatedAt = new Date(attack.updated_at).getTime()
 
     const existing = groups.get(key)
@@ -55,6 +57,7 @@ function groupAttacksByOperation(attacks: AttackSummary[]): OperationGroup[] {
       }
     } else {
       groups.set(key, {
+        key,
         name: isUnlabeled ? '(no operation)' : opLabel,
         isUnlabeled,
         attacks: [attack],
@@ -225,10 +228,9 @@ export default function Home({
               {operations.map(op => {
                 const visibleAttacks = op.attacks.slice(0, MAX_ATTACKS_PER_OPERATION)
                 const hiddenCount = op.attacks.length - visibleAttacks.length
-                const key = op.isUnlabeled ? NO_OPERATION_KEY : op.name
                 return (
                   <div
-                    key={key}
+                    key={op.key}
                     className={styles.operationCard}
                     data-testid={`home-operation-${op.isUnlabeled ? 'unlabeled' : op.name}`}
                   >

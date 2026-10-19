@@ -1037,6 +1037,15 @@ class TestIsAzureBlobUrl:
 class TestSignBlobUrlAsync:
     """Tests for _sign_blob_url_async helper."""
 
+    RESULTS_CONTAINER = "https://acct.blob.core.windows.net/c"
+
+    @pytest.fixture(autouse=True)
+    def results_container(self):
+        with patch(
+            "pyrit.backend.mappers.attack_mappers.results_container_url", return_value=self.RESULTS_CONTAINER
+        ) as mock_container:
+            yield mock_container
+
     async def test_non_blob_url_unchanged(self) -> None:
         """Non-Azure URLs pass through without signing."""
         result = await _sign_blob_url_async(blob_url="http://example.com/img.png")
@@ -1044,18 +1053,18 @@ class TestSignBlobUrlAsync:
 
     async def test_already_signed_url_is_re_signed(self) -> None:
         """URLs with existing query params (expired SAS) are stripped and re-signed."""
-        url = "https://acct.blob.core.windows.net/c/b.png?sv=2024&sig=old"
+        url = "https://acct.blob.core.windows.net/c/prompt-memory-entries/b.png?sv=2024&sig=old"
         with patch(
             "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async",
             new_callable=AsyncMock,
             return_value="sv=2024&sig=fresh",
         ):
             result = await _sign_blob_url_async(blob_url=url)
-        assert result == "https://acct.blob.core.windows.net/c/b.png?sv=2024&sig=fresh"
+        assert result == "https://acct.blob.core.windows.net/c/prompt-memory-entries/b.png?sv=2024&sig=fresh"
 
     async def test_appends_sas_token(self) -> None:
         """SAS token is appended to unsigned blob URLs."""
-        url = "https://acct.blob.core.windows.net/container/path/blob.png"
+        url = "https://acct.blob.core.windows.net/c/prompt-memory-entries/images/blob.png"
         with patch(
             "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async",
             new_callable=AsyncMock,
@@ -1064,11 +1073,11 @@ class TestSignBlobUrlAsync:
             result = await _sign_blob_url_async(blob_url=url)
 
         assert result == f"{url}?sv=2024&sig=test"
-        mock_sas.assert_called_once_with(container_url="https://acct.blob.core.windows.net/container")
+        mock_sas.assert_called_once_with(container_url="https://acct.blob.core.windows.net/c")
 
     async def test_sas_failure_returns_original(self) -> None:
         """SAS generation failure falls back to the unsigned URL."""
-        url = "https://acct.blob.core.windows.net/c/b.png"
+        url = "https://acct.blob.core.windows.net/c/prompt-memory-entries/b.png"
         with patch(
             "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async",
             new_callable=AsyncMock,
@@ -1084,6 +1093,60 @@ class TestSignBlobUrlAsync:
         with patch("pyrit.backend.mappers.attack_mappers._is_azure_blob_url", return_value=True):
             result = await _sign_blob_url_async(blob_url=url)
         assert result == url
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://acct.blob.core.windows.net/other/prompt-memory-entries/b.png",
+            "https://other.blob.core.windows.net/c/prompt-memory-entries/b.png",
+            "https://acct.blob.core.windows.net/c/config/settings.yaml",
+        ],
+    )
+    async def test_urls_outside_results_container_media_are_not_signed(self, url: str) -> None:
+        with patch(
+            "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async", new_callable=AsyncMock
+        ) as mock_sas:
+            result = await _sign_blob_url_async(blob_url=url)
+
+        assert result == url
+        mock_sas.assert_not_called()
+
+    async def test_blob_urls_are_not_signed_with_local_results_storage(self, results_container) -> None:
+        results_container.return_value = None
+        url = "https://acct.blob.core.windows.net/c/prompt-memory-entries/b.png"
+        with patch(
+            "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async", new_callable=AsyncMock
+        ) as mock_sas:
+            result = await _sign_blob_url_async(blob_url=url)
+
+        assert result == url
+        mock_sas.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("configured_container", "url"),
+        [
+            (
+                "https://acct.blob.core.windows.net:443/c",
+                "https://acct.blob.core.windows.net/c/prompt-memory-entries/b.png",
+            ),
+            (
+                "https://acct.blob.core.windows.net/c",
+                "https://acct.blob.core.windows.net:443/c/prompt-memory-entries/b.png",
+            ),
+        ],
+    )
+    async def test_media_is_signed_when_only_the_443_port_spelling_differs(
+        self, results_container, configured_container: str, url: str
+    ) -> None:
+        results_container.return_value = configured_container
+        with patch(
+            "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async",
+            new_callable=AsyncMock,
+            return_value="sv=2024&sig=fresh",
+        ):
+            result = await _sign_blob_url_async(blob_url=url)
+
+        assert result == f"{url}?sv=2024&sig=fresh"
 
 
 class TestResolveMediaUrl:

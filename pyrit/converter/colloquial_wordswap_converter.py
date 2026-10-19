@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -53,6 +55,7 @@ class ColloquialWordswapConverter(Converter):
         self._wordswap_path = str(wordswap_path) if wordswap_path is not None else None
         self._colloquial_substitutions: dict[str, list[str]]
 
+        self._has_custom_substitutions = custom_substitutions is not None and len(custom_substitutions) > 0
         if custom_substitutions is not None and len(custom_substitutions) > 0:
             self._colloquial_substitutions = custom_substitutions
         else:
@@ -95,11 +98,18 @@ class ColloquialWordswapConverter(Converter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        # A wordswap file is identified by its path; custom substitutions are identified by their content.
+        substitutions_hash = None
+        if self._has_custom_substitutions:
+            substitutions_str = json.dumps(self._colloquial_substitutions, sort_keys=True)
+            substitutions_hash = hashlib.sha256(substitutions_str.encode("utf-8")).hexdigest()[:16]
+
         return self._create_identifier(
             params={
                 "deterministic": self._deterministic,
                 "wordswap_path": self._wordswap_path,
                 "substitution_keys": sorted(self._colloquial_substitutions.keys()),
+                "custom_substitutions_hash": substitutions_hash,
             }
         )
 

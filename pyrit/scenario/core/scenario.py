@@ -8,6 +8,7 @@ This module provides the Scenario class that orchestrates the execution of multi
 AtomicAttack instances sequentially, enabling comprehensive security testing campaigns.
 """
 
+import ast
 import asyncio
 import logging
 import uuid
@@ -19,7 +20,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast, final
 
 from tqdm.auto import tqdm
 
-from pyrit.common import get_global_default_values
+from pyrit.common import default_values, get_global_default_values
 from pyrit.common.utils import to_sha256
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
@@ -247,6 +248,7 @@ class Scenario(ABC):
         self._objective_target: PromptTarget | None = None
         self._objective_target_identifier: ComponentIdentifier | None = None
         self._memory_labels: dict[str, str] = {}
+        self._operation_id: uuid.UUID | None = None
         self._max_concurrency: int | None = None
         self._max_retries: int = 0
 
@@ -384,6 +386,11 @@ class Scenario(ABC):
             Parameter(
                 name="memory_labels",
                 description="Additional labels applied to every attack run in the scenario.",
+                opaque=True,
+            ),
+            Parameter(
+                name="operation_id",
+                description="Saved Operation UUID for this run; omitted for unassigned activity.",
                 opaque=True,
             ),
             Parameter(
@@ -999,6 +1006,48 @@ class Scenario(ABC):
                 ``TargetRegistry``, or if ``include_baseline=True`` is set for a scenario whose
                 ``BASELINE_ATTACK_POLICY`` is ``Forbidden``.
         """
+        if not self._params_resolved:
+            self.set_params_from_args(args=self.params)
+        raw_operation_id = self.params.get("operation_id")
+        operation_id = (
+            raw_operation_id
+            if isinstance(raw_operation_id, uuid.UUID)
+            else uuid.UUID(str(raw_operation_id))
+            if raw_operation_id is not None
+            else None
+        )
+        supplied_labels = dict(self.params.get("memory_labels") or {})
+        operation_name = supplied_labels.pop("operation", None)
+        if self._scenario_result_id:
+            stored = await self._memory.get_scenario_results_async(scenario_result_ids=[self._scenario_result_id])
+            if not stored:
+                raise ValueError(f"Scenario result id '{self._scenario_result_id}' not found in memory")
+            stored_id = stored[0].operation_id
+            # A run may be resumed with the name it was started with, or a name of its saved Operation.
+            if operation_name is not None and operation_name != stored[0].labels.get("operation"):
+                resolved = await self._memory.resolve_operation_id_async(
+                    operation_id=None, operation_name=operation_name
+                )
+                if resolved is None or resolved != stored_id:
+                    raise ValueError("Operation attribution is immutable on resume")
+            if operation_id is not None and operation_id != stored_id:
+                raise ValueError("Operation attribution is immutable on resume")
+            self._operation_id = stored_id
+            operation_name = stored[0].labels.get("operation")
+        else:
+            if operation_name is None and operation_id is None:
+                operation_name = ast.literal_eval(
+                    default_values.get_non_required_value(env_var_name="GLOBAL_MEMORY_LABELS") or "{}"
+                ).get("operation")
+            self._operation_id = await self._memory.resolve_operation_id_async(
+                operation_id=operation_id, operation_name=operation_name
+            )
+            if operation_id is not None:
+                operation_name = None
+        # TODO(PyRIT 1.4): Remove with Operation name attribution, which keeps the name on the run and its attacks.
+        if operation_name is not None:
+            supplied_labels["operation"] = operation_name
+        self.params["memory_labels"] = supplied_labels
         self._resolve_runtime_configuration(require_objective_target=True)
         stored_result: ScenarioResult | None = None
         stored_plan: ScenarioRunPlan | None = None
@@ -1108,6 +1157,7 @@ class Scenario(ABC):
             scenario_identifier=scenario_identifier,
             scenario_description=self._description,
             labels=self._memory_labels,
+            operation_id=self._operation_id,
             attack_results=attack_results,
             scenario_run_state=ScenarioRunState.CREATED,
             display_group_map=self._display_group_map,
@@ -1939,11 +1989,15 @@ class Scenario(ABC):
                     result = await atomic_attack.run_async(
                         executor=shared_executor,
                         return_partial_on_failure=True,
+                        operation_id=self._operation_id,
                     )
                     outcomes.append((atomic_attack, result))
                     if result.has_incomplete:
                         stop_event.set()
                 except Exception as exc:
+                    exc.add_note(
+                        f"Failed atomic attack {atomic_attack.atomic_attack_name!r} in scenario {self._name!r}."
+                    )
                     outcomes.append(exc)
                     stop_event.set()
                 except BaseException:

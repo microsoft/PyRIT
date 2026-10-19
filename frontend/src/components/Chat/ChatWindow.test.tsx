@@ -29,6 +29,14 @@ import {
 import { attacksApi, convertersApi, scoresApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
 
+jest.mock("./FindingEvidenceDialog", () => ({
+  __esModule: true,
+  default: ({ attackResultId, disabled, open }: {
+    attackResultId: string; disabled: boolean; open: boolean;
+  }) => <div data-testid="finding-evidence-dialog" data-attack={attackResultId}
+    data-disabled={String(disabled)} data-open={String(open)} />,
+}));
+
 const buildCapabilities = (
   overrides: Partial<TargetCapabilities> = {}
 ): TargetCapabilities => ({
@@ -432,6 +440,58 @@ describe("ChatWindow Integration", () => {
     }
     await user.keyboard("{Escape}");
   }
+
+  it("opens the finding dialog for the viewed attack from Attack Result Details", async () => {
+    const user = userEvent.setup();
+    mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Saved").messages);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([{ role: "user", content: "Saved", timestamp: "" }]);
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="related" outcome="undetermined" labels={{ operation: "Different toolbar Operation" }} /></TestWrapper>);
+    const dialog = screen.getByTestId("finding-evidence-dialog");
+    await waitFor(() => { expect(dialog).toHaveAttribute("data-disabled", "false"); });
+    expect(dialog).toHaveAttribute("data-attack", "owner");
+    expect(dialog).toHaveAttribute("data-open", "false");
+    expect(screen.queryByRole("button", { name: "Link to finding" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Objective achieved outcome: undetermined" }));
+    await user.click(await screen.findByRole("button", { name: "Add as finding" }));
+    expect(dialog).toHaveAttribute("data-open", "true");
+    await waitFor(() => { expect(screen.queryByText("Attack Result Details")).not.toBeInTheDocument(); });
+  });
+
+  it("keeps the attachment workflow mounted across viewed conversation changes", async () => {
+    mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Saved").messages);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([{ role: "user", content: "Saved", timestamp: "" }]);
+    const rendered = render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="related" /></TestWrapper>);
+    const dialog = screen.getByTestId("finding-evidence-dialog");
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="another" /></TestWrapper>);
+    await waitFor(() => { expect(screen.getByTestId("finding-evidence-dialog")).toBe(dialog); });
+    expect(dialog).toHaveAttribute("data-attack", "owner");
+  });
+
+  it.each([404, 503])("distinguishes evidence-origin message load status %s", async (status: number) => {
+    mockedAttacksApi.getMessages.mockRejectedValue({ isAxiosError: true, response: { status, data: { detail: "source load failed" } } });
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="main" findingEvidenceId="123e4567-e89b-12d3-a456-426614174000" /></TestWrapper>);
+    if (status === 404) {
+      expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
+    } else {
+      expect(await screen.findByText(/Could not load conversation/)).toBeInTheDocument();
+      expect(screen.queryByText("Evidence unavailable")).not.toBeInTheDocument();
+    }
+  });
+
+  it("reports an evidence-origin successfully empty transcript as unavailable", async () => {
+    mockedAttacksApi.getMessages.mockResolvedValue({ conversation_id: "main", messages: [], target_response_status: null });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="main" findingEvidenceId="123e4567-e89b-12d3-a456-426614174000" /></TestWrapper>);
+    expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
+    expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-attack", "");
+    expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-disabled", "true");
+    expect(screen.getByRole("textbox")).toBeDisabled();
+  });
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -2020,6 +2080,8 @@ describe("ChatWindow Integration", () => {
           onConversationCreated={onConversationCreated}
           onAttackChange={onAttackChange}
           conversationId={null}
+          labels={{ operator: 'testuser' }}
+          operationId="operation-1"
         />
       </TestWrapper>
     );
@@ -2031,7 +2093,8 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => {
       expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith({
         target_registry_name: "openai_chat_1",
-        labels: { operator: 'testuser', operation: 'test_op' },
+        labels: { operator: 'testuser' },
+        operation_id: "operation-1",
         system_prompt: undefined,
       });
       expect(onConversationCreated).toHaveBeenCalledWith("ar-conv-1", "conv-1", undefined);

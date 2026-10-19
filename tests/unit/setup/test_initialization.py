@@ -12,7 +12,7 @@ import pytest
 from pyrit.common.apply_defaults import reset_default_values
 from pyrit.common.random_context import get_configured_random_seed
 from pyrit.common.singleton import Singleton
-from pyrit.memory import CentralMemory, SQLiteMemory
+from pyrit.memory import AzureSQLMemory, CentralMemory, SQLiteMemory
 from pyrit.models import MessagePiece
 from pyrit.registry import InitializerRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -111,6 +111,40 @@ async def test_setup_rejects_switching_sqlite_modes(sqlite_instance: SQLiteMemor
     ):
         await initialize_pyrit_async(memory_db_type="SQLite", load_defaults=False)
     assert CentralMemory.get_memory_instance() is sqlite_instance
+
+
+@pytest.mark.usefixtures("reset_memory_singletons")
+@pytest.mark.parametrize("explicit_migration", [False, True])
+async def test_setup_azure_sql_migrates_only_when_explicit_async(*, explicit_migration: bool) -> None:
+    with (
+        mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock),
+        mock.patch.object(AzureSQLMemory, "_create_engine"),
+        mock.patch.object(AzureSQLMemory, "_enable_azure_authorization"),
+        mock.patch.object(AzureSQLMemory, "_check_schema_migration") as check,
+        mock.patch.object(AzureSQLMemory, "_run_schema_migration") as migrate,
+        mock.patch.dict(
+            os.environ,
+            {
+                "PYRIT_REQUIRE_CURRENT_SCHEMA": "",
+                AzureSQLMemory.AZURE_SQL_DB_CONNECTION_STRING_PROD: "",
+            },
+        ),
+    ):
+        kwargs = {"skip_schema_migration": False} if explicit_migration else {}
+        await initialize_pyrit_async(
+            memory_db_type="AzureSQL",
+            load_defaults=False,
+            connection_string="Server=tcp:dev.database.windows.net;",
+            results_container_url="https://test.blob.core.windows.net/test",
+            results_sas_token="valid_sas_token",
+            **kwargs,
+        )
+        if explicit_migration:
+            migrate.assert_called_once()
+            check.assert_not_called()
+        else:
+            check.assert_called_once()
+            migrate.assert_not_called()
 
 
 class TestLoadInitializersFromScripts:

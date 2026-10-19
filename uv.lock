@@ -4983,6 +4983,7 @@ dependencies = [
     { name = "pypinyin" },
     { name = "python-docx" },
     { name = "python-dotenv" },
+    { name = "regex" },
     { name = "reportlab" },
     { name = "scipy" },
     { name = "segno" },
@@ -4995,6 +4996,7 @@ dependencies = [
     { name = "transformers" },
     { name = "treelib" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "wcwidth" },
     { name = "websockets" },
 ]
 
@@ -5119,8 +5121,8 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "jsonschema", specifier = ">=4.25.1" },
     { name = "jupyter", marker = "extra == 'all'", specifier = ">=1.1.1" },
-    { name = "litellm", marker = "extra == 'all'", specifier = ">=1.84.0" },
-    { name = "litellm", marker = "extra == 'litellm'", specifier = ">=1.84.0" },
+    { name = "litellm", marker = "extra == 'all'", specifier = ">=1.104.2" },
+    { name = "litellm", marker = "extra == 'litellm'", specifier = ">=1.104.2" },
     { name = "mcp", specifier = ">=2.2,<3" },
     { name = "numpy", marker = "python_full_version < '3.14'", specifier = ">=1.26.0" },
     { name = "numpy", marker = "python_full_version >= '3.14'", specifier = ">=2.3.0" },
@@ -5143,6 +5145,7 @@ requires-dist = [
     { name = "pypinyin", specifier = ">=0.55.0" },
     { name = "python-docx", specifier = ">=1.1.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "regex", specifier = ">=2024.11.6" },
     { name = "reportlab", specifier = ">=4.4.4" },
     { name = "scipy", specifier = ">=1.15.3" },
     { name = "segno", specifier = ">=1.6.6" },
@@ -5163,6 +5166,7 @@ requires-dist = [
     { name = "transformers", specifier = ">=5.0.0rc3" },
     { name = "treelib", specifier = ">=1.7.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
+    { name = "wcwidth", specifier = ">=0.2.14" },
     { name = "websockets", specifier = ">=14.0" },
 ]
 provides-extras = ["huggingface", "gcg", "playwright", "fairness-bias", "opencv", "speech", "litellm", "github-copilot", "a2a", "all"]

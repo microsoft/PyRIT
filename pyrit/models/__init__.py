@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     )
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
+    from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, FindingSeverity
     from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
     from pyrit.models.identifiers import (
         REGISTRY_NAME_PATTERN,
@@ -127,6 +128,7 @@ if TYPE_CHECKING:
     )
     from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
     from pyrit.models.messages.conversation_retry import ConversationRetry, ConversationRetryReason
+    from pyrit.models.operation import Operation, OperationCreate
     from pyrit.models.parameter import (
         ComponentType,
         Parameter,
@@ -354,6 +356,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ConversationRetry": "pyrit.models.messages.conversation_retry",
     "ConversationRetryReason": "pyrit.models.messages.conversation_retry",
     "ConversationStats": "pyrit.models.conversation_stats",
+    "Finding": "pyrit.models.finding",
+    "FindingCreate": "pyrit.models.finding",
+    "FindingEvidence": "pyrit.models.finding",
+    "FindingSeverity": "pyrit.models.finding",
     "ConversationType": "pyrit.models.messages.conversation_reference",
     "ContentEntryScorable": "pyrit.models.score",
     "ContentScorable": "pyrit.models.score",
@@ -398,6 +404,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Observation": "pyrit.models.score",
     "ObservationPayload": "pyrit.models.score",
     "ObjectiveTargetEvaluationIdentifier": "pyrit.models.identifiers",
+    "Operation": "pyrit.models.operation",
+    "OperationCreate": "pyrit.models.operation",
     "Parameter": "pyrit.models.parameter",
     "ParameterDestination": "pyrit.models.parameter",
     "PresetEntry": "pyrit.models.catalog",

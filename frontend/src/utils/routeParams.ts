@@ -1,4 +1,5 @@
 const SCENARIO_RESULT_ID_QUERY_KEY = 'scenarioResultId'
+const FINDING_EVIDENCE_ID_QUERY_KEY = 'findingEvidenceId'
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
@@ -19,7 +20,14 @@ export function scenarioRunProvenance(searchParams: URLSearchParams): string | n
   if (values.length !== 1 || !UUID_PATTERN.test(values[0])) {
     return null
   }
+
   return values[0]
+}
+
+/** Returns one validated evidence id. Never returns a caller-supplied return URL. */
+export function findingEvidenceOrigin(searchParams: URLSearchParams): string | null {
+  const values = searchParams.getAll(FINDING_EVIDENCE_ID_QUERY_KEY)
+  return values.length === 1 && UUID_PATTERN.test(values[0]) ? values[0] : null
 }
 
 /** Builds an attack-detail route with optional bounded scenario-run provenance. */
@@ -38,11 +46,14 @@ export function attackConversationRoutePath(
   attackResultId: string,
   conversationId: string,
   scenarioResultId?: string | null,
+  findingEvidenceId?: string | null,
 ): string {
-  return appendScenarioRunProvenance(
+  const path = appendScenarioRunProvenance(
     `/attacks/${encodeURIComponent(attackResultId)}/conversations/${encodeURIComponent(conversationId)}`,
     scenarioResultId,
   )
+  if (!findingEvidenceId || !UUID_PATTERN.test(findingEvidenceId)) return path
+  return `${path}${path.includes('?') ? '&' : '?'}${FINDING_EVIDENCE_ID_QUERY_KEY}=${encodeURIComponent(findingEvidenceId)}`
 }
 
 /** Builds the route for one scenario run. Callers must pass a trusted persisted ID. */

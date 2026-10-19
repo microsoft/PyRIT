@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import update
 
 from pyrit.analytics import AttackResultAnalytics, compute_scenario_statistics
 from pyrit.common.task_utils import gather_with_cleanup_async
@@ -17,6 +18,7 @@ from pyrit.exceptions.analytics_exception import AnalyticsBusyException, Analyti
 from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
 from pyrit.memory.attack_analytics import RawAnalyticsOption
+from pyrit.memory.memory_models import TargetIdentifierEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackAnalyticsDimension,
@@ -32,6 +34,7 @@ from pyrit.models import (
     AttackResultRole,
     TargetIdentifier,
 )
+from pyrit.prompt_target import HTTPTarget
 from unit.memory.test_attack_analytics import make_result, predicate
 from unit.mocks import make_scenario_result
 
@@ -516,6 +519,47 @@ async def test_mutated_models_are_revalidated_before_execution(
                     )
                 )
         run.assert_not_awaited()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("model_name", ["", "   ", "\t", "\r\n", "\xa0", "\u2003", " \t\xa0"])
+@pytest.mark.parametrize("embedded", [False, True], ids=["normalized", "embedded"])
+async def test_blank_target_labels_keep_distinct_sdk_identities_async(
+    analytics: AttackResultAnalytics, sqlite_instance: SQLiteMemory, model_name: str, embedded: bool
+) -> None:
+    targets = [
+        HTTPTarget(
+            http_request=f"POST /chat HTTP/1.1\nHost: {host}.example\n\n{{PROMPT}}",
+            model_name=model_name,
+        ).get_identifier()
+        for host in ("bank", "hr")
+    ]
+    results = [make_result(index=index) for index in (1, 2)]
+    for result, target in zip(results, targets, strict=True):
+        result.atomic_attack_identifier = AtomicAttackIdentifier.build(
+            attack_identifier=AttackIdentifier(class_name="ProbeAttack", class_module="tests", objective_target=target)
+        )
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=results)
+    if embedded:
+        async with await sqlite_instance.get_session_async() as session:
+            await session.execute(update(TargetIdentifierEntry).values(model_name=None, identifier_json=None))
+            await session.commit()
+    axis = AttackAnalyticsDimension(name="objective_target")
+    expected = {target.hash: f"HTTPTarget ({target.hash[-8:]})" for target in targets}
+    report = await analytics.query_async(query=AttackAnalyticsQuery(group_by=axis))
+    facets = await analytics.facets_async(query=AttackAnalyticsFacetQuery(dimension=axis, search="HTTPTarget"))
+    matrix = await analytics.query_async(
+        query=AttackAnalyticsQuery(group_by=axis, compare_by=AttackAnalyticsDimension(name="operation"))
+    )
+    assert {group.key.value: group.label for group in report.groups} == expected
+    assert {item.key.value: item.label for item in facets.items} == expected
+    assert {row.key.value: row.label for row in matrix.rows} == expected
+    for group in report.groups:
+        page = await analytics.results_async(
+            query=AttackAnalyticsResultsQuery(filters=AttackAnalyticsFilters(dimensions=group.drilldown_filters))
+        )
+        assert len(page.items) == group.statistics.total_results == 1
+        assert page.items[0].target_identifier_hash == group.key.value
 
 
 async def test_frozen_target_groups_preserve_content_hashes_and_every_result_id(

@@ -245,6 +245,7 @@ interface BuildEstimateRequestInput {
 }
 
 interface BuildRunRequestInput extends BuildEstimateRequestInput {
+  operationId: string | null
   maxConcurrency: number
   maxRetries: number
   labels: Record<string, string>
@@ -377,6 +378,7 @@ function buildRunRequest(input: BuildRunRequestInput): BuildRunRequestResult {
     scenario_name: input.scenario.scenario_name,
     ...estimateRequest,
   }
+  if (input.operationId) request.operation_id = input.operationId
   if (supportsParameter(input.scenario, 'max_concurrency')) {
     request.max_concurrency = input.maxConcurrency
   }
@@ -394,6 +396,8 @@ interface ScenarioDetailProps {
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
+  /** The saved Operation that new runs join, or null for none. */
+  operationId?: string | null
   /** False while the current generation's server defaults are still loading. */
   defaultsReady?: boolean
   onNavigate: (view: ViewName) => void
@@ -422,6 +426,7 @@ function ScenarioDetailContent({
   defaultAdversarialTarget,
   defaultsReady = false,
   labels,
+  operationId = null,
   onNavigate,
 }: ScenarioDetailContentProps) {
   const styles = useScenarioDetailStyles()
@@ -534,6 +539,7 @@ function ScenarioDetailContent({
       defaultObjectiveTarget={defaultObjectiveTarget}
       defaultAdversarialTarget={defaultAdversarialTarget}
       labels={labels}
+      operationId={operationId}
       defaultsReady={defaultsReady}
       onNavigate={onNavigate}
     />
@@ -547,6 +553,7 @@ interface ScenarioLaunchFormProps {
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
+  operationId: string | null
   /** False while the current generation's server defaults are still loading. */
   defaultsReady?: boolean
   onNavigate: (view: ViewName) => void
@@ -559,6 +566,7 @@ function ScenarioLaunchForm({
   defaultObjectiveTarget,
   defaultAdversarialTarget,
   labels,
+  operationId,
   defaultsReady = false,
   onNavigate,
 }: ScenarioLaunchFormProps) {
@@ -777,6 +785,7 @@ function ScenarioLaunchForm({
       maxRetries,
       includeBaseline: isBaselineForbidden ? false : baselineChecked,
       labels,
+      operationId,
     }),
     [
       adversarialTargetName,
@@ -788,6 +797,7 @@ function ScenarioLaunchForm({
       labels,
       maxConcurrency,
       maxRetries,
+      operationId,
       scenario,
       scenarioParamValues,
       targetName,

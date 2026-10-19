@@ -12,6 +12,8 @@ Route structure:
     /api/scenarios/runs          — scenario execution lifecycle
 """
 
+import uuid
+
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from pyrit.backend.models.common import MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr, ProblemDetail
@@ -206,6 +208,8 @@ async def start_scenario_run(  # pyrit-async-suffix-exempt
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
     except ScenarioRunConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
+    except LookupError as e:
+        raise FileNotFoundError(str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
@@ -233,6 +237,8 @@ async def resume_scenario_run_async(*, scenario_result_id: IdentifierStr) -> Sce
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
     except ScenarioRunConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
+    except LookupError as e:
+        raise FileNotFoundError(str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
@@ -258,6 +264,11 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         max_length=MAX_ITEMS,
         description="key:value labels; OR within a key and AND across keys.",
     ),
+    operation_id: list[uuid.UUID] | None = Query(
+        None,
+        max_length=MAX_ITEMS,
+        description="Saved Operation IDs; repeated values are OR-matched. Legacy name-only runs never match.",
+    ),
     limit: int = Query(100, ge=1, le=100, description="Maximum items per page"),
     cursor: CursorStr | None = Query(None, description="Opaque descending history cursor"),
 ) -> ScenarioRunListResponse:
@@ -268,6 +279,7 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         scenario_names: Registered or persisted scenario names to match.
         run_statuses: Run states to match.
         label: Repeated key:value label filters.
+        operation_id: Saved Operation IDs to match.
         limit: Maximum number of runs to return.
         cursor: Opaque cursor from the previous page.
 
@@ -279,6 +291,7 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         scenario_names=scenario_names,
         statuses=run_statuses,
         labels=parse_label_query_params(label),
+        operation_ids=operation_id,
         limit=limit,
         cursor=cursor,
     )
