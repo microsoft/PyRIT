@@ -9,6 +9,14 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.analytics.adversarial_settings_analysis import (
+        AdversarialTrialRecord,
+        build_experiment_report,
+        format_report_markdown,
+        read_trial_records,
+        wilson_interval,
+        write_trial_records,
+    )
     from pyrit.analytics.attack_result_analytics import AttackResultAnalytics
     from pyrit.analytics.conversation_analytics import ConversationAnalytics
     from pyrit.analytics.outcome_statistics import combine_outcome_statistics, compute_outcome_statistics
@@ -27,6 +35,12 @@ if TYPE_CHECKING:
     from pyrit.analytics.text_matching import ApproximateTextMatching, ExactTextMatching, TextMatching
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AdversarialTrialRecord": "pyrit.analytics.adversarial_settings_analysis",
+    "build_experiment_report": "pyrit.analytics.adversarial_settings_analysis",
+    "format_report_markdown": "pyrit.analytics.adversarial_settings_analysis",
+    "read_trial_records": "pyrit.analytics.adversarial_settings_analysis",
+    "wilson_interval": "pyrit.analytics.adversarial_settings_analysis",
+    "write_trial_records": "pyrit.analytics.adversarial_settings_analysis",
     "analyze_results": "pyrit.analytics.result_analysis",
     "ApproximateTextMatching": "pyrit.analytics.text_matching",
     "AttackResultAnalytics": "pyrit.analytics.attack_result_analytics",
