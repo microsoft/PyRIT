@@ -298,7 +298,8 @@ class TargetService:
         local files gets the server's upload folder, which callers cannot choose.
         GitHub Copilot requires an explicit or environment token rather than SDK
         login discovery in CoPyRIT. A target whose construction runs model
-        repository code is built only for an administrator. The response is built
+        repository code, or that would authenticate with this server's stored
+        credentials, is built only for an administrator. The response is built
         before the target is registered, so a failed request leaves no registered
         target.
 
@@ -306,7 +307,8 @@ class TargetService:
             request: The create target request with type, params, and auth_mode.
             upload_directory: Folder the server lets API-created targets upload files from,
                 or None when the server configures none.
-            is_admin: Whether the caller may create a target that runs model repository code.
+            is_admin: Whether the caller may create a target that runs model repository code or
+                authenticates with this server's stored credentials.
 
         Returns:
             TargetInstance with the new target's details.
@@ -319,7 +321,8 @@ class TargetService:
                 the server configures none. Construction errors (unknown params,
                 incompatible inner targets, unrecognized identity endpoints) are
                 raised by the registry / target classes.
-            PermissionError: If a non-administrator enables a target's model code execution.
+            PermissionError: If a non-administrator enables a target's model code execution, or
+                creates a target that would authenticate with this server's stored credentials.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -371,6 +374,7 @@ class TargetService:
                 )
 
         await self._enforce_code_execution_permission_async(target_type=request.type, params=params, is_admin=is_admin)
+        self._enforce_server_credential_permission(target_type=request.type, params=params, is_admin=is_admin)
 
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.
@@ -423,6 +427,37 @@ class TargetService:
             raise PermissionError(
                 f"Creating '{target_type}' with '{parameter_name}' enabled runs model repository code and "
                 "requires administrator access."
+            )
+
+    def _enforce_server_credential_permission(
+        self, *, target_type: str, params: dict[str, Any], is_admin: bool
+    ) -> None:
+        """
+        Require administrator access when a target would authenticate with the server's own credentials.
+
+        A target names the parameter a caller supplies to authenticate with their own credential
+        through ``server_credential_parameter`` (e.g. ``"sas_token"``). When the caller does not
+        supply it, the target falls back to the server's stored credentials (an ambient managed
+        identity or a server-configured token), so a non-administrator could otherwise point those
+        credentials at a resource of their choice. The check runs after identity-mode normalization
+        has removed any conflicting credential, so an identity-mode request is covered too.
+
+        Args:
+            target_type (str): Registered target class name.
+            params (dict[str, Any]): Constructor parameters after auth-mode normalization.
+            is_admin (bool): Whether the caller may use the server's stored credentials.
+
+        Raises:
+            PermissionError: If the caller supplied no credential and is not an administrator.
+        """
+        parameter_name = self._registry.get_class(target_type).server_credential_parameter
+        if parameter_name is None:
+            return
+        if not params.get(parameter_name) and not is_admin:
+            raise PermissionError(
+                f"Creating '{target_type}' without '{parameter_name}' authenticates with this server's stored "
+                f"credentials and requires administrator access. Create it with 'api_key' authentication and your "
+                f"own '{parameter_name}', or ask an administrator."
             )
 
 

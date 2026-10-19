@@ -309,6 +309,7 @@ async def test_other_service_failure_still_closes_analytics_async(
         with pytest.raises(type(error)) as caught:
             await close_services_async()
         assert caught.value is error
+        assert error.__notes__ == ["Failed to close cached backend services."]
     assert analytics_service.is_closed
     assert get_analytics_service.cache_info().currsize == 0
 
@@ -326,6 +327,8 @@ async def test_service_and_analytics_close_failures_are_both_reported_async(
         with pytest.raises(BaseExceptionGroup, match="Backend service closure failed") as caught:
             await close_services_async()
     assert caught.value.exceptions == (services_error, analytics_error)
+    assert services_error.__notes__ == ["Failed to close cached backend services."]
+    assert analytics_error.__notes__ == ["Failed to close analytics service."]
     assert get_analytics_service() is analytics_service
     assert not analytics_service.is_closed
 

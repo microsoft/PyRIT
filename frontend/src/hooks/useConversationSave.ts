@@ -20,6 +20,7 @@ export function useConversationSave(newAttackContext?: NewAttackContext) {
   const save = useCallback(async (
     input: ConversationSaveInput,
     destination: SaveConversationRequest['destination'],
+    reuseUnsentConversation = false,
   ): Promise<AddMessageResponse> => {
     if (pending.current) throw new Error('A conversation save is already in progress.')
     pending.current = true
@@ -50,6 +51,10 @@ export function useConversationSave(newAttackContext?: NewAttackContext) {
         operation_id: operationId,
         labels,
         messages,
+        ...(reuseUnsentConversation ? {
+          reuse_unsent_conversation: true,
+          expected_source_piece_ids: input.sourcePieceIds ?? [],
+        } : {}),
       }
       const signature = JSON.stringify(payload)
       if (attempt.current?.signature !== signature) attempt.current = { signature, id: generateClientId() }

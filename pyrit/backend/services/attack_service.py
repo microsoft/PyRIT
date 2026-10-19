@@ -54,6 +54,7 @@ from pyrit.backend.models.attacks import (
 )
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendStatus
+from pyrit.backend.services.history_replay import validate_history_replay
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
 from pyrit.backend.services.message_send_service import (
     MessageSendService,
@@ -88,8 +89,10 @@ from pyrit.models import (
     Message,
     MessagePiece,
     TargetIdentifier,
+    group_conversation_message_pieces_by_sequence,
 )
 from pyrit.models.messages.tool_content import validate_tool_conversation
+from pyrit.models.target.request_trace_context import RequestTraceContext
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -499,6 +502,15 @@ class AttackService:
                 persisted_paths=persisted_paths,
                 start_sequence=max((piece.sequence for piece in copied), default=-1) + 1,
             )
+            if copied or pieces:
+                target_object = await self._validate_editor_target_async(
+                    target_identifier=target_identifier, registry_name=request.target_registry_name
+                )
+                if target_object:
+                    validate_history_replay(
+                        target=target_object,
+                        messages=group_conversation_message_pieces_by_sequence([*copied, *pieces]),
+                    )
             task = asyncio.create_task(
                 self._memory.add_conversation_branches_to_attack_async(
                     attack_result_id=attack_result.attack_result_id,
@@ -613,7 +625,19 @@ class AttackService:
 
     async def save_conversation_async(self, *, request: SaveConversationRequest) -> AddMessageResponse:
         """
-        Save a complete draft without changing source pieces or invoking a target.
+        Save a complete draft without invoking a target or replacing sent evidence.
+
+        Returns:
+            The stored attack and conversation.
+        """
+        if not request.reuse_unsent_conversation:
+            return await self._save_conversation_async(request=request)
+        with self._message_send_service.reserve_conversation(str(request.source_conversation_id)):
+            return await self._save_conversation_async(request=request)
+
+    async def _save_conversation_async(self, *, request: SaveConversationRequest) -> AddMessageResponse:
+        """
+        Prepare and persist a conversation while the caller holds any required source reservation.
 
         Returns:
             The stored attack and conversation.
@@ -637,13 +661,41 @@ class AttackService:
             else str(uuid.uuid5(request.save_id, "attack"))
         )
         existing = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
-        if existing and existing[0].metadata.get(f"conversation_save:{conversation_id}") == fingerprint:
+        if existing and (
+            existing[0].metadata.get(f"conversation_save:{conversation_id}") == fingerprint
+            or existing[0].metadata.get(f"conversation_save:{conversation_id}:{fingerprint}")
+        ):
             return await self._saved_conversation_response_async(
                 attack_result_id=attack_result_id,
                 conversation_id=conversation_id,
             )
+        if (
+            request.reuse_unsent_conversation
+            and existing
+            and (
+                existing[0].metadata.get(f"conversation_save:{request.source_conversation_id}") == fingerprint
+                or existing[0].metadata.get(f"conversation_save:{request.source_conversation_id}:{fingerprint}")
+            )
+        ):
+            return await self._saved_conversation_response_async(
+                attack_result_id=attack_result_id,
+                conversation_id=str(request.source_conversation_id),
+            )
         source_pieces = await self._get_save_source_async(request=request)
+        replacements: dict[str, Sequence[MessagePiece]] | None = None
+        if request.reuse_unsent_conversation:
+            if set(source_pieces) != set(request.expected_source_piece_ids or []):
+                raise AttackStateConflictError("The conversation changed. Reload before leaving edit mode.")
+            if not any(
+                piece.role in ("assistant", "tool")
+                or piece.prompt_metadata.get(RequestTraceContext.REQUEST_METADATA_KEY)
+                or piece.prompt_metadata.get(RequestTraceContext.METADATA_KEY)
+                for piece in source_pieces.values()
+            ):
+                conversation_id = str(request.source_conversation_id)
+                replacements = {conversation_id: list(source_pieces.values())}
         same_attack = request.destination == "same_attack"
+        replay_registry_name = request.target_registry_name
         new_attack: AttackResult | None = None
         expected_fields: dict[str, Any] = {}
         update_fields: dict[str, Any] = {}
@@ -655,6 +707,9 @@ class AttackService:
             attack = results[0]
             if request.operation_id is not None and request.operation_id != attack.operation_id:
                 raise ValueError("Operation attribution is immutable on continuation")
+            original_registry_name = attack.metadata.get("target_registry_name")
+            if isinstance(original_registry_name, str):
+                replay_registry_name = original_registry_name
             if attack.operator and attack.operator != request.operator:
                 raise PermissionError("Cannot save to an attack owned by another operator")
             identifier = attack.get_attack_strategy_identifier()
@@ -686,7 +741,7 @@ class AttackService:
             )
         target = await self._validate_editor_target_async(
             target_identifier=target_identifier,
-            registry_name=request.target_registry_name,
+            registry_name=replay_registry_name,
         )
         persisted_paths: list[str] = []
         inserted = False
@@ -713,7 +768,9 @@ class AttackService:
                     if same_attack
                     and request.source_conversation_id
                     and request.source_attack_result_id == request.attack_result_id
+                    and replacements is None
                     else None,
+                    replace_conversation_pieces=replacements,
                 )
             )
             try:
@@ -859,7 +916,7 @@ class AttackService:
                 prepared_pieces.append((saved, request_piece))
             prepared_messages.append(Message(message_pieces=prepared))
         if target:
-            target.validate_history(prepared_messages)
+            validate_history_replay(target=target, messages=prepared_messages)
         elif source_pieces is not None:
             validate_tool_conversation(prepared_messages)
         for saved, request_piece in prepared_pieces:
@@ -877,13 +934,13 @@ class AttackService:
         registry_name: str | None,
     ) -> PromptTarget | None:
         """
-        Resolve a registered target that supports editable, multi-turn history.
+        Resolve a registered target; check replay capabilities against the actual history separately.
 
         Returns:
             The resolved target for provider preflight, or None for an unbound draft.
 
         Raises:
-            ValueError: If a bound target is unavailable or cannot replay the draft.
+            ValueError: If a bound target is unavailable or its identity no longer matches.
         """
         if target_identifier is None:
             return None
@@ -899,9 +956,6 @@ class AttackService:
                     break
         if target is None or target.identifier.hash != target_identifier.hash:
             raise ValueError("The attack target is not registered. Choose New attack without a target.")
-        capabilities = target.capabilities
-        if not capabilities.supports_editable_history or not capabilities.supports_multi_turn:
-            raise ValueError("The selected target does not support editable history. Select a different target.")
         target_object = service.get_target_object(target_registry_name=target.target_registry_name)
         if target_object is None:
             raise ValueError("The selected target is no longer registered")
@@ -1074,6 +1128,17 @@ class AttackService:
                 target_identifier=objective_target,
             )
 
+        if all_pieces and conversation.target_identifier is not None:
+            target = await self._validate_editor_target_async(
+                target_identifier=conversation.target_identifier,
+                registry_name=ar.metadata.get("target_registry_name")
+                if isinstance(ar.metadata.get("target_registry_name"), str)
+                else None,
+            )
+            if target:
+                validate_history_replay(
+                    target=target, messages=group_conversation_message_pieces_by_sequence(all_pieces)
+                )
         stored = await self._memory.add_conversation_branches_to_attack_async(
             attack_result_id=attack_result_id,
             conversations=[conversation],
@@ -1189,7 +1254,7 @@ class AttackService:
         )
         if target_object:
             for conversation in conversations.values():
-                target_object.validate_history(conversation)
+                validate_history_replay(target=target_object, messages=conversation)
         atomic = AtomicAttackIdentifier.build(
             attack_identifier=AttackIdentifier(
                 class_name="ManualAttack",
