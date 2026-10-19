@@ -96,6 +96,14 @@ def test_anagram_uses_fallback_when_shuffles_never_change_source():
     assert result == "BCA"
 
 
+def test_anagram_fallback_keeps_marks_with_their_letters() -> None:
+    assert build_anagram(["q\u0301b"], _NeverShuffles()) == "BQ\u0301"
+
+
+def test_anagram_single_marked_letter_is_not_split() -> None:
+    assert build_anagram(["q\u0301"], random.Random(0)) == "Q\u0301"
+
+
 def test_anagram_empty_list_raises():
     with pytest.raises(ValueError):
         build_anagram([], random.Random(0))
@@ -132,6 +140,25 @@ def test_crossword_build_applies_mapping_per_word():
 
 def test_crossword_single_word_has_no_symbols():
     assert build_crossword(["abduct"]) == "1. ABDUCT"
+
+
+def test_crossword_does_not_treat_a_shared_mark_as_a_letter() -> None:
+    assert crossword_symbol_map(["q\u0301a", "x\u0301b"]) == {}
+    assert build_crossword(["q\u0301a", "x\u0301b"]) == "1. Q\u0301A\n2. X\u0301B"
+
+
+def test_crossword_substitutes_the_whole_marked_letter() -> None:
+    assert crossword_symbol_map(["q\u0301a", "q\u0301b"]) == {"Q\u0301": "#"}
+    assert build_crossword(["q\u0301a", "q\u0301b"]) == "1. #A\n2. #B"
+
+
+@pytest.mark.parametrize(
+    "first, second, shared",
+    [("éa", "e\u0301b", "É"), ("ΐa", "ι\u0308\u0301b", "ΐ")],
+)
+def test_crossword_shares_canonically_equivalent_marked_letters(*, first: str, second: str, shared: str) -> None:
+    assert crossword_symbol_map([first, second]) == {shared: "#"}
+    assert build_crossword([first, second]) == "1. #A\n2. #B"
 
 
 def test_crossword_empty_raises():

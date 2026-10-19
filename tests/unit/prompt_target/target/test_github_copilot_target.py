@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, NonCallableMagicMock, call, create_autospec
 from uuid import UUID, uuid4
 
 import pytest
-from unit.async_utils import get_defined_tasks, wait_for_completion_async
+from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async
 from unit.mocks import store_message_async
 
 from pyrit.models import Message, MessagePiece, MessageScorable, ScoringExpectation
@@ -1203,7 +1203,7 @@ async def test_cancelled_send_preserves_cancellation_when_retirement_fails_async
     )
 
     try:
-        await asyncio.wait_for(send_started.wait(), timeout=2.0)
+        await asyncio.wait_for(send_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
         send_task.cancel()
         with pytest.raises(asyncio.CancelledError) as exc_info:
             await asyncio.wait_for(send_task, timeout=2.0)

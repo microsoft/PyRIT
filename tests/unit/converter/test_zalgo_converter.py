@@ -7,6 +7,7 @@ import pytest
 
 from pyrit.converter import ZalgoConverter
 from pyrit.converter.text_selection_strategy import WordProportionSelectionStrategy
+from pyrit.registry import ConverterRegistry
 
 
 async def test_zalgo_output_changes_text():
@@ -136,3 +137,26 @@ async def test_zalgo_negative_intensity(caplog):
 async def test_zalgo_invalid_intensity(bad_intensity):
     with pytest.raises(ValueError):
         ZalgoConverter(intensity=bad_intensity, seed=1)
+
+
+def test_zalgo_identifier_includes_seed() -> None:
+    assert ZalgoConverter(seed=7).get_identifier().params["seed"] == 7
+
+
+def test_zalgo_identifier_distinguishes_seeds() -> None:
+    first = ZalgoConverter(seed=1)
+    second = ZalgoConverter(seed=2)
+    assert first.get_identifier().hash != second.get_identifier().hash
+
+    # Both configurations get their own default registry name instead of colliding.
+    instances = ConverterRegistry().instances
+    instances.register(first)
+    instances.register(second)
+    assert instances.get(first.get_identifier().unique_name) is first
+    assert instances.get(second.get_identifier().unique_name) is second
+
+
+def test_zalgo_identifier_without_seed_is_unchanged_by_the_seed_param() -> None:
+    # An unseeded converter inherits the configured root, and None params are not hashed.
+    assert "seed" not in ZalgoConverter().get_identifier().params
+    assert ZalgoConverter(seed=3).get_identifier().hash == ZalgoConverter(seed=3).get_identifier().hash

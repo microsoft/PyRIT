@@ -466,7 +466,11 @@ export function SeedExampleBrowserView({
         </div>
       )}
       {detailState.detail && query.exampleId === detailState.detail.example_id && (
-        <SeedExampleDetail detail={detailState.detail} headingRef={detailHeadingRef} />
+        <SeedExampleDetail
+          detail={detailState.detail}
+          headingRef={detailHeadingRef}
+          onRefreshUrls={detailState.refreshDisplayUrls}
+        />
       )}
     </div>
   )

@@ -4,6 +4,7 @@
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +13,7 @@ import httpx
 import pytest
 from mcp.types import Tool as MCPToolDefinition
 from openai.types.chat import ChatCompletion
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
 from pyrit.models import Message, MessagePiece, PromptDataType, RequestTraceContext
@@ -792,14 +794,33 @@ async def test_responses_probes_suppress_provider_io_and_preserve_state(
         original_value_data_type="function_call",
     ).to_message()
 
+    requested = asyncio.Event()
+    cancelled = asyncio.Event()
+
     async def finish_async(**kwargs: object) -> Message:
         if outcome == "error":
             raise ValueError("Probe request failed")
         if outcome == "cancel":
             raise asyncio.CancelledError
         if outcome == "timeout":
-            await asyncio.Event().wait()
+            requested.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
         return response
+
+    original_wait_for = asyncio.wait_for
+
+    async def expire_once_requested_async(awaitable: Awaitable[list[Message]], *, timeout: float) -> list[Message]:
+        probe = asyncio.ensure_future(awaitable)
+        try:
+            await original_wait_for(requested.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            return await original_wait_for(probe, timeout=0)
+        finally:
+            if not probe.done():
+                probe.cancel()
+            await asyncio.gather(probe, return_exceptions=True)
 
     with (
         patch.object(provider, "execution_scope_async") as scope,
@@ -810,21 +831,27 @@ async def test_responses_probes_suppress_provider_io_and_preserve_state(
         patch.object(target._client.responses, "create", new_callable=AsyncMock) as create,
     ):
 
-        async def probe_async() -> None:
-            await discover_target_capabilities_async(
+        async def probe_async() -> TargetCapabilities:
+            return await discover_target_capabilities_async(
                 target=target,
                 capabilities=[CapabilityName.JSON_OUTPUT],
                 test_modalities=set(),
                 retries=0,
-                # The deadline includes async memory access before the mocked request.
-                per_probe_timeout_s=5.0,
+                per_probe_timeout_s=TEST_WATCHDOG_SECONDS,
             )
 
         if outcome == "cancel":
             with pytest.raises(asyncio.CancelledError):
                 await probe_async()
+        elif outcome == "timeout":
+            with patch.object(asyncio, "wait_for", side_effect=expire_once_requested_async) as deadline:
+                result = await probe_async()
+            deadline.assert_awaited_once()
+            assert cancelled.is_set()
+            assert not result.supports_json_output
         else:
-            await probe_async()
+            result = await probe_async()
+            assert result.supports_json_output is (outcome == "success")
         send.assert_awaited_once()
         await send.call_args.kwargs["api_call"]()
         assert not {"tools", "tool_choice", "parallel_tool_calls"} & create.call_args.kwargs.keys()
