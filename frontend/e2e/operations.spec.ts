@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 import type { Finding, Operation } from '../src/types'
+import { waitForAppReady } from './_runtime'
 
 for (const width of [1280, 390]) {
   test(`wraps long finding text in detail and evidence picker at ${width}px @seeded`, async ({ page, request }) => {
@@ -178,6 +179,7 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
   test.setTimeout(90_000)
   const name = `Engagement / α% & ${Date.now()}`
   await page.goto('/')
+  await waitForAppReady(page)
   const bar = page.getByRole('region', { name: 'Default Labels' })
   await bar.getByRole('combobox', { name: 'Operation', exact: true }).click()
   await page.getByRole('option', { name: 'New operation…', exact: true }).click()
@@ -191,6 +193,9 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
   await expect(bar.getByRole('combobox', { name: 'Operation' })).toHaveValue(name)
   await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toBeFocused()
   await expect(page).toHaveURL(/\/$/)
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('pyrit.userPreferences.v1.local') ?? '{}').operation,
+  )).toEqual({ id: operation.id })
   await page.reload()
   await expect(bar.getByRole('combobox', { name: 'Operation' })).toHaveValue(name)
 
