@@ -428,10 +428,7 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
         }
       }
       for (const [pieceType, stages] of Object.entries(restoredPipelines)) {
-        const previous = next.pipelines[pieceType] ?? []
-        if (previous.length !== stages.length || previous.some(
-          (stage: ConverterPipelineStage, index: number) => stage.converterId !== stages[index].converterId,
-        )) next = changePipeline(next, pieceType, stages)
+        next = changePipeline(next, pieceType, stages)
       }
       return {
         ...next, applied: { ...conversions }, workingInputs: {}, stageResults: {}, errors: {}, runId: 0, isConverting: false,

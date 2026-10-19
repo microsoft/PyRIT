@@ -183,7 +183,12 @@ class TestTemporaryComponents:
         original = source.get_identifier()
         service = TargetService()
         spec = SourceInstanceSpec(source_name="source", source_hash=original.hash, params={"temperature": 1.5})
-        with patch.object(service, "_enforce_code_execution_permission_async", new_callable=AsyncMock) as permission:
+        with (
+            patch.object(service, "_enforce_code_execution_permission_async", new_callable=AsyncMock) as permission,
+            patch.object(
+                service, "_enforce_server_credential_permission", wraps=service._enforce_server_credential_permission
+            ) as credential_permission,
+        ):
             built = await service.create_target_async(
                 request=CreateTargetRequest(
                     type="OpenAIChatTarget",
@@ -195,6 +200,8 @@ class TestTemporaryComponents:
         assert permission.call_args.kwargs["params"]["temperature"] == 1.5
         assert permission.call_args.kwargs["params"]["api_key"] == "test-only-key"
         assert permission.call_args.kwargs["is_admin"] is False
+        credential_permission.assert_called_once()
+        assert credential_permission.call_args.kwargs == permission.call_args.kwargs
         assert built.identifier.temperature == 1.5
         binding = TargetBinding(
             source_name="source",

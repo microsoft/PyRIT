@@ -59,6 +59,7 @@ class ZalgoConverter(WordLevelConverter):
             params={
                 **selection_params,
                 "intensity": self._intensity,
+                "seed": self._seed,
             },
         )
 

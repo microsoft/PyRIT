@@ -278,6 +278,7 @@ class RuntimeLifecycle:
             if service:
                 await service.shutdown_async()
         except (Exception, asyncio.CancelledError) as error:
+            error.add_note("Runtime shutdown phase: scenario service shutdown.")
             errors.append(error)
         try:
             await close_services_async()
@@ -289,6 +290,7 @@ class RuntimeLifecycle:
             if CentralMemory._memory_instance is not None:
                 await CentralMemory.get_memory_instance().dispose_engine_async()
         except (Exception, asyncio.CancelledError) as error:
+            error.add_note("Runtime shutdown phase: memory disposal.")
             errors.append(error)
         if len(errors) == 1:
             raise errors[0]

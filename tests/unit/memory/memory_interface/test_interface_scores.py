@@ -60,7 +60,8 @@ async def test_get_scores_by_label(sqlite_instance: MemoryInterface, sample_conv
             attack_results=[AttackResult(conversation_id=conversation_id, objective="Test objective", labels=labels)]
         )
     )
-    db_score = await sqlite_instance.get_prompt_scores_async(labels=labels)
+    with pytest.warns(DeprecationWarning, match=r"get_prompt_scores_async\(labels=\.\.\.\)"):
+        db_score = await sqlite_instance.get_prompt_scores_async(labels=labels)
 
     assert len(db_score) == 1
     assert db_score[0].score_value == score.score_value
@@ -76,7 +77,8 @@ async def test_get_scores_by_label(sqlite_instance: MemoryInterface, sample_conv
     assert len(db_score) == 1
     assert db_score[0].score_value == score.score_value
 
-    db_score = await sqlite_instance.get_prompt_scores_async(labels={"x": "y"})
+    with pytest.warns(DeprecationWarning, match=r"get_prompt_scores_async\(labels=\.\.\.\)"):
+        db_score = await sqlite_instance.get_prompt_scores_async(labels={"x": "y"})
     assert len(db_score) == 0
 
     db_score = await sqlite_instance.get_scores_async()
@@ -335,7 +337,8 @@ async def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
     )
 
     # Fetch the score we just added
-    db_score = await sqlite_instance.get_prompt_scores_async(labels={"sample": "label"})
+    with pytest.warns(DeprecationWarning, match=r"get_prompt_scores_async\(labels=\.\.\.\)"):
+        db_score = await sqlite_instance.get_prompt_scores_async(labels={"sample": "label"})
 
     assert len(db_score) == 1
     assert db_score[0].score_value == score.score_value

@@ -9,7 +9,7 @@ import { Suspense, startTransition } from 'react'
 
 import { convertersApi } from '@/services/api'
 import { useChatConverters, usePieceConverters } from './useChatConverters'
-import type { MessageAttachment } from '@/types'
+import type { ConverterPipelineStage, MessageAttachment, SourceInstanceSpec } from '@/types'
 
 const runtime = { generation: 'gen-1' }
 
@@ -155,6 +155,34 @@ describe('useChatConverters across runtime generation changes', () => {
     expect(result.current.pipelines.image).toEqual([])
     expect(result.current.applied).toEqual(conversions)
     expect(mockedPreview).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { change: 'changed', initial: privateSpec, restored: { ...privateSpec, params: { example: 5 } } },
+    { change: 'cleared', initial: privateSpec, restored: undefined },
+    { change: 'added', initial: undefined, restored: privateSpec },
+  ])('restores $change temporary settings with the same converter IDs', async ({
+    initial, restored,
+  }: { initial?: SourceInstanceSpec; restored?: SourceInstanceSpec }) => {
+    const { result } = renderHook(() => useChatConverters('original text', NO_ATTACHMENTS))
+    const pipeline: ConverterPipelineStage[] = [
+      { id: 'first', converterId: 'base64-default' },
+      { id: 'second', converterId: 'base64-default', temporary: initial },
+    ]
+    const restoredPipeline: ConverterPipelineStage[] = [
+      pipeline[0], { ...pipeline[1], temporary: restored },
+    ]
+    act(() => result.current.setPipeline('text', () => pipeline))
+    act(() => result.current.restore('original text', NO_ATTACHMENTS, {}, { text: restoredPipeline }))
+
+    expect(result.current.pipelines.text).toEqual(restoredPipeline)
+    mockedPreview.mockResolvedValue({
+      ...makePreviewResponse(), steps: [makePreviewResponse().steps[0], makePreviewResponse().steps[0]],
+    })
+    await act(async () => { await result.current.convert('text') })
+    const request = mockedPreview.mock.calls[0][0]
+    expect(request.converter_ids).toEqual(['base64-default', 'base64-default'])
+    expect(request.converter_specs).toEqual(restored ? [null, restored] : undefined)
   })
 
   it('keeps user-authored working text when only the generation changes', () => {

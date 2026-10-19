@@ -117,7 +117,7 @@ class ScorerService:
             if request.type not in self._registry:
                 raise ValueError(f"Scorer type '{request.type}' not found")
             if not request.register:
-                scorer = self._registry.create_instance(request.type, **request.params)
+                scorer = self._registry.create_instance_from_external_input(request.type, params=request.params)
                 return UnregisteredScorer(
                     identifier=ScorerIdentifier.from_component_identifier(scorer.get_identifier())
                 )

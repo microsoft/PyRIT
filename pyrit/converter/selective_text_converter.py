@@ -215,6 +215,7 @@ class SelectiveTextConverter(Converter):
                 "preserve_tokens": self._preserve_tokens,
                 "start_token": self._start_token,
                 "end_token": self._end_token,
+                "word_separator": self._word_separator if self._is_word_level else None,
             },
             sub_converter=self._sub_converter.get_identifier(),
         )

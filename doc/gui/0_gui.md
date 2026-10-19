@@ -19,7 +19,8 @@ Then open `http://localhost:8000` in your browser.
 Local mode deliberately disables incoming-request Entra authentication and is
 restricted to a loopback host by the packaged CLI. Authentication-disabled local
 servers deny administrator operations by default. To enable administrator operations
-(configuration, initializer administration, and creating targets that run model repository code) for a trusted local
+(configuration, initializer administration, creating targets that run model repository code, and creating targets
+that authenticate with this server's stored credentials) for a trusted local
 development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use these local settings on a
 network-accessible deployment.
 

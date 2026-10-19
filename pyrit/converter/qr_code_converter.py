@@ -67,12 +67,22 @@ class QRCodeConverter(Converter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        # The data, finder, and border colors default to the dark or light color. They join the
+        # identity only when they differ from it, so equivalent configurations, including the
+        # default one, keep their existing hash.
         return self._create_identifier(
             params={
                 "scale": self._scale,
                 "border": self._border,
                 "dark_color": self._dark_color,
                 "light_color": self._light_color,
+                "data_dark_color": self._data_dark_color if self._data_dark_color != self._dark_color else None,
+                "data_light_color": self._data_light_color if self._data_light_color != self._light_color else None,
+                "finder_dark_color": self._finder_dark_color if self._finder_dark_color != self._dark_color else None,
+                "finder_light_color": (
+                    self._finder_light_color if self._finder_light_color != self._light_color else None
+                ),
+                "border_color": self._border_color if self._border_color != self._light_color else None,
             }
         )
 
