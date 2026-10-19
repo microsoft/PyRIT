@@ -2222,7 +2222,7 @@ class ScenarioRunService:
         if len(progress_snapshot.deltas) != len(progress_snapshot.results):
             raise ValueError("Scenario progress deltas and results have different lengths.")
         overload_events: deque[Any] = deque(maxlen=_MAX_OVERLOAD_EVENTS)
-        
+
         for delta in progress_snapshot.deltas:
             overload_events.extend(delta.retry_events)
         # Use binary search to locate the bookmark in results sorted by timestamp and ID.

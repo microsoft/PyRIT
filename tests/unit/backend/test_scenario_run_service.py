@@ -46,6 +46,7 @@ from pyrit.models import (
     Operation,
     RetryEvent,
     ScenarioAttackResultDelta,
+    ScenarioObjectiveScorerMetrics,
     ScenarioProgressResult,
     ScenarioProgressScore,
     ScenarioResult,
@@ -71,7 +72,6 @@ from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
 from pyrit.scenario.scenarios.airt.scam import Scam
-from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
 from unit.async_utils import wait_for_completion_async
 from unit.mocks import (
     MockPromptTarget,
@@ -5030,9 +5030,7 @@ def test_progress_summary_uses_latest_attempt_for_backend_owned_counts() -> None
             "sub_scorers": [sub_scorer_identifier],
         },
     )
-    metrics = ObjectiveScorerMetrics(
-        num_responses=100,
-        num_human_raters=3,
+    metrics = ScenarioObjectiveScorerMetrics(
         accuracy=0.95,
         accuracy_standard_error=0.01,
         f1_score=0.94,
@@ -5040,16 +5038,16 @@ def test_progress_summary_uses_latest_attempt_for_backend_owned_counts() -> None
         recall=0.92,
         average_score_time_seconds=0.25,
     )
-    with patch.object(_progress_mod, "find_objective_metrics_by_eval_hash", return_value=metrics):
-        summary = ScenarioProgressReadModel._build_progress_summary(
-            plan=plan,
-            plan_complete=True,
-            results=results,
-            active_group_ids=["group"],
-            terminal=False,
-            objective_scorer_identifier=scorer_identifier,
-            technique_details_by_group={},
-        )
+    summary = ScenarioProgressReadModel._build_progress_summary(
+        plan=plan,
+        plan_complete=True,
+        results=results,
+        active_group_ids=["group"],
+        terminal=False,
+        objective_scorer_identifier=scorer_identifier,
+        technique_details_by_group={},
+        scorer_metrics=metrics,
+    )
 
     assert summary.overall.completed == 2
     assert summary.overall.succeeded == 0

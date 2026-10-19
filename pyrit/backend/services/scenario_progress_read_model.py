@@ -9,6 +9,8 @@ from collections import OrderedDict
 from collections.abc import AsyncGenerator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal
 
 from pyrit.analytics.scenario_statistics import (
@@ -19,6 +21,7 @@ from pyrit.analytics.scenario_statistics import (
     resolve_execution_unit,
     retry_pressure,
 )
+from pyrit.common.path import SCORER_EVALS_PATH
 from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor
 from pyrit.memory.memory_interface import MemoryInterface
@@ -83,6 +86,8 @@ class _ProgressSummaryState:
     active_group_ids: tuple[str, ...]
     terminal: bool
     plan_complete: bool
+    scorer_identity: str | None
+    scorer_metrics: ScenarioObjectiveScorerMetrics | None
 
 
 @dataclass
@@ -145,6 +150,14 @@ class ScenarioProgressReadModel:
             entry = self._get_cache_entry(scenario_result_id=scenario_result_id, plan=plan, terminal=terminal)
             first_new_index = len(entry.results)
             deltas_updated = await self._hydrate_new_deltas_async(scenario_result_id=scenario_result_id, entry=entry)
+            scorer_metrics = (
+                await asyncio.to_thread(
+                    self._load_objective_metrics,
+                    eval_hash=ScorerEvaluationIdentifier(objective_scorer_identifier).eval_hash,
+                )
+                if objective_scorer_identifier is not None
+                else None
+            )
             return self._build_snapshot(
                 entry=entry,
                 first_new_index=first_new_index,
@@ -154,6 +167,7 @@ class ScenarioProgressReadModel:
                 terminal=terminal,
                 objective_scorer_identifier=objective_scorer_identifier,
                 deltas_updated=deltas_updated,
+                scorer_metrics=scorer_metrics,
             )
 
     @asynccontextmanager
@@ -215,6 +229,7 @@ class ScenarioProgressReadModel:
         terminal: bool,
         objective_scorer_identifier: ComponentIdentifier | None,
         deltas_updated: bool = False,
+        scorer_metrics: ScenarioObjectiveScorerMetrics | None = None,
     ) -> ScenarioProgressSnapshot:
         summary_plan = plan or self._synthesize_legacy_plan(deltas=entry.deltas)
         if len(entry.results) < len(entry.deltas):
@@ -228,6 +243,10 @@ class ScenarioProgressReadModel:
             active_group_ids=tuple(active_group_ids),
             terminal=terminal,
             plan_complete=plan_complete,
+            scorer_identity=(
+                objective_scorer_identifier.model_dump_json() if objective_scorer_identifier is not None else None
+            ),
+            scorer_metrics=scorer_metrics,
         )
         if (
             entry.summary is None
@@ -247,6 +266,7 @@ class ScenarioProgressReadModel:
                 terminal=terminal,
                 objective_scorer_identifier=objective_scorer_identifier,
                 technique_details_by_group=technique_details_by_group,
+                scorer_metrics=scorer_metrics,
             )
             entry.summary_state = summary_state
 
@@ -394,6 +414,7 @@ class ScenarioProgressReadModel:
         terminal: bool,
         objective_scorer_identifier: ComponentIdentifier | None,
         technique_details_by_group: dict[str, ScenarioAttackTechniqueDetails],
+        scorer_metrics: ScenarioObjectiveScorerMetrics | None = None,
     ) -> ScenarioProgressSummary:
         """
         Build canonical progress rollups from a plan and persisted attempts.
@@ -462,6 +483,7 @@ class ScenarioProgressReadModel:
         objective_scorer = ScenarioProgressReadModel._build_objective_scorer(
             scorer_identifier=objective_scorer_identifier,
             results=latest_results,
+            metrics=scorer_metrics,
         )
 
         results_by_atomic_group_id: dict[str, list[ScenarioProgressResult]] = {}
@@ -581,10 +603,56 @@ class ScenarioProgressReadModel:
         )
 
     @staticmethod
+    def _load_objective_metrics(*, eval_hash: str) -> ScenarioObjectiveScorerMetrics | None:
+        """
+        Check for file changes off-loop before reusing a scorer's saved metrics.
+
+        Returns:
+            ScenarioObjectiveScorerMetrics | None: Display metrics, or None if no entry exists.
+        """
+        file_path = SCORER_EVALS_PATH / "objective" / "objective_achieved_metrics.jsonl"
+        try:
+            file_stat = file_path.stat()
+        except FileNotFoundError:
+            file_version = None
+        else:
+            # Check file metadata so unchanged metrics can be reused without rereading the file.
+            file_version = (file_stat.st_mtime_ns, file_stat.st_ctime_ns, file_stat.st_size, file_stat.st_ino)
+        return ScenarioProgressReadModel._load_unchanged_objective_metrics(
+            eval_hash=eval_hash, file_path=file_path, _file_version=file_version
+        )
+
+    @staticmethod
+    @lru_cache(maxsize=_CACHE_MAX_RUNS)
+    def _load_unchanged_objective_metrics(
+        *, eval_hash: str, file_path: Path, _file_version: tuple[int, int, int, int] | None
+    ) -> ScenarioObjectiveScorerMetrics | None:
+        """
+        Reuse metrics for the same scorer and file version, including absent entries.
+
+        The file version is part of the cache key, so edits trigger a fresh lookup.
+
+        Returns:
+            ScenarioObjectiveScorerMetrics | None: Display metrics, or None if no entry exists.
+        """
+        official_metrics = find_objective_metrics_by_eval_hash(eval_hash=eval_hash, file_path=file_path)
+        if official_metrics is None:
+            return None
+        return ScenarioObjectiveScorerMetrics(
+            accuracy=official_metrics.accuracy,
+            accuracy_standard_error=official_metrics.accuracy_standard_error,
+            f1_score=official_metrics.f1_score,
+            precision=official_metrics.precision,
+            recall=official_metrics.recall,
+            average_score_time_seconds=official_metrics.average_score_time_seconds,
+        )
+
+    @staticmethod
     def _build_objective_scorer(
         *,
         scorer_identifier: ComponentIdentifier | None,
         results: Sequence[ScenarioProgressResult],
+        metrics: ScenarioObjectiveScorerMetrics | None = None,
     ) -> ScenarioObjectiveScorer | None:
         """
         Build the objective scorer identity and its official evaluation metrics.
@@ -598,21 +666,6 @@ class ScenarioProgressReadModel:
                 return None
             return ScenarioObjectiveScorer(component_name=next(iter(scorer_names)))
 
-        official_metrics = find_objective_metrics_by_eval_hash(
-            eval_hash=ScorerEvaluationIdentifier(scorer_identifier).eval_hash
-        )
-        metrics = (
-            ScenarioObjectiveScorerMetrics(
-                accuracy=official_metrics.accuracy,
-                accuracy_standard_error=official_metrics.accuracy_standard_error,
-                f1_score=official_metrics.f1_score,
-                precision=official_metrics.precision,
-                recall=official_metrics.recall,
-                average_score_time_seconds=official_metrics.average_score_time_seconds,
-            )
-            if official_metrics
-            else None
-        )
         identity = ScenarioProgressReadModel._build_scorer_identity(scorer_identifier=scorer_identifier)
         return ScenarioObjectiveScorer(**identity.model_dump(), metrics=metrics)
 
