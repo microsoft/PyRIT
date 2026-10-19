@@ -7,6 +7,7 @@ import {
 import type { InputOnChangeData, SelectOnChangeData } from '@fluentui/react-components'
 import { AddRegular, DismissRegular, FilterDismissRegular } from '@fluentui/react-icons'
 
+import { useAnalyticsOperationLabels } from '@/hooks/useAnalyticsOperationLabels'
 import { useAttackAnalyticsFacet } from '@/hooks/useAttackAnalyticsFacet'
 import type {
   AttackAnalyticsDimension, AttackAnalyticsFilter, AttackAnalyticsFilters,
@@ -26,12 +27,21 @@ interface AnalyticsFacetPickerProps {
   readonly initial: AttackAnalyticsFilter | null
   readonly refreshVersion: number
   readonly knownLabels: Record<string, string>
-  readonly onApply: (filter: AttackAnalyticsFilter, options: AttackAnalyticsOption[]) => void
+  /** `fetchedOptions` are selections chosen from server facet options in this editor. */
+  readonly onApply: (filter: AttackAnalyticsFilter, fetchedOptions: AttackAnalyticsOption[]) => void
 }
 
 /** Friendly labels are cached per typed dimension/value, never used to identify or merge predicates. */
 function optionLabelKey(dimension: AttackAnalyticsDimension, value: AttackAnalyticsValue): string {
   return JSON.stringify([analyticsDimensionKey(dimension), analyticsValueKey(value)])
+}
+
+/** Base label for a restored value without a fetched label; analyticsOptionLabel adds its suffix once. */
+function restoredOptionLabel(value: AttackAnalyticsValue): string {
+  if (value.kind === 'missing') return 'Unknown'
+  if (value.kind === 'no_converters') return 'No converters'
+  if (value.kind === 'legacy_operation_name') return value.value
+  return analyticsValueLabel(value)
 }
 
 /** Keep draft selections across facet searches/pages; only Apply changes the dashboard cohort. */
@@ -40,13 +50,15 @@ function AnalyticsFacetPicker({
 }: AnalyticsFacetPickerProps) {
   const styles = useAnalyticsFiltersStyles()
   const facet = useAttackAnalyticsFacet(dimension, filters, refreshVersion)
-  const [selected, setSelected] = useState<AttackAnalyticsOption[]>(() =>
+  // Restored selections may carry a fallback label, such as a raw Operation ID, so
+  // Apply reports only options picked from the server's facet values for caching.
+  const [restored] = useState<AttackAnalyticsOption[]>(() =>
     initial?.values.map((value: AttackAnalyticsValue) => ({
       key: value,
-      label: knownLabels[optionLabelKey(dimension, value)] ??
-        (value.kind === 'missing' ? 'Unknown' : value.kind === 'no_converters' ? 'No converters' : analyticsValueLabel(value)),
+      label: knownLabels[optionLabelKey(dimension, value)] ?? restoredOptionLabel(value),
     })) ?? [],
   )
+  const [selected, setSelected] = useState(restored)
   const [matchMode, setMatchMode] = useState(initial?.match_mode ?? 'any')
   const tooMany = selected.length > ANALYTICS_MAX_VALUES
   const selectedKeys = new Set(selected.map((option: AttackAnalyticsOption) => analyticsValueKey(option.key)))
@@ -133,13 +145,19 @@ function AnalyticsFacetPicker({
       <Text size={200} className={styles.note}>
         {matchMode === 'all' ? 'All selected converters must match.' : 'Selected values are alternatives within this filter.'}
         {' '}Separate filter chips are combined with AND.
+        {dimension.name === 'operation' && ' History from before Operation IDs is listed separately as (legacy name).'}
       </Text>
       <div>
         <Button
           appearance="primary"
           className={styles.button}
           disabled={selected.length === 0 || tooMany}
-          onClick={() => { onApply({ dimension, values: selected.map((option: AttackAnalyticsOption) => option.key), match_mode: matchMode }, selected) }}
+          onClick={() => {
+            onApply(
+              { dimension, values: selected.map((option: AttackAnalyticsOption) => option.key), match_mode: matchMode },
+              selected.filter((option: AttackAnalyticsOption) => !restored.includes(option)),
+            )
+          }}
         >
           Apply filter
         </Button>
@@ -154,7 +172,7 @@ interface AnalyticsFilterEditorProps {
   readonly filters: AttackAnalyticsFilters
   readonly refreshVersion: number
   readonly knownLabels: Record<string, string>
-  readonly onApply: (filter: AttackAnalyticsFilter, options: AttackAnalyticsOption[]) => void
+  readonly onApply: (filter: AttackAnalyticsFilter, fetchedOptions: AttackAnalyticsOption[]) => void
   readonly onClose: () => void
 }
 
@@ -264,6 +282,14 @@ export default function AnalyticsFilters({ filters, refreshVersion, onChange }: 
   const [editor, setEditor] = useState<FilterEditorState | null>(null)
   const [datesOpen, setDatesOpen] = useState(false)
   const [knownLabels, setKnownLabels] = useState<Record<string, string>>({})
+  const operationLabels = useAnalyticsOperationLabels(filters)
+  // Fetched option labels win; restored Operation IDs fall back to their current names.
+  const labels: Record<string, string> = {
+    ...Object.fromEntries(Object.entries(operationLabels).map(([id, name]: [string, string]) => [
+      optionLabelKey({ name: 'operation' }, { kind: 'value', value: id }), name,
+    ])),
+    ...knownLabels,
+  }
   const [expanded, setExpanded] = useState(false)
   const moreFiltersId = useId()
   // Browser Back can replace/remove a chip while its editor is open. Never apply
@@ -284,14 +310,14 @@ export default function AnalyticsFilters({ filters, refreshVersion, onChange }: 
     setEditor({ dimension, index: index < 0 ? null : index, initial: filters.dimensions[index] ?? null })
   }
 
-  function apply(filter: AttackAnalyticsFilter, options: AttackAnalyticsOption[]): void {
+  function apply(filter: AttackAnalyticsFilter, fetchedOptions: AttackAnalyticsOption[]): void {
     const dimensions = editor?.index == null
       ? [...filters.dimensions, filter]
       : filters.dimensions.map((predicate: AttackAnalyticsFilter, index: number) => index === editor.index ? filter : predicate)
     if (!onChange({ ...filters, dimensions })) return
     setKnownLabels((previous: Record<string, string>) => ({
       ...previous,
-      ...Object.fromEntries(options.map((option: AttackAnalyticsOption) => [
+      ...Object.fromEntries(fetchedOptions.map((option: AttackAnalyticsOption) => [
         optionLabelKey(filter.dimension, option.key), option.label,
       ])),
     }))
@@ -343,8 +369,8 @@ export default function AnalyticsFilters({ filters, refreshVersion, onChange }: 
           occurrences.set(fingerprint, occurrence + 1)
           const label = `${analyticsDimensionLabel(predicate.dimension)} (${predicate.match_mode.toUpperCase()}): ` +
             predicate.values.map((value: AttackAnalyticsValue) =>
-              knownLabels[optionLabelKey(predicate.dimension, value)]
-                ? analyticsOptionLabel({ key: value, label: knownLabels[optionLabelKey(predicate.dimension, value)] })
+              labels[optionLabelKey(predicate.dimension, value)]
+                ? analyticsOptionLabel({ key: value, label: labels[optionLabelKey(predicate.dimension, value)] })
                 : analyticsValueLabel(value),
             ).join(', ')
           return (
@@ -382,7 +408,7 @@ export default function AnalyticsFilters({ filters, refreshVersion, onChange }: 
         <AnalyticsFilterEditor
           key={JSON.stringify(editor)}
           initial={editor.initial} startingDimension={editor.dimension} filters={filters}
-          knownLabels={knownLabels} refreshVersion={refreshVersion}
+          knownLabels={labels} refreshVersion={refreshVersion}
           onApply={apply} onClose={() => { setEditor(null) }}
         />
       )}

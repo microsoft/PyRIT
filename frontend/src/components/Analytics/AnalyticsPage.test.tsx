@@ -3,10 +3,10 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router'
 
-import { analyticsApi } from '@/services/api'
+import { analyticsApi, operationsApi } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
 import {
-  ANALYTICS_EMPTY_STATISTICS, ANALYTICS_OPERATION_FILTER, ANALYTICS_PAGE_TIME,
+  ANALYTICS_EMPTY_STATISTICS, ANALYTICS_NIGHTLY_ID, ANALYTICS_OPERATION_FILTER, ANALYTICS_OPERATIONS, ANALYTICS_PAGE_TIME,
   ANALYTICS_PREDICATE_LIMIT_REASON, ANALYTICS_TEST_STATISTICS, ANALYTICS_TEST_TIME, ANALYTICS_VALUE_LIMIT_REASON,
   makeAnalyticsFacets, makeAnalyticsReport, makeAnalyticsResults, makeAnalyticsRow,
 } from '@/test-utils/analyticsFixtures'
@@ -22,6 +22,7 @@ import AnalyticsPage from './AnalyticsPage'
 
 jest.mock('@/services/api', () => ({
   analyticsApi: { query: jest.fn(), results: jest.fn(), facets: jest.fn() },
+  operationsApi: { list: jest.fn() },
 }))
 jest.mock('@/hooks/useRuntime', () => ({ useRuntime: jest.fn() }))
 const mockRuntime = jest.mocked(useRuntime)
@@ -29,6 +30,7 @@ const mockRuntime = jest.mocked(useRuntime)
 const mockQuery = jest.mocked(analyticsApi.query)
 const mockResults = jest.mocked(analyticsApi.results)
 const mockFacets = jest.mocked(analyticsApi.facets)
+const mockList = jest.mocked(operationsApi.list)
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
@@ -84,6 +86,7 @@ describe('AnalyticsPage', () => {
     mockQuery.mockReset().mockImplementation(async (query: AttackAnalyticsQuery) => echoQuery(query))
     mockResults.mockReset().mockResolvedValue(makeAnalyticsResults())
     mockFacets.mockReset().mockResolvedValue(makeAnalyticsFacets())
+    mockList.mockReset().mockResolvedValue(ANALYTICS_OPERATIONS)
   })
 
   afterEach(() => { jest.useRealTimers() })
@@ -106,7 +109,7 @@ describe('AnalyticsPage', () => {
           : Array.from({ length: 5 }, (_unused: unknown, index: number): AttackAnalyticsFilter => ({
             ...ANALYTICS_OPERATION_FILTER,
             values: Array.from({ length: index === 4 ? initialSize - 400 : 100 }, (_value: unknown, value: number): AttackAnalyticsValue => ({
-              kind: 'value', value: value === 0 ? 'Nightly' : `operation-${index}-${value}`,
+              kind: 'value', value: value === 0 ? ANALYTICS_NIGHTLY_ID : `00000000-0000-4000-8000-${String(index * 100 + value).padStart(12, '0')}`,
             })),
           })),
       }
@@ -521,11 +524,20 @@ describe('AnalyticsPage', () => {
     await waitFor(() => { expect(mockQuery).toHaveBeenLastCalledWith(expect.objectContaining({ filters: DEFAULT_ANALYTICS_VIEW.filters }), expect.any(AbortSignal)) })
   })
 
+  it('should label a drill-down Operation chip by name', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Filter to Nightly' }))
+    expect(await screen.findByRole('button', { name: 'Operation (ANY): Nightly' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent(ANALYTICS_NIGHTLY_ID)
+    expect(mockList).toHaveBeenCalledTimes(1)
+  })
+
   it('should invalidate a stale filter editor when browser Back restores a different predicate', async () => {
     const user = userEvent.setup()
     renderPage()
     await user.click(await screen.findByRole('button', { name: 'Filter to Nightly' }))
-    await user.click(screen.getByRole('button', { name: /^Operation \(ANY\): Nightly/ }))
+    await user.click(await screen.findByRole('button', { name: /^Operation \(ANY\): Nightly/ }))
     expect(screen.getByRole('region', { name: 'Filter editor' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Browser back' }))
     expect(screen.queryByRole('region', { name: 'Filter editor' })).not.toBeInTheDocument()
