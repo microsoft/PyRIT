@@ -451,7 +451,31 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         Args:
             result (AttackStrategyResultT): The completed result to persist.
         """
-        (await self._memory.add_attack_results_to_memory_async(attack_results=[result]))
+        await self._save_result_async(result=result)
+
+    async def _save_result_async(self, *, result: AttackResult) -> None:
+        """
+        Save an attack result, without its Operation if that Operation was deleted while the attack ran.
+
+        Args:
+            result (AttackResult): The result to save. Its Operation ID is cleared when the Operation is gone.
+
+        Raises:
+            LookupError: If the save fails for another missing reference.
+        """
+        try:
+            await self._memory.add_attack_results_to_memory_async(attack_results=[result])
+        except LookupError:
+            operation_id = result.operation_id
+            if operation_id is None or await self._memory.get_operations_async(operation_ids=[operation_id]):
+                raise
+            self._logger.warning(
+                "Operation %s was deleted while attack result %s ran; saving the result without an Operation.",
+                operation_id,
+                result.attack_result_id,
+            )
+            result.operation_id = None
+            await self._memory.add_attack_results_to_memory_async(attack_results=[result])
 
     async def _confirm_result_persistence_async(
         self, *, context: AttackStrategyContextT, attack_result_id: str
@@ -634,7 +658,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._apply_targeted_harm_categories(context=context, result=error_result)
 
         try:
-            (await self._memory.add_attack_results_to_memory_async(attack_results=[error_result]))
+            await self._save_result_async(result=error_result)
         except Exception as persistence_error:
             context._error_result_persistence_error = persistence_error
             await self._confirm_result_persistence_async(
