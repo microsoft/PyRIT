@@ -58,7 +58,7 @@ from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse, _build_rapid_response_technique
 from pyrit.scenario.scenarios.foundry.red_team_agent import RedTeamAgent
 from pyrit.score import SubStringScorer
-from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async
+from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async
 from unit.mocks import MockPromptTarget
 
 _SCENARIO_NAME = "offline.resume"
@@ -744,9 +744,8 @@ async def test_run_completion_waits_for_terminal_handoff_async(
                 )
         finally:
             release.set()
-            if observer is not None:
-                await wait_for_completion_async(future=observer)
-            await wait_for_completion_async(future=active.task)
+            for task in get_defined_tasks(observer, active.task):
+                await wait_for_completion_async(future=task)
         polling_wait.assert_not_awaited()
         assert active.task.done()
         after = await CentralMemory.get_memory_instance().get_scenario_result_header_async(scenario_result_id=run_id)
