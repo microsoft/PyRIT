@@ -42,7 +42,6 @@ from pyrit.datasets.seed_datasets.remote import (
     _HarmEvalDataset,
     _HiXSTestDataset,
     _JailbreakV28KDataset,
-    _MaskDataset,
     _PromptIntelDataset,
     _SGXSTestDataset,
     _SIUODataset,
@@ -86,7 +85,6 @@ _LIMITED_EXAMPLES_PROVIDERS: set[type] = {
 _HF_GATED_PROVIDERS: set[type] = {
     _HarmEvalDataset,
     _HiXSTestDataset,
-    _MaskDataset,
     _SGXSTestDataset,
     _SorryBenchDataset,
     _VLGuardDataset,
