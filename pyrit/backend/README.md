@@ -236,11 +236,12 @@ uses them:
 Targets that need a setting the API does not allow can be registered in Python or with an
 initializer.
 
-With Entra authentication enabled, API callers are members of the `ENTRA_ALLOWED_GROUP_IDS` or
-`ENTRA_ADMIN_GROUP_ID` groups, and members of `ENTRA_ADMIN_GROUP_ID` are administrators. With
-authentication disabled, anyone who can reach the server is an API caller, and callers are
-administrators only when the server sets `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Other API
-callers receive **403** for administrator-only operations.
+In Entra mode (`PYRIT_AUTH_MODE=entra`), API callers are members of the `ENTRA_ALLOWED_GROUP_IDS`
+or `ENTRA_ADMIN_GROUP_ID` groups, and members of `ENTRA_ADMIN_GROUP_ID` are administrators. In
+local mode (`PYRIT_AUTH_MODE=local`), meant for loopback-only development, requests are not
+authenticated: anyone who can reach the server is an API caller, and callers are administrators
+only when the server sets `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Other API callers receive
+**403** for administrator-only operations.
 
 API callers are trusted operators, so these are intentional exceptions:
 
@@ -249,8 +250,8 @@ API callers are trusted operators, so these are intentional exceptions:
   host allow-list, private-network blocking, or DNS pinning); limit outbound network access in
   the deployment instead.
 - Some targets use this server's credentials when the caller gives no key: an API key from the
-  server's environment or a token for the server's Azure identity, sent even to an endpoint the
-  caller chose.
+  server's environment, sent even to an endpoint the caller chose, or a token for the server's
+  Azure identity, sent to the Azure endpoint or container the caller chose.
 - Registered targets, converters, and scorers are shared: any API caller can use them, whoever
   created them.
 - Prompt content is not filtered; it is adversarial test data by design.
