@@ -3,6 +3,7 @@
 
 import os
 import sqlite3
+import sys
 import tempfile
 from collections.abc import AsyncGenerator, Generator
 from contextlib import closing, contextmanager
@@ -21,6 +22,15 @@ os.environ["CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS"] = "5"
 os.environ["RETRY_MAX_NUM_ATTEMPTS"] = "2"
 os.environ["RETRY_WAIT_MIN_SECONDS"] = "0"
 os.environ["RETRY_WAIT_MAX_SECONDS"] = "1"
+
+if sys.platform == "win32":
+    from asyncio import AbstractEventLoop
+    from collections.abc import Callable
+
+    from test_support.event_loop import new_test_event_loop
+
+    def pytest_asyncio_loop_factories() -> dict[str, Callable[[], AbstractEventLoop]]:
+        return {"proactor": new_test_event_loop}
 
 
 @contextmanager
