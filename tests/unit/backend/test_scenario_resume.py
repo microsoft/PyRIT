@@ -41,7 +41,7 @@ from pyrit.models import (
     Seed,
     SeedObjective,
 )
-from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioRunSummary
 from pyrit.models.seeds import yaml_seed_loader
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, IncompatibleTechniquePolicy
@@ -60,6 +60,9 @@ from pyrit.scenario.scenarios.foundry.red_team_agent import RedTeamAgent
 from pyrit.score import SubStringScorer
 from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async
 from unit.mocks import MockPromptTarget
+
+# Bound the whole test, including teardown, even if cancellation or the event loop stalls.
+pytestmark = pytest.mark.timeout(TEST_WATCHDOG_SECONDS, method="thread")
 
 _SCENARIO_NAME = "offline.resume"
 _TARGET_NAME = "offline-target"
@@ -158,9 +161,17 @@ async def _wait_for_run_completion_async(
     assert snapshot.queued == []
 
 
-@pytest.mark.parametrize("watchdog_expires", [False, True])
+async def _shutdown_after_launch_async(
+    *, service: ScenarioRunService, launch: asyncio.Task[ScenarioRunSummary]
+) -> None:
+    if not launch.done():
+        launch.cancel()
+    await asyncio.gather(launch, return_exceptions=True)
+    await service.shutdown_async()
+
+
 async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
-    *, patch_central_database: object, sqlite_instance: SQLiteMemory, watchdog_expires: bool
+    *, patch_central_database: object, sqlite_instance: SQLiteMemory
 ) -> None:
     loop = asyncio.get_running_loop()
     backend_thread = threading.get_ident()
@@ -241,11 +252,6 @@ async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
                 await asyncio.wait_for(entered.wait(), 5)
                 await asyncio.wait_for(heartbeat.wait(), 1)
                 assert not launch.done()
-                if watchdog_expires:
-                    with pytest.raises(TimeoutError, match="test watchdog expired"):
-                        await wait_for_completion_async(future=launch, timeout=0)
-                    assert not launch.done()
-                    assert launch.cancelling() == 0
                 release.set()
                 response = await wait_for_completion_async(future=launch)
                 await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
@@ -259,16 +265,16 @@ async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
                 release.set()
                 stop.set()
                 try:
-                    await wait_for_completion_async(future=launch)
-                finally:
                     await pulse
-                    await service.shutdown_async()
-                    _build_rapid_response_technique.cache_clear()
+                finally:
+                    try:
+                        await _shutdown_after_launch_async(service=service, launch=launch)
+                    finally:
+                        _build_rapid_response_technique.cache_clear()
 
 
-@pytest.mark.parametrize("watchdog_expires", [False, True])
 async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async(
-    *, patch_central_database: object, sqlite_instance: SQLiteMemory, watchdog_expires: bool
+    *, patch_central_database: object, sqlite_instance: SQLiteMemory
 ) -> None:
     loop = asyncio.get_running_loop()
     backend_thread = threading.get_ident()
@@ -364,11 +370,6 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
                 await asyncio.wait_for(entered.wait(), 5)
                 await asyncio.wait_for(heartbeat.wait(), 1)
                 assert not launch.done()
-                if watchdog_expires:
-                    with pytest.raises(TimeoutError, match="test watchdog expired"):
-                        await wait_for_completion_async(future=launch, timeout=0)
-                    assert not launch.done()
-                    assert launch.cancelling() == 0
                 release.set()
                 response = await wait_for_completion_async(future=launch)
                 await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
@@ -384,10 +385,58 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
                 release.set()
                 stop.set()
                 try:
-                    await wait_for_completion_async(future=launch)
-                finally:
                     await pulse
-                    await service.shutdown_async()
+                finally:
+                    await _shutdown_after_launch_async(service=service, launch=launch)
+
+
+@pytest.mark.parametrize("enqueued", [False, True])
+async def test_shutdown_cancels_stuck_launch_and_preserves_timeout_async(
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], enqueued: bool
+) -> None:
+    service, _ = resume_environment
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_schedule = service._schedule_prepared_run_async
+
+    async def hold_schedule_async(
+        *, request: RunScenarioRequest, prepared: _PreparedRun, resumed_from_cancelled: bool
+    ) -> ScenarioRunSummary:
+        response = None
+        if enqueued:
+            response = await original_schedule(
+                request=request, prepared=prepared, resumed_from_cancelled=resumed_from_cancelled
+            )
+        entered.set()
+        await release.wait()
+        assert response is not None
+        return response
+
+    with patch.object(service, "_schedule_prepared_run_async", side_effect=hold_schedule_async):
+        launch = asyncio.create_task(
+            service.start_run_async(
+                request=RunScenarioRequest(
+                    scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, max_concurrency=1, include_baseline=False
+                )
+            )
+        )
+        entered_waiter = asyncio.create_task(entered.wait())
+        try:
+            await wait_for_completion_async(future=entered_waiter)
+            assert service._launch_lock.locked()
+            with pytest.raises(TimeoutError, match="test watchdog expired"):
+                try:
+                    await wait_for_completion_async(future=launch, timeout=0)
+                finally:
+                    await _shutdown_after_launch_async(service=service, launch=launch)
+            assert launch.cancelled()
+            assert not service._launch_lock.locked()
+            assert not service.has_active_work()
+            await service.close_async()
+        finally:
+            release.set()
+            entered_waiter.cancel()
+            await asyncio.gather(entered_waiter, return_exceptions=True)
+            await _shutdown_after_launch_async(service=service, launch=launch)
 
 
 async def _create_failed_run_async(*, target: MockPromptTarget, legacy: bool) -> ScenarioResult:
@@ -653,7 +702,7 @@ async def test_resume_without_launch_metadata_is_rejected_without_initialization
     assert target.prompt_sent == []
 
 
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(60, method="thread")
 @pytest.mark.parametrize("failure", ["initialization", "execution"])
 async def test_resume_failure_preserves_saved_results_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget], failure: str
@@ -685,7 +734,6 @@ async def test_resume_failure_preserves_saved_results_async(
     assert target.prompt_sent == [_SECOND_OBJECTIVE]
 
 
-@pytest.mark.timeout(300)
 @pytest.mark.parametrize("launch", ["fresh", "resume"])
 @pytest.mark.parametrize("watchdog_expires", [False, True])
 async def test_run_completion_waits_for_terminal_handoff_async(
@@ -840,7 +888,6 @@ async def test_overlapping_resume_requests_only_initialize_once_async(
         assert start.await_count == 1
 
 
-@pytest.mark.timeout(300)
 async def test_fresh_launch_saves_only_nonsecret_resume_inputs_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
 ) -> None:
