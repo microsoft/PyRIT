@@ -93,6 +93,14 @@ class PromptTarget(Identifiable):
     # unaffected.
     code_execution_parameter: ClassVar[str | None] = None
 
+    # Targets that can authenticate with this server's own stored credentials (e.g. an ambient
+    # managed identity) name the constructor parameter a caller supplies to use their own
+    # credential instead (e.g. ``"sas_token"``). When a caller does not supply it, the
+    # create-target API builds the target only for an administrator, so a non-administrator
+    # cannot point the server's credentials at a caller-chosen resource; direct Python use is
+    # unaffected.
+    server_credential_parameter: ClassVar[str | None] = None
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
         Validate that subclasses follow the keyword-only ``__init__`` contract.
@@ -224,6 +232,23 @@ class PromptTarget(Identifiable):
             ValueError: Tool content, roles, or call/result links are invalid.
         """
         validate_tool_conversation(messages)
+
+    def validate_history_replay(self) -> None:
+        """
+        Check configuration support for initializing a new conversation from stored history.
+
+        Native editable history or an explicit history adapter is sufficient.
+        Targets with a provider-specific restoration path can override this check.
+        This does not validate message content or guarantee that a live session exists.
+
+        Raises:
+            ValueError: If neither native support nor a configured history adapter is available.
+        """
+        if not self.configuration.includes(
+            capability=CapabilityName.MULTI_TURN
+        ) and self.configuration.pipeline.has_normalizer_for(capability=CapabilityName.MULTI_TURN):
+            return
+        self.configuration.ensure_can_handle(capability=CapabilityName.EDITABLE_HISTORY)
 
     @final
     async def send_prompt_async(

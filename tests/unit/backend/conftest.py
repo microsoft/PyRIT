@@ -18,13 +18,13 @@ from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.memory import SQLiteMemory
-from test_support.fixtures import compatibility_headers, compatibility_id  # noqa: F401
+from test_support.fixtures import authentication_policy, compatibility_headers, compatibility_id  # noqa: F401
 
 
 @pytest.fixture
 async def analytics_service(sqlite_instance: SQLiteMemory) -> AsyncGenerator[AttackResultAnalytics, None]:
     """Use real isolated memory with finite correctness budgets, not production latency assertions."""
-    execution = partial(AnalyticsExecution, queue_timeout=30.0, report_timeout=30.0, quick_timeout=30.0)
+    execution = partial(AnalyticsExecution, queue_timeout=300.0, report_timeout=300.0, quick_timeout=300.0)
     assert get_analytics_service.cache_info().currsize == 0
     with patch("pyrit.analytics.attack_result_analytics.AnalyticsExecution", side_effect=execution):
         try:

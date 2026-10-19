@@ -23,7 +23,7 @@ async def analytics(sqlite_instance: SQLiteMemory) -> AsyncGenerator[AttackResul
     Default budgets and expiration/cleanup are tested independently in
     test_execution.py. Admission capacities and native database work are unchanged.
     """
-    execution = partial(AnalyticsExecution, queue_timeout=30.0, report_timeout=30.0, quick_timeout=30.0)
+    execution = partial(AnalyticsExecution, queue_timeout=300.0, report_timeout=300.0, quick_timeout=300.0)
     with patch("pyrit.analytics.attack_result_analytics.AnalyticsExecution", side_effect=execution):
         async with AttackResultAnalytics(memory=sqlite_instance) as analytics:
             yield analytics

@@ -11,10 +11,10 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.dialects import mssql
-from unit.mocks import get_mock_target_identifier, make_scenario_result
+from unit.mocks import add_legacy_attack_results_async, get_mock_target_identifier, make_scenario_result
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
+from pyrit.memory import AttackResultKeysetCursor, MemoryInterface, SQLiteMemory
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
 from pyrit.memory.memory_interface import _AttackResultQuery
 from pyrit.memory.memory_models import AtomicAttackIdentifierEntry, AttackResultEntry, TargetIdentifierEntry
@@ -1105,8 +1105,8 @@ async def test_get_attack_results_by_labels_single(sqlite_instance: MemoryInterf
     )
 
     (
-        await sqlite_instance.add_attack_results_to_memory_async(
-            attack_results=[attack_result1, attack_result2, attack_result3]
+        await add_legacy_attack_results_async(
+            sqlite_instance, attack_results=[attack_result1, attack_result2, attack_result3]
         )
     )
 
@@ -1145,21 +1145,87 @@ async def test_get_attack_results_by_labels_empty_sequence_value_skips_key(sqlit
 
 
 @pytest.mark.parametrize(
-    "bad_key",
+    "literal_key",
     [
-        "foo')=1 OR 1=1 --",  # SQL break-out attempt
+        "foo')=1 OR 1=1 --",  # SQL break-out attempt stays a plain string
         "key with spaces",
         'key"quoted',
+        "caf\u00e9",
         "",
     ],
 )
-async def test_get_attack_results_rejects_invalid_label_keys(sqlite_instance: MemoryInterface, bad_key: str):
-    """Label keys are interpolated into JSON path expressions by the per-backend
-    helpers, so keys outside the ``[A-Za-z0-9_.-]+`` allowlist must be rejected
-    before reaching the SQL layer (defense against JSON-path / SQL injection).
-    """
-    with pytest.raises(ValueError, match="Invalid label key"):
-        (await sqlite_instance.get_attack_results_async(labels={bad_key: "value"}))
+async def test_get_attack_results_matches_non_allowlisted_label_keys_literally_async(
+    *, sqlite_instance: MemoryInterface, literal_key: str
+) -> None:
+    """Keys outside the ``[A-Za-z0-9_.-]+`` allowlist never become JSON paths; they're compared as bound values."""
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            create_attack_result("conv_1", 1, labels={literal_key: "value", "phase": "initial"}),
+            create_attack_result("conv_2", 2, labels={literal_key: "other", "phase": "initial"}),
+            create_attack_result("conv_3", 3, labels={"team": "value", "phase": "initial"}),
+            create_attack_result("conv_4", 4, labels={literal_key: "value", "phase": "final"}),
+        ]
+    )
+
+    only_literal = await sqlite_instance.get_attack_results_async(labels={literal_key: "value"})
+    combined = await sqlite_instance.get_attack_results_async(labels={literal_key: ["value"], "phase": "initial"})
+
+    assert {result.conversation_id for result in only_literal} == {"conv_1", "conv_4"}
+    assert {result.conversation_id for result in combined} == {"conv_1"}
+    assert len(await sqlite_instance.get_attack_results_async()) == 4
+
+
+async def test_get_attack_results_literal_label_keys_differing_by_trailing_space_stay_distinct_async(
+    *, sqlite_instance: MemoryInterface
+) -> None:
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            create_attack_result("conv_1", 1, labels={"team name": "review"}),
+            create_attack_result("conv_2", 2, labels={"team name ": "review"}),
+        ]
+    )
+
+    exact = await sqlite_instance.get_attack_results_async(labels={"team name": "review"})
+    padded = await sqlite_instance.get_attack_results_async(labels={"team name ": "review"})
+
+    assert [result.conversation_id for result in exact] == ["conv_1"]
+    assert [result.conversation_id for result in padded] == ["conv_2"]
+
+
+class _LegacyLabelMemory(SQLiteMemory):
+    """A backend written against the interface from before the literal label hook existed."""
+
+    _get_attack_result_literal_label_condition = MemoryInterface._get_attack_result_literal_label_condition
+
+
+async def test_literal_label_hook_is_optional_for_existing_backends_async() -> None:
+    assert "_get_attack_result_literal_label_condition" not in MemoryInterface.__abstractmethods__
+
+    memory = _LegacyLabelMemory.__new__(_LegacyLabelMemory)
+    try:
+        with patch.object(memory, "cleanup"):
+            memory.__init__(db_path=":memory:", skip_schema_migration=True)
+    finally:
+        await memory.dispose_engine_async()
+
+
+async def test_backend_without_literal_label_hook_rejects_only_literal_keys_async(
+    *, sqlite_instance: MemoryInterface
+) -> None:
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[create_attack_result("conv_1", 1, labels={"phase": "initial", "team name": "red"})]
+    )
+
+    with patch.object(
+        SQLiteMemory,
+        "_get_attack_result_literal_label_condition",
+        MemoryInterface._get_attack_result_literal_label_condition,
+    ):
+        allowlisted = await sqlite_instance.get_attack_results_async(labels={"phase": "initial"})
+        with pytest.raises(NotImplementedError, match="_get_attack_result_literal_label_condition"):
+            await sqlite_instance.get_attack_results_async(labels={"team name": "red"})
+
+    assert [result.conversation_id for result in allowlisted] == ["conv_1"]
 
 
 @pytest.mark.parametrize("key", ["team.name", "run-id"])
@@ -1212,7 +1278,8 @@ async def test_get_message_pieces_by_literal_label_key_async(
         ]
     )
 
-    pieces = await sqlite_instance.get_message_pieces_async(labels={key: value})
+    with pytest.warns(DeprecationWarning, match=r"get_message_pieces_async\(labels=\.\.\.\)"):
+        pieces = await sqlite_instance.get_message_pieces_async(labels={key: value})
     assert [p.conversation_id for p in pieces] == ["conv_1"]
 
 
@@ -1235,9 +1302,11 @@ async def test_get_message_pieces_literal_labels_match_one_attack_without_duplic
         ]
     )
 
-    pieces = await sqlite_instance.get_message_pieces_async(labels=labels, role="user")
+    with pytest.warns(DeprecationWarning, match=r"get_message_pieces_async\(labels=\.\.\.\)"):
+        pieces = await sqlite_instance.get_message_pieces_async(labels=labels, role="user")
+        narrowed = await sqlite_instance.get_message_pieces_async(labels=labels, conversation_id="conv_2")
     assert [p.conversation_id for p in pieces] == ["conv_1"]
-    assert await sqlite_instance.get_message_pieces_async(labels=labels, conversation_id="conv_2") == []
+    assert narrowed == []
 
 
 async def test_get_attack_results_by_labels_multiple(sqlite_instance: MemoryInterface):
@@ -1265,7 +1334,7 @@ async def test_get_attack_results_by_labels_multiple(sqlite_instance: MemoryInte
         ),
     ]
 
-    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
+    (await add_legacy_attack_results_async(sqlite_instance, attack_results=attack_results))
 
     # Test filtering by multiple labels (AND logic)
     roakey_initial_results = await sqlite_instance.get_attack_results_async(
@@ -1303,13 +1372,14 @@ async def test_get_attack_results_by_labels_or_within_key_and_across_keys(sqlite
     """Test that OR-within-key composes with AND-across-keys."""
 
     (
-        await sqlite_instance.add_attack_results_to_memory_async(
+        await add_legacy_attack_results_async(
+            sqlite_instance,
             attack_results=[
                 create_attack_result("conv_1", 1, labels={"operator": "alice", "operation": "red"}),
                 create_attack_result("conv_2", 2, labels={"operator": "bob", "operation": "red"}),
                 create_attack_result("conv_3", 3, labels={"operator": "charlie", "operation": "red"}),
                 create_attack_result("conv_4", 4, labels={"operator": "alice", "operation": "blue"}),
-            ]
+            ],
         )
     )
 
@@ -1324,7 +1394,7 @@ async def test_get_attack_results_labels_no_matches(sqlite_instance: MemoryInter
 
     # Create attack result with labels that don't match the search
     attack_result = create_attack_result("conv_1", 1, AttackOutcome.SUCCESS, labels={"operation": "test_op"})
-    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
+    (await add_legacy_attack_results_async(sqlite_instance, attack_results=[attack_result]))
 
     # Search for non-existent labels
     results = await sqlite_instance.get_attack_results_async(labels={"nonexistent": "value"})
@@ -1363,7 +1433,7 @@ async def test_get_attack_results_labels_key_exists_value_mismatch(sqlite_instan
         ),
         create_attack_result("conv_3", 3, AttackOutcome.FAILURE, labels={"operation": "test_op"}),
     ]
-    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
+    (await add_legacy_attack_results_async(sqlite_instance, attack_results=attack_results))
 
     # Query for key that exists but with wrong value
     results = await sqlite_instance.get_attack_results_async(labels={"operation": "op_doesnotexist"})
@@ -1572,7 +1642,8 @@ async def test_get_unique_attack_labels_deduplicates_across_attacks(sqlite_insta
 
 async def test_get_unique_attack_labels_narrows_by_attribution_and_labels(sqlite_instance: MemoryInterface):
     (
-        await sqlite_instance.add_attack_results_to_memory_async(
+        await add_legacy_attack_results_async(
+            sqlite_instance,
             attack_results=[
                 create_attack_result(
                     "conv_1",
@@ -1595,7 +1666,7 @@ async def test_get_unique_attack_labels_narrows_by_attribution_and_labels(sqlite
                     operation="nightly",
                     labels={"team": "red", "env": "dev"},
                 ),
-            ]
+            ],
         )
     )
 
@@ -1614,7 +1685,7 @@ async def test_get_attack_results_filters_dedicated_attribution_columns(sqlite_i
         create_attack_result("conv_2", 2, operator="bob", operation="nightly"),
         create_attack_result("conv_3", 3, operator="alice", operation="daytime"),
     ]
-    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
+    (await add_legacy_attack_results_async(sqlite_instance, attack_results=attack_results))
 
     results = await sqlite_instance.get_attack_results_async(operator=["alice"], operation="nightly")
 
@@ -1641,14 +1712,15 @@ async def test_get_attack_results_rejects_conflicting_attribution_filters(sqlite
 
 async def test_unique_attack_attribution_uses_dedicated_columns(sqlite_instance: MemoryInterface):
     (
-        await sqlite_instance.add_attack_results_to_memory_async(
+        await add_legacy_attack_results_async(
+            sqlite_instance,
             attack_results=[
                 create_attack_result("conv_1", 1, operator="bob", operation="nightly", labels={"team": "red"}),
                 create_attack_result("conv_2", 2, operator="alice", operation="nightly", labels={"team": "blue"}),
                 create_attack_result("conv_3", 3),
                 create_attack_result("conv_4", 4, operator="alice"),
                 create_attack_result("conv_5", 5, operation="nightly"),
-            ]
+            ],
         )
     )
 

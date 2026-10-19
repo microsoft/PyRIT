@@ -10,6 +10,7 @@ import pytest
 from scipy.io import wavfile
 
 from pyrit.converter.audio_speed_converter import AudioSpeedConverter
+from pyrit.registry import ConverterRegistry
 
 
 async def test_speed_up_audio(sqlite_instance):
@@ -139,3 +140,29 @@ async def test_unsupported_input_type(sqlite_instance):
     converter = AudioSpeedConverter(speed_factor=1.5)
     with pytest.raises(ValueError, match="Input type not supported"):
         await converter.convert_async(prompt="some_file.wav", input_type="text")
+
+
+def test_speed_identifier_includes_settings() -> None:
+    params = AudioSpeedConverter(speed_factor=0.5).get_identifier().params
+    assert params["output_format"] == "wav"
+    assert params["speed_factor"] == 0.5
+
+
+def test_speed_identifier_distinguishes_settings() -> None:
+    default = AudioSpeedConverter()
+    other = AudioSpeedConverter(speed_factor=2.0)
+    assert default.get_identifier().hash != other.get_identifier().hash
+
+    # Both configurations get their own default registry name instead of colliding.
+    instances = ConverterRegistry().instances
+    instances.register(default)
+    instances.register(other)
+    assert instances.get(default.get_identifier().unique_name) is default
+    assert instances.get(other.get_identifier().unique_name) is other
+
+
+def test_speed_identifier_is_stable_for_equal_settings() -> None:
+    assert (
+        AudioSpeedConverter(speed_factor=0.5).get_identifier().hash
+        == AudioSpeedConverter(speed_factor=0.5).get_identifier().hash
+    )

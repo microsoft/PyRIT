@@ -12,7 +12,7 @@ from scipy.io import wavfile
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.memory import data_serializer_factory
-from pyrit.models import PromptDataType
+from pyrit.models import ComponentIdentifier, PromptDataType
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,20 @@ class AudioSpeedConverter(Converter):
             raise ValueError("speed_factor must be finite, greater than 0, and at most 100.")
         self._output_format = output_format
         self._speed_factor = speed_factor
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with audio speed parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "output_format": self._output_format,
+                "speed_factor": self._speed_factor,
+            },
+        )
 
     def _resample_channel(self, channel_data: np.ndarray[Any, Any], new_num_samples: int) -> np.ndarray[Any, Any]:
         """

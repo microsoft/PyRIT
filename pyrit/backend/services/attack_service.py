@@ -150,6 +150,7 @@ class AttackService:
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operator: Sequence[str] | None = None,
         operation: Sequence[str] | None = None,
+        operation_ids: Sequence[uuid.UUID] | None = None,
         min_turns: int | None = None,
         max_turns: int | None = None,
         limit: int = 20,
@@ -180,6 +181,8 @@ class AttackService:
             outcome: Filter by attack outcome.
             operator: Filter by dedicated operator values.
             operation: Filter by dedicated operation values.
+            operation_ids: Filter by saved Operation IDs. Legacy attacks that only carry an
+                operation name never match.
             labels: Filter by labels. See ``MemoryInterface.get_attack_results`` for
                 semantics (AND across label names; string equality or sequence OR within
                 each name).
@@ -225,6 +228,8 @@ class AttackService:
             fingerprint_values["operator"] = operator
         if operation is not None:
             fingerprint_values["operation"] = operation
+        if operation_ids is not None:
+            fingerprint_values["operation_ids"] = [str(operation_id) for operation_id in operation_ids]
         filter_fingerprint = fingerprint_filters(filters=fingerprint_values)
         decoded_cursor = decode_keyset_cursor(cursor=cursor, fingerprint=filter_fingerprint)
         after = (
@@ -240,6 +245,7 @@ class AttackService:
             outcome=outcome,
             operator=operator,
             operation=operation,
+            operation_ids=operation_ids,
             labels=normalized_labels,
             attack_classes=effective_attack_types,
             converter_classes=effective_converter_types,
@@ -278,6 +284,7 @@ class AttackService:
         )
 
         # Phase 3: Build summaries from aggregated stats for the page
+        operation_names = await self._get_operation_names_async(results=page_results)
         page: list[AttackSummary] = []
         for ar in page_results:
             # Merge stats for the main conversation and its pruned relatives.
@@ -297,7 +304,11 @@ class AttackService:
                 labels=conv_labels,
             )
 
-            page.append(await attack_result_to_summary_async(ar, stats=merged))
+            page.append(
+                await attack_result_to_summary_async(
+                    ar, stats=merged, operation_name=operation_names.get(ar.operation_id) if ar.operation_id else None
+                )
+            )
 
         return AttackListResponse(
             items=page,
@@ -344,7 +355,23 @@ class AttackService:
         ar = results[0]
         stats_map = await self._memory.get_conversation_stats_async(conversation_ids=[ar.conversation_id])
         stats = stats_map.get(ar.conversation_id, ConversationStats(message_count=0))
-        return await attack_result_to_summary_async(ar, stats=stats)
+        operation_names = await self._get_operation_names_async(results=[ar])
+        return await attack_result_to_summary_async(
+            ar, stats=stats, operation_name=operation_names.get(ar.operation_id) if ar.operation_id else None
+        )
+
+    async def _get_operation_names_async(self, *, results: Sequence[AttackResult]) -> dict[uuid.UUID, str]:
+        """
+        Read the current names of the saved Operations referenced by these attacks.
+
+        Returns:
+            dict[uuid.UUID, str]: Current names keyed by Operation ID.
+        """
+        operation_ids = {ar.operation_id for ar in results if ar.operation_id is not None}
+        if not operation_ids:
+            return {}
+        operations = await self._memory.get_operations_async(operation_ids=list(operation_ids))
+        return {operation.id: operation.name for operation in operations}
 
     async def get_conversation_messages_async(
         self,
@@ -388,6 +415,30 @@ class AttackService:
             target_response_status=_get_latest_target_response_status(backend_messages),
         )
 
+    async def get_saved_conversation_async(self, *, conversation_id: str) -> AddMessageResponse | None:
+        """
+        Resolve a saved chat conversation by ID without changing its history.
+
+        Returns:
+            The stored attack and conversation, or None if no saved chat owns the ID.
+        """
+        conversation = await self._memory.get_conversation_metadata_async(conversation_id=conversation_id)
+        attack_result_id = conversation.attack_result_id if conversation else None
+        if attack_result_id is None:
+            legacy_attack = await self._memory.get_attack_result_for_conversation_async(conversation_id=conversation_id)
+            if legacy_attack is None:
+                return None
+            attack_result_id = legacy_attack.attack_result_id
+        attack = await self.get_attack_async(attack_result_id=attack_result_id)
+        if attack is None or conversation_id not in attack.get_active_conversation_ids():
+            return None
+        messages = await self.get_conversation_messages_async(
+            attack_result_id=attack_result_id, conversation_id=conversation_id
+        )
+        if messages is None:
+            return None
+        return AddMessageResponse(attack=attack, messages=messages)
+
     async def create_attack_async(self, *, request: CreateAttackRequest) -> CreateAttackResponse:
         """
         Create a new attack.
@@ -404,6 +455,16 @@ class AttackService:
         Raises:
             ValueError: If the target is not found.
         """
+        operation_id = await self._memory.resolve_operation_id_async(
+            operation_id=request.operation_id, operation_name=request.operation
+        )
+        # TODO(PyRIT 1.4): Store only the ID with Operation name attribution; an explicit ID wins until then.
+        request = request.model_copy(
+            update={
+                "operation_id": operation_id,
+                "operation": request.operation if request.operation_id is None else None,
+            }
+        )
         target_identifier = await self._get_save_target_async(request.target_registry_name)
         copied: Sequence[MessagePiece] = []
         if request.source_conversation_id is not None and request.cutoff_index is not None:
@@ -495,6 +556,7 @@ class AttackService:
             timestamp=now,
             operator=request.operator,
             operation=request.operation,
+            operation_id=request.operation_id,
             labels={"source": "gui", **(request.labels or {})},
             metadata={
                 "created_at": now.isoformat(),
@@ -556,6 +618,17 @@ class AttackService:
         Returns:
             The stored attack and conversation.
         """
+        if request.destination == "new_attack":
+            operation_id = await self._memory.resolve_operation_id_async(
+                operation_id=request.operation_id, operation_name=request.operation
+            )
+            # TODO(PyRIT 1.4): Store only the ID with Operation name attribution; an explicit ID wins until then.
+            request = request.model_copy(
+                update={
+                    "operation_id": operation_id,
+                    "operation": request.operation if request.operation_id is None else None,
+                }
+            )
         fingerprint = to_sha256(json.dumps(request.model_dump(mode="json"), sort_keys=True))
         conversation_id = str(request.save_id)
         attack_result_id = (
@@ -580,6 +653,8 @@ class AttackService:
             if not results:
                 raise ValueError("The destination attack does not exist")
             attack = results[0]
+            if request.operation_id is not None and request.operation_id != attack.operation_id:
+                raise ValueError("Operation attribution is immutable on continuation")
             if attack.operator and attack.operator != request.operator:
                 raise PermissionError("Cannot save to an attack owned by another operator")
             identifier = attack.get_attack_strategy_identifier()

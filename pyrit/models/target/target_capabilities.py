@@ -91,9 +91,9 @@ class TargetCapabilities(BaseModel):
     #: format), which ensures the output is valid JSON.
     supports_json_output: bool = False
 
-    #: Whether the target allows the attack history to be modified. Implies that the
-    #: target supports multi-turn interactions and that the attack history is not
-    #: immutable once set.
+    #: Whether the target natively honors caller-supplied changes to conversation
+    #: history. Implies multi-turn support. False does not imply server-side state
+    #: or rule out a configured adapter or restoration path for a new conversation.
     supports_editable_history: bool = False
 
     #: Whether the target natively supports system prompts.

@@ -24,7 +24,7 @@ class EscapedAnsiOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     Returns True if any pattern matches.
     """
 
-    _DEFAULT_PATTERNS: dict[str, str] = {
+    _DEFAULT_PATTERNS: dict[str, str] | None = {
         # \x1b[ or \x1b] -- hexadecimal escape of ESC before a CSI or OSC introducer.
         "Hex Escaped ESC Sequence": r"(?i)\\x1b[\[\]]",
         # \033[ or \033] -- octal escape.

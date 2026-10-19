@@ -91,7 +91,7 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
               <Text size={200} className={styles.nowrap}>{attack.operator || '—'}</Text>
             </TableCell>
             <TableCell>
-              <Text size={200} className={styles.nowrap}>{attack.operation || '—'}</Text>
+              <Text size={200} className={styles.nowrap}>{attack.operation_name || '—'}</Text>
             </TableCell>
             <TableCell>
               <Text size={200}>{attack.message_count}</Text>

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import uuid
+from typing import assert_type
 
 import pytest
 
@@ -195,3 +196,14 @@ def test_seed_dataset_group_without_group_id():
 def test_seed_dataset_group_rejects_unsupported_seed_type():
     with pytest.raises(ValueError, match="Unsupported seed type: Seed"):
         SeedDataset.group_seed_prompts_by_prompt_group_id([Seed(value="unsupported")])
+
+
+def test_seed_dataset_from_dict_preserves_subclass_type():
+    class CustomSeedDataset(SeedDataset):
+        pass
+
+    ds = CustomSeedDataset.from_dict({"seeds": [{"value": "hello"}]})
+
+    assert_type(ds, CustomSeedDataset)
+    assert type(ds) is CustomSeedDataset
+    assert isinstance(ds.seeds[0], SeedPrompt)

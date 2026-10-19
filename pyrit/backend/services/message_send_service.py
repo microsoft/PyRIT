@@ -186,6 +186,8 @@ class MessageSendService:
                     conversations[conversation_id] = owner
                 owned_request = request.model_copy(deep=True)
                 validated = await self._validate_message_async(attack_result_id=attack_result_id, request=owned_request)
+                if owned_request.count > 1:
+                    await self._validate_repeat_history_async(request=owned_request, target=validated.target)
                 if self._closing:
                     raise ManualSendQueueFullError("Manual message operations are shutting down")
                 operation = _Send(
@@ -310,6 +312,27 @@ class MessageSendService:
             response_configurations=response_converter_configs,
             applied_identifiers=resolve_applied_converter_identifiers(request.pieces),
         )
+
+    async def _validate_repeat_history_async(self, *, request: MessageSendRequest, target: PromptTarget | None) -> None:
+        """
+        Check that the target can initialize the repeated conversations from stored history.
+
+        Raises:
+            ValueError: If non-system history cannot be replayed through native support,
+                a configured adapter, or a provider-specific restoration path.
+        """
+        if target is None:
+            return
+        history = await self._memory.get_conversation_messages_async(conversation_id=request.target_conversation_id)
+        if not any(message.api_role != "system" for message in history):
+            return
+        try:
+            target.validate_history_replay()
+        except ValueError as exc:
+            raise ValueError(
+                f"{type(target).__name__} cannot initialize copies of this conversation from stored history. "
+                "Repeat the send from a new conversation or configure a supported history adapter or restoration path."
+            ) from exc
 
     async def _execute_validated_message_async(
         self,

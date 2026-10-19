@@ -157,7 +157,7 @@ class ResolvedDataset:
             seeds, in configuration order. Empty for inline ``seeds`` / ``seed_groups``.
     """
 
-    seeds: Sequence[Seed]
+    seeds: Sequence[Seed[Any]]
     source_kind: DatasetSourceKind
     dataset_names: tuple[str, ...] = ()
 
@@ -238,7 +238,7 @@ def require_harm_categories(required: set[str]) -> Callable[[ResolvedDataset], N
     return _validate
 
 
-def require_seed_type(seed_type: type[Seed]) -> Callable[[ResolvedDataset], None]:
+def require_seed_type(seed_type: type[Seed[Any]]) -> Callable[[ResolvedDataset], None]:
     """
     Build a validator that requires every resolved seed to be an instance of ``seed_type``.
 
@@ -349,7 +349,7 @@ class DatasetConfiguration:
     def __init__(
         self,
         *,
-        seeds: Sequence[Seed] | None = None,
+        seeds: Sequence[Seed[Any]] | None = None,
         seed_groups: list[SeedGroup] | None = None,
         sources: Sequence[DatasetSource] | None = None,
         max_per_dataset: DatasetLimit = "default",
@@ -703,7 +703,7 @@ class DatasetConfiguration:
     # Resolution helpers
     # =========================================================================
 
-    async def _collect_named_seeds_async(self) -> dict[str, list[Seed]]:
+    async def _collect_named_seeds_async(self) -> dict[str, list[Seed[Any]]]:
         """
         Collect seeds for each configured dataset name, keyed by name.
 
@@ -717,12 +717,12 @@ class DatasetConfiguration:
         Raises:
             DatasetConstraintError: If any configured dataset yields no seeds.
         """
-        result: dict[str, list[Seed]] = {}
+        result: dict[str, list[Seed[Any]]] = {}
         for name in self.dataset_names:
             result[name] = await self._collect_seeds_for_dataset_async(dataset_name=name)
         return result
 
-    async def _collect_seeds_for_dataset_async(self, *, dataset_name: str) -> list[Seed]:
+    async def _collect_seeds_for_dataset_async(self, *, dataset_name: str) -> list[Seed[Any]]:
         """
         Read seeds for a single dataset name without fetching or writing.
 
@@ -828,7 +828,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         inline = self._seeds is not None or self._seed_groups is not None
         return 5 if not inline else "all"
 
-    def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
+    def _build_attack_groups(self, seeds: list[Seed[Any]]) -> list[AttackSeedGroup]:
         """
         Shape raw seeds into attack groups (override seam).
 

@@ -14,10 +14,10 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import ParseResult, parse_qs, unquote, urlparse
 
 from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
-from pyrit.memory import CentralMemory, data_serializer_factory
+from pyrit.memory import AzureBlobStorageIO, CentralMemory, data_serializer_factory
 from pyrit.models import MEDIA_PATH_DATA_TYPES
 
 if TYPE_CHECKING:
@@ -29,7 +29,7 @@ _ALLOWED_MEDIA_SUBDIRECTORIES = frozenset({"prompt-memory-entries", "seed-prompt
 
 
 class MediaAccessDeniedError(ValueError):
-    """A local media path is outside the API's allowed storage directories."""
+    """A media path or URL is outside the API's allowed storage directories."""
 
 
 class MediaOrigin(str, Enum):
@@ -106,6 +106,86 @@ async def validate_local_media_path_async(*, path: str) -> Path:
     return await asyncio.to_thread(validate_media_path, path=path, allowed_root=Path(memory.results_path))
 
 
+def results_container_url() -> str | None:
+    """
+    Return the results container URL when result media is stored in Azure Blob Storage.
+
+    Returns:
+        str | None: The container URL, or None for local storage or when memory is not initialized.
+    """
+    try:
+        memory = CentralMemory.get_memory_instance()
+    except ValueError:
+        return None
+    if not memory.results_path or not isinstance(memory.results_storage_io, AzureBlobStorageIO):
+        return None
+    return str(memory.results_path)
+
+
+def _has_container_origin(*, url: ParseResult, container: ParseResult) -> bool:
+    """
+    Return whether a media URL has the results container's host and port, and no user info.
+
+    An omitted HTTPS port is 443, so ``host`` and ``host:443`` match. A port that does not
+    parse on either URL never matches.
+
+    Args:
+        url (ParseResult): The parsed media URL.
+        container (ParseResult): The parsed results container URL.
+
+    Returns:
+        bool: True when both URLs name the same host and port and the media URL has no user info.
+    """
+    try:
+        url_port = 443 if url.port is None else url.port
+        container_port = 443 if container.port is None else container.port
+    except ValueError:
+        return False
+    return (
+        url.username is None
+        and url.password is None
+        and url.hostname is not None
+        and url.hostname == container.hostname
+        and url_port == container_port
+    )
+
+
+def validate_blob_media_url(*, url: str, container_url: str) -> str:
+    """
+    Check that a media URL names a file in a media subdirectory of the results container.
+
+    Blob storage reads a URL's file name from the configured container whatever account or
+    container the URL names, so only URLs in that container can refer to managed media.
+
+    Args:
+        url (str): The media URL.
+        container_url (str): The configured results container URL.
+
+    Returns:
+        str: The URL without a query string or fragment.
+
+    Raises:
+        MediaAccessDeniedError: If the URL is outside the media subdirectories of the results container.
+    """
+    parsed = urlparse(url)
+    container = urlparse(container_url)
+    container_root = container.path.rstrip("/")
+    container_path = f"{container_root}/"
+    # Stored media URLs are the configured container URL plus "/<media folder>/...", so they repeat its trailing "/".
+    relative_path = parsed.path.removeprefix(container_path).removeprefix(container.path[len(container_root) :])
+    segments = [unquote(segment) for segment in relative_path.split("/")]
+    if not (
+        parsed.scheme == "https"
+        and _has_container_origin(url=parsed, container=container)
+        and parsed.path.startswith(container_path)
+        and len(segments) > 1
+        and segments[0] in _ALLOWED_MEDIA_SUBDIRECTORIES
+        and all(segment not in {"", ".", ".."} and "/" not in segment and "\\" not in segment for segment in segments)
+    ):
+        raise MediaAccessDeniedError("Access denied: URL is not in a media subdirectory of the results container.")
+    return parsed._replace(query="", fragment="").geturl()
+
+
 def _is_raw_base64(value: str) -> bool:
     """Return whether *value* is syntactically valid raw base64."""
     try:
@@ -160,13 +240,16 @@ async def persist_media_value_async(
 
     Local paths and ``/api/media`` references must be in a media subdirectory
     of the configured results directory, as required by ``GET /api/media``.
+    When results are stored in Azure Blob Storage, HTTP(S) URLs must name a file
+    in a media subdirectory of the results container.
 
     Returns:
         A typed result containing the resolved value and persistence metadata.
     """
     if value.startswith(("http://", "https://")):
+        container_url = results_container_url()
         return MediaPersistenceResult(
-            value=value,
+            value=validate_blob_media_url(url=value, container_url=container_url) if container_url else value,
             origin=MediaOrigin.REMOTE_URL,
             persisted=False,
             resolved=True,
@@ -257,8 +340,9 @@ async def persist_message_pieces_async(
     file path before the message is built.
 
     If the value is already an HTTP(S) URL (e.g. an Azure Blob Storage URL
-    from a remixed/copied message), it is kept as-is since the file already
-    exists in storage.
+    from a remixed/copied message), it is kept since the file already exists in
+    storage. With Azure Blob results storage, the URL must name a file in the
+    results container's media subdirectories.
     """
     for piece in pieces:
         original_value = piece.original_value

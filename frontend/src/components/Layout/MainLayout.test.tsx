@@ -18,6 +18,9 @@ jest.mock("../../services/api", () => ({
   labelsApi: {
     getLabels: jest.fn().mockResolvedValue({ labels: {} }),
   },
+  operationsApi: {
+    list: jest.fn(() => new Promise(() => {})),
+  },
 }));
 
 // Mock Navigation to simplify testing
