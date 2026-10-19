@@ -60,6 +60,11 @@ class AzureBlobStorageTarget(PromptTarget):
     # for the OpenAI, Azure ML and Prompt Shield targets.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
 
+    # Without a caller-supplied ``sas_token`` (identity mode, or ``api_key`` mode with no token),
+    # the target authenticates with the server's own credentials, so the create-target API gates
+    # it on administrator access.
+    server_credential_parameter: ClassVar[str | None] = "sas_token"
+
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             input_modalities=frozenset(
