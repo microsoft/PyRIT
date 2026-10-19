@@ -398,6 +398,9 @@ class ScenarioProgressReadModel:
         """
         Build canonical progress rollups from a plan and persisted attempts.
 
+        Build a lookup of each seed's planned work to avoid searching all groups
+        and results again for every seed.
+
         Returns:
             ScenarioProgressSummary: Progress grouped for client display.
         """
@@ -429,6 +432,10 @@ class ScenarioProgressReadModel:
             ]
             for group in plan.atomic_groups
         }
+        units_by_seed: dict[str, list[ResultUnitIdentity]] = {}
+        for units in group_units.values():
+            for unit in units:
+                units_by_seed.setdefault(unit.seed_group_id, []).append(unit)
         overall_units = (
             [unit for units in group_units.values() for unit in units] if plan_complete else list(attempts_by_unit)
         )
@@ -549,16 +556,10 @@ class ScenarioProgressReadModel:
         seed_by_id = {seed.id: seed for seed in plan.seed_groups}
         seed_groups: list[ScenarioSeedGroupProgress] = []
         for seed_id, seed in seed_by_id.items():
-            units = [
-                ResultUnitIdentity(atomic_group_id=group.id, seed_group_id=seed_id)
-                for group in plan.atomic_groups
-                if seed_id in group.seed_group_ids
-            ]
-            group_ids = {group.id for group in plan.atomic_groups if seed_id in group.seed_group_ids}
+            units = units_by_seed.get(seed_id, [])
             counts = aggregate(
                 units=units,
                 planned=len(units) if plan_complete else None,
-                producer_attempts=[r for r in results if r.seed_group_id == seed_id and r.atomic_group_id in group_ids],
             )
             seed_groups.append(
                 ScenarioSeedGroupProgress(

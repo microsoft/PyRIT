@@ -653,6 +653,121 @@ async def test_get_snapshot_invalidates_cache_when_plan_changes_while_waiting() 
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+@pytest.mark.parametrize("plan_complete", [False, True])
+@pytest.mark.parametrize("terminal", [False, True])
+def test_seed_progress_keeps_counts_correct_without_rescanning_all_results(
+    *, plan_complete: bool, terminal: bool
+) -> None:
+    plan = ScenarioRunPlan(
+        atomic_groups=[
+            ScenarioRunPlanAtomicGroup(
+                id=group_id,
+                atomic_attack_name=group_id,
+                display_group=group_id,
+                technique_eval_hash="",
+                seed_group_ids=seed_ids,
+            )
+            for group_id, seed_ids in [
+                ("group-a", ["shared", "seed-a"]),
+                ("group-b", ["shared", "seed-b"]),
+            ]
+        ],
+        seed_groups=[
+            ScenarioRunPlanSeedGroup(id=seed_id, objective_sha256=seed_id, objective=seed_id)
+            for seed_id in ("shared", "seed-a", "seed-b", "unused")
+        ],
+    )
+
+    def make_result(
+        *, index: int, group_id: str, seed_id: str, outcome: AttackOutcome, total_retries: int = 0
+    ) -> ScenarioProgressResult:
+        return ScenarioProgressResult(
+            attack_result_id=str(index),
+            conversation_id=str(index),
+            atomic_group_id=group_id,
+            atomic_attack_name=group_id,
+            seed_group_id=seed_id,
+            outcome=outcome,
+            execution_time_ms=10,
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC) + timedelta(seconds=index),
+            total_retries=total_retries,
+            result_role=AttackResultRole.TARGET_FACING,
+        )
+
+    first_attempt_retries = 2
+    later_attempt_retries = 1
+    excluded_result_retries = 10
+    results = [
+        make_result(
+            index=0,
+            group_id="group-a",
+            seed_id="shared",
+            outcome=AttackOutcome.ERROR,
+            total_retries=first_attempt_retries,
+        ),
+        make_result(index=1, group_id="group-a", seed_id="seed-a", outcome=AttackOutcome.SUCCESS),
+        make_result(index=2, group_id="group-b", seed_id="shared", outcome=AttackOutcome.FAILURE),
+        make_result(
+            index=3,
+            group_id="group-a",
+            seed_id="shared",
+            outcome=AttackOutcome.SUCCESS,
+            total_retries=later_attempt_retries,
+        ),
+        # Seed-a is not assigned to group-b; its retries must not affect seed-a's counts.
+        make_result(
+            index=4,
+            group_id="group-b",
+            seed_id="seed-a",
+            outcome=AttackOutcome.SUCCESS,
+            total_retries=excluded_result_retries,
+        ),
+        # This group is not in the plan; its retries must not affect the shared seed's counts.
+        make_result(
+            index=5,
+            group_id="unknown",
+            seed_id="shared",
+            outcome=AttackOutcome.SUCCESS,
+            total_retries=excluded_result_retries,
+        ),
+    ]
+
+    tracked_results = MagicMock(spec=list)
+    tracked_results.__iter__.side_effect = lambda: iter(results)
+    summary = ScenarioProgressReadModel._build_progress_summary(
+        plan=plan,
+        plan_complete=plan_complete,
+        results=tracked_results,
+        active_group_ids=(),
+        terminal=terminal,
+        objective_scorer_identifier=None,
+        technique_details_by_group={},
+    )
+
+    # One pass each for grouping attempts, counting overall producers, and grouping results by attack.
+    assert tracked_results.__iter__.call_count <= 3
+    seeds = {seed.id: seed for seed in summary.seed_groups}
+    shared = seeds["shared"]
+    assert shared.planned == (2 if plan_complete else None)
+    assert shared.completed == 2
+    assert shared.succeeded == 1
+    assert shared.errors == 1
+    # Repeating group-a's shared seed adds one retry beyond the retries recorded within each attempt.
+    assert shared.retries == first_attempt_retries + later_attempt_retries + 1
+    assert shared.producer_counts.target_facing.attempts == 3
+    assert shared.producer_counts.target_facing.errors == 1
+    assert shared.producer_counts.target_facing.retries == first_attempt_retries + later_attempt_retries
+    assert seeds["seed-a"].completed == seeds["seed-a"].succeeded == 1
+    assert seeds["seed-a"].retries == 0
+    assert seeds["seed-a"].producer_counts.target_facing.attempts == 1
+    assert seeds["seed-b"].planned == (1 if plan_complete else None)
+    assert seeds["unused"].planned == (0 if plan_complete else None)
+    for seed_id in ("seed-b", "unused"):
+        assert seeds[seed_id].completed == 0
+        assert seeds[seed_id].producer_counts.target_facing.attempts == 0
+    assert [seed.id for seed in summary.seed_groups] == ["seed-a", "seed-b", "shared", "unused"]
+
+
 @pytest.mark.parametrize(
     ("active_group_ids", "terminal", "plan_complete", "expected_status", "expected_planned"),
     [
