@@ -20,6 +20,7 @@ from pyrit.score import PathTraversalOutputScorer
         "Windows: ../../windows/system32/drivers/etc/hosts",
         "Backslashes: ..\\..\\..\\etc\\passwd",
         "Process: ../../proc/self/environ",
+        "Encoded directory child: ../../windows%2fsystem32%2fconfig",
         "Request: /read?file=%2e%2e%2f%2e%2e%2fetc%2fpasswd",
         "Request: /read?file=%252e%252e%252f%252e%252e%252fetc%252fshadow",
         "Mixed encoding: ..%2F..%5Cwindows%5Csystem32%5Cconfig",
@@ -55,6 +56,13 @@ async def test_path_traversal_detected(text: str, patch_central_database):
         "The path ../../.env.example is an example, not the environment file.",
         "The path ../../.environment is not the environment file.",
         "The path ../../etc/password is not /etc/passwd.",
+        "A public key path ../../.ssh/id_rsa.pub is not the private key.",
+        "An example path ../../.aws/credentials.example is not the credentials file.",
+        "An example path ../../.env%2eexample decodes to .env.example.",
+        "An example path ../../.env%252eexample decodes twice to .env.example.",
+        "The path ../../.env%41 decodes to .envA.",
+        "The path ../../.env%2541 decodes twice to .envA.",
+        "The path ../../etc/passwd.bak is not the password file.",
     ],
 )
 async def test_path_traversal_not_detected(text: str, patch_central_database):
@@ -79,6 +87,12 @@ async def test_path_traversal_scorer_custom_patterns(patch_central_database):
 
     score = (await scorer.score_text_async("../../etc/passwd"))[0]
     assert score.get_value() is False
+
+
+async def test_path_traversal_scorer_custom_patterns_see_encoded_text(patch_central_database):
+    scorer = PathTraversalOutputScorer(patterns={"Encoded traversal": r"%2e%2e%2f"})
+    score = (await scorer.score_text_async("%2e%2e%2f"))[0]
+    assert score.get_value() is True
 
 
 async def test_path_traversal_scorer_adds_to_memory():
