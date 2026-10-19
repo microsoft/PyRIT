@@ -97,7 +97,7 @@ describe("ChatInputArea", () => {
     );
 
     expect(screen.getByRole("textbox")).toBeEnabled();
-    expect(getSendButton()).toBeDisabled();
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
     await user.type(screen.getByRole("textbox"), "Unsent draft");
     expect(screen.queryByText(/No target is selected/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Why the prompt box is disabled")).not.toBeVisible();
@@ -125,6 +125,66 @@ describe("ChatInputArea", () => {
     render(<TestWrapper><ChatInputArea {...defaultProps} activeTarget={makeTarget({})} disabled /></TestWrapper>);
     await user.click(screen.getByLabelText("Why the prompt box is disabled"));
     expect(screen.getByRole("listitem")).toHaveTextContent("Wait for the current operation to finish.");
+  });
+
+  it("should explain an empty draft in the Send tooltip and restore the label when ready", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatInputArea {...defaultProps} /></TestWrapper>);
+    await user.hover(getSendButton());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Send message: Enter a prompt or attach a file.");
+    await user.unhover(getSendButton());
+    await user.type(screen.getByRole("textbox"), "Ready to send");
+    await user.hover(getSendButton());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Send message$/);
+    expect(getSendButton()).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("should explain all Send blockers without disabling drafting", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatInputArea {...defaultProps} sendDisabled sendDisabledReasons={[
+      "Select a target to send a message.",
+      "Choose a saved Operation, register, or clear this one to start new attacks and scans.",
+    ]} /></TestWrapper>);
+    await user.type(screen.getByRole("textbox"), "Keep this draft");
+    await user.hover(getSendButton());
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("Send message: Select a target to send a message.");
+    expect(tooltip).toHaveTextContent("Choose a saved Operation, register, or clear this one");
+    expect(screen.getByRole("textbox")).toBeEnabled();
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
+    await user.click(getSendButton());
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
+  });
+
+  it("should explain disabled input in the Send tooltip on keyboard focus", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatInputArea {...defaultProps} disabled
+      disabledReasons={["A message is being sent. Wait for the response."]} /></TestWrapper>);
+    await user.tab();
+    expect(getSendButton()).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Send message: A message is being sent.");
+    await user.keyboard("{Enter} ");
+    await user.click(getSendButton());
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
+  });
+
+  it("should explain a temporary Send blocker when no reason was supplied", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatInputArea {...defaultProps} sendDisabled /></TestWrapper>);
+    await user.hover(getSendButton());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Send message: Sending is temporarily unavailable.");
+  });
+
+  it("should explain unsupported converter output in the Send tooltip", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatInputArea {...defaultProps} converterOutputDataTypes={["audio_path"]}
+      activeTarget={makeTarget({ capabilities: buildCapabilities({ supported_input_modalities: ["text"] }) })} /></TestWrapper>);
+    await user.type(screen.getByRole("textbox"), "Convert this");
+    await user.hover(getSendButton());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Send message: The selected converter produces audio output, which this target does not support."
+    );
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("should show a retry action when target verification fails", async () => {
@@ -276,7 +336,7 @@ describe("ChatInputArea", () => {
     );
 
     const sendButton = getSendButton();
-    expect(sendButton).toBeDisabled();
+    expect(sendButton).toHaveAttribute("aria-disabled", "true");
   });
 
   it("should enable send button when input has text", async () => {
@@ -292,7 +352,7 @@ describe("ChatInputArea", () => {
     await user.type(input, "Some text");
 
     const sendButton = getSendButton();
-    expect(sendButton).toBeEnabled();
+    expect(sendButton).not.toHaveAttribute("aria-disabled");
   });
 
   it("should allow draft edits while sending is disabled", async () => {
@@ -306,7 +366,7 @@ describe("ChatInputArea", () => {
     const input = screen.getByRole("textbox");
     await user.type(input, "Draft while history loads");
     expect(input).toBeEnabled();
-    expect(getSendButton()).toBeDisabled();
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
     await user.keyboard("{Enter}");
     await user.click(getSendButton());
     expect(onSend).not.toHaveBeenCalled();
@@ -575,7 +635,7 @@ describe("ChatInputArea", () => {
     );
 
     const sendButton = getSendButton();
-    expect(sendButton).toBeDisabled();
+    expect(sendButton).toHaveAttribute("aria-disabled", "true");
   });
 
   it("should have file input for attachments", () => {
@@ -704,7 +764,7 @@ describe("ChatInputArea", () => {
 
     // Should be able to send with just attachment
     const sendButton = getSendButton();
-    expect(sendButton).toBeEnabled();
+    expect(sendButton).not.toHaveAttribute("aria-disabled");
     await user.click(sendButton);
 
     expect(onSend).toHaveBeenCalled();
@@ -856,7 +916,7 @@ describe("ChatInputArea", () => {
     });
 
     // Send button should be enabled since there's an attachment
-    expect(screen.getByRole("button", { name: /send message/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /send message/i })).not.toHaveAttribute("aria-disabled");
   });
 
   it("should synchronously report each recovered and uploaded attachment with a distinct draft identity", () => {
@@ -1424,9 +1484,12 @@ describe("ChatInputArea", () => {
     await user.upload(fileInput, file);
 
     await waitFor(() => {
-      expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-      expect(screen.getByText(/does not support image attachments/)).toBeInTheDocument();
+      expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent(/does not support image attachments/);
     });
+    await user.hover(getSendButton());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Send message: This target does not support image attachments. Remove them to send."
+    );
   });
 
   it("should not show warning when attaching image to image-capable target", async () => {
@@ -1495,8 +1558,7 @@ describe("ChatInputArea", () => {
     await user.upload(fileInput, file);
 
     await waitFor(() => {
-      expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-      expect(screen.getByText(/does not support audio attachments/)).toBeInTheDocument();
+      expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent(/does not support audio attachments/);
     });
   });
 
@@ -1524,8 +1586,7 @@ describe("ChatInputArea", () => {
     await user.upload(fileInput, files);
 
     await waitFor(() => {
-      expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-      expect(screen.getByText(/does not support image, audio attachments/)).toBeInTheDocument();
+      expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent(/does not support image, audio attachments/);
     });
   });
 
@@ -1556,7 +1617,7 @@ describe("ChatInputArea", () => {
     });
 
     // Send should be disabled (warning is blocking)
-    expect(getSendButton()).toBeDisabled();
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("should show warning for file attachment to text-only target", async () => {
@@ -1580,8 +1641,7 @@ describe("ChatInputArea", () => {
     await user.upload(fileInput, file);
 
     await waitFor(() => {
-      expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-      expect(screen.getByText(/does not support file attachments/)).toBeInTheDocument();
+      expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent(/does not support file attachments/);
     });
   });
 
@@ -1605,9 +1665,10 @@ describe("ChatInputArea", () => {
     const input = screen.getByRole("textbox");
     await user.type(input, "convert this to image");
 
-    expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-    expect(screen.getByText(/selected converter produces image output, which this target does not support/)).toBeInTheDocument();
-    expect(getSendButton()).toBeDisabled();
+    expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent(
+      /selected converter produces image output, which this target does not support/
+    );
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("should not block when converter output type is supported by target", () => {
@@ -1653,11 +1714,11 @@ describe("ChatInputArea", () => {
       expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
     });
     // Attachment message — uses UI piece type
-    expect(screen.getByText(/does not support image attachments\. Remove them to send\./)).toBeInTheDocument();
+    expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent(/does not support image attachments\. Remove them to send\./);
     // Converter message — uses formatted modality label (audio, not audio_path)
     expect(
-      screen.getByText(/selected converter produces audio output, which this target does not support/)
-    ).toBeInTheDocument();
-    expect(getSendButton()).toBeDisabled();
+      screen.getByTestId("unsupported-modality-warning")
+    ).toHaveTextContent(/selected converter produces audio output, which this target does not support/);
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
   });
 });
