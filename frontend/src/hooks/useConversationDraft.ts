@@ -25,7 +25,9 @@ interface DraftState extends ConversationSaveInput {
   baselineTarget: string | undefined
 }
 
-export function useConversationDraft(newAttackContext?: NewAttackContext) {
+export function useConversationDraft(
+  newAttackContext?: NewAttackContext, options: { pendingUserMessage?: boolean } = {},
+) {
   const [draft, setDraft] = useState<DraftState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const activeId = useRef<string | null>(null)
@@ -37,8 +39,11 @@ export function useConversationDraft(newAttackContext?: NewAttackContext) {
     || targetKey(draft.target) !== draft.baselineTarget
   )
   const validationError = draft ? validateDraft(draft.messages) : null
+  const messages = draft?.messages ?? []
+  const history = options.pendingUserMessage && messages[messages.length - 1]?.role === 'user'
+    ? messages.slice(0, -1) : messages
   const targetError = draft?.target
-    ? editorTargetDisabledReason(draft.target, draftDataTypes(draft.messages)) : undefined
+    ? editorTargetDisabledReason(draft.target, draftDataTypes(messages), history) : undefined
 
   const releaseUrls = useCallback((): void => {
     for (const url of urls.current) URL.revokeObjectURL(url)
@@ -52,7 +57,12 @@ export function useConversationDraft(newAttackContext?: NewAttackContext) {
     activeId.current = id
     saved.current = false
     setError(null)
-    setDraft({ ...input, id, baselineMessages: input.messages, baselineTarget: targetKey(input.target) })
+    setDraft({
+      ...input, id, baselineMessages: input.messages, baselineTarget: targetKey(input.target),
+      sourcePieceIds: input.messages.flatMap((message: ConversationDraftMessage) => message.pieces.flatMap(
+        (piece: ConversationDraftPiece) => piece.source_piece_id ? [piece.source_piece_id] : [],
+      )),
+    })
   }, [releaseUrls])
   const discard = useCallback((): void => {
     activeId.current = null
@@ -134,18 +144,21 @@ export function useConversationDraft(newAttackContext?: NewAttackContext) {
   const save = async (
     destination: SaveConversationRequest['destination'], onSaved: (response: AddMessageResponse) => void,
     messages: ConversationDraftMessage[] = draft?.messages ?? [],
-  ): Promise<void> => {
-    if (!draft || workflow.saving) return
+    reuseUnsentConversation = false,
+  ): Promise<boolean> => {
+    if (!draft || workflow.saving) return false
     const id = draft.id
     setError(null)
     try {
       if (validationError || targetError) throw new Error(validationError ?? targetError)
-      const response = await workflow.save({ ...draft, messages }, destination)
-      if (activeId.current !== id) return
+      const response = await workflow.save({ ...draft, messages }, destination, reuseUnsentConversation)
+      if (activeId.current !== id) return false
       saved.current = true
       onSaved(response)
+      return true
     } catch (cause) {
       if (activeId.current === id) setError(toApiError(cause).detail)
+      return false
     }
   }
 
@@ -154,7 +167,7 @@ export function useConversationDraft(newAttackContext?: NewAttackContext) {
   }, [])
 
   return {
-    draft, dirty, error, validationError, targetError, saving: workflow.saving,
+    draft, dirty, error, validationError, targetError, history, saving: workflow.saving,
     begin, discard, save, changeMessages, changePiece, changeAttachments, addPiece, applyConversions,
     shouldBlock: (): boolean => !saved.current && (dirty || workflow.saving),
     changeObjective,

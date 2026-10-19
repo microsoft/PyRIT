@@ -22,7 +22,7 @@ import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
-  ChatConverterController, ConverterInputPiece, ConverterInstance, ConverterPipelineStage, ConverterStageResult,
+  ChatConverterController, ConverterInputPiece, ConverterInstance, ConverterPipelineStage, ConverterStageResult, PieceConversionUpdates,
 } from '@/types'
 
 import {
@@ -67,7 +67,7 @@ interface ConverterPanelProps {
   onClose: () => void
   controller: ChatConverterController
   selectedMessageCount?: number
-  onApply?: () => void
+  onApply?: (updates: PieceConversionUpdates) => void
 }
 
 interface SelectedConverter extends ConverterInstance {
@@ -178,6 +178,15 @@ export default function ConverterPanel({
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH)
   const isResizing = useRef(false)
   const draggedConverterIndex = useRef<number | null>(null)
+  const applyResult = (applied: PieceConversionUpdates | void): void => {
+    if (applied) onApply?.(applied)
+  }
+  const convert = async (pieceType: string): Promise<void> => {
+    applyResult(await controller.convert(pieceType))
+  }
+  const convertRemaining = async (pieceId: string, stageId: string): Promise<void> => {
+    applyResult(await controller.convertRemaining(pieceId, stageId))
+  }
 
   const tabs = useMemo(() => {
     const seen = new Set(['text'])
@@ -433,7 +442,7 @@ export default function ConverterPanel({
             allowSelection={selectedConverters.length > 0}
             edited={workingInputs[input.id] !== undefined && workingInputs[input.id] !== input.value}
             onChange={input.dataType === 'text'
-              ? (value: string) => controller.editInput(input.id, value)
+              ? (value: string) => applyResult(controller.editInput(input.id, value))
               : undefined}
             testId="converter-input-value"
             value={workingInputs[input.id] ?? input.value}
@@ -455,7 +464,7 @@ export default function ConverterPanel({
                   appearance="primary"
                   size="small"
                   icon={isConverting ? <Spinner size="tiny" /> : <PlayRegular />}
-                  onClick={() => void controller.convert(effectiveActiveTab)}
+                  onClick={() => void convert(effectiveActiveTab)}
                   disabled={!ready || isConverting || convertibleInputs.length === 0}
                   className={styles.previewButton}
                   title={`Convert the configured ${
@@ -562,7 +571,7 @@ export default function ConverterPanel({
                             edited={stage !== undefined && stage.value !== stage.generated.output_value}
                             allowSelection={hasRemaining}
                             onChange={stage && outputType === 'text'
-                              ? (value: string) => controller.editStageOutput(input.id, converter.stageId, value)
+                              ? (value: string) => applyResult(controller.editStageOutput(input.id, converter.stageId, value))
                               : undefined}
                           />
                           {hasRemaining && (
@@ -573,7 +582,7 @@ export default function ConverterPanel({
                               disabled={isConverting || stage === undefined}
                               aria-label={`Convert ${input.name} from stage ${index + 2} to end`}
                               title="Convert all remaining stages from this value."
-                              onClick={() => void controller.convertRemaining(input.id, converter.stageId)}
+                              onClick={() => void convertRemaining(input.id, converter.stageId)}
                             >
                               Convert
                             </Button>
@@ -608,16 +617,6 @@ export default function ConverterPanel({
                   ))}
                 </section>
               )}
-              <Button
-                appearance="primary"
-                onClick={onApply ?? controller.apply}
-                disabled={!ready || isConverting || Object.keys(results).length === 0}
-                className={styles.addConvertedButton}
-                data-testid="use-converted-btn"
-              >
-                {onApply && Object.keys(errors).length > 0
-                  ? 'Apply successful results' : isBatch ? 'Add converted values' : 'Add converted value'}
-              </Button>
             </div>
           )}
         </div>

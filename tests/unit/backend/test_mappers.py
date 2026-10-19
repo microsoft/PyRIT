@@ -29,6 +29,7 @@ from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.attacks import AddMessageRequest, MessagePieceRequest, ScoreView
+from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -40,7 +41,9 @@ from pyrit.models import (
     Score,
 )
 from pyrit.models.conversation_stats import ConversationStats
-from pyrit.prompt_target import PromptTarget, TargetCapabilities
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, TextTarget, WebsocketTarget
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from unit.mocks import MockPromptTarget
 
 # ============================================================================
 # Helpers
@@ -1484,6 +1487,42 @@ class TestBuildFilename:
 # ============================================================================
 # Target Mapper Tests
 # ============================================================================
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "mode", ["native", "unsupported", "editable_adapter", "multi_turn_adapter", "restore_callback"]
+)
+def test_target_instance_reports_effective_history_replay(mode: str) -> None:
+    if mode == "native":
+        target: PromptTarget = MockPromptTarget()
+    elif mode == "unsupported":
+        target = TextTarget()
+    elif mode == "restore_callback":
+        target = WebsocketTarget(
+            endpoint="ws://localhost:9999",
+            protocol_identifier="offline-replay",
+            initialization_strings=[],
+            response_parser=str,
+            message_builder=str,
+            conversation_restore_callback=AsyncMock(),
+        )
+    else:
+        capability = CapabilityName.EDITABLE_HISTORY if mode == "editable_adapter" else CapabilityName.MULTI_TURN
+        target = MockPromptTarget(
+            custom_configuration=TargetConfiguration(
+                capabilities=TargetCapabilities(supports_multi_turn=mode == "editable_adapter"),
+                normalizer_overrides={capability: HistorySquashNormalizer()},
+            )
+        )
+    with patch.object(target, "validate_history_replay", wraps=target.validate_history_replay) as validate:
+        result = target_object_to_instance("replay-target", target)
+    validate.assert_called_once()
+    assert result.supports_history_replay is (mode != "unsupported")
+    assert result.model_dump()["supports_history_replay"] is (mode != "unsupported")
+    assert result.capabilities == target.capabilities
+    if mode not in ("native", "unsupported"):
+        assert not result.capabilities.supports_editable_history
 
 
 class TestTargetObjectToInstance:
