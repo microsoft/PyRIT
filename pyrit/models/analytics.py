@@ -534,6 +534,7 @@ class AttackAnalyticsResultRow(_AnalyticsModel):
     outcome: AttackOutcome
     updated_at: AwareDatetime
     operation: str | None
+    operation_id: str | None
     operator: str | None
     attack_type: str | None
     target_model: str | None

@@ -729,8 +729,9 @@ class AttackAnalyticsReader:
         """
         data = dict(record)
         data["attack_result_id"] = str(data["attack_result_id"])
-        if data["scenario_result_id"] is not None:
-            data["scenario_result_id"] = str(data["scenario_result_id"])
+        for key in ("operation_id", "scenario_result_id"):
+            if data[key] is not None:
+                data[key] = str(data[key])
         if data["targeted_harm_categories"] is None:
             data["targeted_harm_categories"] = []
         if data["labels"] is None:

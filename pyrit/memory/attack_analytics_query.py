@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from sqlalchemy import (
     JSON,
     Boolean,
+    Integer,
     Unicode,
     UnicodeText,
     and_,
@@ -39,6 +40,7 @@ from sqlalchemy import (
     or_,
     select,
     true,
+    type_coerce,
     union_all,
 )
 from sqlalchemy.sql import visitors
@@ -98,7 +100,8 @@ class _Source:
     converter objects and distinguishes [] from missing metadata. ``insensitive``
     lowercases membership keys with the backend's Unicode-aware operation,
     never their display labels. ``kind``, when set, is a scalar key's kind;
-    otherwise only a NULL value is missing.
+    otherwise only a NULL value is missing. ``sort_by_label`` lists options in
+    kind blocks (missing, value, then legacy names) by binary label, then key.
     """
 
     value: ColumnElement[Any]
@@ -107,6 +110,7 @@ class _Source:
     converters: bool = False
     insensitive: bool = False
     kind: ColumnElement[Any] | None = None
+    sort_by_label: bool = False
 
 
 class AttackAnalyticsQueryCompiler:
@@ -449,13 +453,16 @@ class AttackAnalyticsQueryCompiler:
             self._axis(profiles=profiles, sources=sources, index=index, limit=query.axis_limit + 1)
             for index in range(2)
         ]
-        visible = [
-            select(axis)
-            .order_by(axis.c[f"kind{index}"], axis.c[f"value{index}"])
-            .limit(query.axis_limit)
-            .cte(f"visible_axis{index}")
-            for index, axis in enumerate(candidates)
-        ]
+        visible: list[CTE] = []
+        for index, axis in enumerate(candidates):
+            kind, value, label = (axis.c[f"{field}{index}"] for field in ("kind", "value", "label"))
+            ranks = [self._kind_rank(kind).label(f"rank{index}")] if sources[index].sort_by_label else []
+            visible.append(
+                select(axis, *ranks)
+                .order_by(*self._option_order(source=sources[index], kind=kind, value=value, label=label))
+                .limit(query.axis_limit)
+                .cte(f"visible_axis{index}")
+            )
         members = self._memberships(profiles=profiles, sources=sources, dimensions=[0, 1], name="cell_members")
         selected = members.join(visible[0], self._same_key(left=members, right=visible[0], index=0)).join(
             visible[1], self._same_key(left=members, right=visible[1], index=1)
@@ -474,7 +481,8 @@ class AttackAnalyticsQueryCompiler:
             ),
             else_=False,
         ).label("truncated")
-        return self._matrix_output(axes=visible, cells=cells, truncated=truncated)
+        label_ordered = (sources[0].sort_by_label, sources[1].sort_by_label)
+        return self._matrix_output(axes=visible, cells=cells, truncated=truncated, label_ordered=label_ordered)
 
     def _compact_matrix(self, *, profiles: CTE, sources: list[_Source], limit: int) -> CompoundSelect[Any]:
         """
@@ -515,18 +523,26 @@ class AttackAnalyticsQueryCompiler:
             else_=False,
         ).label("truncated")
         bounded = select(ranked).where(ranked.c.rank0 <= limit, ranked.c.rank1 <= limit).cte("visible_cells")
-        return self._matrix_output(axes=axes, cells=bounded, truncated=truncated)
+        return self._matrix_output(axes=axes, cells=bounded, truncated=truncated, label_ordered=(False, False))
 
     @classmethod
-    def _matrix_output(cls, *, axes: list[CTE], cells: CTE, truncated: ColumnElement[Any]) -> CompoundSelect[Any]:
+    def _matrix_output(
+        cls, *, axes: list[CTE], cells: CTE, truncated: ColumnElement[Any], label_ordered: tuple[bool, bool]
+    ) -> CompoundSelect[Any]:
         """
         Put axis metadata and cell counts in one consistently shaped result stream.
+
+        A label-ordered axis carries ``rank{index}`` and sorts by it, its binary label,
+        then its key; other axes sort by typed key.
 
         Returns:
             CompoundSelect[Any]: UNION ALL rows tagged ``row``, ``column``, or ``cell``.
                 The truncation flag is repeated so no separate metadata query is needed.
         """
-        records = [cls._axis_record(axes[index], index=index, truncated=truncated) for index in range(2)]
+        records = [
+            cls._axis_record(axes[index], index=index, truncated=truncated, ranked=label_ordered[index])
+            for index in range(2)
+        ]
         records.append(
             select(
                 literal("cell").label("record"),
@@ -538,9 +554,20 @@ class AttackAnalyticsQueryCompiler:
                 cells.c.label1,
                 cells.c.counts,
                 truncated,
+                *[
+                    (cls._kind_rank(cells.c[f"kind{index}"]) if ordered else cast(null(), Integer())).label(
+                        f"rank{index}"
+                    )
+                    for index, ordered in enumerate(label_ordered)
+                ],
             )
         )
-        return union_all(*records).order_by("record", "kind0", "value0", "kind1", "value1")
+        order = ["record"]
+        for index, ordered in enumerate(label_ordered):
+            order.extend(
+                [f"rank{index}", f"label{index}", f"value{index}"] if ordered else [f"kind{index}", f"value{index}"]
+            )
+        return union_all(*records).order_by(*order)
 
     def facet(self, query: AttackAnalyticsFacetQuery) -> Select[*tuple[Any, ...]]:
         """
@@ -581,7 +608,7 @@ class AttackAnalyticsQueryCompiler:
         Read distinct scalar keys directly, avoiding profile and outcome aggregation.
 
         Returns:
-            Select[Any]: A key-ordered page plus one lookahead row. Labels use binary
+            Select[Any]: A page in option order plus one lookahead row. Labels use binary
                 MIN so case-insensitive database defaults do not choose arbitrary spellings.
         """
         conditions = self._conditions()
@@ -612,12 +639,13 @@ class AttackAnalyticsQueryCompiler:
             kind, value, label = projected
         if query.search:
             conditions.append(self._search_condition(label=label, search=query.search))
+        minimum = func.min(self._collate(label))
         return (
-            select(kind.label("kind0"), value.label("value0"), func.min(self._collate(label)).label("label0"))
+            select(kind.label("kind0"), value.label("value0"), minimum.label("label0"))
             .select_from(origin)
             .where(*conditions)
             .group_by(kind, value)
-            .order_by(kind, value)
+            .order_by(*self._option_order(source=source, kind=kind, value=value, label=minimum))
             .offset(query.offset)
             .limit(query.limit + 1)
         )
@@ -702,6 +730,7 @@ class AttackAnalyticsQueryCompiler:
                 self.root.c.outcome,
                 self.root.c.timestamp.label("updated_at"),
                 operation.label("operation"),
+                self.root.c.operation_id,
                 self.root.c.operator,
                 attack.label.label("attack_type"),
                 model.label.label("target_model"),
@@ -825,6 +854,7 @@ class AttackAnalyticsQueryCompiler:
                 value=case((linked, operation_id), else_=root.operation),
                 label=func.coalesce(saved.c.name, root.operation, operation_id),
                 kind=kind,
+                sort_by_label=True,
             )
         return self._operation
 
@@ -1632,20 +1662,50 @@ class AttackAnalyticsQueryCompiler:
         Discover one axis independently before bounding high-cardinality cell combinations.
 
         Returns:
-            CTE: Distinct typed keys in binary order, normally including one extra key
-                for truncation detection. Axis selection does not rank by outcome counts.
+            CTE: Distinct typed keys in option order with binary-collated labels, normally
+                including one extra key for truncation detection. Axis selection does not
+                rank by outcome counts.
         """
         members = self._memberships(profiles=profiles, sources=sources, dimensions=[index], name=f"axis{index}_members")
+        kind, value = members.c[f"kind{index}"], members.c[f"value{index}"]
+        label = func.min(self._collate(members.c[f"label{index}"]))
         return (
-            select(
-                members.c[f"kind{index}"],
-                members.c[f"value{index}"],
-                func.min(members.c[f"label{index}"]).label(f"label{index}"),
-            )
-            .group_by(members.c[f"kind{index}"], members.c[f"value{index}"])
-            .order_by(members.c[f"kind{index}"], members.c[f"value{index}"])
+            select(kind, value, label.label(f"label{index}"))
+            .group_by(kind, value)
+            .order_by(*self._option_order(source=sources[index], kind=kind, value=value, label=label))
             .limit(limit)
             .cte(f"axis{index}_candidates")
+        )
+
+    @classmethod
+    def _option_order(
+        cls, *, source: _Source, kind: ColumnElement[Any], value: ColumnElement[Any], label: ColumnElement[Any]
+    ) -> list[ColumnElement[Any]]:
+        """
+        Order facet and axis options by typed key, or label-ordered options by kind block and label.
+
+        Returns:
+            list[ColumnElement[Any]]: ORDER BY terms ending in the key, so paging and truncation
+                stay deterministic. ``label`` must already use binary collation.
+        """
+        return [cls._kind_rank(kind), label, value] if source.sort_by_label else [kind, value]
+
+    @staticmethod
+    def _kind_rank(kind: ColumnElement[Any]) -> ColumnElement[int]:
+        """
+        Rank a label-ordered option's kind: missing first, then saved values, then legacy names.
+
+        Returns:
+            ColumnElement[int]: 0, 1, or 2. Inline literals let SQL Server repeat the rank
+                in SELECT and ORDER BY without positional parameters.
+        """
+        return type_coerce(
+            case(
+                (kind == literal("missing", literal_execute=True), literal(0, literal_execute=True)),
+                (kind == literal("value", literal_execute=True), literal(1, literal_execute=True)),
+                else_=literal(2, literal_execute=True),
+            ),
+            Integer(),
         )
 
     @staticmethod
@@ -1692,13 +1752,14 @@ class AttackAnalyticsQueryCompiler:
         )
 
     @staticmethod
-    def _axis_record(axis: CTE, *, index: int, truncated: ColumnElement[Any]) -> Select[*tuple[Any, ...]]:
+    def _axis_record(axis: CTE, *, index: int, truncated: ColumnElement[Any], ranked: bool) -> Select[*tuple[Any, ...]]:
         """
         Project an axis into the shared matrix row shape, filling the other axis with NULL.
 
         Returns:
-            Select[Any]: A row/column-tagged record with no counts. Explicit text types
-                keep SQL Server's UNION from inferring incompatible types for absent fields.
+            Select[Any]: A row/column-tagged record with no counts. Explicit text and
+                integer types keep SQL Server's UNION from inferring incompatible types
+                for absent fields.
         """
         empty = cast(null(), UnicodeText())
         return select(
@@ -1710,4 +1771,10 @@ class AttackAnalyticsQueryCompiler:
             ],
             empty.label("counts"),
             truncated,
+            *[
+                (axis.c[f"rank{index}"] if dimension == index and ranked else cast(null(), Integer())).label(
+                    f"rank{dimension}"
+                )
+                for dimension in range(2)
+            ],
         )

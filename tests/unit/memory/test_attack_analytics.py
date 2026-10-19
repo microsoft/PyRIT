@@ -22,6 +22,7 @@ from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import CompileError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.sql import Select, visitors
+from sqlalchemy.sql.elements import Case
 from sqlalchemy.sql.functions import Function
 from sqlalchemy.sql.selectable import CTE
 
@@ -759,6 +760,80 @@ async def test_operation_heatmap_compaction_keeps_operation_keys(sqlite_instance
     assert totals == {typed_key(group.option): sum(group.counts.values()) for group in groups.groups}
 
 
+async def test_operation_options_list_saved_before_legacy(sqlite_instance: SQLiteMemory) -> None:
+    for index, name in ((1, "Zulu"), (2, "Alpha")):
+        await sqlite_instance.add_operation_async(Operation(id=uuid.UUID(int=index), name=name))
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[
+            make_result(index=1, operation=None, operation_id=uuid.UUID(int=1)),
+            make_result(index=2, operation=None, operation_id=uuid.UUID(int=2)),
+            make_result(index=3, operation="Alpha"),
+            make_result(index=4, operation="Bravo"),
+            make_result(index=5, operation="Bravo"),
+            make_result(index=6, operation=None),
+        ],
+    )
+    keys = [
+        ("missing", None),
+        ("value", str(uuid.UUID(int=2))),
+        ("value", str(uuid.UUID(int=1))),
+        ("legacy_operation_name", "Alpha"),
+        ("legacy_operation_name", "Bravo"),
+    ]
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    operation = AttackAnalyticsDimension(name="operation")
+    attack_type = AttackAnalyticsDimension(name="attack_type")
+
+    facet = await reader.facets_async(query=AttackAnalyticsFacetQuery(dimension=operation), control=control())
+    assert [typed_key(item) for item in facet.items] == keys
+    page = await reader.facets_async(
+        query=AttackAnalyticsFacetQuery(dimension=operation, limit=2, offset=2), control=control()
+    )
+    assert [typed_key(item) for item in page.items] == keys[2:4]
+    assert page.has_more
+
+    by_rows = await reader.report_async(
+        query=AttackAnalyticsQuery(group_by=operation, compare_by=attack_type), control=control()
+    )
+    assert [typed_key(row) for row in by_rows.rows] == keys
+    assert [typed_key(cell.option) for cell in by_rows.cells] == keys
+    by_columns = await reader.report_async(
+        query=AttackAnalyticsQuery(group_by=attack_type, compare_by=operation), control=control()
+    )
+    assert [typed_key(column) for column in by_columns.columns] == keys
+    assert [typed_key(cell.column) for cell in by_columns.cells if cell.column] == keys
+    truncated = await reader.report_async(
+        query=AttackAnalyticsQuery(group_by=operation, compare_by=attack_type, axis_limit=3), control=control()
+    )
+    assert [typed_key(row) for row in truncated.rows] == keys[:3]
+    assert truncated.axes_truncated
+
+    groups = await reader.report_async(query=AttackAnalyticsQuery(group_by=operation), control=control())
+    assert [typed_key(group.option) for group in groups.groups] == [
+        ("legacy_operation_name", "Bravo"),
+        ("legacy_operation_name", "Alpha"),
+        ("missing", None),
+        ("value", str(uuid.UUID(int=1))),
+        ("value", str(uuid.UUID(int=2))),
+    ]
+
+
+async def test_result_rows_carry_operation_id(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    linked = make_result(operation=None, operation_id=operation.id)
+    legacy = make_result(index=2, operation="Legacy")
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[linked, legacy])
+
+    page = await AttackAnalyticsReader(memory=sqlite_instance).results_async(
+        query=AttackAnalyticsResultsQuery(), control=control()
+    )
+    assert {item.attack_result_id: (item.operation_id, item.operation) for item in page.items} == {
+        linked.attack_result_id: (str(operation.id), "Engagement"),
+        legacy.attack_result_id: (None, "Legacy"),
+    }
+
+
 @pytest.mark.parametrize("dialect", [sqlite.dialect(), mssql.dialect(deprecate_large_types=True)])
 def test_operation_joins_saved_operations_once_per_statement(dialect: Dialect) -> None:
     filters = AttackAnalyticsFilters.model_validate(
@@ -823,6 +898,45 @@ def test_mssql_operation_profiles_group_kind_without_bind_parameters(compare_by:
     ]
     assert any("'legacy_operation_name'" in expression for expression in grouped)
     assert not any("?" in expression for expression in grouped)
+
+
+@pytest.mark.parametrize(
+    ("method", "order"),
+    [
+        ("facet", None),
+        ("rows", "ORDER BY record, rank0, label0, value0, kind1, value1"),
+        ("columns", "ORDER BY record, kind0, value0, rank1, label1, value1"),
+    ],
+)
+def test_mssql_operation_order_ranks_kinds_without_bind_parameters(method: str, order: str | None) -> None:
+    operation = AttackAnalyticsDimension(name="operation")
+    attack_type = AttackAnalyticsDimension(name="attack_type")
+    query = (
+        AttackAnalyticsFacetQuery(dimension=operation)
+        if method == "facet"
+        else AttackAnalyticsQuery(
+            group_by=operation if method == "rows" else attack_type,
+            compare_by=attack_type if method == "rows" else operation,
+        )
+    )
+    compiler = AttackAnalyticsQueryCompiler(dialect="mssql", filters=query.filters)
+    statement = compiler.facet(query) if method == "facet" else compiler.matrix(query)
+    dialect = mssql.dialect(paramstyle="qmark", deprecate_large_types=True)
+    ranks = {
+        id(node): str(node.compile(dialect=dialect, compile_kwargs={"render_postcompile": True}))
+        for node in visitors.iterate(statement)
+        if isinstance(node, Case) and getattr(node.else_, "value", None) == 2
+    }
+    assert ranks
+    for rank in ranks.values():
+        assert re.fullmatch(r"CASE WHEN \(\S+ = 'missing'\) THEN 0 WHEN \(\S+ = 'value'\) THEN 1 ELSE 2 END", rank)
+        assert "?" not in rank
+    sql = str(statement.compile(dialect=dialect, compile_kwargs={"render_postcompile": True}))
+    if order is not None:
+        # A UNION orders only by its selected columns, so the axis label must already be binary-collated.
+        assert sql.endswith(order)
+        index = 0 if method == "rows" else 1
+        assert f"min(axis{index}_members.label{index} COLLATE Latin1_General_100_BIN2) AS label{index}" in sql
 
 
 async def test_results_pagination_never_queries_aggregates_or_scores(sqlite_instance: SQLiteMemory) -> None:
