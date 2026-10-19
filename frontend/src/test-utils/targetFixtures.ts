@@ -18,6 +18,7 @@ export interface FlatTargetInput {
   identifier_hash?: string | null
   identifier?: Partial<TargetIdentifier>
   capabilities?: TargetCapabilities | null
+  supports_history_replay?: boolean
   target_specific_params?: Record<string, unknown> | null
   inner_targets?: FlatTargetInput[] | null
 }
@@ -38,6 +39,7 @@ export function makeTarget(flat: FlatTargetInput): TargetInstance {
     target_registry_name: flat.target_registry_name,
     identifier,
     capabilities: flat.capabilities ?? null,
+    ...(flat.supports_history_replay !== undefined ? { supports_history_replay: flat.supports_history_replay } : {}),
     target_specific_params: flat.target_specific_params ?? null,
     inner_targets: flat.inner_targets ? flat.inner_targets.map(makeTarget) : null,
   }

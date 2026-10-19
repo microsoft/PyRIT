@@ -136,7 +136,7 @@ test.describe("Accessibility", () => {
     await expect(input).toBeVisible({ timeout: 5000 });
 
     // Send button should have accessible name
-    const sendButton = page.getByRole("button", { name: /send/i });
+    const sendButton = page.getByRole("button", { name: "Send message", exact: true });
     await expect(sendButton).toBeVisible();
 
     // New Attack button should have accessible name

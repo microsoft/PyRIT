@@ -80,6 +80,12 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         except ValueError as exc:
             reconstructable = False
             reconstruction_error = str(exc)
+    try:
+        target_obj.validate_history_replay()
+    except ValueError:
+        supports_history_replay = False
+    else:
+        supports_history_replay = True
 
     return TargetInstance(
         target_registry_name=target_registry_name,
@@ -92,6 +98,7 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         ),
         identifier=target_identifier,
         capabilities=target_obj.capabilities,
+        supports_history_replay=supports_history_replay,
         target_specific_params=_target_specific_params(target_identifier),
         inner_targets=_build_inner_targets(target_obj),
     )

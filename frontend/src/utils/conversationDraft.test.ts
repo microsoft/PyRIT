@@ -1,10 +1,140 @@
-import type { ConversationDraftMessage, TargetCapabilities } from '@/types'
+import type { ChatConverterSnapshot, ConversationDraftMessage, TargetCapabilities } from '@/types'
 import { makeTarget } from '@/test-utils/targetFixtures'
 
 import { buildMessagePieces } from './messageMapper'
-import { draftConverterInputs, draftDataTypes, draftMessageToInput, editorTargetDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft } from './conversationDraft'
+import {
+  draftConverterInputs, draftDataTypes, draftMessageToComposer, draftMessageToInput, editorTargetDisabledReason,
+  historyReplayDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft,
+} from './conversationDraft'
 
 describe('conversation drafts', () => {
+  it('returns original text and media with separate conversions and remapped converter stages', () => {
+    const stage = { id: 'stage', converterId: 'base64' }
+    const snapshot: ChatConverterSnapshot = {
+      generation: 'runtime', pipelines: { text: [stage], image: [{ id: 'image-stage', converterId: 'image' }] },
+      workingInputs: { 'pending-text': 'Working text', unrelated: 'Other message' },
+      stageResults: { 'pending-text': [{
+        stageId: stage.id, value: 'Edited output', generated: {
+          converter_id: 'base64', converter_type: 'Base64Converter', input_value: 'Working text',
+          input_data_type: 'text', output_value: 'Generated output', output_data_type: 'text',
+        },
+      }] },
+      errors: { unrelated: 'Other error' }, applied: {},
+    }
+    const file = new File(['image'], 'original.png', { type: 'image/png' })
+    const prompt = draftMessageToComposer({
+      id: 'pending', role: 'user', pieces: [{
+        draftId: 'pending-text', data_type: 'text', original_value: 'Original text',
+        converted_value: 'Edited output', converted_value_data_type: 'text', applied_converter_ids: ['base64'],
+        applied_converter_provenance: ['signed-text'],
+        prompt_metadata: { video_id: 'video' },
+      }, {
+        draftId: 'image', data_type: 'image_path', original_value: '', file, previewUrl: 'blob:original',
+        converted_value: 'converted.png', converted_value_data_type: 'image_path', applied_converter_ids: ['image'],
+        applied_converter_provenance: ['signed-image'],
+      }],
+    }, snapshot)
+    expect(prompt.text).toBe('Original text')
+    expect(prompt.textMetadata).toEqual({ video_id: 'video' })
+    expect(prompt.attachments[0]).toMatchObject({ draftId: 'image', file, url: 'blob:original' })
+    expect(prompt.converters.applied.text).toMatchObject({
+      pieceId: 'text', originalValue: 'Original text', convertedValue: 'Edited output', converterInstanceIds: ['base64'],
+      converterProvenance: ['signed-text'],
+    })
+    expect(prompt.converters.applied.image).toMatchObject({
+      pieceId: 'image', convertedValue: 'converted.png', converterInstanceIds: ['image'],
+      converterProvenance: ['signed-image'],
+    })
+    expect(prompt.converters.stageResults.text).toEqual(snapshot.stageResults['pending-text'])
+    expect(prompt.converters.workingInputs).toEqual({ text: 'Working text' })
+    expect(prompt.converters.errors).toEqual({})
+    expect(prompt.converters.pipelines).toEqual(snapshot.pipelines)
+  })
+
+  it('keeps a text-to-file conversion separate from its original prompt', () => {
+    const prompt = draftMessageToComposer({
+      id: 'pending', role: 'user', pieces: [{
+        draftId: 'pending-text', data_type: 'text', original_value: 'Make an image',
+        converted_value: 'output.png', converted_value_data_type: 'image_path', applied_converter_ids: ['draw'],
+      }],
+    }, { generation: 'runtime', pipelines: {}, stageResults: {}, workingInputs: {}, errors: {}, applied: {} })
+    expect(prompt.text).toBe('Make an image')
+    expect(prompt.attachments).toEqual([])
+    expect(prompt.converters.applied.text).toMatchObject({
+      convertedValue: 'output.png', convertedDataType: 'image_path', originalValue: 'Make an image',
+    })
+  })
+
+  it('combines text pieces without replacing their originals with converted text or clearing pipelines', () => {
+    const pipelines = { text: [{ id: 'stage', converterId: 'base64' }] }
+    const prompt = draftMessageToComposer({
+      id: 'pending', role: 'user', pieces: [{
+        draftId: 'one', data_type: 'text', original_value: 'First', converted_value: 'Converted first',
+      }, { draftId: 'two', data_type: 'text', original_value: 'Second' }],
+    }, { generation: 'runtime', pipelines, stageResults: {}, workingInputs: {}, errors: {}, applied: {} })
+    expect(prompt.text).toBe('First\nSecond')
+    expect(prompt.converters.applied.text.convertedValue).toBe('Converted first\nSecond')
+    expect(prompt.converters.applied.text.manuallyEdited).toBe(true)
+    expect(prompt.converters.pipelines).toEqual(pipelines)
+    expect(prompt.notice).toContain('Multiple text pieces')
+  })
+
+  it.each([
+    [false, false], [true, false], [true, true],
+  ])('allows a fresh request for multi-turn=%s and editable=%s', (multiTurn: boolean, editable: boolean) => {
+    const target = makeTarget({
+      target_registry_name: 'fresh',
+      capabilities: { supports_multi_turn: multiTurn, supports_editable_history: editable, supported_input_modalities: ['text'] },
+    })
+    expect(historyReplayDisabledReason(target, [])).toBeUndefined()
+    expect(editorTargetDisabledReason(target, ['text'], [])).toBeUndefined()
+    expect(editorTargetDisabledReason(target, ['image_path'], [])).toMatch(/image_path/)
+  })
+
+  it.each(['user', 'assistant', 'simulated_assistant', 'tool', 'simulated_tool'])(
+    'rejects replayed %s history without editable history, but allows an editable target', (role: string) => {
+      const target = makeTarget({
+        target_registry_name: 'immutable',
+        capabilities: { supports_multi_turn: true, supports_editable_history: false, supported_input_modalities: ['text'] },
+      })
+      expect(historyReplayDisabledReason(target, [{ role }])).toMatch(/editable history/)
+      const editable = makeTarget({
+        target_registry_name: 'editable',
+        capabilities: { supports_multi_turn: true, supports_editable_history: true, supported_input_modalities: ['text'] },
+      })
+      expect(historyReplayDisabledReason(editable, [{ role }])).toBeUndefined()
+    },
+  )
+
+  it.each([false, true])('uses effective replay support for an adapted single-turn=%s target', (singleTurn: boolean) => {
+    const target = makeTarget({
+      target_registry_name: 'adapted',
+      supports_history_replay: true,
+      capabilities: {
+        supports_multi_turn: !singleTurn, supports_editable_history: false, supported_input_modalities: ['text'],
+      },
+    })
+    const history = [{ role: 'user' }, { role: 'assistant' }]
+    expect(historyReplayDisabledReason(target, history)).toBeUndefined()
+    expect(editorTargetDisabledReason(target, ['text'], history)).toBeUndefined()
+    expect(historyReplayDisabledReason({ ...target, supports_history_replay: false }, history)).toBeDefined()
+    expect(editorTargetDisabledReason(target, ['image_path'], history)).toMatch(/image_path/)
+  })
+
+  it('allows initial system setup only with system-prompt and multi-turn support', () => {
+    const history = [{ role: 'system' }, { role: 'developer' }]
+    const target = makeTarget({
+      target_registry_name: 'system-bootstrap',
+      capabilities: { supports_multi_turn: true, supports_editable_history: false, supports_system_prompt: true },
+    })
+    expect(historyReplayDisabledReason(target, history)).toBeUndefined()
+    expect(historyReplayDisabledReason(target, [...history, { role: 'simulated_assistant' }])).toBeDefined()
+    expect(historyReplayDisabledReason(makeTarget({
+      target_registry_name: 'no-system',
+      capabilities: { supports_multi_turn: true, supports_editable_history: false, supports_system_prompt: false },
+    }), history)).toBeDefined()
+  })
+
   it('preserves text-only remix metadata through composer restoration and request construction', async () => {
     const prompt = draftMessageToInput({
       id: 'user', role: 'user', pieces: [{

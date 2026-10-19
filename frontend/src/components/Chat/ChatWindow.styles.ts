@@ -3,7 +3,21 @@ import { mobileTouchTarget, NARROW_VIEWPORT_QUERY } from '../../styles/touchTarg
 
 import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
 
+export const CHAT_NOTICE_FADE_DURATION_MS = 200
+
 export const useChatWindowStyles = makeStyles({
+  infoNotice: {
+    opacity: 1,
+    transitionProperty: 'opacity',
+    transitionDuration: `${CHAT_NOTICE_FADE_DURATION_MS}ms`,
+    transitionTimingFunction: 'ease-out',
+    '@media (prefers-reduced-motion: reduce)': {
+      transitionDuration: '0ms',
+    },
+  },
+  fadingInfoNotice: {
+    opacity: 0,
+  },
   root: {
     display: 'flex',
     height: '100%',

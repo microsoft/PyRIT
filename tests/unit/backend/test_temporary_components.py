@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.models.attacks import (
     CreateAttackRequest,
+    CreateConversationRequest,
     MessagePieceRequest,
     MessageRequest,
     SaveConversationRequest,
@@ -27,7 +28,7 @@ from pyrit.backend.models.scorers import CreateScorerRequest
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.routes import converters, scorers, targets
 from pyrit.backend.services.attack_service import AttackService
-from pyrit.backend.services.component_lifecycle import construct_component_async
+from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
 from pyrit.backend.services.converter_service import ConverterService, get_converter_service
 from pyrit.backend.services.manual_send_scheduler import ManualSendScheduler
 from pyrit.backend.services.message_send_service import MessageSendService, resolve_applied_converter_identifiers
@@ -442,6 +443,7 @@ class TestTemporaryComponents:
                 request=CreateAttackRequest(
                     target_registry_name="source",
                     target_binding=binding,
+                    system_prompt="Test setup",
                 )
             )
             [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[created.attack_result_id])
@@ -457,7 +459,23 @@ class TestTemporaryComponents:
                 target_binding=binding,
                 messages=[MessageRequest(role="user", pieces=[MessagePieceRequest(original_value="test")])],
             )
-            await service.save_conversation_async(request=request)
+            saved = await service.save_conversation_async(request=request)
+            with patch(
+                "pyrit.backend.services.attack_service.release_component_async", wraps=release_component_async
+            ) as release:
+                branch = await service.create_related_conversation_async(
+                    attack_result_id=created.attack_result_id,
+                    request=CreateConversationRequest(
+                        source_conversation_id=saved.messages.conversation_id,
+                        cutoff_index=0,
+                    ),
+                )
+            assert branch is not None
+            release.assert_awaited_once()
+            private = release.await_args.args[0]
+            assert private.get_identifier().hash == binding.effective_hash
+            assert private._client.is_closed()
+            assert not source._client.is_closed()
             request.target_binding = binding.model_copy(update={"temperature": 1.2})
             request.save_id = uuid.uuid4()
             with pytest.raises(ValueError, match="keep its temperature"):
