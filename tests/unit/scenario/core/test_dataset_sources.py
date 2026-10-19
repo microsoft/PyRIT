@@ -7,18 +7,23 @@ import asyncio
 import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import closing
+from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import aiofiles
 import pytest
 from sqlalchemy import event
 from sqlalchemy.exc import SQLAlchemyError
 from unit.mocks import MockPromptTarget
 
 from pyrit.datasets import SeedDatasetProvider
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
+from pyrit.memory.memory_interface import PreparedSeedBatch
 from pyrit.memory.memory_models import SeedEntry
 from pyrit.models import (
     AllAvailableDatasetSize,
@@ -39,8 +44,13 @@ from pyrit.scenario import (
     DatasetSource,
     Scenario,
 )
-from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, ScenarioTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetConstraintError, require_min_size, require_seed_type
+from pyrit.scenario.core import AtomicAttack, AttackTechnique, BaselineAttackPolicy, ScenarioTechnique
+from pyrit.scenario.core.dataset_configuration import (
+    DatasetConstraintError,
+    ResolvedDataset,
+    require_min_size,
+    require_seed_type,
+)
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import SubStringScorer
 from test_support.fixtures import use_sqlite_memory
@@ -63,6 +73,7 @@ def _copy_memory_to_file(*, source: SQLiteMemory, path: Path) -> SQLiteMemory:
     memory = SQLiteMemory.__new__(SQLiteMemory)
     with patch.object(memory, "cleanup"):
         memory.__init__(db_path=path, skip_schema_migration=True)
+    memory.results_path = source.results_path
     return memory
 
 
@@ -86,6 +97,11 @@ def memory() -> MagicMock:
         side_effect=lambda *, dataset_name, **kwargs: populations.get(dataset_name, [])
     )
     instance.add_seed_datasets_to_memory_async = AsyncMock()
+    instance.prepare_seed_batch_async = AsyncMock(
+        side_effect=lambda *, seeds, added_by: PreparedSeedBatch(
+            _seeds=tuple(seed.model_copy(deep=True) for seed in seeds)
+        )
+    )
     return instance
 
 
@@ -810,15 +826,15 @@ async def test_refresh_checks_all_fetches_before_independent_writes_async(
         sources=[DatasetSource(name=provider.dataset_name, provider=provider) for provider in (first, last)],
         fetch=DatasetFetchPolicy.ALWAYS,
     )
-    replace = sqlite_instance.replace_seeds_for_dataset_async
+    replace = sqlite_instance.replace_prepared_seed_batch_async
 
-    async def replace_async(*, dataset_name: str, seeds: list[SeedObjective], added_by: str) -> int:
+    async def replace_async(*, dataset_name: str, batch: PreparedSeedBatch) -> int:
         if failure == "write" and dataset_name == "last":
             raise RuntimeError("Last write failed")
-        return await replace(dataset_name=dataset_name, seeds=seeds, added_by=added_by)
+        return await replace(dataset_name=dataset_name, batch=batch)
 
     with (
-        patch.object(sqlite_instance, "replace_seeds_for_dataset_async", side_effect=replace_async),
+        patch.object(sqlite_instance, "replace_prepared_seed_batch_async", side_effect=replace_async),
         pytest.raises((RuntimeError, DatasetConstraintError), match="Last .* failed|must return"),
     ):
         await config.prepare_async()
@@ -966,6 +982,126 @@ class _RefreshValidationScenario(Scenario):
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         raise AssertionError("Invalid candidates must fail before attack construction.")
+
+
+class _PreparedRefreshScenario(_RefreshValidationScenario):
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        return [
+            AtomicAttack(
+                atomic_attack_name="fresh",
+                attack_technique=AttackTechnique(attack=PromptSendingAttack(objective_target=context.objective_target)),
+                seed_groups=list(context.seed_groups),
+            )
+        ]
+
+
+class _JsonSeedProvider(SeedDatasetProvider):
+    should_register = False
+
+    def __init__(self, *, path: Path) -> None:
+        self.path = path
+        self.fetched: SeedDataset | None = None
+
+    @property
+    def dataset_name(self) -> str:
+        return "fresh"
+
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+        async with aiofiles.open(self.path, encoding="utf-8") as handle:
+            self.fetched = SeedDataset.model_validate_json(await handle.read())
+        return self.fetched
+
+
+@pytest.mark.parametrize("policy", [DatasetFetchPolicy.IF_MISSING, DatasetFetchPolicy.ALWAYS])
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"value_sha256": [sha256(b"Fresh apple").hexdigest()]},
+        {"value_sha256": [sha256(b"Fresh apple").hexdigest()], "harm_categories": ["fruit"]},
+    ],
+)
+async def test_fresh_json_provider_matches_stored_derived_filters_async(
+    *, file_memory: SQLiteMemory, tmp_path: Path, policy: DatasetFetchPolicy, filters: dict[str, list[str]]
+) -> None:
+    source = SeedDataset(
+        dataset_name="fresh",
+        seeds=[
+            SeedObjective(value="Fresh apple", dataset_name="fresh", added_by="provider", harm_categories=["fruit"])
+        ],
+    )
+    path = tmp_path / "fresh.json"
+    async with aiofiles.open(path, "w", encoding="utf-8") as handle:
+        await handle.write(source.model_dump_json())
+    if policy is DatasetFetchPolicy.ALWAYS:
+        await file_memory.add_seeds_to_memory_async(seeds=dataset("fresh", 3).seeds, added_by="user")
+    provider = _JsonSeedProvider(path=path)
+    validated: list[dict[str, Any]] = []
+
+    def validate_prepared(resolved: ResolvedDataset) -> None:
+        assert all(seed.added_by == "DatasetConfiguration" and seed.date_added is not None for seed in resolved.seeds)
+        validated.extend(seed.model_dump(mode="json") for seed in resolved.seeds)
+
+    config = DatasetAttackConfiguration(
+        sources=[DatasetSource(name="fresh", provider=provider)],
+        fetch=policy,
+        filters=filters,
+        validators=[validate_prepared],
+    )
+    scenario = _PreparedRefreshScenario(config=config)
+    scenario.set_params_from_args(args={"objective_target": MockPromptTarget()})
+    with patch.object(
+        file_memory, "_prepare_seed_for_storage_async", wraps=file_memory._prepare_seed_for_storage_async
+    ) as prepare:
+        await scenario.initialize_async()
+        assert prepare.await_count == 1
+    stored = await file_memory.get_seeds_async(dataset_name="fresh", **filters)
+    assert len(stored) == 1
+    assert stored[0].value == "Fresh apple"
+    assert stored[0].value_sha256 == sha256(b"Fresh apple").hexdigest()
+    assert stored[0].added_by == "DatasetConfiguration"
+    assert stored[0].model_dump(mode="json") == validated[0]
+    assert len(await config.get_attack_seed_groups_async()) == 1
+    assert provider.fetched is not None
+    if policy is DatasetFetchPolicy.ALWAYS:
+        assert provider.fetched.seeds[0].value_sha256 is None
+        assert provider.fetched.seeds[0].added_by == "provider"
+
+
+@pytest.mark.parametrize("failure", ["validation", "preparation"])
+async def test_refresh_batches_prepare_all_sources_before_any_commit_async(
+    *, file_memory: SQLiteMemory, failure: str
+) -> None:
+    await file_memory.add_seeds_to_memory_async(seeds=dataset("fresh", 3).seeds, added_by="user")
+    before = {seed.id: seed.value for seed in await file_memory.get_seeds_async(dataset_name="fresh")}
+    providers = []
+    for name in ("fresh", "new"):
+        provider = MagicMock(spec=SeedDatasetProvider)
+        provider.dataset_name = name
+        provider.fetch_dataset_async.return_value = dataset(name, 2)
+        providers.append(provider)
+    config = DatasetAttackConfiguration(
+        sources=[
+            DatasetSource(name="fresh", fetch=DatasetFetchPolicy.ALWAYS, provider=providers[0]),
+            DatasetSource(name="new", provider=providers[1]),
+        ],
+        validators=[require_min_size(6)] if failure == "validation" else [],
+    )
+    prepare = file_memory._prepare_seed_for_storage_async
+
+    async def prepare_async(*, prompt: Seed[Any], added_by: str | None, current_time: datetime) -> None:
+        if prompt.dataset_name == "new" and failure == "preparation":
+            raise RuntimeError("Later seed preparation failed")
+        await prepare(prompt=prompt, added_by=added_by, current_time=current_time)
+
+    with (
+        patch.object(file_memory, "_prepare_seed_for_storage_async", side_effect=prepare_async),
+        pytest.raises((RuntimeError, DatasetConstraintError), match="failed|require at least"),
+    ):
+        await config.prepare_async()
+    assert {seed.id: seed.value for seed in await file_memory.get_seeds_async(dataset_name="fresh")} == before
+    assert await file_memory.get_seeds_async(dataset_name="new") == []
+    for provider in providers:
+        assert all(seed.value_sha256 is None for seed in provider.fetch_dataset_async.return_value.seeds)
 
 
 @pytest.mark.parametrize("failure", ["group", "minimum"])

@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 
     from pyrit.datasets import SeedDatasetProvider
     from pyrit.memory import MemoryInterface
+    from pyrit.memory.memory_interface import PreparedSeedBatch
 
 # Dataset-name label that inline ``seeds`` / ``seed_groups`` carry in by-dataset views, since
 # they have no real dataset name. Inline and named sources are mutually exclusive, so this
@@ -597,23 +598,28 @@ class DatasetConfiguration:
             SeedDataset.group_seed_prompts_by_prompt_group_id(dataset.seeds)
             fetched[name] = dataset
         if any(policies[name] is DatasetFetchPolicy.ALWAYS for name in fetched):
-            await self._validate_refresh_candidates_async(fetched=fetched)
-        for name, dataset in fetched.items():
-            refresh = policies[name] is DatasetFetchPolicy.ALWAYS
-            if refresh:
-                await self._memory.replace_seeds_for_dataset_async(
-                    dataset_name=name, seeds=dataset.seeds, added_by="DatasetConfiguration"
-                )
-            else:
-                await self._memory.add_seed_datasets_to_memory_async(
-                    datasets=[dataset], added_by="DatasetConfiguration"
-                )
+            await self._commit_refresh_candidates_async(fetched=fetched, policies=policies)
+            return
+        for dataset in fetched.values():
+            await self._memory.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="DatasetConfiguration")
 
-    async def _validate_refresh_candidates_async(self, *, fetched: dict[str, SeedDataset]) -> None:
-        """Resolve task-local candidate copies without changing stored or reusable state."""
-        candidates: dict[str, list[Seed[Any]]] = {
-            name: [seed.model_copy(deep=True) for seed in dataset.seeds] for name, dataset in fetched.items()
+    async def _commit_refresh_candidates_async(
+        self, *, fetched: dict[str, SeedDataset], policies: dict[str, DatasetFetchPolicy]
+    ) -> None:
+        prepared = {
+            name: await self._memory.prepare_seed_batch_async(seeds=dataset.seeds, added_by="DatasetConfiguration")
+            for name, dataset in fetched.items()
         }
+        await self._validate_refresh_candidates_async(prepared=prepared)
+        for name, batch in prepared.items():
+            if policies[name] is DatasetFetchPolicy.ALWAYS:
+                await self._memory.replace_prepared_seed_batch_async(dataset_name=name, batch=batch)
+            else:
+                await self._memory.add_prepared_seed_batch_async(batch)
+
+    async def _validate_refresh_candidates_async(self, *, prepared: dict[str, PreparedSeedBatch]) -> None:
+        """Resolve task-local copies of storage-ready snapshots without modifying them."""
+        candidates = {name: batch.seeds for name, batch in prepared.items()}
         token = _candidate_populations.set(candidates)
         try:
             await self.with_overrides()._validate_candidate_population_async()

@@ -172,7 +172,10 @@ Options:
   Refresh can remove manual edits and prevent older runs from resuming. All provider results
   are fetched and checked before any dataset write. Candidates and retained sources must
   pass the same filters, custom grouping, and child/compound validators used by normal reads,
-  without sampling. A fetch, grouping, or validation failure keeps every dataset unchanged.
+  without sampling. Memory prepares copied candidates first, including checksums, attribution,
+  timestamps, and media metadata. Commit that prepared snapshot without preparing it again.
+  A fetch, preparation, grouping, or validation failure keeps every dataset unchanged.
+  Media preparation may leave unreferenced files when validation fails; stored seed rows remain unchanged.
   Storage commits remain per dataset: a later write failure does not undo an earlier successful write.
   Generation count and selection limits are separate; filters and limits do not reduce the
   replacement. Use a new dataset name to keep another generated batch.

@@ -156,6 +156,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class PreparedSeedBatch:
+    """A storage-ready seed snapshot created by memory, before database writes."""
+
+    _seeds: tuple[Seed[Any], ...]
+
+    @property
+    def seeds(self) -> list[Seed[Any]]:
+        """Independent copies of the prepared seeds for candidate validation."""
+        return [seed.model_copy(deep=True) for seed in self._seeds]
+
+
 class AttackStateConflictError(ValueError):
     """An atomic attack write no longer matches the state read by its caller."""
 
@@ -4172,7 +4184,10 @@ class MemoryInterface(abc.ABC):
         self, *, seeds: Sequence[Seed[Any]], filters: Mapping[str, Any]
     ) -> list[Seed[Any]]:
         """
-        Apply the backend's seed predicates to candidate rows without storing them.
+        Apply the backend's seed predicates to storage-ready candidates without storing them.
+
+        Use ``prepare_seed_batch_async`` before this read so storage-derived fields have
+        the same values as persisted rows.
 
         Returns:
             list[Seed]: Matching candidates in input order, with their original identities.
@@ -4649,6 +4664,42 @@ class MemoryInterface(abc.ABC):
 
         await set_seed_sha256_async(prompt)
 
+    async def _prepare_seeds_for_storage_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None) -> None:
+        current_time = datetime.now(tz=UTC)
+        for seed in seeds:
+            await self._prepare_seed_for_storage_async(prompt=seed, added_by=added_by, current_time=current_time)
+
+    async def prepare_seed_batch_async(
+        self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None
+    ) -> PreparedSeedBatch:
+        """
+        Prepare copied seeds once for validation and subsequent persistence.
+
+        Computes checksums, attribution, timestamps, and encoding metadata through the
+        normal storage path. Media may be copied into managed storage; no database rows
+        are written. Rejected batches can leave unreferenced media, not changed seed rows.
+
+        Args:
+            seeds (Sequence[Seed]): Caller-owned seeds to copy and prepare.
+            added_by (str | None): Attribution override, matching normal insertion.
+
+        Returns:
+            PreparedSeedBatch: Storage-ready seeds, isolated from caller and validator mutations.
+        """
+        copies = [seed.model_copy(deep=True) for seed in seeds]
+        SeedDataset.group_seed_prompts_by_prompt_group_id(copies)
+        await self._prepare_seeds_for_storage_async(seeds=copies, added_by=added_by)
+        return PreparedSeedBatch(_seeds=tuple(SeedEntry(entry=seed).get_seed() for seed in copies))
+
+    async def add_prepared_seed_batch_async(self, batch: PreparedSeedBatch) -> None:
+        """
+        Insert prepared seeds with normal deduplication, without preparing them again.
+
+        Args:
+            batch (PreparedSeedBatch): The snapshot returned by ``prepare_seed_batch_async``.
+        """
+        await self._run_database_operation_async(self._insert_prepared_seeds, seeds=batch.seeds)
+
     async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None) -> None:
         """
         Insert a list of seeds into the memory storage.
@@ -4667,10 +4718,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the 'added_by' attribute is not set for each prompt.
         """
-        current_time = datetime.now(tz=UTC)
-        for prompt in seeds:
-            await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
-
+        await self._prepare_seeds_for_storage_async(seeds=seeds, added_by=added_by)
         await self._run_database_operation_async(self._insert_prepared_seeds, seeds=seeds)
 
     def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
@@ -5186,6 +5234,32 @@ class MemoryInterface(abc.ABC):
                 to another dataset, or the seed groups are structurally invalid.
             SQLAlchemyError: If the replacement fails; the transaction is rolled back first.
         """
+        self._validate_seed_replacement(dataset_name=dataset_name, seeds=seeds)
+        await self._prepare_seeds_for_storage_async(seeds=seeds, added_by=added_by)
+        return await self.replace_prepared_seed_batch_async(
+            dataset_name=dataset_name, batch=PreparedSeedBatch(_seeds=tuple(seeds))
+        )
+
+    async def replace_prepared_seed_batch_async(self, *, dataset_name: str, batch: PreparedSeedBatch) -> int:
+        """
+        Atomically replace a dataset with the prepared snapshot, without reprocessing media or hashes.
+
+        Args:
+            dataset_name (str): Dataset whose rows are replaced.
+            batch (PreparedSeedBatch): The snapshot returned by ``prepare_seed_batch_async``.
+
+        Returns:
+            int: The number of replaced seed rows.
+        """
+        seeds = batch.seeds
+        self._validate_seed_replacement(dataset_name=dataset_name, seeds=seeds)
+        entries = [SeedEntry(entry=seed) for seed in seeds]
+        return await self._run_database_operation_async(
+            self._replace_prepared_seeds, dataset_name=dataset_name, entries=entries
+        )
+
+    @staticmethod
+    def _validate_seed_replacement(*, dataset_name: str, seeds: Sequence[Seed[Any]]) -> None:
         if not dataset_name:
             raise ValueError("dataset_name must be a non-empty string.")
         if not seeds:
@@ -5202,15 +5276,6 @@ class MemoryInterface(abc.ABC):
             )
 
         SeedDataset.group_seed_prompts_by_prompt_group_id(seeds)
-        current_time = datetime.now(tz=UTC)
-        entries: list[SeedEntry] = []
-        for prompt in seeds:
-            await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
-            entries.append(SeedEntry(entry=prompt))
-
-        return await self._run_database_operation_async(
-            self._replace_prepared_seeds, dataset_name=dataset_name, entries=entries
-        )
 
     def _replace_prepared_seeds(self, *, dataset_name: str, entries: Sequence[SeedEntry]) -> int:
         """

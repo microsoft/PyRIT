@@ -4,6 +4,8 @@
 import os
 import tempfile
 from collections.abc import Sequence
+from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -32,6 +34,9 @@ from pyrit.models import MessagePiece, SeedDataset, SeedGroup, SeedObjective, Se
         {"authors": ["Jones"]},
         {"origin": SeedOrigin.USER},
         {"value": "candidate-2"},
+        {"value_sha256": [sha256(b"candidate-2").hexdigest()]},
+        {"added_by": "test"},
+        {"value_sha256": [sha256(b"candidate-2").hexdigest()], "added_by": "test"},
     ],
 )
 async def test_candidate_filters_match_stored_queries_without_writes_async(
@@ -68,14 +73,96 @@ async def test_candidate_filters_match_stored_queries_without_writes_async(
 
     event.listen(sqlite_instance.engine, "before_cursor_execute", capture)
     try:
-        actual = await sqlite_instance.filter_seed_candidates_async(seeds=seeds, filters=filters)
+        prepared = await sqlite_instance.prepare_seed_batch_async(seeds=seeds, added_by="test")
+        assert all(seed.value_sha256 is None and seed.added_by is None for seed in seeds)
+        assert all(seed.value_sha256 is not None and seed.added_by == "test" for seed in prepared.seeds)
+        actual = await sqlite_instance.filter_seed_candidates_async(seeds=prepared.seeds, filters=filters)
     finally:
         event.remove(sqlite_instance.engine, "before_cursor_execute", capture)
     assert [seed.id for seed in actual] == [seed.id for seed in seeds if seed.id in {item.id for item in expected}]
     assert await sqlite_instance.get_seeds_async(dataset_name="candidate") == []
     for statement in statements:
+        assert not statement.is_dml
         compiled = str(statement.compile(dialect=mssql.dialect()))
         assert "FROM [SeedPromptEntries]" not in compiled
+
+
+@pytest.mark.parametrize("replace", [False, True])
+async def test_prepared_seed_snapshot_is_committed_without_reprocessing_async(
+    *, sqlite_instance: MemoryInterface, replace: bool
+) -> None:
+    source = SeedObjective(
+        value="Fresh apple", dataset_name="candidate", added_by="provider", metadata={"scope": "original"}
+    )
+    prepared = await sqlite_instance.prepare_seed_batch_async(seeds=[source], added_by="test")
+    validated = prepared.seeds[0]
+    assert validated.added_by == "test"
+    assert validated.date_added is not None
+    assert validated.value_sha256 == sha256(b"Fresh apple").hexdigest()
+    expected = validated.model_dump(mode="json")
+    source.value = "Changed by caller"
+    validated.value = "Changed by validator"
+    validated.metadata["scope"] = "changed"
+    with patch.object(
+        sqlite_instance, "_prepare_seed_for_storage_async", side_effect=AssertionError("Must prepare only once")
+    ):
+        if replace:
+            await sqlite_instance.replace_prepared_seed_batch_async(dataset_name="candidate", batch=prepared)
+        else:
+            await sqlite_instance.add_prepared_seed_batch_async(prepared)
+    stored = await sqlite_instance.get_seeds_async(dataset_name="candidate")
+    assert len(stored) == 1
+    assert stored[0].model_dump(mode="json") == expected
+    assert source.value_sha256 is None and source.added_by == "provider"
+
+
+@pytest.mark.parametrize("replace", [False, True])
+@pytest.mark.usefixtures("patch_central_database")
+async def test_prepared_media_keeps_the_validated_path_hash_and_metadata_async(
+    *, sqlite_instance: MemoryInterface, tmp_path: Path, replace: bool
+) -> None:
+    import asyncio
+
+    from PIL import Image
+
+    path = tmp_path / "source.png"
+
+    def save_image() -> bytes:
+        Image.new("RGB", (2, 2), color="red").save(path)
+        return path.read_bytes()
+
+    content = await asyncio.to_thread(save_image)
+    source = SeedPrompt(value=str(path), dataset_name="candidate", data_type="image_path")
+    with patch.object(
+        sqlite_instance, "_serialize_seed_value_async", wraps=sqlite_instance._serialize_seed_value_async
+    ) as serialize:
+        prepared = await sqlite_instance.prepare_seed_batch_async(seeds=[source], added_by="test")
+        candidate = prepared.seeds[0]
+        assert candidate.value != str(path)
+        assert candidate.value_sha256 == sha256(content).hexdigest()
+        assert candidate.metadata["format"] == "png"
+        assert serialize.await_count == 1
+        assert await sqlite_instance.get_seeds_async(dataset_name="candidate") == []
+        selected = await sqlite_instance.filter_seed_candidates_async(
+            seeds=prepared.seeds,
+            filters={
+                "value_sha256": [candidate.value_sha256],
+                "metadata": {"format": "png"},
+                "added_by": "test",
+                "data_types": ["image_path"],
+            },
+        )
+        assert len(selected) == 1 and selected[0].id == source.id
+        if replace:
+            await sqlite_instance.replace_prepared_seed_batch_async(dataset_name="candidate", batch=prepared)
+        else:
+            await sqlite_instance.add_prepared_seed_batch_async(prepared)
+        assert serialize.await_count == 1
+    stored = (await sqlite_instance.get_seeds_async(dataset_name="candidate"))[0]
+    assert stored.model_dump(mode="json") == candidate.model_dump(mode="json")
+    assert await asyncio.to_thread(Path(stored.value).read_bytes) == content
+    assert source.value == str(path) and source.value_sha256 is None
+    assert not source.metadata.get("format")
 
 
 async def test_replacement_rejects_invalid_group_without_deleting_old_rows_async(
