@@ -53,6 +53,7 @@ no queries, migration, repair, or database-setting changes.
 
 ```python
 from pyrit.analytics import AttackResultAnalytics
+from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackAnalyticsDimension,
     AttackAnalyticsFacetQuery,
@@ -63,6 +64,8 @@ from pyrit.models import (
     AttackAnalyticsValue,
 )
 
+operation = (await CentralMemory.get_memory_instance().get_operations_async(name="operation-a"))[0]
+
 async with AttackResultAnalytics() as analytics:
     report = await analytics.query_async(
         query=AttackAnalyticsQuery(
@@ -70,7 +73,7 @@ async with AttackResultAnalytics() as analytics:
                 dimensions=[
                     AttackAnalyticsFilter(
                         dimension=AttackAnalyticsDimension(name="operation"),
-                        values=[AttackAnalyticsValue(value="operation-a")],
+                        values=[AttackAnalyticsValue(value=str(operation.id))],
                     )
                 ]
             ),
@@ -101,6 +104,9 @@ async with AttackResultAnalytics() as analytics:
         )
     )
 ```
+
+Activity saved with only an Operation name, not an Operation ID, uses
+`AttackAnalyticsValue(kind="legacy_operation_name", value="...")`.
 
 ### The same statistics for scenario units
 
@@ -581,7 +587,8 @@ without discovering user dotenv files, the existing `PYTHON_DOTENV_DISABLED=1`
 setting can be used; it does not control whether the test runs.
 
 The deterministic data contains 100,000 result IDs, two per conversation, all
-outcomes and result roles, 100 skewed operations (the largest exceeds 60%), 50
+outcomes and result roles, skewed operations (one saved Operation holds 60%; the
+rest use 100 legacy Operation names), 50
 operators, 40 overlapping harm categories, 64 shared identifier configurations,
 eight models, overlapping converter pairs, known empty pipelines, supported
 legacy documents, missing identifiers, and 100,000 distinct case labels.

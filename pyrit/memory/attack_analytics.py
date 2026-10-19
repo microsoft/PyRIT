@@ -670,7 +670,9 @@ class AttackAnalyticsReader:
             kind = AttackAnalyticsValueKind(record[f"kind{index}"])
             key = AttackAnalyticsValue(
                 kind=kind,
-                value=record[f"value{index}"] if kind is AttackAnalyticsValueKind.VALUE else None,
+                value=record[f"value{index}"]
+                if kind in {AttackAnalyticsValueKind.VALUE, AttackAnalyticsValueKind.LEGACY_OPERATION_NAME}
+                else None,
             )
         except ValidationError as error:
             if any(issue["type"] == "string_too_long" for issue in error.errors()):
