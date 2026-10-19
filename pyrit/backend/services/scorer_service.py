@@ -16,7 +16,21 @@ from pyrit.backend.models.scorers import (
 )
 from pyrit.models.catalog.scorer import ScorerInstance
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
+from pyrit.models.parameter import Parameter
 from pyrit.registry import ScorerRegistry
+
+
+def _names_server_file(parameter: Parameter) -> bool:
+    """
+    Return whether a scorer parameter names a file on the server.
+
+    Args:
+        parameter (Parameter): The scorer constructor parameter.
+
+    Returns:
+        bool: True for ``Path`` and ``Path | str`` parameters.
+    """
+    return parameter.is_path or parameter.is_path_or_str
 
 
 class ScorerService:
@@ -40,7 +54,9 @@ class ScorerService:
 
         Each entry lists only the parameters external callers may supply, each
         described in the form callers send it; types that need a Python object for a
-        required parameter are left out.
+        required parameter are left out. Parameters that name a file on the server,
+        and types that require one, are left out too, so callers cannot choose a
+        server file for a scorer to read.
 
         Returns:
             ScorerTypeResponse: Scorer type metadata for external callers.
@@ -53,13 +69,17 @@ class ScorerService:
                     parameters=[
                         parameter.for_external_catalog()
                         for parameter in metadata.parameters
-                        if parameter.is_external_input
+                        if parameter.is_external_input and not _names_server_file(parameter)
                     ],
                     is_llm_based=metadata.is_llm_based,
                     description=metadata.class_description or None,
                 )
                 for metadata in self._registry.get_all_registered_class_metadata()
-                if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
+                if all(
+                    parameter.is_external_input and not _names_server_file(parameter)
+                    for parameter in metadata.parameters
+                    if parameter.required
+                )
             ]
             return ScorerTypeResponse(items=items)
 
@@ -108,13 +128,27 @@ class ScorerService:
         """
         Build and register a scorer through the shared registry resolver.
 
+        A parameter that names a file on the server is rejected before the scorer is
+        built, so the server never reads a file a caller chose.
+
         Returns:
             ScorerInstance: The registered scorer and its identifier.
+
+        Raises:
+            ValueError: If the scorer type is unknown, a parameter names a file on the
+                server, or the registry or scorer rejects the parameters.
         """
 
         def create() -> ScorerInstance:
             if request.type not in self._registry:
                 raise ValueError(f"Scorer type '{request.type}' not found")
+            metadata = self._registry.get_registered_class_metadata(request.type)
+            for parameter in metadata.parameters if metadata else []:
+                if parameter.name in request.params and _names_server_file(parameter):
+                    raise ValueError(
+                        f"Parameter '{parameter.name}' of '{request.type}' names a server file and cannot be set "
+                        "through the API; pass it from Python or an initializer instead."
+                    )
             scorer = self._registry.create_named_instance(
                 name=request.name,
                 type_name=request.type,
