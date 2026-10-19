@@ -15,6 +15,8 @@ import string
 from collections import Counter
 from enum import Enum
 
+from pyrit.converter.puzzled._text import _letter_units
+
 # Eight placement directions for the word search: right, left, down, up, and the four
 # diagonals. Each is a (row_delta, col_delta) step.
 _DIRECTIONS = (
@@ -63,6 +65,7 @@ def _upper_same_length(word: str) -> str:
     ``str.upper`` expands some letters ("ß" becomes "SS", "ﬁ" becomes "FI"), which would make
     an encoded word longer than its clue. It also changes the case-folded spelling of dotless
     "ı" to "i", merging distinct words. Keep a character unchanged when either would happen.
+    Combining marks are retained, even when uppercasing would turn one into a letter.
 
     Args:
         word (str): The word to uppercase.
@@ -71,29 +74,31 @@ def _upper_same_length(word: str) -> str:
         str: The uppercased word, preserving its length and case-folded spelling.
     """
     return "".join(
-        upper if len(upper := char.upper()) == 1 and upper.casefold() == char.casefold() else char for char in word
+        upper if char.isalpha() and len(upper := char.upper()) == 1 and upper.casefold() == char.casefold() else char
+        for char in word
     )
 
 
-def _normalize(words: list[str]) -> list[str]:
+def _normalize(words: list[str]) -> list[list[str]]:
     """
-    Uppercase the words and strip surrounding whitespace.
+    Uppercase the words and split them into canonically composed letter units.
 
     Uppercasing keeps each word's length and case-folded spelling (see ``_upper_same_length``),
-    so every puzzle agrees with both the masker's length clue and its word identity.
+    and combining marks stay attached to their letters. Every puzzle uses the same units as
+    the masker's length clue.
 
     Args:
         words (list[str]): The masked keywords to encode.
 
     Returns:
-        list[str]: Cleaned, uppercased words.
+        list[list[str]]: Cleaned words, each split into letters with attached marks.
 
     Raises:
         ValueError: If ``words`` is empty or any word has no letters after cleaning.
     """
     if not words:
         raise ValueError("At least one word is required to build a puzzle.")
-    cleaned = [_upper_same_length(w.strip()) for w in words]
+    cleaned = [[_upper_same_length(letter) for letter in _letter_units(w.strip())] for w in words]
     if any(not w for w in cleaned):
         raise ValueError("Words must contain at least one non-whitespace character.")
     return cleaned
@@ -101,9 +106,10 @@ def _normalize(words: list[str]) -> list[str]:
 
 def build_anagram(words: list[str], rng: random.Random) -> str:
     """
-    Concatenate the masked words and shuffle every character into one sequence.
+    Concatenate the masked words and shuffle their letter units into one sequence.
 
-    The model must both unscramble and re-segment the sequence into the original words.
+    Combining marks move with their letters. The model must both unscramble and re-segment
+    the sequence into the original words.
 
     Args:
         words (list[str]): The masked keywords to encode.
@@ -115,17 +121,17 @@ def build_anagram(words: list[str], rng: random.Random) -> str:
     Raises:
         ValueError: If ``words`` is empty or any word has no letters after cleaning.
     """
-    source = "".join(_normalize(words))
-    if len(source) <= 1 or len(set(source)) == 1:
+    letters = [letter for word in _normalize(words) for letter in word]
+    source = "".join(letters)
+    if len(letters) <= 1 or len(set(letters)) == 1:
         return source
 
-    letters = list(source)
     for _ in range(_MAX_ANAGRAM_SHUFFLES):
         rng.shuffle(letters)
         result = "".join(letters)
         if result != source:
             return result
-    return source[1:] + source[0]
+    return "".join(letters[1:] + letters[:1])
 
 
 def crossword_symbol_map(words: list[str]) -> dict[str, str]:
@@ -151,7 +157,7 @@ def crossword_symbol_map(words: list[str]) -> dict[str, str]:
     for word in normalized:
         for letter in set(word):
             words_per_letter[letter] += 1
-    total_frequency = Counter("".join(normalized))
+    total_frequency = Counter(letter for word in normalized for letter in word)
 
     shared = [letter for letter, count in words_per_letter.items() if count >= 2]
     shared.sort(key=lambda letter: (-words_per_letter[letter], -total_frequency[letter], letter))
@@ -177,7 +183,7 @@ def build_crossword(words: list[str]) -> str:
         ValueError: If ``words`` is empty or any word has no letters after cleaning.
     """
     normalized = _normalize(words)
-    mapping = crossword_symbol_map(normalized)
+    mapping = crossword_symbol_map(words)
     lines = []
     for index, word in enumerate(normalized, start=1):
         masked = "".join(mapping.get(letter, letter) for letter in word)
@@ -185,12 +191,12 @@ def build_crossword(words: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _grid_size(words: list[str]) -> int:
+def _grid_size(words: list[list[str]]) -> int:
     """
     Pick a square grid size large enough to place all words with room to spare.
 
     Args:
-        words (list[str]): The masked keywords to encode.
+        words (list[list[str]]): The masked keywords split into letter units.
 
     Returns:
         int: The side length of the square grid.
@@ -205,7 +211,7 @@ def _grid_size(words: list[str]) -> int:
 
 def _try_place(
     grid: list[list[str]],
-    word: str,
+    word: list[str],
     rng: random.Random,
 ) -> bool:
     """
@@ -215,7 +221,7 @@ def _try_place(
 
     Args:
         grid (list[list[str]]): The mutable grid; empty cells are the empty string.
-        word (str): The word to place.
+        word (list[str]): The letter units to place, one per cell.
         rng (random.Random): Randomness source.
 
     Returns:
@@ -260,7 +266,8 @@ def build_word_search(words: list[str], rng: random.Random) -> str:
         rng (random.Random): Randomness source (injected for reproducibility).
 
     Returns:
-        str: The grid, one row per line with letters separated by spaces.
+        str: The grid, one row per line with letter units separated by spaces. A cell may
+            include combining marks attached to its letter.
 
     Raises:
         ValueError: If ``words`` is empty, any word has no letters after cleaning, or the

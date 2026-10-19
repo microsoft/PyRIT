@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target.http_target.httpx_api_target import HTTPXAPITarget
     from pyrit.prompt_target.hugging_face.hugging_face_chat_target import HuggingFaceChatTarget
     from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
+    from pyrit.prompt_target.litellm_decision_target import LiteLLMDecisionTarget
     from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
     from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
     from pyrit.prompt_target.openai.openai_completion_target import OpenAICompletionTarget
@@ -99,6 +100,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "HuggingFaceChatTarget": "pyrit.prompt_target.hugging_face.hugging_face_chat_target",
     "limit_requests_per_minute": "pyrit.prompt_target.common.utils",
     "LiteLLMChatTarget": "pyrit.prompt_target.litellm_chat_target",
+    "LiteLLMDecisionTarget": "pyrit.prompt_target.litellm_decision_target",
     "MCPConfig": "pyrit.prompt_target.common.mcp_tool_provider",
     "MCPServerConfig": "pyrit.prompt_target.common.mcp_tool_provider",
     "MCPStdioServerConfig": "pyrit.prompt_target.common.mcp_tool_provider",

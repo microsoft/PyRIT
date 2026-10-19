@@ -29,19 +29,28 @@ export default function Reinitialize({
 }: ReinitializeProps) {
   const styles = useReinitializeStyles()
   const [status, setStatus] = useState<RuntimeStatus | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [pollError, setPollError] = useState<string | null>(null)
+  const [applyError, setApplyError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [showConfirmation, setShowConfirmation] = useState(false)
   const [showRuntimeStatus, setShowRuntimeStatus] = useState(false)
 
   useEffect(() => {
     let cancelled = false
+    let polling = false
     const refresh = async (): Promise<void> => {
+      if (polling) return
+      polling = true
       try {
         const response = await configurationApi.getRuntimeStatus()
-        if (!cancelled) setStatus(response)
+        if (!cancelled) {
+          setStatus(response)
+          setPollError(null)
+        }
       } catch (reason) {
-        if (!cancelled) setError(toApiError(reason).detail)
+        if (!cancelled) setPollError(toApiError(reason).detail)
+      } finally {
+        polling = false
       }
     }
     void refresh()
@@ -52,13 +61,13 @@ export default function Reinitialize({
   const apply = async (): Promise<void> => {
     if (hasUnsavedChanges || !liveReinitializationEnabled) return
     setSubmitting(true)
-    setError(null)
+    setApplyError(null)
     setShowConfirmation(false)
     setShowRuntimeStatus(true)
     try {
       setStatus(await configurationApi.reinitialize(version))
     } catch (reason) {
-      setError(toApiError(reason).detail)
+      setApplyError(toApiError(reason).detail)
     } finally {
       setSubmitting(false)
     }
@@ -79,7 +88,8 @@ export default function Reinitialize({
           </MessageBarBody>
         </MessageBar>
       )}
-      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
+      {pollError && <MessageBar intent="error"><MessageBarBody>{pollError}</MessageBarBody></MessageBar>}
+      {applyError && <MessageBar intent="error"><MessageBarBody>{applyError}</MessageBarBody></MessageBar>}
       {hasUnsavedChanges && <Text>Save or explicitly discard unsaved edits before reinitializing.</Text>}
       {!liveReinitializationEnabled && (
         <Text>Set <code>enable_live_reinitialization: true</code> in the saved configuration to enable this action.</Text>

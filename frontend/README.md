@@ -62,8 +62,12 @@ objectives on the server, not dataset names, and it does not search
 simulated-conversation JSON. Filter by that seed type to find those examples.
 Matching ignores ASCII case only. Examples stay in the groups the server
 returns, including multimodal members. Expanding an example loads its stored
-records for inspection only: nothing is executed, imported into chat, or played
-as media. Filters, page size, and the open example stay in the address bar.
+records for inspection only: nothing is executed or imported into chat.
+**Show image/audio/video preview** loads supported media on demand, without
+autoplay. Reopening waits for a fresh display URL, with Show disabled while the
+request is pending. If refreshing fails, the preview stays closed and shows a
+message so you can try again. Hiding a preview stops playback.
+Filters, page size, and the open example stay in the address bar.
 **Back to datasets** returns to the catalog search, facets, and sort you came
 from. A direct link without that return state goes to `/datasets`.
 On narrow screens, scroll the example table horizontally to read its columns.
