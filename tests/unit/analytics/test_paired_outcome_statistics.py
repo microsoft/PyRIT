@@ -10,8 +10,11 @@ import pytest
 from pyrit.analytics.paired_outcome_statistics import compute_paired_outcome_statistics
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.executor.attack.compound import SequenceCompletionPolicy, SequentialAttackResult
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
+    AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
     AttackSeedGroup,
@@ -22,6 +25,7 @@ from pyrit.models import (
     ScenarioRunPlanSeedGroup,
     Score,
     SeedObjective,
+    TargetIdentifier,
 )
 from pyrit.models.score import MatchesObjective, ScoringExpectation
 from pyrit.scenario import DatasetConfiguration
@@ -340,6 +344,126 @@ def _score(scorer: str, *, expectation: ScoringExpectation | None = None) -> Sco
         scorer_class_identifier=ComponentIdentifier(class_name=scorer, class_module="tests"),
         scored_expectation=expectation,
     )
+
+
+def _with_target(result: AttackResult, *, model_name: str, endpoint: str = "https://example.com") -> AttackResult:
+    result.atomic_attack_identifier = AtomicAttackIdentifier.build(
+        attack_identifier=AttackIdentifier(
+            class_name="PromptSendingAttack",
+            class_module="pyrit.executor.attack.single_turn.prompt_sending",
+            objective_target=TargetIdentifier(
+                class_name="MockPromptTarget",
+                class_module="tests",
+                model_name=model_name,
+                endpoint=endpoint,
+            ),
+        )
+    )
+    return result
+
+
+@pytest.mark.parametrize(
+    ("baseline_model", "attack_model", "attack_endpoint"),
+    [("model-A", "model-B", "https://example.com"), ("model-A", "model-A", "https://other.example.com")],
+)
+def test_paired_outcomes_reject_different_recorded_objective_targets(
+    baseline_model: str, attack_model: str, attack_endpoint: str
+) -> None:
+    baseline = _with_target(_result("a", AttackOutcome.FAILURE), model_name=baseline_model)
+    attack = _with_target(_result("a", AttackOutcome.SUCCESS), model_name=attack_model, endpoint=attack_endpoint)
+
+    with pytest.raises(ValueError, match="different objective targets"):
+        _statistics(_plan(("a",), ("a",)), {"baseline": [baseline], "attack": [attack]})
+
+
+def test_paired_outcomes_reject_target_drift_across_decided_pairs() -> None:
+    baseline = [
+        _with_target(_result(seed, AttackOutcome.FAILURE), model_name=model)
+        for seed, model in (("a", "model-A"), ("b", "model-B"))
+    ]
+    attack = [
+        _with_target(_result(seed, AttackOutcome.SUCCESS), model_name=model)
+        for seed, model in (("a", "model-A"), ("b", "model-B"))
+    ]
+
+    with pytest.raises(ValueError, match="incompatible objective targets"):
+        _statistics(_plan(("a", "b"), ("a", "b")), {"baseline": baseline, "attack": attack})
+
+
+def _compound_outcome(
+    *, scorer: str, expectation: ScoringExpectation | None = None
+) -> tuple[SequentialAttackResult, AttackResult]:
+    child = _result("a", AttackOutcome.SUCCESS, group="attack", attempt_index=1)
+    child.automated_score = _score(scorer, expectation=expectation)
+    envelope = SequentialAttackResult.model_validate(_result("a", AttackOutcome.SUCCESS, group="attack").model_dump())
+    envelope.completion_policy = SequenceCompletionPolicy.LAST_RESULT
+    envelope.metadata["completion_policy"] = SequenceCompletionPolicy.LAST_RESULT.value
+    envelope.metadata["child_attack_result_ids"] = [child.attack_result_id]
+    assert envelope.last_score is None
+    return envelope, child
+
+
+def test_paired_outcomes_validate_compound_child_scorer_evidence() -> None:
+    baseline = _result("a", AttackOutcome.FAILURE, group="base")
+    baseline.automated_score = _score("ScorerA")
+    envelope, child = _compound_outcome(scorer="ScorerB")
+
+    with pytest.raises(ValueError, match="different scorers"):
+        _statistics(_plan(("a",), ("a",)), {"baseline": [baseline], "attack": [envelope, child]})
+
+
+def test_paired_outcomes_validate_live_compound_child_scorer_evidence() -> None:
+    baseline = _result("a", AttackOutcome.FAILURE, group="base")
+    baseline.automated_score = _score("ScorerA")
+    envelope, child = _compound_outcome(scorer="ScorerB")
+    envelope.child_attack_results = [child]
+
+    with pytest.raises(ValueError, match="different scorers"):
+        _statistics(_plan(("a",), ("a",)), {"baseline": [baseline], "attack": [envelope]})
+
+
+def test_paired_outcomes_reject_compound_child_target_mismatch() -> None:
+    baseline = _with_target(_result("a", AttackOutcome.FAILURE, group="base"), model_name="model-A")
+    envelope, child = _compound_outcome(scorer="SharedScorer")
+    _with_target(child, model_name="model-B")
+
+    with pytest.raises(ValueError, match="different objective targets"):
+        _statistics(_plan(("a",), ("a",)), {"baseline": [baseline], "attack": [envelope, child]})
+
+
+def test_paired_outcomes_validate_compound_child_scoring_expectation() -> None:
+    baseline = _result("a", AttackOutcome.FAILURE, group="base")
+    baseline.automated_score = _score("SharedScorer", expectation=ScoringExpectation(objective="first"))
+    envelope, child = _compound_outcome(scorer="SharedScorer", expectation=ScoringExpectation(objective="second"))
+
+    with pytest.raises(ValueError, match="scoring expectations"):
+        _statistics(_plan(("a",), ("a",)), {"baseline": [baseline], "attack": [envelope, child]})
+
+
+def test_paired_outcomes_accept_matching_compound_child_scoring_evidence() -> None:
+    baseline = _result("a", AttackOutcome.FAILURE, group="base")
+    baseline.automated_score = _score("SharedScorer")
+    envelope, child = _compound_outcome(scorer="SharedScorer")
+    unrelated = _result("a", AttackOutcome.FAILURE, group="attack", attempt_index=2)
+    unrelated.automated_score = _score("OtherScorer")
+
+    stats = _statistics(_plan(("a",), ("a",)), {"baseline": [baseline], "attack": [envelope, child, unrelated]})
+    assert (stats.decided_pairs, stats.failure_to_success) == (1, 1)
+
+
+def test_paired_outcomes_reject_unavailable_compound_child_evidence() -> None:
+    baseline = _result("a", AttackOutcome.FAILURE, group="base")
+    envelope, _ = _compound_outcome(scorer="SharedScorer")
+
+    with pytest.raises(ValueError, match="missing child attack result"):
+        _statistics(_plan(("a",), ("a",)), {"baseline": [baseline], "attack": [envelope]})
+
+
+def test_paired_outcomes_exclude_unpaired_compound_without_child_evidence() -> None:
+    envelope, _ = _compound_outcome(scorer="SharedScorer")
+    stats = _statistics(_plan(("a",), ("a",)), {"attack": [envelope]})
+
+    assert (stats.decided_pairs, stats.missing_baseline, stats.excluded_pairs) == (0, 1, 1)
 
 
 def test_paired_outcomes_reject_incompatible_persisted_scorers() -> None:

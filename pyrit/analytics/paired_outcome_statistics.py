@@ -67,6 +67,14 @@ class _ScoringEvidence:
     expectation: ScoringExpectation | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _OutcomeEvidence:
+    """Available evidence from a completion and its recorded child attempts."""
+
+    scores: tuple[_ScoringEvidence, ...]
+    objective_targets: tuple[str, ...]
+
+
 def _selected_groups(
     *, scenario_result: ScenarioResult, baseline_group_id: str, attack_group_id: str
 ) -> tuple[ScenarioRunPlanAtomicGroup, ScenarioRunPlanAtomicGroup, ScenarioRunPlan, ScenarioPlanLookup]:
@@ -109,21 +117,88 @@ def _selected_groups(
     return baseline, attack, plan, ScenarioPlanLookup.from_plan(plan=plan)
 
 
-def _score_details(result: AttackResult) -> _ScoringEvidence:
+def _score_details(result: AttackResult) -> _ScoringEvidence | None:
     """
     Extract available scorer identity, type, and scoring criteria.
 
     Returns:
-        _ScoringEvidence: Persisted scorer identity, score type and expectation.
+        _ScoringEvidence | None: Persisted scorer identity, score type and expectation, if scored.
     """
     score = result.last_score
     if score is None:
-        return _ScoringEvidence()
+        return None
     return _ScoringEvidence(
         scorer_identifier=score.scorer_class_identifier,
         score_type=score.score_type,
         expectation=score.scored_expectation,
     )
+
+
+def _objective_target_hash(result: AttackResult) -> str | None:
+    """
+    Read the full recorded target identity, including model and endpoint.
+
+    Returns:
+        str | None: Target identity hash, if the result records an objective target.
+    """
+    identifier = result.atomic_attack_identifier
+    if identifier is None:
+        return None
+    technique = identifier.get_child("attack_technique")
+    attack = technique.get_child("attack") if technique is not None else identifier.get_child("attack")
+    target = attack.get_child("objective_target") if attack is not None else None
+    return target.hash if target is not None else None
+
+
+def _outcome_evidence(result: AttackResult, *, attempts_by_id: dict[str, AttackResult]) -> _OutcomeEvidence:
+    """
+    Retain scorer and target evidence from the selected completion's children.
+
+    Only children explicitly linked from this completion count as evidence;
+    unrelated children and superseded top-level retries cannot affect it.
+
+    Returns:
+        _OutcomeEvidence: Available scoring and objective-target identities.
+
+    Raises:
+        ValueError: If a linked child result is unavailable.
+    """
+    child_ids = getattr(result, "child_attack_result_ids", result.metadata.get("child_attack_result_ids", ()))
+    live_children = {child.attack_result_id: child for child in getattr(result, "child_attack_results", ())}
+    scores: list[_ScoringEvidence] = []
+    objective_targets: list[str] = []
+    for linked in (result, *(attempts_by_id.get(child_id) or live_children.get(child_id) for child_id in child_ids)):
+        if linked is None:
+            raise ValueError("A selected compound outcome references a missing child attack result.")
+        score = _score_details(linked)
+        if score is not None:
+            scores.append(score)
+        target = _objective_target_hash(linked)
+        if target is not None:
+            objective_targets.append(target)
+    return _OutcomeEvidence(scores=tuple(scores), objective_targets=tuple(objective_targets))
+
+
+def _check_pair_evidence(before: _OutcomeEvidence, after: _OutcomeEvidence) -> None:
+    """
+    Reject known target and scoring incompatibilities within one seed pair.
+
+    Raises:
+        ValueError: If recorded target or scoring evidence conflicts.
+    """
+    targets = before.objective_targets + after.objective_targets
+    if targets and any(target != targets[0] for target in targets[1:]):
+        raise ValueError("Selected outcomes used different objective targets.")
+
+    scores = before.scores + after.scores
+    for attribute, message in (
+        ("scorer_identifier", "Selected outcomes were evaluated by different scorers."),
+        ("score_type", "Selected outcomes have incompatible score types."),
+        ("expectation", "Selected outcomes have incompatible scoring expectations."),
+    ):
+        values = [value for score in scores if (value := getattr(score, attribute)) is not None]
+        if values and any(value != values[0] for value in values[1:]):
+            raise ValueError(message)
 
 
 def compute_paired_outcome_statistics(
@@ -163,7 +238,7 @@ def compute_paired_outcome_statistics(
         raise ValueError("Selected groups have no shared logical seed-group IDs to compare.")
 
     # The plan validates unique seed IDs. The same run carries the scenario-level
-    # target/scorer identity; per-result scorer identities add a stronger check.
+    # target/scorer identity; per-result identities add stronger checks.
     objectives = {seed.id: seed.objective_sha256 for seed in plan.seed_groups}
     relevant_names = {baseline.atomic_attack_name, attack.atomic_attack_name}
     selected_ids = {baseline.id, attack.id}
@@ -221,13 +296,14 @@ def compute_paired_outcome_statistics(
                 raise ValueError("An attempt's objective disagrees with its planned logical seed group.")
             attempts_by_unit.setdefault(attempt.unit, []).append((attempt, result))
 
-    effective: dict[ScenarioExecutionUnit, tuple[AttackOutcome, _ScoringEvidence]] = {}
+    effective: dict[ScenarioExecutionUnit, tuple[AttackOutcome, AttackResult, dict[str, AttackResult]]] = {}
     for unit, attempts in attempts_by_unit.items():
         attempts.sort(key=lambda entry: (entry[0].timestamp, entry[0].attempt_id))
         top_level = [entry for entry in attempts if entry[0].attempt_index is None]
         if top_level:
             attempt, result = top_level[-1]
-            effective[unit] = (attempt.outcome, _score_details(result))
+            by_id = {candidate.attack_result_id: candidate for _, candidate in attempts}
+            effective[unit] = (attempt.outcome, result, by_id)
 
     transitions: dict[tuple[AttackOutcome, AttackOutcome], int] = {
         (before, after): 0
@@ -238,6 +314,7 @@ def compute_paired_outcome_statistics(
     baseline_errors = attack_errors = baseline_undetermined = attack_undetermined = 0
     observed_scorer: object | None = None
     observed_score_type: str | None = None
+    observed_target: str | None = None
 
     for seed_id in shared:
         before = effective.get(ScenarioExecutionUnit(atomic_group_id=baseline.id, seed_group_id=seed_id))
@@ -258,29 +335,16 @@ def compute_paired_outcome_statistics(
 
         if before is None or after is None:
             continue
-        before_score, after_score = before[1], after[1]
-        if (
-            before_score.scorer_identifier is not None
-            and after_score.scorer_identifier is not None
-            and before_score.scorer_identifier != after_score.scorer_identifier
-        ):
-            raise ValueError("Selected outcomes were evaluated by different scorers.")
-        if (
-            before_score.score_type is not None
-            and after_score.score_type is not None
-            and before_score.score_type != after_score.score_type
-        ):
-            raise ValueError("Selected outcomes have incompatible score types.")
-        if (
-            before_score.expectation is not None
-            and after_score.expectation is not None
-            and before_score.expectation != after_score.expectation
-        ):
-            raise ValueError("Selected outcomes have incompatible scoring expectations.")
+        before_score = _outcome_evidence(before[1], attempts_by_id=before[2])
+        after_score = _outcome_evidence(after[1], attempts_by_id=after[2])
+        _check_pair_evidence(before_score, after_score)
         if (before[0], after[0]) in transitions:
-            for scoring_evidence in (before_score, after_score):
-                scorer = scoring_evidence.scorer_identifier
-                score_type = scoring_evidence.score_type
+            for target in before_score.objective_targets + after_score.objective_targets:
+                if observed_target is not None and target != observed_target:
+                    raise ValueError("Decided pairs contain incompatible objective targets.")
+                observed_target = target
+            for scoring_evidence in before_score.scores + after_score.scores:
+                scorer, score_type = scoring_evidence.scorer_identifier, scoring_evidence.score_type
                 if scorer is not None:
                     if observed_scorer is not None and scorer != observed_scorer:
                         raise ValueError("Decided pairs contain incompatible scorer identities.")
