@@ -130,7 +130,7 @@ class SamplingVariant:
     @property
     def registry_name(self) -> str:
         """Deterministic ``TargetRegistry`` name, for example ``gpt4o__temperature_0p7``."""
-        value_text = f"{self.value:g}".replace(".", "p").replace("-", "m")
+        value_text = repr(self.value).replace(".", "p").replace("-", "m").replace("+", "p")
         return f"{self.generator_name}__{self.parameter.value}_{value_text}"
 
 
@@ -612,20 +612,52 @@ async def run_sampling_sweep_async(
     existing = (
         [r for r in read_trial_records(path=output_path) if r.experiment_id == experiment_id] if output_path else []
     )
-    completed_repetitions = {record.repetition for record in existing}
-    records = list(existing)
+    records: list[AdversarialTrialRecord] = []
     pinned_ids: dict[str, str] | None = None
+    if any(record.repetition >= plan.repetitions for record in existing):
+        raise ValueError("Stored repetitions exceed the current experiment plan; use a new experiment_id.")
 
     with registered_variants(targets=targets):
         for repetition in range(plan.repetitions):
-            if repetition in completed_repetitions:
-                logger.info(f"Sampling sweep {experiment_id}: repetition {repetition} already recorded; skipping.")
-                continue
             objective_ids = objective_ids_by_text(seed_groups=await dataset_config.get_attack_seed_groups_async())
             if pinned_ids is None:
                 pinned_ids = objective_ids
             elif objective_ids != pinned_ids:
                 raise ValueError("The dataset selection changed between repetitions; pin the objectives.")
+
+            expected_trial_ids = {
+                make_trial_id(
+                    experiment_id=experiment_id,
+                    variant=variant,
+                    repetition=repetition,
+                    objective_id=objective_id,
+                )
+                for variant in plan.variants
+                for objective_id in objective_ids.values()
+            }
+            previous = [record for record in existing if record.repetition == repetition]
+            previous_ids = {record.trial_id for record in previous}
+            if previous_ids - expected_trial_ids:
+                raise ValueError(
+                    f"Stored results for repetition {repetition} do not match the current experiment plan "
+                    "or pinned objectives. Use a new experiment_id and output_path."
+                )
+            if previous and len(previous) == len(expected_trial_ids) and previous_ids == expected_trial_ids:
+                logger.info(f"Sampling sweep {experiment_id}: repetition {repetition} already complete; skipping.")
+                records.extend(previous)
+                continue
+            if previous and output_path is not None:
+                logger.warning(f"Sampling sweep {experiment_id}: repetition {repetition} is incomplete; rerunning.")
+                # Remove old partial rows, including duplicates, before rerunning the entire repetition.
+                # Preserve records for other experiments sharing the output file.
+                saved = read_trial_records(path=output_path)
+                remaining = [
+                    record
+                    for record in saved
+                    if not (record.experiment_id == experiment_id and record.repetition == repetition)
+                ]
+                write_trial_records(records=remaining, path=output_path, append=False)
+                existing = [record for record in existing if record.repetition != repetition]
             scenario = scenario_factory(objective_scorer=objective_scorer, use_cached=False)
             scenario.set_params_from_args(
                 args={

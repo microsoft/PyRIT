@@ -188,6 +188,13 @@ class TestSamplingSweepPlan:
         names = [variant.registry_name for variant in _plan().variants]
         assert names[:3] == ["gen_a__temperature_0p2", "gen_a__temperature_0p7", "gen_a__temperature_1p2"]
 
+    def test_nearby_temperatures_get_distinct_registry_names(self):
+        # The old :g formatting used six significant digits and silently collided.
+        plan = _plan(values=[0.12345671, 0.12345672], baseline_value=0.12345671)
+        names = [variant.registry_name for variant in plan.variants]
+        assert len(names) == len(set(names))
+        assert names[0] != names[1]
+
     def test_run_order_is_a_reproducible_permutation(self):
         plan = _plan(run_order_seed=11)
         first = plan.run_order(repetition=0)
@@ -570,6 +577,43 @@ class TestRunSamplingSweep:
         assert len(records) == 24
         assert len(read_trial_records(path=output)) == 24
         assert len({record.trial_id for record in records}) == 24
+
+    async def test_incomplete_repetition_is_rerun_without_duplicate_trials(self, stub_benchmark, tmp_path):
+        output = tmp_path / "partially_written.jsonl"
+        arguments = {
+            "plan": _plan(repetitions=1),
+            "experiment_id": "exp",
+            "objective_target": MockPromptTarget(),
+            "objective_scorer": _scorer(),
+            "dataset_config": _dataset(),
+            "output_path": output,
+            "scenario_factory": _StubBenchmark,
+        }
+        await run_sampling_sweep_async(**arguments)
+        original = read_trial_records(path=output)
+        assert len(original) == 12
+        write_trial_records(records=original[:5], path=output, append=False)
+
+        resumed = await run_sampling_sweep_async(**arguments)
+        persisted = read_trial_records(path=output)
+        assert len(_StubBenchmark.instances) == 2
+        assert len(resumed) == len(persisted) == 12
+        assert len({record.trial_id for record in persisted}) == 12
+
+    async def test_changed_objectives_cannot_resume_old_results(self, stub_benchmark, tmp_path):
+        output = tmp_path / "changed_objectives.jsonl"
+        arguments = {
+            "plan": _plan(repetitions=1),
+            "experiment_id": "exp",
+            "objective_target": MockPromptTarget(),
+            "objective_scorer": _scorer(),
+            "output_path": output,
+            "scenario_factory": _StubBenchmark,
+        }
+        await run_sampling_sweep_async(dataset_config=_dataset(2), **arguments)
+        with pytest.raises(ValueError, match="do not match"):
+            await run_sampling_sweep_async(dataset_config=_dataset(3), **arguments)
+        assert len(_StubBenchmark.instances) == 1
 
     async def test_objective_target_change_stops_the_sweep(self, stub_benchmark):
         objective_target = MockPromptTarget()
