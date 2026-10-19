@@ -869,3 +869,34 @@ CoPyRIT monitors the backend connection and shows a status banner:
 - **Disconnected (red):** Unable to reach the backend. Check that the server is running.
 - **Degraded (yellow):** Connection is unstable.
 - **Reconnected (green):** Briefly shown after a successful reconnection, then auto-dismissed.
+
+## Paired baseline and attack outcomes
+
+Open a completed run from **Scanner History** and find **Paired outcomes**.
+Choose the saved **Baseline group** and **Attack group**, then select
+**Compare outcomes**. Groups are explicitly marked by the saved execution
+plan; PyRIT does not guess a baseline from its name. If several configurations
+have the same name, the options include their group IDs to distinguish them.
+
+The comparison shows all four baseline-to-attack transitions, both success
+rates, and their difference in percentage points. Rates use the same decided
+pairs. For example, four pairs with one of each transition give 50% success
+on each side and a 0 pp difference, while still showing one failure becoming
+a success and one success becoming a failure.
+
+**Decided pairs** shows the number with success or failure on both sides,
+followed by the number planned on both sides. **Excluded pairs** counts the
+remaining shared pairs. Missing outcomes, errors, and undetermined outcomes
+are listed separately; reason counts can overlap. Seeds planned on only one
+side are unmatched and are not included in the pair denominator.
+
+The panel uses the [paired analytics SDK](../code/analytics/0_attack_results.md)
+and its latest top-level outcome rules. Children and superseded retries do
+not add observations. Empty decided populations display **Unavailable** rates.
+Legacy runs without a complete saved plan, runs without explicit group kinds,
+and runs that have not completed cannot be compared. Incompatible groups
+show the backend's explanation, and **Compare outcomes** can retry a failed
+request. Changing a group clears the comparison.
+
+Missing persisted scoring metadata limits compatibility validation. These
+observed differences do not establish causation.
