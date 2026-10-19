@@ -84,6 +84,12 @@ timeout coverage expires the real cancellation path only after the request start
 Event-controlled analytics expiry tests freeze both deadline clocks so floating-point
 rounding cannot turn a valid query budget into a failed assertion.
 
+The cold target-type route test signals readiness back to the event loop without
+occupying another discovery worker. Startup and draining use the shared finite
+watchdog; the separate 10-second health-response check runs while discovery is
+explicitly held. Single-worker and failure-path cases check that the request and
+worker finish before test patches and the client are released.
+
 For scenario correctness tests, wait for the owned task to finish, including
 persistence and scheduler handoff. Use events to control concurrent steps and a
 finite test watchdog to detect deadlocks, not short per-step latency limits.
