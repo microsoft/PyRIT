@@ -302,7 +302,12 @@ def select_execution_attempts(attempts: Sequence[_AttemptT]) -> Sequence[_Attemp
     return execution_attempts if execution_attempts else attempts
 
 
-def select_execution_attack_result_ids(scenario_result: ScenarioResult) -> set[str]:
+def select_execution_attack_result_ids(
+    scenario_result: ScenarioResult,
+    *,
+    plan: ScenarioRunPlan | None = None,
+    use_saved_plan: bool = True,
+) -> set[str]:
     """
     Select the IDs of the attack results that count as execution attempts.
 
@@ -312,11 +317,16 @@ def select_execution_attack_result_ids(scenario_result: ScenarioResult) -> set[s
 
     Args:
         scenario_result (ScenarioResult): The scenario result with its hydrated attack results.
+        plan (ScenarioRunPlan | None): An explicit run plan. Defaults to None.
+        use_saved_plan (bool): When ``plan`` is None, whether to use the plan saved in the result's
+            metadata. Pass False to resolve the result as a legacy run. Defaults to True.
 
     Returns:
         set[str]: The selected attack result IDs.
     """
-    plan_lookup = ScenarioPlanLookup.from_plan(plan=load_scenario_run_plan(scenario_result))
+    if plan is None and use_saved_plan:
+        plan = load_scenario_run_plan(scenario_result)
+    plan_lookup = ScenarioPlanLookup.from_plan(plan=plan)
     attempts_by_unit: dict[ScenarioExecutionUnit, list[ScenarioAttempt]] = {}
     for atomic_attack_name, results in scenario_result.attack_results.items():
         for attack_result in results:
