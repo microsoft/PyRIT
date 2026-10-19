@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from pyrit.analytics.scenario_statistics import (
@@ -19,6 +20,7 @@ from pyrit.models import AttackOutcome, ScenarioExecutionUnit, ScenarioRunPlanGr
 if TYPE_CHECKING:
     from pyrit.analytics.scenario_statistics import ScenarioAttempt
     from pyrit.models import AttackResult, ScenarioResult, ScenarioRunPlan, ScenarioRunPlanAtomicGroup
+    from pyrit.models.score import ScoringExpectation
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,9 +28,10 @@ class PairedOutcomeStatistics:
     """
     Transition counts and exclusions for one explicitly selected pair of planned groups.
 
-    ``planned_pairs`` is the union of both groups' planned seed IDs. Only shared
-    IDs whose latest top-level outcomes are both decided enter ``decided_pairs``.
-    Error and undetermined counts describe each side, so they may overlap.
+    ``planned_pairs`` counts seed IDs planned in both groups. Only shared IDs
+    whose latest top-level outcomes are both decided enter ``decided_pairs``.
+    Unmatched seed IDs are reported separately. Error and undetermined counts
+    describe each side, so they may overlap.
     """
 
     baseline_group_id: str
@@ -53,6 +56,15 @@ class PairedOutcomeStatistics:
     unmatched_baseline_seeds: int
     unmatched_attack_seeds: int
     unattributed_attempts: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ScoringEvidence:
+    """Available scoring metadata for a persisted outcome."""
+
+    scorer_identifier: object | None = None
+    score_type: str | None = None
+    expectation: ScoringExpectation | None = None
 
 
 def _selected_groups(
@@ -97,15 +109,21 @@ def _selected_groups(
     return baseline, attack, plan, ScenarioPlanLookup.from_plan(plan=plan)
 
 
-def _score_identity(result: AttackResult) -> object | None:
+def _score_details(result: AttackResult) -> _ScoringEvidence:
     """
-    Use a persisted scorer identity when one is available.
+    Extract available scorer identity, type, and scoring criteria.
 
     Returns:
-        object | None: A persisted scorer identity, or None when absent.
+        _ScoringEvidence: Persisted scorer identity, score type and expectation.
     """
     score = result.last_score
-    return score.scorer_class_identifier if score is not None else None
+    if score is None:
+        return _ScoringEvidence()
+    return _ScoringEvidence(
+        scorer_identifier=score.scorer_class_identifier,
+        score_type=score.score_type,
+        expectation=score.scored_expectation,
+    )
 
 
 def compute_paired_outcome_statistics(
@@ -148,6 +166,7 @@ def compute_paired_outcome_statistics(
     # target/scorer identity; per-result scorer identities add a stronger check.
     objectives = {seed.id: seed.objective_sha256 for seed in plan.seed_groups}
     relevant_names = {baseline.atomic_attack_name, attack.atomic_attack_name}
+    selected_ids = {baseline.id, attack.id}
     attempts_by_unit: dict[ScenarioExecutionUnit, list[tuple[ScenarioAttempt, AttackResult]]] = {}
     seen_ids: set[str] = set()
     unattributed_attempts = 0
@@ -156,11 +175,40 @@ def compute_paired_outcome_statistics(
             continue
         same_name_groups = lookup.groups_by_name.get(name, ())
         for result in results:
-            attribution = result.attribution_data if isinstance(result.attribution_data, dict) else {}
+            if result.attribution_data is not None and not isinstance(result.attribution_data, dict):
+                raise ValueError("An attempt has invalid attribution metadata.")
+            attribution = result.attribution_data or {}
+            eval_hash = attribution.get("parent_eval_hash")
+            if isinstance(eval_hash, str):
+                known_group = lookup.groups_by_identity.get((name, eval_hash))
+                if known_group is not None and known_group.id not in selected_ids:
+                    unattributed_attempts += 1
+                    continue
+            recorded_name = attribution.get("parent_collection")
+            if recorded_name is not None and recorded_name != name:
+                raise ValueError("An attempt's parent_collection disagrees with its recorded atomic name.")
+            if not isinstance(result.outcome, AttackOutcome):
+                raise ValueError("An attempt has an invalid outcome.")
+            if (
+                not isinstance(result.timestamp, datetime)
+                or result.timestamp.tzinfo is None
+                or result.timestamp.utcoffset() is None
+            ):
+                raise ValueError("An attempt has an invalid timestamp.")
+            if not isinstance(result.metadata, dict):
+                raise ValueError("An attempt has invalid result metadata.")
+            children = result.metadata.get("child_attack_result_ids", ())
+            if not isinstance(children, (list, tuple)) or any(not isinstance(child, str) for child in children):
+                raise ValueError("An attempt has invalid child_attack_result_ids metadata.")
+            child_index = attribution.get("attempt_index")
+            if child_index is not None and (
+                not isinstance(child_index, int) or isinstance(child_index, bool) or child_index < 1
+            ):
+                raise ValueError("An attempt has an invalid attempt_index.")
             if len(same_name_groups) > 1 and not attribution.get("parent_eval_hash"):
                 raise ValueError("Attempt attribution cannot distinguish multiple planned configurations.")
             attempt = resolve_attack_result_attempt(atomic_attack_name=name, attack_result=result, plan_lookup=lookup)
-            if attempt.unit.atomic_group_id not in {baseline.id, attack.id}:
+            if attempt.unit.atomic_group_id not in selected_ids:
                 unattributed_attempts += 1
                 continue
             group = baseline if attempt.unit.atomic_group_id == baseline.id else attack
@@ -173,13 +221,13 @@ def compute_paired_outcome_statistics(
                 raise ValueError("An attempt's objective disagrees with its planned logical seed group.")
             attempts_by_unit.setdefault(attempt.unit, []).append((attempt, result))
 
-    effective: dict[ScenarioExecutionUnit, tuple[AttackOutcome, object | None]] = {}
+    effective: dict[ScenarioExecutionUnit, tuple[AttackOutcome, _ScoringEvidence]] = {}
     for unit, attempts in attempts_by_unit.items():
         attempts.sort(key=lambda entry: (entry[0].timestamp, entry[0].attempt_id))
         top_level = [entry for entry in attempts if entry[0].attempt_index is None]
         if top_level:
             attempt, result = top_level[-1]
-            effective[unit] = (attempt.outcome, _score_identity(result))
+            effective[unit] = (attempt.outcome, _score_details(result))
 
     transitions: dict[tuple[AttackOutcome, AttackOutcome], int] = {
         (before, after): 0
@@ -188,6 +236,8 @@ def compute_paired_outcome_statistics(
     }
     missing_baseline = missing_attack = missing_both = 0
     baseline_errors = attack_errors = baseline_undetermined = attack_undetermined = 0
+    observed_scorer: object | None = None
+    observed_score_type: str | None = None
 
     for seed_id in shared:
         before = effective.get(ScenarioExecutionUnit(atomic_group_id=baseline.id, seed_group_id=seed_id))
@@ -208,9 +258,37 @@ def compute_paired_outcome_statistics(
 
         if before is None or after is None:
             continue
-        if before[1] is not None and after[1] is not None and before[1] != after[1]:
+        before_score, after_score = before[1], after[1]
+        if (
+            before_score.scorer_identifier is not None
+            and after_score.scorer_identifier is not None
+            and before_score.scorer_identifier != after_score.scorer_identifier
+        ):
             raise ValueError("Selected outcomes were evaluated by different scorers.")
+        if (
+            before_score.score_type is not None
+            and after_score.score_type is not None
+            and before_score.score_type != after_score.score_type
+        ):
+            raise ValueError("Selected outcomes have incompatible score types.")
+        if (
+            before_score.expectation is not None
+            and after_score.expectation is not None
+            and before_score.expectation != after_score.expectation
+        ):
+            raise ValueError("Selected outcomes have incompatible scoring expectations.")
         if (before[0], after[0]) in transitions:
+            for scoring_evidence in (before_score, after_score):
+                scorer = scoring_evidence.scorer_identifier
+                score_type = scoring_evidence.score_type
+                if scorer is not None:
+                    if observed_scorer is not None and scorer != observed_scorer:
+                        raise ValueError("Decided pairs contain incompatible scorer identities.")
+                    observed_scorer = scorer
+                if score_type is not None:
+                    if observed_score_type is not None and score_type != observed_score_type:
+                        raise ValueError("Decided pairs contain incompatible score types.")
+                    observed_score_type = score_type
             transitions[(before[0], after[0])] += 1
 
     decided = sum(transitions.values())
@@ -227,9 +305,9 @@ def compute_paired_outcome_statistics(
     return PairedOutcomeStatistics(
         baseline_group_id=baseline.id,
         attack_group_id=attack.id,
-        planned_pairs=len(baseline_seeds | attack_seeds),
+        planned_pairs=len(shared),
         decided_pairs=decided,
-        excluded_pairs=len(baseline_seeds | attack_seeds) - decided,
+        excluded_pairs=len(shared) - decided,
         failure_to_success=transitions[(AttackOutcome.FAILURE, AttackOutcome.SUCCESS)],
         success_to_failure=transitions[(AttackOutcome.SUCCESS, AttackOutcome.FAILURE)],
         failure_to_failure=transitions[(AttackOutcome.FAILURE, AttackOutcome.FAILURE)],
