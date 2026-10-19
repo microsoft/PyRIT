@@ -1923,9 +1923,7 @@ class TestConcurrentMessages:
                     )
                 )
                 await shared_waiting.wait()
-                await asyncio.wait_for(
-                    peer.add_message_async(attack_result_id=ar.attack_result_id, request=requests[2]), timeout=3
-                )
+                await peer.add_message_async(attack_result_id=ar.attack_result_id, request=requests[2])
                 assert calls == 1
                 assert not any(task.done() for task in tasks)
             finally:

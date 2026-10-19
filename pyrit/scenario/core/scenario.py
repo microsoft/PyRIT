@@ -1995,6 +1995,9 @@ class Scenario(ABC):
                     if result.has_incomplete:
                         stop_event.set()
                 except Exception as exc:
+                    exc.add_note(
+                        f"Failed atomic attack {atomic_attack.atomic_attack_name!r} in scenario {self._name!r}."
+                    )
                     outcomes.append(exc)
                     stop_event.set()
                 except BaseException:

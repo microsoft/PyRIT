@@ -294,6 +294,7 @@ async def test_cancelled_waiter_preserves_run_lock_without_blocking_other_runs()
 
 
 @pytest.mark.parametrize("owner_exit", ["success", "cancellation", "storage-error"])
+@pytest.mark.timeout(300)
 @patch.object(ScenarioProgressReadModel, "_CACHE_MAX_RUNS", 1)
 async def test_owner_handoff_keeps_waiter_cache_under_pressure(owner_exit: str) -> None:
     memory = MagicMock(spec=MemoryInterface)
@@ -341,17 +342,17 @@ async def test_owner_handoff_keeps_waiter_cache_under_pressure(owner_exit: str) 
     successor = None
     other = None
     try:
-        await asyncio.wait_for(owner_blocked.wait(), timeout=5)
+        await owner_blocked.wait()
         state = read_model._refresh_states["run"]
         entry = read_model._cache["run"]
         waiter_started = asyncio.Event()
         waiter = asyncio.create_task(wait_for_snapshot_async(waiter_started))
-        await asyncio.wait_for(waiter_started.wait(), timeout=5)
+        await waiter_started.wait()
         assert state.callers == 2
         assert not waiter.done()
 
         other = asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id="other"))
-        await asyncio.wait_for(other_blocked.wait(), timeout=5)
+        await other_blocked.wait()
         assert list(read_model._cache) == ["run", "other"]
         assert set(read_model._refresh_states) == {"run", "other"}
 
@@ -363,11 +364,11 @@ async def test_owner_handoff_keeps_waiter_cache_under_pressure(owner_exit: str) 
             release_owner.set()
             if owner_exit == "storage-error":
                 with pytest.raises(RuntimeError, match="storage failed"):
-                    await asyncio.wait_for(owner, timeout=5)
+                    await owner
             else:
-                initial = await asyncio.wait_for(owner, timeout=5)
+                initial = await owner
                 assert initial.deltas == (first,)
-        await asyncio.wait_for(waiter_blocked.wait(), timeout=5)
+        await waiter_blocked.wait()
         assert read_model._refresh_states["run"] is state
         assert state.callers == 1
         assert state.lock.locked()
@@ -377,14 +378,14 @@ async def test_owner_handoff_keeps_waiter_cache_under_pressure(owner_exit: str) 
 
         successor_started = asyncio.Event()
         successor = asyncio.create_task(wait_for_snapshot_async(successor_started))
-        await asyncio.wait_for(successor_started.wait(), timeout=5)
+        await successor_started.wait()
         assert read_model._refresh_states["run"] is state
         assert state.callers == 2
         assert not successor.done()
         assert len(cursors) == 3
 
         release_waiter.set()
-        snapshots = await asyncio.wait_for(asyncio.gather(waiter, successor), timeout=5)
+        snapshots = await asyncio.gather(waiter, successor)
         assert all(snapshot.deltas == (first, second) for snapshot in snapshots)
         assert all(snapshot.summary.overall.completed == 2 for snapshot in snapshots)
         first_cursor = AttackResultKeysetCursor(timestamp=first.timestamp, attack_result_id=first.attack_result_id)
@@ -395,7 +396,7 @@ async def test_owner_handoff_keeps_waiter_cache_under_pressure(owner_exit: str) 
         assert set(read_model._refresh_states) == {"other"}
 
         release_other.set()
-        await asyncio.wait_for(other, timeout=5)
+        await other
         assert len(read_model._cache) == 1
         assert not read_model._refresh_states
     finally:

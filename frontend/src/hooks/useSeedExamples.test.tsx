@@ -171,6 +171,361 @@ describe('useSeedExampleDetail', () => {
     expect(mockDetail).toHaveBeenCalledTimes(2)
   })
 
+  it('refreshes one display url without clearing the open example or its stored value', async () => {
+    const stored = 'https://account.blob.core.windows.net/container/pic.png'
+    const expired = {
+      ...DETAIL,
+      members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=expired` }],
+    } as SeedExampleDetailResponse
+    const fresh = {
+      ...DETAIL,
+      members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=fresh` }],
+    } as SeedExampleDetailResponse
+    mockDetail.mockResolvedValueOnce(expired).mockResolvedValueOnce(fresh)
+    const { result } = renderHook(() => useSeedExampleDetail('dataset:named:harmbench', 'example-1', false, 'gen-1'))
+    await waitFor(() => expect(result.current.detail?.members[0]?.value_url).toContain('sig=expired'))
+
+    let next: string | null = null
+    await act(async () => {
+      next = await result.current.refreshDisplayUrls('image-1')
+    })
+    expect(next).toBe(`${stored}?sig=fresh`)
+    expect(result.current.detail?.members[0]?.value).toBe(stored)
+    expect(result.current.detail?.members[0]?.value_url).toBe(`${stored}?sig=fresh`)
+    expect(result.current.loading).toBe(false)
+    expect(mockDetail).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes only the requested member when the response re-signs every blob', async () => {
+    const image = 'https://account.blob.core.windows.net/container/pic.png'
+    const audio = 'https://account.blob.core.windows.net/container/talk.wav'
+    const opened = {
+      ...DETAIL,
+      members: [
+        { id: 'image-1', value: image, value_url: `${image}?sig=old` },
+        { id: 'audio-1', value: audio, value_url: `${audio}?sig=old` },
+      ],
+    } as SeedExampleDetailResponse
+    const resigned = {
+      ...DETAIL,
+      members: [
+        { id: 'image-1', value: image, value_url: `${image}?sig=new` },
+        { id: 'audio-1', value: audio, value_url: `${audio}?sig=new` },
+      ],
+    } as SeedExampleDetailResponse
+    mockDetail.mockResolvedValueOnce(opened).mockResolvedValueOnce(resigned)
+    const { result } = renderHook(() => useSeedExampleDetail('dataset:named:harmbench', 'example-1', false, 'gen-1'))
+    await waitFor(() => expect(result.current.detail?.members).toHaveLength(2))
+
+    await act(async () => {
+      await result.current.refreshDisplayUrls('image-1')
+    })
+    expect(result.current.detail?.members[0]?.value_url).toBe(`${image}?sig=new`)
+    expect(result.current.detail?.members[0]?.value).toBe(image)
+    expect(result.current.detail?.members[1]?.value_url).toBe(`${audio}?sig=old`)
+    expect(result.current.detail?.members[1]).toBe(opened.members[1])
+  })
+
+  it('keeps the open example when a display-url refresh fails', async () => {
+    const stored = 'https://account.blob.core.windows.net/container/pic.png'
+    const expired = {
+      ...DETAIL,
+      members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=expired` }],
+    } as SeedExampleDetailResponse
+    mockDetail.mockResolvedValueOnce(expired).mockRejectedValueOnce(new Error('unavailable'))
+    const { result } = renderHook(() => useSeedExampleDetail('dataset:named:harmbench', 'example-1', false, 'gen-1'))
+    await waitFor(() => expect(result.current.detail).not.toBeNull())
+
+    await act(async () => {
+      await expect(result.current.refreshDisplayUrls('image-1')).rejects.toThrow('unavailable')
+    })
+    expect(result.current.detail?.members[0]?.value_url).toContain('sig=expired')
+    expect(result.current.loading).toBe(false)
+    expect(result.current.error).toBeNull()
+  })
+
+  it('drops a refresh that resolves after the example is closed and reopened', async () => {
+    const stored = 'https://account.blob.core.windows.net/container/pic.png'
+    const opened = {
+      ...DETAIL,
+      members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=opened` }],
+    } as SeedExampleDetailResponse
+    const reopened = {
+      ...DETAIL,
+      members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=newly-opened` }],
+    } as SeedExampleDetailResponse
+    const stale = {
+      ...DETAIL,
+      members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=older-refresh` }],
+    } as SeedExampleDetailResponse
+    let resolveRefresh: (value: SeedExampleDetailResponse) => void = () => {}
+    let refreshSignal: AbortSignal | undefined
+    mockDetail
+      .mockResolvedValueOnce(opened)
+      .mockImplementationOnce((_exampleId: string, _selectionKey: string, signal: AbortSignal) => {
+        refreshSignal = signal
+        return new Promise((resolve) => { resolveRefresh = resolve })
+      })
+      .mockResolvedValueOnce(reopened)
+
+    const { result, rerender } = renderHook(
+      ({ exampleId }: { exampleId: string | null }) => (
+        useSeedExampleDetail('dataset:named:harmbench', exampleId, false, 'gen-1')
+      ),
+      { initialProps: { exampleId: 'example-1' as string | null } },
+    )
+    await waitFor(() => expect(result.current.detail?.members[0]?.value_url).toContain('sig=opened'))
+    const loadSignal = mockDetail.mock.calls[0]?.[2] as AbortSignal
+
+    let refresh: Promise<string | null> = Promise.resolve(null)
+    act(() => {
+      refresh = result.current.refreshDisplayUrls('image-1')
+    })
+    const settled = refresh.then(
+      (value) => value,
+      (err: unknown) => err,
+    )
+    rerender({ exampleId: null })
+    expect(loadSignal.aborted).toBe(true)
+    expect(refreshSignal?.aborted).toBe(true)
+    expect(result.current.detail).toBeNull()
+    rerender({ exampleId: 'example-1' })
+    await waitFor(() => expect(result.current.detail?.members[0]?.value_url).toBe(`${stored}?sig=newly-opened`))
+
+    await act(async () => {
+      resolveRefresh(stale)
+    })
+    await expect(settled).resolves.toMatchObject({ name: 'AbortError' })
+    expect(result.current.detail?.members[0]?.value).toBe(stored)
+    expect(result.current.detail?.members[0]?.value_url).toBe(`${stored}?sig=newly-opened`)
+    expect(result.current.error).toBeNull()
+  })
+
+  it('drops a refresh that resolves after switching to another example', async () => {
+    const stored = 'https://account.blob.core.windows.net/container/pic.png'
+    const opened = {
+      ...DETAIL,
+      example_id: 'example-1',
+      members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=first` }],
+    } as SeedExampleDetailResponse
+    const other = {
+      ...DETAIL,
+      example_id: 'example-2',
+      members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=second` }],
+    } as SeedExampleDetailResponse
+    const stale = {
+      ...DETAIL,
+      example_id: 'example-1',
+      members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=older-refresh` }],
+    } as SeedExampleDetailResponse
+    let resolveRefresh: (value: SeedExampleDetailResponse) => void = () => {}
+    let refreshSignal: AbortSignal | undefined
+    mockDetail
+      .mockResolvedValueOnce(opened)
+      .mockImplementationOnce((_exampleId: string, _selectionKey: string, signal: AbortSignal) => {
+        refreshSignal = signal
+        return new Promise((resolve) => { resolveRefresh = resolve })
+      })
+      .mockResolvedValueOnce(other)
+
+    const { result, rerender } = renderHook(
+      ({ exampleId }: { exampleId: string }) => (
+        useSeedExampleDetail('dataset:named:harmbench', exampleId, false, 'gen-1')
+      ),
+      { initialProps: { exampleId: 'example-1' } },
+    )
+    await waitFor(() => expect(result.current.detail?.example_id).toBe('example-1'))
+    const loadSignal = mockDetail.mock.calls[0]?.[2] as AbortSignal
+
+    let refresh: Promise<string | null> = Promise.resolve(null)
+    act(() => {
+      refresh = result.current.refreshDisplayUrls('image-1')
+    })
+    const settled = refresh.then(
+      (value) => value,
+      (err: unknown) => err,
+    )
+    rerender({ exampleId: 'example-2' })
+    expect(loadSignal.aborted).toBe(true)
+    expect(refreshSignal?.aborted).toBe(true)
+    await waitFor(() => expect(result.current.detail?.members[0]?.value_url).toBe(`${stored}?sig=second`))
+
+    await act(async () => {
+      resolveRefresh(stale)
+    })
+    await expect(settled).resolves.toMatchObject({ name: 'AbortError' })
+    expect(result.current.detail?.example_id).toBe('example-2')
+    expect(result.current.detail?.members[0]?.value_url).toBe(`${stored}?sig=second`)
+    expect(result.current.error).toBeNull()
+  })
+
+  it('drops a refresh that resolves after the runtime generation changes', async () => {
+    const stored = 'https://account.blob.core.windows.net/container/pic.png'
+    const opened = {
+      ...DETAIL,
+      members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=opened` }],
+    } as SeedExampleDetailResponse
+    const nextRuntime = {
+      ...DETAIL,
+      members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=newly-opened` }],
+    } as SeedExampleDetailResponse
+    const stale = {
+      ...DETAIL,
+      members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=older-refresh` }],
+    } as SeedExampleDetailResponse
+    let resolveRefresh: (value: SeedExampleDetailResponse) => void = () => {}
+    let refreshSignal: AbortSignal | undefined
+    mockDetail
+      .mockResolvedValueOnce(opened)
+      .mockImplementationOnce((_exampleId: string, _selectionKey: string, signal: AbortSignal) => {
+        refreshSignal = signal
+        return new Promise((resolve) => { resolveRefresh = resolve })
+      })
+      .mockResolvedValueOnce(nextRuntime)
+
+    const { result, rerender } = renderHook(
+      ({ generation }: { generation: string }) => (
+        useSeedExampleDetail('dataset:named:harmbench', 'example-1', false, generation)
+      ),
+      { initialProps: { generation: 'gen-1' } },
+    )
+    await waitFor(() => expect(result.current.detail?.members[0]?.value_url).toContain('sig=opened'))
+    const loadSignal = mockDetail.mock.calls[0]?.[2] as AbortSignal
+
+    let refresh: Promise<string | null> = Promise.resolve(null)
+    act(() => {
+      refresh = result.current.refreshDisplayUrls('image-1')
+    })
+    const settled = refresh.then(
+      (value) => value,
+      (err: unknown) => err,
+    )
+    rerender({ generation: 'gen-2' })
+    expect(loadSignal.aborted).toBe(true)
+    expect(refreshSignal?.aborted).toBe(true)
+    await waitFor(() => expect(result.current.detail?.members[0]?.value_url).toBe(`${stored}?sig=newly-opened`))
+
+    await act(async () => {
+      resolveRefresh(stale)
+    })
+    await expect(settled).resolves.toMatchObject({ name: 'AbortError' })
+    expect(result.current.detail?.members[0]?.value_url).toBe(`${stored}?sig=newly-opened`)
+    expect(result.current.error).toBeNull()
+  })
+
+  it('aborts an in-flight refresh when the detail hook unmounts', async () => {
+    const stored = 'https://account.blob.core.windows.net/container/pic.png'
+    const opened = {
+      ...DETAIL,
+      members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=opened` }],
+    } as SeedExampleDetailResponse
+    let resolveRefresh: (value: SeedExampleDetailResponse) => void = () => {}
+    let refreshSignal: AbortSignal | undefined
+    mockDetail
+      .mockResolvedValueOnce(opened)
+      .mockImplementationOnce((_exampleId: string, _selectionKey: string, signal: AbortSignal) => {
+        refreshSignal = signal
+        return new Promise((resolve) => { resolveRefresh = resolve })
+      })
+
+    const { result, unmount } = renderHook(() => (
+      useSeedExampleDetail('dataset:named:harmbench', 'example-1', false, 'gen-1')
+    ))
+    await waitFor(() => expect(result.current.detail).not.toBeNull())
+    const loadSignal = mockDetail.mock.calls[0]?.[2] as AbortSignal
+
+    let refresh: Promise<string | null> = Promise.resolve(null)
+    act(() => {
+      refresh = result.current.refreshDisplayUrls('image-1')
+    })
+    const settled = refresh.then(
+      (value) => value,
+      (err: unknown) => err,
+    )
+    unmount()
+    expect(loadSignal.aborted).toBe(true)
+    expect(refreshSignal?.aborted).toBe(true)
+
+    await act(async () => {
+      resolveRefresh({
+        ...DETAIL,
+        members: [{ id: 'image-1', value: stored, value_url: `${stored}?sig=older-refresh` }],
+      } as SeedExampleDetailResponse)
+    })
+    await expect(settled).resolves.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('does not abort another member when one member is retried', async () => {
+    const image = 'https://account.blob.core.windows.net/container/pic.png'
+    const audio = 'https://account.blob.core.windows.net/container/talk.wav'
+    const opened = {
+      ...DETAIL,
+      members: [
+        { id: 'image-1', value: image, value_url: `${image}?sig=old` },
+        { id: 'audio-1', value: audio, value_url: `${audio}?sig=old` },
+      ],
+    } as SeedExampleDetailResponse
+    const imageFresh = {
+      ...opened,
+      members: [
+        { id: 'image-1', value: image, value_url: `${image}?sig=fresh` },
+        { id: 'audio-1', value: audio, value_url: `${audio}?sig=other` },
+      ],
+    } as SeedExampleDetailResponse
+    const audioFresh = {
+      ...opened,
+      members: [
+        { id: 'image-1', value: image, value_url: `${image}?sig=ignored` },
+        { id: 'audio-1', value: audio, value_url: `${audio}?sig=fresh` },
+      ],
+    } as SeedExampleDetailResponse
+    let resolveImage: (value: SeedExampleDetailResponse) => void = () => {}
+    let resolveAudio: (value: SeedExampleDetailResponse) => void = () => {}
+    let imageSignal: AbortSignal | undefined
+    let audioSignal: AbortSignal | undefined
+    mockDetail
+      .mockResolvedValueOnce(opened)
+      .mockImplementationOnce((_exampleId: string, _selectionKey: string, signal: AbortSignal) => {
+        imageSignal = signal
+        return new Promise((resolve) => { resolveImage = resolve })
+      })
+      .mockImplementationOnce((_exampleId: string, _selectionKey: string, signal: AbortSignal) => {
+        audioSignal = signal
+        return new Promise((resolve) => { resolveAudio = resolve })
+      })
+
+    const { result } = renderHook(() => useSeedExampleDetail('dataset:named:harmbench', 'example-1', false, 'gen-1'))
+    await waitFor(() => expect(result.current.detail?.members).toHaveLength(2))
+
+    let imageRefresh: Promise<string | null> = Promise.resolve(null)
+    let audioRefresh: Promise<string | null> = Promise.resolve(null)
+    act(() => {
+      imageRefresh = result.current.refreshDisplayUrls('image-1')
+      audioRefresh = result.current.refreshDisplayUrls('audio-1')
+    })
+    expect(imageSignal?.aborted).toBe(false)
+    expect(audioSignal?.aborted).toBe(false)
+
+    await act(async () => {
+      resolveImage(imageFresh)
+      await imageRefresh
+    })
+    expect(imageSignal?.aborted).toBe(false)
+    expect(audioSignal?.aborted).toBe(false)
+    expect(await imageRefresh).toBe(`${image}?sig=fresh`)
+    expect(result.current.detail?.members[0]?.value_url).toBe(`${image}?sig=fresh`)
+    expect(result.current.detail?.members[1]?.value_url).toBe(`${audio}?sig=old`)
+
+    await act(async () => {
+      resolveAudio(audioFresh)
+      await audioRefresh
+    })
+    expect(audioSignal?.aborted).toBe(false)
+    expect(await audioRefresh).toBe(`${audio}?sig=fresh`)
+    expect(result.current.detail?.members[0]?.value_url).toBe(`${image}?sig=fresh`)
+    expect(result.current.detail?.members[1]?.value_url).toBe(`${audio}?sig=fresh`)
+  })
+
   it('does not request a detail when the example id is repeated or absent', async () => {
     renderHook(() => useSeedExampleDetail('dataset:named:harmbench', null, true, 'gen-1'))
     await act(async () => { await Promise.resolve() })

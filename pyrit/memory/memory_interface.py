@@ -3757,15 +3757,13 @@ class MemoryInterface(abc.ABC):
         if len(messages) == 0:
             return str(uuid.uuid4())
 
-        last_message = messages[-1]
-
-        length_of_sequence_to_remove = 0
-
-        length_of_sequence_to_remove = 1 if last_message.api_role == "system" or last_message.api_role == "user" else 2
-
-        messages_to_duplicate = [
-            message for message in messages if message.sequence <= last_message.sequence - length_of_sequence_to_remove
-        ]
+        # The last turn starts at the last user (or system) message. A target's tool loop stores the function
+        # call, the tool output and the final answer as separate messages, so the turn can span more than two.
+        last_turn_start = max(
+            (index for index, message in enumerate(messages) if message.api_role in ("user", "system")),
+            default=0,
+        )
+        messages_to_duplicate = messages[:last_turn_start]
 
         source_metadata = self._get_conversation(conversation_id=conversation_id)
         source_target = source_metadata.target_identifier if source_metadata else None
