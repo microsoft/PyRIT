@@ -80,9 +80,25 @@ class SeedExampleListResponse(BaseModel):
     total: int = Field(..., description="Number of logical examples that match the filters")
 
 
+class SeedMemberView(SeedRecord):
+    """A stored seed plus the URL a browser can use to fetch its media."""
+
+    value_url: str | None = Field(
+        None,
+        description=(
+            "Client-fetchable media URL (/api/media or a signed blob URL). "
+            "Null for non-media. The stored value remains the stable source reference."
+        ),
+    )
+
+
 class SeedExampleDetailResponse(SeedExampleSummary):
     """One logical seed example with all of its stored seeds."""
 
-    members: list[SeedRecord] = Field(
-        ..., description="Stored seed records without reconstruction, objectives first, then by sequence"
+    members: list[SeedMemberView] = Field(
+        ...,
+        description=(
+            "Stored seed records without reconstruction, objectives first, then by sequence. "
+            "Media members include value_url for display; value is the stored reference."
+        ),
     )

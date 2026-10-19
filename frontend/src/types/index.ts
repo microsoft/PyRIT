@@ -1030,7 +1030,7 @@ export interface DatasetListResponse {
 /** Stored seed kinds accepted by the dataset seed browser. */
 export type SeedType = 'prompt' | 'objective' | 'simulated_conversation'
 
-/** Stored prompt data types. Media path values are not played by the browser. */
+/** Stored prompt data types. Media previews use `value_url`; the stored value stays a reference. */
 export type PromptDataType =
   | 'text'
   | 'image_path'
@@ -1071,6 +1071,12 @@ export interface SeedRecord {
   seed_type: SeedType
   value: string
   value_sha256: string | null
+  /**
+   * Client-fetchable media URL (`/api/media` or a signed blob URL).
+   * A non-URL or a missing field means the file cannot be previewed.
+   * `value` remains the stable stored reference.
+   */
+  value_url?: string | null
   data_type: PromptDataType
   name: string | null
   dataset_name: string | null

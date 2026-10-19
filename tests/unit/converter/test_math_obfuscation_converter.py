@@ -7,6 +7,7 @@ import random
 import pytest
 
 from pyrit.converter.math_obfuscation_converter import MathObfuscationConverter
+from pyrit.registry import ConverterRegistry
 
 
 @pytest.mark.parametrize(
@@ -151,3 +152,35 @@ def test_math_obfuscation_full_defaults():
     # Hint should be on first line only
     lines = result.output_text.split(MathObfuscationConverter.DEFAULT_SUFFIX)[0].splitlines()
     assert MathObfuscationConverter.DEFAULT_HINT in lines[0]
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [{"hint": "custom hint"}, {"hint": ""}, {"suffix": "custom suffix"}, {"suffix": ""}],
+)
+def test_math_obfuscation_identifier_distinguishes_hint_and_suffix(settings: dict[str, str]) -> None:
+    default = MathObfuscationConverter()
+    other = MathObfuscationConverter(**settings)
+    assert default.get_identifier().hash != other.get_identifier().hash
+
+    # Both configurations get their own default registry name instead of colliding.
+    instances = ConverterRegistry().instances
+    instances.register(default)
+    instances.register(other)
+    assert instances.get(default.get_identifier().unique_name) is default
+    assert instances.get(other.get_identifier().unique_name) is other
+
+
+def test_math_obfuscation_identifier_is_stable_for_equal_settings() -> None:
+    assert (
+        MathObfuscationConverter(hint="h", suffix="s").get_identifier().hash
+        == MathObfuscationConverter(hint="h", suffix="s").get_identifier().hash
+    )
+    assert (
+        MathObfuscationConverter().get_identifier().hash
+        == MathObfuscationConverter(
+            hint=MathObfuscationConverter.DEFAULT_HINT, suffix=MathObfuscationConverter.DEFAULT_SUFFIX
+        )
+        .get_identifier()
+        .hash
+    )

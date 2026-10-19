@@ -2516,6 +2516,11 @@ class TestScenarioParallelExecution:
         messages = sorted(str(e) for e in exc_info.value.exceptions)
         assert messages == ["a boom", "b boom", "c boom"]
         assert all(isinstance(e, RuntimeError) for e in exc_info.value.exceptions)
+        assert sorted(error.__notes__ for error in exc_info.value.exceptions) == [
+            ["Failed atomic attack 'attack_run_1' in scenario 'Test Scenario'."],
+            ["Failed atomic attack 'attack_run_2' in scenario 'Test Scenario'."],
+            ["Failed atomic attack 'attack_run_3' in scenario 'Test Scenario'."],
+        ]
 
     async def test_single_failure_is_raised_directly_not_wrapped(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
@@ -2526,8 +2531,10 @@ class TestScenarioParallelExecution:
                 [sample_attack_results[i]], atomic_attack=mock_atomic_attacks[i]
             )
 
+        failure = RuntimeError("solo boom")
+
         async def bad_run(*a, **k):
-            raise RuntimeError("solo boom")
+            raise failure
 
         mock_atomic_attacks[1].run_async = AsyncMock(side_effect=bad_run)
 
@@ -2544,9 +2551,12 @@ class TestScenarioParallelExecution:
         )
         await scenario.initialize_async()
 
-        # Bare RuntimeError, not ExceptionGroup.
-        with pytest.raises(RuntimeError, match="solo boom"):
+        # Bare RuntimeError, not ExceptionGroup, with the original exception identity.
+        with pytest.raises(RuntimeError, match="solo boom") as exc_info:
             await scenario.run_async()
+
+        assert exc_info.value is failure
+        assert exc_info.value.__notes__ == ["Failed atomic attack 'attack_run_2' in scenario 'Test Scenario'."]
 
     async def test_max_concurrency_one_serializes_via_single_worker(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target

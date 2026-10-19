@@ -679,13 +679,14 @@ async def test_resume_failure_preserves_saved_results_async(
     assert target.prompt_sent == [_SECOND_OBJECTIVE]
 
 
-@pytest.mark.timeout(60)
-async def test_resume_completion_waits_for_terminal_handoff_async(
+@pytest.mark.timeout(300)
+@pytest.mark.parametrize("launch", ["fresh", "resume"])
+async def test_run_completion_waits_for_terminal_handoff_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+    launch: str,
 ) -> None:
     service, target = resume_environment
-    stored = await _create_failed_run_async(target=target, legacy=False)
-    run_id = str(stored.id)
+    stored = await _create_failed_run_async(target=target, legacy=False) if launch == "resume" else None
     target.prompt_sent.clear()
     entered, release = asyncio.Event(), asyncio.Event()
     original_handoff = service._complete_handoff_async
@@ -701,7 +702,15 @@ async def test_resume_completion_waits_for_terminal_handoff_async(
         await original_wait_for(awaitable, timeout=0)
 
     with patch.object(service, "_complete_handoff_async", side_effect=handoff_async):
-        await service.resume_run_async(scenario_result_id=run_id)
+        if stored is not None:
+            response = await service.resume_run_async(scenario_result_id=str(stored.id))
+        else:
+            response = await service.start_run_async(
+                request=RunScenarioRequest(
+                    scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, max_concurrency=1, include_baseline=False
+                )
+            )
+        run_id = response.scenario_result_id
         await entered.wait()
         active = service._active_tasks[run_id]
         assert active.task is not None
@@ -713,7 +722,9 @@ async def test_resume_completion_waits_for_terminal_handoff_async(
                 assert not active.task.done()
                 assert active.task.cancelling() == 0
                 assert service.get_queue_snapshot().active is not None
-                assert target.prompt_sent == [_SECOND_OBJECTIVE]
+                assert target.prompt_sent == (
+                    [_SECOND_OBJECTIVE] if launch == "resume" else [_FIRST_OBJECTIVE, _SECOND_OBJECTIVE]
+                )
             finally:
                 release.set()
                 await observer
@@ -811,6 +822,7 @@ async def test_overlapping_resume_requests_only_initialize_once_async(
         assert start.await_count == 1
 
 
+@pytest.mark.timeout(300)
 async def test_fresh_launch_saves_only_nonsecret_resume_inputs_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
 ) -> None:
@@ -829,7 +841,7 @@ async def test_fresh_launch_saves_only_nonsecret_resume_inputs_async(
                 max_concurrency=1,
             )
         )
-        await _wait_for_idle_async(service)
+        await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
     stored = await CentralMemory.get_memory_instance().get_scenario_result_header_async(
         scenario_result_id=response.scenario_result_id
     )

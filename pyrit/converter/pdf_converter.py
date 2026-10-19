@@ -3,6 +3,7 @@
 
 import ast
 import hashlib
+import json
 import time
 from io import BytesIO
 from pathlib import Path
@@ -22,6 +23,9 @@ from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 # stays hidden on a typical page.
 _GENERATED_TEXT_COLOR: tuple[int, int, int] = (0, 0, 0)
 _INJECTED_TEXT_COLOR: tuple[int, int, int] = (255, 255, 255)
+
+# Default row height in mm for generated PDFs. The identifier leaves the default out, so default hashes don't move.
+_DEFAULT_ROW_HEIGHT = 10
 
 
 class PDFConverter(Converter):
@@ -52,7 +56,7 @@ class PDFConverter(Converter):
         page_width: int = 210,
         page_height: int = 297,
         column_width: int = 0,
-        row_height: int = 10,
+        row_height: int = _DEFAULT_ROW_HEIGHT,
         existing_pdf: Path | None = None,
         injection_items: list[dict[str, Any]] | None = None,
     ) -> None:
@@ -71,7 +75,8 @@ class PDFConverter(Converter):
             column_width (int): Width of each column in the PDF. Defaults to 0 (full page width).
             row_height (int): Height of each row in the PDF. Defaults to 10.
             existing_pdf (Path | None, optional): Path to an existing PDF file. Defaults to None.
-            injection_items (list[Dict] | None, optional): A list of injection items for modifying an existing PDF.
+            injection_items (list[dict[str, Any]] | None, optional): Injection items for modifying an existing PDF.
+                Identifier values must be JSON-serializable or UTF-8 bytes, which are identified as their decoded text.
 
         Raises:
             ValueError: If the font color is invalid or the injection items are not provided as a list of dictionaries.
@@ -130,6 +135,14 @@ class PDFConverter(Converter):
         if self._existing_pdf_path:
             existing_pdf_path = str(self._existing_pdf_path)
 
+        injection_items_hash = None
+        if self._injection_items:
+            injection_items_hash = hashlib.sha256(
+                json.dumps(self._injection_items, sort_keys=True, default=self._serialize_injection_value).encode(
+                    "utf-8"
+                )
+            ).hexdigest()[:16]
+
         return self._create_identifier(
             params={
                 "font_type": self._font_type,
@@ -139,6 +152,11 @@ class PDFConverter(Converter):
                 "prompt_template_hash": template_hash,
                 "existing_pdf_path": existing_pdf_path,
                 "font_color": list(self._font_color) if self._font_color is not None else None,
+                # Layout and injection settings join the identity only when they are set, so the
+                # default identity keeps its existing hash.
+                "column_width": self._column_width or None,
+                "row_height": self._row_height if self._row_height != _DEFAULT_ROW_HEIGHT else None,
+                "injection_items_hash": injection_items_hash,
             }
         )
 
@@ -461,3 +479,22 @@ class PDFConverter(Converter):
         )
         await pdf_serializer.save_data_async(pdf_bytes, output_filename=output_filename)
         return pdf_serializer
+
+    @staticmethod
+    def _serialize_injection_value(value: object) -> str:
+        """
+        Normalize byte text consistently with ReportLab for identifier serialization.
+
+        Args:
+            value (object): A value not handled by the JSON encoder.
+
+        Returns:
+            str: The decoded UTF-8 text.
+
+        Raises:
+            TypeError: If the value is not bytes.
+            UnicodeDecodeError: If the bytes are not valid UTF-8.
+        """
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        raise TypeError(f"Unsupported injection item value type: {type(value).__name__}")

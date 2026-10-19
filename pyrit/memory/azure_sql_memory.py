@@ -591,6 +591,48 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             )
         return and_(*are_parts)
 
+    def _get_attack_result_literal_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
+        """
+        Azure SQL implementation that matches label names literally through OPENJSON.
+
+        Keys and values are bound parameters, so no key becomes part of a JSON path or SQL text.
+        DATALENGTH keeps keys that differ only by trailing spaces apart, since SQL Server pads
+        strings before comparing them.
+
+        Returns:
+            Any: SQLAlchemy condition with bound parameters.
+        """
+        literal_conditions: list[str] = []
+        bindparams: dict[str, str] = {}
+        for key_index, (key, raw_value) in enumerate(labels.items()):
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if not values:
+                continue
+            key_param = f"are_literal_key_{key_index}"
+            bindparams[key_param] = key
+            placeholders = []
+            for value_index, value in enumerate(values):
+                value_param = f"are_literal_{key_index}_{value_index}"
+                bindparams[value_param] = str(value)
+                placeholders.append(f":{value_param}")
+            literal_conditions.append(
+                'EXISTS (SELECT 1 FROM OPENJSON("AttackResultEntries".labels) AS label_entry '
+                f"WHERE label_entry.[key] = :{key_param} "
+                f"AND DATALENGTH(label_entry.[key]) = DATALENGTH(CAST(:{key_param} AS NVARCHAR(MAX))) "
+                f"AND label_entry.[value] IN ({', '.join(placeholders)}))"
+            )
+
+        parts: list[Any] = [AttackResultEntry.labels.isnot(None)]
+        if literal_conditions:
+            combined = " AND ".join(literal_conditions)
+            parts.append(
+                cast(
+                    "ColumnElement[bool]",
+                    text(f'ISJSON("AttackResultEntries".labels) = 1 AND {combined}').bindparams(**bindparams),
+                )
+            )
+        return and_(*parts)
+
     def _execute_get_unique_attack_class_names(self) -> list[str]:
         """
         Azure SQL implementation: extract unique class_name values from

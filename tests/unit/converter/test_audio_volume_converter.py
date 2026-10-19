@@ -12,6 +12,7 @@ import pytest
 from scipy.io import wavfile
 
 from pyrit.converter.audio_volume_converter import AudioVolumeConverter
+from pyrit.registry import ConverterRegistry
 
 
 @pytest.mark.usefixtures("sqlite_instance")
@@ -201,3 +202,29 @@ def test_invalid_volume_factor_non_finite(volume_factor: float) -> None:
     """Non-finite volume factors should fail during converter construction."""
     with pytest.raises(ValueError, match="volume_factor must be finite"):
         AudioVolumeConverter(volume_factor=volume_factor)
+
+
+def test_volume_identifier_includes_settings() -> None:
+    params = AudioVolumeConverter(volume_factor=0.5).get_identifier().params
+    assert params["output_format"] == "wav"
+    assert params["volume_factor"] == 0.5
+
+
+def test_volume_identifier_distinguishes_settings() -> None:
+    default = AudioVolumeConverter()
+    other = AudioVolumeConverter(volume_factor=2.0)
+    assert default.get_identifier().hash != other.get_identifier().hash
+
+    # Both configurations get their own default registry name instead of colliding.
+    instances = ConverterRegistry().instances
+    instances.register(default)
+    instances.register(other)
+    assert instances.get(default.get_identifier().unique_name) is default
+    assert instances.get(other.get_identifier().unique_name) is other
+
+
+def test_volume_identifier_is_stable_for_equal_settings() -> None:
+    assert (
+        AudioVolumeConverter(volume_factor=0.5).get_identifier().hash
+        == AudioVolumeConverter(volume_factor=0.5).get_identifier().hash
+    )

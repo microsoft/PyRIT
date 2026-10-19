@@ -41,7 +41,7 @@ class TestAzureSpeechAudioToTextConverter:
         import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
 
         # Create a mock event
-        mock_event = MagicMock()
+        mock_event = MagicMock(spec=speechsdk.SpeechRecognitionCanceledEventArgs)
         mock_event.result.reason = speechsdk.ResultReason.Canceled
         mock_event.result.cancellation_details.reason = speechsdk.CancellationReason.EndOfStream
         mock_event.result.cancellation_details.error_details = "Mock error details"
@@ -59,6 +59,41 @@ class TestAzureSpeechAudioToTextConverter:
         mock_logger.info.assert_any_call(f"CLOSING on {mock_event}")
         mock_logger.info.assert_any_call(f"Speech recognition canceled: {speechsdk.CancellationReason.EndOfStream}")
         mock_logger.info.assert_called_with("End of audio stream detected.")
+
+    @patch("pyrit.converter.azure_speech_audio_to_text_converter.logger")
+    def test_stop_cb_session_stopped_event_has_no_result(self, mock_logger):
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
+
+        # session_stopped delivers a SessionEventArgs, which has no `result`; spec keeps the mock
+        # from inventing one.
+        event = MagicMock(spec=speechsdk.SessionEventArgs)
+        recognizer = MagicMock(spec=speechsdk.SpeechRecognizer)
+        converter = AzureSpeechAudioToTextConverter(azure_speech_region="test_region", azure_speech_key="test_key")
+
+        converter.stop_cb(evt=event, recognizer=recognizer)
+
+        recognizer.stop_continuous_recognition_async.assert_called_once()
+        assert converter.done is True
+        assert not any("canceled" in str(c.args[0]) for c in mock_logger.info.call_args_list)
+        mock_logger.error.assert_not_called()
+
+    @patch("pyrit.converter.azure_speech_audio_to_text_converter.logger")
+    def test_stop_cb_canceled_event_logs_error_details(self, mock_logger):
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
+
+        event = MagicMock(spec=speechsdk.SpeechRecognitionCanceledEventArgs)
+        event.result.reason = speechsdk.ResultReason.Canceled
+        event.result.cancellation_details.reason = speechsdk.CancellationReason.Error
+        event.result.cancellation_details.error_details = "Mock error details"
+        recognizer = MagicMock(spec=speechsdk.SpeechRecognizer)
+        converter = AzureSpeechAudioToTextConverter(azure_speech_region="test_region", azure_speech_key="test_key")
+
+        converter.stop_cb(evt=event, recognizer=recognizer)
+
+        recognizer.stop_continuous_recognition_async.assert_called_once()
+        assert converter.done is True
+        mock_logger.info.assert_any_call(f"Speech recognition canceled: {speechsdk.CancellationReason.Error}")
+        mock_logger.error.assert_called_once_with("Error details: Mock error details")
 
     @patch(
         "pyrit.common.default_values.get_required_value",
