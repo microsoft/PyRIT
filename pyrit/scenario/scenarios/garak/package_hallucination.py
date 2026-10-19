@@ -23,9 +23,10 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score.true_false.regex.package_hallucination_scorer import (
@@ -88,20 +89,6 @@ _LANGUAGE_SPECS: dict[str, _LanguageSpec] = {
 }
 
 
-class _PackageHallucinationDatasetConfiguration(DatasetConfiguration):
-    """Dataset configuration that exposes raw values for prompt and registry datasets."""
-
-    async def get_values_by_dataset_async(self) -> dict[str, list[str]]:
-        """
-        Resolve configured datasets, fetching missing datasets from their providers.
-
-        Returns:
-            dict[str, list[str]]: Seed values keyed by dataset name.
-        """
-        seeds_by_dataset = await self._collect_named_seeds_async()
-        return {name: [seed.value for seed in seeds] for name, seeds in seeds_by_dataset.items()}
-
-
 class PackageHallucinationTechnique(ScenarioTechnique):
     """
     Techniques for the PackageHallucination scenario.
@@ -153,6 +140,8 @@ class PackageHallucination(Scenario):
     """
 
     VERSION: int = 3
+    DATASET_OPTIONS = ScenarioDatasetOptions(mode=DatasetSelectionMode.FIXED, per_dataset_limit=False)
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # The plain code request is not an adversarial baseline to compare against, so no baseline.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
@@ -205,13 +194,27 @@ class PackageHallucination(Scenario):
             # Preload only the Rust registry and prompt corpus. Other registries are fetched
             # on demand when their techniques are selected.
             default_dataset_config=DatasetAttackConfiguration(
-                dataset_names=[_LANGUAGE_SPECS["rust"].dataset_name, *_CORPUS_DATASETS]
+                max_per_dataset="all",
+                sources=[
+                    DatasetSource(name=name) for name in [_LANGUAGE_SPECS["rust"].dataset_name, *_CORPUS_DATASETS]
+                ],
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
 
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
+
+    def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
+        techniques = self._resolve_scenario_techniques(scenario_techniques=self.params.get("scenario_techniques"))
+        names = [
+            *_CORPUS_DATASETS,
+            *(_LANGUAGE_SPECS[technique.value].dataset_name for technique in techniques),
+        ]
+        by_name = {source.name: source for source in self._default_dataset_config.sources}
+        return self._default_dataset_config.with_overrides(
+            sources=[by_name.get(name, DatasetSource(name=name)) for name in dict.fromkeys(names)]
+        )
 
     def _validate_runtime_configuration(self) -> None:
         super()._validate_runtime_configuration()
@@ -222,6 +225,9 @@ class PackageHallucination(Scenario):
         """Return the combined generated-prompt cap for the selected languages."""
         return BoundedDatasetSize(value=self._max_prompts_per_language * len(self._scenario_techniques))
 
+    def _get_required_objective_keys(self) -> list[str]:
+        return [technique.value for technique in self._scenario_techniques]
+
     async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
         Estimate generated prompts from the per-language cap without loading the corpus.
@@ -230,18 +236,21 @@ class PackageHallucination(Scenario):
             ScenarioRunSizeEstimate: Combined budget for the selected languages.
         """
         assert isinstance(budget, BoundedDatasetSize)
+        components = [
+            ScenarioRunSizeComponent(label=technique.value, count=self._max_prompts_per_language)
+            for technique in self._scenario_techniques
+        ]
+        if budget.value < sum(component.count for component in components):
+            components = [ScenarioRunSizeComponent(label="Selected generated objectives", count=budget.value)]
         return ScenarioRunSizeEstimate(
             total_attack_count=budget.value,
-            components=[
-                ScenarioRunSizeComponent(label=technique.value, count=self._max_prompts_per_language)
-                for technique in self._scenario_techniques
-            ],
+            components=components,
             datasets=[
                 ScenarioDatasetSummary(name=technique.value, kind="synthesized")
                 for technique in self._scenario_techniques
             ],
             effective_parameters={"max_prompts_per_language": self._max_prompts_per_language},
-            note="The generated-prompt cap applies per language. Dataset size limits do not apply.",
+            note="The objective limit caps all selected languages; the per-language generation cap also applies.",
         )
 
     @staticmethod
@@ -342,13 +351,8 @@ class PackageHallucination(Scenario):
             if not isinstance(technique, PackageHallucinationTechnique):
                 raise TypeError(f"Unexpected package hallucination technique: {type(technique).__name__}")
             specs_by_technique[technique.value] = _LANGUAGE_SPECS[technique.value]
-        dataset_names = [
-            *_CORPUS_DATASETS,
-            *(spec.dataset_name for spec in specs_by_technique.values()),
-        ]
-        dataset_values = await _PackageHallucinationDatasetConfiguration(
-            dataset_names=list(dict.fromkeys(dataset_names))
-        ).get_values_by_dataset_async()
+        seeds_by_dataset = await self._dataset_config._collect_named_seeds_async()
+        dataset_values = {name: [seed.value for seed in seeds] for name, seeds in seeds_by_dataset.items()}
 
         rng = random.Random(self._random_seed)
         stubs, tasks = self._load_corpus(dataset_values=dataset_values)

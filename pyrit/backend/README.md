@@ -7,14 +7,20 @@ FastAPI-based REST API for PyRIT.
 ### Run the Server
 
 ```bash
-# Development server with auto-reload
-python -m pyrit.backend.main
+# Loopback-only local development without Entra authentication
+python -m pyrit.backend.pyrit_backend --auth-mode local --host 127.0.0.1 --reload
 
-# Or with uvicorn directly
-uvicorn pyrit.backend.main:app --reload --host 0.0.0.0 --port 8000
+# Equivalent direct Uvicorn launch
+PYRIT_AUTH_MODE=local python -m uvicorn pyrit.backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 The API will be available at `http://localhost:8000`
+
+For a shared deployment, set `PYRIT_AUTH_MODE=entra`, configure
+`ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, and `ENTRA_ALLOWED_GROUP_IDS`, and then
+bind the server to the intended network interface. Startup fails when neither
+explicit local mode nor complete Entra configuration is present. Target-provider
+API keys do not authenticate incoming GUI users.
 
 ### API Documentation
 
@@ -31,6 +37,69 @@ The API will be available at `http://localhost:8000`
 ### Targets
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
+
+### Saved conversations
+
+`GET /api/attacks/conversations/{conversation_id}` returns the saved chat history
+and its owning attack. The scanner uses this read-only lookup to open its
+conversation editor. For upgraded history without an ownership link, the lookup
+uses a verified main or pruned attack reference without changing stored rows.
+Missing IDs, standalone conversations, and internal conversations return 404.
+Saving from the scanner creates a copy through `POST /api/attacks/save-conversation`;
+it does not change the source or send to a target.
+
+### Techniques
+
+| Endpoint | Result |
+| --- | --- |
+| `GET /api/techniques` | A page of active registered technique factories |
+| `GET /api/techniques/types` | Attack-class parameters and supported converter/adversarial controls |
+| `GET /api/techniques/{name}` | Safe settings for one factory; 404 if not registered |
+| `POST /api/techniques` | Validate and register a basic runtime technique; 201 on success |
+
+The list accepts `limit` (default 50, range 1-200) and `cursor` (the last returned
+registry name). Results use registry-name order. Follow `pagination.next_cursor`
+while `pagination.has_more` is true. The GUI loads all pages for search and filters.
+
+Use a class name from `AttackRegistry` as `type`, with `name` and constructor
+`params`. Optional fields are `description`, `tags`, ordered
+`request_converters` and `response_converters` names, an `adversarial_chat`
+target name, and inline `adversarial_system_prompt`, `adversarial_seed_prompt`,
+and `adversarial_prompt_template` strings. References use existing registries.
+Seeds, conversation settings, and advanced attack configurations remain
+Python-only.
+
+Creation does not run an attack. The scenario supplies the objective target and
+scoring configuration; an omitted adversarial target uses the execution default.
+Invalid settings or selector collisions return 400 without registering a factory;
+invalid request shapes return 422. `all` and `default` are reserved selectors;
+`types` is also a reserved name. Names cannot replace inherited `ScenarioTechnique`
+attributes such as `resolve` or `get_all_techniques`.
+Admission also checks the effective dynamic scenario pools, including local factory
+tags and scenario filters, before changing the registry. Attack-owned constructor
+validators check bounds and other configuration constraints without constructing
+or executing attacks. Target and scorer compatibility stays an initialization check.
+Constrained list inputs are resolved to their declared enum or literal values.
+Deferred Python validation uses the same configured-default rules as decorated
+constructors; the factory retains omitted arguments and explicit `None` values.
+
+The basic GUI supports scalar inputs and one level of declared structured settings.
+It hides nested structured settings that the shared resolver cannot construct.
+
+Additions are runtime-only and available in compatible scenarios. Restart or
+reinitialize PyRIT to remove them. Existing scenario snapshots and runs do not
+change. List and detail responses include Python-created factories without
+disclosing target credentials.
+Scenario-local factories take precedence over registered factories of the same name.
+`AttackTechniqueRegistry.cache_scenario_technique_class` refreshes scenario selection
+enums when registered factories change; it does not create attacks.
+Selections from an earlier enum remain valid in the same scenario and registry
+generation if their factories are unchanged. Earlier aggregate selections retain
+their original members; they do not gain newly registered techniques.
+Responses include `creation_statement`, a Python-style display of the factory's
+supplied arguments. Helper constructors retain their original call form.
+Live components without captured inputs use `...`; this display is not executable
+or lossless source. Responses do not include identifier or expanded seed JSON.
 
 ### Manual Messages
 
@@ -197,6 +266,12 @@ CLI wheel, and backend must be available before enabling enforcement in deployme
 ## Configuration
 
 Environment variables:
+- `PYRIT_AUTH_MODE` - Incoming-request authentication mode: `local` or `entra`
+- `ENTRA_TENANT_ID` - Entra directory used for GUI sign-in
+- `ENTRA_CLIENT_ID` - Entra application registration used by the GUI
+- `ENTRA_ALLOWED_GROUP_IDS` - Comma-separated groups allowed to use protected APIs
+- `ENTRA_ADMIN_GROUP_ID` - Optional group allowed to use administrator APIs
+- `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN` - Local-mode-only administrator override
 - `PYRIT_API_HOST` - Host to bind to (default: localhost)
 - `PYRIT_API_PORT` - Port to listen on (default: 8000)
 - `PYRIT_API_RELOAD` - Enable auto-reload (default: false)

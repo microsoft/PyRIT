@@ -2,7 +2,7 @@ import { useState } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
-import { createMemoryRouter, MemoryRouter, RouterProvider, Route, Routes } from "react-router";
+import { createMemoryRouter, MemoryRouter, RouterProvider, Route, Routes, useLocation } from "react-router";
 import ChatWindow from "./ChatWindow";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
@@ -28,6 +28,14 @@ import {
 } from "../../types";
 import { attacksApi, convertersApi, scoresApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
+
+jest.mock("./FindingEvidenceDialog", () => ({
+  __esModule: true,
+  default: ({ attackResultId, disabled, open }: {
+    attackResultId: string; disabled: boolean; open: boolean;
+  }) => <div data-testid="finding-evidence-dialog" data-attack={attackResultId}
+    data-disabled={String(disabled)} data-open={String(open)} />,
+}));
 
 const buildCapabilities = (
   overrides: Partial<TargetCapabilities> = {}
@@ -97,6 +105,19 @@ const actualMessageMapper = jest.requireActual<typeof import("../../utils/messag
   "../../utils/messageMapper"
 );
 const MARKDOWN_PREFERENCE_STORAGE_KEY = "pyrit.chatMarkdownMode";
+
+function RouterLocation() {
+  const location = useLocation();
+  return <output aria-label="Current URL">{location.pathname}{location.search}</output>;
+}
+
+async function findRecoveryAction(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  const buttons = await screen.findAllByRole("button", { name: "Copy or Branch" });
+  const lastButton = buttons.at(-1);
+  if (!lastButton) throw new Error("The failed prompt has no copy menu.");
+  await user.click(lastButton);
+  return screen.findByRole("menuitem", { name: "Branch conversation" });
+}
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -420,6 +441,58 @@ describe("ChatWindow Integration", () => {
     await user.keyboard("{Escape}");
   }
 
+  it("opens the finding dialog for the viewed attack from Attack Result Details", async () => {
+    const user = userEvent.setup();
+    mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Saved").messages);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([{ role: "user", content: "Saved", timestamp: "" }]);
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="related" outcome="undetermined" labels={{ operation: "Different toolbar Operation" }} /></TestWrapper>);
+    const dialog = screen.getByTestId("finding-evidence-dialog");
+    await waitFor(() => { expect(dialog).toHaveAttribute("data-disabled", "false"); });
+    expect(dialog).toHaveAttribute("data-attack", "owner");
+    expect(dialog).toHaveAttribute("data-open", "false");
+    expect(screen.queryByRole("button", { name: "Link to finding" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Objective achieved outcome: undetermined" }));
+    await user.click(await screen.findByRole("button", { name: "Add as finding" }));
+    expect(dialog).toHaveAttribute("data-open", "true");
+    await waitFor(() => { expect(screen.queryByText("Attack Result Details")).not.toBeInTheDocument(); });
+  });
+
+  it("keeps the attachment workflow mounted across viewed conversation changes", async () => {
+    mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Saved").messages);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([{ role: "user", content: "Saved", timestamp: "" }]);
+    const rendered = render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="related" /></TestWrapper>);
+    const dialog = screen.getByTestId("finding-evidence-dialog");
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="another" /></TestWrapper>);
+    await waitFor(() => { expect(screen.getByTestId("finding-evidence-dialog")).toBe(dialog); });
+    expect(dialog).toHaveAttribute("data-attack", "owner");
+  });
+
+  it.each([404, 503])("distinguishes evidence-origin message load status %s", async (status: number) => {
+    mockedAttacksApi.getMessages.mockRejectedValue({ isAxiosError: true, response: { status, data: { detail: "source load failed" } } });
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="main" findingEvidenceId="123e4567-e89b-12d3-a456-426614174000" /></TestWrapper>);
+    if (status === 404) {
+      expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
+    } else {
+      expect(await screen.findByText(/Could not load conversation/)).toBeInTheDocument();
+      expect(screen.queryByText("Evidence unavailable")).not.toBeInTheDocument();
+    }
+  });
+
+  it("reports an evidence-origin successfully empty transcript as unavailable", async () => {
+    mockedAttacksApi.getMessages.mockResolvedValue({ conversation_id: "main", messages: [], target_response_status: null });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="main" findingEvidenceId="123e4567-e89b-12d3-a456-426614174000" /></TestWrapper>);
+    expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
+    expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-attack", "");
+    expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-disabled", "true");
+    expect(screen.getByRole("textbox")).toBeDisabled();
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockedAttacksApi.getMessages.mockReset();
@@ -575,9 +648,8 @@ describe("ChatWindow Integration", () => {
       });
       render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
       await sendDraft(user);
-      await user.click(await screen.findByRole("button", { name: /edit in clean conversation/i }));
+      await user.click(await findRecoveryAction(user));
       expect(screen.getByRole("textbox")).toHaveValue("Request from another client");
-      expect(screen.getByText(/restored from conversation history/)).toBeInTheDocument();
     });
 
     it("finishes immediately without advancing a polling timer", async () => {
@@ -676,7 +748,7 @@ describe("ChatWindow Integration", () => {
         expect(await screen.findByText(`Controlled ${stage} failure`, { exact: false })).toBeInTheDocument();
         expect(screen.getByRole("textbox")).toHaveValue("Draft to send");
         if (stage === "preparation") {
-          expect(screen.getByRole("button", { name: /edit in clean conversation/i })).toBeInTheDocument();
+          expect(await findRecoveryAction(user)).toBeInTheDocument();
         } else {
           expect(screen.queryByRole("button", { name: /edit in clean conversation/i })).not.toBeInTheDocument();
         }
@@ -730,8 +802,8 @@ describe("ChatWindow Integration", () => {
         ...makeErrorResponse("processing", "Stored processing error").messages, conversation_id: props.conversationId,
       });
       await user.click(screen.getByRole("button", { name: `Select conversation ${props.conversationId}` }));
-      const recovery = await screen.findByRole("button", { name: /edit in clean conversation/i });
-      expect(recovery).toBeDisabled();
+      const recovery = await findRecoveryAction(user);
+      expect(recovery).toHaveAttribute("aria-disabled", "true");
       await user.click(recovery);
       expect(mockedAttacksApi.createConversation).not.toHaveBeenCalled();
     });
@@ -901,8 +973,10 @@ describe("ChatWindow Integration", () => {
         await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue(""));
         await user.click(screen.getByRole("button", { name: "Open conversation copy-1" }));
         rendered.rerender(<TestWrapper><ChatWindow {...attachmentProps} activeConversationId="copy-1" /></TestWrapper>);
-        const restore = stage === "preparation" ? /restore prompt/i : /edit in clean conversation/i;
-        await user.click(await screen.findByRole("button", { name: restore }));
+        const restore = stage === "preparation"
+          ? await screen.findByRole("button", { name: /restore prompt/i })
+          : await findRecoveryAction(user);
+        await user.click(restore);
         expect(screen.getByRole("textbox")).toHaveValue("Draft to send");
         expect(screen.getByText(/retained.png/)).toBeInTheDocument();
         expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
@@ -950,6 +1024,138 @@ describe("ChatWindow Integration", () => {
   // -----------------------------------------------------------------------
   // Basic rendering
   // -----------------------------------------------------------------------
+
+  it.each([true, false])("should move the final fake user turn to the composer with a target: %s", async (hasTarget: boolean) => {
+    const user = userEvent.setup();
+    mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
+    const onConversationCreated = jest.fn();
+    mockedAttacksApi.saveConversation.mockResolvedValue({
+      attack: {
+        attack_result_id: "new", conversation_id: "saved", attack_type: "ManualAttack",
+        objective: "", converters: [], message_count: 1, related_conversation_ids: [],
+        labels: {}, created_at: "", updated_at: "", target_unbound: !hasTarget,
+      },
+      messages: {
+        conversation_id: "saved", target_response_status: null,
+        messages: [{
+          role: "system", turn_number: 0, created_at: "",
+          message_pieces: [{ id: "system", original_value_data_type: "text", original_value: "System context",
+            converted_value_data_type: "text", converted_value: "System context", scores: [], response_error: "none" }],
+        }],
+      },
+    });
+    const router = createMemoryRouter([{
+      path: "/", element: <ChatWindow {...defaultProps} activeTarget={hasTarget ? mockTarget : null}
+        onConversationCreated={onConversationCreated} />,
+    }]);
+    render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+      <RouterProvider router={router} />
+    </UserPreferencesProvider></FluentProvider>);
+    await user.click(screen.getByRole("button", { name: "Edit Conversation", exact: true }));
+    await user.click(await screen.findByRole("button", { name: "Insert message at start" }));
+    const system = screen.getByRole("region", { name: "Message 1" });
+    await user.selectOptions(within(system).getByRole("combobox"), "system");
+    await user.type(within(system).getByRole("textbox"), "System context");
+    await user.click(screen.getByRole("button", { name: "Insert message after message 1" }));
+    await user.type(within(screen.getByRole("region", { name: "Message 2" })).getByRole("textbox"), "Ready to send");
+    await user.click(screen.getByRole("button", { name: "Save conversation" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save conversation" }));
+    await screen.findByRole("button", { name: "Send message" });
+    expect(await screen.findByPlaceholderText("Type prompt here")).toHaveValue("Ready to send");
+    const request = mockedAttacksApi.saveConversation.mock.calls[0][0];
+    expect(request.messages).toEqual([expect.objectContaining({
+      role: "system", pieces: [expect.objectContaining({ original_value: "System context" })],
+    })]);
+    expect(screen.getByText("System context")).toBeInTheDocument();
+    expect(screen.queryAllByText("Ready to send").every((element: HTMLElement) => element.tagName === "TEXTAREA")).toBe(true);
+    if (!hasTarget) {
+      expect(screen.queryByTestId("no-target-banner")).not.toBeInTheDocument();
+      expect(screen.getByPlaceholderText("Type prompt here")).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    }
+    expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
+  });
+
+  it("should send a text-only video remix with its metadata after saving the editor", async () => {
+    const user = userEvent.setup();
+    const metadata = { video_id: "existing-video", custom: "preserved" };
+    const source: BackendMessage[] = [{
+      role: "user", turn_number: 0, created_at: "",
+      message_pieces: [{
+        id: "text-remix", original_value_data_type: "text", original_value: "Change the background",
+        converted_value_data_type: "text", converted_value: "Change the background",
+        prompt_metadata: metadata, scores: [], response_error: "none",
+      }],
+    }];
+    const empty = { conversation_id: "saved", messages: [], target_response_status: null };
+    mockedAttacksApi.getMessages.mockImplementation(async (_attackId, conversationId) => (
+      conversationId === "source" ? { ...empty, conversation_id: "source", messages: source } : empty
+    ));
+    mockedAttacksApi.saveConversation.mockResolvedValue({
+      attack: {
+        attack_result_id: "existing", conversation_id: "saved", attack_type: "ManualAttack",
+        objective: "", converters: [], message_count: 0, related_conversation_ids: [],
+        labels: {}, created_at: "", updated_at: "",
+      },
+      messages: empty,
+    });
+    mockedMapper.buildMessagePieces.mockImplementation(actualMessageMapper.buildMessagePieces);
+    mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
+    mockedAttacksApi.submitMessageSend.mockImplementation(() => new Promise(() => {}));
+    function SavedRemixHarness() {
+      const [conversationId, setConversationId] = useState("source");
+      return <ChatWindow {...defaultProps} attackResultId="existing" conversationId={conversationId}
+        activeConversationId={conversationId} onSelectConversation={setConversationId} />;
+    }
+    const router = createMemoryRouter([{ path: "/", element: <SavedRemixHarness /> }]);
+    render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+      <RouterProvider router={router} />
+    </UserPreferencesProvider></FluentProvider>);
+    await user.click(await screen.findByRole("button", { name: "Edit Conversation", exact: true }));
+    await screen.findByRole("region", { name: "Message 1" });
+    await user.click(screen.getByRole("button", { name: "Save conversation" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save conversation" }));
+    const input = await screen.findByPlaceholderText("Type prompt here");
+    await waitFor(() => expect(input).toHaveValue("Change the background"));
+    expect(mockedAttacksApi.saveConversation.mock.calls[0][0].messages).toEqual([]);
+    await user.type(input, " to blue");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledWith(
+      "existing", expect.objectContaining({
+        pieces: [{ data_type: "text", original_value: "Change the background to blue", prompt_metadata: metadata }],
+      }),
+    ));
+  });
+
+  it("should keep a target-free attack unbound when copying a system turn", async () => {
+    const user = userEvent.setup();
+    const source: BackendMessage[] = [{
+      role: "system", turn_number: 0, created_at: "",
+      message_pieces: [{ id: "system", original_value_data_type: "text", original_value: "Context",
+        converted_value_data_type: "text", converted_value: "Context", scores: [], response_error: "none" }],
+    }];
+    mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
+    mockedAttacksApi.getMessages.mockResolvedValue({ conversation_id: "source", messages: source, target_response_status: null });
+    mockedAttacksApi.saveConversation.mockResolvedValue({
+      attack: {
+        attack_result_id: "existing", conversation_id: "source", attack_type: "ManualAttack",
+        objective: "", converters: [], message_count: 1, related_conversation_ids: ["copy"],
+        labels: {}, created_at: "", updated_at: "", target_unbound: true,
+      },
+      messages: { conversation_id: "copy", messages: source, target_response_status: null },
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="existing" conversationId="source"
+      activeConversationId="source" targetResolutionStatus="unbound" /></TestWrapper>);
+    await user.click(await screen.findByRole("button", { name: "Copy or Branch" }));
+    await user.click(screen.getByRole("menuitem", { name: "Branch conversation", exact: true }));
+    await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledTimes(1));
+    expect(mockedAttacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+      destination: "same_attack", target_registry_name: undefined,
+      messages: [expect.objectContaining({ role: "system" })],
+    }));
+    expect(defaultProps.onSelectConversation).toHaveBeenCalledWith("copy");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 
   it.each(["Same attack", "New attack"])("edits locally, restores the composer on Cancel, and saves to %s", async (destination: string) => {
     const user = userEvent.setup();
@@ -1083,12 +1289,12 @@ describe("ChatWindow Integration", () => {
     mockedAttacksApi.saveConversation.mockResolvedValue({
       attack: {
         attack_result_id: "new", conversation_id: "saved", attack_type: "ManualAttack",
-        objective: "", converters: [], message_count: 2, related_conversation_ids: [],
+        objective: "", converters: [], message_count: 1, related_conversation_ids: [],
         labels: {}, created_at: "", updated_at: "",
       },
-      messages: { conversation_id: "saved", messages: savedMessages, target_response_status: null },
+      messages: { conversation_id: "saved", messages: savedMessages.slice(0, 1), target_response_status: null },
     });
-    mockedAttacksApi.getMessages.mockResolvedValue({ messages: savedMessages });
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: savedMessages.slice(0, 1) });
     mockedAttacksApi.submitMessageSend.mockImplementation(() => new Promise(() => {}));
     mockedMapper.buildMessagePieces.mockImplementation(actualMessageMapper.buildMessagePieces);
     mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
@@ -1132,10 +1338,13 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledTimes(1));
     const request = mockedAttacksApi.saveConversation.mock.calls[0][0];
     expect(request.destination).toBe("new_attack");
-    expect(request.messages.map((message) => message.pieces[0].converted_value)).toEqual([btoa("First prompt"), btoa("Second prompt")]);
+    expect(request.messages.map((message) => message.pieces[0].converted_value)).toEqual([btoa("First prompt")]);
     expect(request.messages[0].pieces[0].applied_converter_ids).toEqual(["base64"]);
     expect(defaultProps.onNewAttack).not.toHaveBeenCalled();
     expect(await screen.findByText("Conversation saved.")).toBeInTheDocument();
+    await screen.findByRole("button", { name: "Send message" });
+    expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue(btoa("Second prompt"));
+    await user.clear(screen.getByPlaceholderText("Type prompt here"));
     await user.type(await screen.findByPlaceholderText("Type prompt here"), "Next prompt");
     expect(screen.getByText("Conversation saved.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -1144,10 +1353,15 @@ describe("ChatWindow Integration", () => {
   });
 
   it.each([
-    ["New conversation", "same_attack"],
-    ["New attack", "new_attack"],
-  ])("copies through the selected message to %s without sending", async (label: string, destination: string) => {
+    ["Branch conversation", "same_attack"],
+    ["Branch attack", "new_attack"],
+    ["Use in scan", "new_attack"],
+  ])("copies through the selected message to %s without sending", async (
+    label: string, destination: string,
+  ) => {
     const user = userEvent.setup();
+    const clipboard = jest.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("Clipboard denied"));
+    const useInTechnique = label === "Use in scan";
     const source: BackendMessage[] = ["system", "user", "assistant"].map((role: string, index: number) => ({
       turn_number: index, role, created_at: "2026-01-01T00:00:00Z",
       message_pieces: [{
@@ -1165,13 +1379,13 @@ describe("ChatWindow Integration", () => {
       messages: { conversation_id: "copied-conversation", messages: source.slice(0, 2), target_response_status: null },
     });
     mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
-    const router = createMemoryRouter([{
-      path: "/", element: <ChatWindow {...defaultProps} attackResultId="existing" conversationId="source"
-        activeConversationId="source" objective="Source objective"
-        defaultBranchTarget={makeTarget({ target_registry_name: "unrelated-default", capabilities: buildCapabilities() })} />,
-    }]);
     render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
-      <RouterProvider router={router} />
+      <MemoryRouter><Routes>
+        <Route path="/" element={<ChatWindow {...defaultProps} attackResultId="existing" conversationId="source"
+          activeConversationId="source" objective="Source objective"
+          defaultBranchTarget={makeTarget({ target_registry_name: "unrelated-default", capabilities: buildCapabilities() })} />} />
+        <Route path="/scanner/technique.execute" element={<><h1>Technique configuration</h1><RouterLocation /></>} />
+      </Routes></MemoryRouter>
     </UserPreferencesProvider></FluentProvider>);
     await user.click(await screen.findByTestId("copy-to-input-btn-1"));
     await user.click(screen.getByRole("menuitem", { name: label, exact: true }));
@@ -1180,18 +1394,130 @@ describe("ChatWindow Integration", () => {
     expect(request.destination).toBe(destination);
     expect(request.objective).toBe(destination === "new_attack" ? "Source objective" : undefined);
     expect(request.expected_objective).toBeUndefined();
-    expect(request.target_registry_name).toBe(mockTarget.target_registry_name);
+    expect(request.target_registry_name).toBe(useInTechnique ? undefined : mockTarget.target_registry_name);
     expect(request.messages.map((message) => message.pieces[0].source_piece_id)).toEqual(["source-0", "source-1"]);
     expect(screen.queryByTestId("conversation-editor")).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    if (destination === "same_attack") {
+    if (useInTechnique) {
+      expect(await screen.findByRole("heading", { name: "Technique configuration" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Current URL")).toHaveTextContent(
+        "/scanner/technique.execute?prepended_conversation_id=copied-conversation",
+      );
+      expect(defaultProps.onConversationCreated).not.toHaveBeenCalled();
+      expect(defaultProps.onSelectConversation).not.toHaveBeenCalled();
+      expect(screen.queryByText(/Conversation ID copied/)).not.toBeInTheDocument();
+    } else if (destination === "same_attack") {
       await waitFor(() => expect(defaultProps.onSelectConversation).toHaveBeenCalledWith("copied-conversation"));
     } else {
       await waitFor(() => expect(defaultProps.onConversationCreated).toHaveBeenCalledWith(
         "copied", "copied-conversation", "Source objective", mockTarget,
       ));
     }
+    if (!useInTechnique) {
+      expect(await screen.findByRole("complementary", { name: "Attack Conversations" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Toggle conversations panel" })).toHaveAttribute("aria-expanded", "true");
+    }
+    expect(clipboard).not.toHaveBeenCalled();
+    expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
     expect(mockedAttacksApi.addMessage).not.toHaveBeenCalled();
+  });
+
+  it("should copy a failed prompt to a new attack without stored errors or dependent history", async () => {
+    const user = userEvent.setup();
+    const safeHistory = makeErrorResponse("none", "", 0).messages.messages;
+    safeHistory[0].message_pieces[0].original_value = "Safe context";
+    safeHistory[1].message_pieces[0].original_value = "Safe response";
+    const earlierFailure = makeErrorResponse("processing", "Earlier target error", 2);
+    const latestFailure = makeErrorResponse("processing", "Latest target error", 4);
+    latestFailure.messages.messages[0].message_pieces[0].original_value = "Latest failed draft";
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      conversation_id: "failed-source",
+      messages: [...safeHistory, ...earlierFailure.messages.messages, ...latestFailure.messages.messages],
+      target_response_status: latestFailure.messages.target_response_status,
+    });
+    mockedAttacksApi.saveConversation.mockResolvedValue({
+      attack: {
+        attack_result_id: "copied", conversation_id: "copied-conversation", objective: "", attack_type: "ManualAttack",
+        converters: [], message_count: 3, related_conversation_ids: [], labels: {}, created_at: "", updated_at: "",
+      },
+      messages: { conversation_id: "copied-conversation", messages: [], target_response_status: null },
+    });
+    mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
+    const rendered = render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="existing"
+      conversationId="failed-source" activeConversationId="failed-source" /></TestWrapper>);
+    await findRecoveryAction(user);
+    await user.click(screen.getByRole("menuitem", { name: "Branch attack", exact: true }));
+    await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledTimes(1));
+    const request = mockedAttacksApi.saveConversation.mock.calls[0][0];
+    expect(request.destination).toBe("new_attack");
+    expect(request.messages.map((message) => message.pieces[0].original_value)).toEqual([
+      "Safe context", "Safe response",
+    ]);
+    expect(request.target_registry_name).toBe(mockTarget.target_registry_name);
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      conversation_id: "copied-conversation", messages: safeHistory, target_response_status: null,
+    });
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} attackResultId="copied"
+      conversationId="copied-conversation" activeConversationId="copied-conversation" /></TestWrapper>);
+    expect(await screen.findByRole("textbox")).toHaveValue("Latest failed draft");
+    await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+    expect(screen.queryByText("Latest target error")).not.toBeInTheDocument();
+    expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: "non-editable", supportsMultiTurn: true, supportsEditableHistory: false },
+    { name: "single-turn", supportsMultiTurn: false, supportsEditableHistory: true },
+  ])("should restore a saved failure in a fresh targeted attack for a $name target", async ({
+    supportsMultiTurn, supportsEditableHistory,
+  }: { supportsMultiTurn: boolean; supportsEditableHistory: boolean }) => {
+    const user = userEvent.setup();
+    const target = makeTarget({
+      target_registry_name: "saved-retry-target",
+      capabilities: buildCapabilities({
+        supports_multi_turn: supportsMultiTurn,
+        supports_editable_history: supportsEditableHistory,
+        supports_multi_message_pieces: true,
+        supported_input_modalities: ["text", "image_path"],
+      }),
+    });
+    const failed = makeErrorResponse("processing", "Saved error", 2, true).messages;
+    failed.messages[0].message_pieces[0].original_value = "Retry this prompt";
+    failed.messages[0].message_pieces.push({
+      id: "original-image", original_value_data_type: "image_path", original_value: "/original/evidence.png",
+      converted_value_data_type: "image_path", converted_value: "/original/evidence.png",
+      original_filename: "evidence.png", scores: [], response_error: "none",
+    });
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      conversation_id: "failed-source", messages: [...makeErrorResponse("none", "").messages.messages, ...failed.messages],
+      target_response_status: failed.target_response_status,
+    });
+    mockedAttacksApi.createAttack.mockResolvedValue({
+      attack_result_id: "retry-attack", conversation_id: "retry-conversation", created_at: "",
+    });
+    mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
+    const rendered = render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
+      attackResultId="source-attack" conversationId="failed-source" activeConversationId="failed-source" /></TestWrapper>);
+    await findRecoveryAction(user);
+    await user.click(screen.getByRole("menuitem", { name: "Branch attack", exact: true }));
+    await waitFor(() => expect(defaultProps.onConversationCreated).toHaveBeenCalledWith(
+      "retry-attack", "retry-conversation", "", target,
+    ));
+    expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(expect.objectContaining({
+      target_registry_name: target.target_registry_name,
+    }));
+    expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      conversation_id: "retry-conversation", messages: [], target_response_status: null,
+    });
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
+      attackResultId="retry-attack" conversationId="retry-conversation" activeConversationId="retry-conversation" /></TestWrapper>);
+    expect(await screen.findByRole("textbox")).toHaveValue("Retry this prompt");
+    await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Remove evidence.png" })).toBeInTheDocument();
+    expect(screen.getByText(/Converter choices could not be restored/)).toBeInTheDocument();
+    expect(screen.queryByText("Saved error")).not.toBeInTheDocument();
+    expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
   });
 
   it.each<{ name: string; target: TargetInstance | null }>([
@@ -1234,8 +1560,8 @@ describe("ChatWindow Integration", () => {
     render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
       <RouterProvider router={router} />
     </UserPreferencesProvider></FluentProvider>);
-    await user.click(await screen.findByRole("button", { name: "Copy conversation" }));
-    await user.click(screen.getByRole("menuitem", { name: "New attack", exact: true }));
+    await user.click(await screen.findByRole("button", { name: "Copy or Branch" }));
+    await user.click(screen.getByRole("menuitem", { name: "Branch attack", exact: true }));
     await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledTimes(1));
     const request = mockedAttacksApi.saveConversation.mock.calls[0][0];
     expect(request.destination).toBe("new_attack");
@@ -1600,14 +1926,14 @@ describe("ChatWindow Integration", () => {
     expect(onNewAttack).toHaveBeenCalled();
   });
 
-  it("should disable the composer when no target is selected", () => {
+  it("should allow drafting but disable sending when no target is selected", () => {
     render(
       <TestWrapper>
         <ChatWindow {...defaultProps} activeTarget={null} />
       </TestWrapper>
     );
 
-    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("textbox")).toBeEnabled();
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   });
 
@@ -1754,6 +2080,8 @@ describe("ChatWindow Integration", () => {
           onConversationCreated={onConversationCreated}
           onAttackChange={onAttackChange}
           conversationId={null}
+          labels={{ operator: 'testuser' }}
+          operationId="operation-1"
         />
       </TestWrapper>
     );
@@ -1765,7 +2093,8 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => {
       expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith({
         target_registry_name: "openai_chat_1",
-        labels: { operator: 'testuser', operation: 'test_op' },
+        labels: { operator: 'testuser' },
+        operation_id: "operation-1",
         system_prompt: undefined,
       });
       expect(onConversationCreated).toHaveBeenCalledWith("ar-conv-1", "conv-1", undefined);
@@ -2920,7 +3249,7 @@ describe("ChatWindow Integration", () => {
         await user.type(screen.getByRole("textbox"), "Latest failed draft");
         await user.click(screen.getByRole("button", { name: /send message/i }));
       }
-      const recover = await screen.findByRole("button", { name: /edit in clean conversation/i });
+      const recover = await findRecoveryAction(user);
       await user.click(recover);
       await waitFor(() => {
         expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith(
@@ -2931,7 +3260,7 @@ describe("ChatWindow Integration", () => {
         );
       });
       expect(onSelectConversation).toHaveBeenCalledWith("conv-error-free");
-      expect(screen.getByText(/history from the first failed prompt onward will be left out/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Continue in a clean conversation/i)).not.toBeInTheDocument();
 
       mockedAttacksApi.getMessages.mockResolvedValue({
         conversation_id: "conv-error-free",
@@ -3130,7 +3459,7 @@ describe("ChatWindow Integration", () => {
         />
       </TestWrapper>
     );
-    await user.click(await screen.findByRole("button", { name: /edit in clean conversation/i }));
+    await user.click(await findRecoveryAction(user));
     expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith(
       "ar-blocked-prefix",
       { source_conversation_id: "conv-blocked-prefix", cutoff_index: 1 },
@@ -3228,7 +3557,7 @@ describe("ChatWindow Integration", () => {
     await user.click(await screen.findByRole("button", { name: /add converted value/i }));
     await user.click(screen.getByTestId("close-converter-panel-btn"));
     await user.click(screen.getByRole("button", { name: /send message/i }));
-    expect(await screen.findByRole("button", { name: /edit in clean conversation/i })).toBeEnabled();
+    expect(await findRecoveryAction(user)).toBeEnabled();
     expect(mockSendResult).toHaveBeenLastCalledWith(
       props.attackResultId,
       expect.objectContaining({
@@ -3243,7 +3572,7 @@ describe("ChatWindow Integration", () => {
       expect(screen.queryByTestId("clear-media-conversion-image")).not.toBeInTheDocument();
     });
     rendered.rerender(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
-    const recover = await screen.findByRole("button", { name: /edit in clean conversation/i });
+    const recover = await findRecoveryAction(user);
     deferFileReads = true;
     await user.click(recover);
     await waitFor(() => {
@@ -3316,10 +3645,7 @@ describe("ChatWindow Integration", () => {
     await user.type(input, "retry this prompt");
     await user.click(screen.getByRole("button", { name: /send/i }));
 
-    const recoveryButton = await screen.findByRole(
-      "button",
-      { name: /edit in clean conversation/i }
-    );
+    const recoveryButton = await findRecoveryAction(user);
     expect(input).toHaveValue("retry this prompt");
     expect(input).toBeDisabled();
     expect(screen.queryByTestId("message-actions-1")).not.toBeInTheDocument();
@@ -3446,7 +3772,7 @@ describe("ChatWindow Integration", () => {
     });
 
     expect(
-      await screen.findByRole("button", { name: /edit in clean conversation/i })
+      await findRecoveryAction(user)
     ).toBeInTheDocument();
     expect(screen.getByText(/The target could not process this message\./)).toBeInTheDocument();
     expect(input).toHaveValue("keep this draft");
@@ -3521,7 +3847,7 @@ describe("ChatWindow Integration", () => {
     });
 
     expect(
-      await screen.findByRole("button", { name: /edit in clean conversation/i })
+      await findRecoveryAction(user)
     ).toBeInTheDocument();
     expect(screen.getByText(/The target could not process this message\./)).toBeInTheDocument();
     expect(input).toHaveValue("keep failed draft");
@@ -3675,7 +4001,7 @@ describe("ChatWindow Integration", () => {
       const input = screen.getByRole("textbox");
       await user.type(input, "live draft");
       await user.click(screen.getByRole("button", { name: /send/i }));
-      expect(await screen.findByRole("button", { name: /edit in clean conversation/i })).toBeEnabled();
+      expect(await findRecoveryAction(user)).toBeEnabled();
 
       mockedAttacksApi.getMessages.mockResolvedValue({
         conversation_id: "conv-status-refresh",
@@ -3745,7 +4071,7 @@ describe("ChatWindow Integration", () => {
 
       await user.type(screen.getByRole("textbox"), "failed request");
       await user.click(screen.getByRole("button", { name: /send/i }));
-      expect(await screen.findByRole("button", { name: /edit in clean conversation/i })).toBeEnabled();
+      expect(await findRecoveryAction(user)).toBeEnabled();
 
       mockedAttacksApi.getMessages.mockResolvedValue({
         conversation_id: "conv-newer-failure",
@@ -3760,13 +4086,7 @@ describe("ChatWindow Integration", () => {
       await user.click(
         await screen.findByRole("button", { name: "Select conversation conv-newer-failure" })
       );
-
-      expect(await screen.findByText(/restored from conversation history/i)).toBeInTheDocument();
-      const recoveryButton = screen.getByRole("button", { name: /edit in clean conversation/i });
-      expect(recoveryButton).toHaveAttribute(
-        "data-testid",
-        `recover-processing-error-btn-${requestTurn === 2 ? 2 : 3}`
-      );
+      const recoveryButton = await findRecoveryAction(user);
       await user.click(recoveryButton);
       await waitFor(() => {
         expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith(
@@ -3778,12 +4098,20 @@ describe("ChatWindow Integration", () => {
     }
   );
 
-  it.each([false, true])("should restore the matching live draft with reinitialization %s", async (reinitialized: boolean) => {
+  it.each([
+    { reinitialized: false, destination: "Branch conversation" },
+    { reinitialized: true, destination: "Branch conversation" },
+    { reinitialized: false, destination: "Branch attack" },
+    { reinitialized: true, destination: "Branch attack" },
+  ])("should restore the matching live draft to $destination with reinitialization $reinitialized", async ({
+    reinitialized, destination,
+  }: { reinitialized: boolean; destination: string }) => {
     const user = userEvent.setup();
     const runtime = jest.spyOn(runtimeHooks, "useRuntime").mockReturnValue({
       ready: true, state: "ready", generation: "original",
     });
     const onSelectConversation = jest.fn();
+    const onConversationCreated = jest.fn();
     const failedResponse = makeErrorResponse("processing", "The target could not process this message.", 2, true);
     const file = new File(["image content"], "live.png", { type: "image/png" });
     Object.assign(failedResponse.messages.messages[0].message_pieces[0], {
@@ -3805,6 +4133,7 @@ describe("ChatWindow Integration", () => {
     const props = {
       ...defaultProps,
       activeTarget: makeTarget({
+        target_registry_name: "live-retry-target",
         capabilities: buildCapabilities({
           supports_multi_message_pieces: true,
           supported_input_modalities: ["text", "image_path", "binary_path"],
@@ -3815,6 +4144,7 @@ describe("ChatWindow Integration", () => {
       activeConversationId: "conv-matching-failure",
       relatedConversationCount: 1,
       onSelectConversation,
+      onConversationCreated,
     };
     mockedAttacksApi.getConversations.mockResolvedValue({
       main_conversation_id: props.conversationId,
@@ -3823,6 +4153,11 @@ describe("ChatWindow Integration", () => {
     mockedAttacksApi.getMessages.mockResolvedValueOnce({ messages: [] } as never);
     mockSendResult.mockResolvedValue(failedResponse as never);
     mockedAttacksApi.createConversation.mockResolvedValue({
+      conversation_id: "conv-matching-recovery",
+      created_at: "2026-01-01T00:00:04Z",
+    });
+    mockedAttacksApi.createAttack.mockResolvedValue({
+      attack_result_id: "recovered-attack",
       conversation_id: "conv-matching-recovery",
       created_at: "2026-01-01T00:00:04Z",
     });
@@ -3862,7 +4197,7 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: /^convert$/i }));
     await user.click(await screen.findByRole("button", { name: /add converted value/i }));
     await user.click(screen.getByRole("button", { name: /send message/i }));
-    expect(await screen.findByRole("button", { name: /edit in clean conversation/i })).toBeEnabled();
+    expect(await findRecoveryAction(user)).toBeEnabled();
 
     if (reinitialized) {
       runtime.mockReturnValue({ ready: true, state: "ready", generation: "replacement" });
@@ -3879,14 +4214,16 @@ describe("ChatWindow Integration", () => {
     await user.click(
       await screen.findByRole("button", { name: "Select conversation conv-matching-failure" })
     );
-    const recoveryButton = await screen.findByTestId("recover-processing-error-btn-3");
-    expect(screen.getByText(reinitialized
-      ? /converter choices could not be restored/i
-      : /converter choices are preserved/i)).toBeInTheDocument();
-    await user.click(recoveryButton);
+    const recoveryButton = await findRecoveryAction(user);
+    await user.click(destination === "Branch conversation" ? recoveryButton
+      : screen.getByRole("menuitem", { name: "Branch attack", exact: true }));
     await waitFor(() => {
-      expect(onSelectConversation).toHaveBeenCalledWith("conv-matching-recovery");
-      expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith(props.attackResultId, {});
+      if (destination === "Branch conversation") {
+        expect(onSelectConversation).toHaveBeenCalledWith("conv-matching-recovery");
+        expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith(props.attackResultId, {});
+      } else {
+        expect(onConversationCreated).toHaveBeenCalledWith("recovered-attack", "conv-matching-recovery", "", props.activeTarget);
+      }
     });
     mockedAttacksApi.getMessages.mockResolvedValue({
       conversation_id: "conv-matching-recovery",
@@ -3894,20 +4231,24 @@ describe("ChatWindow Integration", () => {
       target_response_status: null,
     });
     rendered.rerender(
-      <TestWrapper><ChatWindow {...props} activeConversationId="conv-matching-recovery" /></TestWrapper>
+      <TestWrapper><ChatWindow {...props} activeConversationId="conv-matching-recovery"
+        attackResultId={destination === "Branch attack" ? "recovered-attack" : props.attackResultId}
+        conversationId={destination === "Branch attack" ? "conv-matching-recovery" : props.conversationId} /></TestWrapper>
     );
 
     expect(await screen.findByText(/live\.png/)).toBeInTheDocument();
     expect(screen.getByTestId("chat-input")).toHaveValue("live draft");
     if (reinitialized) {
       expect(screen.queryByTestId("converted-file-chip")).not.toBeInTheDocument();
+      expect(screen.getByText(/Converter choices could not be restored/)).toBeInTheDocument();
     } else {
       expect(await screen.findByTestId("converted-file-chip")).toHaveTextContent("live.pdf");
+      expect(screen.queryByText(/Converter choices could not be restored/)).not.toBeInTheDocument();
     }
     await user.click(screen.getByRole("button", { name: /send message/i }));
     await waitFor(() => {
       expect(mockSendResult).toHaveBeenLastCalledWith(
-        props.attackResultId,
+        destination === "Branch attack" ? "recovered-attack" : props.attackResultId,
         expect.objectContaining({
           target_conversation_id: "conv-matching-recovery",
           pieces: expect.arrayContaining([reinitialized
@@ -3921,7 +4262,8 @@ describe("ChatWindow Integration", () => {
     }
     expect(mockedMapper.buildMessagePieces).toHaveBeenLastCalledWith(
       "live draft",
-      [expect.objectContaining({ file, name: "live.png" })]
+      [expect.objectContaining({ file, name: "live.png" })],
+      undefined,
     );
   });
 
@@ -4036,11 +4378,7 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
 
-    const recoveryButton = await screen.findByRole(
-      "button",
-      { name: /edit in clean conversation/i }
-    );
-    expect(screen.getByText(/converter choices could not be restored/i)).toBeInTheDocument();
+    const recoveryButton = await findRecoveryAction(user);
     expect(screen.getByRole("textbox")).toBeDisabled();
 
     await user.click(recoveryButton);
@@ -4072,6 +4410,7 @@ describe("ChatWindow Integration", () => {
 
     const restoredInput = await screen.findByRole("textbox");
     expect(restoredInput).toHaveValue("original persisted prompt");
+    expect(screen.getByText(/Converter choices could not be restored/)).toBeInTheDocument();
     expect(screen.getAllByText("evidence.png", { exact: false })).toHaveLength(1);
     expect(screen.queryByText(/converted\.pdf/i)).not.toBeInTheDocument();
 
@@ -4397,14 +4736,11 @@ describe("ChatWindow Integration", () => {
     const input = screen.getByRole("textbox");
     await user.type(input, "failed draft");
     await user.click(screen.getByRole("button", { name: /send/i }));
-    const recoveryButton = await screen.findByRole(
-      "button",
-      { name: /edit in clean conversation/i }
-    );
+    const recoveryButton = await findRecoveryAction(user);
 
     await user.click(recoveryButton);
     await waitFor(() => {
-      expect(recoveryButton).toBeDisabled();
+      expect(recoveryButton).toHaveAttribute("aria-disabled", "true");
       expect(mockedAttacksApi.createConversation).toHaveBeenCalledTimes(1);
     });
     await user.click(recoveryButton);
@@ -4527,10 +4863,7 @@ describe("ChatWindow Integration", () => {
     await user.type(input, "generate this image");
     await user.click(screen.getByRole("button", { name: /send/i }));
 
-    const recoveryButton = await screen.findByRole(
-      "button",
-      { name: /edit in new conversation/i }
-    );
+    const recoveryButton = await findRecoveryAction(user);
     expect(screen.getByTestId("single-turn-banner")).toBeInTheDocument();
 
     await user.click(recoveryButton);
@@ -5031,6 +5364,40 @@ describe("ChatWindow Integration", () => {
     expect(screen.queryByTestId("conversation-panel")).not.toBeInTheDocument();
   });
 
+  it.each([false, true])("should preserve the operator's panel choice after a late conversation update, narrow %s", async (isNarrowScreen: boolean) => {
+    const user = userEvent.setup();
+    mockMatchMedia(isNarrowScreen);
+    const props = {
+      ...defaultProps,
+      attackResultId: "ar-late-conversations",
+      conversationId: "conv-main",
+      activeConversationId: "conv-main",
+      relatedConversationCount: 0,
+    };
+    const rendered = render(
+      <TestWrapper><ChatWindow {...props} /></TestWrapper>
+    );
+    const toggleButton = screen.getByRole("button", { name: "Toggle conversations panel" });
+    expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(toggleButton);
+    await user.click(await screen.findByRole("button", { name: "Close panel" }));
+    await waitFor(() => {
+      expect(screen.queryByRole(isNarrowScreen ? "dialog" : "complementary", {
+        name: "Attack Conversations",
+      })).not.toBeInTheDocument();
+    });
+
+    rendered.rerender(
+      <TestWrapper><ChatWindow {...props} relatedConversationCount={1} /></TestWrapper>
+    );
+
+    expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole(isNarrowScreen ? "dialog" : "complementary", {
+      name: "Attack Conversations",
+    })).not.toBeInTheDocument();
+  });
+
   it("should keep the mobile drawer closed until requested and restore focus after Escape", async () => {
     const user = userEvent.setup();
     mockMatchMedia(true);
@@ -5187,7 +5554,7 @@ describe("ChatWindow Integration", () => {
     // Click copy-to-input on assistant message (index 1)
     const copyBtn = screen.getByTestId("copy-to-input-btn-1");
     await userEvent.click(copyBtn);
-    await userEvent.click(screen.getByRole("menuitem", { name: "This conversation" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Copy to next message" }));
 
     // The text should appear in the input area
     await waitFor(() => {
@@ -5783,7 +6150,7 @@ describe("ChatWindow Integration", () => {
 
     const copyBtn = screen.getByTestId("copy-to-input-btn-1");
     await user.click(copyBtn);
-    await user.click(screen.getByRole("menuitem", { name: "This conversation" }));
+    await user.click(screen.getByRole("menuitem", { name: "Copy to next message" }));
 
     await waitFor(() => {
       const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
@@ -5802,7 +6169,8 @@ describe("ChatWindow Integration", () => {
           { ...copiedAttachments[0], draftId: expect.any(String) },
           { ...copiedAttachments[1], draftId: expect.any(String) },
           { ...copiedAttachments[2], draftId: expect.any(String) },
-        ]
+        ],
+        undefined,
       );
     });
   });
@@ -5855,7 +6223,7 @@ describe("ChatWindow Integration", () => {
     });
 
     await userEvent.click(screen.getByTestId("copy-to-input-btn-1"));
-    await userEvent.click(screen.getByRole("menuitem", { name: "This conversation" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Copy to next message" }));
 
     await waitFor(() => {
       const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
@@ -6829,7 +7197,7 @@ describe("ChatWindow Integration", () => {
         labels: { operation: "config_op_v2" },
       }))
       expect(mockedMapper.buildMessagePieces).toHaveBeenLastCalledWith(
-        'prepared draft', expect.arrayContaining([expect.objectContaining({ file })]),
+        'prepared draft', expect.arrayContaining([expect.objectContaining({ file })]), undefined,
       )
     })
 
@@ -6846,8 +7214,8 @@ describe("ChatWindow Integration", () => {
         activeConversationId: "conv-1",
       }
       const rendered = render(<TestWrapper><ChatWindow {...props} defaultsReady={false} /></TestWrapper>)
-      await user.click(await screen.findByRole('button', { name: 'Copy conversation' }))
-      const create = screen.getByRole('menuitem', { name: 'New attack', exact: true })
+      await user.click(await screen.findByRole('button', { name: 'Copy or Branch' }))
+      const create = screen.getByRole('menuitem', { name: 'Branch attack', exact: true })
       expect(create).toHaveAttribute('aria-disabled', 'true')
       expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled()
 
@@ -6880,10 +7248,10 @@ describe("ChatWindow Integration", () => {
         attackResultId: "existing-attack", conversationId: "conv-1", activeConversationId: "conv-1",
       }
       const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>)
-      await user.click(await screen.findByRole('button', { name: 'Copy conversation' }))
+      await user.click(await screen.findByRole('button', { name: 'Copy or Branch' }))
       let finish: (value: typeof copiedSource) => void = () => {}
       mockedAttacksApi.getMessages.mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
-      await user.click(screen.getByRole('menuitem', { name: 'New attack', exact: true }))
+      await user.click(screen.getByRole('menuitem', { name: 'Branch attack', exact: true }))
 
       runtime.mockReturnValue({ ready: true, state: "ready", generation: "gen-2" })
       rendered.rerender(
@@ -6895,11 +7263,46 @@ describe("ChatWindow Integration", () => {
       expect(await screen.findByText(/Runtime or default labels changed while loading this conversation/)).toBeInTheDocument()
       expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled()
 
-      await user.click(screen.getByRole('button', { name: 'Copy conversation' }))
-      await user.click(screen.getByRole('menuitem', { name: 'New attack', exact: true }))
+      await user.click(screen.getByRole('button', { name: 'Copy or Branch' }))
+      await user.click(screen.getByRole('menuitem', { name: 'Branch attack', exact: true }))
       await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
         destination: 'new_attack', labels: { ...defaultProps.labels, operation: "config_op_v2" },
       })))
+    })
+  })
+
+  describe('converter restoration warning', () => {
+    it('does not show converter restoration warning on fresh empty chat with no conversation', async () => {
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            activeTarget={mockTarget}
+            attackResultId={null}
+            conversationId={null}
+            activeConversationId={null}
+            defaultsReady={true}
+          />
+        </TestWrapper>,
+      )
+      expect(screen.queryByText(/Converter choices could not be restored/)).not.toBeInTheDocument()
+      expect(screen.getByText('There are no messages in this conversation yet.')).toBeInTheDocument()
+    })
+
+    it('does not show converter restoration warning while fresh chat is loading without active target', async () => {
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            activeTarget={null}
+            attackResultId={null}
+            conversationId={null}
+            activeConversationId={null}
+            defaultsReady={false}
+          />
+        </TestWrapper>,
+      )
+      expect(screen.queryByText(/Converter choices could not be restored/)).not.toBeInTheDocument()
     })
   })
 })

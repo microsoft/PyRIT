@@ -25,9 +25,10 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     SkeletonKeyAttack,
 )
-from pyrit.models import AttackTechniqueSeedGroup, SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, SeedGroupRequirements, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
 
 def get_technique_factories() -> list[AttackTechniqueFactory]:
@@ -39,6 +40,13 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
     """
     return [
         AttackTechniqueFactory(
+            name="crescendo",
+            attack_class=CrescendoAttack,
+            description="Escalates a multi-turn conversation toward the objective with the standard Crescendo prompts.",
+            technique_tags=["multi_turn"],
+            supports_additional_request_converters=True,
+        ),
+        AttackTechniqueFactory(
             name="pair",
             attack_class=PAIRAttack,
             description="Runs the PAIR algorithm, using an adversarial model to iteratively rewrite jailbreak prompts.",
@@ -49,6 +57,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             attack_class=SkeletonKeyAttack,
             description="Builds a multi-step context that asks the target to operate without its usual safety rules.",
             technique_tags=["single_turn"],
+            requirements=TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True)),
         ),
         AttackTechniqueFactory(
             name="best_of_n",

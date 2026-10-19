@@ -6,10 +6,16 @@ Dataset models for the PyRIT API.
 
 Datasets are seed prompt/objective collections provided by
 ``SeedDatasetProvider`` subclasses. These models describe the wire format for
-listing available datasets.
+listing available datasets and browsing their stored seed examples.
 """
 
+from uuid import UUID
+
 from pydantic import BaseModel, Field
+
+from pyrit.backend.models.common import PaginationInfo
+from pyrit.models import PromptDataType, SeedRecord, SeedType
+from pyrit.models.scenario_dataset import ScenarioDatasetSettings
 
 
 class DatasetInfo(BaseModel):
@@ -25,6 +31,7 @@ class DatasetInfo(BaseModel):
     )
     loaded: bool = Field(..., description="Whether this dataset currently has seeds in memory")
     provider_available: bool = Field(..., description="Whether a registered provider can load this dataset")
+    origins: list[str] = Field(default_factory=list, description="Distinct origins of stored seeds, not providers")
     logical_examples: int | None = Field(
         None, description="Number of logical examples represented by stored seed groups"
     )
@@ -41,3 +48,57 @@ class DatasetListResponse(BaseModel):
     """Response for listing available datasets."""
 
     items: list[DatasetInfo] = Field(..., description="List of available datasets")
+
+
+class ScenarioDatasetLoadResponse(BaseModel):
+    """Selected dataset settings and metadata after an explicit load."""
+
+    settings: ScenarioDatasetSettings
+    items: list[DatasetInfo]
+
+
+class SeedExampleSummary(BaseModel):
+    """One logical seed example: the seeds that share a group ID, or one seed without a group."""
+
+    example_id: UUID = Field(..., description="The prompt_group_id, or the seed ID of a seed without a group")
+    name: str | None = Field(None, description="The first member name, if any")
+    preview: str = Field(..., description="Text preview of at most 100 characters, or a type label")
+    preview_truncated: bool = Field(..., description="Whether the preview text was shortened")
+    modalities: list[PromptDataType]
+    seed_types: list[SeedType]
+    piece_count: int
+    objective_count: int
+    harm_categories: list[str]
+    has_unlabeled_harm: bool = Field(..., description="Whether any member has no harm category")
+
+
+class SeedExampleListResponse(BaseModel):
+    """One page of logical seed examples."""
+
+    items: list[SeedExampleSummary]
+    pagination: PaginationInfo
+    total: int = Field(..., description="Number of logical examples that match the filters")
+
+
+class SeedMemberView(SeedRecord):
+    """A stored seed plus the URL a browser can use to fetch its media."""
+
+    value_url: str | None = Field(
+        None,
+        description=(
+            "Client-fetchable media URL (/api/media or a signed blob URL). "
+            "Null for non-media. The stored value remains the stable source reference."
+        ),
+    )
+
+
+class SeedExampleDetailResponse(SeedExampleSummary):
+    """One logical seed example with all of its stored seeds."""
+
+    members: list[SeedMemberView] = Field(
+        ...,
+        description=(
+            "Stored seed records without reconstruction, objectives first, then by sequence. "
+            "Media members include value_url for display; value is the stored reference."
+        ),
+    )

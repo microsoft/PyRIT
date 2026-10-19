@@ -8,7 +8,8 @@ This is the new, cleaner design that leverages the params_type architecture.
 """
 
 import asyncio
-from collections.abc import Iterator, Sequence
+import copy
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
@@ -24,7 +25,7 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackStrategyContextT,
     AttackStrategyResultT,
 )
-from pyrit.models import AttackSeedGroup
+from pyrit.models import AtomicAttackIdentifier, AttackSeedGroup
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -56,6 +57,23 @@ class AttackExecutorResult(Generic[AttackResultT]):
     list that produced ``completed_results[i]``.  When some inputs fail, this lets
     callers correlate results back to the specific input that produced them.
     """
+    incomplete_result_ids: list[str | None] = field(default_factory=list)
+    """Confirmed persisted result ID for each ``incomplete_objectives`` entry.
+
+    ``None`` means no stored row was confirmed, including parameter-build failures.
+    Executor-produced containers align this list with ``incomplete_objectives``;
+    manually constructed containers may omit it for backward compatibility.
+    """
+
+    def __post_init__(self) -> None:
+        """
+        Validate the alignment of supplied failure result IDs.
+
+        Raises:
+            ValueError: If supplied IDs do not align with incomplete objectives.
+        """
+        if self.incomplete_result_ids and len(self.incomplete_result_ids) != len(self.incomplete_objectives):
+            raise ValueError("incomplete_result_ids length must match incomplete_objectives length")
 
     def __iter__(self) -> Iterator[AttackResultT]:
         """
@@ -177,6 +195,8 @@ class AttackExecutor:
         return_partial_on_failure: bool = False,
         attribution: AttackResultAttribution | None = None,
         attributions: Sequence[AttackResultAttribution] | None = None,
+        atomic_attack_identifiers: Sequence[AtomicAttackIdentifier] | None = None,
+        result_metadata: Sequence[Mapping[str, Any]] | None = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -208,6 +228,9 @@ class AttackExecutor:
                 reconstructed from the row's own ``objective_sha256``.
             attributions: Optional per-seed-group attribution. Must match
                 ``seed_groups`` and cannot be combined with ``attribution``.
+            atomic_attack_identifiers: Per-input caller-prepared behavioral and source identities,
+                recorded before persistence without changing the attack's strategy identity.
+            result_metadata: Per-input caller-prepared metadata copied onto success and error results.
             **broadcast_fields: Fields applied to all seed groups (e.g., memory_labels).
                 Per-seed-group field_overrides take precedence.
 
@@ -232,6 +255,12 @@ class AttackExecutor:
             )
         if attribution is not None and attributions is not None:
             raise ValueError("Provide attribution or attributions, not both")
+        for name, values in (
+            ("atomic_attack_identifiers", atomic_attack_identifiers),
+            ("result_metadata", result_metadata),
+        ):
+            if values is not None and len(values) != len(seed_groups):
+                raise ValueError(f"{name} length ({len(values)}) must match seed_groups length ({len(seed_groups)})")
         effective_attributions = (
             list(attributions)
             if attributions is not None
@@ -291,6 +320,14 @@ class AttackExecutor:
             return_partial_on_failure=return_partial_on_failure,
             attributions=successful_attributions,
             input_indices=successful_input_indices,
+            atomic_attack_identifiers=(
+                [atomic_attack_identifiers[index] for index in successful_input_indices]
+                if atomic_attack_identifiers is not None
+                else None
+            ),
+            result_metadata=(
+                [result_metadata[index] for index in successful_input_indices] if result_metadata is not None else None
+            ),
         )
         return self._merge_parameter_build_failures(
             build_failures=build_failures,
@@ -374,6 +411,8 @@ class AttackExecutor:
         return_partial_on_failure: bool = False,
         attributions: Sequence[AttackResultAttribution] | None = None,
         input_indices: Sequence[int] | None = None,
+        atomic_attack_identifiers: Sequence[AtomicAttackIdentifier] | None = None,
+        result_metadata: Sequence[Mapping[str, Any]] | None = None,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
         Execute attacks in parallel with a list of pre-built parameters.
@@ -388,6 +427,8 @@ class AttackExecutor:
             attributions: Optional per-task attribution matching ``params_list``.
             input_indices: Original input positions for ``params_list``. Defaults
                 to sequential positions when parameters were constructed directly.
+            atomic_attack_identifiers: Optional per-task caller-prepared result identities.
+            result_metadata: Optional per-task caller-prepared result metadata.
 
         Returns:
             AttackExecutorResult with completed results and any incomplete objectives.
@@ -400,14 +441,29 @@ class AttackExecutor:
             raise ValueError(
                 f"attributions length ({len(attributions)}) must match params_list length ({len(params_list)})"
             )
+        for name, values in (
+            ("atomic_attack_identifiers", atomic_attack_identifiers),
+            ("result_metadata", result_metadata),
+        ):
+            if values is not None and len(values) != len(params_list):
+                raise ValueError(f"{name} length ({len(values)}) must match params_list length ({len(params_list)})")
+        persisted_result_ids: list[str | None] = [None] * len(params_list)
 
         async def run_one_async(index: int, params: AttackParameters) -> AttackStrategyResultT:
             async with semaphore:
                 context = attack._context_type(params=params)
+                if atomic_attack_identifiers is not None:
+                    context._atomic_attack_identifier = atomic_attack_identifiers[index].model_copy(deep=True)
+                context._result_metadata = (
+                    copy.deepcopy(dict(result_metadata[index])) if result_metadata is not None else {}
+                )
                 task_attribution = attributions[index] if attributions is not None else None
                 if task_attribution is not None:
                     context._attribution = task_attribution
-                return await attack.execute_with_context_async(context=context)
+                try:
+                    return await attack.execute_with_context_async(context=context)
+                finally:
+                    persisted_result_ids[index] = context._persisted_attack_result_id
 
         tasks = [run_one_async(i, p) for i, p in enumerate(params_list)]
         results_or_exceptions = await asyncio.gather(*tasks, return_exceptions=True)
@@ -417,6 +473,7 @@ class AttackExecutor:
             results_or_exceptions=list(results_or_exceptions),
             return_partial_on_failure=return_partial_on_failure,
             input_indices=input_indices,
+            persisted_result_ids=persisted_result_ids,
         )
 
     def _process_execution_results(
@@ -426,6 +483,7 @@ class AttackExecutor:
         results_or_exceptions: list[Any],
         return_partial_on_failure: bool,
         input_indices: Sequence[int] | None = None,
+        persisted_result_ids: Sequence[str | None] | None = None,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
         Process results from parallel execution into an AttackExecutorResult.
@@ -435,26 +493,32 @@ class AttackExecutor:
             results_or_exceptions: Results or exceptions from asyncio.gather.
             return_partial_on_failure: Whether to return partial results on failure.
             input_indices: Original input positions corresponding to ``objectives``.
+            persisted_result_ids: Confirmed stored row IDs corresponding to ``objectives``.
 
         Returns:
             AttackExecutorResult with completed and incomplete results.
 
         Raises:
             BaseException: If return_partial_on_failure=False and any failed.
-            ValueError: If input_indices length doesn't match objectives length.
+            ValueError: If input-index or result-ID lengths don't match objectives.
         """
         completed: list[AttackStrategyResultT] = []
         incomplete: list[tuple[str, BaseException]] = []
         completed_indices: list[int] = []
+        incomplete_result_ids: list[str | None] = []
         source_indices = list(input_indices) if input_indices is not None else list(range(len(objectives)))
         if len(source_indices) != len(objectives):
             raise ValueError("input_indices length must match objectives length")
+        result_ids = list(persisted_result_ids) if persisted_result_ids is not None else [None] * len(objectives)
+        if len(result_ids) != len(objectives):
+            raise ValueError("persisted_result_ids length must match objectives length")
 
         self._raise_first_fatal_exception(results_or_exceptions=results_or_exceptions)
 
         for i, (objective, result) in enumerate(zip(objectives, results_or_exceptions, strict=True)):
             if isinstance(result, BaseException):
                 incomplete.append((objective, result))
+                incomplete_result_ids.append(result_ids[i])
             else:
                 completed.append(result)
                 completed_indices.append(source_indices[i])
@@ -463,6 +527,7 @@ class AttackExecutor:
             completed_results=completed,
             incomplete_objectives=incomplete,
             input_indices=completed_indices,
+            incomplete_result_ids=incomplete_result_ids,
         )
 
         if not return_partial_on_failure:
@@ -493,17 +558,21 @@ class AttackExecutor:
         if not build_failures:
             return execution_result
 
-        incomplete_by_index: dict[int, tuple[str, BaseException]] = {
-            index: (objective, error) for index, objective, error in build_failures
+        incomplete_by_index: dict[int, tuple[str, BaseException, str | None]] = {
+            index: (objective, error, None) for index, objective, error in build_failures
         }
         completed_indices = set(execution_result.input_indices)
-        execution_failures = iter(execution_result.incomplete_objectives)
+        result_ids = execution_result.incomplete_result_ids or [None] * len(execution_result.incomplete_objectives)
+        execution_failures = iter(zip(execution_result.incomplete_objectives, result_ids, strict=True))
         for input_index in successful_input_indices:
             if input_index not in completed_indices:
-                incomplete_by_index[input_index] = next(execution_failures)
+                (objective, error), result_id = next(execution_failures)
+                incomplete_by_index[input_index] = (objective, error, result_id)
 
+        ordered_failures = [incomplete_by_index[index] for index in sorted(incomplete_by_index)]
         return AttackExecutorResult(
             completed_results=execution_result.completed_results,
-            incomplete_objectives=[incomplete_by_index[index] for index in sorted(incomplete_by_index)],
+            incomplete_objectives=[(objective, error) for objective, error, _ in ordered_failures],
             input_indices=execution_result.input_indices,
+            incomplete_result_ids=[result_id for _, _, result_id in ordered_failures],
         )

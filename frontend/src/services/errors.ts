@@ -1,5 +1,21 @@
 import type { AxiosError } from 'axios'
 
+import type { Operation } from '@/types'
+
+export function conflictingOperation(cause: unknown): Operation | null {
+  if (!isAxiosError(cause) || cause.response?.status !== 409) return null
+  const data: unknown = cause.response.data
+  if (typeof data !== 'object' || data === null || !('detail' in data)) return null
+  const detail = data.detail
+  if (typeof detail !== 'object' || detail === null || !('operation' in detail)) return null
+  const operation = detail.operation
+  if (typeof operation !== 'object' || operation === null
+    || !('id' in operation) || typeof operation.id !== 'string'
+    || !('name' in operation) || typeof operation.name !== 'string'
+    || !('created_at' in operation) || typeof operation.created_at !== 'string') return null
+  return { id: operation.id, name: operation.name, created_at: operation.created_at }
+}
+
 /**
  * Normalized error from any API call.
  *
@@ -103,6 +119,17 @@ export function toApiError(err: unknown): ApiError {
     isTimeout: false,
     raw: err,
   }
+}
+
+/** Respect a server-directed cooldown before a user retries a busy read. */
+export function retryAfterMilliseconds(error: unknown): number {
+  if (!isAxiosError(error) || error.response?.status !== 503) return 0
+  const header: unknown = error.response.headers?.['retry-after']
+  if (typeof header !== 'string' && typeof header !== 'number') return 0
+  const seconds = Number(header)
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000
+  const date = typeof header === 'string' ? Date.parse(header) : NaN
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0
 }
 
 // ---------------------------------------------------------------------------

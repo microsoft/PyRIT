@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import uuid  # noqa: TC003  (runtime-required by Pydantic field annotations)
 from abc import ABC
-from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.score._trace_validation import TraceId  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.score.surface import SurfaceMatch  # noqa: TC001 (runtime-required by Pydantic)
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
@@ -65,7 +66,7 @@ class MessageScorable(Scorable):
     def from_message(
         cls,
         message: Message,
-    ) -> MessageScorable:
+    ) -> Self:
         """
         Name the pieces of a persisted message.
 
@@ -73,7 +74,7 @@ class MessageScorable(Scorable):
             message (Message): The message whose pieces to name.
 
         Returns:
-            MessageScorable: A scorable naming the message's pieces.
+            Self: A scorable naming the message's pieces.
         """
         return cls(message_piece_ids=tuple(piece.id for piece in message.message_pieces))
 
@@ -92,7 +93,7 @@ class ContentScorable(Scorable):
     data_type: PromptDataType = "text"
 
     @classmethod
-    def from_message(cls, message: Message) -> ContentScorable:
+    def from_message(cls, message: Message) -> Self:
         """
         Describe the converted content of a single-piece ephemeral message.
 
@@ -106,7 +107,7 @@ class ContentScorable(Scorable):
             message (Message): The ephemeral message whose converted content to take.
 
         Returns:
-            ContentScorable: A scorable holding the converted message content.
+            Self: A scorable holding the converted message content.
         """
         piece = message.get_piece()
         return cls(value=piece.converted_value, data_type=piece.converted_value_data_type)
@@ -156,11 +157,25 @@ class TraceScorable(Scorable):
         return self
 
 
+class SurfaceScorable(Scorable):
+    """
+    A file location to inspect when evidence is acquired.
+
+    ``uri`` names one location, or with ``SurfaceMatch.GLOB`` every location the pattern
+    covers. A location names a place, not a write: it does not identify the run that put
+    the content there.
+    """
+
+    scorable_type: Literal["surface"] = "surface"
+    uri: str = Field(min_length=1, pattern=r"^[^\x00]+$")
+    match: SurfaceMatch = SurfaceMatch.EXACT
+
+
 # Polymorphic union of scorables that can be stored on a Score. Every member declares a
 # ``scorable_type`` tag and Pydantic dispatches on it, so a new member is never mistaken for
 # an existing one and storage never depends on field shape.
 ScorableUnion = Annotated[
-    MessageScorable | ContentScorable | ContentEntryScorable | ConversationScorable | TraceScorable,
+    MessageScorable | ContentScorable | ContentEntryScorable | ConversationScorable | TraceScorable | SurfaceScorable,
     Field(discriminator="scorable_type"),
 ]
 

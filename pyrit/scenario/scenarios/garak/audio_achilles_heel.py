@@ -32,7 +32,7 @@ from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import AttackSeedGroup, Seed, SeedObjective, SeedPrompt
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
@@ -88,7 +88,7 @@ class AudioAchillesHeelDatasetConfiguration(DatasetAttackConfiguration):
         self._text_prompt = text_prompt or DEFAULT_TEXT_PROMPT
 
     @staticmethod
-    def _derive_objective(seed: Seed) -> str:
+    def _derive_objective(seed: Seed[Any]) -> str:
         """
         Derive a scoring objective from a seed's harm category.
 
@@ -112,7 +112,7 @@ class AudioAchillesHeelDatasetConfiguration(DatasetAttackConfiguration):
         humanized = category.replace("_", " ").strip()
         return OBJECTIVE_TEMPLATE.format(category=humanized) if humanized else GENERIC_OBJECTIVE
 
-    def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
+    def _build_attack_groups(self, seeds: list[Seed[Any]]) -> list[AttackSeedGroup]:
         """
         Shape audio seeds into multimodal attack groups.
 
@@ -167,6 +167,7 @@ class AudioAchillesHeel(Scenario):
     """
 
     VERSION: int = 1
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # Audio payload dominated: a text-only baseline of the derived objective drops the audio
     # entirely and is a weak comparison point (Garak has no text-only variant). Baseline stays
@@ -206,9 +207,10 @@ class AudioAchillesHeel(Scenario):
             version=self.VERSION,
             technique_class=AudioAchillesHeelTechnique,
             default_dataset_config=AudioAchillesHeelDatasetConfiguration(
-                dataset_names=["garak_audio_achilles_heel"],
+                sources=[DatasetSource(name=name) for name in ["garak_audio_achilles_heel"]],
                 text_prompt=text_prompt,
-                max_dataset_size=DEFAULT_MAX_DATASET_SIZE,
+                max_per_dataset="all",
+                max_total=DEFAULT_MAX_DATASET_SIZE,
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,

@@ -13,11 +13,12 @@ to test.
 from __future__ import annotations
 
 import logging
-from functools import cache
 from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
-from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
+from pyrit.common.async_compatibility import run_legacy_sync_async
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
 
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@cache
+@AttackTechniqueRegistry.cache_scenario_technique_class
 def _build_rapid_response_technique() -> type[ScenarioTechnique]:
     """
     Build the RapidResponse technique class dynamically from the registered factories.
@@ -42,12 +43,10 @@ def _build_rapid_response_technique() -> type[ScenarioTechnique]:
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
-    from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-
     registry = AttackTechniqueRegistry.get_registry_singleton()
     factories = list(registry.get_factories_or_raise().values())
 
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(
         class_name="RapidResponseTechnique",
         factories=factories,
         default_tags={"light"},
@@ -94,17 +93,20 @@ class RapidResponse(Scenario):
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
             technique_class=technique_class,
-            default_dataset_config=CompoundDatasetAttackConfiguration.per_dataset(
-                dataset_names=[
-                    "airt_hate",
-                    "airt_fairness",
-                    "airt_violence",
-                    "airt_sexual",
-                    "airt_harassment",
-                    "airt_misinformation",
-                    "airt_leakage",
+            default_dataset_config=DatasetAttackConfiguration(
+                sources=[
+                    DatasetSource(name=name)
+                    for name in [
+                        "airt_hate",
+                        "airt_fairness",
+                        "airt_violence",
+                        "airt_sexual",
+                        "airt_harassment",
+                        "airt_misinformation",
+                        "airt_leakage",
+                    ]
                 ],
-                max_dataset_size=4,
+                max_per_dataset=4,
             ),
             scenario_result_id=scenario_result_id,
         )
@@ -124,7 +126,8 @@ class RapidResponse(Scenario):
         Returns:
             list[AtomicAttack]: The generated atomic attacks.
         """
-        return build_matrix_atomic_attacks(
+        return await run_legacy_sync_async(
+            build_matrix_atomic_attacks,
             context=context,
             objective_scorer=self._objective_scorer,
             display_group_fn=lambda combo: combo.dataset_name,

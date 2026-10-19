@@ -1,0 +1,13 @@
+# Isolated, provider-free browser acceptance environment.
+memory_db_type: in_memory
+env_files: []
+env_akv_ref: []
+initializers:
+  - technique
+  - name: load_default_datasets
+    args:
+      dataset_names:
+        - jailbreak_templates
+initialization_scripts:
+  - tests/end_to_end/browser_initializer.py
+operation: browser_proposed

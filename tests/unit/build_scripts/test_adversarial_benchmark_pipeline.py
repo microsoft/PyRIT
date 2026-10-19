@@ -27,7 +27,9 @@ def _step(display_name: str) -> dict:
 
 
 def _step_script(step: dict) -> str:
-    return step.get("bash") or step["inputs"]["inlineScript"]
+    script = step.get("bash") or step["inputs"]["inlineScript"]
+    assert isinstance(script, str)
+    return script
 
 
 def _emitted_benchmark_variables() -> set[str]:

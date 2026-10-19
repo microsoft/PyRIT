@@ -19,6 +19,7 @@ from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    AttackResultSelection,
     AttackSeedGroup,
     ComponentIdentifier,
     Message,
@@ -152,6 +153,7 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
 
     attack = MagicMock(spec=AtomicAttack)
     attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
+    attack.seed_group_adaptations = {}
     attack.atomic_attack_name = name
     attack.display_group = name
     attack.technique_eval_hash = config_hash({"name": name, "objectives": objectives})
@@ -553,7 +555,9 @@ class TestScenarioResumption:
             remaining = await scenario._get_remaining_atomic_attacks_async()
 
         assert remaining == attacks[5:]
-        read_results.assert_called_once_with(scenario_result_id=scenario._scenario_result_id)
+        read_results.assert_called_once_with(
+            scenario_result_id=scenario._scenario_result_id, result_selection=AttackResultSelection.ALL_RESULTS
+        )
 
     async def test_parameter_build_partial_result_persists_linkage_before_retry(
         self,

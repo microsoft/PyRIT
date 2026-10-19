@@ -19,7 +19,7 @@
 #
 # > **Two selection axes**: *Techniques* select attack techniques (*how* attacks run — e.g., prompt
 # > sending, role play, TAP). *Datasets* select objectives (*what* is tested — e.g., harm categories,
-# > compliance topics). Use `--dataset-names` on the CLI to filter by content category.
+# > compliance topics). Use `--datasets` on the CLI to filter by content category.
 #
 # > **Running scenarios from the command line?** See the [Scanner documentation](../../scanner/0_scanner.md).
 #
@@ -42,13 +42,13 @@ objective_target = TargetRegistry.get_registry_singleton().instances.get("openai
 # ## Dataset Configuration
 #
 # `DatasetAttackConfiguration` controls which prompts (objectives) are sent to the target.
-# The simplest approach uses `dataset_names` to load datasets by name from memory.
+# Use `sources` to select named datasets from memory.
 # By default, `RedTeamAgent` loads four random objectives from HarmBench [@mazeika2024harmbench].
 
 # %%
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=2)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="harmbench")], max_total=2)
 
 # %% [markdown]
 # For more control, use `SeedDatasetProvider` to fetch datasets and pass explicit `seed_groups`.
@@ -69,8 +69,8 @@ seed_groups: list[SeedGroup] = [
     if all(seed.value.isascii() and seed.value.isprintable() for seed in group.seeds)
 ]
 
-# Pass explicit seed_groups instead of dataset_names
-dataset_config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=2)
+# Pass explicit seed_groups instead of named sources
+dataset_config = DatasetAttackConfiguration(seed_groups=seed_groups, max_total=2)
 
 # %% [markdown]
 # ## Technique Selection and Composition
@@ -160,6 +160,26 @@ await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)
 # )
 # await scenario.initialize_async()
 # ```
+
+# %% [markdown]
+# ## Incompatible techniques
+#
+# Set `incompatible_technique_policy` to `skip` (default) to warn and omit incompatible
+# techniques, or `raise` to stop initialization.
+#
+# ```python
+# scenario = RedTeamAgent()
+# scenario.set_params_from_args(
+#     args={"objective_target": objective_target, "incompatible_technique_policy": "raise"}
+# )
+# await scenario.initialize_async()
+# ```
+#
+# Use `--incompatible-technique-policy raise` on the CLI or
+# `incompatible_technique_policy: raise` in YAML. `None` uses the scenario class default.
+#
+# This policy does not enable adaptation. Initialization fails if no selected technique can run,
+# even with a baseline. Other construction errors are not skipped.
 
 # %% [markdown]
 # ## Custom Scorers

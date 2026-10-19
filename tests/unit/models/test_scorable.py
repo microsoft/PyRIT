@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import uuid
+from typing import assert_type
 
 import pytest
 from pydantic import ValidationError
@@ -15,6 +16,7 @@ from pyrit.models import (
     MessageScorable,
     Scorable,
     Score,
+    SurfaceScorable,
     TraceScorable,
     scorable_from_dict,
 )
@@ -79,6 +81,18 @@ def test_message_scorable_from_message_names_pieces():
     assert not hasattr(scorable, "message")
 
 
+def test_message_scorable_from_message_preserves_subclass_type():
+    class CustomMessageScorable(MessageScorable):
+        pass
+
+    message = _message()
+    scorable = CustomMessageScorable.from_message(message)
+
+    assert_type(scorable, CustomMessageScorable)
+    assert type(scorable) is CustomMessageScorable
+    assert scorable.message_piece_ids == (message.get_piece().id,)
+
+
 def test_message_scorable_rejects_empty_ids():
     with pytest.raises(ValueError, match="at least one message piece"):
         MessageScorable(message_piece_ids=())
@@ -113,6 +127,26 @@ def test_content_scorable_from_message_uses_converted_view():
 
     scorable = ContentScorable.from_message(message)
 
+    assert scorable.value == "converted"
+    assert scorable.data_type == "text"
+
+
+def test_content_scorable_from_message_preserves_subclass_type():
+    class CustomContentScorable(ContentScorable):
+        pass
+
+    message = MessagePiece(
+        role="user",
+        original_value="original",
+        converted_value="converted",
+        original_value_data_type="text",
+        converted_value_data_type="text",
+    ).to_message()
+
+    scorable = CustomContentScorable.from_message(message)
+
+    assert_type(scorable, CustomContentScorable)
+    assert type(scorable) is CustomContentScorable
     assert scorable.value == "converted"
     assert scorable.data_type == "text"
 
@@ -152,6 +186,7 @@ def test_every_union_member_round_trips_to_its_own_type():
         ContentScorable(value="hello"),
         ContentEntryScorable(content_id=uuid.uuid4()),
         TraceScorable(trace_ids=("1" * 32,)),
+        SurfaceScorable(uri="/data/out.txt"),
         ConversationScorable(conversation_id="whole-conversation"),
     ]
 

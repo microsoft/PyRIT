@@ -5,12 +5,13 @@
 
 import asyncio
 import uuid
-from collections.abc import AsyncGenerator, Generator, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlencode
 
 import pytest
 from pydantic import ValidationError
@@ -46,6 +47,7 @@ from pyrit.common.attack_result_scope import get_current_attack_result_id
 from pyrit.common.utils import to_sha256
 from pyrit.converter import Base64Converter, Converter, ConverterResult
 from pyrit.memory import CentralMemory, SQLiteMemory
+from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -59,6 +61,8 @@ from pyrit.models import (
     PromptDataType,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
+from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from unit.async_utils import wait_for_completion_async
 from unit.backend.mocks import (
     _make_matching_target_mock,
@@ -106,7 +110,7 @@ def send_dependencies(mock_memory: MagicMock) -> Iterator[tuple[MagicMock, Async
 @pytest.fixture
 async def real_send_context(
     *, sqlite_instance: SQLiteMemory, patch_central_database: MagicMock
-) -> Iterator[tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter]]:
+) -> AsyncIterator[tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter]]:
     target = MockPromptTarget()
     converter = Base64Converter()
     ar = AttackResult(
@@ -807,17 +811,14 @@ class TestPersistBase64Pieces:
         for serializer in serializers:
             serializer.save_b64_image_async.assert_awaited_once()
 
-    @pytest.mark.parametrize(
-        ("converted_value", "expected_value"),
-        [
-            ("/api/media?path=preview.png", "preview.png"),
-            ("https://example.com/preview.png?token=example", "https://example.com/preview.png?token=example"),
-            ("preview.png", "preview.png"),
-        ],
-    )
+    @pytest.mark.parametrize("origin", ["reference", "url", "local"])
     async def test_converted_media_references_are_not_repersisted_async(
-        self, *, converted_value: str, expected_value: str
+        self, *, origin: str, managed_media_path: Path
     ) -> None:
+        expected_value = "https://example.com/preview.png?token=example" if origin == "url" else str(managed_media_path)
+        converted_value = (
+            f"/api/media?{urlencode({'path': expected_value})}" if origin == "reference" else expected_value
+        )
         request = AddMessageRequest(
             pieces=[
                 MessagePieceRequest(
@@ -829,10 +830,7 @@ class TestPersistBase64Pieces:
             send=False,
             target_conversation_id="test-id",
         )
-        with (
-            patch("pyrit.backend.services.media_persistence.Path.is_file", return_value=True),
-            patch("pyrit.backend.services.message_send_service.data_serializer_factory") as factory,
-        ):
+        with patch("pyrit.backend.services.message_send_service.data_serializer_factory") as factory:
             await MessageSendService._persist_base64_pieces_async(request)
 
         assert request.pieces[0].original_value == "source"
@@ -1103,14 +1101,14 @@ class TestPersistBase64Pieces:
         assert request.pieces[0].original_value == ("https://myblob.blob.core.windows.net/images/photo.png?sv=2024")
         assert request.pieces[0].converted_value == request.pieces[0].original_value
 
-    async def test_media_reference_is_resolved_without_persistence(self, message_send_service) -> None:
+    async def test_media_reference_is_resolved_without_persistence(self, *, managed_media_path: Path) -> None:
         """Local media URLs are converted back to their decoded file paths."""
         request = AddMessageRequest(
             role="user",
             pieces=[
                 MessagePieceRequest(
                     data_type="image_path",
-                    original_value="/api/media?path=%2Ftmp%2Fimage.png",
+                    original_value=f"/api/media?{urlencode({'path': str(managed_media_path)})}",
                 ),
             ],
             send=False,
@@ -1120,14 +1118,13 @@ class TestPersistBase64Pieces:
         with patch("pyrit.backend.services.message_send_service.data_serializer_factory") as factory:
             await MessageSendService._persist_base64_pieces_async(request)
 
-        assert request.pieces[0].original_value == "/tmp/image.png"
-        assert request.pieces[0].converted_value == "/tmp/image.png"
+        assert request.pieces[0].original_value == str(managed_media_path)
+        assert request.pieces[0].converted_value == str(managed_media_path)
         factory.assert_not_called()
 
-    async def test_existing_file_is_kept_without_persistence(self, message_send_service, tmp_path: Path) -> None:
+    async def test_existing_file_is_kept_without_persistence(self, *, managed_media_path: Path) -> None:
         """An existing path remains the canonical original and converted value."""
-        media_path = tmp_path / "image.png"
-        media_path.write_bytes(b"image")
+        media_path = managed_media_path
         request = AddMessageRequest(
             role="user",
             pieces=[MessagePieceRequest(data_type="image_path", original_value=str(media_path))],
@@ -1926,9 +1923,7 @@ class TestConcurrentMessages:
                     )
                 )
                 await shared_waiting.wait()
-                await asyncio.wait_for(
-                    peer.add_message_async(attack_result_id=ar.attack_result_id, request=requests[2]), timeout=3
-                )
+                await peer.add_message_async(attack_result_id=ar.attack_result_id, request=requests[2])
                 assert calls == 1
                 assert not any(task.done() for task in tasks)
             finally:
@@ -2605,7 +2600,19 @@ class TestExactPreviewSend:
         converted_value: str,
         expected_original: str,
         expected_final: str,
+        managed_media_path: Path,
     ) -> None:
+        mock_memory.results_path = str(managed_media_path.parent.parent)
+        if original_type.endswith("_path"):
+            original_value = f"/api/media?{urlencode({'path': str(managed_media_path)})}"
+            expected_original = str(managed_media_path)
+        if converted_type.endswith("_path"):
+            converted_path = managed_media_path.with_name(
+                "preview.wav" if converted_type == "audio_path" else "preview.png"
+            )
+            converted_path.write_bytes(b"preview")
+            converted_value = f"/api/media?{urlencode({'path': str(converted_path)})}"
+            expected_final = str(converted_path)
         mock_memory.get_attack_results_async.return_value = [make_attack_result(conversation_id="test-id")]
         preview_converter = MagicMock(spec=Converter)
         preview_converter.get_identifier.return_value = ComponentIdentifier(
@@ -2713,6 +2720,46 @@ class TestExactPreviewSend:
             "second",
             "first",
         ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestLocalMediaInputs:
+    @pytest.mark.parametrize("reference", [False, True])
+    @pytest.mark.parametrize("field", ["original_value", "converted_value"])
+    async def test_rejects_unmanaged_media_before_send_async(
+        self, *, managed_media_path: Path, tmp_path: Path, reference: bool, field: str
+    ) -> None:
+        path = tmp_path / "outside.png"
+        path.write_bytes(b"image")
+        value = f"/api/media?{urlencode({'path': str(path)})}" if reference else str(path)
+        request = AddMessageRequest(
+            target_conversation_id="test-id",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value=value if field == "original_value" else str(managed_media_path),
+                    converted_value=value if field == "converted_value" else str(managed_media_path),
+                )
+            ],
+        )
+        service = MessageSendService(scheduler=ManualSendScheduler())
+        target = MockPromptTarget()
+        with (
+            patch.object(target, "send_prompt_async", new_callable=AsyncMock) as send,
+            pytest.raises(ValueError, match="outside the allowed results directory"),
+        ):
+            await service._send_and_store_message_async(
+                conversation_id="test-id",
+                target=target,
+                request=request,
+                sequence=0,
+                request_converter_configurations=[],
+                response_converter_configurations=[],
+                preconverted_indexes=set(),
+                applied_converter_identifiers={},
+            )
+
+        send.assert_not_awaited()
 
 
 def _submission(
@@ -2983,6 +3030,91 @@ class TestAsyncMessageSend:
         assert (
             await service.get_status_async(attack_result_id=ar.attack_result_id, send_id=status.send_id)
         ).state == MessageSendState.COMPLETED
+
+    async def test_repeat_send_rejects_copying_history_without_replay_support_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        sqlite_instance: SQLiteMemory,
+    ) -> None:
+        """Copies would be answered by a target that never saw the earlier turns, so refuse up front."""
+        service, ar, target, _ = real_send_context
+        first = await service.submit_async(
+            attack_result_id=ar.attack_result_id, request=_submission(conversation_id=ar.conversation_id)
+        )
+        assert (await _settle_send_async(service=service, status=first)).state == MessageSendState.COMPLETED
+        target._configuration = TargetConfiguration(
+            capabilities=TargetCapabilities(supports_multi_turn=True, supports_multi_message_pieces=True)
+        )
+
+        with pytest.raises(ValueError, match="cannot initialize copies"):
+            await service.submit_async(
+                attack_result_id=ar.attack_result_id,
+                request=_submission(conversation_id=ar.conversation_id, submission_id="repeat", count=3),
+            )
+
+        pieces = await sqlite_instance.get_message_pieces_async(conversation_id=ar.conversation_id)
+        assert [piece.role for piece in pieces] == ["user", "assistant"]
+        assert not service._scheduler._conversations
+
+    @pytest.mark.parametrize("capability", [CapabilityName.EDITABLE_HISTORY, CapabilityName.MULTI_TURN])
+    async def test_repeat_send_replays_history_through_a_configured_adapter_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        capability: CapabilityName,
+    ) -> None:
+        service, ar, target, _ = real_send_context
+        first = await service.submit_async(
+            attack_result_id=ar.attack_result_id, request=_submission(conversation_id=ar.conversation_id)
+        )
+        assert (await _settle_send_async(service=service, status=first)).state == MessageSendState.COMPLETED
+        target._configuration = TargetConfiguration(
+            capabilities=TargetCapabilities(supports_multi_turn=capability == CapabilityName.EDITABLE_HISTORY),
+            normalizer_overrides={capability: HistorySquashNormalizer()},
+        )
+
+        with patch.object(
+            target, "_send_prompt_to_target_async", wraps=target._send_prompt_to_target_async
+        ) as provider:
+            status = await service.submit_async(
+                attack_result_id=ar.attack_result_id,
+                request=_submission(conversation_id=ar.conversation_id, submission_id="repeat", count=3),
+            )
+            assert (await _settle_send_async(service=service, status=status)).state == MessageSendState.COMPLETED
+
+        assert provider.await_count == 3
+        for call in provider.call_args_list:
+            conversation = call.kwargs["normalized_conversation"]
+            assert len(conversation) == 1
+            prompt = conversation[0].get_piece().converted_value
+            assert "[Conversation History]" in prompt
+            assert "User: Hello" in prompt
+            assert "Assistant: default" in prompt
+            assert "[Current Message]" in prompt
+
+    @pytest.mark.parametrize("system_history", [False, True])
+    async def test_repeat_send_without_replay_support_is_fine_on_a_new_conversation_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        system_history: bool,
+    ) -> None:
+        service, ar, target, _ = real_send_context
+        target._configuration = TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True, supports_multi_message_pieces=True, supports_system_prompt=True
+            )
+        )
+        if system_history:
+            await target.set_system_prompt_async(system_prompt="Be brief.", conversation_id=ar.conversation_id)
+
+        status = await service.submit_async(
+            attack_result_id=ar.attack_result_id,
+            request=_submission(conversation_id=ar.conversation_id, count=3),
+        )
+
+        assert (await _settle_send_async(service=service, status=status)).state == MessageSendState.COMPLETED
 
     @pytest.mark.parametrize("invalid", ["attack", "conversation", "target", "converter"])
     async def test_validation_does_not_accept_or_write_async(

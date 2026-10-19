@@ -16,6 +16,7 @@ from sqlalchemy import (
     INTEGER,
     JSON,
     Boolean,
+    CheckConstraint,
     Computed,
     DateTime,
     Float,
@@ -57,8 +58,11 @@ from pyrit.models import (
     ConversationType,
     ConverterIdentifier,
     EvaluationIdentifier,
+    Finding,
+    FindingEvidence,
     MessagePiece,
     Observation,
+    Operation,
     PromptDataType,
     ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
@@ -74,11 +78,14 @@ from pyrit.models import (
     SeedObjective,
     SeedOrigin,
     SeedPrompt,
+    SeedRecord,
     SeedSimulatedConversation,
     SeedType,
     TargetIdentifier,
     scorable_from_dict,
 )
+from pyrit.models.harm_category import HarmCategory
+from pyrit.models.operation import operation_name_key
 from pyrit.models.results.attack_result import normalize_legacy_attack_attribution
 
 logger = logging.getLogger(__name__)
@@ -201,12 +208,31 @@ class UTCDateTime(TypeDecorator[datetime]):
     A DateTime type that returns timezone-aware UTC datetimes.
 
     Databases such as SQLite store datetimes without timezone information and return naive
-    ``datetime`` objects. This decorator attaches UTC tzinfo on read so callers always receive
-    aware datetimes, removing the need to normalize at every read site.
+    ``datetime`` objects. This decorator stores every value as naive UTC and attaches UTC tzinfo
+    on read, so callers always receive aware datetimes, removing the need to normalize at every
+    read site.
     """
 
     impl = DateTime
     cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Any) -> datetime | None:
+        """
+        Convert an aware datetime to naive UTC before it is stored or compared.
+
+        The column has no timezone, so an aware value with another offset would otherwise be
+        stored as its local wall-clock time and read back as UTC. Naive values are taken as UTC.
+
+        Args:
+            value (datetime | None): The value being written or compared.
+            dialect (Any): The database dialect being used.
+
+        Returns:
+            datetime | None: The value as naive UTC, or unchanged if it was naive or None.
+        """
+        if value is not None and value.tzinfo is not None:
+            return value.astimezone(UTC).replace(tzinfo=None)
+        return value
 
     def process_result_value(self, value: datetime | None, dialect: Any) -> datetime | None:
         """
@@ -228,6 +254,157 @@ class Base(DeclarativeBase):
     """
     Base class for all database models.
     """
+
+
+class OperationEntry(Base):
+    """A saved operation that owns findings."""
+
+    __tablename__ = "OperationEntries"
+    __table_args__ = (Index("ix_OperationEntries_name_key", "name_key", unique=True),)
+
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    name: Mapped[str] = mapped_column(Unicode(128), nullable=False)
+    # Case folding can expand a 128-unit name up to three times, for example "ΐ".
+    # Binary collation keeps SQL Server from folding the key further than operation_name_key does.
+    name_key: Mapped[str] = mapped_column(
+        Unicode(384).with_variant(Unicode(384, collation="Latin1_General_100_BIN2"), "mssql"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    description: Mapped[str] = mapped_column(Unicode, nullable=False)
+
+    def __init__(self, operation: Operation) -> None:
+        """Store a validated operation and its identity key."""
+        validated = Operation.model_validate(operation.model_dump())
+        self.id = validated.id
+        self.name = validated.name
+        self.name_key = operation_name_key(validated.name)
+        self.created_at = validated.created_at.astimezone(UTC)
+        self.description = validated.description
+
+    def get_operation(self) -> Operation:
+        """
+        Rebuild the operation model.
+
+        Returns:
+            Operation: The stored operation.
+        """
+        return Operation(id=self.id, name=self.name, created_at=self.created_at, description=self.description)
+
+
+class FindingEntry(Base):
+    """A saved finding, kept separate from scores and attack results."""
+
+    __tablename__ = "FindingEntries"
+    # Harm types are deliberately unconstrained: HarmCategory changes over time, so reads map unknown values instead.
+    __table_args__ = (
+        Index("ix_FindingEntries_operation_id", "operation_id"),
+        CheckConstraint(
+            "severity IN ('critical', 'important', 'moderate', 'low', 'informational', 'other')",
+            name="ck_findings_severity",
+        ),
+        CheckConstraint(
+            "(severity = 'other' AND severity_other IS NOT NULL AND LTRIM(RTRIM(severity_other)) <> '') "
+            "OR (severity <> 'other' AND severity_other IS NULL)",
+            name="ck_findings_severity_other",
+        ),
+        CheckConstraint(
+            "(harm_type IS NOT NULL AND harm_type = 'Other' AND harm_type_other IS NOT NULL "
+            "AND LTRIM(RTRIM(harm_type_other)) <> '') "
+            "OR ((harm_type IS NULL OR harm_type <> 'Other') AND harm_type_other IS NULL)",
+            name="ck_findings_harm_type_other",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    operation_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID, ForeignKey(f"{OperationEntry.__tablename__}.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(Unicode, nullable=False)
+    description: Mapped[str] = mapped_column(Unicode, nullable=False)
+    severity: Mapped[str] = mapped_column(String(32), nullable=False)
+    severity_other: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    harm_type: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    harm_type_other: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+
+    def __init__(self, finding: Finding) -> None:
+        """Store a validated finding."""
+        validated = Finding.model_validate(finding.model_dump())
+        self.id = validated.id
+        self.operation_id = validated.operation_id
+        self.title = validated.title
+        self.description = validated.description
+        self.severity = validated.severity.value
+        self.severity_other = validated.severity_other
+        self.harm_type = validated.harm_type.value if validated.harm_type is not None else None
+        self.harm_type_other = validated.harm_type_other
+        self.created_at = validated.created_at.astimezone(UTC)
+
+    def get_finding(self) -> Finding:
+        """
+        Rebuild the finding model.
+
+        A stored harm type that is no longer a ``HarmCategory`` maps through its aliases, or to
+        Other with the stored text, rather than making the finding unreadable.
+
+        Returns:
+            Finding: The stored finding.
+        """
+        harm_type, harm_type_other = self.harm_type, self.harm_type_other
+        if harm_type is not None and harm_type not in set(HarmCategory):
+            # parse() logs a warning when it falls back to Other.
+            parsed = HarmCategory.parse(harm_type)
+            harm_type, harm_type_other = parsed, harm_type if parsed == HarmCategory.OTHER else None
+        return Finding(
+            id=self.id,
+            operation_id=self.operation_id,
+            title=self.title,
+            description=self.description,
+            severity=self.severity,
+            severity_other=self.severity_other,
+            harm_type=harm_type,
+            harm_type_other=harm_type_other,
+            created_at=self.created_at,
+        )
+
+
+class FindingEvidenceEntry(Base):
+    """A finding-to-attack-result link. Attack results can be deleted, so they have no foreign key here."""
+
+    __tablename__ = "FindingEvidenceEntries"
+    __table_args__ = (
+        Index("ix_FindingEvidenceEntries_finding_id", "finding_id"),
+        UniqueConstraint("finding_id", "attack_result_id", name="uq_finding_evidence_source"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    finding_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID, ForeignKey(f"{FindingEntry.__tablename__}.id"), nullable=False
+    )
+    attack_result_id: Mapped[uuid.UUID] = mapped_column(CustomUUID, nullable=False)
+    attached_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+
+    def __init__(self, evidence: FindingEvidence) -> None:
+        """Store validated evidence."""
+        validated = FindingEvidence.model_validate(evidence.model_dump())
+        self.id = validated.id
+        self.finding_id = validated.finding_id
+        self.attack_result_id = validated.attack_result_id
+        self.attached_at = validated.attached_at.astimezone(UTC)
+
+    def get_evidence(self) -> FindingEvidence:
+        """
+        Rebuild the evidence model.
+
+        Returns:
+            FindingEvidence: The stored evidence.
+        """
+        return FindingEvidence(
+            id=self.id,
+            finding_id=self.finding_id,
+            attack_result_id=self.attack_result_id,
+            attached_at=self.attached_at,
+        )
 
 
 class PromptMemoryEntry(Base):
@@ -1521,7 +1698,7 @@ class SeedEntry(Base):
     )
     conditions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
-    def __init__(self, *, entry: Seed) -> None:
+    def __init__(self, *, entry: Seed[Any]) -> None:
         """
         Initialize a SeedEntry from a Seed object.
 
@@ -1570,7 +1747,7 @@ class SeedEntry(Base):
             self.role = None
 
     @staticmethod
-    def _pack_seed_metadata(entry: Seed) -> dict[str, str | int] | None:
+    def _pack_seed_metadata(entry: Seed[Any]) -> dict[str, str | int] | None:
         """
         Build the persisted ``prompt_metadata`` for ``entry``.
 
@@ -1648,12 +1825,45 @@ class SeedEntry(Base):
             decoded = None
         return cleaned, decoded
 
-    def get_seed(self) -> Seed:
+    def get_seed_record(self) -> SeedRecord:
+        """
+        Project stored fields without reconstructing an executable seed.
+
+        Returns:
+            SeedRecord: Stored content, identifiers, and metadata, including raw configuration text.
+        """
+        metadata, response_json_schema = self._unpack_seed_metadata(self.prompt_metadata)
+        return SeedRecord(
+            id=self.id,
+            seed_type=self.seed_type,
+            value=self.value,
+            value_sha256=self.value_sha256,
+            data_type=self.data_type,
+            name=self.name,
+            dataset_name=self.dataset_name,
+            origin=SeedOrigin(self.origin),
+            harm_categories=self.harm_categories,
+            description=self.description,
+            authors=self.authors,
+            groups=self.groups,
+            source=self.source,
+            date_added=self.date_added,
+            added_by=self.added_by,
+            metadata=metadata,
+            prompt_group_id=self.prompt_group_id,
+            sequence=self.sequence,
+            role=self.role,
+            parameters=self.parameters,
+            conditions=self.conditions,
+            response_json_schema=response_json_schema,
+        )
+
+    def get_seed(self) -> SeedPrompt | SeedObjective | SeedSimulatedConversation:
         """
         Convert this database entry back into a Seed object.
 
         Returns:
-            Seed: The reconstructed seed object (SeedPrompt, SeedObjective, or SeedSimulatedConversation)
+            SeedPrompt | SeedObjective | SeedSimulatedConversation: The reconstructed seed object.
 
         Raises:
             ValueError: If persisted conditions are invalid or attached to a non-objective seed,
@@ -1892,6 +2102,9 @@ class AttackResultEntry(Base):
     attack_metadata: Mapped[dict[str, str | int | float | bool] | None] = mapped_column(JSON, nullable=True)
     operator: Mapped[str | None] = mapped_column(Unicode(128), nullable=True)
     operation: Mapped[str | None] = mapped_column(Unicode(128), nullable=True)
+    operation_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey("OperationEntries.id", name="fk_attack_results_operation"), nullable=True, index=True
+    )
     labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     targeted_harm_categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     pruned_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -1977,6 +2190,7 @@ class AttackResultEntry(Base):
         )
         self.operator = operator
         self.operation = operation
+        self.operation_id = entry.operation_id
         self.labels = remaining_labels
         self.targeted_harm_categories = entry.targeted_harm_categories or None
 
@@ -2161,6 +2375,7 @@ class AttackResultEntry(Base):
             timestamp=self.timestamp or datetime.now(tz=UTC),
             operator=self.operator,
             operation=self.operation,
+            operation_id=self.operation_id,
             labels=self.labels or {},
             targeted_harm_categories=self.targeted_harm_categories or [],
             error_message=self.error_message,
@@ -2242,6 +2457,9 @@ class ScenarioResultEntry(Base):
     display_group_map_json: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     number_tries: Mapped[int] = mapped_column(INTEGER, nullable=False, default=0)
+    operation_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey("OperationEntries.id", name="fk_scenario_results_operation"), nullable=True, index=True
+    )
     completion_time = mapped_column(UTCDateTime, nullable=False)
     timestamp = mapped_column(UTCDateTime, nullable=False)
 
@@ -2302,6 +2520,7 @@ class ScenarioResultEntry(Base):
         self.objective_scorer_identifier = scorer_identifier.model_dump() if scorer_identifier else None
         self.scenario_run_state = entry.scenario_run_state.value
         self.labels = entry.labels
+        self.operation_id = entry.operation_id
         self.number_tries = entry.number_tries
         self.completion_time = entry.completion_time
 
@@ -2355,6 +2574,7 @@ class ScenarioResultEntry(Base):
             scenario_run_state=ScenarioRunState(self.scenario_run_state),
             labels=self.labels or {},
             creation_time=self.timestamp,
+            operation_id=self.operation_id,
             number_tries=self.number_tries,
             completion_time=self.completion_time,
             display_group_map=display_group_map or {},

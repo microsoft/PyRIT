@@ -60,7 +60,24 @@ If you changed the schema in a meaningful way (added a table, added a foreign ke
 
 ## How Migrations Run at Startup
 
-Schema migrations are triggered inside each memory class constructor (`SQLiteMemory.__init__` and `AzureSQLMemory.__init__`). When `skip_schema_migration=False` (the default), the inherited `_run_schema_migration()` method on `MemoryInterface` runs:
+SQLite keeps automatic schema initialization (`skip_schema_migration=False`). Azure SQL defaults to `skip_schema_migration=True`: construction and `initialize_pyrit_async("AzureSQL")` check the schema without changing it. Granting SQL DDL permission does not enable automatic migrations.
+
+For Azure SQL, run the explicit deployment migration command:
+
+```bash
+uv run --no-sync python -m pyrit.cli.pyrit_migrate \
+  --config-file /path/to/.pyrit_conf \
+  --expected-server <server>.database.windows.net \
+  --expected-database <database>
+```
+
+The command validates the database target, applies migrations, and checks the resulting schema. It can migrate production because the command is an explicit action. It does not run PyRIT initializers.
+
+Add `--check-only` to validate the target and check the schema without applying migrations. The command returns a nonzero exit code if the check fails. Internal deployments use this check to avoid stopping the app when the schema is already current.
+
+For non-production Azure SQL initialization, callers can instead explicitly pass `skip_schema_migration=False` to `AzureSQLMemory` or `initialize_pyrit_async`. The production connection guard and `PYRIT_REQUIRE_CURRENT_SCHEMA=true` still prevent initialization from migrating, even with this opt-in.
+
+When initialization runs a migration, the inherited `_run_schema_migration()` method on `MemoryInterface` runs:
 
 ```
 SQLiteMemory.__init__() / AzureSQLMemory.__init__()
@@ -81,11 +98,13 @@ Both SQLite and AzureSQL follow the same migration path: first `run_schema_migra
 
 Migrations run inside a transaction (`engine.begin()`), so a failed migration rolls back cleanly. The version tracking table is `pyrit_memory_alembic_version`.
 
-Users can skip migrations by passing `skip_schema_migration=True` to the memory class constructor. When using `initialize_pyrit_async()`, this can be forwarded via `**memory_instance_kwargs`:
+Users can skip SQLite migrations by passing `skip_schema_migration=True` to the memory class constructor. When using `initialize_pyrit_async()`, this can be forwarded via `**memory_instance_kwargs`:
 
 ```python
 await initialize_pyrit_async("SQLite", skip_schema_migration=True)
 ```
+
+Azure SQL check-only initialization logs a warning on schema mismatch. Internal deployments set `PYRIT_REQUIRE_CURRENT_SCHEMA=true` to fail startup on a mismatch. SQLite behavior is unchanged.
 
 ## Important Rules
 
@@ -103,9 +122,11 @@ The query grain is a distinct stored `AttackResultEntry.id`. Different result ID
 sharing a conversation remain different results. For callers that need full result
 objects, `MemoryInterface.get_attack_results_async` accepts the opt-in
 `result_selection=AttackResultSelection.ALL_RESULTS` mode. The deprecated sync
-method also accepts this mode. Both default to
-`LATEST_PER_CONVERSATION`, including existing History callers. Turn bounds apply
-after selection, and neither mode deletes or rewrites stored duplicates.
+method also accepts this mode. Both still default to `LATEST_PER_CONVERSATION`.
+The backend's Attack History listing explicitly requests `ALL_RESULTS` and
+fingerprints that mode in its cursor; unrelated SDK and scenario callers keep
+their existing selection. Turn bounds apply after selection, and neither mode
+deletes or rewrites stored duplicates.
 
 Revision `901e6c7bf9d4` follows the published `main` head `34a18645c7e9`. It
 bounds `outcome` to 16 characters and adds the computed
@@ -135,6 +156,19 @@ their names. The frozen v1 evaluation rules match
 `ObjectiveTargetEvaluationIdentifier` at introduction. Do not change them
 in place when evaluation rules evolve: add a new versioned column, backfill,
 and explicit selection policy instead of silently changing historical groups.
+
+v1 had one pre-release correction before it shipped in a release. Targets
+without a model name (HTTP, Gandalf and other non-LLM targets) carry no
+behavioral settings, so the original rules merged every such target of a
+class into one group. v1 now keys a target with no nonempty
+`underlying_model_name` or `model_name` by its content hash, after unwrapping
+a wrapper to its first inner target. Targets with a model name keep their
+original key. Revision `3f6a9d2c8b1e` recomputes stored keys for databases
+that already applied `901e6c7bf9d4`, so existing databases, fresh installs, and
+new writes agree. Its downgrade keeps the corrected keys. Objective-target
+labels skip blank model names and fall back to the class name, which the SDK
+suffixes with a short key. With this correction the v1 definition is frozen
+again.
 
 Filters OR values within each predicate (converter `ALL` is the exception) and AND
 separate predicates, including repeated dimensions. Missing metadata, recorded
@@ -179,9 +213,16 @@ and result-ID selection; updated bounds use a half-open UTC interval. Each reque
 is copied and revalidated before acquiring a session, so changes to the caller's
 query during execution cannot mix different filters or axes in one report.
 `QueryControl` supplies a monotonic deadline and request-local cancellation signal.
-Async session acquisition is bounded by that budget. SQLite's per-connection
-busy timeout is bounded by the remaining budget before each statement and
-restored afterward, so lock waits cannot use the full default busy timeout.
+Async session acquisition is bounded by that budget. SQLite's native busy
+sleeps are disabled on the request-owned connection because they accumulate
+requested sleep durations rather than enforcing an absolute deadline. Analytics
+retries only plain `SQLITE_BUSY` reads and report setup operations with paced
+asynchronous waits against the shared budget, without restarting the read
+transaction. Other database errors, including `SQLITE_BUSY_SNAPSHOT`, propagate.
+The original busy timeout is restored and the request's progress handler removed
+before releasing the connection, even under repeated task cancellation. A failed
+reset discards the connection and propagates the error. Deadline
+checks remain cooperative; OS scheduling can delay when a task observes expiry.
 SQL Server pool acquisition remains subject to its pool; aioodbc configures
 pyodbc query timeouts in its executor before statement cursors are created and
 restores them when the session closes. SQL Server reports require SNAPSHOT

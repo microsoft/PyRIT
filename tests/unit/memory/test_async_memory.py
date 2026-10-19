@@ -435,9 +435,9 @@ async def test_disposal_failure_still_releases_sync_engine(sqlite_instance: SQLi
 async def test_sync_disposal_rejects_active_async_resources(sqlite_instance: SQLiteMemory) -> None:
     await sqlite_instance.get_message_pieces_async()
     with (
+        patch.object(sqlite_instance, "_dispose_sync_engine") as dispose,
         pytest.warns(DeprecationWarning),
         pytest.raises(RuntimeError, match="owning event loops"),
-        patch.object(sqlite_instance, "_dispose_sync_engine") as dispose,
     ):
         sqlite_instance.dispose_engine()
     dispose.assert_not_called()
@@ -490,6 +490,7 @@ async def test_in_memory_transactions_are_serialized_across_loops(sqlite_instanc
         try:
             async with await sqlite_instance.get_session_async() as session:
                 count = await session.scalar(text("SELECT COUNT(*) FROM LockProbe"))
+                assert isinstance(count, int)
                 await session.execute(text("INSERT INTO LockProbe VALUES (2)"))
                 await session.commit()
                 return count
@@ -502,6 +503,7 @@ async def test_in_memory_transactions_are_serialized_across_loops(sqlite_instanc
         started.set()
         with sqlite_instance._get_sync_session() as session:
             count = session.scalar(text("SELECT COUNT(*) FROM LockProbe"))
+            assert isinstance(count, int)
             session.execute(text("INSERT INTO LockProbe VALUES (2)"))
             session.commit()
             return count

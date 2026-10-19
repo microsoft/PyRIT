@@ -38,5 +38,5 @@ class FentanylKeywordScorer(_FixedRegexScorerMixin, RegexScorer):
     illicit-substances scoring module.
     """
 
-    _DEFAULT_PATTERNS: dict[str, str] = {kw: f"(?i){re.escape(kw)}" for kw in _KEYWORDS}
+    _DEFAULT_PATTERNS: dict[str, str] | None = {kw: f"(?i){re.escape(kw)}" for kw in _KEYWORDS}
     _DEFAULT_CATEGORIES: tuple[str, ...] = ("fentanyl",)

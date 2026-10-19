@@ -91,6 +91,11 @@ const catalogScenario = {
   baseline_policy: "enabled",
   include_baseline_by_default: false,
   uses_default_adversarial_target: false,
+  supported_parameter_names: [
+    "objective_target", "scenario_techniques", "dataset_config", "memory_labels",
+    "max_concurrency", "max_retries", "include_baseline", "num_jailbreaks",
+    "num_jailbreak_attempts", "jailbreak_names",
+  ],
   supported_parameters: [
     {
       name: "num_jailbreaks",
@@ -257,6 +262,10 @@ async function mockScenarioAPIs(page: Page): Promise<ScenarioMocks> {
       contentType: "application/json",
       body: JSON.stringify({ status: "healthy" }),
     });
+  });
+
+  await page.route(/\/api\/datasets(?:\?|$)/, async (route) => {
+    await route.fulfill({ json: { items: [] } });
   });
 
   await page.route(/\/api\/runtime(?:\?|$)/, async (route) => {
@@ -530,13 +539,16 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     const primaryNavigation = page.getByRole("navigation", { name: "Primary" });
     const primaryButtons = primaryNavigation.getByRole("button");
     await expect(primaryNavigation.getByRole("button", { name: "Configuration" })).toBeVisible();
-    await expect(primaryButtons).toHaveCount(6);
+    await expect(primaryButtons).toHaveCount(9);
     expect(await primaryButtons.evaluateAll((buttons) =>
       buttons.map((button) => button.getAttribute("aria-label")))).toEqual([
       "Home",
-      "Chat",
+      "Technique.execute",
       "History",
+      "Analytics",
+      "Operations",
       "Scanner",
+      "Datasets",
       "Registry",
       "Configuration",
     ]);

@@ -82,6 +82,7 @@ class ScenarioResult(BaseModel):
     scenario_run_state: ScenarioRunState = ScenarioRunState.CREATED
     #: Optional labels.
     labels: dict[str, str] = Field(default_factory=dict)
+    operation_id: uuid.UUID | None = None
     #: When the scenario result was created.
     creation_time: datetime = Field(default_factory=lambda: datetime.now(UTC))
     #: Optional completion timestamp.
@@ -258,7 +259,7 @@ class ScenarioResult(BaseModel):
             return 0
 
         successful_results = sum(1 for result in all_results if result.outcome == AttackOutcome.SUCCESS)
-        return int((successful_results / total_results) * 100)
+        return successful_results * 100 // total_results
 
     @staticmethod
     def normalize_scenario_name(scenario_name: str) -> str:

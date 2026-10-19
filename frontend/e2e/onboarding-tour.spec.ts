@@ -22,6 +22,10 @@ const TOUR_SCENARIO: RegisteredScenario = {
   baseline_policy: "disabled",
   include_baseline_by_default: false,
   supported_parameters: [],
+  supported_parameter_names: [
+    "objective_target", "scenario_techniques", "dataset_config", "memory_labels",
+    "max_concurrency", "max_retries", "include_baseline",
+  ],
   default_run_size: {
     status: "unavailable",
     dataset_size: { kind: "indeterminate", detail: "Mock estimate only." },
@@ -35,6 +39,9 @@ const TOUR_SCENARIO: RegisteredScenario = {
 
 /** Serves a one-scenario catalog so the detail route is reachable by click. */
 async function mockScenarioCatalog(page: Page): Promise<void> {
+  await page.route(/\/api\/datasets(?:\?|$)/, async (route) => {
+    await route.fulfill({ json: { items: [] } });
+  });
   await page.route(/\/api\/scenarios\/catalog(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       json: {
@@ -187,7 +194,7 @@ test.describe("Onboarding tour", () => {
     await expect(page).toHaveURL(/\/chat$/);
     await expect(dialog).toContainText("Chat shows the message composer");
     await expect(dialog).toContainText("Toggle converter panel");
-    await expect(page.getByRole("textbox")).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Type prompt here", exact: true })).toBeVisible();
     await expect(page.locator('[data-tour="converter-toggle"]')).toHaveAttribute(
       "aria-label",
       "Toggle converter panel"
@@ -242,7 +249,7 @@ test.describe("Onboarding tour", () => {
     await expect(page).toHaveURL(/\/chat$/);
     await expect(dialog).toContainText("Chat shows the message composer");
     await expect(dialog).toContainText("Toggle converter panel");
-    await expect(page.getByRole("textbox")).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Type prompt here", exact: true })).toBeVisible();
     await expect(page.locator('[data-tour="converter-toggle"]')).toHaveAttribute(
       "aria-label",
       "Toggle converter panel"

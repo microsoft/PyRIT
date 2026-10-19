@@ -191,6 +191,10 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (apiPath === "/operations" && method === "GET") {
+      await route.fulfill(jsonResponse({ items: [] }));
+      return;
+    }
     if (apiPath === "/config" && method === "GET") {
       await route.fulfill(
         jsonResponse({
@@ -374,6 +378,27 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       await route.fulfill(jsonResponse({ converter_types: [] }));
       return;
     }
+    if (apiPath === "/datasets") {
+      await route.fulfill(
+        jsonResponse({
+          items: [
+            {
+              name: "harmbench",
+              selection_key: "dataset:named:harmbench",
+              loaded: true,
+              provider_available: true,
+              logical_examples: 12,
+              seed_pieces: 12,
+              objectives: 1,
+              modalities: ["text"],
+              harm_categories: ["hate"],
+              has_unlabeled_harm_categories: false,
+            },
+          ],
+        })
+      );
+      return;
+    }
     if (apiPath === "/scenarios/catalog" || apiPath === "/scenarios/runs") {
       await route.fulfill(
         jsonResponse({
@@ -455,7 +480,7 @@ async function startChatWithMessages(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Registry", exact: true }).click();
   await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
-  await page.getByRole("button", { name: "Chat", exact: true }).click();
+  await page.getByRole("button", { name: "Technique.execute", exact: true }).click();
   await page.getByTestId("chat-input").fill(
     "Assess this deterministic mobile prompt"
   );
@@ -480,7 +505,7 @@ test.describe("Mobile touch targets", () => {
     await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
     await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
-    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    await page.getByRole("button", { name: "Technique.execute", exact: true }).click();
 
     await page.getByRole("button", { name: "Add objective" }).click();
     const objectiveInput = page.getByRole("textbox", {
@@ -705,9 +730,14 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
 
     await page.getByTestId("copy-to-input-btn-1").click();
-    for (const name of ["This conversation", "New conversation", "New attack"]) {
+    for (const name of ["Copy to next message", "Branch conversation", "Branch attack", "Use in scan"]) {
       await expectMinimumTouchTarget(page.getByRole("menuitem", { name, exact: true }));
     }
+    await expect(page.getByText("Copy only this message to the prompt box.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Copy history including this turn into the same attack.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Copy history including this turn into a new attack (i.e., separate group of conversations).", { exact: true })).toBeVisible();
+    await expect(page.getByText("Apply a PyRIT attack technique after prepending history including this turn.", { exact: true })).toBeVisible();
+    await expectNoDocumentOverflow(page);
     await page.keyboard.press("Escape");
 
     const outcomeButton = page.getByRole("button", {
@@ -748,6 +778,16 @@ test.describe("Mobile touch targets", () => {
         ].join(",")
       )
     );
+    await expectNoDocumentOverflow(page);
+  });
+
+  test("keeps closed dataset filters at least 44px", async ({ page }) => {
+    await page.goto("/datasets");
+    await expect(page.getByRole("heading", { name: "Datasets" })).toBeVisible();
+
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Modalities" }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Harm categories" }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Sort datasets" }));
     await expectNoDocumentOverflow(page);
   });
 
@@ -886,4 +926,10 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
   await openAttack.scrollIntoViewIfNeeded();
   await expectCompactDesktopTarget(openAttack);
   await expectCompactDesktopTarget(page.getByTestId("next-page-btn"));
+
+  await page.goto("/datasets");
+  await expect(page.getByRole("heading", { name: "Datasets" })).toBeVisible();
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Modalities" }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Harm categories" }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Sort datasets" }));
 });

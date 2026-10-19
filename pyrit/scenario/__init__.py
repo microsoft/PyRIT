@@ -24,12 +24,17 @@ if TYPE_CHECKING:
         CompoundDatasetAttackConfiguration,
         DatasetAttackConfiguration,
         DatasetConfiguration,
+        DatasetFetchPolicy,
+        DatasetSource,
         DatasetSourceKind,
+        IncompatibleTechniqueError,
+        IncompatibleTechniquePolicy,
         ResolvedDataset,
         Scenario,
         ScenarioTechnique,
+        TechniqueRequirements,
     )
-    from pyrit.scenario.scenarios import adaptive, airt, benchmark, foundry, garak
+    from pyrit.scenario.scenarios import adaptive, airt, benchmark, foundry, garak, technique
 
 _SCENARIO_ALIASES = {
     "pyrit.scenario.adaptive": "pyrit.scenario.scenarios.adaptive",
@@ -37,6 +42,7 @@ _SCENARIO_ALIASES = {
     "pyrit.scenario.benchmark": "pyrit.scenario.scenarios.benchmark",
     "pyrit.scenario.foundry": "pyrit.scenario.scenarios.foundry",
     "pyrit.scenario.garak": "pyrit.scenario.scenarios.garak",
+    "pyrit.scenario.technique": "pyrit.scenario.scenarios.technique",
 }
 
 
@@ -89,11 +95,16 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "CompoundDatasetAttackConfiguration": "pyrit.scenario.core.dataset_configuration",
     "DatasetAttackConfiguration": "pyrit.scenario.core.dataset_configuration",
     "DatasetConfiguration": "pyrit.scenario.core.dataset_configuration",
+    "DatasetFetchPolicy": "pyrit.scenario.core.dataset_configuration",
+    "DatasetSource": "pyrit.scenario.core.dataset_configuration",
     "DatasetSourceKind": "pyrit.scenario.core.dataset_configuration",
     "Parameter": "pyrit.models.parameter",
     "ResolvedDataset": "pyrit.scenario.core.dataset_configuration",
     "Scenario": "pyrit.scenario.core.scenario",
     "ScenarioTechnique": "pyrit.scenario.core.scenario_technique",
+    "TechniqueRequirements": "pyrit.scenario.core.technique_requirements",
+    "IncompatibleTechniqueError": "pyrit.scenario.core.technique_requirements",
+    "IncompatibleTechniquePolicy": "pyrit.scenario.core.technique_requirements",
     "ScenarioIdentifier": "pyrit.models.identifiers.scenario_identifier",
     "ScenarioResult": "pyrit.models.results.scenario_result",
     "adaptive": ("pyrit.scenario.scenarios.adaptive", None),
@@ -101,6 +112,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "benchmark": ("pyrit.scenario.scenarios.benchmark", None),
     "garak": ("pyrit.scenario.scenarios.garak", None),
     "foundry": ("pyrit.scenario.scenarios.foundry", None),
+    "technique": ("pyrit.scenario.scenarios.technique", None),
 }
 
 __all__ = list(_LAZY_EXPORTS)

@@ -12,7 +12,7 @@ import random
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -233,7 +233,7 @@ class SeedDataset(BaseModel):
         return random.sample(prompts, min(len(prompts), number))
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> SeedDataset:
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         """
         Build a SeedDataset, assigning per-seed ``prompt_group_id`` by alias.
 
@@ -246,7 +246,7 @@ class SeedDataset(BaseModel):
             data (dict[str, Any]): Dataset payload with top-level defaults and seed entries.
 
         Returns:
-            SeedDataset: Constructed dataset.
+            Self: Constructed dataset.
 
         Raises:
             ValueError: If any seed entry includes a pre-set ``prompt_group_id``.
@@ -299,7 +299,7 @@ class SeedDataset(BaseModel):
                 prompt["prompt_group_id"] = uuid.uuid4()
 
     @staticmethod
-    def group_seed_prompts_by_prompt_group_id(seeds: Sequence[Seed]) -> Sequence[SeedGroup]:
+    def group_seed_prompts_by_prompt_group_id(seeds: Sequence[Seed[Any]]) -> Sequence[SeedGroup]:
         """
         Group the given list of seeds by prompt_group_id and create
         SeedGroup or AttackSeedGroup instances.

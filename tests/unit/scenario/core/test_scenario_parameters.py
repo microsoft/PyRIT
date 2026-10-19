@@ -3,7 +3,7 @@
 
 """Tests for Scenario custom parameter declaration, coercion, and validation (Stage 1b)."""
 
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 from unittest.mock import MagicMock
 
 import pytest
@@ -57,6 +57,9 @@ def _make_scenario(
             return {}
 
         async def _build_atomic_attacks_async(self, *, context):
+            return []
+
+        def _resolve_scenario_techniques(self, *, scenario_techniques: Any) -> list[ScenarioTechnique]:
             return []
 
     mock_scorer = MagicMock(spec=Scorer)
@@ -456,7 +459,7 @@ class TestResumeParameterValidation:
     @classmethod
     def _make_stored_result(cls, *, scenario_name: str, version: int, params):
         """Build a minimal ScenarioResult with a controlled scenario identifier for resume tests."""
-        from tests.unit.mocks import make_scenario_result
+        from unit.mocks import make_scenario_result
 
         return make_scenario_result(
             scenario_name=scenario_name,
@@ -472,7 +475,7 @@ class TestResumeParameterValidation:
     @classmethod
     def _current_identifier(cls, *, scenario, version: int = 1, params):
         """Build the identifier that mirrors the current run for the given scenario."""
-        from tests.unit.mocks import make_scenario_identifier
+        from unit.mocks import make_scenario_identifier
 
         return make_scenario_identifier(
             scenario_name=type(scenario).__name__,

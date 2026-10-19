@@ -8,7 +8,6 @@ Tests for ScenarioRunService.
 import asyncio
 import logging
 import threading
-import time
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -22,6 +21,7 @@ import pyrit.backend.services.scenario_progress_read_model as _progress_mod
 import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit.backend.services.scenario_progress_read_model import ScenarioPlanLookup, ScenarioProgressReadModel
 from pyrit.backend.services.scenario_run_service import (
+    ScenarioRunConflictError,
     ScenarioRunService,
 )
 from pyrit.common.utils import to_sha256
@@ -34,6 +34,7 @@ from pyrit.memory import (
     ScenarioRunStateRecord,
     SQLiteMemory,
 )
+from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackIdentifier,
@@ -42,6 +43,7 @@ from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
+    Operation,
     RetryEvent,
     ScenarioAttackResultDelta,
     ScenarioProgressResult,
@@ -56,20 +58,40 @@ from pyrit.models import (
     config_hash,
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioTechniqueSummary
+from pyrit.models.scenario_dataset import ScenarioDatasetOptions, ScenarioDatasetRequest
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.registry import ScenarioMetadata, ScenarioRegistry
-from pyrit.scenario import Scenario
+from pyrit.registry import ConverterRegistry, ScenarioMetadata, ScenarioRegistry
+from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
     get_default_adversarial_target,
 )
+from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
+from pyrit.scenario.scenarios.airt.scam import Scam
 from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
-from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
+from unit.async_utils import wait_for_completion_async
+from unit.mocks import (
+    MockPromptTarget,
+    get_mock_target_identifier,
+    make_scenario_result,
+    make_technique_class,
+)
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
+
+
+def _apply_mapped_datasets(registries: dict[str, Any]) -> DatasetAttackConfiguration:
+    call = registries["scenario_registry"].create_and_initialize_async.await_args
+    assert "dataset_config" not in call.kwargs
+    return apply_dataset_overrides(
+        config=registries["scenario_instance"]._default_dataset_config,
+        request=call.kwargs.get("dataset_overrides", ScenarioDatasetRequest()),
+        options=ScenarioDatasetOptions(),
+    )
 
 
 class _StubTechnique(ScenarioTechnique):
@@ -90,11 +112,73 @@ def _patch_converter_registry(instances: dict[str, Any]):
     reg = MagicMock()
     reg.instances.get.side_effect = lambda name: instances.get(name)
     reg.instances.get_names.return_value = list(instances.keys())
-    return patch.object(_resolver_mod.ConverterRegistry, "get_registry_singleton", return_value=reg)
+    return patch.object(ConverterRegistry, "get_registry_singleton", return_value=reg)
 
 
 _REGISTRY_PATCH_BASE = "pyrit.registry"
 _MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_missing_operation_rejected_before_initializers_async(sqlite_instance) -> None:
+    service = ScenarioRunService()
+    with patch.object(service, "_run_initializers_async", new_callable=AsyncMock) as initialize:
+        try:
+            with pytest.raises(LookupError, match="Operation"):
+                await service.start_run_async(
+                    request=RunScenarioRequest(scenario_name="test", target_name="target", operation_id=uuid.uuid4())
+                )
+            initialize.assert_not_awaited()
+            assert await sqlite_instance.get_scenario_results_async() == []
+        finally:
+            await service.close_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("explicit_id", [False, True])
+async def test_fresh_run_keeps_deprecated_name_unless_an_id_is_given_async(sqlite_instance, explicit_id: bool) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    service = ScenarioRunService()
+    labels = {"operation": "engagement", "team": "red"}
+    try:
+        request = await service._validate_run_operation_async(
+            request=RunScenarioRequest(
+                scenario_name="test",
+                target_name="target",
+                labels=labels,
+                operation_id=operation.id if explicit_id else None,
+            )
+        )
+    finally:
+        await service.close_async()
+    # The scenario resolves a remaining name when it initializes.
+    expected = (operation.id, {"team": "red"}) if explicit_id else (None, labels)
+    assert (request.operation_id, request.labels) == expected
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_list_runs_filters_by_id_and_shows_current_operation_name_async(sqlite_instance) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    target = get_mock_target_identifier()
+    linked = make_scenario_result(scenario_name="Linked", objective_target_identifier=target, attack_results={})
+    linked.operation_id = operation.id
+    legacy = make_scenario_result(
+        scenario_name="Legacy", objective_target_identifier=target, attack_results={}, labels={"operation": "Old"}
+    )
+    with sqlite_instance._get_session() as session:
+        session.add_all([ScenarioResultEntry(entry=result) for result in (linked, legacy)])
+        session.commit()
+    service = ScenarioRunService()
+    try:
+        filtered = await service.list_runs_async(operation_ids=[operation.id])
+        everything = await service.list_runs_async()
+    finally:
+        await service.close_async()
+    assert [(run.operation_id, run.operation_name) for run in filtered.items] == [(operation.id, "Engagement")]
+    assert {run.scenario_result_id: run.operation_name for run in everything.items} == {
+        str(linked.id): "Engagement",
+        str(legacy.id): "Old",
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -117,16 +201,31 @@ async def test_has_active_work_covers_scheduler_owned_work(patch_central_databas
     assert service.has_active_work()
     service._queued_runs.clear()
 
-    preparation: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+    async def prepare_async() -> _svc_mod._PreparedRun:
+        return _svc_mod._PreparedRun(scenario=MagicMock(spec=Scenario))
+
+    preparation = asyncio.create_task(prepare_async())
     service._preparations.add(preparation)
     assert service.has_active_work()
     service._preparations.clear()
+    await preparation
 
     handoff = asyncio.create_task(asyncio.sleep(0))
     service._handoff_retry_tasks.add(handoff)
     assert service.has_active_work()
     service._handoff_retry_tasks.clear()
     await handoff
+
+    cleanup = asyncio.create_task(asyncio.sleep(0))
+    service._abandoned_prepare_tasks.add(cleanup)
+    assert service.has_active_work()
+    with pytest.raises(RuntimeError, match="not drained"):
+        await service.close_async()
+    service._abandoned_prepare_tasks.clear()
+    await cleanup
+
+    async with service._launch_lock:
+        assert service.has_active_work()
 
     assert not service.has_active_work()
     await service.close_async()
@@ -153,11 +252,124 @@ def _make_request(
         techniques=techniques,
         scenario_result_id=scenario_result_id,
         dataset_names=dataset_names,
-        max_dataset_size=max_dataset_size,
+        **({"max_dataset_size": max_dataset_size} if max_dataset_size is not None else {}),
         dataset_filters=dataset_filters,
         include_baseline=include_baseline,
         scenario_params=scenario_params,
     )
+
+
+@pytest.mark.parametrize("supports_common_inputs", [True, False])
+async def test_prepare_and_restore_preserve_common_input_support_async(
+    patch_central_database: MagicMock, supports_common_inputs: bool
+) -> None:
+    declared = Scam.supported_parameters() if supports_common_inputs else []
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.get_class.return_value = Scam
+    registry.create_and_initialize_async = AsyncMock(return_value=MagicMock(spec=Scenario))
+    service = ScenarioRunService()
+    request = RunScenarioRequest(
+        scenario_name="test.support",
+        **({"target_name": "my_target"} if supports_common_inputs else {}),
+    )
+    with (
+        patch.object(Scam, "supported_parameters", return_value=declared),
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
+        patch.object(service._configuration_resolver, "resolve_target") as resolve_target,
+    ):
+        await service._prepare_run_async(request=request)
+        kwargs = registry.create_and_initialize_async.call_args.kwargs
+        saved = kwargs["initial_metadata"][_svc_mod._LAUNCH_REQUEST_METADATA_KEY]
+        stored = make_scenario_result(
+            scenario_name="test.support",
+            techniques=["prompt_sending"],
+            datasets=[],
+            attack_results={},
+            metadata={_svc_mod._LAUNCH_REQUEST_METADATA_KEY: saved},
+        )
+        restored = service._restore_launch_request(stored=stored)
+        if supports_common_inputs:
+            resolve_target.assert_called_once()
+            assert kwargs["max_concurrency"] == restored.max_concurrency == 10
+            assert kwargs["max_retries"] == restored.max_retries == 0
+            assert restored.target_name == "my_target"
+            assert restored.include_baseline is True
+        else:
+            resolve_target.assert_not_called()
+            for name in ("objective_target", "max_concurrency", "max_retries", "include_baseline"):
+                assert name not in kwargs
+            assert restored.target_name is None
+            assert restored.max_concurrency is None
+            assert restored.max_retries is None
+            assert restored.include_baseline is None
+            assert restored.techniques is None
+            assert restored.dataset_names is None
+            assert restored.labels is None
+            registry.create_and_initialize_async.reset_mock()
+            await service._prepare_run_async(request=restored)
+            for name in ("objective_target", "max_concurrency", "max_retries", "include_baseline"):
+                assert name not in registry.create_and_initialize_async.call_args.kwargs
+    await service.close_async()
+
+
+async def test_prepare_requires_target_for_scenarios_that_declare_it_async(
+    patch_central_database: MagicMock,
+) -> None:
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.get_class.return_value = Scam
+    service = ScenarioRunService()
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
+        pytest.raises(ValueError, match="requires an objective target"),
+    ):
+        await service._prepare_run_async(request=RunScenarioRequest(scenario_name="test.support"))
+    await service.close_async()
+
+
+@pytest.mark.parametrize(
+    ("scenario_params", "rejected"),
+    [
+        ({"dataset_config": "x"}, "'dataset_config' of 'airt.scam' cannot be set through the API"),
+        ({"objective_target": {"name": "x"}}, "airt.scam.objective_target: expected a registry name"),
+        ({"unknown": None}, "Unknown parameter 'unknown' for 'airt.scam'"),
+        ({"max_concurrency": 2}, None),
+    ],
+)
+async def test_start_run_checks_scenario_params_in_the_preparation_worker(
+    patch_central_database: MagicMock, scenario_params: dict[str, Any], rejected: str | None
+) -> None:
+    loop_thread = threading.current_thread()
+    lookup_threads: list[threading.Thread] = []
+
+    def get_class(name: str) -> type[Scenario]:
+        lookup_threads.append(threading.current_thread())
+        return Scam
+
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.get_class.side_effect = get_class
+    service = ScenarioRunService()
+    request = _make_request(scenario_name="airt.scam", scenario_params=scenario_params)
+
+    with (
+        patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=registry),
+        patch.object(
+            service,
+            "_run_initializers_async",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("initializers reached"),
+        ) as run_initializers,
+        pytest.raises(ValueError if rejected else RuntimeError, match=rejected or "initializers reached"),
+    ):
+        await service.start_run_async(request=request)
+
+    assert lookup_threads
+    assert loop_thread not in lookup_threads
+    assert run_initializers.await_count == (0 if rejected else 1)
+    # The finished preparation's done callback can still be queued when its error reaches the caller.
+    await asyncio.sleep(0)
+    await service.close_async()
 
 
 def _make_db_scenario_result(
@@ -181,6 +393,7 @@ def _make_db_scenario_result(
     sr.creation_time = datetime(2025, 1, 1, tzinfo=UTC)
     sr.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=UTC)
     sr.labels = {}
+    sr.operation_id = None
     sr.objective_achieved_rate.return_value = 0
     sr.get_display_groups.return_value = {}
     sr.display_group_map = {}
@@ -215,6 +428,41 @@ def _make_history_record(
     )
 
 
+@pytest.mark.usefixtures("patch_central_database")
+class TestCompatibilityPolicyLaunch:
+    @pytest.mark.parametrize(
+        ("class_default", "supplied", "expected"),
+        [
+            (IncompatibleTechniquePolicy.SKIP, None, "skip"),
+            (IncompatibleTechniquePolicy.RAISE, None, "raise"),
+            (IncompatibleTechniquePolicy.SKIP, "raise", "raise"),
+            (IncompatibleTechniquePolicy.RAISE, "skip", "skip"),
+        ],
+    )
+    async def test_launch_saves_effective_policy_async(
+        self,
+        *,
+        class_default: IncompatibleTechniquePolicy,
+        supplied: str | None,
+        expected: str,
+        mock_all_registries: dict[str, Any],
+    ) -> None:
+        mock_all_registries["scenario_class"].INCOMPATIBLE_TECHNIQUE_POLICY = class_default
+        request = _make_request(
+            include_baseline=False,
+            scenario_params={"incompatible_technique_policy": supplied} if supplied is not None else None,
+        )
+        service = ScenarioRunService()
+
+        await service._initialize_scenario_async(request=request, init_kwargs={})
+
+        call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
+        launch = call.kwargs["initial_metadata"][_svc_mod._LAUNCH_REQUEST_METADATA_KEY]
+        assert launch["incompatible_technique_policy"] == expected
+        assert call.kwargs["scenario_params"] == (request.scenario_params or {})
+        await service.close_async()
+
+
 @pytest.fixture
 def mock_memory():
     """Patch CentralMemory.get_memory_instance to return a mock."""
@@ -225,6 +473,7 @@ def mock_memory():
     # Default: no error AttackResults linked to any scenario. Tests that exercise
     # the error fallback path explicitly set get_attack_results.return_value.
     mock.get_attack_results_async = AsyncMock(return_value=[])
+    mock.resolve_operation_id_async = AsyncMock(side_effect=lambda *, operation_id, operation_name=None: operation_id)
     with patch(_MEMORY_PATCH, return_value=mock):
         yield mock
 
@@ -238,8 +487,11 @@ def mock_all_registries(mock_memory):
     mock_scenario_instance._scenario_result_id = "sr-uuid-1"
 
     mock_scenario_class = MagicMock(return_value=mock_scenario_instance)
+    mock_scenario_class.supported_parameters.return_value = Scenario.supported_parameters()
+    mock_scenario_class.INCOMPATIBLE_TECHNIQUE_POLICY = IncompatibleTechniquePolicy.SKIP
     mock_scenario_instance._technique_class = MagicMock()
     mock_scenario_instance._default_dataset_config = MagicMock()
+    mock_scenario_instance.supported_parameters.return_value = Scenario.supported_parameters()
 
     mock_sr = MagicMock()
     mock_sr.get_class.return_value = mock_scenario_class
@@ -294,7 +546,7 @@ class TestAdversarialRunScope:
             await service.shutdown_async()
 
     @pytest.mark.parametrize("first_outcome", ["success", "error", "cancel"])
-    async def test_worker_queue_execution_and_handoff_keep_submitted_targets_async(
+    async def test_preparation_queue_execution_and_handoff_keep_submitted_targets_async(
         self, mock_all_registries: dict[str, Any], first_outcome: str
     ) -> None:
         targets = {name: MockPromptTarget() for name in ("first", "second", "adversarial_chat", "my_target")}
@@ -308,6 +560,7 @@ class TestAdversarialRunScope:
         release_first = asyncio.Event()
         finished = asyncio.Event()
         main_thread = threading.get_ident()
+        backend_loop = asyncio.get_running_loop()
 
         def introspect() -> Any:
             assert threading.get_ident() != main_thread
@@ -315,7 +568,8 @@ class TestAdversarialRunScope:
             return mock_all_registries["scenario_instance"]
 
         async def initialize_async(*args: object, **kwargs: object) -> Any:
-            assert threading.get_ident() != main_thread
+            assert threading.get_ident() == main_thread
+            assert asyncio.get_running_loop() is backend_loop
             initialized.append(get_default_adversarial_target())
             await asyncio.sleep(0)
             assert get_default_adversarial_target() is initialized[-1]
@@ -327,6 +581,7 @@ class TestAdversarialRunScope:
             scenario.active_atomic_group_ids = set()
 
             async def run_async() -> None:
+                assert asyncio.get_running_loop() is backend_loop
                 selected = get_default_adversarial_target()
                 executed.append(selected)
                 if run_id == "scope-0":
@@ -377,14 +632,15 @@ class TestAdversarialRunScope:
                 release_first.set()
             await asyncio.wait_for(finished.wait(), timeout=5)
             await asyncio.wait_for(first_task, timeout=5)
-            assert introspected == initialized == [first, second, fallback, second]
+            assert introspected == []
+            assert initialized == [first, second, fallback, second]
             assert executed == [first, second, fallback]
             assert get_default_adversarial_target() is fallback
         finally:
             release_first.set()
             await service.shutdown_async()
 
-    async def test_failed_preparation_restores_worker_scope_async(self, mock_all_registries: dict[str, Any]) -> None:
+    async def test_failed_preparation_restores_scope_async(self, mock_all_registries: dict[str, Any]) -> None:
         selected, fallback = MockPromptTarget(), MockPromptTarget()
         targets = {"selected": selected, "adversarial_chat": fallback, "my_target": fallback}
         mock_all_registries["target_registry"].instances.get.side_effect = targets.get
@@ -400,30 +656,26 @@ class TestAdversarialRunScope:
         try:
             with pytest.raises(ValueError, match="initialization failed"):
                 await service.start_run_async(request=request)
-            worker_default = await asyncio.get_running_loop().run_in_executor(
-                service._prepare_executor, get_default_adversarial_target
-            )
-            assert worker_default is fallback
             assert get_default_adversarial_target() is fallback
             assert not service._active_tasks
         finally:
             await service.shutdown_async()
 
-    async def test_cancelled_start_keeps_worker_scope_until_preparation_finishes_async(
+    async def test_cancelled_start_keeps_scope_until_preparation_finishes_async(
         self, mock_all_registries: dict[str, Any]
     ) -> None:
         selected, fallback = MockPromptTarget(), MockPromptTarget()
         targets = {"selected": selected, "adversarial_chat": fallback, "my_target": fallback}
         mock_all_registries["target_registry"].instances.get.side_effect = targets.get
         service = ScenarioRunService()
-        started = threading.Event()
-        release = threading.Event()
+        started = asyncio.Event()
+        release = asyncio.Event()
         observed: list[PromptTarget] = []
 
         async def initialize_async(*args: object, **kwargs: object) -> Any:
             observed.append(get_default_adversarial_target())
             started.set()
-            assert await asyncio.to_thread(release.wait, 5)
+            await asyncio.wait_for(release.wait(), 5)
             observed.append(get_default_adversarial_target())
             return mock_all_registries["scenario_instance"]
 
@@ -432,16 +684,13 @@ class TestAdversarialRunScope:
         request.adversarial_target_name = "selected"
         task = asyncio.create_task(service.start_run_async(request=request))
         try:
-            assert await asyncio.to_thread(started.wait, 5)
+            await asyncio.wait_for(started.wait(), 5)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
             assert get_default_adversarial_target() is fallback
             release.set()
-            worker_default = await asyncio.get_running_loop().run_in_executor(
-                service._prepare_executor, get_default_adversarial_target
-            )
-            assert worker_default is fallback
+            await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), 5)
             assert observed == [selected, selected]
             assert not service._active_tasks
         finally:
@@ -621,6 +870,8 @@ class TestScenarioRunServiceStartRun:
 
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._technique_class = _JailbreakTechnique
+        mock_sr = mock_all_registries["scenario_registry"]
+        mock_sr.get_class.return_value.supported_parameters.return_value = Jailbreak.supported_parameters()
         objective_target = mock_all_registries["target_registry"].instances.get.return_value
         scenario_params = {"num_jailbreaks": 2, "num_jailbreak_attempts": 1}
 
@@ -647,6 +898,7 @@ class TestScenarioRunServiceStartRun:
             max_retries=0,
             include_baseline=False,
             scenario_techniques=[_JailbreakTechnique.PROMPT_SENDING],
+            operation_id=None,
         )
 
     async def test_exact_eight_unit_jailbreak_request_queues_behind_active_run(self, mock_all_registries) -> None:
@@ -663,6 +915,7 @@ class TestScenarioRunServiceStartRun:
 
         service = ScenarioRunService()
         mock_sr = mock_all_registries["scenario_registry"]
+        mock_sr.get_class.return_value.supported_parameters.return_value = Jailbreak.supported_parameters()
         mock_memory = mock_all_registries["memory"]
         mock_all_registries["scenario_instance"]._technique_class = _JailbreakTechnique
         records: dict[str, MagicMock] = {}
@@ -767,19 +1020,44 @@ class TestScenarioRunServiceStartRun:
         assert init_call.kwargs["include_baseline"] is False
 
     async def test_start_run_max_dataset_size_uses_default_config(self, mock_all_registries) -> None:
-        """``max_dataset_size`` with no ``dataset_names`` reuses the scenario's default config."""
-        default_config = MagicMock()
-        default_config.max_dataset_size = 100  # original
+        """A total override copies the default configuration without mutating it."""
+        default_config = DatasetAttackConfiguration(dataset_names=["original"], max_total=100)
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._default_dataset_config = default_config
 
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(max_dataset_size=5))
 
-        # max_dataset_size on the default config was overridden
-        assert default_config.max_dataset_size == 5
+        assert default_config.max_total == 100
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
-        assert init_call.kwargs["dataset_config"] is default_config
+        assert init_call.kwargs["dataset_overrides"].max_total == 5
+        assert "dataset_config" not in init_call.kwargs
+
+    @pytest.mark.parametrize(
+        ("limit_args", "expected"),
+        [
+            ({}, 20),
+            ({"max_dataset_size": None}, 20),
+            ({"max_dataset_size": ""}, 20),
+            ({"max_dataset_size": "default"}, 20),
+            ({"max_dataset_size": "all"}, "all"),
+            ({"max_dataset_size": 7}, 7),
+        ],
+    )
+    async def test_start_run_resolves_total_limit_async(
+        self, *, mock_all_registries: dict[str, Any], limit_args: dict[str, Any], expected: int | str
+    ) -> None:
+        default_config = DatasetAttackConfiguration(dataset_names=["original"], max_total=20)
+        mock_all_registries["scenario_instance"]._default_dataset_config = default_config
+        service = ScenarioRunService()
+        await service.start_run_async(
+            request=RunScenarioRequest(scenario_name="test", target_name="my_target", **limit_args)
+        )
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
+        config = _apply_mapped_datasets(mock_all_registries)
+        assert config.max_total == expected
+        saved = init_call.kwargs["initial_metadata"][_svc_mod._LAUNCH_REQUEST_METADATA_KEY]
+        assert saved["max_dataset_size"] == (limit_args.get("max_dataset_size") or "default")
 
     async def test_start_run_dataset_names_preserves_subclass_config_type(self, mock_all_registries) -> None:
         """``dataset_names`` rebuilds the config using the scenario's own DatasetConfiguration subclass.
@@ -802,7 +1080,7 @@ class TestScenarioRunServiceStartRun:
         await service.start_run_async(request=_make_request(dataset_names=["custom_a", "custom_b"], max_dataset_size=3))
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
-        built_config = init_call.kwargs["dataset_config"]
+        built_config = _apply_mapped_datasets(mock_all_registries)
 
         # Type is preserved (this is the regression assertion)
         assert type(built_config) is _MarkerDatasetConfiguration
@@ -828,13 +1106,15 @@ class TestScenarioRunServiceStartRun:
         await service.start_run_async(request=_make_request(dataset_names=["only_this"]))
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
-        built_config = init_call.kwargs["dataset_config"]
+        built_config = _apply_mapped_datasets(mock_all_registries)
         assert type(built_config) is _MarkerDatasetConfiguration
         assert built_config.dataset_names == ["only_this"]
-        assert built_config.max_dataset_size is None
+        assert built_config.max_dataset_size == "all"
 
-    async def test_start_run_dataset_names_rejects_incompatible_subclass_constructor(self, mock_all_registries) -> None:
-        """Reject overrides that cannot preserve scenario-specific dataset configuration."""
+    async def test_start_run_dataset_names_preserves_custom_constructor_state_async(
+        self, mock_all_registries: dict[str, Any]
+    ) -> None:
+        """Copy overrides without calling a subclass constructor again."""
 
         class _RequiresExtraArgConfiguration(DatasetConfiguration):
             def __init__(self, *, required_extra: str, **kwargs: Any) -> None:
@@ -848,13 +1128,12 @@ class TestScenarioRunServiceStartRun:
         )
 
         service = ScenarioRunService()
-        with pytest.raises(
-            ValueError,
-            match="does not support overriding dataset names.*_RequiresExtraArgConfiguration",
-        ):
-            await service.start_run_async(request=_make_request(dataset_names=["custom"]))
-
-        mock_all_registries["scenario_registry"].create_and_initialize_async.assert_not_awaited()
+        await service.start_run_async(request=_make_request(dataset_names=["custom"]))
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
+        config = _apply_mapped_datasets(mock_all_registries)
+        assert isinstance(config, _RequiresExtraArgConfiguration)
+        assert config._required_extra == "seeded"
+        assert config.dataset_names == ["custom"]
 
     async def test_start_run_dataset_filters_new_config(self, mock_all_registries) -> None:
         """``dataset_filters`` with ``dataset_names`` builds a config carrying the filters."""
@@ -875,7 +1154,7 @@ class TestScenarioRunServiceStartRun:
         )
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
-        built_config = init_call.kwargs["dataset_config"]
+        built_config = _apply_mapped_datasets(mock_all_registries)
         assert built_config.dataset_names == ["custom"]
         assert built_config.max_dataset_size == 7
         assert built_config.filters == {"harm_categories": ["cyber"]}
@@ -890,8 +1169,9 @@ class TestScenarioRunServiceStartRun:
         await service.start_run_async(request=_make_request(dataset_filters={"harm_categories": ["cyber"]}))
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
-        built_config = init_call.kwargs["dataset_config"]
-        assert built_config is default_config
+        built_config = _apply_mapped_datasets(mock_all_registries)
+        assert built_config is not default_config
+        assert default_config.filters == {}
         assert built_config.filters == {"harm_categories": ["cyber"]}
 
     async def test_start_run_dataset_names_introspection_failure_raises(self, mock_memory) -> None:
@@ -918,8 +1198,13 @@ class TestScenarioRunServiceStartRun:
             patch(f"{_REGISTRY_PATCH_BASE}.TargetRegistry.get_registry_singleton", return_value=mock_tr),
             patch(f"{_REGISTRY_PATCH_BASE}.InitializerRegistry.get_registry_singleton", return_value=mock_ir),
         ):
-            with pytest.raises(ValueError, match="not instantiable without arguments"):
-                await service.start_run_async(request=_make_request(dataset_names=["custom"]))
+            mapped = _svc_mod.ScenarioConfigurationResolver.resolve_configuration(
+                scenario_name="test",
+                scenario_class=mock_scenario_class,
+                datasets=_make_request(dataset_names=["custom"]).dataset_request,
+            )
+            assert mapped["dataset_overrides"].sources[0].name == "custom"
+            mock_scenario_class.assert_not_called()
 
     async def test_start_run_max_dataset_size_with_dataset_names_uses_subclass_with_both(
         self, mock_all_registries
@@ -937,37 +1222,51 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(dataset_names=["a", "b"], max_dataset_size=7))
 
-        built_config = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args.kwargs[
-            "dataset_config"
-        ]
+        built_config = _apply_mapped_datasets(mock_all_registries)
         assert type(built_config) is _MarkerDatasetConfiguration
         assert built_config.dataset_names == ["a", "b"]
         assert built_config.max_dataset_size == 7
 
-    async def test_concurrent_launches_run_one_at_a_time_in_fifo_order(self, mock_all_registries) -> None:
-        """Concurrent launches queue durably and hand off exactly once in FIFO order."""
+    @pytest.mark.parametrize(
+        "watchdog_expires",
+        [pytest.param(False, id="normal-observation"), pytest.param(True, id="expired-watchdog")],
+    )
+    async def test_concurrent_launches_run_one_at_a_time_in_fifo_order_async(
+        self, *, mock_all_registries: dict[str, Any], watchdog_expires: bool
+    ) -> None:
+        """Concurrent launches queue durably and survive non-cancelling observation timeouts."""
         service = ScenarioRunService()
         mock_sr = mock_all_registries["scenario_registry"]
         mock_memory = mock_all_registries["memory"]
         records: dict[str, MagicMock] = {}
         release_events: dict[str, asyncio.Event] = {}
         started_events: dict[str, asyncio.Event] = {}
+        handoff_read_started: dict[str, asyncio.Event] = {}
+        release_handoff: dict[str, asyncio.Event] = {}
+        blocked_handoffs: set[str] = set()
+        observation_tasks: set[asyncio.Task[bool]] = set()
+        execution_tasks: set[asyncio.Task[Any]] = set()
         started: list[str] = []
         active_count = 0
         max_active_count = 0
         fail_once = {"handoff_read": False, "queued_cancel": False, "active_cancel": False}
 
-        async def _create_scenario(*args: object, **kwargs: object) -> MagicMock:
+        async def _create_scenario_async(*args: object, **kwargs: object) -> MagicMock:
             run_id = f"run-{len(records) + 1}"
             record = _make_db_scenario_result(result_id=run_id, run_state=ScenarioRunState.CREATED)
             records[run_id] = record
             release_events[run_id] = asyncio.Event()
             started_events[run_id] = asyncio.Event()
-            scenario = MagicMock()
+            handoff_read_started[run_id] = asyncio.Event()
+            release_handoff[run_id] = asyncio.Event()
+            scenario = MagicMock(spec=Scenario)
             scenario._scenario_result_id = run_id
 
-            async def _run() -> None:
+            async def _run_async() -> None:
                 nonlocal active_count, max_active_count
+                current_task = asyncio.current_task()
+                assert current_task is not None
+                execution_tasks.add(current_task)
                 active_count += 1
                 max_active_count = max(max_active_count, active_count)
                 started.append(run_id)
@@ -981,15 +1280,19 @@ class TestScenarioRunServiceStartRun:
                 finally:
                     active_count -= 1
 
-            scenario.run_async = AsyncMock(side_effect=_run)
+            scenario.run_async = AsyncMock(side_effect=_run_async)
             return scenario
 
-        def _get_results(*, scenario_result_ids: list[str] | None = None) -> list[MagicMock]:
+        async def _get_results_async(*, scenario_result_ids: list[str] | None = None) -> list[MagicMock]:
             if scenario_result_ids is None:
                 return list(records.values())
             if fail_once["handoff_read"] and scenario_result_ids == ["run-2"]:
                 fail_once["handoff_read"] = False
                 raise RuntimeError("temporary storage failure")
+            if len(scenario_result_ids) == 1 and scenario_result_ids[0] in blocked_handoffs:
+                run_id = scenario_result_ids[0]
+                handoff_read_started[run_id].set()
+                await release_handoff[run_id].wait()
             return [records[run_id] for run_id in scenario_result_ids if run_id in records]
 
         def _update_state(*, scenario_result_id: str, scenario_run_state: ScenarioRunState, **_: object) -> None:
@@ -1009,48 +1312,112 @@ class TestScenarioRunServiceStartRun:
                 raise RuntimeError("temporary active cancellation persistence failure")
             records[scenario_result_id].scenario_run_state = scenario_run_state
 
-        mock_sr.create_and_initialize_async = AsyncMock(side_effect=_create_scenario)
-        mock_memory.get_scenario_results_async = AsyncMock(side_effect=_get_results)
+        async def _observe_handoff_async(run_id: str) -> None:
+            started_waiter = asyncio.create_task(started_events[run_id].wait())
+            observation_tasks.add(started_waiter)
+            if watchdog_expires:
+                handoff_waiter = asyncio.create_task(handoff_read_started[run_id].wait())
+                observation_tasks.add(handoff_waiter)
+                await wait_for_completion_async(future=handoff_waiter)
+                with pytest.raises(TimeoutError, match="test watchdog expired"):
+                    await wait_for_completion_async(future=started_waiter, timeout=0)
+                assert not started_waiter.done()
+                assert not started_events[run_id].is_set()
+                release_handoff[run_id].set()
+            await wait_for_completion_async(future=started_waiter)
+
+        mock_sr.create_and_initialize_async = AsyncMock(side_effect=_create_scenario_async)
+        mock_memory.get_scenario_results_async = AsyncMock(side_effect=_get_results_async)
         mock_memory.update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
         mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
         mock_memory.update_scenario_run_state_and_metadata_fields_async = AsyncMock(side_effect=_update_state)
 
-        responses = await asyncio.gather(*(service.start_run_async(request=_make_request()) for _ in range(4)))
+        launch_tasks = [asyncio.create_task(service.start_run_async(request=_make_request())) for _ in range(4)]
+        try:
+            responses = await wait_for_completion_async(future=asyncio.gather(*launch_tasks))
+            first_started_waiter = asyncio.create_task(started_events["run-1"].wait())
+            observation_tasks.add(first_started_waiter)
+            await wait_for_completion_async(future=first_started_waiter)
 
-        assert [response.scenario_result_id for response in responses] == ["run-1", "run-2", "run-3", "run-4"]
-        snapshot = service.get_queue_snapshot()
-        assert snapshot.active and snapshot.active.scenario_result_id == "run-1"
-        assert [(entry.scenario_result_id, entry.position) for entry in snapshot.queued] == [
-            ("run-2", 1),
-            ("run-3", 2),
-            ("run-4", 3),
-        ]
+            assert [response.scenario_result_id for response in responses] == ["run-1", "run-2", "run-3", "run-4"]
+            snapshot = service.get_queue_snapshot()
+            assert snapshot.active and snapshot.active.scenario_result_id == "run-1"
+            assert [(entry.scenario_result_id, entry.position) for entry in snapshot.queued] == [
+                ("run-2", 1),
+                ("run-3", 2),
+                ("run-4", 3),
+            ]
+            assert [record.scenario_run_state for record in records.values()] == [
+                ScenarioRunState.IN_PROGRESS,
+                ScenarioRunState.QUEUED,
+                ScenarioRunState.QUEUED,
+                ScenarioRunState.QUEUED,
+            ]
 
-        fail_once["handoff_read"] = True
-        release_events["run-1"].set()
-        await asyncio.wait_for(started_events["run-2"].wait(), timeout=1)
-        fail_once["queued_cancel"] = True
-        with pytest.raises(RuntimeError, match="temporary cancellation persistence failure"):
-            await service.cancel_run_async(scenario_result_id="run-3")
-        assert [entry.scenario_result_id for entry in service.get_queue_snapshot().queued] == ["run-3", "run-4"]
-        cancelled = await service.cancel_run_async(scenario_result_id="run-3")
-        assert cancelled and cancelled.status == ScenarioRunState.CANCELLED
-        assert [(entry.scenario_result_id, entry.position) for entry in service.get_queue_snapshot().queued] == [
-            ("run-4", 1)
-        ]
+            if watchdog_expires:
+                blocked_handoffs.update({"run-2", "run-4"})
+            fail_once["handoff_read"] = True
+            release_events["run-1"].set()
+            await _observe_handoff_async("run-2")
+            fail_once["queued_cancel"] = True
+            with pytest.raises(RuntimeError, match="temporary cancellation persistence failure"):
+                await service.cancel_run_async(scenario_result_id="run-3")
+            assert [entry.scenario_result_id for entry in service.get_queue_snapshot().queued] == ["run-3", "run-4"]
+            cancelled = await service.cancel_run_async(scenario_result_id="run-3")
+            assert cancelled and cancelled.status == ScenarioRunState.CANCELLED
+            assert [(entry.scenario_result_id, entry.position) for entry in service.get_queue_snapshot().queued] == [
+                ("run-4", 1)
+            ]
 
-        fail_once["active_cancel"] = True
-        with pytest.raises(RuntimeError, match="temporary active cancellation persistence failure"):
-            await service.cancel_run_async(scenario_result_id="run-2")
-        await asyncio.wait_for(started_events["run-4"].wait(), timeout=1)
-        assert records["run-2"].scenario_run_state == ScenarioRunState.CANCELLED
-        release_events["run-4"].set()
-        await asyncio.wait_for(service._active_tasks["run-4"].task, timeout=1)
+            fail_once["active_cancel"] = True
+            with pytest.raises(RuntimeError, match="temporary active cancellation persistence failure"):
+                await service.cancel_run_async(scenario_result_id="run-2")
+            await _observe_handoff_async("run-4")
+            assert records["run-2"].scenario_run_state == ScenarioRunState.CANCELLED
+            final_task = service._active_tasks["run-4"].task
+            assert final_task is not None
+            if watchdog_expires:
+                with pytest.raises(TimeoutError, match="test watchdog expired"):
+                    await wait_for_completion_async(future=final_task, timeout=0)
+                assert not final_task.done()
+                assert final_task.cancelling() == 0
+            release_events["run-4"].set()
+            await wait_for_completion_async(future=final_task)
 
-        assert started == ["run-1", "run-2", "run-4"]
-        assert max_active_count == 1
-        assert service.get_queue_snapshot().active is None
-        assert service.get_queue_snapshot().queued == []
+            assert started == ["run-1", "run-2", "run-4"]
+            assert max_active_count == 1
+            assert not any(fail_once.values())
+            assert records["run-1"].scenario_run_state == ScenarioRunState.COMPLETED
+            assert records["run-3"].scenario_run_state == ScenarioRunState.CANCELLED
+            assert records["run-4"].scenario_run_state == ScenarioRunState.COMPLETED
+            assert service.get_queue_snapshot().active is None
+            assert service.get_queue_snapshot().queued == []
+        finally:
+            for event in (*release_events.values(), *release_handoff.values()):
+                event.set()
+            for task in observation_tasks:
+                if not task.done():
+                    task.cancel()
+            await wait_for_completion_async(
+                future=asyncio.gather(*launch_tasks, *observation_tasks, return_exceptions=True)
+            )
+            # A preparation can finish after teardown's first release pass.
+            for event in (*release_events.values(), *release_handoff.values()):
+                event.set()
+            while True:
+                pending_tasks = {
+                    active.task
+                    for active in service._active_tasks.values()
+                    if active.task is not None and not active.task.done()
+                } | {task for task in service._handoff_retry_tasks if not task.done()}
+                if not pending_tasks:
+                    break
+                execution_tasks.update(pending_tasks)
+                await wait_for_completion_async(future=asyncio.gather(*pending_tasks, return_exceptions=True))
+            await wait_for_completion_async(future=asyncio.gather(*execution_tasks, return_exceptions=True))
+            await service.close_async()
+            assert active_count == 0
+            assert all(task.done() for task in (*launch_tasks, *execution_tasks, *observation_tasks))
 
     async def test_start_run_runs_initializers(self, mock_all_registries) -> None:
         """Test that initializers are run during start_run_async."""
@@ -1097,30 +1464,27 @@ class TestScenarioRunServiceStartRun:
         assert call.kwargs["scenario_result_id"] is None
 
     async def test_start_run_keeps_event_loop_responsive(self, mock_all_registries) -> None:
-        """Initialization is offloaded, so the loop keeps running while a run starts."""
+        """A database await in initialization does not block the backend loop."""
         service = ScenarioRunService()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        backend_loop = asyncio.get_running_loop()
 
-        def _slow_prepare(*, request: Any) -> Any:
-            time.sleep(0.5)
+        async def _slow_prepare_async(*, request: Any) -> Any:
+            assert asyncio.get_running_loop() is backend_loop
+            started.set()
+            await release.wait()
             return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
 
-        beats = 0
-
-        async def _heartbeat() -> None:
-            nonlocal beats
-            while True:
-                await asyncio.sleep(0.01)
-                beats += 1
-
-        with patch.object(service, "_prepare_run_blocking", _slow_prepare):
-            heartbeat = asyncio.create_task(_heartbeat())
+        with patch.object(service, "_prepare_run_async", _slow_prepare_async):
+            task = asyncio.create_task(service.start_run_async(request=_make_request()))
             try:
-                await service.start_run_async(request=_make_request())
+                await asyncio.wait_for(started.wait(), 5)
+                await asyncio.wait_for(asyncio.sleep(0), 5)
+                assert not task.done()
             finally:
-                heartbeat.cancel()
-
-        # A blocked event loop yields zero heartbeats over the same window.
-        assert beats > 10
+                release.set()
+                await asyncio.wait_for(task, 5)
 
     async def test_start_run_background_task_survives_handoff(self, mock_all_registries) -> None:
         """The background task must outlive start_run_async and actually execute the run."""
@@ -1144,53 +1508,59 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._scenario_result_id = "abandoned-id"
-        finished = threading.Event()
+        started = asyncio.Event()
+        release = asyncio.Event()
 
-        def _slow_prepare(*, request: Any) -> Any:
-            time.sleep(0.5)
-            finished.set()
+        async def _slow_prepare_async(*, request: Any) -> Any:
+            started.set()
+            await release.wait()
             return _svc_mod._PreparedRun(scenario=scenario_instance)
 
-        with patch.object(service, "_prepare_run_blocking", _slow_prepare):
+        with patch.object(service, "_prepare_run_async", _slow_prepare_async):
             with patch.object(service._memory, "try_update_scenario_run_state_async") as update_state:
                 task = asyncio.create_task(service.start_run_async(request=_make_request()))
-                await asyncio.sleep(0.1)
+                await asyncio.wait_for(started.wait(), 5)
                 task.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await task
 
-                await asyncio.sleep(1.0)
-                assert finished.is_set()
+                assert service.has_active_work()
+                release.set()
+                await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), 5)
+                assert not service.has_active_work()
+                scenario_instance.run_async.assert_not_awaited()
                 update_state.assert_called_once()
                 assert update_state.call_args.kwargs["scenario_result_id"] == "abandoned-id"
                 assert update_state.call_args.kwargs["scenario_run_state"] == ScenarioRunState.CANCELLED
                 assert update_state.call_args.kwargs["expected_states"] == {
                     ScenarioRunState.CREATED,
                     ScenarioRunState.IN_PROGRESS,
+                    ScenarioRunState.QUEUED,
                 }
 
     async def test_start_run_marks_prepare_cancelled_when_it_finishes_before_cancellation_lands(
         self, mock_all_registries
     ) -> None:
-        """A done future never calls back, so this race used to leave the run stuck in CREATED."""
+        """Cancellation after preparation finishes must still terminalize the abandoned run."""
         service = ScenarioRunService()
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._scenario_result_id = "raced-id"
 
-        def _instant_prepare(*, request: Any) -> Any:
+        async def _instant_prepare_async(*, request: Any) -> Any:
             return _svc_mod._PreparedRun(scenario=scenario_instance)
 
-        async def _complete_then_cancel(awaitable):
+        async def _complete_then_cancel_async(awaitable):
             # The preparation finishes, then the cancellation lands: the exact ordering that
             # leaves ``prepare_task.done()`` True inside the handler.
             await awaitable
             raise asyncio.CancelledError
 
-        with patch.object(service, "_prepare_run_blocking", _instant_prepare):
-            with patch("asyncio.shield", _complete_then_cancel):
+        with patch.object(service, "_prepare_run_async", _instant_prepare_async):
+            with patch("asyncio.shield", _complete_then_cancel_async):
                 with patch.object(service._memory, "try_update_scenario_run_state_async") as update_state:
                     with pytest.raises(asyncio.CancelledError):
                         await service.start_run_async(request=_make_request())
+                    await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), 5)
 
         update_state.assert_called_once()
         assert update_state.call_args.kwargs["scenario_result_id"] == "raced-id"
@@ -1198,7 +1568,125 @@ class TestScenarioRunServiceStartRun:
         assert update_state.call_args.kwargs["expected_states"] == {
             ScenarioRunState.CREATED,
             ScenarioRunState.IN_PROGRESS,
+            ScenarioRunState.QUEUED,
         }
+
+    @pytest.mark.parametrize("phase", ["persisted-read", "summary-read", "active-write", "queued-write"])
+    async def test_cancellation_before_admission_retains_cleanup_async(
+        self, mock_all_registries: dict[str, Any], phase: str
+    ) -> None:
+        service = ScenarioRunService()
+        memory = mock_all_registries["memory"]
+        scenario = mock_all_registries["scenario_instance"]
+        run_id = scenario._scenario_result_id
+        record = mock_all_registries["db_result"]
+        record.scenario_run_state = ScenarioRunState.FAILED
+        memory.get_scenario_result_header_async.return_value = record
+        entered, release, cleanup_entered, cleanup_release = (asyncio.Event() for _ in range(4))
+        original_response = service._build_response_async
+
+        async def prepare_async(*, request: RunScenarioRequest) -> _svc_mod._PreparedRun:
+            record.scenario_run_state = ScenarioRunState.CREATED
+            return _svc_mod._PreparedRun(scenario=scenario)
+
+        async def get_results_async(**_: object) -> list[ScenarioResult]:
+            if phase == "persisted-read":
+                entered.set()
+                await release.wait()
+            return [record]
+
+        async def build_response_async(**kwargs: Any) -> Any:
+            if phase == "summary-read":
+                entered.set()
+                await release.wait()
+            return await original_response(**kwargs)
+
+        async def update_state_async(*, scenario_run_state: ScenarioRunState, **_: object) -> None:
+            record.scenario_run_state = scenario_run_state
+            if phase in {"active-write", "queued-write"}:
+                entered.set()
+                await release.wait()
+
+        async def cleanup_async(*, expected_states: set[ScenarioRunState], **_: object) -> bool:
+            cleanup_entered.set()
+            await cleanup_release.wait()
+            assert record.scenario_run_state in expected_states
+            record.scenario_run_state = ScenarioRunState.CANCELLED
+            return True
+
+        if phase == "queued-write":
+            service._active_scenario_result_id = "other-run"
+        with (
+            patch.object(service, "_prepare_run_async", side_effect=prepare_async),
+            patch.object(memory, "get_scenario_results_async", side_effect=get_results_async),
+            patch.object(service, "_build_response_async", side_effect=build_response_async),
+            patch.object(memory, "update_scenario_run_state_and_metadata_fields_async", side_effect=update_state_async),
+            patch.object(memory, "try_update_scenario_run_state_async", side_effect=cleanup_async),
+        ):
+            start = asyncio.create_task(service.start_run_async(request=_make_request(scenario_result_id=run_id)))
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                start.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(start, 5)
+                await asyncio.wait_for(cleanup_entered.wait(), 5)
+                assert service.has_active_work()
+                assert service._preparation_lock.locked()
+                assert run_id in service._preparing_run_ids
+                assert not service._active_tasks
+                assert not service._queued_runs
+                scenario.run_async.assert_not_awaited()
+                cleanup_release.set()
+                await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), 5)
+                assert record.scenario_run_state == ScenarioRunState.CANCELLED
+                assert run_id not in service._preparing_run_ids
+                assert not service._preparation_lock.locked()
+            finally:
+                release.set()
+                cleanup_release.set()
+                await asyncio.gather(start, *service._abandoned_prepare_tasks, return_exceptions=True)
+                service._active_scenario_result_id = None
+                await service.shutdown_async()
+
+    @pytest.mark.parametrize("queued", [False, True])
+    async def test_cancellation_after_admission_preserves_scheduler_ownership_async(
+        self, mock_all_registries: dict[str, Any], queued: bool
+    ) -> None:
+        service = ScenarioRunService()
+        scenario = mock_all_registries["scenario_instance"]
+        run_id = scenario._scenario_result_id
+        entered, release, execution_release = (asyncio.Event() for _ in range(3))
+        original_response = service.get_run_from_storage_async
+
+        async def read_response_async(**kwargs: Any) -> Any:
+            entered.set()
+            await release.wait()
+            return await original_response(**kwargs)
+
+        if queued:
+            service._active_scenario_result_id = "other-run"
+        scenario.run_async.side_effect = execution_release.wait
+        with patch.object(service, "get_run_from_storage_async", side_effect=read_response_async):
+            start = asyncio.create_task(service.start_run_async(request=_make_request()))
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                start.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(start, 5)
+                await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), 5)
+                service._memory.try_update_scenario_run_state_async.assert_not_awaited()
+                if queued:
+                    assert [run.scenario_result_id for run in service._queued_runs] == [run_id]
+                else:
+                    assert run_id in service._active_tasks
+                assert not service._preparation_lock.locked()
+            finally:
+                release.set()
+                execution_release.set()
+                await asyncio.gather(start, return_exceptions=True)
+                if queued:
+                    service._active_scenario_result_id = None
+                await service.shutdown_async()
 
     async def test_start_run_does_not_run_a_scenario_cancelled_during_initialization(self, mock_all_registries) -> None:
         """A run appears in the run list as soon as it is stored, so it can be cancelled mid-init."""
@@ -1206,12 +1694,12 @@ class TestScenarioRunServiceStartRun:
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._scenario_result_id = "cancelled-during-init"
 
-        def _prepare(*, request: Any) -> Any:
+        async def _prepare_async(*, request: Any) -> Any:
             return _svc_mod._PreparedRun(scenario=scenario_instance)
 
         cancelled = _make_db_scenario_result(result_id="cancelled-during-init", run_state=ScenarioRunState.CANCELLED)
         mock_all_registries["memory"].get_scenario_results_async = AsyncMock(return_value=[cancelled])
-        with patch.object(service, "_prepare_run_blocking", _prepare):
+        with patch.object(service, "_prepare_run_async", _prepare_async):
             with patch.object(service, "_execute_run_async") as execute:
                 response = await service.start_run_async(request=_make_request())
 
@@ -1225,14 +1713,14 @@ class TestScenarioRunServiceStartRun:
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._scenario_result_id = "resumed-cancelled"
 
-        def _prepare(*, request: Any) -> Any:
+        async def _prepare_async(*, request: Any) -> Any:
             return _svc_mod._PreparedRun(scenario=scenario_instance)
 
         cancelled = _make_db_scenario_result(result_id="resumed-cancelled", run_state=ScenarioRunState.CANCELLED)
         mock_all_registries["memory"].get_scenario_results_async = AsyncMock(return_value=[cancelled])
         mock_all_registries["memory"].get_scenario_result_header_async = AsyncMock(return_value=cancelled)
 
-        with patch.object(service, "_prepare_run_blocking", _prepare):
+        with patch.object(service, "_prepare_run_async", _prepare_async):
             with patch.object(service, "_execute_run_async") as execute:
                 response = await service.start_run_async(request=_make_request(scenario_result_id="resumed-cancelled"))
 
@@ -1250,16 +1738,16 @@ class TestScenarioRunServiceStartRun:
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._scenario_result_id = "cancelled-mid-init"
 
-        def _prepare(*, request: Any) -> Any:
+        async def _prepare_async(*, request: Any) -> Any:
             return _svc_mod._PreparedRun(scenario=scenario_instance)
 
         cancelled = _make_db_scenario_result(result_id="cancelled-mid-init", run_state=ScenarioRunState.CANCELLED)
         failed = _make_db_scenario_result(result_id="cancelled-mid-init", run_state=ScenarioRunState.FAILED)
         mock_all_registries["memory"].get_scenario_results_async = AsyncMock(return_value=[cancelled])
-        # The pre-preparation read sees a live run; the cancel lands while the worker prepares.
+        # The pre-preparation read sees a live run; cancellation lands during initialization.
         mock_all_registries["memory"].get_scenario_result_header_async = AsyncMock(return_value=failed)
 
-        with patch.object(service, "_prepare_run_blocking", _prepare):
+        with patch.object(service, "_prepare_run_async", _prepare_async):
             with patch.object(service, "_execute_run_async") as execute:
                 response = await service.start_run_async(request=_make_request(scenario_result_id="cancelled-mid-init"))
 
@@ -1272,10 +1760,10 @@ class TestScenarioRunServiceStartRun:
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._scenario_result_id = "fresh-id"
 
-        def _prepare(*, request: Any) -> Any:
+        async def _prepare_async(*, request: Any) -> Any:
             return _svc_mod._PreparedRun(scenario=scenario_instance)
 
-        with patch.object(service, "_prepare_run_blocking", _prepare):
+        with patch.object(service, "_prepare_run_async", _prepare_async):
             with patch.object(service, "_execute_run_async"):
                 await service.start_run_async(request=_make_request())
 
@@ -1284,10 +1772,10 @@ class TestScenarioRunServiceStartRun:
     async def test_start_run_failure_does_not_report_a_cancellation(self, mock_all_registries, caplog) -> None:
         service = ScenarioRunService()
 
-        def _failing_prepare(*, request: Any) -> Any:
+        async def _failing_prepare_async(*, request: Any) -> Any:
             raise ValueError("Scenario 'nope' not found")
 
-        with patch.object(service, "_prepare_run_blocking", _failing_prepare):
+        with patch.object(service, "_prepare_run_async", _failing_prepare_async):
             with caplog.at_level(logging.WARNING):
                 with pytest.raises(ValueError, match="not found"):
                     await service.start_run_async(request=_make_request())
@@ -1295,261 +1783,359 @@ class TestScenarioRunServiceStartRun:
         assert "cancelled" not in caplog.text.lower()
 
     async def test_start_run_cleanup_failure_still_propagates_cancellation(self, mock_all_registries) -> None:
-        """Cleanup runs inline on this path, so it must not replace the CancelledError."""
+        """Cleanup failures are logged and reported at shutdown, not to the cancelled caller."""
         service = ScenarioRunService()
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._scenario_result_id = "raced-id"
 
-        def _instant_prepare(*, request: Any) -> Any:
+        async def _instant_prepare_async(*, request: Any) -> Any:
             return _svc_mod._PreparedRun(scenario=scenario_instance)
 
-        async def _complete_then_cancel(awaitable):
+        async def _complete_then_cancel_async(awaitable):
             await awaitable
             raise asyncio.CancelledError
 
-        with patch.object(service, "_prepare_run_blocking", _instant_prepare):
-            with patch("asyncio.shield", _complete_then_cancel):
+        with patch.object(service, "_prepare_run_async", _instant_prepare_async):
+            with patch("asyncio.shield", _complete_then_cancel_async):
                 with patch.object(
                     service, "_release_abandoned_prepare_async", side_effect=RuntimeError("cleanup exploded")
                 ):
                     with pytest.raises(asyncio.CancelledError):
                         await service.start_run_async(request=_make_request())
-
-    def test_prepare_executor_serializes_preparations(self, mock_all_registries) -> None:
-        """In-memory SQLite shares one connection across threads, so preparations must not overlap."""
-        service = ScenarioRunService()
-        overlap = []
-        active = 0
-        lock = threading.Lock()
-
-        def _prepare(*, request: Any) -> Any:
-            nonlocal active
-            with lock:
-                active += 1
-                overlap.append(active)
-            time.sleep(0.05)
-            with lock:
-                active -= 1
-            return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
-
-        with patch.object(service, "_prepare_run_blocking", _prepare):
-            futures = [
-                service._prepare_executor.submit(lambda: service._prepare_run_blocking(request=_make_request()))
-                for _ in range(4)
-            ]
-            for future in futures:
-                future.result()
-
-        assert max(overlap) == 1
-
-    def test_prepare_run_blocking_waits_for_initialization_teardown_tasks(self, mock_all_registries) -> None:
-        """Async clients schedule their own teardown, so a benign task must not fail the start."""
-        service = ScenarioRunService()
-
-        async def _prepare_with_teardown(*, request: Any) -> Any:
-            task = asyncio.create_task(asyncio.sleep(0.05))
-            task.set_name("client-teardown-task")
-            return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
-
-        with patch.object(service, "_prepare_run_async", _prepare_with_teardown):
-            prepared = service._prepare_run_blocking(request=_make_request())
-            assert prepared.scenario is mock_all_registries["scenario_instance"]
-
-    def test_prepare_run_blocking_fails_when_a_task_outlives_the_drain(self, mock_all_registries) -> None:
-        """A task still running when the loop closes is cancelled, so the scenario is unusable."""
-        service = ScenarioRunService()
-
-        async def _leaky_prepare(*, request: Any) -> Any:
-            task = asyncio.create_task(asyncio.sleep(3600))
-            task.set_name("stray-initializer-task")
-            await asyncio.sleep(0)
-            return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
-
-        with patch.object(service, "_prepare_run_async", _leaky_prepare):
-            with patch.object(ScenarioRunService, "_INITIALIZATION_DRAIN_TIMEOUT", 0.05):
-                with pytest.raises(RuntimeError, match="left background tasks on the initialization loop") as exc_info:
-                    service._prepare_run_blocking(request=_make_request())
-
-        assert "stray-initializer-task" in str(exc_info.value)
-
-    def test_prepare_run_blocking_marks_the_run_failed_when_the_drain_fails(self, mock_all_registries) -> None:
-        """Initialization already stored the run, so a failed drain must not leave it in CREATED."""
-        service = ScenarioRunService()
-        scenario_instance = mock_all_registries["scenario_instance"]
-        scenario_instance._scenario_result_id = "drained-id"
-
-        async def _leaky_prepare(*, request: Any) -> Any:
-            task = asyncio.create_task(asyncio.sleep(3600))
-            task.set_name("stray-initializer-task")
-            await asyncio.sleep(0)
-            return _svc_mod._PreparedRun(scenario=scenario_instance)
-
-        with patch.object(service, "_prepare_run_async", _leaky_prepare):
-            with patch.object(ScenarioRunService, "_INITIALIZATION_DRAIN_TIMEOUT", 0.05):
-                with patch.object(service._memory, "try_update_scenario_run_state_async") as update_state:
-                    with pytest.raises(RuntimeError, match="left background tasks"):
-                        service._prepare_run_blocking(request=_make_request())
-
-        update_state.assert_called_once()
-        assert update_state.call_args.kwargs["scenario_result_id"] == "drained-id"
-        assert update_state.call_args.kwargs["scenario_run_state"] == ScenarioRunState.FAILED
-        assert update_state.call_args.kwargs["error_type"] == "RuntimeError"
-        assert update_state.call_args.kwargs["expected_states"] == {
-            ScenarioRunState.CREATED,
-            ScenarioRunState.IN_PROGRESS,
-        }
-
-    def test_prepare_run_blocking_reports_the_drain_error_when_marking_failed_fails(self, mock_all_registries) -> None:
-        """A bookkeeping failure must not replace the error that explains the failed start."""
-        service = ScenarioRunService()
-        scenario_instance = mock_all_registries["scenario_instance"]
-        scenario_instance._scenario_result_id = "drained-id"
-
-        async def _leaky_prepare(*, request: Any) -> Any:
-            task = asyncio.create_task(asyncio.sleep(3600))
-            task.set_name("stray-initializer-task")
-            await asyncio.sleep(0)
-            return _svc_mod._PreparedRun(scenario=scenario_instance)
-
-        with patch.object(service, "_prepare_run_async", _leaky_prepare):
-            with patch.object(ScenarioRunService, "_INITIALIZATION_DRAIN_TIMEOUT", 0.05):
-                with patch.object(
-                    service._memory, "try_update_scenario_run_state_async", side_effect=ValueError("gone")
-                ):
-                    with pytest.raises(RuntimeError, match="left background tasks"):
-                        service._prepare_run_blocking(request=_make_request())
-
-    def test_prepare_run_blocking_waits_for_a_task_spawned_during_the_drain(self, mock_all_registries) -> None:
-        """A draining task can start another one, which the first snapshot never saw."""
-        service = ScenarioRunService()
-        scenario_instance = mock_all_registries["scenario_instance"]
-        child_finished = threading.Event()
-
-        async def _prepare_spawning_a_child(*, request: Any) -> Any:
-            async def _child() -> None:
-                await asyncio.sleep(0.05)
-                child_finished.set()
-
-            async def _parent() -> None:
-                await asyncio.sleep(0.01)
-                asyncio.create_task(_child(), name="child-teardown-task")
-
-            asyncio.create_task(_parent(), name="parent-teardown-task")
-            await asyncio.sleep(0)
-            return _svc_mod._PreparedRun(scenario=scenario_instance)
-
-        with patch.object(service, "_prepare_run_async", _prepare_spawning_a_child):
-            assert service._prepare_run_blocking(request=_make_request()).scenario is scenario_instance
-
-        assert child_finished.is_set()
-
-    def test_prepare_run_blocking_fails_when_a_spawned_child_outlives_the_drain(self, mock_all_registries) -> None:
-        """The child is the one that would be cancelled by the closing loop, so it must be named."""
-        service = ScenarioRunService()
-
-        async def _prepare_spawning_a_slow_child(*, request: Any) -> Any:
-            async def _parent() -> None:
-                await asyncio.sleep(0.01)
-                asyncio.create_task(asyncio.sleep(3600), name="child-teardown-task")
-
-            asyncio.create_task(_parent(), name="parent-teardown-task")
-            await asyncio.sleep(0)
-            return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
-
-        with patch.object(service, "_prepare_run_async", _prepare_spawning_a_slow_child):
-            with patch.object(ScenarioRunService, "_INITIALIZATION_DRAIN_TIMEOUT", 0.3):
-                with pytest.raises(RuntimeError, match="child-teardown-task"):
-                    service._prepare_run_blocking(request=_make_request())
-
-    def test_prepare_run_blocking_drain_uses_one_deadline_across_generations(self, mock_all_registries) -> None:
-        """Re-scanning must not restart the budget, or a chain of tasks could stall a start forever."""
-        service = ScenarioRunService()
-
-        async def _prepare_spawning_a_chain(*, request: Any) -> Any:
-            async def _link(depth: int) -> None:
-                await asyncio.sleep(0.05)
-                asyncio.create_task(_link(depth + 1), name=f"chain-task-{depth + 1}")
-
-            asyncio.create_task(_link(0), name="chain-task-0")
-            await asyncio.sleep(0)
-            return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
-
-        started = time.monotonic()
-        with patch.object(service, "_prepare_run_async", _prepare_spawning_a_chain):
-            with patch.object(ScenarioRunService, "_INITIALIZATION_DRAIN_TIMEOUT", 0.3):
-                with pytest.raises(RuntimeError, match="chain-task"):
-                    service._prepare_run_blocking(request=_make_request())
-
-        assert time.monotonic() - started < 3
-
-    async def test_start_run_fails_when_initialization_leaks_a_task(self, mock_all_registries) -> None:
-        """A preparation with leaked tasks must fail before scheduling."""
-        service = ScenarioRunService()
-
-        async def _leaky_prepare(*, request: Any) -> Any:
-            task = asyncio.create_task(asyncio.sleep(3600))
-            task.set_name("stray-initializer-task")
-            await asyncio.sleep(0)
-            return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
-
-        with patch.object(service, "_prepare_run_async", _leaky_prepare):
-            with patch.object(ScenarioRunService, "_INITIALIZATION_DRAIN_TIMEOUT", 0.05):
-                with pytest.raises(RuntimeError, match="left background tasks"):
-                    await service.start_run_async(request=_make_request())
-
-    def test_prepare_run_blocking_is_quiet_when_initialization_is_self_contained(
-        self, mock_all_registries, caplog
-    ) -> None:
-        """The happy path must not warn, otherwise the signal is worthless."""
-        service = ScenarioRunService()
-
-        async def _clean_prepare(*, request: Any) -> Any:
-            return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
-
-        with patch.object(service, "_prepare_run_async", _clean_prepare):
-            with caplog.at_level(logging.WARNING):
-                service._prepare_run_blocking(request=_make_request())
-
-        assert "left background tasks" not in caplog.text
+                    await asyncio.gather(*service._abandoned_prepare_tasks, return_exceptions=True)
+        with pytest.raises(ExceptionGroup, match="shutdown transitions") as caught:
+            await service.shutdown_async()
+        assert str(caught.value.exceptions[0]) == "cleanup exploded"
 
     async def test_start_run_serializes_after_abandoned_prepare(self, mock_all_registries) -> None:
-        """A cancelled start must leave its worker isolated until initialization finishes."""
+        """A cancelled start holds the gate through preparation and result cleanup."""
         service = ScenarioRunService()
-        started = threading.Event()
-        release = threading.Event()
-        finished = threading.Event()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        second_waiting = asyncio.Event()
+        second_prepared = asyncio.Event()
+        preparations = 0
 
-        def _blocking_prepare(*, request: Any) -> Any:
-            started.set()
-            release.wait()
-            finished.set()
+        async def _prepare_async(*, request: Any) -> Any:
+            nonlocal preparations
+            preparations += 1
+            if preparations == 1:
+                started.set()
+                await release.wait()
+            else:
+                second_prepared.set()
             return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
 
-        with patch.object(service, "_prepare_run_blocking", _blocking_prepare):
-            task = asyncio.create_task(service.start_run_async(request=_make_request()))
-            try:
-                assert await asyncio.to_thread(started.wait, 5)
-                task.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await asyncio.wait_for(task, timeout=5)
+        async def _cleanup_async(**kwargs: Any) -> bool:
+            cleanup_started.set()
+            await release_cleanup.wait()
+            return True
 
-                assert not finished.is_set()
-            finally:
-                task.cancel()
+        async def _second_start_async() -> Any:
+            second_waiting.set()
+            return await service.start_run_async(request=_make_request())
+
+        with (
+            patch.object(service, "_prepare_run_async", _prepare_async),
+            patch.object(service._memory, "try_update_scenario_run_state_async", side_effect=_cleanup_async),
+        ):
+            first = asyncio.create_task(service.start_run_async(request=_make_request()))
+            try:
+                await asyncio.wait_for(started.wait(), 5)
+                first.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(first, 5)
+                second = asyncio.create_task(_second_start_async())
+                await asyncio.wait_for(second_waiting.wait(), 5)
+                assert preparations == 1
                 release.set()
-                await asyncio.gather(task, return_exceptions=True)
+                await asyncio.wait_for(cleanup_started.wait(), 5)
+                assert service.has_active_work()
+                assert service._preparation_lock.locked()
+                assert not second_prepared.is_set()
+                release_cleanup.set()
+                await asyncio.wait_for(second, 5)
+                assert preparations == 2
+            finally:
+                release.set()
+                release_cleanup.set()
                 await service.shutdown_async()
 
-            assert finished.is_set()
+    async def test_normal_preparations_are_serialized_async(self, mock_all_registries) -> None:
+        service = ScenarioRunService()
+        entered, release, second_waiting = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        order: list[str] = []
+
+        async def prepare_async(*, request: RunScenarioRequest) -> _svc_mod._PreparedRun:
+            order.append(request.scenario_name)
+            if len(order) == 1:
+                entered.set()
+                await release.wait()
+            return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
+
+        async def second_async() -> Any:
+            second_waiting.set()
+            return await service.start_run_async(request=_make_request(scenario_name="second"))
+
+        with (
+            patch.object(service, "_prepare_run_async", side_effect=prepare_async),
+            patch.object(service, "_schedule_prepared_run_async", new_callable=AsyncMock),
+        ):
+            first = asyncio.create_task(service.start_run_async(request=_make_request(scenario_name="first")))
+            second: asyncio.Task[Any] | None = None
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                second = asyncio.create_task(second_async())
+                await asyncio.wait_for(second_waiting.wait(), 5)
+                assert order == ["first"]
+                release.set()
+                await asyncio.wait_for(asyncio.gather(first, second), 5)
+                assert order == ["first", "second"]
+                assert not service.has_active_work()
+            finally:
+                release.set()
+                await asyncio.gather(first, *([second] if second else []), return_exceptions=True)
+
+    @pytest.mark.parametrize("stage", ["introspection", "initializer"])
+    @pytest.mark.parametrize("cancelled", [False, True])
+    async def test_blocking_construction_keeps_backend_responsive_async(
+        self, mock_all_registries, stage: str, cancelled: bool
+    ) -> None:
+        service = ScenarioRunService()
+        entered = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+        backend_thread = threading.get_ident()
+        registry = mock_all_registries["initializer_registry"]
+        initializer = registry.create_and_configure.return_value
+
+        def construct(*args: Any, **kwargs: Any) -> Any:
+            assert threading.get_ident() != backend_thread
+            loop.call_soon_threadsafe(entered.set)
+            if not release.wait(5):
+                raise TimeoutError("Construction was not released.")
+            return initializer if stage == "initializer" else mock_all_registries["scenario_instance"]
+
+        async def initialize_async() -> None:
+            assert asyncio.get_running_loop() is loop
+
+        initializer.initialize_async.side_effect = initialize_async
+        constructor = registry.create_and_configure if stage == "initializer" else mock_all_registries["scenario_class"]
+        constructor.side_effect = construct
+        task = asyncio.create_task(
+            service.start_run_async(
+                request=_make_request(
+                    initializers=["target"] if stage == "initializer" else None,
+                    techniques=["single_turn"] if stage == "introspection" else None,
+                )
+            )
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            assert service.has_active_work()
+            assert not task.done()
+            if cancelled:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 5)
+                assert service.has_active_work()
+                assert service._preparation_lock.locked()
+            release.set()
+            if cancelled:
+                await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), 5)
+                mock_all_registries["scenario_instance"].run_async.assert_not_awaited()
+            else:
+                await asyncio.wait_for(task, 5)
+            if stage == "initializer":
+                initializer.initialize_async.assert_awaited_once()
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+            await service.shutdown_async()
+
+    @pytest.mark.parametrize(
+        "state",
+        [ScenarioRunState.CREATED, ScenarioRunState.FAILED, ScenarioRunState.CANCELLED, ScenarioRunState.COMPLETED],
+    )
+    async def test_abandoned_success_preserves_terminal_state_async(
+        self, mock_all_registries, state: ScenarioRunState
+    ) -> None:
+        service = ScenarioRunService()
+        entered, release = asyncio.Event(), asyncio.Event()
+        record = _make_db_scenario_result(run_state=state)
+
+        async def prepare_async(*, request: RunScenarioRequest) -> _svc_mod._PreparedRun:
+            entered.set()
+            await release.wait()
+            return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
+
+        async def update_async(
+            *, expected_states: set[ScenarioRunState], scenario_run_state: ScenarioRunState, **_: Any
+        ) -> bool:
+            if record.scenario_run_state not in expected_states:
+                return False
+            record.scenario_run_state = scenario_run_state
+            return True
+
+        with (
+            patch.object(service, "_prepare_run_async", side_effect=prepare_async),
+            patch.object(service._memory, "try_update_scenario_run_state_async", side_effect=update_async),
+        ):
+            task = asyncio.create_task(service.start_run_async(request=_make_request()))
+            await asyncio.wait_for(entered.wait(), 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 5)
+            release.set()
+            await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), 5)
+        assert record.scenario_run_state == (ScenarioRunState.CANCELLED if state == ScenarioRunState.CREATED else state)
+        mock_all_registries["scenario_instance"].run_async.assert_not_awaited()
+        assert not service.has_active_work()
+
+    async def test_abandoned_failure_is_retrieved_and_logged_async(self, mock_all_registries, caplog) -> None:
+        service = ScenarioRunService()
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def prepare_async(*, request: RunScenarioRequest) -> _svc_mod._PreparedRun:
+            entered.set()
+            await release.wait()
+            raise ValueError("failed retained initialization")
+
+        with patch.object(service, "_prepare_run_async", side_effect=prepare_async):
+            task = asyncio.create_task(service.start_run_async(request=_make_request()))
+            await asyncio.wait_for(entered.wait(), 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 5)
+            release.set()
+            await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), 5)
+        assert "failed retained initialization" in caplog.text
+        service._memory.try_update_scenario_run_state_async.assert_not_awaited()
+        assert not service.has_active_work()
+
+    async def test_duplicate_resume_rejected_until_abandoned_cleanup_finishes_async(self, mock_all_registries) -> None:
+        service = ScenarioRunService()
+        entered, release, cleanup_entered, release_cleanup = (asyncio.Event() for _ in range(4))
+        run_id = "sr-uuid-1"
+        service._memory.get_scenario_result_header_async.return_value = _make_db_scenario_result(
+            result_id=run_id, run_state=ScenarioRunState.FAILED
+        )
+
+        async def prepare_async(*, request: RunScenarioRequest) -> _svc_mod._PreparedRun:
+            entered.set()
+            await release.wait()
+            return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
+
+        async def cleanup_async(**kwargs: Any) -> bool:
+            cleanup_entered.set()
+            await release_cleanup.wait()
+            return True
+
+        with (
+            patch.object(service, "_prepare_run_async", side_effect=prepare_async) as prepare,
+            patch.object(service._memory, "try_update_scenario_run_state_async", side_effect=cleanup_async),
+        ):
+            task = asyncio.create_task(service.start_run_async(request=_make_request(scenario_result_id=run_id)))
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 5)
+                release.set()
+                await asyncio.wait_for(cleanup_entered.wait(), 5)
+                assert run_id in service._preparing_run_ids
+                assert service.has_active_work()
+                with pytest.raises(ScenarioRunConflictError, match="scheduled or initializing"):
+                    await service.start_run_async(request=_make_request(scenario_result_id=run_id))
+                with pytest.raises(ScenarioRunConflictError, match="scheduled or initializing"):
+                    await service.resume_run_async(scenario_result_id=run_id)
+                prepare.assert_awaited_once()
+            finally:
+                release.set()
+                release_cleanup.set()
+                await asyncio.wait_for(service.shutdown_async(), 5)
+        assert run_id not in service._preparing_run_ids
+        assert not service.has_active_work()
+
+    async def test_waiting_preparation_rechecks_shutdown_admission_async(self, mock_all_registries) -> None:
+        service = ScenarioRunService()
+        entered, release, second_entered, stopped = (asyncio.Event() for _ in range(4))
+        original_stop = service.stop_admission
+
+        async def prepare_async(*, request: RunScenarioRequest) -> _svc_mod._PreparedRun:
+            entered.set()
+            await release.wait()
+            return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
+
+        async def second_async() -> Any:
+            second_entered.set()
+            return await service.start_run_async(request=_make_request())
+
+        def stop() -> None:
+            original_stop()
+            stopped.set()
+
+        with (
+            patch.object(service, "_prepare_run_async", side_effect=prepare_async) as prepare,
+            patch.object(service, "stop_admission", side_effect=stop),
+        ):
+            first = asyncio.create_task(service.start_run_async(request=_make_request()))
+            await asyncio.wait_for(entered.wait(), 5)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(first, 5)
+            second = asyncio.create_task(second_async())
+            await asyncio.wait_for(second_entered.wait(), 5)
+            shutdown = asyncio.create_task(service.shutdown_async())
+            try:
+                await asyncio.wait_for(stopped.wait(), 5)
+                assert not second.done()
+                assert not shutdown.done()
+                release.set()
+                with pytest.raises(RuntimeError, match="scheduling is stopping"):
+                    await asyncio.wait_for(second, 5)
+                await asyncio.wait_for(shutdown, 5)
+                prepare.assert_awaited_once()
+                assert not service.has_active_work()
+            finally:
+                release.set()
+                await asyncio.gather(first, second, shutdown, return_exceptions=True)
+
+    async def test_initialization_tasks_stay_on_live_backend_loop(self, mock_all_registries) -> None:
+        """Preparation does not drain or cancel unrelated tasks on the live loop."""
+        service = ScenarioRunService()
+        release = asyncio.Event()
+        child_started = asyncio.Event()
+        children: list[asyncio.Task[None]] = []
+
+        async def _child_async() -> None:
+            child_started.set()
+            await release.wait()
+
+        async def _prepare_async(*, request: Any) -> Any:
+            children.append(asyncio.create_task(_child_async()))
+            return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
+
+        with patch.object(service, "_prepare_run_async", _prepare_async):
+            try:
+                await asyncio.wait_for(service.start_run_async(request=_make_request()), 5)
+                await asyncio.wait_for(child_started.wait(), 5)
+                assert len(children) == 1 and not children[0].done()
+            finally:
+                release.set()
+                await asyncio.wait_for(asyncio.gather(*children), 5)
+                await service.shutdown_async()
 
     async def test_start_run_propagates_prepare_failure(self, mock_all_registries) -> None:
         """Preparation failures must reach the caller."""
         service = ScenarioRunService()
 
-        def _failing_prepare(*, request: Any) -> Any:
+        async def _failing_prepare_async(*, request: Any) -> Any:
             raise ValueError("boom")
 
-        with patch.object(service, "_prepare_run_blocking", _failing_prepare):
+        with patch.object(service, "_prepare_run_async", _failing_prepare_async):
             with pytest.raises(ValueError, match="boom"):
                 await service.start_run_async(request=_make_request())
 
@@ -1851,6 +2437,7 @@ class TestScenarioRunServiceListRuns:
             scenario_names=[],
             statuses=[],
             labels=None,
+            operation_ids=None,
             cursor=None,
             limit=10,
         )
@@ -1907,6 +2494,15 @@ class TestScenarioRunServiceListRuns:
                         total_retries=3,
                         latest_attempt_timestamp=timestamp,
                         atomic_attack_names=("attack",),
+                        target_facing_attempts=0,
+                        target_facing_error_attempts=0,
+                        target_facing_retries=0,
+                        orchestration_attempts=0,
+                        orchestration_error_attempts=0,
+                        orchestration_retries=0,
+                        unknown_role_attempts=0,
+                        unknown_role_error_attempts=0,
+                        unknown_role_retries=0,
                     )
                 },
                 False,
@@ -2040,6 +2636,15 @@ class TestScenarioRunServiceListRuns:
                         total_retries=0,
                         latest_attempt_timestamp=timestamp,
                         atomic_attack_names=("attack-1", "attack-2"),
+                        target_facing_attempts=0,
+                        target_facing_error_attempts=0,
+                        target_facing_retries=0,
+                        orchestration_attempts=0,
+                        orchestration_error_attempts=0,
+                        orchestration_retries=0,
+                        unknown_role_attempts=0,
+                        unknown_role_error_attempts=0,
+                        unknown_role_retries=0,
                     )
                 },
                 False,
@@ -2173,6 +2778,15 @@ class TestScenarioRunServiceListRuns:
                     total_retries=4,
                     latest_attempt_timestamp=datetime(2026, 8, 7, tzinfo=UTC),
                     atomic_attack_names=("attack",),
+                    target_facing_attempts=0,
+                    target_facing_error_attempts=0,
+                    target_facing_retries=0,
+                    orchestration_attempts=0,
+                    orchestration_error_attempts=0,
+                    orchestration_retries=0,
+                    unknown_role_attempts=0,
+                    unknown_role_error_attempts=0,
+                    unknown_role_retries=0,
                 )
             }
         )
@@ -2245,6 +2859,7 @@ async def test_legacy_plan_techniques_agree_across_projections(
         registry_name="garak.prompt_inject",
         default_technique="all",
         all_techniques=tuple(techniques),
+        technique_class=make_technique_class(techniques=techniques, aggregates=("all",)),
         technique_summaries=summaries,
         aggregate_techniques=("all",),
         default_datasets=(),
@@ -2485,8 +3100,8 @@ class TestScenarioRunServiceRecovery:
             ),
         }
         active_started = asyncio.Event()
-        preparation_started = threading.Event()
-        release_preparation = threading.Event()
+        preparation_started = asyncio.Event()
+        release_preparation = asyncio.Event()
         shutdown_started = asyncio.Event()
 
         async def _run_active() -> None:
@@ -2520,13 +3135,12 @@ class TestScenarioRunServiceRecovery:
             record.scenario_run_state = scenario_run_state
             return True
 
-        def _prepare(*, request: Any) -> _svc_mod._PreparedRun:
+        async def _prepare_async(*, request: Any) -> _svc_mod._PreparedRun:
             preparation_started.set()
-            if not release_preparation.wait(timeout=5):
-                raise TimeoutError("Test did not release scenario preparation.")
+            await asyncio.wait_for(release_preparation.wait(), 5)
             return _svc_mod._PreparedRun(scenario=prepared_scenario)
 
-        async def _shutdown() -> None:
+        async def _shutdown_async() -> None:
             shutdown_started.set()
             await service.shutdown_async()
 
@@ -2545,10 +3159,10 @@ class TestScenarioRunServiceRecovery:
         active.task = asyncio.create_task(service._execute_run_async(scenario_result_id="active"))
         await active_started.wait()
 
-        with patch.object(service, "_prepare_run_blocking", _prepare):
+        with patch.object(service, "_prepare_run_async", _prepare_async):
             start_task = asyncio.create_task(service.start_run_async(request=_make_request()))
-            assert await asyncio.to_thread(preparation_started.wait, 5)
-            shutdown_task = asyncio.create_task(_shutdown())
+            await asyncio.wait_for(preparation_started.wait(), 5)
+            shutdown_task = asyncio.create_task(_shutdown_async())
             await shutdown_started.wait()
 
             assert not shutdown_task.done()
@@ -3383,6 +3997,15 @@ async def test_history_and_detail_retry_work_match_across_attempt_partitions(moc
         total_retries=5,
         latest_attempt_timestamp=timestamp + timedelta(seconds=2),
         atomic_attack_names=("attack",),
+        target_facing_attempts=0,
+        target_facing_error_attempts=0,
+        target_facing_retries=0,
+        orchestration_attempts=0,
+        orchestration_error_attempts=0,
+        orchestration_retries=0,
+        unknown_role_attempts=0,
+        unknown_role_error_attempts=0,
+        unknown_role_retries=0,
     )
     service = ScenarioRunService()
 

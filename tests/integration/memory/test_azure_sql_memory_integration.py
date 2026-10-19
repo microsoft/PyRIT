@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import numpy as np
+import pytest
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -301,6 +302,69 @@ async def test_get_seeds_with_metadata_filter(azuresql_instance: AzureSQLMemory)
     # Ensure that entries are removed (filter by added_by to check only our test data)
     assert (await azuresql_instance.get_seeds_async(metadata={"key1": value1}, added_by=test_id)) == []
     assert (await azuresql_instance.get_seeds_async(metadata={"key2": value1}, added_by=test_id)) == []
+
+
+@pytest.mark.run_only_if_all_tests
+@pytest.mark.parametrize(("string_value", "container_value"), [("{}", {}), ("[]", [])])
+async def test_metadata_string_filters_exclude_containers_async(
+    *,
+    azuresql_instance: AzureSQLMemory,
+    string_value: str,
+    container_value: dict[str, object] | list[object],
+) -> None:
+    test_id = str(uuid4())
+    scalar_metadata: dict[str, str | int] = {"payload": string_value}
+    container_metadata = {"payload": container_value}
+    scalar = SeedPrompt(value="scalar", dataset_name=test_id, metadata=scalar_metadata)
+    container = SeedPrompt(value="container", dataset_name=test_id, metadata=container_metadata)
+
+    try:
+        await azuresql_instance.add_seeds_to_memory_async(seeds=[scalar, container], added_by=test_id)
+        async with cleanup_conversation_data_async(azuresql_instance, [test_id]):
+            pieces = [
+                MessagePiece(
+                    conversation_id=test_id, role="user", original_value="scalar", prompt_metadata=scalar_metadata
+                ),
+                MessagePiece(
+                    conversation_id=test_id, role="user", original_value="container", prompt_metadata=container_metadata
+                ),
+            ]
+            await azuresql_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+            retrieved = await azuresql_instance.get_message_pieces_async(
+                conversation_id=test_id, prompt_metadata=scalar_metadata
+            )
+            assert [piece.id for piece in retrieved] == [pieces[0].id]
+
+        retrieved_seeds = await azuresql_instance.get_seeds_async(dataset_name=test_id, metadata=scalar_metadata)
+        assert [seed.id for seed in retrieved_seeds] == [scalar.id]
+        assert (
+            await azuresql_instance.remove_seeds_from_memory_async(dataset_name=test_id, metadata=scalar_metadata) == 1
+        )
+        assert [seed.id for seed in await azuresql_instance.get_seeds_async(dataset_name=test_id)] == [container.id]
+
+        scalar_group_id, container_group_id = uuid4(), uuid4()
+        groups = [
+            SeedPrompt(
+                value="scalar group", dataset_name=test_id, prompt_group_id=scalar_group_id, metadata=scalar_metadata
+            ),
+            SeedPrompt(value="scalar companion", dataset_name=test_id, prompt_group_id=scalar_group_id),
+            SeedPrompt(
+                value="container group",
+                dataset_name=test_id,
+                prompt_group_id=container_group_id,
+                metadata=container_metadata,
+            ),
+            SeedPrompt(value="container companion", dataset_name=test_id, prompt_group_id=container_group_id),
+        ]
+        await azuresql_instance.add_seeds_to_memory_async(seeds=groups, added_by=test_id)
+        assert (
+            await azuresql_instance.remove_seed_groups_from_memory_async(dataset_name=test_id, metadata=scalar_metadata)
+            == 2
+        )
+        remaining = await azuresql_instance.get_seeds_async(dataset_name=test_id)
+        assert {seed.id for seed in remaining} == {container.id, groups[2].id, groups[3].id}
+    finally:
+        await azuresql_instance.remove_seeds_from_memory_async(dataset_name=test_id)
 
 
 async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):

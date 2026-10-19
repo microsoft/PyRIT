@@ -223,12 +223,16 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
                 # writes "format" for media files and would overwrite the source value.
                 row_metadata: dict[str, str | int] = {
                     "source_format": item.get("format", ""),
-                    "transfer_attack_type": item.get("transfer_attack_type", ""),
+                    "from": item.get("from", ""),
                     "policy": raw_policy,
                     "image_path_raw": image_rel_path,
                 }
                 if "id" in item and item["id"] is not None:
                     row_metadata["row_id"] = str(item["id"])
+                # Upstream flags rows transferred from text-only LLM jailbreaks (vs. the
+                # MLLM-specific rows) with a boolean column; keep it when present.
+                if item.get("transfer_from_llm") is not None:
+                    row_metadata["transfer_from_llm"] = bool(item["transfer_from_llm"])
 
                 seed_objective = SeedObjective(
                     value=item.get("redteam_query", ""),

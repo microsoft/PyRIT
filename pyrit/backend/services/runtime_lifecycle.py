@@ -12,17 +12,19 @@ from typing import Any
 from fastapi import FastAPI
 
 from pyrit.backend.models.initializers import ConfiguredInitializerSetting
+from pyrit.backend.services.analytics_service import get_analytics_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service, peek_scenario_run_service
 from pyrit.backend.services.service_lifecycle import (
     close_services_async,
+    has_active_analytics_work,
     has_active_manual_sends,
     outstanding_estimates,
 )
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.memory import CentralMemory
-from pyrit.registry import InitializerRegistry
+from pyrit.registry import InitializerRegistry, ScenarioPresetRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import validate_reinitialization_memory
@@ -36,15 +38,6 @@ class RuntimeLifecycle:
     def __init__(self, *, app: FastAPI, source: ConfigurationFileService) -> None:
         """Bind lifecycle state to one app and its immutable configuration source."""
         self.app = app
-        self.app.state.auth_environment = {
-            key: os.getenv(key, "")
-            for key in (
-                "ENTRA_CLIENT_ID",
-                "ENTRA_TENANT_ID",
-                "ENTRA_ALLOWED_GROUP_IDS",
-                "PYRIT_ALLOW_UNAUTHENTICATED_ADMIN",
-            )
-        }
         self.source = source
         self.edit_lock = asyncio.Lock()
         self.state = "initializing"
@@ -101,17 +94,23 @@ class RuntimeLifecycle:
             read_only_file_sources=read_only,
         )
         self.app.state.allow_custom_initializers = config.allow_custom_initializers
+        self.app.state.target_upload_directory = config.target_upload_directory
         registry = await asyncio.to_thread(InitializerRegistry.get_registry_singleton)
         registry.configure_custom_scripts_source(config.custom_initializers_source)
+        preset_registry = ScenarioPresetRegistry.get_registry_singleton()
+        # Constructing the storage creates the default preset directory when no source is
+        # configured, and the scan reads every stored document, so both stay off the event loop.
+        await asyncio.to_thread(preset_registry.configure_source, config.scenario_presets_source)
+        await asyncio.to_thread(preset_registry.scan_stored_presets)
 
     def _publish(self, config: ConfigurationLoader) -> None:
         self.app.state.configured_initializers = [
             ConfiguredInitializerSetting(initializer_name=item.name, parameters=item.args, order_index=index)
             for index, item in enumerate(config.initializer_configs)
         ]
-        self.app.state.default_labels = {
-            key: value for key, value in (("operator", config.operator), ("operation", config.operation)) if value
-        }
+        self.app.state.default_labels = {"operator": config.operator} if config.operator else {}
+        # A proposal shown to users, never created or resolved to a saved Operation.
+        self.app.state.default_operation = (config.operation or "").strip() or None
         self.app.state.max_concurrent_scenario_runs = config.max_concurrent_scenario_runs
         self.generation = str(uuid.uuid4())
         self.state, self.outcome, self.message = "ready", "success", "PyRIT is ready."
@@ -119,9 +118,11 @@ class RuntimeLifecycle:
     async def startup_async(self) -> None:
         """Keep management alive even when parsing or initialization fails."""
         self.app.state.allow_custom_initializers = False
+        self.app.state.target_upload_directory = None
         self.app.state.environment_file_service = None
         self.app.state.configured_initializers = []
         self.app.state.default_labels = {}
+        self.app.state.default_operation = None
         try:
             config = await self._load_async()
             await self._management_async(config)
@@ -215,7 +216,7 @@ class RuntimeLifecycle:
                 await self._management_async(config)
                 self.version = current_version
                 self._publish(config)
-            except Exception:
+            except (Exception, asyncio.CancelledError) as error:
                 logger.exception(
                     "PyRIT live apply failed phase=%s generation=%s",
                     "mutation" if mutated else "preflight",
@@ -231,6 +232,8 @@ class RuntimeLifecycle:
                     if mutated
                     else "Configuration or memory settings are invalid. Memory changes require a restart."
                 )
+                if isinstance(error, asyncio.CancelledError):
+                    raise
             finally:
                 logger.info("PyRIT apply outcome=%s generation=%s", self.outcome, self.generation)
 
@@ -242,6 +245,7 @@ class RuntimeLifecycle:
             or self.operations
             or outstanding_estimates()
             or has_active_manual_sends()
+            or has_active_analytics_work()
         )
 
     async def shutdown_async(self) -> None:
@@ -260,6 +264,9 @@ class RuntimeLifecycle:
 
     async def _shutdown_runtime_async(self) -> None:
         """Finish retained requests without cancelling their offloaded writes."""
+        service = peek_scenario_run_service()
+        if service:
+            service.stop_admission()
         pending = self.operations | self.management_operations
         if self.apply_task is not None:
             pending.add(self.apply_task)
@@ -271,15 +278,19 @@ class RuntimeLifecycle:
             if service:
                 await service.shutdown_async()
         except (Exception, asyncio.CancelledError) as error:
+            error.add_note("Runtime shutdown phase: scenario service shutdown.")
             errors.append(error)
         try:
             await close_services_async()
         except (Exception, asyncio.CancelledError) as error:
             errors.append(error)
         try:
+            if get_analytics_service.cache_info().currsize:
+                raise RuntimeError("Analytics closure did not finish; memory was not disposed.")
             if CentralMemory._memory_instance is not None:
                 await CentralMemory.get_memory_instance().dispose_engine_async()
         except (Exception, asyncio.CancelledError) as error:
+            error.add_note("Runtime shutdown phase: memory disposal.")
             errors.append(error)
         if len(errors) == 1:
             raise errors[0]

@@ -12,9 +12,9 @@ import pytest
 from sqlalchemy import Engine, create_engine
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.common.singleton import Singleton
 from pyrit.memory import CentralMemory, SQLiteMemory, migration
 from pyrit.models import SeedDataset
+from test_support.fixtures import use_sqlite_memory
 
 # This limits retries and speeds up execution
 os.environ["CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS"] = "5"
@@ -45,21 +45,6 @@ def sqlite_template() -> Generator[sqlite3.Connection, None, None]:
         engine.dispose()
 
 
-@contextmanager
-def _use_sqlite_memory(sqlite_memory: SQLiteMemory) -> Generator[None, None, None]:
-    previous_instance = Singleton._instances.get(SQLiteMemory)
-    Singleton._instances[SQLiteMemory] = sqlite_memory
-    try:
-        with patch.object(CentralMemory, "_memory_instance", None):
-            CentralMemory.set_memory_instance(sqlite_memory)
-            yield
-    finally:
-        if previous_instance is None:
-            Singleton._instances.pop(SQLiteMemory, None)
-        else:
-            Singleton._instances[SQLiteMemory] = previous_instance
-
-
 @pytest.fixture
 def garak_api_key_service_patterns() -> dict[str, str | None]:
     dataset = SeedDataset.from_yaml_file(
@@ -87,7 +72,7 @@ async def sqlite_instance(sqlite_template: sqlite3.Connection) -> AsyncGenerator
             sqlite_memory.disable_embedding()
             with _sqlite_connection(sqlite_memory.engine) as connection:
                 sqlite_template.backup(connection)
-            with _use_sqlite_memory(sqlite_memory):
+            with use_sqlite_memory(sqlite_memory):
                 yield sqlite_memory
         finally:
             await sqlite_memory.dispose_engine_async()

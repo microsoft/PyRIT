@@ -89,6 +89,7 @@ export const useObjectiveHeaderStyles = makeStyles({
   },
   resultActions: {
     display: 'flex',
+    flexWrap: 'wrap',
     justifyContent: 'flex-end',
     gap: tokens.spacingHorizontalS,
   },

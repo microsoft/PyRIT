@@ -187,11 +187,22 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         self._conversation_manager = ConversationManager(prompt_normalizer=self._prompt_normalizer)
 
         # set the maximum number of turns for the attack
-        if max_turns <= 0:
-            raise ValueError("Maximum turns must be a positive integer.")
+        RedTeamingAttack.validate_constructor_parameters({"max_turns": max_turns})
 
         self._max_turns = max_turns
         self._score_last_turn_only = score_last_turn_only
+
+    @classmethod
+    def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
+        """
+        Validate the turn bound without constructing an attack.
+
+        Raises:
+            ValueError: If turns are not positive.
+        """
+        super().validate_constructor_parameters(params)
+        if "max_turns" in params and params["max_turns"] <= 0:
+            raise ValueError("Maximum turns must be a positive integer.")
 
     def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
@@ -406,10 +417,16 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             # Increment the executed turns
             context.executed_turns += 1
 
-        return self._create_attack_result(
-            context=context,
-            outcome=attack_outcome_from_score(context.last_score) if context.last_score else AttackOutcome.FAILURE,
-        )
+        if context.last_score is not None:
+            return self._create_attack_result(context=context, outcome=attack_outcome_from_score(context.last_score))
+        if context.last_response is not None:
+            # The last response was scored but the scorer produced nothing, so nothing was measured
+            return self._create_attack_result(
+                context=context,
+                outcome=AttackOutcome.UNDETERMINED,
+                outcome_reason="Objective scorer returned no score",
+            )
+        return self._create_attack_result(context=context, outcome=AttackOutcome.FAILURE)
 
     def _create_attack_result(
         self,

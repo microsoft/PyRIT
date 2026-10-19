@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
@@ -17,7 +17,7 @@ from pyrit.models import AttackSeedGroup, DivergesFromRepetition, ScoringExpecta
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError, DatasetSource
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import DivergenceScorer, TrueFalseScorer
@@ -31,7 +31,7 @@ class DivergenceDatasetConfiguration(DatasetAttackConfiguration):
 
     DEFAULT_MAX_DATASET_SIZE: int = 10
 
-    def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
+    def _build_attack_groups(self, seeds: list[Seed[Any]]) -> list[AttackSeedGroup]:
         """
         Preserve each source prompt and add its attack objective.
 
@@ -122,8 +122,9 @@ class Divergence(Scenario):
             version=self.VERSION,
             technique_class=DivergenceTechnique,
             default_dataset_config=DivergenceDatasetConfiguration(
-                dataset_names=self.required_datasets(),
-                max_dataset_size=DivergenceDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
+                sources=[DatasetSource(name=name) for name in self.required_datasets()],
+                max_per_dataset="all",
+                max_total=DivergenceDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
             ),
             objective_scorer=objective_scorer or DivergenceScorer(),
             scenario_result_id=scenario_result_id,

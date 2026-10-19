@@ -4,10 +4,11 @@
 import abc
 import logging
 from collections.abc import Mapping, Sequence
-from typing import Any, ClassVar, Literal, final
+from typing import Any, ClassVar, final
 
 from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.attack_result_scope import get_current_attack_result_id
+from pyrit.common.auth_mode import AuthMode
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.message_normalizer import MessageListNormalizer
@@ -34,12 +35,9 @@ from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, ta
 
 logger = logging.getLogger(__name__)
 
-# Authentication modes a target can expose to target type discovery and creation APIs.
-# ``api_key`` passes a key (from params or the target's env var); ``identity``
-# omits the key so the target authenticates itself via an ambient Azure identity
-# (e.g. minting a Microsoft Entra ID token for its own endpoint, or falling back
-# to ``DefaultAzureCredential``).
-AuthMode = Literal["api_key", "identity"]
+# ``AuthMode`` is imported above (and re-exported from this module for backward
+# compatibility); it is canonically defined in ``pyrit.common.auth_mode`` so
+# ``pyrit.auth`` resolvers can consume it without depending on the target layer.
 
 
 class PromptTarget(Identifiable):
@@ -80,9 +78,28 @@ class PromptTarget(Identifiable):
     #
     # ``supported_auth_modes`` lists the auth modes the create-target API accepts
     # for this type. Base default is api-key only; targets that can authenticate
-    # via an ambient Azure identity when given no key (e.g. OpenAI, Azure ML,
-    # Azure Blob Storage, Prompt Shield) override this to add ``"identity"``.
+    # via an ambient Azure identity (e.g. OpenAI, Azure ML, Azure Blob Storage,
+    # Prompt Shield) override this to add ``"identity"``.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key",)
+
+    # Targets that upload files from the machine running PyRIT name the constructor parameter that
+    # confines those uploads. The create-target API sets it to the folder the server operator
+    # configured and does not let callers choose it.
+    upload_directory_parameter: ClassVar[str | None] = None
+
+    # Targets whose construction can run model repository code name the boolean constructor
+    # parameter that enables it (e.g. ``"trust_remote_code"``). The create-target API builds
+    # them only for an administrator when that parameter resolves true; direct Python use is
+    # unaffected.
+    code_execution_parameter: ClassVar[str | None] = None
+
+    # Targets that can authenticate with this server's own stored credentials (e.g. an ambient
+    # managed identity) name the constructor parameter a caller supplies to use their own
+    # credential instead (e.g. ``"sas_token"``). When a caller does not supply it, the
+    # create-target API builds the target only for an administrator, so a non-administrator
+    # cannot point the server's credentials at a caller-chosen resource; direct Python use is
+    # unaffected.
+    server_credential_parameter: ClassVar[str | None] = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
@@ -215,6 +232,23 @@ class PromptTarget(Identifiable):
             ValueError: Tool content, roles, or call/result links are invalid.
         """
         validate_tool_conversation(messages)
+
+    def validate_history_replay(self) -> None:
+        """
+        Check configuration support for initializing a new conversation from stored history.
+
+        Native editable history or an explicit history adapter is sufficient.
+        Targets with a provider-specific restoration path can override this check.
+        This does not validate message content or guarantee that a live session exists.
+
+        Raises:
+            ValueError: If neither native support nor a configured history adapter is available.
+        """
+        if not self.configuration.includes(
+            capability=CapabilityName.MULTI_TURN
+        ) and self.configuration.pipeline.has_normalizer_for(capability=CapabilityName.MULTI_TURN):
+            return
+        self.configuration.ensure_can_handle(capability=CapabilityName.EDITABLE_HISTORY)
 
     @final
     async def send_prompt_async(

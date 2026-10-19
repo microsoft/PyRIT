@@ -8,6 +8,7 @@ This module provides the Scenario class that orchestrates the execution of multi
 AtomicAttack instances sequentially, enabling comprehensive security testing campaigns.
 """
 
+import ast
 import asyncio
 import logging
 import uuid
@@ -19,7 +20,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast, final
 
 from tqdm.auto import tqdm
 
-from pyrit.common import get_global_default_values
+from pyrit.common import default_values, get_global_default_values
 from pyrit.common.utils import to_sha256
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
@@ -30,6 +31,8 @@ from pyrit.models import (
     AllAvailableDatasetSize,
     AttackOutcome,
     AttackResult,
+    AttackResultMetadata,
+    AttackResultSelection,
     AttackSeedGroup,
     BoundedDatasetSize,
     DatasetLimitInput,
@@ -43,6 +46,7 @@ from pyrit.models import (
     ScenarioResult,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
     ScenarioRunPlanSeedGroup,
     ScenarioRunPlanSeedPrompt,
     ScenarioRunSizeComponent,
@@ -53,6 +57,12 @@ from pyrit.models import (
     config_hash,
 )
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
+from pyrit.models.scenario_dataset import (
+    DatasetFetchPolicy,
+    ScenarioDatasetOptions,
+    ScenarioDatasetRequest,
+    ScenarioDatasetSettings,
+)
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
@@ -61,9 +71,12 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
 )
+from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
+from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, IncompatibleTechniquePolicy
 from pyrit.score import (
     Scorer,
     SelfAskRefusalScorer,
@@ -136,10 +149,19 @@ class Scenario(ABC):
     #: caller-supplied ``include_baseline=True`` raises ``ValueError``.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 
+    INCOMPATIBLE_TECHNIQUE_POLICY: ClassVar[IncompatibleTechniquePolicy] = IncompatibleTechniquePolicy.SKIP
+
     #: Whether LLM-backed scorers constructed by ``_get_default_objective_scorer`` raise
     #: when their own target blocks a scoring request. Subclasses may disable this when
     #: an unavailable verdict is an expected result rather than a scenario error.
     RAISE_IF_DEFAULT_SCORER_BLOCKS: ClassVar[bool] = True
+
+    #: Whether the scenario applies ``technique_converters``. Scenarios that don't set this to
+    #: False so the parameter isn't declared, and passing it fails instead of being ignored.
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = True
+
+    #: Maximum number of resolved concrete techniques; None leaves the selection unrestricted.
+    MAX_CONCRETE_TECHNIQUES: ClassVar[int | None] = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -226,6 +248,7 @@ class Scenario(ABC):
         self._objective_target: PromptTarget | None = None
         self._objective_target_identifier: ComponentIdentifier | None = None
         self._memory_labels: dict[str, str] = {}
+        self._operation_id: uuid.UUID | None = None
         self._max_concurrency: int | None = None
         self._max_retries: int = 0
 
@@ -265,6 +288,7 @@ class Scenario(ABC):
         # Resolved effective baseline inclusion for the current run. Set in initialize_async
         # before _build_atomic_attacks_async is awaited so overrides can read it.
         self._include_baseline: bool = False
+        self._incompatible_technique_policy = self.INCOMPATIBLE_TECHNIQUE_POLICY
 
     @property
     def name(self) -> str:
@@ -345,6 +369,11 @@ class Scenario(ABC):
                 opaque=True,
             ),
             Parameter(
+                name="dataset_overrides",
+                description="Serializable dataset edits applied on top of the dataset configuration.",
+                opaque=True,
+            ),
+            Parameter(
                 name="technique_converters",
                 description="Mapping of concrete technique name to extra request converters to append.",
                 opaque=True,
@@ -357,6 +386,11 @@ class Scenario(ABC):
             Parameter(
                 name="memory_labels",
                 description="Additional labels applied to every attack run in the scenario.",
+                opaque=True,
+            ),
+            Parameter(
+                name="operation_id",
+                description="Saved Operation UUID for this run; omitted for unassigned activity.",
                 opaque=True,
             ),
             Parameter(
@@ -375,6 +409,11 @@ class Scenario(ABC):
                 name="include_baseline",
                 description="Whether to prepend a baseline atomic attack; None defers to BASELINE_ATTACK_POLICY.",
                 param_type=bool,
+            ),
+            Parameter(
+                name="incompatible_technique_policy",
+                description="Skip or raise for incompatible techniques; None uses the scenario class default.",
+                param_type=IncompatibleTechniquePolicy,
             ),
         ]
 
@@ -431,7 +470,10 @@ class Scenario(ABC):
         Returns:
             list[Parameter]: Declared parameters (default: common run inputs + additional).
         """
-        return cls._common_scenario_parameters() + cls.additional_parameters()
+        parameters = cls._common_scenario_parameters() + cls.additional_parameters()
+        if not cls.SUPPORTS_TECHNIQUE_CONVERTERS:
+            parameters = [parameter for parameter in parameters if parameter.name != "technique_converters"]
+        return parameters
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
         # Deferred import to avoid circular dependency.
@@ -630,6 +672,22 @@ class Scenario(ABC):
     @final
     async def get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
         """
+        Estimate without preparation and expose resolved defaults separately from edits.
+
+        Returns:
+            ScenarioRunSizeEstimate: Estimate with dataset defaults and effective settings.
+        """
+        estimate = await self._get_run_size_estimate_async(target_is_configured=target_is_configured)
+        return estimate.model_copy(
+            update={
+                "dataset_options": self.get_dataset_options(),
+                "dataset_defaults": project_dataset_settings(self._resolved_default_dataset_config),
+                "effective_datasets": project_dataset_settings(self._dataset_config),
+            }
+        )
+
+    async def _get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
+        """
         Estimate the currently configured run without creating or persisting it.
 
         ``set_params_from_args`` should be called first for a request-specific
@@ -651,6 +709,9 @@ class Scenario(ABC):
         if target_is_configured and self._objective_target is None:
             raise ValueError("target_is_configured requires a resolved objective_target")
         budget = self._get_run_size_budget()
+        cap = self._dataset_config.max_total
+        if cap != "all" and isinstance(budget, BoundedDatasetSize):
+            budget = BoundedDatasetSize(value=min(cap, budget.value))
         dataset_limit = self._get_dataset_limit_input()
         if isinstance(budget, IndeterminateDatasetSize):
             return ScenarioRunSizeEstimate.unavailable(
@@ -732,12 +793,10 @@ class Scenario(ABC):
 
     def _get_dataset_limit_input(self) -> DatasetLimitInput:
         """Return the editable limit, never an aggregate population budget."""
-        if not self.USES_DATASET_SIZE_LIMIT:
+        if not self.get_dataset_options().total_limit:
             return DatasetLimitInput(state=DatasetLimitState.NotApplicable)
-        limit = self._dataset_config.max_dataset_size
-        return (
-            DatasetLimitInput(state=DatasetLimitState.Value, value=limit) if limit is not None else DatasetLimitInput()
-        )
+        limit = self._dataset_config.max_total
+        return DatasetLimitInput(state=DatasetLimitState.Value, value=limit) if limit != "all" else DatasetLimitInput()
 
     def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
         """Return the scenario's configured population budget."""
@@ -813,7 +872,6 @@ class Scenario(ABC):
 
         dataset_config = params.get("dataset_config")
         self._dataset_config_provided = dataset_config is not None
-        self._dataset_config = dataset_config if dataset_config else self._default_dataset_config
         self._max_concurrency = params.get("max_concurrency", 4)
         self._max_retries = params.get("max_retries", 0)
         self._memory_labels = params.get("memory_labels") or {}
@@ -829,16 +887,87 @@ class Scenario(ABC):
         elif include_baseline is None:
             include_baseline = self.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Enabled
         self._include_baseline = include_baseline
+        self._incompatible_technique_policy = IncompatibleTechniquePolicy(
+            params.get("incompatible_technique_policy") or self.INCOMPATIBLE_TECHNIQUE_POLICY
+        )
 
         self._scenario_techniques = self._resolve_scenario_techniques(
             scenario_techniques=params.get("scenario_techniques")
         )
+        limit = self.MAX_CONCRETE_TECHNIQUES
+        if limit is not None:
+            if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+                raise ValueError(f"{type(self).__name__}.MAX_CONCRETE_TECHNIQUES must be a positive integer")
+            if len(self._scenario_techniques) > limit:
+                raise ValueError(
+                    f"{type(self).__name__} accepts at most {limit} concrete technique(s); "
+                    f"received {[technique.value for technique in self._scenario_techniques]}."
+                )
         self._technique_converters = params.get("technique_converters") or {}
+        self._resolved_default_dataset_config = self._resolve_default_dataset_config().with_overrides()
+        self._dataset_config = (
+            dataset_config if dataset_config is not None else self._resolved_default_dataset_config
+        ).with_overrides()
+        options = self.get_dataset_options()
+        raw_overrides = params.get("dataset_overrides")
+        if raw_overrides is not None:
+            self._dataset_config = apply_dataset_overrides(
+                config=self._dataset_config,
+                request=ScenarioDatasetRequest.model_validate(raw_overrides),
+                options=options,
+            )
         self._validate_runtime_configuration()
 
+    def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
+        """
+        Resolve parameter-aware defaults before any override or preparation.
+
+        Returns:
+            DatasetAttackConfiguration: Scenario-owned resolved default configuration.
+        """
+        return self._default_dataset_config
+
+    DATASET_OPTIONS: ClassVar[ScenarioDatasetOptions] = ScenarioDatasetOptions()
+
+    def get_dataset_options(self) -> ScenarioDatasetOptions:
+        """Return the scenario's named-dataset capabilities for the current parameters."""
+        return self.DATASET_OPTIONS
+
+    def get_default_dataset_settings(self) -> ScenarioDatasetSettings:
+        """Return the default dataset settings for the current parameters, without reading memory."""
+        return project_dataset_settings(self._resolve_default_dataset_config())
+
+    async def load_datasets_async(self) -> ScenarioDatasetSettings:
+        """
+        Load missing selected datasets explicitly, without creating or executing a run.
+
+        Returns:
+            ScenarioDatasetSettings: Resolved settings, with the scan's policies unchanged.
+        """
+        self._resolve_runtime_configuration(require_objective_target=False)
+        await self._dataset_config.prepare_async(fetch=DatasetFetchPolicy.IF_MISSING)
+        return project_dataset_settings(self._dataset_config)
+
     def _validate_runtime_configuration(self) -> None:
-        """Check resolved parameters for preview and launch without reading datasets."""
+        """
+        Check resolved parameters for preview and launch without reading datasets.
+
+        Raises:
+            ValueError: If an ingredient-only scenario receives per-dataset limits.
+        """
         self._dataset_config.validate_configuration()
+        cap = self._dataset_config.max_total
+        minimum = max(1, len(self._get_required_objective_keys()))
+        if cap != "all" and cap < minimum:
+            raise ValueError(f"Select at least {minimum} objectives, or select fewer techniques.")
+        if not self.USES_DATASET_SIZE_LIMIT and any(
+            self._dataset_config.source_limit(source.name) != "all" for source in self._dataset_config.sources
+        ):
+            raise ValueError("This scenario uses ingredient datasets and does not support per-dataset limits.")
+
+    def _get_required_objective_keys(self) -> list[str]:
+        """Return population names that must retain at least one objective."""
+        return []
 
     @final
     async def initialize_async(self) -> None:
@@ -859,23 +988,81 @@ class Scenario(ABC):
 
         If a scenario_result_id was provided in __init__, this method will check if it exists
         in memory and validate that the stored scenario matches the current configuration.
-        If it matches, the scenario will resume from prior progress. If it doesn't match or
-        doesn't exist, a new scenario result will be created.
+        If it matches, the scenario will resume from prior progress without preparation.
+        If it does not match or does not exist, initialization raises an error.
 
         The common run inputs read from the bag are ``objective_target`` (a ``PromptTarget``
         instance or a registered target name resolved against ``TargetRegistry``),
         ``scenario_techniques``, ``technique_converters``, ``dataset_config``,
-        ``max_concurrency``, ``max_retries``, ``memory_labels``, and ``include_baseline``
+        ``max_concurrency``, ``max_retries``, ``memory_labels``, ``include_baseline``,
+        and ``incompatible_technique_policy``
         (see ``_common_scenario_parameters``). A subclass that removes a common input via
         ``supported_parameters`` falls back to that input's default here.
 
         Raises:
+            IncompatibleTechniqueError: If techniques were selected but none can run.
             ValueError: If ``objective_target`` is declared but not resolvable (neither supplied
                 nor registered as a default), if a supplied target name is not registered in
                 ``TargetRegistry``, or if ``include_baseline=True`` is set for a scenario whose
                 ``BASELINE_ATTACK_POLICY`` is ``Forbidden``.
         """
+        if not self._params_resolved:
+            self.set_params_from_args(args=self.params)
+        raw_operation_id = self.params.get("operation_id")
+        operation_id = (
+            raw_operation_id
+            if isinstance(raw_operation_id, uuid.UUID)
+            else uuid.UUID(str(raw_operation_id))
+            if raw_operation_id is not None
+            else None
+        )
+        supplied_labels = dict(self.params.get("memory_labels") or {})
+        operation_name = supplied_labels.pop("operation", None)
+        if self._scenario_result_id:
+            stored = await self._memory.get_scenario_results_async(scenario_result_ids=[self._scenario_result_id])
+            if not stored:
+                raise ValueError(f"Scenario result id '{self._scenario_result_id}' not found in memory")
+            stored_id = stored[0].operation_id
+            # A run may be resumed with the name it was started with, or a name of its saved Operation.
+            if operation_name is not None and operation_name != stored[0].labels.get("operation"):
+                resolved = await self._memory.resolve_operation_id_async(
+                    operation_id=None, operation_name=operation_name
+                )
+                if resolved is None or resolved != stored_id:
+                    raise ValueError("Operation attribution is immutable on resume")
+            if operation_id is not None and operation_id != stored_id:
+                raise ValueError("Operation attribution is immutable on resume")
+            self._operation_id = stored_id
+            operation_name = stored[0].labels.get("operation")
+        else:
+            if operation_name is None and operation_id is None:
+                operation_name = ast.literal_eval(
+                    default_values.get_non_required_value(env_var_name="GLOBAL_MEMORY_LABELS") or "{}"
+                ).get("operation")
+            self._operation_id = await self._memory.resolve_operation_id_async(
+                operation_id=operation_id, operation_name=operation_name
+            )
+            if operation_id is not None:
+                operation_name = None
+        # TODO(PyRIT 1.4): Remove with Operation name attribution, which keeps the name on the run and its attacks.
+        if operation_name is not None:
+            supplied_labels["operation"] = operation_name
+        self.params["memory_labels"] = supplied_labels
         self._resolve_runtime_configuration(require_objective_target=True)
+        stored_result: ScenarioResult | None = None
+        stored_plan: ScenarioRunPlan | None = None
+        if self._scenario_result_id:
+            existing_results = await self._memory.get_scenario_results_async(
+                scenario_result_ids=[self._scenario_result_id]
+            )
+            if not existing_results:
+                raise ValueError(
+                    f"Scenario result id '{self._scenario_result_id}' not found in memory. "
+                    f"Drop scenario_result_id to start a new scenario."
+                )
+            stored_result = existing_results[0]
+            stored_plan = self._get_stored_run_plan(stored_result=stored_result)
+
         # Build atomic attacks: resolve the seed groups once, snapshot the resolved inputs
         # into a ScenarioContext, and hand it to the subclass extension point. Baseline emission
         # is the scenario's own responsibility — matrix scenarios get it for free (the matrix
@@ -884,14 +1071,50 @@ class Scenario(ABC):
         # ``self._include_baseline`` above, which the ScenarioContext carries as
         # ``include_baseline``.
         #
-        # On resume, resolve the full, deterministic dataset (no max_dataset_size sampling):
-        # the originally-sampled subset was snapshotted into the ScenarioResult metadata and is
-        # replayed by _apply_persisted_objectives. Re-drawing a fresh random.sample here would
-        # diverge from the persisted hashes and abort resume whenever max_dataset_size is set.
+        # Resolve without sampling on resume, then restore the planned population before
+        # builders check compatibility. Inputs outside the saved run must not affect resume.
         is_resume = self._scenario_result_id is not None
+        if not is_resume:
+            await self._dataset_config.prepare_async()
         seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
-        context = self._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
+        if stored_plan is not None:
+            planned_seed_ids = {group_id for group in stored_plan.atomic_groups for group_id in group.seed_group_ids}
+            if seed_groups_by_dataset:
+                resolved_seed_ids = {group.logical_id for groups in seed_groups_by_dataset.values() for group in groups}
+                missing_seed_ids = planned_seed_ids - resolved_seed_ids
+                if missing_seed_ids:
+                    raise ValueError(
+                        f"Scenario result id '{self._scenario_result_id}' cannot resume: "
+                        f"missing {len(missing_seed_ids)} planned seed group(s) in the resolved datasets."
+                    )
+            seed_groups_by_dataset = {
+                name: [group for group in groups if group.logical_id in planned_seed_ids]
+                for name, groups in seed_groups_by_dataset.items()
+            }
+        if not is_resume and self._dataset_config.max_total != "all":
+            count = sum(len(groups) for groups in seed_groups_by_dataset.values())
+            if count > self._dataset_config.max_total:
+                seed_groups_by_dataset = sample_with_coverage(
+                    groups_by_dataset=seed_groups_by_dataset,
+                    cap=self._dataset_config.max_total,
+                    required_keys=self._get_required_objective_keys(),
+                    key=lambda name, _: name,
+                )
+        # A fresh run's result id is chosen now, so attacks built below can already refer to the run.
+        new_result_id = uuid.uuid4()
+        context = self._build_scenario_context(
+            seed_groups_by_dataset=seed_groups_by_dataset,
+            scenario_result_id=self._scenario_result_id or str(new_result_id),
+            stored_run_plan=stored_plan,
+        )
         self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
+        if context.scenario_techniques and not any(
+            atomic.group_kind is not ScenarioRunPlanGroupKind.BASELINE for atomic in self._atomic_attacks
+        ):
+            raise IncompatibleTechniqueError(
+                f"{type(self).__name__}: no usable selected techniques for the objective target and dataset. "
+                f"Selected techniques: {[technique.value for technique in context.scenario_techniques]}."
+            )
 
         # Build the canonical scenario identifier once params/techniques/datasets
         # are resolved, so both the resume check and the new-result branch share the
@@ -901,23 +1124,11 @@ class Scenario(ABC):
         # Check if we're resuming an existing scenario. Any divergence is a hard error
         # rather than a silent restart, so the original progress isn't orphaned without
         # the user knowing.
-        if self._scenario_result_id:
-            existing_results = await self._memory.get_scenario_results_async(
-                scenario_result_ids=[self._scenario_result_id]
-            )
-
-            if not existing_results:
-                raise ValueError(
-                    f"Scenario result id '{self._scenario_result_id}' not found in memory. "
-                    f"Drop scenario_result_id to start a new scenario."
-                )
-
+        if self._scenario_result_id and stored_result is not None:
             self._validate_stored_scenario(
-                stored_result=existing_results[0],
+                stored_result=stored_result,
                 current_identifier=scenario_identifier,
             )
-            stored_result = existing_results[0]
-            stored_plan = self._get_stored_run_plan(stored_result=stored_result)
             if stored_plan is not None:
                 self._apply_persisted_run_plan(stored_plan=stored_plan)
             else:
@@ -942,9 +1153,11 @@ class Scenario(ABC):
         }
 
         result = ScenarioResult(
+            id=new_result_id,
             scenario_identifier=scenario_identifier,
             scenario_description=self._description,
             labels=self._memory_labels,
+            operation_id=self._operation_id,
             attack_results=attack_results,
             scenario_run_state=ScenarioRunState.CREATED,
             display_group_map=self._display_group_map,
@@ -962,20 +1175,20 @@ class Scenario(ABC):
         """
         Build the metadata dict persisted with a freshly-created ``ScenarioResult``.
 
-        When ``max_dataset_size`` is in effect, the dataset config draws an
+        When a source or total limit is in effect, the dataset config draws an
         unseeded ``random.sample`` and the chosen subset would silently change
         on the next run (e.g. a resume). To make resume reliable, snapshot the
         chosen objective hashes here so the next ``_setup_scenario_async`` can
         replay them via ``keep_seed_groups_with_hashes``.
 
-        The normalized run plan is always stored. When ``max_dataset_size`` is not
-        set, only the run plan is needed because the full dataset is deterministic.
+        The normalized run plan is always stored. When no sampling limits are set,
+        only the run plan is needed because the full dataset is deterministic.
 
         Returns:
             dict[str, Any]: Metadata payload for the new ScenarioResult.
         """
         metadata: dict[str, Any] = {}
-        if getattr(self._dataset_config, "max_dataset_size", None) is not None:
+        if self._dataset_config.has_sampling_limits:
             hashes: list[str] = []
             seen: set[str] = set()
             for aa in self._atomic_attacks:
@@ -986,6 +1199,14 @@ class Scenario(ABC):
                         hashes.append(sha)
             metadata["objective_hashes"] = hashes
         metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = self._build_run_plan().model_dump(mode="json", exclude_none=True)
+        metadata["incompatible_technique_policy"] = self._incompatible_technique_policy.value
+        adaptations = {
+            atomic.logical_group_id: atomic.seed_group_adaptations
+            for atomic in self._atomic_attacks
+            if atomic.seed_group_adaptations
+        }
+        if adaptations:
+            metadata["seed_group_adaptations"] = adaptations
         return metadata
 
     def _build_run_plan(self) -> ScenarioRunPlan:
@@ -1261,8 +1482,8 @@ class Scenario(ABC):
         ``parent_eval_hash`` was introduced (or by callers that don't supply
         one) match name-only as a backward-compatible fallback.
 
-        ``ERROR`` rows and rows carrying an ``AttackPreparationFailure`` are
-        excluded: neither reached the objective target, so both stay pending.
+        Child rows cannot complete their parent unit. ``ERROR`` rows and rows carrying
+        an ``AttackPreparationFailure`` also stay pending.
 
         Returns:
             dict[tuple[str, str | None], set[str]]: Completed objective hashes keyed by
@@ -1276,7 +1497,9 @@ class Scenario(ABC):
         if not self._scenario_result_id:
             return {}
 
-        rows = await self._memory.get_attack_results_async(scenario_result_id=self._scenario_result_id)
+        rows = await self._memory.get_attack_results_async(
+            scenario_result_id=self._scenario_result_id, result_selection=AttackResultSelection.ALL_RESULTS
+        )
         completed_by_attack: dict[tuple[str, str | None], set[str]] = {}
         for row in rows:
             # ERROR rows hit infrastructure problems, and preparation failures never reached the
@@ -1286,6 +1509,8 @@ class Scenario(ABC):
             # are measured results of a deterministic configuration; retrying them would re-send
             # the objective on every resume without ever converging.
             if row.outcome == AttackOutcome.ERROR or not row.attribution_data or not row.objective:
+                continue
+            if AttackResultMetadata.from_metadata(metadata=row.attribution_data).attempt_index is not None:
                 continue
             if AttackPreparationFailure.from_result(result=row) is not None:
                 continue
@@ -1369,7 +1594,13 @@ class Scenario(ABC):
         """
         return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
 
-    def _build_scenario_context(self, *, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]) -> ScenarioContext:
+    def _build_scenario_context(
+        self,
+        *,
+        seed_groups_by_dataset: dict[str, list[AttackSeedGroup]],
+        stored_run_plan: ScenarioRunPlan | None = None,
+        scenario_result_id: str | None = None,
+    ) -> ScenarioContext:
         """
         Snapshot the resolved runtime inputs into a ``ScenarioContext``.
 
@@ -1382,6 +1613,8 @@ class Scenario(ABC):
             seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): Seed groups already
                 resolved once (see ``_resolve_seed_groups_by_dataset_async``). The flat
                 ``context.seed_groups`` is derived from these so both views share one sample.
+            stored_run_plan (ScenarioRunPlan | None): The original plan when resuming.
+            scenario_result_id (str | None): The id of the ``ScenarioResult`` this run writes to.
 
         Returns:
             ScenarioContext: The immutable inputs for atomic-attack construction.
@@ -1402,8 +1635,11 @@ class Scenario(ABC):
             dataset_config=self._dataset_config,
             memory_labels=dict(self._memory_labels),
             include_baseline=self._include_baseline,
+            incompatible_technique_policy=self._incompatible_technique_policy,
             seed_groups=seed_groups,
             seed_groups_by_dataset=seed_groups_by_dataset,
+            stored_run_plan=stored_run_plan,
+            scenario_result_id=scenario_result_id,
         )
 
     @abstractmethod
@@ -1753,11 +1989,15 @@ class Scenario(ABC):
                     result = await atomic_attack.run_async(
                         executor=shared_executor,
                         return_partial_on_failure=True,
+                        operation_id=self._operation_id,
                     )
                     outcomes.append((atomic_attack, result))
                     if result.has_incomplete:
                         stop_event.set()
                 except Exception as exc:
+                    exc.add_note(
+                        f"Failed atomic attack {atomic_attack.atomic_attack_name!r} in scenario {self._name!r}."
+                    )
                     outcomes.append(exc)
                     stop_event.set()
                 except BaseException:

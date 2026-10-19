@@ -45,7 +45,7 @@ interface HistoryFiltersBarProps {
   attackTypeOptions: string[]
   converterOptions: string[]
   operatorOptions: string[]
-  operationOptions: string[]
+  operationOptions: FilterOption[]
   otherLabelOptions: string[]
 }
 
@@ -68,7 +68,7 @@ export default function HistoryFiltersBar({
     hasConverters,
     includeScenarioAttacks,
     operator: operatorFilters,
-    operation: operationFilters,
+    operationId: operationFilters,
     otherLabels: otherLabelFilters,
     labelSearchText,
   } = filters
@@ -144,8 +144,8 @@ export default function HistoryFiltersBar({
           className={styles.filterDropdown}
           placeholder="All operations"
           selectedOptions={operationFilters}
-          options={toFilterOptions(operationOptions)}
-          onSelect={(selected) => setFilter('operation', selected)}
+          options={operationOptions}
+          onSelect={(selected) => setFilter('operationId', selected)}
           testId="operation-filter"
         />
         <Combobox

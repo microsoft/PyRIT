@@ -41,7 +41,7 @@ describe("Navigation", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
 
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Technique.execute" })).toHaveAttribute(
       "aria-current",
       "page"
     );
@@ -61,9 +61,12 @@ describe("Navigation", () => {
     expect(onNavigate).toHaveBeenCalledWith("home");
   });
 
-  it("renders the chat button", () => {
+  it("renders the Technique.execute button for chat", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
-    expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Technique.execute" })).toHaveAttribute(
+      "title",
+      "Technique.execute"
+    );
   });
 
   it("renders the registry button", () => {
@@ -80,7 +83,7 @@ describe("Navigation", () => {
       <Navigation {...defaultProps} onNavigate={onNavigate} />
     );
 
-    await user.click(screen.getByRole("button", { name: "Chat" }));
+    await user.click(screen.getByRole("button", { name: "Technique.execute" }));
     expect(onNavigate).toHaveBeenCalledWith("chat");
   });
 
@@ -139,12 +142,28 @@ describe("Navigation", () => {
 
     expect(labels).toEqual([
       "Home",
-      "Chat",
+      "Technique.execute",
       "History",
+      "Analytics",
+      "Operations",
       "Scanner",
+      "Datasets",
       "Registry",
       "Configuration",
     ]);
+  });
+
+  it("marks Operations current and navigates to its view", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} currentView="operations" onNavigate={onNavigate} />,
+    );
+
+    const button = screen.getByRole("button", { name: "Operations" });
+    expect(button).toHaveAttribute("aria-current", "page");
+    await user.click(button);
+    expect(onNavigate).toHaveBeenCalledWith("operations");
   });
 
   it("marks History current and navigates to its tabbed view", async () => {
@@ -164,6 +183,16 @@ describe("Navigation", () => {
     expect(onNavigate).toHaveBeenCalledWith("history");
   });
 
+  it("marks Analytics current and opens the explorer", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderWithProvider(<Navigation {...defaultProps} currentView="analytics" onNavigate={onNavigate} />);
+    const button = screen.getByRole("button", { name: "Analytics" });
+    expect(button).toHaveAttribute("aria-current", "page");
+    await user.click(button);
+    expect(onNavigate).toHaveBeenCalledWith("analytics");
+  });
+
   it("calls onNavigate with 'scenarios' when the scenarios button is clicked", async () => {
     const user = userEvent.setup();
     const onNavigate = jest.fn();
@@ -180,6 +209,32 @@ describe("Navigation", () => {
       <Navigation {...defaultProps} currentView="scenarios" />
     );
     expect(screen.getByRole("button", { name: "Scanner" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+  });
+
+  it("renders the Datasets button", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+    expect(screen.getByRole("button", { name: "Datasets" })).toBeInTheDocument();
+  });
+
+  it("calls onNavigate with 'datasets' when the datasets button is clicked", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} onNavigate={onNavigate} />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Datasets" }));
+    expect(onNavigate).toHaveBeenCalledWith("datasets");
+  });
+
+  it("marks the datasets button current when it is the active view", () => {
+    renderWithProvider(
+      <Navigation {...defaultProps} currentView="datasets" />
+    );
+    expect(screen.getByRole("button", { name: "Datasets" })).toHaveAttribute(
       "aria-current",
       "page"
     );

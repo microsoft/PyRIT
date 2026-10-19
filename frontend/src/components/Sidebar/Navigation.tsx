@@ -10,9 +10,12 @@ import {
 import type { MenuCheckedValueChangeData, MenuCheckedValueChangeEvent } from '@fluentui/react-components'
 import {
   ChatRegular,
+  DatabaseRegular,
   HomeRegular,
   SettingsRegular,
   HistoryRegular,
+  DataBarVerticalRegular,
+  BriefcaseRegular,
   PersonFeedbackRegular,
   ScriptRegular,
   TargetRegular,
@@ -29,9 +32,12 @@ export type ViewName =
   | 'home'
   | 'chat'
   | 'history'
+  | 'analytics'
+  | 'operations'
   | 'registry'
   | 'configuration'
   | 'scenarios'
+  | 'datasets'
 
 interface NavigationProps {
   currentView: ViewName
@@ -84,8 +90,8 @@ export default function Navigation({
           data-active={currentView === 'chat'}
           appearance="subtle"
           icon={<ChatRegular />}
-          title="Chat"
-          aria-label="Chat"
+          title="Technique.execute"
+          aria-label="Technique.execute"
           aria-current={currentView === 'chat' ? 'page' : undefined}
           onClick={() => onNavigate('chat')}
         />
@@ -103,6 +109,28 @@ export default function Navigation({
 
         <Button
           className={styles.navButton}
+          data-active={currentView === 'analytics'}
+          appearance="subtle"
+          icon={<DataBarVerticalRegular />}
+          title="Analytics"
+          aria-label="Analytics"
+          aria-current={currentView === 'analytics' ? 'page' : undefined}
+          onClick={() => onNavigate('analytics')}
+        />
+
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'operations'}
+          appearance="subtle"
+          icon={<BriefcaseRegular />}
+          title="Operations"
+          aria-label="Operations"
+          aria-current={currentView === 'operations' ? 'page' : undefined}
+          onClick={() => onNavigate('operations')}
+        />
+
+        <Button
+          className={styles.navButton}
           data-active={currentView === 'scenarios'}
           appearance="subtle"
           icon={<TargetRegular />}
@@ -110,6 +138,17 @@ export default function Navigation({
           aria-label="Scanner"
           aria-current={currentView === 'scenarios' ? 'page' : undefined}
           onClick={() => onNavigate('scenarios')}
+        />
+
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'datasets'}
+          appearance="subtle"
+          icon={<DatabaseRegular />}
+          title="Datasets"
+          aria-label="Datasets"
+          aria-current={currentView === 'datasets' ? 'page' : undefined}
+          onClick={() => onNavigate('datasets')}
         />
 
         <Button

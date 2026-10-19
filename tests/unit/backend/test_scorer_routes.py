@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
+from pyrit.backend.models.common import MAX_CURSOR_LENGTH, MAX_IDENTIFIER_LENGTH, MAX_ITEMS
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.models import ComponentIdentifier, Scorable, Score, ScoringExpectation, TargetIdentifier
 from pyrit.prompt_target import PromptTarget
@@ -199,6 +200,17 @@ def test_duplicate_name_returns_400_and_does_not_replace_instance(compatibility_
         ("/api/scorers", {"name": "invalid name", "type": "_RouteLeafScorer", "params": {}}),
         ("/api/scorers?limit=0", None),
         ("/api/scorers?limit=201", None),
+        ("/api/scorers", {"name": "valid", "type": "t" * (MAX_IDENTIFIER_LENGTH + 1), "params": {}}),
+        (
+            "/api/scorers",
+            {"name": "valid", "type": "_RouteLeafScorer", "params": {"p" * (MAX_IDENTIFIER_LENGTH + 1): 1}},
+        ),
+        (
+            "/api/scorers",
+            {"name": "valid", "type": "_RouteLeafScorer", "params": {f"p{i}": i for i in range(MAX_ITEMS + 1)}},
+        ),
+        (f"/api/scorers?cursor={'c' * (MAX_CURSOR_LENGTH + 1)}", None),
+        (f"/api/scorers/{'s' * (MAX_IDENTIFIER_LENGTH + 1)}", None),
     ],
 )
 def test_invalid_scorer_request_shapes_return_422(

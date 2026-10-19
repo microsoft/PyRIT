@@ -28,7 +28,7 @@ class MyScenario(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=MyTechnique,
-            default_dataset_config=DatasetConfiguration(dataset_names=["my_dataset"]),
+            default_dataset_config=DatasetAttackConfiguration(sources=[DatasetSource(name="my_dataset")]),
             objective_scorer=objective_scorer or self._get_default_objective_scorer(),
             scenario_result_id=scenario_result_id,
         )
@@ -68,7 +68,7 @@ def __init__(
     super().__init__(
         version=self.VERSION,
         technique_class=MyTechnique,
-        default_dataset_config=DatasetConfiguration(dataset_names=["my_dataset"]),
+        default_dataset_config=DatasetAttackConfiguration(sources=[DatasetSource(name="my_dataset")]),
         objective_scorer=objective_scorer,
     )
 ```
@@ -92,7 +92,12 @@ scenario.set_params_from_args(args={"objective_target": target, "max_concurrency
 await scenario.initialize_async()
 ```
 
-The base `Scenario` declares the common run inputs once in `_common_scenario_parameters()`: `objective_target` (a `RegistryReference` — resolved by name or supplied as an instance), the `opaque` live objects `scenario_techniques` / `technique_converters` / `dataset_config` / `memory_labels` (passed by identity, never coerced or deep-copied), and the scalars `max_concurrency` / `max_retries` / `include_baseline`.
+The base `Scenario` declares the common run inputs once in `_common_scenario_parameters()`: `objective_target` (a `RegistryReference` — resolved by name or supplied as an instance), the `opaque` live objects `scenario_techniques` / `technique_converters` / `dataset_config` / `memory_labels` (passed by identity, never coerced or deep-copied), and the scalars `max_concurrency` / `max_retries` / `include_baseline` / `incompatible_technique_policy`.
+
+`incompatible_technique_policy` accepts `skip` (default) or `raise`; `None` uses
+`INCOMPATIBLE_TECHNIQUE_POLICY`. Forward `context.incompatible_technique_policy` to matrix
+builders and apply shared requirement helpers in manual builders. Skip only known incompatibility,
+with one summary per technique/dataset. Raise if no selected technique can run, even with a baseline.
 
 ### Declaring custom parameters — add via `additional_parameters`
 
@@ -113,30 +118,86 @@ Dropping a common input is not silent: `set_params_from_args` rejects any value 
 
 ## Dataset Loading
 
-Datasets are read from `CentralMemory`.
+Datasets are read from `CentralMemory`. New runs call `prepare_async()` before
+reading. Reads, discovery, estimates, and resume must never fetch or store datasets.
+Resolve parameter-dependent source names before preparation, not during seed reads.
 
 ### Basic — named datasets:
 ```python
-DatasetConfiguration(
-    dataset_names=["airt_hate", "airt_violence"],
-    max_dataset_size=10,  # optional: sample up to N per dataset
+DatasetAttackConfiguration(
+    sources=[
+        DatasetSource(name="harmbench"),
+        DatasetSource(name="airt_hate", max_size=10),
+        DatasetSource(name="team_objectives", max_size="all"),
+    ],
+    max_per_dataset=5,
+    max_total=12,
 )
 ```
 
+With filtered populations of 100, 40, and 7 groups, selection has two steps:
+
+| Dataset | Full population | After source cap |
+| --- | --- | --- |
+| `harmbench` | 100 | 5 (inherits `max_per_dataset`) |
+| `airt_hate` | 40 | 10 (explicit `max_size`) |
+| `team_objectives` | 7 | 7 (`"all"` removes the source cap) |
+
+The total cap then samples 12 groups from these 22 groups. The split can be 3, 6,
+and 3, for example; it is not balanced or guaranteed to cover every dataset.
+A dataset with no selected groups keeps its key with an empty list.
+
 ### Advanced — custom subclass for filtering:
 ```python
-class MyDatasetConfiguration(DatasetConfiguration):
-    def get_seed_groups(self) -> dict[str, list[SeedGroup]]:
-        result = super().get_seed_groups()
-        # Filter by selected techniques via self._scenario_techniques
-        return filtered_result
+class MyDatasetConfiguration(DatasetAttackConfiguration):
+    def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
+        return build_custom_groups(seeds)
 ```
 
 Options:
-- `dataset_names` — load by name from memory
-- `seed_groups` — pass explicit groups (mutually exclusive with `dataset_names`)
-- `max_dataset_size` — cap per dataset
-- Override `_load_seed_groups_for_dataset()` for custom loading
+- `sources` selects datasets by name. Source `max_size` overrides `max_per_dataset`;
+  omitted, `None`, empty, and `"default"` mean inherit; `"all"` means no cap.
+- All dataset limits use the same rule: omitted, `None`, empty, and `"default"` use the
+  default; `"all"` removes that limit; a positive integer sets a cap.
+- `max_per_dataset=5` is the named-objective default. `max_total="all"` leaves the
+  combined selection uncapped. Apply source limits before the total limit.
+- `DatasetSource(provider=...)` attaches a configured `SeedDatasetProvider` instance whose
+  `dataset_name` must match the source name. It takes precedence over registry lookup.
+  Configuration copies must preserve live providers by identity, not serialize or deep-copy them.
+- `fetch=DatasetFetchPolicy.IF_MISSING` prepares absent configured or registered datasets.
+  `NEVER` requires stored data. A filter miss must never fetch.
+- Stored rows win even if a configured provider's inputs change. Generation count and
+  selection limits are separate; use a new dataset name to keep another generated batch.
+  Use one writer per name; concurrent runs can generate and store different batches.
+- `seed_groups` and `seeds` are inline alternatives. They never use memory or providers.
+- Validators run on full filtered populations before any sampling.
+- Ingredients must remain complete. Use `max_per_dataset="all"` and no finite source
+  `max_size`; cap the assembled attack groups with `max_total`, not ingredient rows.
+- Use `with_overrides()` instead of reconstructing a subclass or mutating its defaults.
+- Clients and Python use `ScenarioDatasetRequest` through the common `dataset_overrides`
+  parameter. `dataset_config` still replaces the default; overrides apply on top.
+- Resolve parameter/technique-dependent names in `_resolve_default_dataset_config()`,
+  before overrides, validation, and preparation. Do not rewrite user selections in validators.
+- Declare `DATASET_OPTIONS` (or parameter-aware `get_dataset_options()`): `ANY` only for
+  generic named populations, `SUBSET` for approved alternatives, `FIXED` for ingredients.
+  Disable limits that would truncate ingredients. Compound source edits are ambiguous;
+  preserve child shaping/caps and allow only supported global edits.
+- Estimates expose `dataset_defaults`, `effective_datasets`, and `dataset_options`.
+  These are response projections, not incoming edit state. Never read seeds for projections.
+  The catalog reads options and defaults from registry metadata, never from an estimate.
+- Resume replays the saved launch request; the stored run plan fixes the selected seed groups,
+  so caps and fetch policies cannot change a resumed run. Dataset names are checked by the
+  stored scenario identity. Resume never prepares datasets.
+- Keep custom shaping in `_build_attack_groups()` or `_build_groups_by_dataset_async()`.
+  Reads use `_collect_seeds_for_dataset_async()` and must not fetch.
+- Build synthesized prompts from those filtered seeds, not a second unfiltered memory query.
+  Scenario code must not call memory seed-read methods directly; the scenario contract test enforces this.
+- `dataset_names`, `max_dataset_size`, `auto_fetch`, and `per_dataset()` are deprecated.
+
+`max_dataset_size` is an exact alias for `max_total`; it does not disable source caps.
+To keep the old total-only selection of up to 10 groups, use
+`max_per_dataset="all", max_total=10`. To remove both caps, set both to `"all"`;
+`None` now uses the default, not unlimited selection.
 
 ## Technique Enum
 
@@ -217,6 +278,11 @@ config, memory labels, baseline flag, and seed groups), snapshots them into an i
 `_build_atomic_attacks_async` (see the Baseline section below). Scenario authors never read
 half-initialized `self._*` state to build attacks — read everything from `context`.
 
+On resume, `context.stored_run_plan` carries the original plan. Restore committed
+per-input technique choices from it instead of selecting again. The base restores
+the planned source population before builders check compatibility. Saved adaptive
+choices must identify the full technique, including its prompts, not only its inner attack.
+
 ### Zero-boilerplate matrix scenarios
 
 Scenarios whose construction is the plain technique × dataset cross-product delegate to the
@@ -283,6 +349,9 @@ Key points:
   `True` to force opt-in.
 - `kwargs` are validated against the attack class constructor signature at
   factory-construction time, so typos fail loudly and early.
+- Check factory and attack-class requirements through `TargetRequirements.check` to retain custom validation.
+- Use shared seed preparation before adding technique seeds. Keep source groups unchanged and record adaptation.
+- Reject saved plans whose technique identity or accepted inputs cannot be restored.
 
 The canonical catalog factories live in `pyrit/setup/initializers/techniques/`; see
 [setup-techniques.instructions.md](setup-techniques.instructions.md) for how to add one

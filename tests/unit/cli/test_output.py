@@ -43,6 +43,7 @@ def _make_scenario(**overrides) -> RegisteredScenario:
         "all_techniques": [],
         "default_datasets": [],
         "supported_parameters": [],
+        "supported_parameter_names": [],
     }
     defaults.update(overrides)
     return RegisteredScenario(**defaults)
@@ -271,6 +272,26 @@ def test_print_initializer_list_full(capsys):
     assert "Total initializers: 2" in captured.out
 
 
+def test_print_initializer_list_shows_falsy_defaults(capsys):
+    items = [
+        _make_initializer(
+            initializer_name="flags",
+            initializer_type="FlagsInitializer",
+            supported_parameters=[
+                Parameter(name="verbose", default=False, param_type=bool, description="Chatty output."),
+                Parameter(name="retries", default=0, param_type=int, description="Retry count."),
+                Parameter(name="label", default=None, param_type=str, description="Optional label."),
+            ],
+        ),
+    ]
+    _output.print_initializer_list(items=items)
+    captured = capsys.readouterr()
+    assert "[default: False]" in captured.out
+    assert "[default: 0]" in captured.out
+    label_line = next(line for line in captured.out.splitlines() if "label" in line)
+    assert "[default:" not in label_line
+
+
 # ---------------------------------------------------------------------------
 # print_target_list
 # ---------------------------------------------------------------------------
@@ -387,6 +408,13 @@ def test_print_scenario_run_progress_with_known_totals(capsys):
     assert "units: 5/10 (50%)" in captured.out
     assert "IN_PROGRESS" in captured.out
     assert "30%" in captured.out
+
+
+def test_print_scenario_run_progress_truncates_the_exact_ratio(capsys):
+    run = _make_run(status=ScenarioRunState.IN_PROGRESS, total_attacks=100, completed_attacks=29)
+    _output.print_scenario_run_progress(run=run)
+    captured = capsys.readouterr()
+    assert "units: 29/100 (29%)" in captured.out
 
 
 def test_print_scenario_run_progress_uses_ascii_for_limited_console():

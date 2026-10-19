@@ -12,9 +12,12 @@ Route structure:
     /api/scenarios/runs          — scenario execution lifecycle
 """
 
+import uuid
+
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from pyrit.backend.models.common import MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr, ProblemDetail
+from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.models.scenarios import (
     ListRegisteredScenariosResponse,
     ScenarioRunListResponse,
@@ -137,6 +140,32 @@ async def estimate_scenario_run_size(  # pyrit-async-suffix-exempt
     return estimate
 
 
+@router.post(
+    "/catalog/{scenario_name}/datasets/load",
+    response_model=ScenarioDatasetLoadResponse,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid dataset selection"},
+        404: {"model": ProblemDetail, "description": "Scenario not found"},
+    },
+)
+async def load_scenario_datasets_async(
+    *, scenario_name: IdentifierStr, request: ScenarioRunSizeEstimateRequest
+) -> ScenarioDatasetLoadResponse:
+    """
+    Load missing selected datasets on explicit request, without starting a scan.
+
+    Returns:
+        ScenarioDatasetLoadResponse: Selected settings and stored metadata.
+    """
+    try:
+        result = await get_scenario_service().load_datasets_async(scenario_name=scenario_name, request=request)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_name}' not found")
+    return result
+
+
 # ============================================================================
 # Scenario Runs
 # ============================================================================
@@ -179,6 +208,8 @@ async def start_scenario_run(  # pyrit-async-suffix-exempt
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
     except ScenarioRunConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
+    except LookupError as e:
+        raise FileNotFoundError(str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
@@ -206,6 +237,8 @@ async def resume_scenario_run_async(*, scenario_result_id: IdentifierStr) -> Sce
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
     except ScenarioRunConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
+    except LookupError as e:
+        raise FileNotFoundError(str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
@@ -231,6 +264,11 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         max_length=MAX_ITEMS,
         description="key:value labels; OR within a key and AND across keys.",
     ),
+    operation_id: list[uuid.UUID] | None = Query(
+        None,
+        max_length=MAX_ITEMS,
+        description="Saved Operation IDs; repeated values are OR-matched. Legacy name-only runs never match.",
+    ),
     limit: int = Query(100, ge=1, le=100, description="Maximum items per page"),
     cursor: CursorStr | None = Query(None, description="Opaque descending history cursor"),
 ) -> ScenarioRunListResponse:
@@ -241,6 +279,7 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         scenario_names: Registered or persisted scenario names to match.
         run_statuses: Run states to match.
         label: Repeated key:value label filters.
+        operation_id: Saved Operation IDs to match.
         limit: Maximum number of runs to return.
         cursor: Opaque cursor from the previous page.
 
@@ -252,6 +291,7 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         scenario_names=scenario_names,
         statuses=run_statuses,
         labels=parse_label_query_params(label),
+        operation_ids=operation_id,
         limit=limit,
         cursor=cursor,
     )

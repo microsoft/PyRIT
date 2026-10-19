@@ -76,6 +76,25 @@ configs (prepended conversations, multimodal seeds, next-turn messages, memory l
 
 The category pages above each walk through their executors with short runnable examples.
 
+## Partial execution and stored results
+
+`AttackExecutor` raises execution failures by default. With `return_partial_on_failure=True`,
+it returns an `AttackExecutorResult` containing completed results and `incomplete_objectives`.
+Each incomplete entry retains the original exception; `raise_if_incomplete()` re-raises it.
+Cancellation still propagates rather than becoming an incomplete objective.
+
+An incomplete execution may have saved an error result, or a completed result whose database
+commit acknowledgement failed. `incomplete_result_ids` aligns with `incomplete_objectives` and
+contains each confirmed stored result ID, or `None` when no row was confirmed. After a failed
+write, PyRIT checks the allocated result ID without retrying the write or creating another row.
+If that check also fails, the failure is logged and the original execution/persistence error
+still propagates.
+
+`SequentialAttack` keeps its ordered child links in
+`metadata["child_attack_result_ids"]`, including when the parent fails. Nested sequences link
+their direct children, not their grandchildren. These links survive database round-trips;
+they include confirmed child rows only, never IDs for children that were not saved.
+
 ## When do you actually need a new executor class?
 
 Most of an executor's behavior comes from its *configuration and data*, not from new code. So before

@@ -235,10 +235,15 @@ export interface TargetPreferences {
   readonly adversarial: TargetReference | null
 }
 
+/** A saved Operation, or a name kept from before Operations were saved records. */
+export type OperationSelection = { readonly id: string } | { readonly name: string }
+
 export interface UserPreferences {
   readonly targets: TargetPreferences
   readonly hiddenTargetRegistryNames: string[]
   readonly labels: Record<string, string | null>
+  /** Omitted to use the server default; null when the user cleared the selection. */
+  readonly operation?: OperationSelection | null
   readonly theme: ThemeMode
   readonly chatMarkdown: boolean
 }
@@ -366,6 +371,53 @@ export interface CreateConverterRequest {
   params?: Record<string, unknown>
 }
 
+export interface TechniqueInstance {
+  name: string
+  description?: string | null
+  attack_type: string
+  tags: string[]
+  uses_adversarial: boolean
+  uses_default_adversarial_target: boolean
+  /** Supplied factory creation inputs, with live component credentials omitted. */
+  creation_statement: string
+}
+
+export interface TechniqueTypeEntry {
+  attack_type: string
+  description: string
+  parameters: Parameter[]
+  supports_adversarial: boolean
+  supports_converters: boolean
+}
+
+export interface TechniqueListResponse {
+  items: TechniqueInstance[]
+  pagination: PaginationInfo
+}
+
+export interface TechniqueTypeResponse {
+  items: TechniqueTypeEntry[]
+}
+
+export interface CreateTechniqueRequest {
+  name: string
+  description?: string
+  tags: string[]
+  type: string
+  params: Record<string, unknown>
+  request_converters?: string[]
+  response_converters?: string[]
+  adversarial_chat?: string
+  adversarial_system_prompt?: string
+  adversarial_seed_prompt?: string
+  adversarial_prompt_template?: string
+}
+
+export interface RegistryReferenceOption {
+  name: string
+  type: string
+}
+
 export interface Parameter {
   name: string
   type_name: string
@@ -458,6 +510,186 @@ export type AttackTargetResolutionStatus =
 
 export type AttackOutcome = 'undetermined' | 'success' | 'failure' | 'error'
 
+// Wire contracts from pyrit.models.analytics. The SDK selects and counts the cohort.
+export type AttackAnalyticsDimensionName =
+  | 'operation'
+  | 'operator'
+  | 'targeted_harm_category'
+  | 'attack_type'
+  | 'converter_type'
+  | 'objective_target'
+  | 'model'
+  | 'scenario'
+  | 'label'
+
+export type AttackAnalyticsConverterDirection = 'request' | 'response'
+export type AttackAnalyticsMatchMode = 'any' | 'all'
+
+export type AttackAnalyticsDimension =
+  | {
+      readonly name: 'label'
+      readonly label_key: string
+      readonly converter_direction?: 'request'
+    }
+  | {
+      readonly name: 'converter_type'
+      readonly label_key?: null
+      readonly converter_direction?: AttackAnalyticsConverterDirection
+    }
+  | {
+      readonly name: Exclude<AttackAnalyticsDimensionName, 'label' | 'converter_type'>
+      readonly label_key?: null
+      readonly converter_direction?: 'request'
+    }
+
+/** Absence keys cannot collide with literal values such as "Unknown" or "No converters". */
+export type AttackAnalyticsValue =
+  | { readonly kind: 'value'; readonly value: string }
+  | { readonly kind: 'missing' | 'no_converters'; readonly value: null }
+
+export interface AttackAnalyticsFilter {
+  readonly dimension: AttackAnalyticsDimension
+  readonly values: AttackAnalyticsValue[]
+  readonly match_mode: AttackAnalyticsMatchMode
+}
+
+/** Separate predicates are ANDed, including repeated dimensions. Bounds are [after, before). */
+export interface AttackAnalyticsFilters {
+  readonly dimensions: AttackAnalyticsFilter[]
+  readonly outcomes: AttackOutcome[]
+  readonly updated_after?: string | null
+  readonly updated_before?: string | null
+}
+
+/** SDK-computed proportions in [0, 1]. A null rate has no available denominator. */
+export interface OutcomeStatistics {
+  readonly success_rate: number | null
+  /** Serialized read-only alias of success_rate, not a separately calculated value. */
+  readonly success_rate_decided: number | null
+  readonly success_rate_all: number | null
+  readonly total_decided: number
+  readonly successes: number
+  readonly failures: number
+  readonly undetermined: number
+  readonly errors: number
+  readonly total_results: number
+  readonly decided_share: number | null
+  readonly outcome_shares: Readonly<Record<AttackOutcome, number>>
+}
+
+export type AttackAnalyticsStatistics = OutcomeStatistics
+
+export interface AttackAnalyticsQuery {
+  readonly filters?: AttackAnalyticsFilters
+  readonly group_by?: AttackAnalyticsDimension
+  readonly compare_by?: AttackAnalyticsDimension | null
+  readonly group_limit?: number
+  readonly group_offset?: number
+  readonly axis_limit?: number
+  readonly result_limit?: number
+}
+
+export interface AttackAnalyticsResultsQuery {
+  readonly filters?: AttackAnalyticsFilters
+  readonly cursor?: string | null
+  readonly limit?: number
+}
+
+/** The SDK excludes this exact dimension's predicates, keeping all other filters. */
+export interface AttackAnalyticsFacetQuery {
+  readonly dimension: AttackAnalyticsDimension
+  readonly filters?: AttackAnalyticsFilters
+  readonly search?: string
+  readonly offset?: number
+  readonly limit?: number
+}
+
+export interface AttackAnalyticsOption {
+  readonly key: AttackAnalyticsValue
+  /** Presentation only. Saved target keys are behavioral hashes; scenario keys are saved run IDs. */
+  readonly label: string
+}
+
+export interface AttackAnalyticsGroup extends AttackAnalyticsOption {
+  readonly statistics: OutcomeStatistics
+  readonly drilldown_filters: AttackAnalyticsFilter[]
+}
+
+export interface AttackAnalyticsCell {
+  readonly row: AttackAnalyticsValue
+  readonly column: AttackAnalyticsValue
+  readonly statistics: OutcomeStatistics
+  readonly drilldown_filters: AttackAnalyticsFilter[]
+}
+
+export interface AttackAnalyticsResultRow {
+  readonly attack_result_id: string
+  readonly objective_preview: string
+  readonly outcome: AttackOutcome
+  readonly updated_at: string
+  readonly operation: string | null
+  readonly operator: string | null
+  readonly attack_type: string | null
+  readonly target_model: string | null
+  /** Content hash for inspection, not the behavioral key used by target filters. */
+  readonly target_identifier_hash: string | null
+  readonly scenario_result_id: string | null
+  readonly targeted_harm_categories: string[]
+  readonly request_converters: string[]
+  readonly response_converters: string[]
+  readonly labels: Record<string, string>
+}
+
+export interface AttackAnalyticsResults {
+  readonly items: AttackAnalyticsResultRow[]
+  readonly has_more: boolean
+  readonly next_cursor: string | null
+  readonly computed_at: string
+}
+
+export interface AttackAnalyticsFacets {
+  readonly items: AttackAnalyticsOption[]
+  readonly has_more: boolean
+  readonly next_offset: number | null
+  readonly computed_at: string
+}
+
+/** Later result-page reads must not replace the report or advance its freshness. */
+export interface AttackAnalyticsReport {
+  readonly filters: AttackAnalyticsFilters
+  readonly group_by: AttackAnalyticsDimension
+  readonly compare_by: AttackAnalyticsDimension | null
+  readonly summary: OutcomeStatistics
+  readonly outcome_filter_applied: boolean
+  readonly groups_overlap: boolean
+  readonly drilldown_unavailable_reason: string | null
+  readonly groups: AttackAnalyticsGroup[]
+  readonly has_more_groups: boolean
+  readonly next_group_offset: number | null
+  readonly rows: AttackAnalyticsOption[]
+  readonly columns: AttackAnalyticsOption[]
+  readonly cells: AttackAnalyticsCell[]
+  readonly axes_truncated: boolean
+  readonly results: AttackAnalyticsResults
+  readonly computed_at: string
+  readonly warnings: string[]
+}
+
+export type AttackAnalyticsChart = 'outcomes' | 'success-rate' | 'heatmap'
+export type AttackAnalyticsHeatmapMetric = 'success_rate' | 'total_results'
+export type AttackAnalyticsDenominator = 'decided' | 'all'
+
+/** Browser presentation state. Inactive axes and denominator choices do not affect API requests. */
+export interface AttackAnalyticsViewState {
+  readonly filters: AttackAnalyticsFilters
+  readonly groupBy: AttackAnalyticsDimension
+  readonly heatmapRow: AttackAnalyticsDimension
+  readonly heatmapColumn: AttackAnalyticsDimension
+  readonly chart: AttackAnalyticsChart
+  readonly heatmapMetric: AttackAnalyticsHeatmapMetric
+  readonly denominator: AttackAnalyticsDenominator
+}
+
 export interface AttackSummary {
   attack_result_id: string
   conversation_id: string
@@ -477,6 +709,9 @@ export interface AttackSummary {
   related_conversation_ids: string[]
   operator?: string | null
   operation?: string | null
+  operation_id?: string | null
+  /** The saved Operation's current name, or the historical name of legacy activity. */
+  operation_name?: string | null
   related_conversations?: Array<{
     conversation_id: string
     conversation_type: 'adversarial' | 'preparation' | 'pruned' | 'score' | 'converter'
@@ -491,7 +726,7 @@ export interface CreateAttackRequest {
   target_registry_name?: string
   name?: string
   operator?: string
-  operation?: string
+  operation_id?: string
   labels?: Record<string, string>
   source_conversation_id?: string
   cutoff_index?: number
@@ -528,6 +763,7 @@ export interface NewAttackContext {
   generation: string
   ready: boolean
   labels?: Record<string, string>
+  operationId?: string | null
 }
 
 export interface ConvertedFileChip {
@@ -552,7 +788,7 @@ export interface SaveConversationRequest {
   objective?: string
   target_registry_name?: string
   operator?: string
-  operation?: string
+  operation_id?: string
   labels?: Record<string, string>
   messages: MessageRequest[]
 }
@@ -768,9 +1004,189 @@ export interface ChangeMainConversationResponse {
   conversation_id: string
 }
 
+/**
+ * Wire shape of `DatasetInfo` from `GET /api/datasets`.
+ * Null counts mean the total is unknown, not zero.
+ */
+export interface DatasetInfo {
+  name: string
+  selection_key: string
+  loaded: boolean
+  provider_available: boolean
+  origins?: string[]
+  logical_examples: number | null
+  seed_pieces: number | null
+  objectives: number | null
+  modalities: string[]
+  harm_categories: string[]
+  has_unlabeled_harm_categories: boolean
+}
+
+/** Wire shape of `DatasetListResponse` from `GET /api/datasets`. */
+export interface DatasetListResponse {
+  items: DatasetInfo[]
+}
+
+/** Stored seed kinds accepted by the dataset seed browser. */
+export type SeedType = 'prompt' | 'objective' | 'simulated_conversation'
+
+/** Stored prompt data types. Media previews use `value_url`; the stored value stays a reference. */
+export type PromptDataType =
+  | 'text'
+  | 'image_path'
+  | 'audio_path'
+  | 'video_path'
+  | 'binary_path'
+  | 'url'
+  | 'reasoning'
+  | 'error'
+  | 'function_call'
+  | 'tool_call'
+  | 'function_call_output'
+
+export type ChatMessageRole =
+  | 'system'
+  | 'user'
+  | 'assistant'
+  | 'simulated_assistant'
+  | 'tool'
+  | 'simulated_tool'
+  | 'developer'
+
+/** How a seed entered memory. Unknown stays unknown; it is not inferred. */
+export type SeedOrigin = 'local' | 'remote' | 'generated' | 'user' | 'unknown'
+
+/** One typed objective condition. Extra fields stay on the object for inspection. */
+export interface SeedCondition {
+  condition_type: string
+  [key: string]: unknown
+}
+
+/**
+ * Wire shape of `SeedRecord` from the seed-example detail endpoint.
+ * This is stored inspection data, not an executable seed.
+ */
+export interface SeedRecord {
+  id: string
+  seed_type: SeedType
+  value: string
+  value_sha256: string | null
+  /**
+   * Client-fetchable media URL (`/api/media` or a signed blob URL).
+   * A non-URL or a missing field means the file cannot be previewed.
+   * `value` remains the stable stored reference.
+   */
+  value_url?: string | null
+  data_type: PromptDataType
+  name: string | null
+  dataset_name: string | null
+  origin: SeedOrigin
+  harm_categories: string[] | null
+  description: string | null
+  authors: string[] | null
+  groups: string[] | null
+  source: string | null
+  date_added: string
+  added_by: string
+  metadata: Record<string, unknown> | null
+  prompt_group_id: string | null
+  sequence: number | null
+  role: ChatMessageRole | null
+  parameters: string[] | null
+  conditions: SeedCondition[] | null
+  response_json_schema: Record<string, unknown> | null
+}
+
+/** Wire shape of one logical example from `GET /api/datasets/seeds`. */
+export interface SeedExampleSummary {
+  example_id: string
+  name: string | null
+  preview: string
+  preview_truncated: boolean
+  modalities: string[]
+  seed_types: string[]
+  piece_count: number
+  objective_count: number
+  harm_categories: string[]
+  has_unlabeled_harm: boolean
+}
+
+/** Wire shape of `SeedExampleListResponse`. `total` counts matching examples. */
+export interface SeedExampleListResponse {
+  items: SeedExampleSummary[]
+  pagination: PaginationInfo
+  total: number
+}
+
+/** Wire shape of `SeedExampleDetailResponse`, including stored members in server order. */
+export interface SeedExampleDetailResponse extends SeedExampleSummary {
+  members: SeedRecord[]
+}
+
+/** Query for `GET /api/datasets/seeds`. Facet arrays are repeated singular parameters. */
+export interface SeedExampleListParams {
+  selection_key: string
+  limit?: number
+  cursor?: string
+  search?: string
+  modality?: readonly string[]
+  seed_type?: readonly SeedType[]
+  harm_category?: readonly string[]
+}
+
 // --- Scenarios ---
 
+export type ScenarioDatasetLimit = number | 'all' | 'default'
+export type DatasetFetchPolicy = 'never' | 'if_missing'
+
+export interface ScenarioDatasetSourceInput {
+  name: string
+  max_size?: ScenarioDatasetLimit | null
+  fetch?: DatasetFetchPolicy | 'default' | null
+}
+
+export interface ScenarioDatasetRequest {
+  sources?: ScenarioDatasetSourceInput[] | null
+  max_per_dataset?: ScenarioDatasetLimit | null
+  max_total?: ScenarioDatasetLimit | null
+  fetch?: DatasetFetchPolicy | 'default' | null
+  filters?: Record<string, string[]> | null
+}
+
+export interface ScenarioDatasetOptions {
+  mode: 'any' | 'subset' | 'fixed'
+  allowed_names: string[]
+  max_selected?: number | null
+  per_dataset_limit: boolean
+  total_limit: boolean
+  supports_overrides: boolean
+  filters: boolean
+  source_settings?: boolean
+}
+
+export interface ScenarioDatasetSourceSettings {
+  name: string
+  max_size: number | 'all'
+  fetch: DatasetFetchPolicy
+  configured_provider: boolean
+}
+
+export interface ScenarioDatasetSettings {
+  sources: ScenarioDatasetSourceSettings[]
+  max_per_dataset: number | 'all'
+  max_total: number | 'all'
+  fetch: DatasetFetchPolicy
+  filters: Record<string, string[]>
+}
+
+export interface ScenarioDatasetLoadResponse {
+  settings: ScenarioDatasetSettings
+  items: DatasetInfo[]
+}
+
 export interface RegisteredScenario {
+  /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
+  max_concrete_techniques?: number | null
   scenario_name: string
   scenario_type: string
   scenario_version: number
@@ -783,10 +1199,14 @@ export interface RegisteredScenario {
   all_techniques: string[]
   technique_summaries: ScenarioTechniqueSummary[]
   default_datasets: string[]
+  dataset_options?: ScenarioDatasetOptions
+  dataset_defaults?: ScenarioDatasetSettings
   baseline_policy: 'enabled' | 'disabled' | 'forbidden'
   include_baseline_by_default: boolean
   uses_default_adversarial_target: boolean
   supported_parameters: Parameter[]
+  /** All declared names, including opaque inputs with dedicated controls. */
+  supported_parameter_names: string[]
   default_run_size: ScenarioRunSizeEstimateResponse
 }
 
@@ -803,17 +1223,19 @@ export interface ListRegisteredScenariosResponse {
 
 export interface RunScenarioRequest {
   scenario_name: string
-  target_name: string
+  target_name?: string | null
   adversarial_target_name?: string | null
   initializers?: string[] | null
   techniques?: string[] | null
   dataset_names?: string[] | null
-  max_dataset_size?: number | null
+  max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
+  datasets?: ScenarioDatasetRequest
   max_concurrency?: number
   max_retries?: number
   include_baseline?: boolean | null
   labels?: Record<string, string> | null
+  operation_id?: string | null
   scenario_params?: Record<string, unknown> | null
   initializer_args?: Record<string, Record<string, unknown>> | null
   scenario_result_id?: string | null
@@ -855,6 +1277,9 @@ export interface ScenarioRunSizeEstimateResponse {
   status?: 'exact' | 'approximate' | 'conditional' | 'unavailable'
   dataset_size: ScenarioDatasetSizeEstimate
   dataset_limit: DatasetLimitInput
+  dataset_options?: ScenarioDatasetOptions
+  dataset_defaults?: ScenarioDatasetSettings
+  effective_datasets?: ScenarioDatasetSettings
   estimated_attack_count: number | null
   minimum_attack_count?: number | null
   maximum_attack_count?: number | null
@@ -869,8 +1294,9 @@ export interface ScenarioRunSizeEstimateRequest {
   adversarial_target_name?: string | null
   techniques?: string[] | null
   dataset_names?: string[] | null
-  max_dataset_size?: number | null
+  max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
+  datasets?: ScenarioDatasetRequest
   include_baseline?: boolean | null
   scenario_params?: Record<string, unknown> | null
 }
@@ -1049,6 +1475,9 @@ export interface ScenarioRunListItem {
   objective_achieved_rate: number
   total_retries: number
   labels: Record<string, string>
+  operation_id?: string | null
+  /** The saved Operation's current name, or the historical name of a legacy run. */
+  operation_name?: string | null
   completed_at?: string | null
   pyrit_version?: string | null
   target?: ScenarioTargetSummary | null
@@ -1266,4 +1695,101 @@ export interface RuntimeStatus {
   applying: boolean
   outcome: string
   message: string
+}
+export type FindingSeverity = 'critical' | 'important' | 'moderate' | 'low' | 'informational' | 'other'
+
+export interface OperationCreate {
+  name: string
+  description?: string
+}
+
+/** The editable fields of a saved Operation; renaming is not supported yet. */
+export interface OperationUpdate {
+  description: string
+}
+
+export interface Operation extends OperationCreate {
+  id: string
+  created_at: string
+}
+
+export interface OperationListItem extends Operation {
+  finding_counts: Partial<Record<FindingSeverity, number>>
+}
+
+export interface OperationListResponse {
+  items: OperationListItem[]
+}
+
+export interface FindingCreate {
+  title: string
+  description: string
+  severity: FindingSeverity
+  severity_other?: string | null
+  harm_type?: string | null
+  harm_type_other?: string | null
+}
+
+/** Resending the same id and content returns the finding an earlier, unanswered request saved. */
+export interface FindingCreateRequest extends FindingCreate {
+  id?: string
+  /** A saved attack result to link as evidence in the same request. */
+  attack_result_id?: string
+}
+
+export interface FindingOptionsResponse {
+  harm_types: string[]
+}
+
+export interface Finding extends FindingCreate {
+  id: string
+  operation_id: string
+  created_at: string
+}
+
+export interface FindingListResponse {
+  items: FindingListItem[]
+  has_more: boolean
+  next_offset: number | null
+}
+
+export interface FindingListItem extends Finding {
+  evidence_count: number
+}
+
+export interface FindingEvidenceCreateRequest {
+  attack_result_id: string
+}
+
+export interface FindingEvidence {
+  id: string
+  finding_id: string
+  attack_result_id: string
+  attached_at: string
+}
+
+export interface FindingEvidenceAttachResponse {
+  item: FindingEvidence
+  created: boolean
+}
+
+export interface FindingEvidenceItem {
+  item: FindingEvidence
+  availability: 'available' | 'unavailable'
+  scenario_result_id: string | null
+  /** The attack's own Operation, which may differ from the finding's. */
+  source_operation_id?: string | null
+  source_operation_name?: string | null
+  objective?: string | null
+  outcome?: AttackOutcome | null
+  /** The attack's current score: its human score, otherwise its automated score. */
+  score?: BackendScore | null
+  /** The conversation to open: the one holding the score, otherwise the attack's main conversation. */
+  conversation_id?: string | null
+}
+
+export interface FindingEvidenceListResponse {
+  items: FindingEvidenceItem[]
+  has_more: boolean
+  next_offset: number | null
 }

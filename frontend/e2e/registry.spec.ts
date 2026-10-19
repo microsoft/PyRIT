@@ -1,5 +1,149 @@
 import { expect, test, type Page } from "./_fixtures";
-import { mockVersion } from "./_compatibility";
+import { compatibilityHeaders, mockVersion } from "./_compatibility";
+
+test("creates and selects a runtime technique with the real backend @seeded", async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const headers = compatibilityHeaders();
+  for (const name of ["objective_scorer_chat", "adversarial_chat", "registry_local_objective"]) {
+    const existing = await request.get(`/api/targets/${name}`, { headers });
+    if (existing.status() === 404) {
+      const created = await request.post("/api/targets", { headers, data: name === "registry_local_objective"
+        ? { name, type: "TextTarget", params: {} }
+        : { name, type: "OpenAIChatTarget", auth_mode: "api_key", params: {
+          endpoint: "http://127.0.0.1:9/v1", model_name: "local-test", api_key: "local-test-only",
+        } } });
+      expect(created.ok(), await created.text()).toBe(true);
+    } else {
+      expect(existing.ok(), await existing.text()).toBe(true);
+    }
+  }
+  const warm = await request.get("/api/scenarios/catalog/airt.rapid_response", { headers });
+  expect(warm.ok(), await warm.text()).toBe(true);
+  const before = await warm.json();
+  const name = `browser_${Date.now()}`;
+  expect(before.all_techniques).not.toContain(name);
+  const converterName = `${name}_b64`;
+  const converter = await request.post("/api/converters", {
+    headers, data: { name: converterName, type: "Base64Converter", params: {} },
+  });
+  expect(converter.ok(), await converter.text()).toBe(true);
+  let replacementGeneration: string | undefined;
+  await page.route("**/api/runtime", async (route) => {
+    const response = await route.fetch();
+    const readiness = await response.json();
+    await route.fulfill({ json: { ...readiness, generation: replacementGeneration ?? readiness.generation } });
+  });
+
+  const promptRequests: string[] = [];
+  const detailRequests: string[] = [];
+  page.on("request", (outgoing) => {
+    if (outgoing.method() === "POST" && /\/api\/(?:message-sends|attacks\/[^/]+\/messages|scenarios\/runs)(?:\/|\?|$)/.test(outgoing.url())) {
+      promptRequests.push(outgoing.url());
+    }
+    if (outgoing.method() === "GET" && new URL(outgoing.url()).pathname === `/api/techniques/${name}`) {
+      detailRequests.push(outgoing.url());
+    }
+  });
+  await page.goto("/registry/techniques");
+  await expect(page.getByRole("tab", { name: "Techniques" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("Named configurations of existing attack techniques", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Runtime only|No attack runs when you add a technique/)).toHaveCount(0);
+  await expect(page.getByRole("table", { name: "Registered techniques" })).toBeVisible();
+  const builtinCalls = {
+    crescendo_simulated: "AttackTechniqueFactory.with_simulated_conversation(\n" +
+      "    name='crescendo_simulated',\n" +
+      "    description='Escalates gradually over a simulated conversation toward the objective.',\n" +
+      "    technique_tags=['single_turn'],\n)",
+    tap: "AttackTechniqueFactory(\n" +
+      "    name='tap',\n" +
+      "    attack_class=TreeOfAttacksWithPruningAttack,\n" +
+      "    description='Explores a tree of adversarial prompts, pruning weak branches to refine the attack.',\n" +
+      "    technique_tags=['multi_turn'],\n)",
+  };
+  for (const [builtinName, statement] of Object.entries(builtinCalls)) {
+    await page.getByRole("button", { name: `Details for ${builtinName}` }).click();
+    await expect(page.getByLabel("Technique creation call", { exact: true })).toHaveText(statement);
+    await expect(page.getByRole("heading", { name: "Configuration" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+  }
+  await page.getByRole("button", { name: "New technique" }).click();
+  await page.getByRole("textbox", { name: "Registry name" }).fill(name);
+  await page.getByRole("textbox", { name: "Description" }).fill("Local browser technique");
+  await page.getByRole("textbox", { name: "Tags" }).fill("browser_test");
+  await page.getByRole("combobox", { name: "Attack type", exact: true }).selectOption("PromptSendingAttack");
+  await expect(page.getByRole("dialog")).not.toContainText(/Implementation of|This form shows|Runtime only|prompt_normalizer/);
+  await page.getByLabel("max_attempts_on_failure").fill("0");
+  await page.getByRole("combobox", { name: "Request converters", exact: true }).selectOption(converterName);
+  await page.getByRole("button", { name: "Add to Request converters", exact: true }).click();
+  await page.getByRole("button", { name: "Add to Request converters", exact: true }).click();
+  const create = page.waitForResponse((response) => response.url().endsWith("/api/techniques") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Add technique" }).click();
+  const created = await create;
+  expect(created.status()).toBe(201);
+  const createdTechnique = await created.json();
+  const body = created.request().postDataJSON();
+  expect(body).toMatchObject({
+    name, type: "PromptSendingAttack", params: { max_attempts_on_failure: 0 },
+    request_converters: [converterName, converterName], response_converters: [],
+  });
+  expect(body).not.toHaveProperty("factory_options");
+  expect(body).not.toHaveProperty("seed_technique");
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.getByRole("textbox", { name: "Search techniques" }).fill(name);
+  await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
+  await page.getByRole("button", { name: `Details for ${name}` }).click();
+  const creationCall = page.getByLabel("Technique creation call", { exact: true });
+  await expect(creationCall).toHaveText(createdTechnique.creation_statement);
+  await expect(creationCall).toContainText("AttackTechniqueFactory(");
+  await expect(creationCall).toContainText("'max_attempts_on_failure': 0");
+  expect(createdTechnique).not.toHaveProperty("evaluation_identifier");
+  expect(createdTechnique).not.toHaveProperty("configuration");
+  await expect(page.getByRole("heading", { name: "Configuration" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByRole("button", { name: `Details for ${name}` })).toBeFocused();
+  expect(detailRequests).toEqual([]);
+
+  let finishCreate: (() => void) | undefined;
+  const pendingCreate = new Promise<void>((resolve) => { finishCreate = resolve; });
+  let markCreateStarted: (() => void) | undefined;
+  const createStarted = new Promise<void>((resolve) => { markCreateStarted = resolve; });
+  const original = await request.get(`/api/techniques/${name}`, { headers });
+  const originalTechnique = await original.json();
+  await page.route("**/api/techniques", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    markCreateStarted?.();
+    await pendingCreate;
+    await route.fulfill({ status: 201, json: { ...originalTechnique, name: "old_runtime_response" } });
+  });
+  await page.getByRole("button", { name: "New technique" }).click();
+  await page.getByRole("textbox", { name: "Registry name" }).fill("old_runtime_response");
+  await page.getByRole("combobox", { name: "Attack type", exact: true }).selectOption("PromptSendingAttack");
+  await page.getByRole("button", { name: "Add technique" }).click();
+  await createStarted;
+  replacementGeneration = "registry-replacement-test";
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "New technique" })).toBeFocused();
+  await expect(page.getByRole("table", { name: "Registered techniques" })).toBeVisible();
+  const staleResponse = page.waitForResponse((response) => response.url().endsWith("/api/techniques") && response.request().method() === "POST");
+  finishCreate?.();
+  await staleResponse;
+  await expect(page.getByRole("cell", { name: "old_runtime_response", exact: true })).toHaveCount(0);
+
+  const current = await request.get("/api/scenarios/catalog/airt.rapid_response", { headers });
+  expect(current.ok(), await current.text()).toBe(true);
+  const after = await current.json();
+  expect(after.all_techniques).toContain(name);
+  expect(after.default_techniques).toEqual(before.default_techniques);
+  await page.goto("/scanner/airt.rapid_response");
+  const checkbox = page.getByRole("checkbox", { name, exact: true });
+  await expect(checkbox).toBeVisible();
+  await checkbox.check();
+  await expect(checkbox).toBeChecked();
+  expect(promptRequests).toEqual([]);
+});
 
 interface RegisteredConverter {
   converter_id: string;

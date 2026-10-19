@@ -16,6 +16,7 @@ from uvicorn.lifespan.on import LifespanOn
 
 import pyrit
 from pyrit import _compatibility
+from pyrit.backend.authentication_policy import resolve_authentication_policy
 from pyrit.backend.main import app, lifespan
 from pyrit.backend.middleware.auth import AuthenticatedUser, EntraAuthMiddleware
 from pyrit.backend.middleware.compatibility import CompatibilityAPI, CompatibilityMiddleware
@@ -35,6 +36,7 @@ def guarded_app(*, monkeypatch: pytest.MonkeyPatch, compatibility_id: str) -> Fa
     monkeypatch.setenv("ENTRA_ADMIN_GROUP_ID", "admin-group")
     test_app = FastAPI(routes=list(app.router.routes), middleware=app.user_middleware)
     test_app.state.compatibility_id = compatibility_id
+    test_app.state.authentication_policy = resolve_authentication_policy()
     test_app.state.effects = []
 
     def stateful_dependency() -> None:
@@ -80,6 +82,7 @@ def graph_user() -> AuthenticatedUser:
 
 def test_openapi_documents_the_required_header_only_on_business_operations() -> None:
     schema = app.openapi()
+    assert "/api/ready" not in schema["paths"]
     neutral_paths = {"/api/health", "/api/auth/config", "/api/version", "/api/media"}
     business_operations = set()
     for path, path_item in schema["paths"].items():
@@ -236,7 +239,7 @@ def test_public_neutral_routes_bypass_guard_and_auth(guarded_client: TestClient,
     headers = {_compatibility.COMPATIBILITY_HEADER: marker} if marker is not None else {}
     with patch.object(EntraAuthMiddleware, "_authenticate_request_async", new_callable=AsyncMock) as authenticate:
         response = guarded_client.get(path, headers=headers)
-    assert response.status_code == (422 if path == "/api/media" else 200)
+    assert response.status_code == {"/api/media": 422}.get(path, 200)
     authenticate.assert_not_awaited()
 
 
@@ -246,6 +249,9 @@ def test_public_neutral_routes_bypass_guard_and_auth(guarded_client: TestClient,
         "/api",
         "/api/health/",
         "/api/health/extra",
+        "/api/ready",
+        "/api/ready/",
+        "/api/ready/extra",
         "/api/auth/config/",
         "/api/version/",
         "/api/media/",
@@ -256,6 +262,36 @@ def test_neutral_exemptions_are_exact(guarded_client: TestClient, path: str) -> 
     response = guarded_client.get(path, follow_redirects=False)
     assert response.status_code == 400
     assert response.json()["type"] == _compatibility.INVALID_COMPATIBILITY_TYPE
+
+
+@pytest.mark.parametrize("state", ["ready", "initializing", "failed", "restart-required", "stopping"])
+def test_health_is_public_without_exposing_runtime_details(*, guarded_app: FastAPI, state: str, tmp_path: Path) -> None:
+    runtime = RuntimeLifecycle(
+        app=guarded_app, source=ConfigurationFileService(config_file_value=str(tmp_path / "config.yaml"))
+    )
+    runtime.state = state
+    runtime.message = "private failure details"
+    runtime.generation = "private generation"
+    guarded_app.state.runtime_lifecycle = runtime
+    with (
+        patch.dict("os.environ", {"CONTAINER_APP_REVISION": "copyrit-test--new"}),
+        patch.object(EntraAuthMiddleware, "_authenticate_request_async", new_callable=AsyncMock) as authenticate,
+        TestClient(guarded_app) as client,
+    ):
+        response = client.get("/api/health", headers={_compatibility.COMPATIBILITY_HEADER: "invalid"})
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data["timestamp"], str)
+    assert data == {
+        "status": "healthy",
+        "timestamp": data["timestamp"],
+        "service": "pyrit-backend",
+        "ready": state == "ready",
+        "state": state,
+        "revision": "copyrit-test--new",
+    }
+    assert response.headers["cache-control"] == "no-store"
+    authenticate.assert_not_awaited()
 
 
 @pytest.mark.parametrize("path", ["/", "/assets/app.js", "/apikeys", "/docs"])
@@ -302,6 +338,7 @@ def test_version_is_neutral_but_authenticated(
         "display",
         "database_info",
         "default_labels",
+        "default_operation",
     }
     assert "compatibility_id" in VersionResponse.model_json_schema()["required"]
 

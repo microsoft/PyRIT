@@ -19,7 +19,7 @@ from pyrit.models.seeds.seed import Seed
 logger = logging.getLogger(__name__)
 
 
-class SeedObjective(Seed):
+class SeedObjective(Seed[Literal["text"]]):
     """Represents a seed objective with various attributes and metadata."""
 
     # Discriminator field for the polymorphic Seed union (see seed_group.SeedUnion).
@@ -46,5 +46,5 @@ class SeedObjective(Seed):
             raise ValueError("SeedObjective cannot be a general technique.")
         # Only trusted templates are rendered through Jinja — see seed_prompt.py for details.
         if self.is_jinja_template:
-            self.value = self.render_template_value_silent(**PATHS_DICT)
+            self.value = self._render_trusted_template_value(**PATHS_DICT)
         return self

@@ -10,15 +10,18 @@ import pytest
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective
+from pyrit.models.scenario_dataset import DatasetFetchPolicy
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration, IncompatibleTechniqueError
 from pyrit.scenario.airt import Leakage  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.core import BaselineAttackPolicy
-from pyrit.scenario.scenarios.airt.leakage import _build_leakage_technique
+from pyrit.scenario.core._technique_resolution import resolve_technique_factories_for_techniques
+from pyrit.scenario.scenarios.airt.leakage import _build_leakage_technique, _leakage_factories
 from pyrit.score import TrueFalseCompositeScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
+from tests.unit.mocks import MockPromptTarget
 
 
 def _mock_scorer_id(name: str = "MockObjectiveScorer") -> ComponentIdentifier:
@@ -49,6 +52,12 @@ def mock_dataset_config(mock_memory_seeds):
     """Create a mock dataset config that returns the seed groups."""
     seed_groups = [AttackSeedGroup(seeds=[seed]) for seed in mock_memory_seeds]
     mock_config = MagicMock(spec=DatasetAttackConfiguration)
+    mock_config.with_overrides.return_value = mock_config
+    mock_config.sources = ()
+    mock_config.max_total = "all"
+    mock_config.max_per_dataset = "all"
+    mock_config.fetch = DatasetFetchPolicy.IF_MISSING
+    mock_config._filters = {}
     mock_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"airt_leakage": seed_groups})
     mock_config.dataset_names = ["airt_leakage"]
     return mock_config
@@ -107,6 +116,29 @@ def reset_technique_registry():
 class TestLeakageInitialization:
     """Tests for Leakage initialization."""
 
+    @pytest.mark.parametrize("name", ["first_letter", "image"])
+    def test_local_factory_wins_in_catalog_and_execution(self, name: str) -> None:
+        before = _build_leakage_technique()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        registered = registry.create_factory(
+            name=name,
+            attack_type="PromptSendingAttack",
+            description="Runtime override",
+            technique_tags=["runtime_only"],
+        )
+        registry.instances.register_runtime(registered)
+
+        current = _build_leakage_technique()
+        selected = current(name)
+        local = {factory.name: factory for factory in _leakage_factories()}
+        assert current is not before
+        assert selected.description == local[name].description
+        assert selected.tags == before(name).tags
+        assert "runtime_only" not in current.get_aggregate_tags()
+        resolved = resolve_technique_factories_for_techniques(scenario_techniques=[selected], extra_factories=local)
+        assert resolved[name] is local[name]
+        assert registry.instances.get(name) is registered
+
     def test_init_with_custom_scorer(self, mock_objective_scorer):
         """Test initialization with custom scorer."""
         scenario = Leakage(objective_scorer=mock_objective_scorer)
@@ -126,6 +158,36 @@ class TestLeakageInitialization:
     def test_init_supports_default_baseline(self):
         """Leakage opts into the parent's default baseline."""
         assert Leakage.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Enabled
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestLeakageCompatibilityPolicy:
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
+    async def test_text_only_target_cannot_use_image_technique_async(
+        self, *, policy: str, mock_objective_scorer: TrueFalseCompositeScorer
+    ) -> None:
+        target = MockPromptTarget()
+        scenario = Leakage(objective_scorer=mock_objective_scorer)
+        techniques = scenario._technique_class
+        scenario.set_params_from_args(
+            args={
+                "objective_target": target,
+                "scenario_techniques": [techniques("image"), techniques("first_letter")],
+                "dataset_config": DatasetAttackConfiguration(
+                    seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="objective")])]
+                ),
+                "incompatible_technique_policy": policy,
+            }
+        )
+
+        if policy == "raise":
+            with pytest.raises(IncompatibleTechniqueError, match="image_path"):
+                await scenario.initialize_async()
+        else:
+            await scenario.initialize_async()
+            assert len(scenario._atomic_attacks) == 2
+            assert {atomic.technique_name for atomic in scenario._atomic_attacks} == {None, "first_letter"}
+        assert target.prompt_sent == []
 
 
 @pytest.mark.usefixtures(*FIXTURES)

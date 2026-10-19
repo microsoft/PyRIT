@@ -18,8 +18,16 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from pyrit.models import ScenarioRunSizeEstimate, ScenarioTechniqueSummary, class_name_to_snake_case
+from pyrit.common.async_compatibility import run_legacy_sync_async
+from pyrit.models import (
+    ScenarioDatasetOptions,
+    ScenarioDatasetSettings,
+    ScenarioRunSizeEstimate,
+    ScenarioTechniqueSummary,
+    class_name_to_snake_case,
+)
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
@@ -30,6 +38,7 @@ if TYPE_CHECKING:
     from pyrit.models import Parameter
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.scenario.core import Scenario
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 
 @dataclass(frozen=True)
@@ -54,6 +63,11 @@ class ScenarioMetadata(RegistryMetadata):
     # All available technique names for this scenario.
     all_techniques: tuple[str, ...] = field(kw_only=True)
 
+    # The scenario's technique catalog itself, so a caller can resolve a technique token
+    # without instantiating the scenario. The name tuples above are a projection of it
+    # and cannot expand an aggregate selector or produce the member a run needs.
+    technique_class: type[ScenarioTechnique] = field(kw_only=True)
+
     # Descriptions and tags for each available concrete technique.
     technique_summaries: tuple[ScenarioTechniqueSummary, ...] = field(kw_only=True, default=())
 
@@ -66,6 +80,11 @@ class ScenarioMetadata(RegistryMetadata):
     # Default dataset names used by this scenario.
     default_datasets: tuple[str, ...] = field(kw_only=True)
 
+    # Dataset changes the scenario accepts, and its default dataset settings. Both are static:
+    # they never depend on memory contents or on a run-size estimate succeeding.
+    dataset_options: ScenarioDatasetOptions = field(kw_only=True, default_factory=ScenarioDatasetOptions)
+    dataset_defaults: ScenarioDatasetSettings = field(kw_only=True, default_factory=ScenarioDatasetSettings)
+
     # Scenario-declared custom parameters.
     supported_parameters: tuple[Parameter, ...] = field(kw_only=True, default=())
 
@@ -73,6 +92,7 @@ class ScenarioMetadata(RegistryMetadata):
 
     include_baseline_by_default: bool = field(kw_only=True, default=True)
     uses_default_adversarial_target: bool = field(kw_only=True, default=False)
+    max_concrete_techniques: int | None = field(kw_only=True, default=None)
 
 
 class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
@@ -87,6 +107,25 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
     """
 
     _DISCOVERY_PACKAGE = "pyrit.scenario.scenarios"
+
+    def _ensure_metadata(self) -> dict[str, ScenarioMetadata]:
+        """
+        Refresh the bounded metadata snapshot when the factory pool changes.
+
+        Returns:
+            dict[str, ScenarioMetadata]: The current metadata snapshot.
+        """
+        with self._metadata_build_lock:
+            while True:
+                revision = AttackTechniqueRegistry.get_registry_singleton().catalog_revision
+                with self._catalog_lock:
+                    if getattr(self, "_technique_revision", None) != revision:
+                        self._metadata_cache = None
+                        self._catalog_version += 1
+                        self._technique_revision = revision
+                metadata = super()._ensure_metadata()
+                if revision == AttackTechniqueRegistry.get_registry_singleton().catalog_revision:
+                    return metadata
 
     def _discover(self) -> None:
         """Materialize every built-in scenario before subclass discovery."""
@@ -206,14 +245,18 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             default_techniques=default_techniques,
             description_markdown=description_markdown,
             all_techniques=all_techniques,
+            technique_class=technique_class,
             technique_summaries=technique_summaries,
             aggregate_techniques=aggregate_techniques,
             aggregate_technique_expansions=aggregate_technique_expansions,
             default_datasets=default_datasets,
+            dataset_options=instance.get_dataset_options(),
+            dataset_defaults=instance.get_default_dataset_settings(),
             supported_parameters=supported_parameters,
             baseline_policy=instance.BASELINE_ATTACK_POLICY.value,
             include_baseline_by_default=instance.BASELINE_ATTACK_POLICY.value == "enabled",
             uses_default_adversarial_target=instance.uses_default_adversarial_target,
+            max_concrete_techniques=instance.MAX_CONCRETE_TECHNIQUES,
         )
 
     async def create_and_estimate_async(
@@ -271,6 +314,8 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
 
         Prefer this over manually chaining ``create_instance`` +
         ``set_params_from_args`` + ``initialize_async``.
+        Synchronous construction and configuration run off-loop; async
+        initialization runs on the caller's event loop.
 
         Args:
             name (str): The registry name of the scenario (e.g. ``"foundry.red_team_agent"``).
@@ -291,7 +336,9 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             constructor_kwargs["scenario_result_id"] = scenario_result_id
 
         merged_args = {**(scenario_params or {}), **initialize_kwargs}
-        scenario = self._create_and_configure(name, params=merged_args, constructor_kwargs=constructor_kwargs)
+        scenario = await run_legacy_sync_async(
+            self._create_and_configure, name, params=merged_args, constructor_kwargs=constructor_kwargs
+        )
         scenario.set_scenario_registry_name(scenario_registry_name=name)
         if initial_metadata:
             scenario.set_initial_metadata(metadata=initial_metadata)

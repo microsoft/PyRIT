@@ -4,16 +4,21 @@
 import os
 import tempfile
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import String
+from sqlalchemy import String, event, select
+from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import SQLAlchemyError
 
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import SeedEntry
 from pyrit.models import MessagePiece, SeedDataset, SeedGroup, SeedObjective, SeedPrompt
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Dialect
 
 
 def assert_original_value_in_list(original_value: str, message_pieces: Sequence[MessagePiece]):
@@ -522,6 +527,111 @@ async def test_get_seeds_with_substring_filters_harm_categories(sqlite_instance:
     assert result[1].authors == ["author2"]
 
 
+@pytest.mark.parametrize(
+    "filters, expected",
+    [
+        ({"authors": ["Frédéric Dubut"]}, ["p1"]),
+        ({"authors": ["Frédéric"]}, ["p1"]),
+        ({"harm_categories": ["ÉTHIQUE"]}, ["p1"]),
+        ({"harm_categories": ["Überwachung"]}, ["p2"]),
+        ({"authors": ['"AJ"']}, ["p3"]),
+        ({"authors": ["C:\\red"]}, ["p3"]),
+    ],
+)
+async def test_get_seeds_with_list_filters_matches_non_ascii_values(
+    sqlite_instance: MemoryInterface, filters: dict[str, list[str]], expected: list[str]
+):
+    seed_prompts = [
+        SeedPrompt(value="p1", harm_categories=["ÉTHIQUE"], authors=["Frédéric Dubut"], data_type="text"),
+        SeedPrompt(value="p2", harm_categories=["Überwachung"], authors=["Frederic Smith"], data_type="text"),
+        SeedPrompt(value="p3", authors=['Ann "AJ" Jones', "C:\\red-team"], data_type="text"),
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(seeds=seed_prompts, added_by="test")
+
+    result = await sqlite_instance.get_seeds_async(**filters)
+    assert [seed.value for seed in result] == expected
+
+
+@pytest.mark.parametrize("field", ["authors", "harm_categories", "groups", "parameters"])
+@pytest.mark.parametrize(
+    "needle, other",
+    [
+        ("\u00e9", r"\u00e9"),
+        ("\U0001f642", r"\ud83d\ude42"),
+        ("u00e9", "\u00e9"),
+    ],
+)
+async def test_get_seeds_with_list_filters_matches_decoded_elements(
+    sqlite_instance: MemoryInterface, field: str, needle: str, other: str
+) -> None:
+    seeds = [
+        SeedPrompt(value="match", data_type="text", **{field: [f"prefix {needle} suffix"]}),
+        SeedPrompt(value="other", data_type="text", **{field: [other]}),
+        SeedPrompt(value="empty", data_type="text", **{field: []}),
+        SeedPrompt(value="null", data_type="text", **{field: None}),
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(seeds=seeds, added_by="test")
+
+    result = await sqlite_instance.get_seeds_async(**{field: [needle]})
+
+    assert [seed.value for seed in result] == ["match"]
+
+
+@pytest.mark.parametrize("field", ["authors", "harm_categories", "groups", "parameters"])
+async def test_get_seed_groups_with_list_filters_matches_decoded_elements(
+    sqlite_instance: MemoryInterface, field: str
+) -> None:
+    groups = [
+        SeedGroup(
+            seeds=[
+                SeedPrompt(value=label, data_type="text", sequence=0, role="user", **{field: [value]}),
+                SeedPrompt(value=f"{label}-companion", data_type="text", sequence=1, role="assistant"),
+            ]
+        )
+        for label, value in [("match", "\u00e9"), ("literal", r"\u00e9")]
+    ]
+    await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=groups, added_by="test")
+
+    result = await sqlite_instance.get_seed_groups_async(**{field: ["\u00e9"]})
+
+    assert len(result) == 1
+    assert {seed.value for seed in result[0].seeds} == {"match", "match-companion"}
+
+
+@pytest.mark.parametrize("field", ["authors", "harm_categories", "groups", "parameters"])
+async def test_seed_list_substring_filters_preserve_sqlite_like_semantics(
+    sqlite_instance: MemoryInterface, field: str
+) -> None:
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="match", data_type="text", **{field: ["ANN", "\u00c9THIQUE"]})],
+        added_by="test",
+    )
+
+    for needle in ["ann", "a_n", "a%n", "\u00c9THIQUE"]:
+        result = await sqlite_instance.get_seeds_async(**{field: [needle]})
+        assert [seed.value for seed in result] == ["match"]
+    assert await sqlite_instance.get_seeds_async(**{field: ["\u00e9thique"]}) == []
+
+
+@pytest.mark.parametrize(
+    "dialect, expansion", [(sqlite.dialect(), "json_each(json_extract("), (mssql.dialect(), "OPENJSON(JSON_QUERY(")]
+)
+def test_seed_list_substring_filters_decode_json_on_both_dialects(
+    sqlite_instance: MemoryInterface, dialect: "Dialect", expansion: str
+) -> None:
+    needle = "Fr\u00e9d"
+    conditions = sqlite_instance._build_seed_filter_conditions(authors=[needle, r"\u00e9"])
+    statement = select(SeedEntry.id).where(*conditions)
+    compiled = statement.compile(dialect=dialect)
+    sql = str(compiled)
+
+    assert sql.count(expansion) == 2
+    assert sql.count("EXISTS") == 2
+    assert " AND " in sql
+    assert needle in compiled.params.values()
+    assert r"\u00e9" in compiled.params.values()
+
+
 async def test_get_seeds_with_substring_filters_groups(sqlite_instance: MemoryInterface):
     seed_prompts = [
         SeedPrompt(value="prompt1", groups=["group1"], data_type="text"),
@@ -816,6 +926,25 @@ async def test_get_seed_dataset_names_multiple(sqlite_instance: MemoryInterface)
     await sqlite_instance.add_seeds_to_memory_async(seeds=seed_prompts)
     assert len(await sqlite_instance.get_seed_dataset_names_async()) == 5
     assert sorted(await sqlite_instance.get_seed_dataset_names_async()) == sorted(dataset_names)
+
+
+async def test_get_seed_dataset_names_without_loading_seed_rows_async(sqlite_instance: MemoryInterface) -> None:
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            SeedObjective(value=f"objective-{index}", dataset_name=name)
+            for index, name in enumerate(["first", "first", "second", None, ""])
+        ],
+        added_by="test",
+    )
+
+    def reject_seed_load(*_: object) -> None:
+        raise AssertionError("Listing dataset names must not load full seed rows")
+
+    event.listen(SeedEntry, "load", reject_seed_load)
+    try:
+        assert set(await sqlite_instance.get_seed_dataset_names_async()) == {"first", "second"}
+    finally:
+        event.remove(SeedEntry, "load", reject_seed_load)
 
 
 async def test_add_seed_groups_to_memory_empty_list(sqlite_instance: MemoryInterface):

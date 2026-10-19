@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args, get_o
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, TypeAdapter, model_validator
 
 from pyrit.models.score._trace_validation import ToolName  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.score.surface import SurfaceMatch  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.score.text_matcher import TextMatcher  # noqa: TC001 (runtime-required by Pydantic)
 
 if TYPE_CHECKING:
@@ -59,7 +60,7 @@ class Condition(BaseModel):
         literal_values = (
             get_args(field.annotation) if field is not None and get_origin(field.annotation) is Literal else ()
         )
-        if len(literal_values) != 1 or not isinstance(literal_values[0], str) or not literal_values[0]:
+        if field is None or len(literal_values) != 1 or not isinstance(literal_values[0], str) or not literal_values[0]:
             raise TypeError(
                 f"{cls.__name__}.condition_type must be a single non-empty string Literal with a matching default."
             )
@@ -215,6 +216,28 @@ class AnswerMatches(Condition):
     correct_answer: str = Field(min_length=1)
     #: A nonempty choice label. It is not cross-checked against choices in prompt text.
     correct_answer_label: str | None = Field(default=None, min_length=1)
+
+
+class ContentWritten(Condition):
+    """
+    The named location holds content that satisfies an optional text matcher.
+
+    The condition supplies the locator, so a scorer builds the ``SurfaceScorable`` from
+    ``uri`` and ``match`` and judges only the content criterion against what its source
+    acquired. ``SurfaceMatch.GLOB`` asks whether any selected location holds such content.
+    With no matcher, any nonempty content counts, including binary content.
+
+    ``require_content_change`` additionally requires a different content state from the
+    attempt's baseline. This is a state comparison, not a write-event claim: an unrelated
+    edit can leave matching content in place, and identical rewrites or writes followed by
+    restoration are not detected. Without a baseline, this comparison is undetermined.
+    """
+
+    condition_type: Literal["content_written"] = "content_written"
+    uri: str = Field(min_length=1, pattern=r"^[^\x00]+$")
+    match: SurfaceMatch = SurfaceMatch.EXACT
+    matcher: TextMatcher | None = None
+    require_content_change: bool = False
 
 
 def _parse_conditions(value: Any) -> Any:
