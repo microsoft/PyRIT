@@ -13,6 +13,7 @@ interface SeedExampleSummary {
 interface SeedMember {
   data_type: string;
   value: string;
+  value_url?: string | null;
 }
 
 interface SeedExampleDetail extends SeedExampleSummary {
@@ -82,6 +83,16 @@ test.describe("dataset examples against the real backend @seeded", () => {
     if (!textMember) {
       throw new Error("Expected the stored example to include a text member");
     }
+    for (const member of detail.members) {
+      if (member.data_type === "text") {
+        expect(member.value_url ?? null).toBeNull();
+      }
+    }
+
+    const mediaRequests: string[] = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/media") mediaRequests.push(request.url());
+    });
 
     await page.goto(`/datasets/detail?selection_key=${encodeURIComponent(SELECTION_KEY)}`);
     await expect(page.getByRole("heading", { level: 1, name: "jailbreak_templates" })).toBeVisible();
@@ -96,7 +107,9 @@ test.describe("dataset examples against the real backend @seeded", () => {
     const region = page.getByRole("region", { name: "Example detail" });
     const snippet = textMember.value.replace(/\s+/g, " ").trim().slice(0, 80);
     await expect(region.getByText(snippet, { exact: false })).toBeVisible();
+    await expect(page.getByRole("table", { name: "Examples" }).locator("img, audio, video")).toHaveCount(0);
     await expect(region.locator("img, audio, video")).toHaveCount(0);
+    expect(mediaRequests).toEqual([]);
     await expect(page).toHaveURL(new RegExp(`[?&]example=${first.example_id}`));
 
     await page.reload();

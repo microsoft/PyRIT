@@ -2,10 +2,12 @@
 # Licensed under the MIT license.
 
 import json
+import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+from urllib.parse import quote
 from uuid import uuid4
 
 import pytest
@@ -289,3 +291,78 @@ async def test_seed_example_routes_preserve_legacy_configuration_without_reconst
     assert set(members) == {str(prompt.id), str(expected_id)}
     assert members[str(expected_id)]["value"] == expected_value
     assert members[str(expected_id)]["value_sha256"] == expected_hash
+    assert members[str(expected_id)]["value_url"] is None
+
+
+async def test_get_seed_example_resolves_local_media_without_listing_it(
+    client: AsyncClient, sqlite_instance: MemoryInterface
+) -> None:
+    group = uuid4()
+    with tempfile.TemporaryDirectory() as directory:
+        image = Path(directory) / "pic.png"
+        audio = Path(directory) / "talk.wav"
+        video = Path(directory) / "clip.mp4"
+        image.write_bytes(b"png")
+        audio.write_bytes(b"wav")
+        video.write_bytes(b"mp4")
+        text = _prompt("describe the picture", prompt_group_id=group, sequence=1)
+        picture = _prompt(str(image), data_type="image_path", prompt_group_id=group, sequence=2)
+        speech = _prompt(str(audio), data_type="audio_path", prompt_group_id=group, sequence=3)
+        clip = _prompt(str(video), data_type="video_path", prompt_group_id=group, sequence=4)
+        await _store(sqlite_instance, text, picture, speech, clip)
+
+        listed = await client.get(URL, params={"selection_key": NAMED})
+        detail = await client.get(f"{URL}/{group}", params={"selection_key": NAMED})
+
+    assert listed.status_code == detail.status_code == 200
+    item = listed.json()["items"][0]
+    assert item["preview"] == "describe the picture"
+    assert "value_url" not in item
+    assert str(image) not in json.dumps(listed.json())
+    members = {member["id"]: member for member in detail.json()["members"]}
+    assert members[str(text.id)]["value_url"] is None
+    assert members[str(text.id)]["value"] == "describe the picture"
+    for seed, path in ((picture, image), (speech, audio), (clip, video)):
+        member = members[str(seed.id)]
+        assert member["value"] == str(path)
+        assert member["value_url"] == f"/api/media?path={quote(str(path))}"
+
+
+async def test_get_seed_example_leaves_a_missing_file_as_the_stored_reference(
+    client: AsyncClient, sqlite_instance: MemoryInterface
+) -> None:
+    missing = "/tmp/pyrit-seed-detail-missing.png"
+    seed = _prompt(missing, data_type="image_path")
+    await _store(sqlite_instance, seed)
+
+    detail = await client.get(f"{URL}/{seed.id}", params={"selection_key": NAMED})
+
+    member = detail.json()["members"][0]
+    assert detail.status_code == 200
+    assert member["value"] == missing
+    assert member["value_url"] == missing
+
+
+async def test_get_seed_example_signs_blob_urls_without_azure_credentials(
+    client: AsyncClient, sqlite_instance: MemoryInterface
+) -> None:
+    blob = "https://account.blob.core.windows.net/container/seed-prompt-entries/clip.mp4"
+    signed = f"{blob}?sig=test-only"
+    seed = _prompt(blob, data_type="video_path")
+    await _store(sqlite_instance, seed)
+
+    with patch(
+        "pyrit.backend.mappers.attack_mappers._sign_blob_url_async",
+        new_callable=AsyncMock,
+        return_value=signed,
+    ) as sign:
+        listed = await client.get(URL, params={"selection_key": NAMED})
+        assert sign.await_count == 0
+        detail = await client.get(f"{URL}/{seed.id}", params={"selection_key": NAMED})
+
+    member = detail.json()["members"][0]
+    assert listed.status_code == detail.status_code == 200
+    assert "value_url" not in listed.json()["items"][0]
+    assert member["value"] == blob
+    assert member["value_url"] == signed
+    sign.assert_awaited()
