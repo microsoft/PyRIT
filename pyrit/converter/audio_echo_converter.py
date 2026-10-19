@@ -11,7 +11,7 @@ from scipy.io import wavfile
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.memory import data_serializer_factory
-from pyrit.models import PromptDataType
+from pyrit.models import ComponentIdentifier, PromptDataType
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,21 @@ class AudioEchoConverter(Converter):
         self._output_format = output_format
         self._delay = delay
         self._decay = decay
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with audio echo parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "output_format": self._output_format,
+                "delay": self._delay,
+                "decay": self._decay,
+            },
+        )
 
     def _apply_echo(self, data: np.ndarray[Any, Any], sample_rate: int) -> np.ndarray[Any, Any]:
         """

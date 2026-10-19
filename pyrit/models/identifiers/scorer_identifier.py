@@ -36,7 +36,7 @@ class ScorerIdentifier(ComponentIdentifier):
     aggregation verdict does not depend on child order.
     """
 
-    component_type: ClassVar[ComponentType] = ComponentType.SCORER
+    component_type: ClassVar[ComponentType | None] = ComponentType.SCORER
 
     #: The scorer category (e.g., ``"true_false"`` or ``"float_scale"``).
     scorer_type: Annotated[str | None, Evaluate.Include()] = None

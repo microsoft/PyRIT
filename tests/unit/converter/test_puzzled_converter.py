@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import unicodedata
+from collections import Counter
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -9,7 +11,7 @@ from unit.mocks import MockPromptTarget
 from pyrit.common.random_context import configure_random_seed
 from pyrit.converter import PuzzledConverter
 from pyrit.converter.puzzled import keyword_masker
-from pyrit.converter.puzzled.puzzle_builders import PuzzleType
+from pyrit.converter.puzzled.puzzle_builders import PuzzleType, crossword_symbol_map
 from pyrit.exceptions import EmptyResponseException
 from pyrit.models import Message, MessagePiece
 
@@ -175,7 +177,7 @@ def _clue_lengths(output: str) -> list[int]:
     return [int(line.split(" = ", 1)[1].split("-letter", 1)[0]) for line in clues.splitlines()]
 
 
-def _grid_contains(grid: list[list[str]], word: str) -> bool:
+def _grid_contains(grid: list[list[str]], word: str | list[str]) -> bool:
     # Try every start cell in each of the eight directions a word search may use.
     size = len(grid)
     directions = [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
@@ -188,6 +190,94 @@ def _grid_contains(grid: list[list[str]], word: str) -> bool:
                 ):
                     return True
     return False
+
+
+def _puzzle_letters(text: str) -> list[str]:
+    letters: list[str] = []
+    for char in unicodedata.normalize("NFC", text):
+        if letters and unicodedata.category(char).startswith("M"):
+            letters[-1] += char
+        else:
+            letters.append(char)
+    return letters
+
+
+@pytest.mark.parametrize("puzzle_type", ["word_search", "anagram", "crossword"])
+@pytest.mark.parametrize("form", ["NFC", "NFD"])
+@pytest.mark.parametrize(
+    "words",
+    [
+        [["שָׁ", "ל", "וֹ", "ם"], ["ע", "וֹ", "לָ", "ם"]],
+        [["مَ", "رْ", "حَ", "بً", "ا"], ["بِ", "ا", "لْ", "عَ", "ا", "لَ", "م"]],
+        [["सि", "स्", "ट", "म"], ["मौ", "स", "म"]],
+        [["C", "A", "F", "É"], ["C", "R", "È", "M", "E"]],
+        [["Q\u0301", "A"], ["Q\u0301", "B"]],
+        [["Q\u0345", "A"], ["Q\u0345", "B"]],
+        [["Μ", "Α", "ΐ", "Ο", "Υ"], ["Γ", "Ρ", "Ά", "Μ", "Μ", "Α"]],
+        [["가", "나"], ["다", "나"]],
+    ],
+)
+async def test_marked_words_use_the_clued_letter_units_async(
+    *, puzzle_type: str, form: str, words: list[list[str]]
+) -> None:
+    prompt_words = [unicodedata.normalize(form, "".join(word).lower()) for word in words]
+    result = await PuzzledConverter(puzzle_type=puzzle_type, num_to_mask=2, seed=42).convert_async(
+        prompt=" ".join(prompt_words)
+    )
+    assert _section(result.output_text, "Instruction with hidden words:", "The hidden words are") == "[WORD1] [WORD2]"
+    assert _clue_lengths(result.output_text) == [len(word) for word in words]
+    puzzle = _section(result.output_text, "Puzzle:", "Clues")
+    letters = [letter for word in words for letter in word]
+    if puzzle_type == "word_search":
+        grid = [row.split(" ") for row in puzzle.splitlines()]
+        assert all(len(row) == len(grid) for row in grid)
+        assert all(cell[0].isalpha() for row in grid for cell in row)
+        assert all(_grid_contains(grid, word) for word in words)
+        assert len(grid) == max(map(len, words)) + 5
+    elif puzzle_type == "anagram":
+        assert Counter(_puzzle_letters(puzzle)) == Counter(letters)
+    else:
+        mapping = crossword_symbol_map(prompt_words)
+        assert mapping
+        assert set(mapping) <= set(letters)
+        encoded = [line.split(". ", 1)[1] for line in puzzle.splitlines()]
+        assert encoded == ["".join(mapping.get(letter, letter) for letter in word) for word in words]
+        assert [len(_puzzle_letters(line)) for line in encoded] == _clue_lengths(result.output_text)
+
+
+@pytest.mark.parametrize("puzzle_type", ["word_search", "anagram", "crossword"])
+@pytest.mark.parametrize("form", ["NFC", "NFD"])
+@pytest.mark.parametrize("token", ["café2", "café_name", "caféabc²", "\u0301café"])
+async def test_marked_nonword_tokens_remain_intact_async(*, puzzle_type: str, form: str, token: str) -> None:
+    token = unicodedata.normalize(form, token)
+    converter = PuzzledConverter(puzzle_type=puzzle_type, num_to_mask=3, seed=42)
+    with pytest.raises(ValueError, match="no maskable words"):
+        await converter.convert_async(prompt=token)
+
+    result = await converter.convert_async(prompt=f"garden {token} now")
+    instruction = _section(result.output_text, "Instruction with hidden words:", "The hidden words are")
+    assert instruction == f"[WORD1] {token} [WORD2]"
+    assert _clue_lengths(result.output_text) == [6, 3]
+
+
+@pytest.mark.parametrize("puzzle_type", ["word_search", "anagram", "crossword"])
+@pytest.mark.parametrize("form", ["NFC", "NFD"])
+async def test_greek_case_variants_share_one_placeholder_async(*, puzzle_type: str, form: str) -> None:
+    word = "μαΐου"
+    prompt = unicodedata.normalize(form, f"{word} {word.upper()}")
+    result = await PuzzledConverter(puzzle_type=puzzle_type, num_to_mask=1, seed=42).convert_async(prompt=prompt)
+    assert _section(result.output_text, "Instruction with hidden words:", "The hidden words are") == "[WORD1] [WORD1]"
+    assert _clue_lengths(result.output_text) == [5]
+
+
+async def test_crossword_with_only_shared_marks_falls_back_to_anagram_async() -> None:
+    result = await PuzzledConverter(puzzle_type="crossword", num_to_mask=2, seed=42).convert_async(
+        prompt="q\u0301a x\u0301b"
+    )
+    assert "following anagram puzzle" in result.output_text
+    assert Counter(_puzzle_letters(_section(result.output_text, "Puzzle:", "Clues"))) == Counter(
+        ["Q\u0301", "A", "X\u0301", "B"]
+    )
 
 
 async def test_anagram_encodes_exactly_the_letters_the_clues_promise():

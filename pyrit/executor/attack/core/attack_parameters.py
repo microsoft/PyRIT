@@ -11,6 +11,8 @@ from pyrit.exceptions import AdversarialChatResponseBlockedException
 from pyrit.models import AttackSeedGroup, ConversationReference, Message, ScoringExpectation, SeedGroup
 
 if TYPE_CHECKING:
+    import uuid
+
     from pyrit.models import SeedUnion
     from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
@@ -42,6 +44,7 @@ class AttackParameters:
 
     # Additional labels that can be applied to the prompts throughout the attack
     memory_labels: dict[str, str] | None = field(default_factory=dict)
+    operation_id: uuid.UUID | None = None
 
     # Harm categories targeted by this attack, derived from the seed group's
     # seeds. Stamped onto the produced AttackResult.

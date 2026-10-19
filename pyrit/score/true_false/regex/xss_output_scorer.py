@@ -17,7 +17,7 @@ class XSSOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     Returns True if any pattern matches.
     """
 
-    _DEFAULT_PATTERNS: dict[str, str] = {
+    _DEFAULT_PATTERNS: dict[str, str] | None = {
         # Inline <script>...</script> block.
         "Script Tag": r"(?i)<script[\s>][\s\S]*?</script>",
         # <script src=...> pulling in an external script (no closing tag needed).

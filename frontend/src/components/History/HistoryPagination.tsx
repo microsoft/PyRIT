@@ -13,9 +13,10 @@ interface HistoryPaginationProps {
   isLastPage: boolean
   onPrevPage: () => void
   onNextPage: () => void
+  disabled?: boolean
 }
 
-export default function HistoryPagination({ page, isLastPage, onPrevPage, onNextPage }: HistoryPaginationProps) {
+export default function HistoryPagination({ page, isLastPage, onPrevPage, onNextPage, disabled = false }: HistoryPaginationProps) {
   const styles = useAttackHistoryStyles()
 
   return (
@@ -24,7 +25,7 @@ export default function HistoryPagination({ page, isLastPage, onPrevPage, onNext
         className={styles.touchTargetHeight}
         appearance="subtle"
         icon={<ChevronLeftRegular />}
-        disabled={page === 0}
+        disabled={disabled || page === 0}
         onClick={onPrevPage}
         data-testid="prev-page-btn"
       >
@@ -36,7 +37,7 @@ export default function HistoryPagination({ page, isLastPage, onPrevPage, onNext
         appearance="subtle"
         icon={<ChevronRightRegular />}
         iconPosition="after"
-        disabled={isLastPage}
+        disabled={disabled || isLastPage}
         onClick={onNextPage}
         data-testid="next-page-btn"
       >

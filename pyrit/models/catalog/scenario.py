@@ -17,6 +17,7 @@ from datetime import datetime
 from enum import Enum
 from math import prod
 from typing import Annotated, Any, Literal, Self
+from uuid import UUID
 
 from pydantic import (
     AliasChoices,
@@ -492,6 +493,7 @@ class RunScenarioRequest(_DatasetRequestModel):
         None, description="Override the scenario baseline default; forbidden scenarios reject true"
     )
     labels: _RequestLabels | None = Field(None, description="Labels to attach to memory entries")
+    operation_id: UUID | None = Field(None, description="Saved Operation reference, or unassigned")
     scenario_params: _RequestParams | None = Field(
         None,
         description="Custom parameters for the scenario (passed to scenario.set_params_from_args). "
@@ -625,6 +627,10 @@ class ScenarioRunListItem(BaseModel):
     objective_achieved_rate: int = Field(0, ge=0, le=100, description="Success rate as percentage (0-100)")
     total_retries: int = Field(0, ge=0, description="Retry attempts recorded across projected work units")
     labels: dict[str, str] = Field(default_factory=dict, description="Labels attached to this run")
+    operation_id: UUID | None = Field(None, description="Saved Operation reference, or unassigned")
+    operation_name: str | None = Field(
+        None, description="Current saved Operation name, or the historical name for legacy runs"
+    )
     completed_at: datetime | None = Field(None, description="When the scenario finished")
     pyrit_version: str | None = Field(None, description="PyRIT version that created the run")
     target: "ScenarioTargetSummary | None" = Field(None, description="Safe objective-target identity")

@@ -6,19 +6,15 @@ import {
   MessageBarBody,
   Spinner,
   Text,
-  tokens,
 } from '@fluentui/react-components'
 import {
   ArrowRightRegular,
-  CheckmarkCircleRegular,
-  DismissCircleRegular,
-  ErrorCircleRegular,
-  QuestionCircleRegular,
   TagMultipleRegular,
   TargetRegular,
 } from '@fluentui/react-icons'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
+import { OutcomeIcon } from '@/components/OutcomeBadge'
 import type { AttackSummary, TargetInstance } from '../../types'
 import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
@@ -29,13 +25,6 @@ const MAX_OPERATIONS = 5
 const MAX_ATTACKS_PER_OPERATION = 3
 const NO_OPERATION_KEY = '__no_operation__'
 
-const OUTCOME_ICONS: Record<string, React.ReactElement> = {
-  success: <CheckmarkCircleRegular style={{ color: tokens.colorPaletteGreenForeground1 }} />,
-  failure: <DismissCircleRegular style={{ color: tokens.colorPaletteRedForeground1 }} />,
-  error: <ErrorCircleRegular style={{ color: tokens.colorPaletteRedForeground1 }} />,
-  undetermined: <QuestionCircleRegular style={{ color: tokens.colorNeutralForeground3 }} />,
-}
-
 interface HomeProps {
   activeTarget: TargetInstance | null
   onNavigate: (view: ViewName) => void
@@ -43,6 +32,7 @@ interface HomeProps {
 }
 
 interface OperationGroup {
+  key: string
   name: string
   isUnlabeled: boolean
   attacks: AttackSummary[]
@@ -53,9 +43,10 @@ function groupAttacksByOperation(attacks: AttackSummary[]): OperationGroup[] {
   const groups = new Map<string, OperationGroup>()
 
   for (const attack of attacks) {
-    const opLabel = attack.operation
+    const opLabel = attack.operation_name
     const isUnlabeled = !opLabel
-    const key = isUnlabeled ? NO_OPERATION_KEY : opLabel
+    // Saved Operations group by ID so a rename cannot split them; legacy activity groups by its stored name.
+    const key = isUnlabeled ? NO_OPERATION_KEY : attack.operation_id ? `id:${attack.operation_id}` : `name:${opLabel}`
     const updatedAt = new Date(attack.updated_at).getTime()
 
     const existing = groups.get(key)
@@ -66,6 +57,7 @@ function groupAttacksByOperation(attacks: AttackSummary[]): OperationGroup[] {
       }
     } else {
       groups.set(key, {
+        key,
         name: isUnlabeled ? '(no operation)' : opLabel,
         isUnlabeled,
         attacks: [attack],
@@ -236,10 +228,9 @@ export default function Home({
               {operations.map(op => {
                 const visibleAttacks = op.attacks.slice(0, MAX_ATTACKS_PER_OPERATION)
                 const hiddenCount = op.attacks.length - visibleAttacks.length
-                const key = op.isUnlabeled ? NO_OPERATION_KEY : op.name
                 return (
                   <div
-                    key={key}
+                    key={op.key}
                     className={styles.operationCard}
                     data-testid={`home-operation-${op.isUnlabeled ? 'unlabeled' : op.name}`}
                   >
@@ -264,7 +255,7 @@ export default function Home({
                           data-testid={`home-open-attack-${attack.attack_result_id}`}
                           title={attack.last_message_preview || attack.attack_type}
                         >
-                          {OUTCOME_ICONS[attack.outcome ?? 'undetermined'] ?? OUTCOME_ICONS.undetermined}
+                          <OutcomeIcon outcome={attack.outcome} />
                           <Text size={200} className={styles.attackPreview}>
                             {attack.last_message_preview || attack.attack_type}
                           </Text>

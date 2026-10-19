@@ -246,6 +246,10 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 
 - This is often an LLM, but it doesn't have to be. For Cross-Domain Prompt Injection Attacks, the target might be a storage account that a later target has a reference to. Message and conversation should be generic enough to handle this extra data.
 - Target capabilities should be used to see if a target is compatible with the capabilities that the other components want to use.
+- Editable history means native support for caller-supplied history changes. Its absence does not
+  imply server-side state. Callers that branch stored history use `validate_history_replay()` to check
+  native support, configured adaptation, or provider-specific restoration before creating copies.
+  Targets still check live session and context continuity when sending.
 - Targets should use message_normalizer along with TargetConfiguration to transform `Messages` into formats that target supports.
 - A target may observe an internal, caller-owned send context at the provider-invocation boundary,
   after target-side waits and immediately before irreversible provider I/O, but the caller owns any
@@ -394,6 +398,7 @@ The below talks about responsibilities of most modules in the PyRIT library
 - Score and observation models own their validation rules. Persistence and replay share observation evidence checks; models do no I/O.
 - models should never depend on anything except lightweight Python (the standard library and pydantic) and pyrit.common
 - Store metadata on the narrowest model that owns it (for example, request or response data belongs on `MessagePiece`, not `Message`). Use explicit typed fields for stable, core, or independently queried data.
+- `Message`, `AttackResult`, and `Seed` support typed specialization for their piece, score, and data-type fields. API views specialize these types rather than narrowing writable inherited fields. Unparameterized models retain their existing defaults and schemas; shared loaders and storage accept heterogeneous `Seed[Any]` instances.
 - For shared metadata, define a lightweight value object in `pyrit.models` that owns its keys and provides symmetric `to_metadata()` and `from_metadata()` methods. Use `JsonResponseConfig` as the pattern for data stored in `MessagePiece.prompt_metadata`.
 
 ## [Normalizers](./targets/11_message_normalizer)

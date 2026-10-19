@@ -23,7 +23,7 @@ DATASET = "browse"
 T0 = datetime(2024, 1, 1, tzinfo=UTC)
 
 
-async def _add(memory: MemoryInterface, *seeds: Seed) -> None:
+async def _add(memory: MemoryInterface, *seeds: Seed[Any]) -> None:
     await memory.add_seeds_to_memory_async(seeds=list(seeds), added_by="test")
 
 

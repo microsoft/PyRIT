@@ -34,6 +34,7 @@ from pyrit.memory import (
     ScenarioRunStateRecord,
     SQLiteMemory,
 )
+from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackIdentifier,
@@ -42,6 +43,7 @@ from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
+    Operation,
     RetryEvent,
     ScenarioAttackResultDelta,
     ScenarioProgressResult,
@@ -58,7 +60,7 @@ from pyrit.models import (
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioTechniqueSummary
 from pyrit.models.scenario_dataset import ScenarioDatasetOptions, ScenarioDatasetRequest
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.registry import ScenarioMetadata, ScenarioRegistry
+from pyrit.registry import ConverterRegistry, ScenarioMetadata, ScenarioRegistry
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
@@ -71,7 +73,12 @@ from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
 from pyrit.scenario.scenarios.airt.scam import Scam
 from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
 from unit.async_utils import wait_for_completion_async
-from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
+from unit.mocks import (
+    MockPromptTarget,
+    get_mock_target_identifier,
+    make_scenario_result,
+    make_technique_class,
+)
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -105,11 +112,73 @@ def _patch_converter_registry(instances: dict[str, Any]):
     reg = MagicMock()
     reg.instances.get.side_effect = lambda name: instances.get(name)
     reg.instances.get_names.return_value = list(instances.keys())
-    return patch.object(_resolver_mod.ConverterRegistry, "get_registry_singleton", return_value=reg)
+    return patch.object(ConverterRegistry, "get_registry_singleton", return_value=reg)
 
 
 _REGISTRY_PATCH_BASE = "pyrit.registry"
 _MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_missing_operation_rejected_before_initializers_async(sqlite_instance) -> None:
+    service = ScenarioRunService()
+    with patch.object(service, "_run_initializers_async", new_callable=AsyncMock) as initialize:
+        try:
+            with pytest.raises(LookupError, match="Operation"):
+                await service.start_run_async(
+                    request=RunScenarioRequest(scenario_name="test", target_name="target", operation_id=uuid.uuid4())
+                )
+            initialize.assert_not_awaited()
+            assert await sqlite_instance.get_scenario_results_async() == []
+        finally:
+            await service.close_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("explicit_id", [False, True])
+async def test_fresh_run_keeps_deprecated_name_unless_an_id_is_given_async(sqlite_instance, explicit_id: bool) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    service = ScenarioRunService()
+    labels = {"operation": "engagement", "team": "red"}
+    try:
+        request = await service._validate_run_operation_async(
+            request=RunScenarioRequest(
+                scenario_name="test",
+                target_name="target",
+                labels=labels,
+                operation_id=operation.id if explicit_id else None,
+            )
+        )
+    finally:
+        await service.close_async()
+    # The scenario resolves a remaining name when it initializes.
+    expected = (operation.id, {"team": "red"}) if explicit_id else (None, labels)
+    assert (request.operation_id, request.labels) == expected
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_list_runs_filters_by_id_and_shows_current_operation_name_async(sqlite_instance) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    target = get_mock_target_identifier()
+    linked = make_scenario_result(scenario_name="Linked", objective_target_identifier=target, attack_results={})
+    linked.operation_id = operation.id
+    legacy = make_scenario_result(
+        scenario_name="Legacy", objective_target_identifier=target, attack_results={}, labels={"operation": "Old"}
+    )
+    with sqlite_instance._get_session() as session:
+        session.add_all([ScenarioResultEntry(entry=result) for result in (linked, legacy)])
+        session.commit()
+    service = ScenarioRunService()
+    try:
+        filtered = await service.list_runs_async(operation_ids=[operation.id])
+        everything = await service.list_runs_async()
+    finally:
+        await service.close_async()
+    assert [(run.operation_id, run.operation_name) for run in filtered.items] == [(operation.id, "Engagement")]
+    assert {run.scenario_result_id: run.operation_name for run in everything.items} == {
+        str(linked.id): "Engagement",
+        str(legacy.id): "Old",
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -324,6 +393,7 @@ def _make_db_scenario_result(
     sr.creation_time = datetime(2025, 1, 1, tzinfo=UTC)
     sr.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=UTC)
     sr.labels = {}
+    sr.operation_id = None
     sr.objective_achieved_rate.return_value = 0
     sr.get_display_groups.return_value = {}
     sr.display_group_map = {}
@@ -403,6 +473,7 @@ def mock_memory():
     # Default: no error AttackResults linked to any scenario. Tests that exercise
     # the error fallback path explicitly set get_attack_results.return_value.
     mock.get_attack_results_async = AsyncMock(return_value=[])
+    mock.resolve_operation_id_async = AsyncMock(side_effect=lambda *, operation_id, operation_name=None: operation_id)
     with patch(_MEMORY_PATCH, return_value=mock):
         yield mock
 
@@ -827,6 +898,7 @@ class TestScenarioRunServiceStartRun:
             max_retries=0,
             include_baseline=False,
             scenario_techniques=[_JailbreakTechnique.PROMPT_SENDING],
+            operation_id=None,
         )
 
     async def test_exact_eight_unit_jailbreak_request_queues_behind_active_run(self, mock_all_registries) -> None:
@@ -2365,6 +2437,7 @@ class TestScenarioRunServiceListRuns:
             scenario_names=[],
             statuses=[],
             labels=None,
+            operation_ids=None,
             cursor=None,
             limit=10,
         )
@@ -2786,6 +2859,7 @@ async def test_legacy_plan_techniques_agree_across_projections(
         registry_name="garak.prompt_inject",
         default_technique="all",
         all_techniques=tuple(techniques),
+        technique_class=make_technique_class(techniques=techniques, aggregates=("all",)),
         technique_summaries=summaries,
         aggregate_techniques=("all",),
         default_datasets=(),

@@ -47,9 +47,12 @@ if TYPE_CHECKING:
         OutcomeStatistics,
     )
     from pyrit.models.catalog import (
+        PresetEntry,
+        PresetIssue,
         ScenarioDatasetSizeCap,
         ScenarioDatasetSummary,
         ScenarioDefaultRunSizeEstimate,
+        ScenarioPreset,
         ScenarioProducerCategoryCounts,
         ScenarioProducerCounts,
         ScenarioRunListItem,
@@ -60,9 +63,11 @@ if TYPE_CHECKING:
         ScenarioRunSizeEstimateStatus,
         ScenarioRunSizeFactor,
         ScenarioTechniqueSummary,
+        StoredPreset,
     )
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
+    from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, FindingSeverity
     from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
     from pyrit.models.identifiers import (
         REGISTRY_NAME_PATTERN,
@@ -123,6 +128,7 @@ if TYPE_CHECKING:
     )
     from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
     from pyrit.models.messages.conversation_retry import ConversationRetry, ConversationRetryReason
+    from pyrit.models.operation import Operation, OperationCreate
     from pyrit.models.parameter import (
         ComponentType,
         Parameter,
@@ -350,6 +356,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ConversationRetry": "pyrit.models.messages.conversation_retry",
     "ConversationRetryReason": "pyrit.models.messages.conversation_retry",
     "ConversationStats": "pyrit.models.conversation_stats",
+    "Finding": "pyrit.models.finding",
+    "FindingCreate": "pyrit.models.finding",
+    "FindingEvidence": "pyrit.models.finding",
+    "FindingSeverity": "pyrit.models.finding",
     "ConversationType": "pyrit.models.messages.conversation_reference",
     "ContentEntryScorable": "pyrit.models.score",
     "ContentScorable": "pyrit.models.score",
@@ -394,8 +404,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Observation": "pyrit.models.score",
     "ObservationPayload": "pyrit.models.score",
     "ObjectiveTargetEvaluationIdentifier": "pyrit.models.identifiers",
+    "Operation": "pyrit.models.operation",
+    "OperationCreate": "pyrit.models.operation",
     "Parameter": "pyrit.models.parameter",
     "ParameterDestination": "pyrit.models.parameter",
+    "PresetEntry": "pyrit.models.catalog",
+    "PresetIssue": "pyrit.models.catalog",
     "PromptDataType": "pyrit.models.literals",
     "PromptResponseError": "pyrit.models.literals",
     "QuestionAnsweringDataset": "pyrit.models.question_answering",
@@ -433,6 +447,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDatasetSizeCap": "pyrit.models.catalog",
     "ScenarioDatasetSummary": "pyrit.models.catalog",
     "ScenarioDefaultRunSizeEstimate": "pyrit.models.catalog",
+    "ScenarioPreset": "pyrit.models.catalog",
     "ScenarioProducerCategoryCounts": "pyrit.models.catalog",
     "ScenarioProducerCounts": "pyrit.models.catalog",
     "ScenarioRunListItem": "pyrit.models.catalog",
@@ -495,6 +510,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "warn_prompt_path_deprecated": "pyrit.models.seeds",
     "snake_case_to_class_name": "pyrit.models.identifiers",
     "sort_message_pieces": "pyrit.models.messages.message_piece",
+    "StoredPreset": "pyrit.models.catalog",
     "StrategyResult": "pyrit.models.results.strategy_result",
     "StrategyResultT": "pyrit.models.results.strategy_result",
     "StructuredParameterValue": "pyrit.models.parameter",

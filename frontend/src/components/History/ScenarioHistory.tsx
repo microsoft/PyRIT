@@ -29,10 +29,13 @@ import {
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { useScenarioRunResume } from '@/hooks/useScenarioRunResume'
-import { labelsApi, scenariosApi } from '@/services/api'
+import { labelsApi, operationsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ScenarioQueueSnapshot, ScenarioRunListItem, ScenarioRunState, ScenarioRunSummary } from '@/types'
+import type {
+  FilterOption, ScenarioQueueSnapshot, ScenarioRunListItem, ScenarioRunState, ScenarioRunSummary,
+} from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
+import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
 
 import type { ViewName } from '../Sidebar/Navigation'
 import { useScenarioHistoryStyles } from './ScenarioHistory.styles'
@@ -103,7 +106,7 @@ export default function ScenarioHistory({
   const [optionsError, setOptionsError] = useState<string | null>(null)
   const [scenarioOptions, setScenarioOptions] = useState<string[]>([])
   const [operatorOptions, setOperatorOptions] = useState<string[]>([])
-  const [operationOptions, setOperationOptions] = useState<string[]>([])
+  const [operationOptions, setOperationOptions] = useState<FilterOption[]>([])
   const [otherLabelOptions, setOtherLabelOptions] = useState<string[]>([])
   const [page, setPage] = useState(0)
   const [nextCursor, setNextCursor] = useState<string | undefined>()
@@ -113,7 +116,7 @@ export default function ScenarioHistory({
     filters.scenarioNames,
     filters.statuses,
     filters.operator,
-    filters.operation,
+    filters.operationId,
     filters.otherLabels,
   ])
   const [settledFilterKey, setSettledFilterKey] = useState<string | null>(null)
@@ -148,7 +151,8 @@ export default function ScenarioHistory({
     Promise.allSettled([
       fetchAllPages((cursor) => scenariosApi.listCatalog(100, cursor)),
       labelsApi.getLabels('scenarios'),
-    ]).then(([catalogResult, labelsResult]) => {
+      operationsApi.list(),
+    ]).then(([catalogResult, labelsResult, operationsResult]) => {
       if (cancelled) return
       const failures: string[] = []
       if (catalogResult.status === 'fulfilled') {
@@ -158,15 +162,18 @@ export default function ScenarioHistory({
       }
       if (labelsResult.status === 'fulfilled') {
         const operators = labelsResult.value.labels.operator ?? []
-        const operations = labelsResult.value.labels.operation ?? []
         const others = Object.entries(labelsResult.value.labels)
           .filter(([key]) => key !== 'operator' && key !== 'operation' && key !== 'source')
           .flatMap(([key, values]) => values.map((value) => `${key}:${value}`))
         setOperatorOptions([...operators].sort())
-        setOperationOptions([...operations].sort())
         setOtherLabelOptions(others.sort())
       } else {
         failures.push('labels')
+      }
+      if (operationsResult.status === 'fulfilled') {
+        setOperationOptions(operationsResult.value.items.map(operation => ({ value: operation.id, label: operation.name })))
+      } else {
+        failures.push('operations')
       }
       setOptionsError(failures.length > 0 ? `Some filter options could not be loaded: ${failures.join(', ')}.` : null)
     })
@@ -186,7 +193,6 @@ export default function ScenarioHistory({
     const effectiveCursor = fetchToken.filterKey === filterKey ? fetchToken.cursor : undefined
     const label = [
       ...filters.operator.map((value) => `operator:${value}`),
-      ...filters.operation.map((value) => `operation:${value}`),
       ...filters.otherLabels,
     ]
     scenariosApi.listRuns({
@@ -195,6 +201,7 @@ export default function ScenarioHistory({
       scenario_names: filters.scenarioNames.length > 0 ? filters.scenarioNames : undefined,
       run_statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
       label: label.length > 0 ? label : undefined,
+      operation_id: filters.operationId.length > 0 ? filters.operationId : undefined,
     }).then((response) => {
       if (cancelled) return
       setRuns(response.items)
@@ -224,7 +231,7 @@ export default function ScenarioHistory({
     filters.scenarioNames,
     filters.statuses,
     filters.operator,
-    filters.operation,
+    filters.operationId,
     filters.otherLabels,
   ])
 
@@ -246,7 +253,7 @@ export default function ScenarioHistory({
   const hasFilters = filters.scenarioNames.length > 0
     || filters.statuses.length > 0
     || filters.operator.length > 0
-    || filters.operation.length > 0
+    || filters.operationId.length > 0
     || filters.otherLabels.length > 0
   const filtersPending = settledFilterKey !== filterKey
   const displayLoading = loading || filtersPending
@@ -307,12 +314,12 @@ export default function ScenarioHistory({
             testId="scenario-operator-filter"
             className={styles.filterDropdown}
           />
-          <MultiFilter
-            label="Operation"
+          <SearchableMultiCombobox
+            ariaLabel="Operation"
             placeholder="All operations"
-            selected={filters.operation}
+            selectedOptions={filters.operationId}
             options={operationOptions}
-            onSelect={(values) => setFilter('operation', values)}
+            onSelect={(values) => setFilter('operationId', values)}
             testId="scenario-operation-filter"
             className={styles.filterDropdown}
           />
@@ -476,7 +483,7 @@ function ScenarioHistoryTable({
               </div>
             </TableCell>
             <TableCell>{run.labels.operator ?? 'Unavailable'}</TableCell>
-            <TableCell>{run.labels.operation ?? 'Unavailable'}</TableCell>
+            <TableCell>{run.operation_name ?? 'Unavailable'}</TableCell>
             <TableCell>
               {run.target ? (
                 <Tooltip content={run.target.endpoint ?? run.target.target_type} relationship="label">

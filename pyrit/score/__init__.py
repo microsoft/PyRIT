@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
     from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
     from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
+    from pyrit.score.float_scale.decision_scorer import DecisionScorer
     from pyrit.score.float_scale.float_scale_fallback_scorer import FloatScaleFallbackScorer
     from pyrit.score.float_scale.float_scale_score_aggregator import (
         FloatScaleScoreAggregator,
@@ -177,6 +178,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ConversationScorer": "pyrit.score.conversation_scorer",
     "AgentThreatRulesScorer": "pyrit.score.true_false.regex.agent_threat_rules_scorer",
     "CredentialLeakScorer": "pyrit.score.true_false.regex.credential_leak_scorer",
+    "DecisionScorer": "pyrit.score.float_scale.decision_scorer",
     "DecodingScorer": "pyrit.score.true_false.decoding_scorer",
     "DivergenceScorer": "pyrit.score.true_false.regex.divergence_scorer",
     "EscapedAnsiOutputScorer": "pyrit.score.true_false.regex.escaped_ansi_output_scorer",

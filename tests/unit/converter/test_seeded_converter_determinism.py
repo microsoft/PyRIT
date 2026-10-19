@@ -47,6 +47,7 @@ def _stochastic_converter_cases() -> list[tuple[Callable[[], Converter], str]]:
     return [
         (AskToDecodeConverter, "encoded text"),
         (lambda: AsciiArtConverter(font="rand"), "random font"),
+        (lambda: AsciiArtConverter(font="mix"), "mixed random font"),
         (lambda: RandomCapitalLettersConverter(percentage=50.0), "abcdefghijklmnopqrstuvwxyz"),
         (EmojiConverter, "deterministic emoji output"),
         (
