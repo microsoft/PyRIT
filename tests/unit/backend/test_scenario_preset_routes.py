@@ -67,7 +67,7 @@ def signed_in_user() -> Iterator[None]:
 def _estimate(count: int) -> ScenarioRunSizeEstimate:
     """Build an exact run-size estimate of *count* attacks."""
     return ScenarioRunSizeEstimate(
-        estimated_attack_count=count,
+        total_attack_count=count,
         components=[ScenarioRunSizeComponent(label="Preset sweep", count=count)],
     )
 

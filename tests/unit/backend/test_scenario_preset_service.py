@@ -60,7 +60,7 @@ def _registered_scenario(
 def _estimate(count: int) -> ScenarioRunSizeEstimate:
     """Build an exact run-size estimate of *count* attacks."""
     return ScenarioRunSizeEstimate(
-        estimated_attack_count=count,
+        total_attack_count=count,
         components=[ScenarioRunSizeComponent(label="Preset sweep", count=count)],
     )
 
@@ -88,7 +88,7 @@ def service(preset_registry: ScenarioPresetRegistry) -> ScenarioPresetService:
 
 
 @pytest.fixture
-def registered_scenario() -> RegisteredScenario:
+def registered_scenario() -> Iterator[RegisteredScenario]:
     """Patch the scenario lookup so presets resolve against a known scenario."""
     scenario = _registered_scenario()
     with patch("pyrit.backend.services.scenario_preset_service.get_scenario_service") as mock_factory:
@@ -268,9 +268,9 @@ class TestAdvisoryIssues:
         self, service: ScenarioPresetService, preset_registry: ScenarioPresetRegistry
     ) -> None:
         issue = PresetIssue(field="scenario_name", message="Scenario 'nope' is not registered in this deployment.")
-        cast("MagicMock", preset_registry.check_preset).return_value = [issue]
 
-        saved = await service.save_preset_async(preset=_preset(), expected_version=None)
+        with patch.object(preset_registry, "check_preset", return_value=[issue]):
+            saved = await service.save_preset_async(preset=_preset(), expected_version=None)
 
         assert saved.issues == [issue]
 
@@ -279,20 +279,19 @@ class TestAdvisoryIssues:
     ) -> None:
         await service.save_preset_async(preset=_preset(), expected_version=None)
         issue = PresetIssue(field="techniques", message="Technique 'nope' is not available.")
-        cast("MagicMock", preset_registry.check_preset).return_value = [issue]
 
-        response = await service.list_presets_async(include_estimates=False)
+        with patch.object(preset_registry, "check_preset", return_value=[issue]):
+            response = await service.list_presets_async(include_estimates=False)
 
         assert response.items[0].issues == [issue]
 
     async def test_an_unresolvable_preset_is_still_saved(
         self, service: ScenarioPresetService, preset_registry: ScenarioPresetRegistry
     ) -> None:
-        cast("MagicMock", preset_registry.check_preset).return_value = [
-            PresetIssue(field="scenario_name", message="Scenario 'nope' is not registered in this deployment.")
-        ]
+        issue = PresetIssue(field="scenario_name", message="Scenario 'nope' is not registered in this deployment.")
 
-        await service.save_preset_async(preset=_preset(), expected_version=None)
+        with patch.object(preset_registry, "check_preset", return_value=[issue]):
+            await service.save_preset_async(preset=_preset(), expected_version=None)
 
         assert await service.get_preset_async(name="quick_scan") is not None
 
