@@ -43,6 +43,7 @@ from pyrit.backend.models.common import (
 )
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError, get_attack_service
+from pyrit.backend.services.history_replay import HistoryReplayError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.media_persistence import MediaAccessDeniedError
 from pyrit.common.deprecation import print_deprecation_message
@@ -68,8 +69,10 @@ async def save_conversation_async(*, body: SaveConversationRequest, request: Req
         return await get_attack_service().save_conversation_async(request=body)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except AttackStateConflictError as exc:
+    except (AttackStateConflictError, ManualSendConflictError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ManualSendQueueFullError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except LookupError as exc:
         raise FileNotFoundError(str(exc)) from exc
     except ValueError as exc:
@@ -276,6 +279,8 @@ async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:  
     except LookupError as e:
         raise FileNotFoundError(str(e)) from e
     except MediaAccessDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except HistoryReplayError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ValueError as e:
         raise HTTPException(

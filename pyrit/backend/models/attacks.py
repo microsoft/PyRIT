@@ -597,7 +597,7 @@ ConversationMessageRequest = MessageRequest
 
 
 class SaveConversationRequest(_AttackAttributionInput):
-    """Save a complete draft as a new conversation, without sending it."""
+    """Save a complete draft without sending it, optionally reusing unsent history."""
 
     save_id: uuid.UUID
     destination: Literal["same_attack", "new_attack"]
@@ -608,6 +608,8 @@ class SaveConversationRequest(_AttackAttributionInput):
     objective: str | None = Field(None, description="Omit to keep the destination's objective unchanged")
     target_registry_name: IdentifierStr | None = None
     messages: list[MessageRequest] = Field(default_factory=list)
+    reuse_unsent_conversation: bool = False
+    expected_source_piece_ids: list[uuid.UUID] | None = None
 
     @model_validator(mode="after")
     def _validate_destination(self) -> "SaveConversationRequest":
@@ -621,6 +623,13 @@ class SaveConversationRequest(_AttackAttributionInput):
             raise ValueError("Same attack requires attack_result_id; New attack must not supply it")
         if (self.source_attack_result_id is None) != (self.source_conversation_id is None):
             raise ValueError("Both source attack and source conversation are required together")
+        if self.reuse_unsent_conversation and (
+            self.destination != "same_attack"
+            or self.source_attack_result_id != self.attack_result_id
+            or self.source_conversation_id is None
+            or self.expected_source_piece_ids is None
+        ):
+            raise ValueError("Reusing unsent history requires the same source attack and an expected piece snapshot")
         if self.objective is not None:
             self.objective = self.objective.strip()
         for message in self.messages:

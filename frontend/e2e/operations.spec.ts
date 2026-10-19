@@ -37,12 +37,9 @@ for (const width of [1280, 390]) {
     await expect(finding.getByText(`Harm-type: ${harmType}`, { exact: true })).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
 
-    const targetResponse = await request.post('/api/targets', { headers, data: { type: 'TextTarget', params: {} } })
-    expect(targetResponse.ok()).toBeTruthy()
-    const target = await targetResponse.json()
     const attackResponse = await request.post('/api/attacks', {
       headers, data: {
-        target_registry_name: target.target_registry_name,
+        target_registry_name: 'browser_offline',
         operation_id: operation.id,
         prepended_conversation: [{ role: 'user', pieces: [{ original_value: 'Saved offline evidence.' }] }],
       },
@@ -211,7 +208,7 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
 
   const version = await (await request.get('/api/version')).json()
   const headers = { 'PyRIT-Compatibility-ID': version.compatibility_id }
-  const targetResponse = await request.post('/api/targets', { headers, data: { type: 'TextTarget', params: {} } })
+  const targetResponse = await request.get('/api/targets/browser_offline', { headers })
   expect(targetResponse.ok()).toBeTruthy()
   const target = await targetResponse.json()
   let sourceAttack: { attack_result_id: string; conversation_id: string } | null = null

@@ -228,10 +228,6 @@ export const useConverterPanelStyles = makeStyles({
     ...mobileTouchTarget,
     alignSelf: 'flex-start',
   },
-  addConvertedButton: {
-    alignSelf: 'stretch',
-    marginTop: 'auto',
-  },
   converterName: {
     minWidth: 0,
     overflow: 'hidden',
