@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 class ScenarioPresetService:
     """
-    Wire adapter over :class:`ScenarioPresetRegistry`.
+    Wire adapter over ``ScenarioPresetRegistry``.
 
     The registry owns preset storage, validation, and version-checked resolution, so this
     service adds only what the HTTP layer needs on top of it: it runs the registry's
