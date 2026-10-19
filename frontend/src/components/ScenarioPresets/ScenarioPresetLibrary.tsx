@@ -31,7 +31,7 @@ import { Link, useNavigate } from 'react-router'
 
 import { ScenarioRunEstimateSummary } from '@/components/Scenarios/ScenarioRunEstimate'
 import { mapScenarioRunEstimate } from '@/components/Scenarios/scenarioRunEstimateAdapter'
-import { scenarioPresetsApi } from '@/services/api'
+import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { ScenarioPresetResponse, TargetInstance } from '@/types'
 
@@ -85,8 +85,8 @@ export default function ScenarioPresetLibrary({
     const controller = new AbortController()
     let cancelled = false
 
-    // Sizing a preset rebuilds its scenario, so the table paints from an
-    // unsized read first and fills the run-size column in a second pass.
+    // Estimate the displayed definitions, without re-reading storage or changing
+    // the versions that the operator will confirm at launch.
     const loadPresets = async (): Promise<void> => {
       try {
         const response = await scenarioPresetsApi.list(controller.signal, false)
@@ -102,10 +102,29 @@ export default function ScenarioPresetLibrary({
         }
 
         try {
-          const sized = await scenarioPresetsApi.list(controller.signal)
+          const estimates = await Promise.allSettled(response.items.map((item) => (
+            item.issues.length > 0 ? Promise.resolve(null) : scenariosApi.estimateRun(
+              item.preset.scenario_name,
+              {
+                techniques: item.preset.techniques,
+                datasets: item.preset.datasets ?? undefined,
+                include_baseline: item.preset.include_baseline,
+                scenario_params: item.preset.scenario_params,
+              },
+              controller.signal,
+            )
+          )))
           if (cancelled) return
-          setItems(sized.items)
-          setEstimateError(null)
+          const failures: string[] = []
+          setItems(response.items.map((item, index) => {
+            const estimate = estimates[index]
+            if (estimate.status === 'rejected') {
+              failures.push(`${item.preset.name}: ${toApiError(estimate.reason).detail}`)
+              return { ...item, run_size: null }
+            }
+            return { ...item, run_size: estimate.value }
+          }))
+          setEstimateError(failures.length > 0 ? failures.join('; ') : null)
         } catch (err: unknown) {
           if (cancelled || controller.signal.aborted) return
           setEstimateError(toApiError(err).detail)

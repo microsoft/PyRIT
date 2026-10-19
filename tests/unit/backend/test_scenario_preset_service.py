@@ -140,6 +140,7 @@ class TestPresetCrud:
         self, service: ScenarioPresetService, registered_scenario: RegisteredScenario
     ) -> None:
         preset = _preset(
+            author="Grace Hopper",
             description="Nightly smoke",
             techniques=["crescendo"],
             datasets=ScenarioDatasetRequest(
@@ -382,7 +383,7 @@ class TestRunSizeEstimates:
     ) -> None:
         await service.save_preset_async(preset=_preset(), expected_version=None)
 
-        response = await service.list_presets_async()
+        response = await service.list_presets_async(include_estimates=True)
 
         assert response.items[0].run_size is not None
         assert response.items[0].run_size.total_attack_count == 12
@@ -402,7 +403,7 @@ class TestRunSizeEstimates:
         )
         await service.save_preset_async(preset=preset, expected_version=None)
 
-        await service.list_presets_async()
+        await service.list_presets_async(include_estimates=True)
 
         estimate_call = scenario_service.estimate_scenario_run_size_async.call_args
         assert estimate_call.kwargs["scenario_name"] == SCENARIO_NAME
@@ -421,19 +422,19 @@ class TestRunSizeEstimates:
     ) -> None:
         await service.save_preset_async(preset=_preset(), expected_version=None)
 
-        await service.list_presets_async()
+        await service.list_presets_async(include_estimates=True)
 
         request = scenario_service.estimate_scenario_run_size_async.call_args.kwargs["request"]
         assert request.techniques is None
         assert request.datasets is None
         assert request.target_name is None
 
-    async def test_skipping_estimates_does_no_sizing_work(
+    async def test_estimates_are_off_by_default(
         self, service: ScenarioPresetService, scenario_service: MagicMock
     ) -> None:
         await service.save_preset_async(preset=_preset(), expected_version=None)
 
-        response = await service.list_presets_async(include_estimates=False)
+        response = await service.list_presets_async()
 
         assert response.items[0].run_size is None
         scenario_service.estimate_scenario_run_size_async.assert_not_called()
@@ -447,7 +448,7 @@ class TestRunSizeEstimates:
             side_effect=[_estimate(7), ValueError("unknown technique 'nope'")]
         )
 
-        response = await service.list_presets_async()
+        response = await service.list_presets_async(include_estimates=True)
 
         assert [item.preset.name for item in response.items] == ["alpha", "broken"]
         assert response.items[0].run_size is not None
@@ -460,13 +461,11 @@ class TestRunSizeEstimates:
         await service.save_preset_async(preset=_preset(), expected_version=None)
         scenario_service.estimate_scenario_run_size_async = AsyncMock(return_value=None)
 
-        response = await service.list_presets_async()
+        response = await service.list_presets_async(include_estimates=True)
 
         assert response.items[0].run_size is None
 
-    async def test_a_single_read_stays_cheap(
-        self, service: ScenarioPresetService, scenario_service: MagicMock
-    ) -> None:
+    async def test_a_single_read_stays_cheap(self, service: ScenarioPresetService, scenario_service: MagicMock) -> None:
         await service.save_preset_async(preset=_preset(), expected_version=None)
         scenario_service.estimate_scenario_run_size_async.reset_mock()
 

@@ -697,12 +697,12 @@ export const scenariosApi = {
 }
 
 export const scenarioPresetsApi = {
+  /** Read definitions without run-size calculation unless explicitly requested. */
   list: async (
     signal?: AbortSignal,
-    includeEstimates = true,
+    includeEstimates = false,
   ): Promise<ScenarioPresetListResponse> => {
-    const params: Record<string, boolean> = {}
-    if (!includeEstimates) params.include_estimates = false
+    const params = { include_estimates: includeEstimates }
     const response = await apiClient.get('/scenario-presets', { params, signal })
     return response.data
   },

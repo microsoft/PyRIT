@@ -1261,8 +1261,8 @@ export interface ScenarioPresetResponse {
   issues: PresetIssue[]
   /**
    * How much this preset runs with its own techniques, datasets, and limits.
-   * Only the list endpoint fills this in, and only when estimates are requested;
-   * it stays null for a preset this deployment cannot resolve.
+   * List responses fill this in only when estimates are explicitly requested
+   * (off by default); it stays null for a preset this deployment cannot resolve.
    */
   run_size?: ScenarioRunSizeEstimateResponse | null
 }

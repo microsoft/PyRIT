@@ -196,6 +196,27 @@ describe('LaunchPresetDialog', () => {
     expect(mockNavigate).not.toHaveBeenCalled()
   })
 
+  it('reports a run-start conflict without claiming the preset changed', async () => {
+    const user = userEvent.setup()
+    mockStartRun.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 409, data: { detail: 'A scenario run is already using this identifier.' } },
+    })
+
+    renderDialog()
+
+    await user.click(screen.getByTestId('confirm-launch-preset'))
+
+    expect(await screen.findByText('A scenario run is already using this identifier.')).toBeInTheDocument()
+    expect(onPresetChanged).not.toHaveBeenCalled()
+    expect(mockNavigate).not.toHaveBeenCalled()
+    expect(screen.getByTestId('confirm-launch-preset')).toBeEnabled()
+
+    await user.click(screen.getByTestId('confirm-launch-preset'))
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalled())
+    expect(onPresetChanged).not.toHaveBeenCalled()
+  })
+
   it('sends the default adversarial target when one is configured', async () => {
     const user = userEvent.setup()
     renderDialog({ defaultAdversarialTarget: ADVERSARIAL_TARGET })

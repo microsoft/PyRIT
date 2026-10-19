@@ -76,6 +76,7 @@ class UpdateScenarioPresetRequest(BaseModel):
     distinct operation from creating: a client that has not read the document it
     is replacing has nothing to be optimistic about. Creation goes through POST,
     where no version exists to supply.
+    An omitted or null ``preset.author`` preserves the stored author.
     """
 
     preset: ScenarioPreset = Field(..., description="The replacement preset")

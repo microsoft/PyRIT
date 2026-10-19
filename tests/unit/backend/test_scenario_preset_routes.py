@@ -46,6 +46,7 @@ def anonymous_client(compatibility_headers: dict[str, str]) -> Iterator[TestClie
 def service() -> Iterator[MagicMock]:
     """Patch the preset service the routes resolve."""
     mock_service = MagicMock(spec=ScenarioPresetService)
+    mock_service.get_preset_async.return_value = _response()
     with patch(
         "pyrit.backend.routes.scenario_presets.get_scenario_preset_service",
         return_value=mock_service,
@@ -109,14 +110,13 @@ class TestListPresets:
         assert body["source"] == "/tmp/presets"
         assert body["items"][0]["preset"]["name"] == PRESET_NAME
         assert body["items"][0]["version"] == "v1"
+        assert service.list_presets_async.call_args.kwargs["include_estimates"] is False
 
     def test_list_serializes_a_registered_preset_with_a_null_version(
         self, client: TestClient, service: MagicMock
     ) -> None:
         service.list_presets_async = AsyncMock(
-            return_value=ScenarioPresetListResponse(
-                source="/tmp", items=[_response(origin="registered", version=None)]
-            )
+            return_value=ScenarioPresetListResponse(source="/tmp", items=[_response(origin="registered", version=None)])
         )
 
         response = client.get("/api/scenario-presets")
@@ -156,7 +156,7 @@ class TestListPresets:
             return_value=ScenarioPresetListResponse(source="/tmp", items=[_response(run_size=estimate)])
         )
 
-        response = client.get("/api/scenario-presets")
+        response = client.get("/api/scenario-presets", params={"include_estimates": "true"})
 
         assert response.json()["items"][0]["run_size"]["total_attack_count"] == 42
         assert service.list_presets_async.call_args.kwargs["include_estimates"] is True
@@ -284,6 +284,92 @@ class TestUpdatePreset:
 
         assert response.status_code == 200
         assert service.save_preset_async.call_args.kwargs["expected_version"] == "v1"
+
+    @pytest.mark.parametrize("explicit_null", [False, True])
+    @pytest.mark.usefixtures("signed_in_user")
+    def test_an_update_without_an_author_preserves_the_original_author(
+        self, *, client: TestClient, service: MagicMock, explicit_null: bool
+    ) -> None:
+        stored = _preset().model_copy(update={"author": "Grace Hopper"})
+        service.get_preset_async.return_value = _response().model_copy(update={"preset": stored})
+        service.save_preset_async.return_value = _response(version="v2").model_copy(update={"preset": stored})
+        replacement = _preset().model_dump(exclude_none=True)
+        if explicit_null:
+            replacement["author"] = None
+
+        response = client.put(
+            f"/api/scenario-presets/{PRESET_NAME}",
+            json={"preset": replacement, "expected_version": "v1"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["preset"]["author"] == "Grace Hopper"
+        service.get_preset_async.assert_awaited_once_with(name=PRESET_NAME)
+        assert service.save_preset_async.call_args.kwargs["preset"].author == "Grace Hopper"
+        assert service.save_preset_async.call_args.kwargs["expected_version"] == "v1"
+
+    def test_an_explicit_author_is_preserved_without_an_extra_read(
+        self, *, client: TestClient, service: MagicMock
+    ) -> None:
+        service.save_preset_async.return_value = _response(version="v2")
+        replacement = _preset().model_dump()
+        replacement["author"] = "Explicit author"
+
+        response = client.put(
+            f"/api/scenario-presets/{PRESET_NAME}",
+            json={"preset": replacement, "expected_version": "v1"},
+        )
+
+        assert response.status_code == 200
+        assert service.save_preset_async.call_args.kwargs["preset"].author == "Explicit author"
+        service.get_preset_async.assert_not_called()
+
+    def test_preserving_an_author_does_not_adopt_a_newer_storage_version(
+        self, *, client: TestClient, service: MagicMock
+    ) -> None:
+        stored = _preset().model_copy(update={"author": "Grace Hopper"})
+        service.get_preset_async.return_value = _response(version="v2").model_copy(update={"preset": stored})
+        service.save_preset_async.side_effect = ScenarioPresetConflictError(
+            name=PRESET_NAME, expected_version="v1", actual_version="v2"
+        )
+
+        response = client.put(
+            f"/api/scenario-presets/{PRESET_NAME}",
+            json={"preset": _preset().model_dump(), "expected_version": "v1"},
+        )
+
+        assert response.status_code == 409
+        assert service.save_preset_async.call_args.kwargs["expected_version"] == "v1"
+
+    def test_a_missing_preset_still_conflicts_instead_of_being_recreated(
+        self, *, client: TestClient, service: MagicMock
+    ) -> None:
+        service.get_preset_async.return_value = None
+        service.save_preset_async.side_effect = ScenarioPresetConflictError(
+            name=PRESET_NAME, expected_version="v1", actual_version=None
+        )
+
+        response = client.put(
+            f"/api/scenario-presets/{PRESET_NAME}",
+            json={"preset": _preset().model_dump(), "expected_version": "v1"},
+        )
+
+        assert response.status_code == 409
+        assert service.save_preset_async.call_args.kwargs["expected_version"] == "v1"
+
+    def test_a_failed_author_read_is_reported_without_storage_details(
+        self, *, client: TestClient, service: MagicMock
+    ) -> None:
+        service.get_preset_async.side_effect = AzureError("key=secret")
+
+        response = client.put(
+            f"/api/scenario-presets/{PRESET_NAME}",
+            json={"preset": _preset().model_dump(), "expected_version": "v1"},
+        )
+
+        assert response.status_code == 503
+        assert "secret" not in response.text
+        service.save_preset_async.assert_not_called()
 
     def test_a_body_naming_a_different_preset_is_rejected(self, client: TestClient, service: MagicMock) -> None:
         service.save_preset_async = AsyncMock(return_value=_response())

@@ -1,11 +1,11 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes } from 'react-router'
 
 import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { makeScenario } from '@/test-utils/scenarioFixtures'
-import type { ScenarioPreset } from '@/types'
+import type { ScenarioDatasetSettings, ScenarioPreset, ScenarioRunSizeEstimateResponse } from '@/types'
 
 import ScenarioPresetEditor from './ScenarioPresetEditor'
 
@@ -27,6 +27,7 @@ jest.mock('@/services/api', () => ({
   scenariosApi: {
     listCatalog: jest.fn(),
     getScenario: jest.fn(),
+    estimateRun: jest.fn(),
   },
 }))
 
@@ -35,6 +36,7 @@ const mockCreate = scenarioPresetsApi.create as jest.Mock
 const mockUpdate = scenarioPresetsApi.update as jest.Mock
 const mockListCatalog = scenariosApi.listCatalog as jest.Mock
 const mockGetScenario = scenariosApi.getScenario as jest.Mock
+const mockEstimateRun = scenariosApi.estimateRun as jest.Mock
 
 const mockNavigate = jest.fn()
 
@@ -104,6 +106,7 @@ beforeEach(() => {
     pagination: { has_more: false, next_cursor: null },
   })
   mockGetScenario.mockResolvedValue(SCENARIO)
+  mockEstimateRun.mockResolvedValue(SCENARIO.default_run_size)
   mockGet.mockResolvedValue({ preset: STORED_PRESET, version: 'v1', issues: [] })
   mockCreate.mockResolvedValue({ preset: STORED_PRESET, version: 'v1', issues: [] })
   mockUpdate.mockResolvedValue({ preset: STORED_PRESET, version: 'v2', issues: [] })
@@ -277,7 +280,7 @@ describe('ScenarioPresetEditor edit mode', () => {
     mockGet.mockResolvedValue({
       preset: { ...STORED_PRESET, techniques: ['crescendo', 'retired_attack'] },
       version: 'v1',
-      issues: [],
+      issues: [{ field: 'techniques', message: "Technique 'retired_attack' is not available." }],
     })
 
     renderEdit()
@@ -305,6 +308,7 @@ describe('ScenarioPresetEditor edit mode', () => {
     renderEdit()
 
     await user.type(await screen.findByTestId('preset-description-input'), ' Updated.')
+    expect(screen.queryByTestId('dropped-techniques-warning')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('save-preset-btn'))
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
@@ -312,6 +316,34 @@ describe('ScenarioPresetEditor edit mode', () => {
       expect.objectContaining({ techniques: ['crescendo:converter.translation_spanish'] }),
       'v1',
     ))
+  })
+
+  it('shows modifier validation from the server even when the base technique is available', async () => {
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, techniques: ['crescendo:converter.missing'] },
+      version: 'v1',
+      issues: [{ field: 'techniques', message: "Converter 'missing' is not registered." }],
+    })
+
+    renderEdit()
+
+    expect(await screen.findByTestId('dropped-techniques-warning')).toHaveTextContent(
+      "Converter 'missing' is not registered.",
+    )
+    expect(screen.getByTestId('techniques-without-checkbox')).toHaveTextContent('crescendo:converter.missing')
+  })
+
+  it('does not invent a technique issue for a token the server accepts', async () => {
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, techniques: ['server_extension'] },
+      version: 'v1',
+      issues: [{ field: 'scenario_params', message: 'A parameter is unavailable.' }],
+    })
+
+    renderEdit()
+
+    expect(await screen.findByTestId('techniques-without-checkbox')).toHaveTextContent('server_extension')
+    expect(screen.queryByTestId('dropped-techniques-warning')).not.toBeInTheDocument()
   })
 
   it('shows a pinned aggregate technique as a tag the operator can remove', async () => {
@@ -479,6 +511,173 @@ describe('ScenarioPresetEditor edit mode', () => {
     expect(await screen.findByTestId('editor-error-state')).toHaveTextContent(
       'Preset storage is not configured.',
     )
+  })
+})
+
+describe('ScenarioPresetEditor dataset projection', () => {
+  const defaults: ScenarioDatasetSettings = {
+    sources: [{ name: 'harmbench', max_size: 5, fetch: 'if_missing', configured_provider: false }],
+    max_per_dataset: 5,
+    max_total: 'all',
+    fetch: 'if_missing',
+    filters: {},
+  }
+
+  function projection(limit: number | 'all'): ScenarioRunSizeEstimateResponse {
+    return {
+      ...SCENARIO.default_run_size,
+      dataset_defaults: defaults,
+      effective_datasets: {
+        ...defaults,
+        max_per_dataset: limit,
+        sources: [{ ...defaults.sources[0], max_size: limit }],
+      },
+    }
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers()
+    mockGetScenario.mockResolvedValue(makeScenario({ dataset_defaults: defaults }))
+  })
+
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  it.each([
+    { limit: 2, text: 'Up to 2 of 8' },
+    { limit: 'all', text: '8 examples' },
+  ] as const)('shows the effective size for max_per_dataset=$limit', async ({ limit, text }) => {
+    const datasets = { max_per_dataset: limit }
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, datasets },
+      version: 'v1',
+      issues: [],
+    })
+    mockEstimateRun.mockResolvedValue(projection(limit))
+
+    renderEdit()
+
+    const row = await screen.findByRole('row', { name: /harmbench/ })
+    expect(await within(row).findByText(text)).toBeInTheDocument()
+    expect(mockEstimateRun).toHaveBeenCalledWith(
+      STORED_PRESET.scenario_name,
+      expect.objectContaining({ techniques: ['crescendo'], datasets, include_baseline: false }),
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('uses projected limits for a source that is not in the scenario defaults', async () => {
+    const datasets = { sources: [{ name: 'xstest' }], max_per_dataset: 2 }
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, datasets },
+      version: 'v1',
+      issues: [],
+    })
+    mockEstimateRun.mockResolvedValue({
+      ...projection(2),
+      effective_datasets: {
+        ...defaults,
+        max_per_dataset: 2,
+        sources: [{ name: 'xstest', max_size: 2, fetch: 'if_missing', configured_provider: false }],
+      },
+    })
+
+    renderEdit()
+
+    const row = await screen.findByRole('row', { name: /xstest/ })
+    expect(await within(row).findByText('Up to 2 of 8')).toBeInTheDocument()
+  })
+
+  it('preserves a source-specific cap while projecting the inherited per-dataset cap', async () => {
+    const sourceDefaults: ScenarioDatasetSettings = {
+      ...defaults,
+      sources: [
+        { ...defaults.sources[0], max_size: 3 },
+        { ...defaults.sources[0], name: 'xstest' },
+      ],
+    }
+    mockGetScenario.mockResolvedValue(makeScenario({ dataset_defaults: sourceDefaults }))
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, datasets: { max_per_dataset: 2 } },
+      version: 'v1',
+      issues: [],
+    })
+    mockEstimateRun.mockResolvedValue({
+      ...projection(2),
+      dataset_defaults: sourceDefaults,
+      effective_datasets: {
+        ...sourceDefaults,
+        max_per_dataset: 2,
+        sources: [sourceDefaults.sources[0], { ...sourceDefaults.sources[1], max_size: 2 }],
+      },
+    })
+
+    renderEdit()
+
+    const inherited = await screen.findByRole('row', { name: /xstest/ })
+    expect(await within(inherited).findByText('Up to 2 of 8')).toBeInTheDocument()
+    const pinned = screen.getByRole('row', { name: /harmbench/ })
+    expect(within(pinned).getByText('Up to 3 of 8')).toBeInTheDocument()
+  })
+
+  it('reports projection errors without preventing a preset from being saved', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    mockEstimateRun.mockRejectedValue(new Error('Projection unavailable.'))
+
+    renderEdit()
+
+    expect(await screen.findByText(
+      'Dataset preview could not be updated: Projection unavailable.',
+    )).toBeInTheDocument()
+    await user.click(screen.getByTestId('save-preset-btn'))
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+  })
+
+  it('ignores a pending projection after the operator resets the datasets', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    let complete: (value: ScenarioRunSizeEstimateResponse) => void = () => {}
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, datasets: { max_per_dataset: 2 } },
+      version: 'v1',
+      issues: [],
+    })
+    mockEstimateRun
+      .mockReturnValueOnce(new Promise<ScenarioRunSizeEstimateResponse>((resolve) => { complete = resolve }))
+      .mockResolvedValue(projection(5))
+
+    renderEdit()
+
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledTimes(1))
+    const signal: AbortSignal = mockEstimateRun.mock.calls[0][2]
+    await user.click(screen.getByRole('button', { name: 'Reset datasets' }))
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledTimes(2))
+    expect(signal.aborted).toBe(true)
+
+    await act(async () => { complete(projection(2)) })
+
+    const row = screen.getByRole('row', { name: /harmbench/ })
+    expect(within(row).getByText('Up to 5 of 8')).toBeInTheDocument()
+    expect(within(row).queryByText('Up to 2 of 8')).not.toBeInTheDocument()
+  })
+
+  it('stops the preview spinner when an invalid edit cancels the pending request', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    mockEstimateRun.mockReturnValueOnce(new Promise<ScenarioRunSizeEstimateResponse>(() => {}))
+
+    renderEdit()
+
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledTimes(1))
+    expect(screen.getByText('Updating dataset preview...')).toBeInTheDocument()
+    const signal: AbortSignal = mockEstimateRun.mock.calls[0][2]
+
+    await user.click(screen.getByTestId('technique-crescendo'))
+
+    expect(signal.aborted).toBe(true)
+    expect(screen.queryByText('Updating dataset preview...')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('save-preset-btn'))
+    expect(await screen.findByText('Select at least one technique.')).toBeInTheDocument()
+    expect(mockUpdate).not.toHaveBeenCalled()
   })
 })
 

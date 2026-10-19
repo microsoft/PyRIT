@@ -9,7 +9,6 @@ import {
   configToPreset,
   presetToConfigState,
   uneditableScenarioParams,
-  unknownPresetTechniques,
   validatePresetName,
 } from './scenarioPresetForm'
 
@@ -82,33 +81,6 @@ describe('validatePresetName', () => {
     [`a${'b'.repeat(64)}`],
   ])('rejects %s', (name) => {
     expect(validatePresetName(name)).not.toBeNull()
-  })
-})
-
-describe('unknownPresetTechniques', () => {
-  it('returns nothing when the preset pins no techniques', () => {
-    expect(unknownPresetTechniques(makeScenario(), makePreset())).toEqual([])
-  })
-
-  it('names only the techniques the scenario no longer offers', () => {
-    const scenario = makeScenario({ all_techniques: ['crescendo', 'default_technique'] })
-    const preset = makePreset({ techniques: ['crescendo', 'retired_attack'] })
-
-    expect(unknownPresetTechniques(scenario, preset)).toEqual(['retired_attack'])
-  })
-
-  it('accepts an aggregate technique, which the server allows but the selector has no checkbox for', () => {
-    const scenario = makeScenario({ aggregate_techniques: ['all', 'default'] })
-    const preset = makePreset({ techniques: ['all'] })
-
-    expect(unknownPresetTechniques(scenario, preset)).toEqual([])
-  })
-
-  it('accepts a converter modifier on a technique the scenario does define', () => {
-    const scenario = makeScenario({ all_techniques: ['crescendo', 'default_technique'] })
-    const preset = makePreset({ techniques: ['crescendo:converter.translation_spanish'] })
-
-    expect(unknownPresetTechniques(scenario, preset)).toEqual([])
   })
 })
 

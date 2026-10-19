@@ -38,14 +38,14 @@ class ScenarioPresetService:
     response that has to be computed by the backend rather than read from storage.
     """
 
-    async def list_presets_async(self, *, include_estimates: bool = True) -> ScenarioPresetListResponse:
+    async def list_presets_async(self, *, include_estimates: bool = False) -> ScenarioPresetListResponse:
         """
         Read every stored preset, newest advisory issues included.
 
         Args:
             include_estimates (bool): Whether to size each preset's own configuration. Sizing
-                constructs every scenario, so a caller that wants to paint first can ask for
-                the presets alone and request the sizes separately.
+                constructs every scenario and is opt-in. Callers can estimate the returned
+                configurations through the scenario estimate endpoint without re-reading storage.
 
         Returns:
             ScenarioPresetListResponse: The configured source and every readable preset.
@@ -55,8 +55,7 @@ class ScenarioPresetService:
         if include_estimates:
             estimates = await asyncio.gather(*(self._estimate_run_size_async(preset=item.preset) for item in items))
             items = [
-                item.model_copy(update={"run_size": estimate})
-                for item, estimate in zip(items, estimates, strict=True)
+                item.model_copy(update={"run_size": estimate}) for item, estimate in zip(items, estimates, strict=True)
             ]
         return ScenarioPresetListResponse(source=registry.source, items=items)
 
@@ -222,9 +221,7 @@ class ScenarioPresetService:
         Returns:
             ScenarioPresetResponse: The wire representation of the preset.
         """
-        issues = await asyncio.to_thread(
-            ScenarioPresetRegistry.get_registry_singleton().check_preset, preset=preset
-        )
+        issues = await asyncio.to_thread(ScenarioPresetRegistry.get_registry_singleton().check_preset, preset=preset)
         return ScenarioPresetResponse(preset=preset, origin=origin, version=version, issues=issues)
 
     async def _estimate_run_size_async(self, *, preset: ScenarioPreset) -> ScenarioRunSizeEstimate | None:

@@ -28,7 +28,7 @@ import {
 } from '@/components/Scenarios/scenarioRunLimits'
 import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ScenarioPreset, TargetInstance } from '@/types'
+import type { RunScenarioRequest, ScenarioPreset, TargetInstance } from '@/types'
 import { scenarioRunRoutePath } from '@/utils/routeParams'
 
 import { useLaunchPresetDialogStyles } from './LaunchPresetDialog.styles'
@@ -128,18 +128,15 @@ export default function LaunchPresetDialog({
     }
     setSubmitting(true)
     setError(null)
+    let request: RunScenarioRequest
     try {
-      const request = await scenarioPresetsApi.resolve(preset.name, {
+      request = await scenarioPresetsApi.resolve(preset.name, {
         expected_version: version,
         target_name: targetName,
         ...(adversarialTargetName === '' ? {} : { adversarial_target_name: adversarialTargetName }),
         max_concurrency: maxConcurrency,
         max_retries: maxRetries,
         ...(Object.keys(labels).length > 0 ? { labels } : {}),
-      })
-      const summary = await scenariosApi.startRun(request)
-      navigate(scenarioRunRoutePath(summary.scenario_result_id), {
-        state: { scenarioName: preset.scenario_name },
       })
     } catch (err) {
       const apiError = toApiError(err)
@@ -150,6 +147,16 @@ export default function LaunchPresetDialog({
         return
       }
       setError(apiError.detail)
+      setSubmitting(false)
+      return
+    }
+    try {
+      const summary = await scenariosApi.startRun(request)
+      navigate(scenarioRunRoutePath(summary.scenario_result_id), {
+        state: { scenarioName: preset.scenario_name },
+      })
+    } catch (err) {
+      setError(toApiError(err).detail)
       setSubmitting(false)
     }
   }

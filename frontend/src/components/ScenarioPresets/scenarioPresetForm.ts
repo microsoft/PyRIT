@@ -35,43 +35,6 @@ export function validatePresetName(name: string): string | null {
 }
 
 /**
- * Technique names a preset may legitimately pin. Mirrors the server's allow-list:
- * the concrete techniques plus the scenario's aggregates (`all`, `easy`, ...), which
- * the selector has no checkbox for but which remain valid stored values.
- */
-function presetSelectableTechniques(scenario: RegisteredScenario): Set<string> {
-  const concrete = uniqueTechniqueOptions(scenario).techniques.map((technique) => technique.name)
-  return new Set([...concrete, ...scenario.aggregate_techniques])
-}
-
-/**
- * Mirrors the server-side technique-token grammar (`pyrit/scenario/core/_technique_tokens.py`):
- * a technique name optionally followed by colon-separated modifiers, as in
- * `role_play:converter.translation_spanish`. Only the technique name is matched against the
- * scenario's techniques, so a modifier does not make a known technique look unknown.
- */
-function techniqueBaseName(token: string): string {
-  const separator = token.indexOf(':')
-  return separator === -1 ? token : token.slice(0, separator)
-}
-
-/**
- * Techniques the preset pins that this deployment's scenario does not define. The editor
- * surfaces them so the operator knows the preset will not run here; it carries them through
- * untouched rather than rewriting the document on an unrelated edit.
- */
-export function unknownPresetTechniques(
-  scenario: RegisteredScenario,
-  preset: ScenarioPreset,
-): string[] {
-  if (!preset.techniques) {
-    return []
-  }
-  const available = presetSelectableTechniques(scenario)
-  return preset.techniques.filter((token) => !available.has(techniqueBaseName(token)))
-}
-
-/**
  * Parameters the preset stores that this editor renders no control for — a key the
  * scenario no longer declares, or one of the common parameters the launch form owns.
  * They are carried through untouched rather than dropped on an unrelated edit.

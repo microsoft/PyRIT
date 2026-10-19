@@ -29,7 +29,12 @@ import {
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { RegisteredScenario, ScenarioPreset } from '@/types'
+import type {
+  RegisteredScenario,
+  ScenarioPresetResponse,
+  ScenarioRunSizeEstimateRequest,
+  ScenarioRunSizeEstimateResponse,
+} from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 import { routerPathParamValue } from '@/utils/routeParams'
 
@@ -39,19 +44,19 @@ import {
   configToPreset,
   presetToConfigState,
   uneditableScenarioParams,
-  unknownPresetTechniques,
   validatePresetName,
 } from './scenarioPresetForm'
 
 /** Items requested per catalog page while paging the scenario picker's options. */
 const CATALOG_PAGE_SIZE = 200
+const DATASET_PROJECTION_DEBOUNCE_MS = 250
 
 type LoadStatus = 'loading' | 'ready' | 'not-found' | 'error'
 
-interface LoadedPreset {
-  preset: ScenarioPreset
-  /** Null for a preset registered in code, which has no document to update. */
-  version: string | null
+interface DatasetProjectionResult {
+  request: ScenarioRunSizeEstimateRequest
+  scenarioName: string
+  error: string | null
 }
 
 export default function ScenarioPresetEditor({ mode }: { mode: 'create' | 'edit' }) {
@@ -74,15 +79,17 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   const [status, setStatus] = useState<LoadStatus>('loading')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [catalog, setCatalog] = useState<RegisteredScenario[]>([])
-  const [loaded, setLoaded] = useState<LoadedPreset | null>(null)
+  const [loaded, setLoaded] = useState<ScenarioPresetResponse | null>(null)
 
   const [name, setName] = useState(mode === 'edit' ? decodedName : '')
   const [description, setDescription] = useState('')
   const [scenario, setScenario] = useState<RegisteredScenario | null>(null)
   const [scenarioLoading, setScenarioLoading] = useState(false)
   const [config, setConfig] = useState<ScenarioConfigFormState | null>(null)
-  const [droppedTechniques, setDroppedTechniques] = useState<string[]>([])
   const [scenarioUnavailable, setScenarioUnavailable] = useState<string | null>(null)
+  const [datasetError, setDatasetError] = useState<string | null>(null)
+  const [datasetProjection, setDatasetProjection] = useState<ScenarioRunSizeEstimateResponse | null>(null)
+  const [datasetProjectionResult, setDatasetProjectionResult] = useState<DatasetProjectionResult | null>(null)
 
   const [saving, setSaving] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
@@ -108,7 +115,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
 
         const response = await scenarioPresetsApi.get(decodedName)
         if (cancelled) return
-        setLoaded({ preset: response.preset, version: response.version })
+        setLoaded(response)
         setName(response.preset.name)
         setDescription(response.preset.description ?? '')
         setStatus('ready')
@@ -123,7 +130,6 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
           if (cancelled) return
           setScenario(full)
           setConfig(presetToConfigState(full, response.preset))
-          setDroppedTechniques(unknownPresetTechniques(full, response.preset))
         } catch (scenarioErr) {
           if (cancelled) return
           setScenarioUnavailable(toApiError(scenarioErr).detail)
@@ -146,7 +152,8 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
     setScenarioLoading(true)
     setSaveError(null)
     setValidationError(null)
-    setDroppedTechniques([])
+    setDatasetProjection(null)
+    setDatasetProjectionResult(null)
     try {
       const full = await scenariosApi.getScenario(nextScenarioName)
       setScenario(full)
@@ -158,13 +165,15 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
     }
   }, [])
 
-  const [datasetError, setDatasetError] = useState<string | null>(null)
   const datasetMetadata = useScenarioDatasets()
   const datasetBaseline = useMemo(
     () => (scenario
-      ? { defaults: scenarioDatasetDefaults(scenario), options: scenarioDatasetOptions(scenario) }
+      ? {
+        defaults: datasetProjection?.dataset_defaults ?? scenarioDatasetDefaults(scenario),
+        options: datasetProjection?.dataset_options ?? scenarioDatasetOptions(scenario),
+      }
       : null),
-    [scenario],
+    [datasetProjection, scenario],
   )
 
   const dynamicParameters = useMemo(
@@ -179,6 +188,46 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
     () => (scenario ? Object.keys(uneditableScenarioParams(scenario, loaded?.preset ?? null)) : []),
     [loaded, scenario],
   )
+  const techniqueIssues = loaded?.issues.filter((issue) => issue.field === 'techniques') ?? []
+  const builtConfig = useMemo(
+    () => (config ? buildScenarioConfig({
+      techniques: config.techniques,
+      dynamicParameters,
+      scenarioParamValues: config.scenarioParamValues,
+      datasets: config.datasets,
+      includeBaseline: config.includeBaseline,
+    }) : null),
+    [config, dynamicParameters],
+  )
+  const scenarioName = scenario?.scenario_name
+  const projectionRequest = !scenarioLoading && builtConfig?.ok ? builtConfig.config : null
+  const projectionIsCurrent = datasetProjectionResult?.request === projectionRequest
+    && datasetProjectionResult?.scenarioName === scenarioName
+  const datasetProjectionLoading = Boolean(scenarioName && projectionRequest && !projectionIsCurrent)
+  const datasetProjectionError = projectionIsCurrent ? datasetProjectionResult?.error : null
+
+  useEffect(() => {
+    if (!scenarioName || !projectionRequest) return
+
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      void scenariosApi.estimateRun(scenarioName, projectionRequest, controller.signal)
+        .then((response) => {
+          if (controller.signal.aborted) return
+          setDatasetProjection(response)
+          setDatasetProjectionResult({ request: projectionRequest, scenarioName, error: null })
+        })
+        .catch((err: unknown) => {
+          if (controller.signal.aborted) return
+          setDatasetProjectionResult({ request: projectionRequest, scenarioName, error: toApiError(err).detail })
+        })
+    }, DATASET_PROJECTION_DEBOUNCE_MS)
+
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [projectionRequest, scenarioName])
 
   const updateConfig = (patch: Partial<ScenarioConfigFormState>): void => {
     setConfig((current) => (current ? { ...current, ...patch } : current))
@@ -209,15 +258,8 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
       setValidationError('Select a scenario.')
       return
     }
-    const built = buildScenarioConfig({
-      techniques: config.techniques,
-      dynamicParameters,
-      scenarioParamValues: config.scenarioParamValues,
-      datasets: config.datasets,
-      includeBaseline: config.includeBaseline,
-    })
-    if (!built.ok) {
-      setValidationError(built.error)
+    if (!builtConfig?.ok) {
+      setValidationError(builtConfig?.error ?? 'Select a scenario.')
       return
     }
     if (datasetError) {
@@ -228,7 +270,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
 
     const preset = configToPreset(
       { name: trimmedName, scenarioName: scenario.scenario_name, description },
-      built.config,
+      builtConfig.config,
       { scenario, previous: loaded?.preset ?? null },
     )
 
@@ -305,12 +347,11 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
             <MessageBarBody role="alert">{validationError}</MessageBarBody>
           </MessageBar>
         )}
-        {droppedTechniques.length > 0 && (
+        {techniqueIssues.length > 0 && (
           <MessageBar intent="warning" data-testid="dropped-techniques-warning">
             <MessageBarBody>
-              This preset pins techniques this deployment does not offer
-              ({droppedTechniques.join(', ')}). They are preserved on save — remove them
-              below if this preset should stop running them.
+              {techniqueIssues.map((issue) => issue.message).join(' ')} Stored techniques
+              are preserved on save unless you remove them below.
             </MessageBarBody>
           </MessageBar>
         )}
@@ -409,11 +450,19 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                     testIdPrefix="preset-param"
                   />
                 ))}
+                {datasetProjectionLoading && <Spinner size="tiny" label="Updating dataset preview..." />}
+                {datasetProjectionError && (
+                  <MessageBar intent="warning">
+                    <MessageBarBody>
+                      Dataset preview could not be updated: {datasetProjectionError}
+                    </MessageBarBody>
+                  </MessageBar>
+                )}
                 {datasetBaseline && (
                   <ScenarioDatasetTable
                     request={config.datasets}
                     defaults={datasetBaseline.defaults}
-                    effective={datasetBaseline.defaults}
+                    effective={datasetProjection?.effective_datasets ?? datasetBaseline.defaults}
                     options={datasetBaseline.options}
                     datasets={datasetMetadata.items}
                     disabled={saving}

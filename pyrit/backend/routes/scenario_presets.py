@@ -90,7 +90,7 @@ async def _load_preset_or_404_async(name: str) -> ScenarioPresetResponse:
 
 @router.get("", response_model=ScenarioPresetListResponse)
 async def list_scenario_presets(  # pyrit-async-suffix-exempt
-    include_estimates: bool = Query(True, description="Wait for each preset's own run-size estimate"),
+    include_estimates: bool = Query(False, description="Opt in to each preset's own run-size estimate"),
 ) -> ScenarioPresetListResponse:
     """
     List every readable preset from the configured storage source.
@@ -98,8 +98,9 @@ async def list_scenario_presets(  # pyrit-async-suffix-exempt
     Presets that cannot be parsed are skipped rather than failing the listing.
 
     Args:
-        include_estimates: Whether to size each preset. Sizing constructs every scenario,
-            so a caller that wants to render immediately can list without it and ask again.
+        include_estimates: Whether to size each preset. This is off by default because sizing
+            constructs every scenario. The scenario estimate endpoint can size the returned
+            definitions without listing storage again.
 
     Returns:
         ScenarioPresetListResponse: The configured source and the stored presets.
@@ -200,6 +201,7 @@ async def update_scenario_preset(  # pyrit-async-suffix-exempt
 
     The update fails if the stored document no longer matches ``expected_version``,
     so a concurrent edit is reported instead of being silently overwritten.
+    An omitted or null author preserves the stored author.
 
     Args:
         name: The preset name from the path, which is authoritative.
@@ -219,9 +221,13 @@ async def update_scenario_preset(  # pyrit-async-suffix-exempt
         )
 
     try:
-        return await get_scenario_preset_service().save_preset_async(
-            preset=body.preset, expected_version=body.expected_version
-        )
+        service = get_scenario_preset_service()
+        preset = body.preset
+        if preset.author is None:
+            stored = await service.get_preset_async(name=name)
+            if stored is not None:
+                preset = preset.model_copy(update={"author": stored.preset.author})
+        return await service.save_preset_async(preset=preset, expected_version=body.expected_version)
     except ScenarioPresetNameRegisteredError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

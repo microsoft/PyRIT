@@ -1,9 +1,9 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter } from 'react-router'
 
-import { scenarioPresetsApi } from '@/services/api'
+import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import type {
   PresetIssue,
   ScenarioPreset,
@@ -21,11 +21,13 @@ jest.mock('@/services/api', () => ({
   },
   scenariosApi: {
     startRun: jest.fn(),
+    estimateRun: jest.fn(),
   },
 }))
 
 const mockList = scenarioPresetsApi.list as jest.Mock
 const mockRemove = scenarioPresetsApi.remove as jest.Mock
+const mockEstimateRun = scenariosApi.estimateRun as jest.Mock
 
 const mockNavigate = jest.fn()
 
@@ -82,6 +84,7 @@ function renderLibrary() {
 beforeEach(() => {
   jest.clearAllMocks()
   mockList.mockResolvedValue({ source: 'presets.yaml', items: [] })
+  mockEstimateRun.mockResolvedValue(makeRunSize(12))
 })
 
 describe('ScenarioPresetLibrary', () => {
@@ -123,8 +126,9 @@ describe('ScenarioPresetLibrary', () => {
   it('shows the run size the preset itself produces', async () => {
     mockList.mockResolvedValue({
       source: 'presets.yaml',
-      items: [makeItem(NIGHTLY_PRESET, [], makeRunSize(24))],
+      items: [makeItem()],
     })
+    mockEstimateRun.mockResolvedValue(makeRunSize(24))
 
     renderLibrary()
 
@@ -132,22 +136,33 @@ describe('ScenarioPresetLibrary', () => {
     await waitFor(() => expect(within(cell).getByText('24 attacks')).toBeInTheDocument())
   })
 
-  it('paints the table from an unsized read before asking for run sizes', async () => {
+  it('paints the table before estimates finish without re-reading preset storage', async () => {
+    let complete: (value: ScenarioRunSizeEstimateResponse) => void = () => {}
     mockList.mockResolvedValue({
       source: 'presets.yaml',
-      items: [makeItem(NIGHTLY_PRESET, [], makeRunSize(24))],
+      items: [makeItem()],
     })
+    mockEstimateRun.mockReturnValueOnce(new Promise<ScenarioRunSizeEstimateResponse>((resolve) => {
+      complete = resolve
+    }))
 
     renderLibrary()
 
     await screen.findByTestId('preset-row-nightly_probe')
-    await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('Calculating...')).toBeInTheDocument()
+    expect(mockList).toHaveBeenCalledTimes(1)
     expect(mockList.mock.calls[0][1]).toBe(false)
-    expect(mockList.mock.calls[1][1]).toBeUndefined()
+
+    await act(async () => { complete(makeRunSize(24)) })
+
+    const cell = screen.getByTestId('preset-run-size-nightly_probe')
+    expect(await within(cell).findByText('24 attacks')).toBeInTheDocument()
+    expect(mockList).toHaveBeenCalledTimes(1)
   })
 
   it('leaves the run size blank for a preset this deployment cannot size', async () => {
     mockList.mockResolvedValue({ source: 'presets.yaml', items: [makeItem()] })
+    mockEstimateRun.mockRejectedValueOnce(new Error('Size unavailable.'))
 
     renderLibrary()
 
@@ -156,16 +171,93 @@ describe('ScenarioPresetLibrary', () => {
   })
 
   it('keeps the table usable when run sizes cannot be calculated', async () => {
-    mockList
-      .mockResolvedValueOnce({ source: 'presets.yaml', items: [makeItem()] })
-      .mockRejectedValueOnce(new Error('sizing unavailable'))
+    mockList.mockResolvedValueOnce({ source: 'presets.yaml', items: [makeItem()] })
+    mockEstimateRun.mockRejectedValueOnce(new Error('sizing unavailable'))
 
     renderLibrary()
 
     expect(await screen.findByTestId('preset-row-nightly_probe')).toBeInTheDocument()
     expect(
-      await screen.findByText('Run sizes could not be calculated: sizing unavailable'),
+      await screen.findByText('Run sizes could not be calculated: nightly_probe: sizing unavailable'),
     ).toBeInTheDocument()
+  })
+
+  it('estimates the displayed configuration without re-resolving its stored version', async () => {
+    const preset: ScenarioPreset = {
+      ...NIGHTLY_PRESET,
+      datasets: { sources: [{ name: 'harmbench' }], max_per_dataset: 3, max_total: 12 },
+      include_baseline: false,
+      scenario_params: { max_turns: 4 },
+    }
+    mockList.mockResolvedValue({ source: 'presets.yaml', items: [makeItem(preset)] })
+
+    renderLibrary()
+
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledWith(
+      preset.scenario_name,
+      {
+        techniques: preset.techniques,
+        datasets: preset.datasets,
+        include_baseline: false,
+        scenario_params: { max_turns: 4 },
+      },
+      expect.any(AbortSignal),
+    ))
+    expect(mockList).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps successful estimates when another preset cannot be sized', async () => {
+    mockList.mockResolvedValue({
+      source: 'presets.yaml',
+      items: [
+        makeItem(),
+        makeItem({ name: 'broken_probe', scenario_name: 'foundry.encoding' }),
+      ],
+    })
+    mockEstimateRun
+      .mockResolvedValueOnce(makeRunSize(7))
+      .mockRejectedValueOnce(new Error('Invalid configuration.'))
+
+    renderLibrary()
+
+    const good = await screen.findByTestId('preset-run-size-nightly_probe')
+    expect(await within(good).findByText('7 attacks')).toBeInTheDocument()
+    expect(within(screen.getByTestId('preset-run-size-broken_probe')).getByText('—')).toBeInTheDocument()
+    expect(screen.getByText(
+      'Run sizes could not be calculated: broken_probe: Invalid configuration.',
+    )).toBeInTheDocument()
+    expect(mockList).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not replace a refreshed definition with an older pending estimate', async () => {
+    const user = userEvent.setup()
+    let complete: (value: ScenarioRunSizeEstimateResponse) => void = () => {}
+    const updated = { ...NIGHTLY_PRESET, description: 'Updated configuration.' }
+    mockList
+      .mockResolvedValueOnce({ source: 'presets.yaml', items: [makeItem()] })
+      .mockResolvedValueOnce({
+        source: 'presets.yaml',
+        items: [{ ...makeItem(updated), version: 'v2' }],
+      })
+    mockEstimateRun
+      .mockReturnValueOnce(new Promise<ScenarioRunSizeEstimateResponse>((resolve) => { complete = resolve }))
+      .mockResolvedValue(makeRunSize(24))
+
+    renderLibrary()
+
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledTimes(1))
+    const signal: AbortSignal = mockEstimateRun.mock.calls[0][2]
+    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    const cell = await screen.findByTestId('preset-run-size-nightly_probe')
+    expect(await within(cell).findByText('24 attacks')).toBeInTheDocument()
+    expect(signal.aborted).toBe(true)
+
+    await act(async () => { complete(makeRunSize(12)) })
+
+    expect(screen.getByText('Updated configuration.')).toBeInTheDocument()
+    expect(within(cell).getByText('24 attacks')).toBeInTheDocument()
+    expect(within(cell).queryByText('12 attacks')).not.toBeInTheDocument()
+    expect(mockList).toHaveBeenCalledTimes(2)
   })
 
   it('attributes a preset to its author and leaves the column blank without one', async () => {
@@ -197,6 +289,7 @@ describe('ScenarioPresetLibrary', () => {
     expect(await screen.findByTestId('launch-preset-nightly_probe')).toBeDisabled()
     expect(screen.getByText('Not runnable here')).toBeInTheDocument()
     expect(screen.getByText('Unknown scenario "foundry.retired".')).toBeInTheDocument()
+    expect(mockEstimateRun).not.toHaveBeenCalled()
   })
 
   it('keeps launch enabled when the server reports no issues', async () => {
