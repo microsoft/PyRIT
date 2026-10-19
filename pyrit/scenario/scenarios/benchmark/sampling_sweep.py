@@ -389,8 +389,12 @@ def objective_ids_by_text(*, seed_groups: Iterable[AttackSeedGroup]) -> dict[str
         objective = seed_group.objective
         if objective is None:
             raise ValueError("Every pinned seed group needs an objective.")
+        if objective.value in ids:
+            raise ValueError("Pinned objectives must have unique text values; duplicate text would collapse trials.")
         behavior_id = (objective.metadata or {}).get("BehaviorID")
         ids[objective.value] = str(behavior_id) if behavior_id else f"sha256:{to_sha256(objective.value)[:16]}"
+    if not ids:
+        raise ValueError("Pinned objective set cannot be empty.")
     if len(set(ids.values())) != len(ids):
         raise ValueError("Pinned objectives must have unique identifiers.")
     return ids
@@ -614,6 +618,8 @@ async def run_sampling_sweep_async(
     )
     records: list[AdversarialTrialRecord] = []
     pinned_ids: dict[str, str] | None = None
+    if any(record.technique != plan.technique or record.parameter != plan.parameter.value for record in existing):
+        raise ValueError("Stored results use a different technique or sampling parameter; use a new experiment_id.")
     if any(record.repetition >= plan.repetitions for record in existing):
         raise ValueError("Stored repetitions exceed the current experiment plan; use a new experiment_id.")
 

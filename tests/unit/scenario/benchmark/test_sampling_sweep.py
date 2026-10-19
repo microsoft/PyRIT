@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.analytics.adversarial_settings_analysis import read_trial_records
+from pyrit.analytics.adversarial_settings_analysis import read_trial_records, write_trial_records
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -345,6 +345,18 @@ class TestObjectiveIds:
         with pytest.raises(ValueError, match="unique"):
             objective_ids_by_text(seed_groups=groups)
 
+    def test_duplicate_text_cannot_silently_drop_trials(self):
+        groups = [
+            AttackSeedGroup(seeds=[SeedObjective(value="same objective", metadata={"BehaviorID": f"id-{i}"})])
+            for i in range(2)
+        ]
+        with pytest.raises(ValueError, match="unique text"):
+            objective_ids_by_text(seed_groups=groups)
+
+    def test_empty_objective_set_is_rejected(self):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            objective_ids_by_text(seed_groups=[])
+
 
 class TestRecordsFromScenarioResult:
     async def test_results_are_attributed_by_display_group_and_latest_attempt(self):
@@ -599,6 +611,21 @@ class TestRunSamplingSweep:
         assert len(_StubBenchmark.instances) == 2
         assert len(resumed) == len(persisted) == 12
         assert len({record.trial_id for record in persisted}) == 12
+
+    async def test_changed_technique_cannot_reuse_existing_results(self, stub_benchmark, tmp_path):
+        output = tmp_path / "technique_drift.jsonl"
+        common = {
+            "experiment_id": "exp",
+            "objective_target": MockPromptTarget(),
+            "objective_scorer": _scorer(),
+            "dataset_config": _dataset(),
+            "output_path": output,
+            "scenario_factory": _StubBenchmark,
+        }
+        await run_sampling_sweep_async(plan=_plan(repetitions=1), **common)
+        with pytest.raises(ValueError, match="different technique"):
+            await run_sampling_sweep_async(plan=_plan(repetitions=1, technique="red_teaming"), **common)
+        assert len(_StubBenchmark.instances) == 1
 
     async def test_changed_objectives_cannot_resume_old_results(self, stub_benchmark, tmp_path):
         output = tmp_path / "changed_objectives.jsonl"
