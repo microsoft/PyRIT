@@ -422,6 +422,124 @@ def test_paired_outcomes_validate_live_compound_child_scorer_evidence() -> None:
         _statistics(_plan(("a",), ("a",)), {"baseline": [baseline], "attack": [envelope]})
 
 
+def _nested_compound_outcome() -> tuple[SequentialAttackResult, SequentialAttackResult, AttackResult]:
+    inner, leaf = _compound_outcome(scorer="SharedScorer", expectation=ScoringExpectation(objective="context"))
+    outer = inner.model_copy(deep=True)
+    outer.attack_result_id = str(uuid.uuid4())
+    outer.metadata["child_attack_result_ids"] = [inner.attack_result_id]
+    outer.child_attack_results = [inner]
+    assert inner.attribution_data is not None
+    inner.attribution_data["attempt_index"] = 1
+    inner.child_attack_results = [leaf]
+    return outer, inner, leaf
+
+
+def _saved_compound_results(results: list[AttackResult]) -> list[AttackResult]:
+    return [
+        AttackResult.model_validate({name: getattr(result, name) for name in AttackResult.model_fields})
+        for result in results
+    ]
+
+
+@pytest.mark.parametrize("live", [False, True])
+@pytest.mark.parametrize(
+    ("mismatch", "message"),
+    [
+        ("scorer", "different scorers"),
+        ("target", "different objective targets"),
+        ("score_type", "incompatible score types"),
+        ("expectation", "incompatible scoring expectations"),
+    ],
+)
+def test_paired_outcomes_validate_nested_compound_evidence(live: bool, mismatch: str, message: str) -> None:
+    baseline = _result("a", AttackOutcome.FAILURE, group="base")
+    expectation = ScoringExpectation(objective="context")
+    baseline.automated_score = _score("SharedScorer", expectation=expectation)
+    outer, inner, leaf = _nested_compound_outcome()
+    if mismatch == "scorer":
+        leaf.automated_score = _score("OtherScorer", expectation=expectation)
+    elif mismatch == "target":
+        _with_target(baseline, model_name="model-A")
+        _with_target(leaf, model_name="model-B")
+    elif mismatch == "score_type":
+        leaf.automated_score = Score(
+            score_type="float_scale",
+            score_value="0.7",
+            scorer_class_identifier=baseline.automated_score.scorer_class_identifier,
+            scored_expectation=expectation,
+        )
+    else:
+        leaf.automated_score = _score("SharedScorer", expectation=ScoringExpectation(objective="different context"))
+    results = [outer] if live else _saved_compound_results([outer, inner, leaf])
+
+    with pytest.raises(ValueError, match=message):
+        _statistics(_plan(("a",), ("a",)), {"baseline": [baseline], "attack": results})
+
+
+@pytest.mark.parametrize("live", [False, True])
+@pytest.mark.parametrize("shared_leaf", [False, True])
+def test_paired_outcomes_count_compatible_nested_compound_once(live: bool, shared_leaf: bool) -> None:
+    baseline = _result("a", AttackOutcome.FAILURE, group="base")
+    baseline.automated_score = _score("SharedScorer", expectation=ScoringExpectation(objective="context"))
+    outer, inner, leaf = _nested_compound_outcome()
+    if shared_leaf:
+        outer.metadata["child_attack_result_ids"].append(leaf.attack_result_id)
+        outer.child_attack_results.append(leaf)
+    results = [outer] if live else _saved_compound_results([outer, inner, leaf])
+
+    stats = _statistics(_plan(("a",), ("a",)), {"baseline": [baseline], "attack": results})
+
+    assert (stats.planned_pairs, stats.decided_pairs, stats.failure_to_success) == (1, 1, 1)
+    assert stats.paired_difference == 1.0
+
+
+@pytest.mark.parametrize("live", [False, True])
+def test_paired_outcomes_reject_missing_nested_compound_evidence(live: bool) -> None:
+    outer, inner, _ = _nested_compound_outcome()
+    inner.child_attack_results = []
+    results = [outer] if live else _saved_compound_results([outer, inner])
+
+    with pytest.raises(ValueError, match="missing child attack result"):
+        _statistics(
+            _plan(("a",), ("a",)),
+            {"baseline": [_result("a", AttackOutcome.FAILURE, group="base")], "attack": results},
+        )
+
+
+@pytest.mark.parametrize("live", [False, True])
+@pytest.mark.parametrize("self_reference", [False, True])
+def test_paired_outcomes_reject_compound_cycles(live: bool, self_reference: bool) -> None:
+    outer, inner, _ = _nested_compound_outcome()
+    linked = outer if self_reference else inner
+    linked.metadata["child_attack_result_ids"] = [outer.attack_result_id]
+    linked.child_attack_results = [outer]
+    results = [outer] if live else _saved_compound_results([outer, inner])
+
+    with pytest.raises(ValueError, match="cycle"):
+        _statistics(
+            _plan(("a",), ("a",)),
+            {"baseline": [_result("a", AttackOutcome.FAILURE, group="base")], "attack": results},
+        )
+
+
+def test_paired_outcomes_handle_deep_saved_compounds_without_recursion_limit() -> None:
+    leaf = _result("a", AttackOutcome.SUCCESS, group="attack", attempt_index=1)
+    leaf.automated_score = _score("SharedScorer")
+    results = [leaf]
+    for _ in range(1500):
+        parent = _result("a", AttackOutcome.SUCCESS, group="attack", attempt_index=1)
+        parent.metadata["child_attack_result_ids"] = [results[-1].attack_result_id]
+        results.append(parent)
+    assert results[-1].attribution_data is not None
+    results[-1].attribution_data.pop("attempt_index")
+    baseline = _result("a", AttackOutcome.FAILURE, group="base")
+    baseline.automated_score = _score("SharedScorer")
+
+    stats = _statistics(_plan(("a",), ("a",)), {"baseline": [baseline], "attack": results})
+
+    assert (stats.decided_pairs, stats.failure_to_success) == (1, 1)
+
+
 def test_paired_outcomes_reject_compound_child_target_mismatch() -> None:
     baseline = _with_target(_result("a", AttackOutcome.FAILURE, group="base"), model_name="model-A")
     envelope, child = _compound_outcome(scorer="SharedScorer")

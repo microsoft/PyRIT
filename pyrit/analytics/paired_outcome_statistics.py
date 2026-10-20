@@ -18,6 +18,8 @@ from pyrit.common.utils import to_sha256
 from pyrit.models import AttackOutcome, ScenarioExecutionUnit, ScenarioRunPlanGroupKind
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pyrit.analytics.scenario_statistics import ScenarioAttempt
     from pyrit.models import AttackResult, ScenarioResult, ScenarioRunPlan, ScenarioRunPlanAtomicGroup
     from pyrit.models.score import ScoringExpectation
@@ -150,26 +152,57 @@ def _objective_target_hash(result: AttackResult) -> str | None:
     return target.hash if target is not None else None
 
 
+def _linked_outcome_results(result: AttackResult, *, attempts_by_id: dict[str, AttackResult]) -> Iterator[AttackResult]:
+    """
+    Traverse explicitly linked descendants without recursion or duplicate evidence.
+
+    Yields:
+        AttackResult: The completion and its linked descendants.
+
+    Raises:
+        ValueError: If a linked child is unavailable or the links contain a cycle.
+    """
+    pending = [(result, False)]
+    active: set[str] = set()
+    visited: set[str] = set()
+    while pending:
+        linked, finished = pending.pop()
+        result_id = linked.attack_result_id
+        if finished:
+            active.remove(result_id)
+            visited.add(result_id)
+            continue
+        if result_id in active:
+            raise ValueError("A selected compound outcome contains a cycle in its child attack results.")
+        if result_id in visited:
+            continue
+        active.add(result_id)
+        pending.append((linked, True))
+        child_ids = getattr(linked, "child_attack_result_ids", linked.metadata.get("child_attack_result_ids", ()))
+        live_children = {child.attack_result_id: child for child in getattr(linked, "child_attack_results", ())}
+        for child_id in reversed(child_ids):
+            child = attempts_by_id.get(child_id) or live_children.get(child_id)
+            if child is None:
+                raise ValueError("A selected compound outcome references a missing child attack result.")
+            pending.append((child, False))
+        yield linked
+
+
 def _outcome_evidence(result: AttackResult, *, attempts_by_id: dict[str, AttackResult]) -> _OutcomeEvidence:
     """
-    Retain scorer and target evidence from the selected completion's children.
+    Retain scorer and target evidence from a completion and its linked descendants.
 
-    Only children explicitly linked from this completion count as evidence;
-    unrelated children and superseded top-level retries cannot affect it.
+    Unrelated children and superseded top-level retries cannot affect it.
 
     Returns:
         _OutcomeEvidence: Available scoring and objective-target identities.
 
     Raises:
-        ValueError: If a linked child result is unavailable.
+        ValueError: If linked descendants are missing or contain a cycle.
     """
-    child_ids = getattr(result, "child_attack_result_ids", result.metadata.get("child_attack_result_ids", ()))
-    live_children = {child.attack_result_id: child for child in getattr(result, "child_attack_results", ())}
     scores: list[_ScoringEvidence] = []
     objective_targets: list[str] = []
-    for linked in (result, *(attempts_by_id.get(child_id) or live_children.get(child_id) for child_id in child_ids)):
-        if linked is None:
-            raise ValueError("A selected compound outcome references a missing child attack result.")
+    for linked in _linked_outcome_results(result, attempts_by_id=attempts_by_id):
         score = _score_details(linked)
         if score is not None:
             scores.append(score)

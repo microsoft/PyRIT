@@ -193,6 +193,9 @@ When scores are available, the comparison checks scorer identities and score
 types both within pairs and across the decided cohort. Within each pair, it
 also checks complete scoring expectations, including their conditions and any
 optional scoring context, which may legitimately differ from the attack objective.
+For compound outcomes, these checks follow all explicitly linked descendants,
+including nested compounds. Missing child results or cyclic links are rejected;
+descendants still do not add pairs or change the rate denominator.
 The groups belong to the **same** ScenarioResult and share its scenario-level
 target and scorer identity. When a run uses different per-group scorers,
 persisted per-result scorer identities can reveal incompatibility; if scorer
