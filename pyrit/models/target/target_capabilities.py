@@ -103,8 +103,7 @@ class TargetCapabilities(BaseModel):
     #: Whether the target sends the full conversation and continues a trailing assistant message
     #: instead of ignoring or rejecting it. Locally hosted chat models can; most hosted chat APIs
     #: cannot, and completion-style targets that forward only the last message's text do not qualify.
-    #: Attacks that prime the model by prefilling the start of its reply (e.g. ``PrefillAttack``)
-    #: require this.
+    #: Techniques that prime the model by prefilling the start of its reply require this.
     supports_prefill: bool = False
 
     #: Whether the target supports the streaming audio API: opening a long-lived

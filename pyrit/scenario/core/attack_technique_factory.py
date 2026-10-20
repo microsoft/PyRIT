@@ -1171,5 +1171,7 @@ class AttackTechniqueFactory(Identifiable):
             technique_seed_ids = [SeedIdentifier.from_seed(seed) for seed in self._seed_technique.seeds]
             if technique_seed_ids:
                 children["technique_seeds"] = technique_seed_ids
+            if self._seed_technique.continue_final_assistant_message:
+                params["continue_final_assistant_message"] = True
 
         return ComponentIdentifier.of(self, params=params, children=children)

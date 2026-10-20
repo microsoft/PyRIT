@@ -51,8 +51,6 @@ if TYPE_CHECKING:
     )
     from pyrit.executor.attack.single_turn import (
         ManyShotJailbreakAttack,
-        PrefillAttack,
-        PrefillAttackParameters,
         PromptSendingAttack,
         PromptSendingAttackParameters,
         SingleTurnAttackContext,
@@ -87,8 +85,6 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "MultiTurnAttackContext": "pyrit.executor.attack.multi_turn",
     "MultiTurnAttackStrategy": "pyrit.executor.attack.multi_turn",
     "PAIRAttack": "pyrit.executor.attack.multi_turn",
-    "PrefillAttack": "pyrit.executor.attack.single_turn",
-    "PrefillAttackParameters": "pyrit.executor.attack.single_turn",
     "PrependedConversationConfig": "pyrit.executor.attack.component",
     "PromptSendingAttack": "pyrit.executor.attack.single_turn",
     "PromptSendingAttackParameters": "pyrit.executor.attack.single_turn",

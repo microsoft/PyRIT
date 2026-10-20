@@ -42,6 +42,10 @@ class AttackParameters:
     # Conversation that is automatically prepended to the target model
     prepended_conversation: list[Message] | None = None
 
+    # Explicit contract for a caller-authored, open assistant prefix.
+    # Ordinary assistant-ending histories retain their extraction semantics.
+    continue_final_assistant_message: bool = False
+
     # Additional labels that can be applied to the prompts throughout the attack
     memory_labels: dict[str, str] | None = field(default_factory=dict)
     operation_id: uuid.UUID | None = None
@@ -208,10 +212,17 @@ class AttackParameters:
 
         # Use extraction_group properties for prepended_conversation/next_message
         if "next_message" in valid_fields:
-            params["next_message"] = extraction_group.next_message
+            params["next_message"] = extraction_group.get_next_message(
+                include_final_assistant=seed_group.continue_final_assistant_message
+            )
+
+        if "continue_final_assistant_message" in valid_fields:
+            params["continue_final_assistant_message"] = seed_group.continue_final_assistant_message
 
         if "prepended_conversation" in valid_fields:
-            params["prepended_conversation"] = extraction_group.prepended_conversation
+            params["prepended_conversation"] = extraction_group.get_prepended_conversation(
+                include_final_assistant=seed_group.continue_final_assistant_message
+            )
 
         # Apply overrides (already validated above)
         params.update(overrides)
