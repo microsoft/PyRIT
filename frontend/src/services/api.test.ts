@@ -33,6 +33,7 @@ import {
   scenariosApi,
   operationsApi,
   scenarioPresetsApi,
+  scenarioScansApi,
   datasetsApi,
   analyticsApi,
 } from "./api";
@@ -130,6 +131,32 @@ describe("api service", () => {
         params: { include_estimates: true },
         signal: controller.signal,
       });
+    });
+  });
+
+  describe("scenarioScansApi", () => {
+    it("supports collection and encoded item CRUD with optimistic concurrency", async () => {
+      const scan = { name: "nightly_scan", schema_version: 1, entries: [] };
+      const response = { scan, version: "v1", entry_statuses: [] };
+      const controller = new AbortController();
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: response });
+      (apiClient.post as jest.Mock).mockResolvedValue({ data: response });
+      (apiClient.put as jest.Mock).mockResolvedValue({ data: response });
+      (apiClient.delete as jest.Mock).mockResolvedValue({ data: undefined });
+
+      await scenarioScansApi.list(controller.signal);
+      expect(apiClient.get).toHaveBeenCalledWith("/scenario-scans", { signal: controller.signal });
+      await expect(scenarioScansApi.get("a/b")).resolves.toEqual(response);
+      expect(apiClient.get).toHaveBeenCalledWith("/scenario-scans/a%2Fb");
+      await expect(scenarioScansApi.create(scan)).resolves.toEqual(response);
+      expect(apiClient.post).toHaveBeenCalledWith("/scenario-scans", scan);
+      await expect(scenarioScansApi.update("a/b", scan, "v1")).resolves.toEqual(response);
+      expect(apiClient.put).toHaveBeenCalledWith("/scenario-scans/a%2Fb", {
+        scan,
+        expected_version: "v1",
+      });
+      await scenarioScansApi.remove("a/b");
+      expect(apiClient.delete).toHaveBeenCalledWith("/scenario-scans/a%2Fb");
     });
   });
 

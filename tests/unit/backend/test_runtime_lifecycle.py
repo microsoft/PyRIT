@@ -149,6 +149,31 @@ async def test_failed_startup_keeps_liveness_and_configuration_recovery_async(ru
     assert saved_configuration.status_code == 200
 
 
+async def test_management_configures_scenario_scan_storage_source_async(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("memory_db_type: in_memory\n", encoding="utf-8")
+    source = ConfigurationFileService(config_file_value=str(config_path))
+    lifecycle = RuntimeLifecycle(app=FastAPI(), source=source)
+    scan_source = str(tmp_path / "scenario_scans")
+    config = ConfigurationLoader(
+        memory_db_type="in_memory",
+        env_files=[],
+        scenario_scans_source=scan_source,
+    )
+    initializer_registry = MagicMock()
+    preset_registry = MagicMock()
+    scan_service = MagicMock()
+
+    with (
+        patch.object(lifecycle_module.InitializerRegistry, "get_registry_singleton", return_value=initializer_registry),
+        patch.object(lifecycle_module.ScenarioPresetRegistry, "get_registry_singleton", return_value=preset_registry),
+        patch.object(lifecycle_module, "get_scenario_scan_service", return_value=scan_service),
+    ):
+        await lifecycle._management_async(config)
+
+    scan_service.configure_source.assert_called_once_with(scan_source)
+
+
 @pytest.mark.parametrize(
     "failures", [(), ("scenarios",), ("services",), ("memory",), ("scenarios", "services", "memory")]
 )

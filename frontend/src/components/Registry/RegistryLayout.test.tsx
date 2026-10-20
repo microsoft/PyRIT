@@ -22,6 +22,8 @@ function renderLayout(initialPath = '/registry/targets') {
             <Route path="techniques" element={<div>Technique registry content</div>} />
             <Route path="scenario-presets" element={<div>Preset library content</div>} />
             <Route path="scenario-presets/new" element={<div>Preset editor content</div>} />
+            <Route path="scenario-scans" element={<div>Scan library content</div>} />
+            <Route path="scenario-scans/new" element={<div>Scan editor content</div>} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -30,12 +32,13 @@ function renderLayout(initialPath = '/registry/targets') {
 }
 
 describe('RegistryLayout', () => {
-  it('shows target, converter and preset registry tabs', () => {
+  it('shows target, converter, preset, and scan registry tabs', () => {
     renderLayout()
 
     expect(screen.getByRole('tab', { name: 'Targets' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'Converters' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByRole('tab', { name: 'Scenario presets' })).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('tab', { name: 'Scans' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByText('Target registry content')).toBeInTheDocument()
   })
 
@@ -64,6 +67,23 @@ describe('RegistryLayout', () => {
 
     expect(screen.getByRole('tab', { name: 'Scenario presets' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('Preset editor content')).toBeInTheDocument()
+  })
+
+  it('opens the scan library and keeps the tab selected on nested routes', async () => {
+    const user = userEvent.setup()
+    renderLayout()
+
+    await user.click(screen.getByRole('tab', { name: 'Scans' }))
+
+    expect(screen.getByRole('tab', { name: 'Scans' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Scan library content')).toBeInTheDocument()
+  })
+
+  it('keeps the scan tab selected on the new-scan route', () => {
+    renderLayout('/registry/scenario-scans/new')
+
+    expect(screen.getByRole('tab', { name: 'Scans' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Scan editor content')).toBeInTheDocument()
   })
 
   it('supports the Techniques direct URL and browser history', async () => {

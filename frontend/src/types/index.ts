@@ -1347,6 +1347,49 @@ export interface UpdateScenarioPresetRequest {
   expected_version: string
 }
 
+export interface ScenarioScanEntry {
+  entry_id: string
+  preset_name: string
+}
+
+/** A user-authored, ordered collection of scenario preset references. */
+export interface ScenarioScan {
+  name: string
+  schema_version: number
+  description?: string | null
+  /** Who created the scan. Descriptive only; never used to authorize a read or a write. */
+  author?: string | null
+  entries: ScenarioScanEntry[]
+}
+
+/** Current deployment-specific status for one scan entry. */
+export interface ScenarioScanEntryStatus {
+  entry_id: string
+  preset_name: string
+  origin: 'stored' | 'registered' | null
+  preset_version: string | null
+  /** Advisory only. Missing or invalid preset references do not prevent saving the scan. */
+  issues: PresetIssue[]
+}
+
+export interface ScenarioScanResponse {
+  scan: ScenarioScan
+  /** Opaque document version required to update the scan. */
+  version: string
+  /** Ordered exactly like `scan.entries`. */
+  entry_statuses: ScenarioScanEntryStatus[]
+}
+
+export interface ScenarioScanListResponse {
+  source: string
+  items: ScenarioScanResponse[]
+}
+
+export interface UpdateScenarioScanRequest {
+  scan: ScenarioScan
+  expected_version: string
+}
+
 /** The launch-owned fields a preset deliberately omits. */
 export interface ResolveScenarioPresetRequest {
   expected_version?: string | null

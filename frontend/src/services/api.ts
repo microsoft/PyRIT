@@ -51,7 +51,11 @@ import type {
   ScenarioPreset,
   ScenarioPresetListResponse,
   ScenarioPresetResponse,
+  ScenarioScan,
+  ScenarioScanListResponse,
+  ScenarioScanResponse,
   UpdateScenarioPresetRequest,
+  UpdateScenarioScanRequest,
   ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
   ScenarioDatasetLoadResponse,
@@ -778,6 +782,42 @@ export const scenarioPresetsApi = {
       request,
     )
     return response.data
+  },
+}
+
+export const scenarioScansApi = {
+  list: async (signal?: AbortSignal): Promise<ScenarioScanListResponse> => {
+    const response = await apiClient.get('/scenario-scans', { signal })
+    return response.data
+  },
+
+  get: async (name: string): Promise<ScenarioScanResponse> => {
+    const response = await apiClient.get(`/scenario-scans/${encodeURIComponent(name)}`)
+    return response.data
+  },
+
+  /** Creates a scan that must not already exist; the server returns 409 when the name is taken. */
+  create: async (scan: ScenarioScan): Promise<ScenarioScanResponse> => {
+    const response = await apiClient.post('/scenario-scans', scan)
+    return response.data
+  },
+
+  /**
+   * Replaces a scan the caller has read. The expected version makes concurrent
+   * edits fail with 409 instead of silently overwriting another administrator.
+   */
+  update: async (
+    name: string,
+    scan: ScenarioScan,
+    expectedVersion: string,
+  ): Promise<ScenarioScanResponse> => {
+    const body: UpdateScenarioScanRequest = { scan, expected_version: expectedVersion }
+    const response = await apiClient.put(`/scenario-scans/${encodeURIComponent(name)}`, body)
+    return response.data
+  },
+
+  remove: async (name: string): Promise<void> => {
+    await apiClient.delete(`/scenario-scans/${encodeURIComponent(name)}`)
   },
 }
 

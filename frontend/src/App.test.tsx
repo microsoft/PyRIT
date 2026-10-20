@@ -468,6 +468,32 @@ jest.mock("./components/ScenarioPresets/ScenarioPresetEditor", () => {
   };
 });
 
+jest.mock("./components/ScenarioScans/ScenarioScanLibrary", () => {
+  const MockScenarioScanLibrary = () => <div data-testid="scenario-scan-library" />;
+  MockScenarioScanLibrary.displayName = "MockScenarioScanLibrary";
+  return {
+    __esModule: true,
+    default: MockScenarioScanLibrary,
+  };
+});
+
+jest.mock("./components/ScenarioScans/ScenarioScanEditor", () => {
+  const { useParams } = jest.requireActual("react-router");
+  const MockScenarioScanEditor = ({ mode }: { mode: string }) => {
+    const { scanName } = useParams();
+    return (
+      <div data-testid="scenario-scan-editor" data-mode={mode}>
+        {scanName ?? ""}
+      </div>
+    );
+  };
+  MockScenarioScanEditor.displayName = "MockScenarioScanEditor";
+  return {
+    __esModule: true,
+    default: MockScenarioScanEditor,
+  };
+});
+
 jest.mock("./components/Scenarios/ScenarioDetail", () => {
   const MockScenarioDetail = ({
     defaultObjectiveTarget,
@@ -705,6 +731,24 @@ describe("App", () => {
       "registry"
     );
     expect(screen.getByTestId("scenario-preset-library")).toBeInTheDocument();
+  });
+
+  it("renders the scan library as a registry section", () => {
+    renderApp("/registry/scenario-scans");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+    expect(screen.getByTestId("scenario-scan-library")).toBeInTheDocument();
+  });
+
+  it("renders the scan editor as a nested registry route", () => {
+    renderApp("/registry/scenario-scans/nightly_scan/edit");
+
+    const editor = screen.getByTestId("scenario-scan-editor");
+    expect(editor).toHaveAttribute("data-mode", "edit");
+    expect(editor).toHaveTextContent("nightly_scan");
   });
 
   it("redirects a bookmarked /scanner/presets to the registry section", async () => {

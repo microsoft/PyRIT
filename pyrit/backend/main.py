@@ -41,6 +41,7 @@ from pyrit.backend.routes import (
     message_sends,
     operations,
     scenario_presets,
+    scenario_scans,
     scenarios,
     scorers,
     scores,
@@ -141,6 +142,7 @@ app.include_router(datasets.router, prefix="/api", tags=["datasets"])
 app.include_router(operations.router, prefix="/api", tags=["operations"])
 app.include_router(scenarios.router, prefix="/api", tags=["scenarios"])
 app.include_router(scenario_presets.router, prefix="/api", tags=["scenario-presets"])
+app.include_router(scenario_scans.router, prefix="/api", tags=["scenario-scans"])
 app.include_router(initializers.router, prefix="/api", tags=["initializers"])
 app.include_router(labels.router, prefix="/api", tags=["labels"])
 app.include_router(health.router, prefix="/api", tags=["health"])
