@@ -20,6 +20,7 @@ from pyrit.executor.attack import (
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AdversarialPrompts,
+    AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackSeedGroup,
@@ -71,6 +72,110 @@ class _PolicyScorer(SubStringScorer):
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestGroupAdversarialPrompts:
+    def test_bound_technique_identity_includes_the_response_contract(self) -> None:
+        group = _group()
+        factory = _factory(MockPromptTarget())
+        target = MockPromptTarget()
+        scoring = AttackScoringConfig(objective_scorer=SubStringScorer(substring="policy"))
+        first = factory.create(objective_target=target, attack_scoring_config=scoring, seed_group=group)
+        group.adversarial_prompts.system_prompt.response_json_schema = {
+            **get_common_json_schema("adversarial_chat"),
+            "description": "A distinct response contract.",
+        }
+        group.objective.metadata.update(group.adversarial_prompts.to_metadata())
+        second = factory.create(objective_target=target, attack_scoring_config=scoring, seed_group=group)
+
+        assert first.get_identifier().hash != second.get_identifier().hash
+        assert (
+            AtomicAttackEvaluationIdentifier(
+                AtomicAttackIdentifier.build(technique_identifier=first.get_identifier())
+            ).eval_hash
+            != AtomicAttackEvaluationIdentifier(
+                AtomicAttackIdentifier.build(technique_identifier=second.get_identifier())
+            ).eval_hash
+        )
+
+    @pytest.mark.parametrize("slot", ["first_message", "feedback_template"])
+    @pytest.mark.parametrize("attack_class", [CrescendoAttack, TreeOfAttacksWithPruningAttack, RedTeamingAttack])
+    def test_named_user_prompt_slots_match_attack_consumption(
+        self, *, slot: str, attack_class: type[AttackStrategy]
+    ) -> None:
+        prompt = SeedPrompt(value="Ask about the public return policy.", data_type="text")
+        group = AttackSeedGroup(
+            seeds=[SeedObjective(value="Explain the return policy.")],
+            adversarial_prompts=AdversarialPrompts(**{slot: prompt}),
+        )
+        factory = AttackTechniqueFactory(name="slot_contract", attack_class=attack_class)
+        if attack_class is not RedTeamingAttack:
+            with patch.object(attack_class, "__init__") as constructor:
+                with pytest.raises(IncompatibleTechniqueError, match=slot):
+                    factory.create(
+                        objective_target=MockPromptTarget(),
+                        attack_scoring_config=AttackScoringConfig(),
+                        seed_group=group,
+                    )
+                constructor.assert_not_called()
+        else:
+            technique = factory.create(
+                objective_target=MockPromptTarget(),
+                adversarial_chat=MockPromptTarget(),
+                attack_scoring_config=AttackScoringConfig(objective_scorer=SubStringScorer(substring="policy")),
+                seed_group=group,
+            )
+            config = technique.attack.get_attack_adversarial_config()
+            effective = config.first_message if slot == "first_message" else config.adversarial_prompt_template
+            assert effective.value == prompt.value
+
+    @pytest.mark.parametrize("policy", list(IncompatibleTechniquePolicy))
+    @pytest.mark.parametrize("first_message_schema", [True, False])
+    @pytest.mark.parametrize("replacement_system", [False, True])
+    def test_default_system_schema_conflicts_are_checked_before_construction(
+        self, *, policy: IncompatibleTechniquePolicy, first_message_schema: bool, replacement_system: bool
+    ) -> None:
+        group = AttackSeedGroup(
+            seeds=[SeedObjective(value="Explain the return policy.")],
+            adversarial_prompts=AdversarialPrompts(
+                system_prompt=(
+                    SeedPrompt(value="Achieve {{ objective }}", parameters=["objective"])
+                    if replacement_system
+                    else None
+                ),
+                first_message=SeedPrompt(
+                    value="Ask about returns.",
+                    response_json_schema=get_common_json_schema("adversarial_chat") if first_message_schema else None,
+                ),
+            ),
+        )
+        conflict = first_message_schema and not replacement_system
+        ordinary = AttackSeedGroup(seeds=[SeedObjective(value="Describe delivery options.")])
+        factory = _factory(MockPromptTarget())
+        builder = MatrixAtomicAttackBuilder(
+            objective_target=MockPromptTarget(),
+            objective_scorer=SubStringScorer(substring="policy"),
+            incompatible_technique_policy=policy,
+        )
+        with patch.object(factory, "create", wraps=factory.create) as create:
+            if conflict and policy is IncompatibleTechniquePolicy.RAISE:
+                with pytest.raises(IncompatibleTechniqueError, match="response_json_schema"):
+                    builder.build(
+                        technique_factories={"rta": factory},
+                        dataset_groups={"support": [group, ordinary]},
+                        include_baseline=True,
+                    )
+                create.assert_not_called()
+            else:
+                atomics = builder.build(
+                    technique_factories={"rta": factory},
+                    dataset_groups={"support": [group, ordinary]},
+                    include_baseline=True,
+                )
+                assert len(atomics) == (2 if conflict else 3)
+                assert atomics[0].seed_groups == [group, ordinary]
+                assert [source for atomic in atomics[1:] for source in atomic.seed_groups] == (
+                    [ordinary] if conflict else [group, ordinary]
+                )
+                assert create.call_count == (1 if conflict else 2)
+
     @pytest.mark.parametrize("policy", list(IncompatibleTechniquePolicy))
     @pytest.mark.parametrize("include_user", [True, False])
     def test_core_matrix_checks_group_inputs_before_construction(

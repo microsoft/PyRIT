@@ -65,6 +65,7 @@ if TYPE_CHECKING:
         PrependedHistorySendContext,
     )
     from pyrit.executor.attack.core.attack_config import (
+        AdversarialPromptRequirements,
         AttackAdversarialConfig,
         AttackScoringConfig,
     )
@@ -712,8 +713,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
-    #: Template parameters required by a replacement adversarial system prompt.
-    ADVERSARIAL_SYSTEM_PROMPT_PARAMETERS: ClassVar[tuple[str, ...]] = ()
+    #: Named prompt slots, template parameters, and defaults consumed by the attack.
+    ADVERSARIAL_PROMPT_REQUIREMENTS: ClassVar[AdversarialPromptRequirements | None] = None
 
     #: Compound attacks set this when children own outcome scoring and expectation validation.
     #: No scoring configuration alone does not imply delegation.
@@ -722,6 +723,22 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: What this strategy's persisted results represent. Compound attacks that only coordinate
     #: child attacks, and never call the objective target themselves, set ``ORCHESTRATION``.
     RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.TARGET_FACING
+
+    @classmethod
+    def get_adversarial_prompt_requirements(cls) -> AdversarialPromptRequirements:
+        """
+        Get the prompt contract declared by an adversarial attack.
+
+        Returns:
+            AdversarialPromptRequirements: The attack's shared construction and preflight contract.
+
+        Raises:
+            ValueError: If the attack does not declare named prompt support.
+        """
+        requirements = cls.ADVERSARIAL_PROMPT_REQUIREMENTS
+        if requirements is None:
+            raise ValueError(f"{cls.__name__} does not declare named adversarial prompt support.")
+        return requirements
 
     @classmethod
     def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:

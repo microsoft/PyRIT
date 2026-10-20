@@ -36,6 +36,7 @@ from pyrit.executor.attack.component.prepended_history_send_context import (
     PrependedHistorySendContext,
 )
 from pyrit.executor.attack.core.attack_config import (
+    AdversarialPromptRequirements,
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
@@ -1562,8 +1563,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         AttackResult: The result of the TAP attack execution.
     """
 
-    ADVERSARIAL_SYSTEM_PROMPT_PARAMETERS = ("desired_prefix",)
-
     # Default paths for TAP attack prompts
     DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH: Path = (
         EXECUTOR_SEED_PROMPT_PATH / "tree_of_attacks" / "adversarial_system_prompt.yaml"
@@ -1575,6 +1574,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
     DEFAULT_ADVERSARIAL_SEED_PROMPT_PATH: Path = (
         EXECUTOR_SEED_PROMPT_PATH / "tree_of_attacks" / "adversarial_seed_prompt.yaml"
+    )
+    ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
+        default_system_prompt_path=DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
+        system_prompt_parameters=("desired_prefix",),
     )
 
     @classmethod
@@ -1686,11 +1689,13 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         # The manager owns adversarial-prompt resolution. TAP is override mode: it builds each
         # adversarial prompt itself and passes the text explicitly, so only the system prompt is
         # resolved here (no first / next-message templates).
+        requirements = self.get_adversarial_prompt_requirements()
         self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
             config=attack_adversarial_config,
-            default_system_prompt_path=TreeOfAttacksWithPruningAttack.DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
-            system_prompt_required_parameters=list(self.ADVERSARIAL_SYSTEM_PROMPT_PARAMETERS),
+            default_system_prompt_path=requirements.default_system_prompt_path,
+            system_prompt_required_parameters=list(requirements.system_prompt_parameters),
             system_prompt_error_message="Adversarial seed prompt must have a desired_prefix",
+            resolve_user_messages=requirements.accepts_user_messages,
         )
         self._adversarial_chat_system_seed_prompt = self._resolved_adversarial.system_prompt
         self._load_adversarial_prompts()

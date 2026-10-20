@@ -192,6 +192,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Generated technique enums follow their factory pool's lifecycle. Registry-derived enums and their lazy exports are discarded on setup registry reset so new scenarios see the replacement catalog. Enums built exclusively from fixed scenario-owned factories, such as `DoctorTechnique` and `JailbreakTechnique`, retain their identity across registry resets, so previously imported members remain valid for new scenario instances.
 - Factories opt into additive request-converter composition with `supports_additional_request_converters=True`. This is a semantic capability, not just constructor-signature detection; the factory validates that opted-in attacks accept `attack_converter_config`.
 - A technique declares target and dataset requirements and permitted adaptation; targets own capabilities and adapters.
+- Named adversarial prompts use the attack's declared slot, parameter, and response-schema
+  contracts. Dataset groups and inline groups use the same checks before construction.
 - **Does not own**: the conversation algorithm itself. Branching, turn management, and scoring decisions live in the executor it wraps — a technique only selects and configures existing components, and shouldn't implement new sending, scoring, or branching logic.
 
 **Framework Plans**:

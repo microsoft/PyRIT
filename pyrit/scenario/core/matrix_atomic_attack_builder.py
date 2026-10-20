@@ -58,6 +58,7 @@ __all__ = [
     "MatrixCombo",
     "TechniqueResolutionError",
     "build_baseline_atomic_attack",
+    "build_baseline_atomic_attacks",
     "build_matrix_atomic_attacks",
     "filter_compatible_seed_groups",
     "resolve_technique_factories",
@@ -165,6 +166,39 @@ def build_baseline_atomic_attack(
         display_group=display_group,
         group_kind=ScenarioRunPlanGroupKind.BASELINE,
     )
+
+
+def build_baseline_atomic_attacks(
+    *,
+    objective_target: PromptTarget,
+    objective_scorer: Scorer,
+    seed_groups: list[AttackSeedGroup],
+    memory_labels: dict[str, str] | None = None,
+) -> list[AtomicAttack]:
+    """
+    Build baseline units without collapsing repeated objectives.
+
+    Returns:
+        list[AtomicAttack]: One batch or independently named groups with a shared display group.
+    """
+    repeated = len({group.objective.value for group in seed_groups}) != len(seed_groups)
+    populations = [[group] for group in seed_groups] if repeated else [seed_groups]
+    occurrences: Counter[str] = Counter()
+    return [
+        build_baseline_atomic_attack(
+            objective_target=objective_target,
+            objective_scorer=objective_scorer,
+            seed_groups=population,
+            memory_labels=memory_labels,
+            atomic_attack_name=(
+                _unique_group_name(name=f"baseline__{population[0].logical_id}", occurrences=occurrences)
+                if repeated
+                else "baseline"
+            ),
+            display_group="baseline" if repeated else None,
+        )
+        for population in populations
+    ]
 
 
 def filter_compatible_seed_groups(
@@ -439,24 +473,12 @@ class MatrixAtomicAttackBuilder:
 
         if include_baseline:
             all_seed_groups = [group for groups in dataset_groups.values() for group in groups]
-            repeated_objectives = len({group.objective.value for group in all_seed_groups}) != len(all_seed_groups)
-            populations = [[group] for group in all_seed_groups] if repeated_objectives else [all_seed_groups]
-            occurrences = Counter()
-            baselines = [
-                build_baseline_atomic_attack(
-                    objective_target=self._objective_target,
-                    objective_scorer=self._objective_scorer,
-                    seed_groups=population,
-                    memory_labels=self._memory_labels,
-                    atomic_attack_name=(
-                        _unique_group_name(name=f"baseline__{population[0].logical_id}", occurrences=occurrences)
-                        if repeated_objectives
-                        else "baseline"
-                    ),
-                    display_group="baseline" if repeated_objectives else None,
-                )
-                for population in populations
-            ]
+            baselines = build_baseline_atomic_attacks(
+                objective_target=self._objective_target,
+                objective_scorer=self._objective_scorer,
+                seed_groups=all_seed_groups,
+                memory_labels=self._memory_labels,
+            )
             atomic_attacks = [*baselines, *atomic_attacks]
 
         return atomic_attacks

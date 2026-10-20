@@ -16,7 +16,7 @@ from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
 if TYPE_CHECKING:
     from pyrit.executor.attack import AttackStrategy
-    from pyrit.models import AttackTechniqueSeedGroup
+    from pyrit.models import AdversarialPrompts, AttackTechniqueSeedGroup
 
 
 class AttackTechnique(Identifiable):
@@ -35,11 +35,13 @@ class AttackTechnique(Identifiable):
         attack: AttackStrategy[Any, Any],
         seed_technique: AttackTechniqueSeedGroup | None = None,
         requirements: TechniqueRequirements | None = None,
+        adversarial_prompts: AdversarialPrompts | None = None,
     ) -> None:
         """Initialize an AttackTechnique."""
         self._attack = attack
         self._seed_technique = seed_technique
         self._requirements = requirements or TechniqueRequirements()
+        self._adversarial_prompts = adversarial_prompts
 
     @property
     def attack(self) -> AttackStrategy[Any, Any]:
@@ -79,6 +81,11 @@ class AttackTechnique(Identifiable):
             identifier_params = {
                 **(identifier_params or {}),
                 "seed_group_adaptation": self._requirements.adaptation,
+            }
+        if self._adversarial_prompts is not None:
+            identifier_params = {
+                **(identifier_params or {}),
+                "adversarial_prompts": self._adversarial_prompts.identity,
             }
 
         return AttackTechniqueIdentifier.of(

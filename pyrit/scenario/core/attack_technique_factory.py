@@ -827,15 +827,13 @@ class AttackTechniqueFactory(Identifiable):
             raise IncompatibleTechniqueError(f"Factory '{self._name}' does not accept group adversarial prompts.")
         if self._has_custom_adversarial_prompt:
             raise IncompatibleTechniqueError(f"Factory '{self._name}' already has a custom adversarial prompt.")
-        if prompts.system_prompt is not None:
-            try:
-                SeedPrompt.from_value_with_required_parameters(
-                    prompts.system_prompt,
-                    required_parameters=list(self._attack_class.ADVERSARIAL_SYSTEM_PROMPT_PARAMETERS),
-                    component_name=f"Factory '{self._name}' adversarial system prompt",
-                )
-            except ValueError as exc:
-                raise IncompatibleTechniqueError(str(exc)) from exc
+        requirements = self._attack_class.ADVERSARIAL_PROMPT_REQUIREMENTS
+        if requirements is None:
+            raise IncompatibleTechniqueError(f"Factory '{self._name}' does not declare named prompt support.")
+        try:
+            requirements.validate_prompts(prompts=prompts, system_prompt_prefix=self._adversarial_system_prompt_prefix)
+        except ValueError as exc:
+            raise IncompatibleTechniqueError(f"Factory '{self._name}': {exc}") from exc
 
     def create(
         self,
@@ -1000,7 +998,16 @@ class AttackTechniqueFactory(Identifiable):
                 kwargs["attack_converter_config"] = converter_config
 
         attack = self._attack_class(**kwargs)
-        return AttackTechnique(attack=attack, seed_technique=self._seed_technique, requirements=self._requirements)
+        return AttackTechnique(
+            attack=attack,
+            seed_technique=self._seed_technique,
+            requirements=self._requirements,
+            adversarial_prompts=(
+                seed_group.adversarial_prompts.model_copy(deep=True)
+                if seed_group is not None and seed_group.adversarial_prompts is not None
+                else None
+            ),
+        )
 
     def _apply_score_feedback_override(self, *, attack_scoring_config: AttackScoringConfig) -> AttackScoringConfig:
         """

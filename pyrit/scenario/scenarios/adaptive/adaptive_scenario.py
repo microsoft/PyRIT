@@ -19,13 +19,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import abstractmethod
+from collections import Counter
 from typing import TYPE_CHECKING, Any, ClassVar, get_type_hints
 
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.models import (
-    AtomicAttackEvaluationIdentifier,
-    AtomicAttackIdentifier,
     BoundedDatasetSize,
     ScenarioRunPlanGroupKind,
     ScenarioRunSizeComponent,
@@ -33,9 +32,8 @@ from pyrit.models import (
 )
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.scenario.core.technique_requirements import (
     IncompatibleTechniqueError,
     IncompatibleTechniquePolicy,
@@ -228,8 +226,8 @@ class AdaptiveScenario(Scenario):
 
         atomic_attacks: list[AtomicAttack] = []
         if context.include_baseline:
-            atomic_attacks.append(
-                build_baseline_atomic_attack(
+            atomic_attacks.extend(
+                build_baseline_atomic_attacks(
                     objective_target=context.objective_target,
                     objective_scorer=self._objective_scorer,
                     seed_groups=list(context.seed_groups),
@@ -302,27 +300,14 @@ class AdaptiveScenario(Scenario):
         objective_target: PromptTarget,
     ) -> dict[str, TechniqueBundle]:
         """
-        Resolve selected techniques into a ``{eval_hash: TechniqueBundle}`` map.
+        Retain selected factories and matching scorer configurations for group binding.
 
-        Each bundle carries the inner attack technique along with the factory's
-        ``seed_technique`` and ``adversarial_chat`` so the dispatcher can
-        reproduce the static ``AtomicAttack`` execution path per attempt.
-
-        Technique keys use the full behavioral technique identity, including
-        technique-owned prompts and adaptation rules. Dataset seeds, scorers,
-        and operational target parameters are excluded. The dispatcher supplies
-        the same identity when recording child results, so saved choices and
-        historical success rates refer to the same behavioral configuration.
-
-        For factories whose attack class narrows ``attack_scoring_config`` to a
-        specific subtype (e.g. ``TAPAttackScoringConfig`` for TAP), this method
-        builds the matching subtype using the scenario's objective scorer.
-        Known target and scorer-type mismatches follow the scenario's compatibility
-        policy. Other construction errors propagate.
+        Target and scorer-type mismatches follow the scenario's compatibility policy.
+        The dispatcher constructs compatible candidates for each group and computes
+        their full technique hashes before selection.
 
         Returns:
-            dict[str, TechniqueBundle]: Mapping from technique eval hash to its
-                bundle, in the order selected techniques were resolved.
+            dict[str, TechniqueBundle]: Factory-backed bundles keyed by technique name.
 
         Raises:
             IncompatibleTechniqueError: If a known mismatch is found under RAISE.
@@ -360,24 +345,10 @@ class AdaptiveScenario(Scenario):
                 skipped_incompatible[technique_name] = reason
                 logger.warning(f"Skipping technique '{technique_name}': {reason}")
                 continue
-            technique = factory.create(
-                objective_target=objective_target,
+            techniques[technique_name] = TechniqueBundle(
+                factory=factory,
                 attack_scoring_config=scoring_config,
-            )
-            technique_identifier = technique.get_identifier()
-            eval_hash = AtomicAttackEvaluationIdentifier(
-                AtomicAttackIdentifier.build(technique_identifier=technique_identifier)
-            ).eval_hash
-            adversarial_chat = factory.adversarial_chat
-            if adversarial_chat is None and factory.uses_adversarial:
-                adversarial_chat = get_default_adversarial_target()
-            techniques[eval_hash] = TechniqueBundle(
-                attack=technique.attack,
                 name=technique_name,
-                seed_technique=technique.seed_technique,
-                adversarial_chat=adversarial_chat,
-                requirements=technique.requirements,
-                technique_identifier=technique_identifier,
             )
 
         if not techniques:
@@ -477,13 +448,14 @@ class AdaptiveScenario(Scenario):
         if self._objective_target is None:  # pragma: no cover - defensive
             raise ValueError("objective_target must be set before creating attacks")
 
-        named_seed_groups = [
-            (
-                f"{self._atomic_attack_prefix()}_{dataset_name}::{to_sha256(group.objective.value)}",
-                group,
-            )
-            for group in seed_groups
-        ]
+        objective_counts = Counter(group.objective.value for group in seed_groups)
+        occurrences: Counter[str] = Counter()
+        named_seed_groups: list[tuple[str, AttackSeedGroup]] = []
+        for group in seed_groups:
+            key = group.logical_id if objective_counts[group.objective.value] > 1 else to_sha256(group.objective.value)
+            occurrences[key] += 1
+            suffix = f"__{occurrences[key]}" if occurrences[key] > 1 else ""
+            named_seed_groups.append((f"{self._atomic_attack_prefix()}_{dataset_name}::{key}{suffix}", group))
         if stored_groups is not None:
             named_seed_groups = [(name, group) for name, group in named_seed_groups if name in stored_groups]
         seed_groups = [group for _, group in named_seed_groups]
@@ -501,13 +473,15 @@ class AdaptiveScenario(Scenario):
         compatible_source_ids = {
             technique_hash: {
                 group.logical_id
-                for group in filter_seed_groups(
+                for group in await asyncio.to_thread(
+                    filter_seed_groups,
                     seed_groups=seed_groups,
                     requirements=bundle.requirements.seed_group,
                     seed_technique=bundle.seed_technique,
                     technique_name=bundle.name,
                     dataset_name=dataset_name,
                     policy=self._incompatible_technique_policy,
+                    validate_group=bundle.validate_group,
                 )
             }
             for technique_hash, bundle in techniques.items()
