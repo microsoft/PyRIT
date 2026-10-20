@@ -176,15 +176,15 @@ Point several deployments at the same container to share presets between them. A
 
 In a local directory, PyRIT writes a small hidden `.<name>.json.lock` file beside each preset to serialize concurrent writers. These files remain after a preset is deleted, and are safe to remove when no PyRIT process is running.
 
-### `scenario_scans_source`
+### `scenario_suites_source`
 
-Stores ScenarioScan definitions in a local directory or Azure Blob container. An Azure URI may include a blob-name prefix:
+Stores ScenarioSuite definitions in a local directory or Azure Blob container. An Azure URI may include a blob-name prefix:
 
 ```yaml
-scenario_scans_source: https://account.blob.core.windows.net/pyrit-storage/scenario-scans
+scenario_suites_source: https://account.blob.core.windows.net/pyrit-storage/scenario-suites
 ```
 
-Scans store ordered references to scenario presets and resolve each preset's current status when read. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/scenario_scans`. Local writes use the same hidden lock-file and atomic replacement behavior as scenario presets.
+Suites store ordered references to scenario presets and resolve each preset's current status when read. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/scenario_suites`. Local writes use the same hidden lock-file and atomic replacement behavior as scenario presets.
 
 ### `initialization_scripts`
 

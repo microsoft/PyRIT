@@ -33,7 +33,7 @@ import {
   scenariosApi,
   operationsApi,
   scenarioPresetsApi,
-  scenarioScansApi,
+  scenarioSuitesApi,
   datasetsApi,
   analyticsApi,
 } from "./api";
@@ -134,29 +134,29 @@ describe("api service", () => {
     });
   });
 
-  describe("scenarioScansApi", () => {
+  describe("scenarioSuitesApi", () => {
     it("supports collection and encoded item CRUD with optimistic concurrency", async () => {
-      const scan = { name: "nightly_scan", schema_version: 1, entries: [] };
-      const response = { scan, version: "v1", entry_statuses: [] };
+      const suite = { name: "nightly_suite", schema_version: 1, entries: [] };
+      const response = { suite, version: "v1", entry_statuses: [] };
       const controller = new AbortController();
       (apiClient.get as jest.Mock).mockResolvedValue({ data: response });
       (apiClient.post as jest.Mock).mockResolvedValue({ data: response });
       (apiClient.put as jest.Mock).mockResolvedValue({ data: response });
       (apiClient.delete as jest.Mock).mockResolvedValue({ data: undefined });
 
-      await scenarioScansApi.list(controller.signal);
-      expect(apiClient.get).toHaveBeenCalledWith("/scenario-scans", { signal: controller.signal });
-      await expect(scenarioScansApi.get("a/b")).resolves.toEqual(response);
-      expect(apiClient.get).toHaveBeenCalledWith("/scenario-scans/a%2Fb");
-      await expect(scenarioScansApi.create(scan)).resolves.toEqual(response);
-      expect(apiClient.post).toHaveBeenCalledWith("/scenario-scans", scan);
-      await expect(scenarioScansApi.update("a/b", scan, "v1")).resolves.toEqual(response);
-      expect(apiClient.put).toHaveBeenCalledWith("/scenario-scans/a%2Fb", {
-        scan,
+      await scenarioSuitesApi.list(controller.signal);
+      expect(apiClient.get).toHaveBeenCalledWith("/scenario-suites", { signal: controller.signal });
+      await expect(scenarioSuitesApi.get("a/b")).resolves.toEqual(response);
+      expect(apiClient.get).toHaveBeenCalledWith("/scenario-suites/a%2Fb");
+      await expect(scenarioSuitesApi.create(suite)).resolves.toEqual(response);
+      expect(apiClient.post).toHaveBeenCalledWith("/scenario-suites", suite);
+      await expect(scenarioSuitesApi.update("a/b", suite, "v1")).resolves.toEqual(response);
+      expect(apiClient.put).toHaveBeenCalledWith("/scenario-suites/a%2Fb", {
+        suite,
         expected_version: "v1",
       });
-      await scenarioScansApi.remove("a/b");
-      expect(apiClient.delete).toHaveBeenCalledWith("/scenario-scans/a%2Fb");
+      await scenarioSuitesApi.remove("a/b");
+      expect(apiClient.delete).toHaveBeenCalledWith("/scenario-suites/a%2Fb");
     });
   });
 

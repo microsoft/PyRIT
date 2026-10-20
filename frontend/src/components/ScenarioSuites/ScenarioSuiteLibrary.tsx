@@ -23,29 +23,29 @@ import {
 import { AddRegular, ArrowSyncRegular, DeleteRegular, EditRegular } from '@fluentui/react-icons'
 import { Link, useNavigate } from 'react-router'
 
-import { scenarioScansApi } from '@/services/api'
+import { scenarioSuitesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ScenarioScanResponse } from '@/types'
+import type { ScenarioSuiteResponse } from '@/types'
 
-import { useScenarioScanLibraryStyles } from './ScenarioScanLibrary.styles'
-import { NEW_SCAN_ROUTE, scanEditorRoutePath } from './scanRoutes'
+import { useScenarioSuiteLibraryStyles } from './ScenarioSuiteLibrary.styles'
+import { NEW_SUITE_ROUTE, suiteEditorRoutePath } from './suiteRoutes'
 
-function issueCount(item: ScenarioScanResponse): number {
+function issueCount(item: ScenarioSuiteResponse): number {
   return item.entry_statuses.reduce(
     (count, status) => count + status.issues.length,
     0,
   )
 }
 
-export default function ScenarioScanLibrary() {
-  const styles = useScenarioScanLibraryStyles()
+export default function ScenarioSuiteLibrary() {
+  const styles = useScenarioSuiteLibraryStyles()
   const navigate = useNavigate()
-  const [items, setItems] = useState<ScenarioScanResponse[]>([])
+  const [items, setItems] = useState<ScenarioSuiteResponse[]>([])
   const [source, setSource] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [pendingDelete, setPendingDelete] = useState<ScenarioScanResponse | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<ScenarioSuiteResponse | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [generation, setGeneration] = useState(0)
 
@@ -53,9 +53,9 @@ export default function ScenarioScanLibrary() {
     const controller = new AbortController()
     let cancelled = false
 
-    const loadScans = async (): Promise<void> => {
+    const loadSuites = async (): Promise<void> => {
       try {
-        const response = await scenarioScansApi.list(controller.signal)
+        const response = await scenarioSuitesApi.list(controller.signal)
         if (cancelled) return
         setItems(response.items)
         setSource(response.source)
@@ -70,7 +70,7 @@ export default function ScenarioScanLibrary() {
       }
     }
 
-    void loadScans()
+    void loadSuites()
     return () => {
       cancelled = true
       controller.abort()
@@ -90,7 +90,7 @@ export default function ScenarioScanLibrary() {
     setDeleting(true)
     setActionError(null)
     try {
-      await scenarioScansApi.remove(pendingDelete.scan.name)
+      await scenarioSuitesApi.remove(pendingDelete.suite.name)
       setPendingDelete(null)
       refresh()
     } catch (err: unknown) {
@@ -103,13 +103,13 @@ export default function ScenarioScanLibrary() {
   return (
     <section
       className={styles.root}
-      data-testid="scenario-scan-library"
-      aria-labelledby="scenario-scan-library-title"
+      data-testid="scenario-suite-library"
+      aria-labelledby="scenario-suite-library-title"
     >
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text id="scenario-scan-library-title" as="h1" size={600} weight="semibold">
-            Scans
+          <Text id="scenario-suite-library-title" as="h1" size={600} weight="semibold">
+            Suites
           </Text>
           <Text size={300} className={styles.subtitle}>
             Ordered collections of reusable scenario preset definitions.
@@ -120,10 +120,10 @@ export default function ScenarioScanLibrary() {
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
-            onClick={() => navigate(NEW_SCAN_ROUTE)}
-            data-testid="new-scan-btn"
+            onClick={() => navigate(NEW_SUITE_ROUTE)}
+            data-testid="new-suite-btn"
           >
-            New scan
+            New suite
           </Button>
           <Button
             className={styles.touchTarget}
@@ -151,10 +151,10 @@ export default function ScenarioScanLibrary() {
 
       {loading ? (
         <div className={styles.centeredState}>
-          <Spinner label="Loading scans..." />
+          <Spinner label="Loading suites..." />
         </div>
       ) : error ? (
-        <div className={styles.centeredState} data-testid="scan-error-state">
+        <div className={styles.centeredState} data-testid="suite-error-state">
           <MessageBar intent="error">
             <MessageBarBody>{error}</MessageBarBody>
           </MessageBar>
@@ -163,19 +163,19 @@ export default function ScenarioScanLibrary() {
             appearance="primary"
             icon={<ArrowSyncRegular />}
             onClick={refresh}
-            data-testid="retry-scans-btn"
+            data-testid="retry-suites-btn"
           >
             Retry
           </Button>
         </div>
       ) : items.length === 0 ? (
-        <div className={styles.centeredState} data-testid="scan-empty-state">
-          <Text size={400}>No scans saved yet</Text>
+        <div className={styles.centeredState} data-testid="suite-empty-state">
+          <Text size={400}>No suites saved yet</Text>
           <Text size={200}>Create one to keep an ordered set of scenario presets together.</Text>
         </div>
       ) : (
         <div className={styles.tableContainer}>
-          <Table className={styles.table} aria-label="Saved scans">
+          <Table className={styles.table} aria-label="Saved suites">
             <TableHeader>
               <TableRow>
                 <TableHeaderCell>Name</TableHeaderCell>
@@ -189,11 +189,11 @@ export default function ScenarioScanLibrary() {
               {items.map((item) => {
                 const issues = issueCount(item)
                 return (
-                  <TableRow key={item.scan.name} data-testid={`scan-row-${item.scan.name}`}>
+                  <TableRow key={item.suite.name} data-testid={`suite-row-${item.suite.name}`}>
                     <TableCell className={styles.nameCell}>
                       <div className={styles.titleRow}>
-                        <Link to={scanEditorRoutePath(item.scan.name)}>
-                          <Text weight="semibold">{item.scan.name}</Text>
+                        <Link to={suiteEditorRoutePath(item.suite.name)}>
+                          <Text weight="semibold">{item.suite.name}</Text>
                         </Link>
                         {issues > 0 && (
                           <Badge appearance="tint" color="warning">
@@ -201,15 +201,15 @@ export default function ScenarioScanLibrary() {
                           </Badge>
                         )}
                       </div>
-                      {item.scan.description && (
+                      {item.suite.description && (
                         <Text size={200} className={styles.meta}>
-                          {item.scan.description}
+                          {item.suite.description}
                         </Text>
                       )}
                       {issues > 0 && (
                         <ul
                           className={styles.issueList}
-                          data-testid={`scan-issues-${item.scan.name}`}
+                          data-testid={`suite-issues-${item.suite.name}`}
                         >
                           {item.entry_statuses.flatMap((entryStatus, entryIndex) => (
                             entryStatus.issues.map((issue) => (
@@ -225,17 +225,17 @@ export default function ScenarioScanLibrary() {
                     </TableCell>
                     <TableCell>
                       <Text>
-                        {item.scan.entries.length} entr{item.scan.entries.length === 1 ? 'y' : 'ies'}
+                        {item.suite.entries.length} entr{item.suite.entries.length === 1 ? 'y' : 'ies'}
                       </Text>
                     </TableCell>
-                    <TableCell data-testid={`scan-status-${item.scan.name}`}>
+                    <TableCell data-testid={`suite-status-${item.suite.name}`}>
                       {issues === 0
                         ? <Text>No advisory issues</Text>
                         : <Text>{issues} advisory issue{issues === 1 ? '' : 's'}</Text>}
                     </TableCell>
-                    <TableCell data-testid={`scan-author-${item.scan.name}`}>
-                      {item.scan.author
-                        ? <Text>{item.scan.author}</Text>
+                    <TableCell data-testid={`suite-author-${item.suite.name}`}>
+                      {item.suite.author
+                        ? <Text>{item.suite.author}</Text>
                         : <Text className={styles.meta}>—</Text>}
                     </TableCell>
                     <TableCell>
@@ -244,8 +244,8 @@ export default function ScenarioScanLibrary() {
                           className={styles.touchTarget}
                           appearance="subtle"
                           icon={<EditRegular />}
-                          onClick={() => navigate(scanEditorRoutePath(item.scan.name))}
-                          data-testid={`edit-scan-${item.scan.name}`}
+                          onClick={() => navigate(suiteEditorRoutePath(item.suite.name))}
+                          data-testid={`edit-suite-${item.suite.name}`}
                         >
                           Edit
                         </Button>
@@ -257,7 +257,7 @@ export default function ScenarioScanLibrary() {
                             setActionError(null)
                             setPendingDelete(item)
                           }}
-                          data-testid={`delete-scan-${item.scan.name}`}
+                          data-testid={`delete-suite-${item.suite.name}`}
                         >
                           Delete
                         </Button>
@@ -278,10 +278,10 @@ export default function ScenarioScanLibrary() {
         >
           <DialogSurface>
             <DialogBody>
-              <DialogTitle>Delete {pendingDelete.scan.name}?</DialogTitle>
+              <DialogTitle>Delete {pendingDelete.suite.name}?</DialogTitle>
               <DialogContent className={styles.dialogBody}>
                 <Text>
-                  This permanently removes the scan definition. Referenced presets are unaffected.
+                  This permanently removes the suite definition. Referenced presets are unaffected.
                 </Text>
               </DialogContent>
               <DialogActions>
@@ -296,7 +296,7 @@ export default function ScenarioScanLibrary() {
                   appearance="primary"
                   onClick={() => void handleDelete()}
                   disabled={deleting}
-                  data-testid="confirm-delete-scan"
+                  data-testid="confirm-delete-suite"
                 >
                   {deleting ? 'Deleting...' : 'Delete'}
                 </Button>

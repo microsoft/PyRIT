@@ -1347,46 +1347,46 @@ export interface UpdateScenarioPresetRequest {
   expected_version: string
 }
 
-export interface ScenarioScanEntry {
+export interface ScenarioSuiteEntry {
   entry_id: string
   preset_name: string
 }
 
 /** A user-authored, ordered collection of scenario preset references. */
-export interface ScenarioScan {
+export interface ScenarioSuite {
   name: string
   schema_version: number
   description?: string | null
-  /** Who created the scan. Descriptive only; never used to authorize a read or a write. */
+  /** Who created the suite. Descriptive only; never used to authorize a read or a write. */
   author?: string | null
-  entries: ScenarioScanEntry[]
+  entries: ScenarioSuiteEntry[]
 }
 
-/** Current deployment-specific status for one scan entry. */
-export interface ScenarioScanEntryStatus {
+/** Current deployment-specific status for one suite entry. */
+export interface ScenarioSuiteEntryStatus {
   entry_id: string
   preset_name: string
   origin: 'stored' | 'registered' | null
   preset_version: string | null
-  /** Advisory only. Missing or invalid preset references do not prevent saving the scan. */
+  /** Advisory only. Missing or invalid preset references do not prevent saving the suite. */
   issues: PresetIssue[]
 }
 
-export interface ScenarioScanResponse {
-  scan: ScenarioScan
-  /** Opaque document version required to update the scan. */
+export interface ScenarioSuiteResponse {
+  suite: ScenarioSuite
+  /** Opaque document version required to update the suite. */
   version: string
-  /** Ordered exactly like `scan.entries`. */
-  entry_statuses: ScenarioScanEntryStatus[]
+  /** Ordered exactly like `suite.entries`. */
+  entry_statuses: ScenarioSuiteEntryStatus[]
 }
 
-export interface ScenarioScanListResponse {
+export interface ScenarioSuiteListResponse {
   source: string
-  items: ScenarioScanResponse[]
+  items: ScenarioSuiteResponse[]
 }
 
-export interface UpdateScenarioScanRequest {
-  scan: ScenarioScan
+export interface UpdateScenarioSuiteRequest {
+  suite: ScenarioSuite
   expected_version: string
 }
 

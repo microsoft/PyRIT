@@ -29,31 +29,31 @@ import {
 import { useBeforeUnload, useBlocker, useNavigate, useParams } from 'react-router'
 
 import ConfirmDialog from '@/components/ConfirmDialog'
-import { scenarioPresetsApi, scenarioScansApi } from '@/services/api'
+import { scenarioPresetsApi, scenarioSuitesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
   ScenarioPresetResponse,
-  ScenarioScan,
-  ScenarioScanEntry,
-  ScenarioScanEntryStatus,
-  ScenarioScanResponse,
+  ScenarioSuite,
+  ScenarioSuiteEntry,
+  ScenarioSuiteEntryStatus,
+  ScenarioSuiteResponse,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import { validateRegistryName } from '@/utils/registryName'
 import { routerPathParamValue } from '@/utils/routeParams'
 
-import { useScenarioScanEditorStyles } from './ScenarioScanEditor.styles'
-import { SCANS_ROUTE } from './scanRoutes'
+import { useScenarioSuiteEditorStyles } from './ScenarioSuiteEditor.styles'
+import { SUITES_ROUTE } from './suiteRoutes'
 
 type LoadStatus = 'loading' | 'ready' | 'not-found' | 'error'
 
-interface ScanDraft {
+interface SuiteDraft {
   name: string
   description: string
-  entries: ScenarioScanEntry[]
+  entries: ScenarioSuiteEntry[]
 }
 
-function entryStatusLabel(status: ScenarioScanEntryStatus): string {
+function entryStatusLabel(status: ScenarioSuiteEntryStatus): string {
   if (status.origin === 'registered') {
     return 'Defined in code'
   }
@@ -63,38 +63,38 @@ function entryStatusLabel(status: ScenarioScanEntryStatus): string {
   return 'Unavailable'
 }
 
-function entryStatusColor(status: ScenarioScanEntryStatus): 'brand' | 'informative' | 'warning' {
+function entryStatusColor(status: ScenarioSuiteEntryStatus): 'brand' | 'informative' | 'warning' {
   if (status.issues.length > 0 || status.origin === null) {
     return 'warning'
   }
   return status.origin === 'registered' ? 'informative' : 'brand'
 }
 
-function draftSignature(draft: ScanDraft): string {
+function draftSignature(draft: SuiteDraft): string {
   return JSON.stringify(draft)
 }
 
-export default function ScenarioScanEditor({ mode }: { mode: 'create' | 'edit' }) {
-  const { scanName } = useParams<{ scanName: string }>()
-  return <ScenarioScanEditorContent key={scanName ?? 'new'} mode={mode} scanName={scanName} />
+export default function ScenarioSuiteEditor({ mode }: { mode: 'create' | 'edit' }) {
+  const { suiteName } = useParams<{ suiteName: string }>()
+  return <ScenarioSuiteEditorContent key={suiteName ?? 'new'} mode={mode} suiteName={suiteName} />
 }
 
-interface ScenarioScanEditorContentProps {
+interface ScenarioSuiteEditorContentProps {
   mode: 'create' | 'edit'
-  scanName: string | undefined
+  suiteName: string | undefined
 }
 
-function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContentProps) {
-  const styles = useScenarioScanEditorStyles()
+function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorContentProps) {
+  const styles = useScenarioSuiteEditorStyles()
   const navigate = useNavigate()
-  const decodedName = scanName === undefined ? '' : routerPathParamValue(scanName)
+  const decodedName = suiteName === undefined ? '' : routerPathParamValue(suiteName)
   const allowNavigation = useRef(false)
 
   const [status, setStatus] = useState<LoadStatus>('loading')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [availablePresets, setAvailablePresets] = useState<ScenarioPresetResponse[]>([])
-  const [loaded, setLoaded] = useState<ScenarioScanResponse | null>(null)
-  const [savedDraft, setSavedDraft] = useState<ScanDraft>({
+  const [loaded, setLoaded] = useState<ScenarioSuiteResponse | null>(null)
+  const [savedDraft, setSavedDraft] = useState<SuiteDraft>({
     name: mode === 'edit' ? decodedName : '',
     description: '',
     entries: [],
@@ -102,13 +102,13 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
 
   const [name, setName] = useState(mode === 'edit' ? decodedName : '')
   const [description, setDescription] = useState('')
-  const [entries, setEntries] = useState<ScenarioScanEntry[]>([])
+  const [entries, setEntries] = useState<ScenarioSuiteEntry[]>([])
   const [selectedPresetName, setSelectedPresetName] = useState('')
   const [saving, setSaving] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
 
-  const currentDraft: ScanDraft = { name, description, entries }
+  const currentDraft: SuiteDraft = { name, description, entries }
   const hasUnsavedChanges = status === 'ready'
     && draftSignature(currentDraft) !== draftSignature(savedDraft)
   const shouldBlockNavigation = useCallback(
@@ -138,18 +138,18 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
           return
         }
 
-        const [scan, presets] = await Promise.all([
-          scenarioScansApi.get(decodedName),
+        const [suite, presets] = await Promise.all([
+          scenarioSuitesApi.get(decodedName),
           presetsPromise,
         ])
         if (cancelled) return
-        const nextDraft: ScanDraft = {
-          name: scan.scan.name,
-          description: scan.scan.description ?? '',
-          entries: scan.scan.entries,
+        const nextDraft: SuiteDraft = {
+          name: suite.suite.name,
+          description: suite.suite.description ?? '',
+          entries: suite.suite.entries,
         }
         setAvailablePresets(presets.items)
-        setLoaded(scan)
+        setLoaded(suite)
         setName(nextDraft.name)
         setDescription(nextDraft.description)
         setEntries(nextDraft.entries)
@@ -178,7 +178,7 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
     [loaded],
   )
 
-  const statusForEntry = (entry: ScenarioScanEntry): ScenarioScanEntryStatus => {
+  const statusForEntry = (entry: ScenarioSuiteEntry): ScenarioSuiteEntryStatus => {
     const loadedStatus = loadedStatusesByEntryId.get(entry.entry_id)
     if (loadedStatus?.preset_name === entry.preset_name) {
       return loadedStatus
@@ -248,28 +248,28 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
     }
     setValidationError(null)
 
-    const scan: ScenarioScan = {
+    const suite: ScenarioSuite = {
       name: trimmedName,
-      schema_version: loaded?.scan.schema_version ?? 1,
+      schema_version: loaded?.suite.schema_version ?? 1,
       entries: entries.map((entry) => ({ ...entry })),
     }
     const trimmedDescription = description.trim()
     if (trimmedDescription !== '') {
-      scan.description = trimmedDescription
+      suite.description = trimmedDescription
     }
-    if (loaded?.scan.author != null) {
-      scan.author = loaded.scan.author
+    if (loaded?.suite.author != null) {
+      suite.author = loaded.suite.author
     }
 
     setSaving(true)
     try {
       if (loaded === null) {
-        await scenarioScansApi.create(scan)
+        await scenarioSuitesApi.create(suite)
       } else {
-        await scenarioScansApi.update(loaded.scan.name, scan, loaded.version)
+        await scenarioSuitesApi.update(loaded.suite.name, suite, loaded.version)
       }
       allowNavigation.current = true
-      navigate(SCANS_ROUTE)
+      navigate(SUITES_ROUTE)
     } catch (err: unknown) {
       setSaveError(toApiError(err).detail)
       setSaving(false)
@@ -292,7 +292,7 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
     return (
       <section className={styles.root}>
         <div className={styles.centeredState}>
-          <Spinner label="Loading scan..." />
+          <Spinner label="Loading suite..." />
         </div>
       </section>
     )
@@ -301,14 +301,14 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
   if (status !== 'ready') {
     return (
       <section className={styles.root}>
-        <div className={styles.centeredState} data-testid="scan-editor-error-state">
+        <div className={styles.centeredState} data-testid="suite-editor-error-state">
           <MessageBar intent="error">
             <MessageBarBody>
-              {status === 'not-found' ? `No scan named "${decodedName}".` : loadError}
+              {status === 'not-found' ? `No suite named "${decodedName}".` : loadError}
             </MessageBarBody>
           </MessageBar>
-          <Button appearance="primary" onClick={() => navigate(SCANS_ROUTE)}>
-            Back to scans
+          <Button appearance="primary" onClick={() => navigate(SUITES_ROUTE)}>
+            Back to suites
           </Button>
         </div>
       </section>
@@ -320,15 +320,15 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
   return (
     <section
       className={styles.root}
-      data-testid="scenario-scan-editor"
-      aria-labelledby="scenario-scan-editor-title"
+      data-testid="scenario-suite-editor"
+      aria-labelledby="scenario-suite-editor-title"
     >
       <div className={styles.headerText}>
-        <Text id="scenario-scan-editor-title" as="h1" size={600} weight="semibold">
-          {editing ? `Edit ${decodedName}` : 'New scan'}
+        <Text id="scenario-suite-editor-title" as="h1" size={600} weight="semibold">
+          {editing ? `Edit ${decodedName}` : 'New suite'}
         </Text>
         <Text size={300} className={styles.subtitle}>
-          Arrange scenario presets in the order they should appear. Saving a scan does not run it.
+          Arrange scenario presets in the order they should appear. Saving a suite does not run it.
         </Text>
       </div>
 
@@ -344,14 +344,14 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
           </MessageBar>
         )}
 
-        <section className={styles.section} aria-labelledby="scan-definition-title">
+        <section className={styles.section} aria-labelledby="suite-definition-title">
           <div className={styles.sectionHeader}>
-            <Text id="scan-definition-title" as="h2" size={400} weight="semibold">
+            <Text id="suite-definition-title" as="h2" size={400} weight="semibold">
               Definition
             </Text>
             <Text size={200} className={styles.meta}>
-              Schema version {loaded?.scan.schema_version ?? 1}
-              {editing ? ` · Author: ${loaded?.scan.author ?? '—'}` : ''}
+              Schema version {loaded?.suite.schema_version ?? 1}
+              {editing ? ` · Author: ${loaded?.suite.author ?? '—'}` : ''}
             </Text>
           </div>
           <Field
@@ -367,7 +367,7 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
                 setName(data.value)
                 setValidationError(null)
               }}
-              data-testid="scan-name-input"
+              data-testid="suite-name-input"
             />
           </Field>
           <Field label="Description">
@@ -376,15 +376,15 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
               value={description}
               disabled={saving}
               onChange={(_, data) => setDescription(data.value)}
-              data-testid="scan-description-input"
+              data-testid="suite-description-input"
             />
           </Field>
         </section>
 
-        <section className={styles.section} aria-labelledby="scan-entries-title">
+        <section className={styles.section} aria-labelledby="suite-entries-title">
           <div className={styles.sectionHeader}>
             <div>
-              <Text id="scan-entries-title" as="h2" size={400} weight="semibold">
+              <Text id="suite-entries-title" as="h2" size={400} weight="semibold">
                 Entries
               </Text>
               <Text size={200} className={styles.meta}>
@@ -410,7 +410,7 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
                   placeholder="Select a preset"
                   disabled={saving}
                   onOptionSelect={(_, data) => setSelectedPresetName(data.optionValue ?? '')}
-                  data-testid="scan-preset-select"
+                  data-testid="suite-preset-select"
                 >
                   {availablePresets.map((item) => (
                     <Option key={item.preset.name} value={item.preset.name}>
@@ -426,7 +426,7 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
                 icon={<AddRegular />}
                 disabled={saving || selectedPresetName === ''}
                 onClick={addEntry}
-                data-testid="add-scan-entry"
+                data-testid="add-suite-entry"
               >
                 Add preset
               </Button>
@@ -434,7 +434,7 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
           )}
 
           {entries.length === 0 ? (
-            <Text className={styles.meta}>This scan has no entries.</Text>
+            <Text className={styles.meta}>This suite has no entries.</Text>
           ) : (
             <ol className={styles.entryList}>
               {entries.map((entry, index) => {
@@ -443,7 +443,7 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
                   <li
                     key={entry.entry_id}
                     className={styles.entryCard}
-                    data-testid={`scan-entry-${entry.entry_id}`}
+                    data-testid={`suite-entry-${entry.entry_id}`}
                   >
                     <div className={styles.entryTitle}>
                       <div className={styles.entryIdentity}>
@@ -522,16 +522,16 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
             appearance="primary"
             type="submit"
             disabled={saving}
-            data-testid="save-scan-btn"
+            data-testid="save-suite-btn"
           >
-            {saving ? 'Saving...' : 'Save scan'}
+            {saving ? 'Saving...' : 'Save suite'}
           </Button>
           <Button
             className={styles.touchTarget}
             appearance="secondary"
             type="button"
             disabled={saving}
-            onClick={() => navigate(SCANS_ROUTE)}
+            onClick={() => navigate(SUITES_ROUTE)}
           >
             Cancel
           </Button>
@@ -546,7 +546,7 @@ function ScenarioScanEditorContent({ mode, scanName }: ScenarioScanEditorContent
         onConfirm={discardAndLeave}
         onCancel={keepEditing}
       >
-        Your unsaved scan changes will be lost if you continue.
+        Your unsaved suite changes will be lost if you continue.
       </ConfirmDialog>
     </section>
   )

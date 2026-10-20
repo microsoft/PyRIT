@@ -70,11 +70,11 @@ if TYPE_CHECKING:
         ScenarioPresetResponse,
         UpdateScenarioPresetRequest,
     )
-    from pyrit.backend.models.scenario_scans import (
-        ScenarioScanEntryStatus,
-        ScenarioScanListResponse,
-        ScenarioScanResponse,
-        UpdateScenarioScanRequest,
+    from pyrit.backend.models.scenario_suites import (
+        ScenarioSuiteEntryStatus,
+        ScenarioSuiteListResponse,
+        ScenarioSuiteResponse,
+        UpdateScenarioSuiteRequest,
     )
     from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse, ScenarioRunListResponse
     from pyrit.backend.models.scorers import (
@@ -132,10 +132,10 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ScenarioPresetListResponse": "pyrit.backend.models.scenario_presets",
     "ScenarioPresetResponse": "pyrit.backend.models.scenario_presets",
     "UpdateScenarioPresetRequest": "pyrit.backend.models.scenario_presets",
-    "ScenarioScanEntryStatus": "pyrit.backend.models.scenario_scans",
-    "ScenarioScanListResponse": "pyrit.backend.models.scenario_scans",
-    "ScenarioScanResponse": "pyrit.backend.models.scenario_scans",
-    "UpdateScenarioScanRequest": "pyrit.backend.models.scenario_scans",
+    "ScenarioSuiteEntryStatus": "pyrit.backend.models.scenario_suites",
+    "ScenarioSuiteListResponse": "pyrit.backend.models.scenario_suites",
+    "ScenarioSuiteResponse": "pyrit.backend.models.scenario_suites",
+    "UpdateScenarioSuiteRequest": "pyrit.backend.models.scenario_suites",
     "ListRegisteredScenariosResponse": "pyrit.backend.models.scenarios",
     "CreateScorerRequest": "pyrit.backend.models.scorers",
     "ScorerListResponse": "pyrit.backend.models.scorers",

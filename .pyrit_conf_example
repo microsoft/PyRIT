@@ -149,10 +149,10 @@ allow_custom_initializers: false
 # otherwise DefaultAzureCredential is used. Defaults to ~/.pyrit/scenario_presets.
 # scenario_presets_source: https://account.blob.core.windows.net/container/scenario_presets
 
-# Optional storage for ScenarioScan definitions, which contain ordered references
+# Optional storage for ScenarioSuite definitions, which contain ordered references
 # to scenario presets. This supports the same local directory and Azure Blob
-# sources as scenario_presets_source. Defaults to ~/.pyrit/scenario_scans.
-# scenario_scans_source: https://account.blob.core.windows.net/container/scenario_scans
+# sources as scenario_presets_source. Defaults to ~/.pyrit/scenario_suites.
+# scenario_suites_source: https://account.blob.core.windows.net/container/scenario_suites
 
 # Upload Folder for API-Created Targets
 # -------------------------------------

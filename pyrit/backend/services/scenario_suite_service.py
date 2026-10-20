@@ -1,46 +1,46 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Scenario scan definition service."""
+"""Scenario suite definition service."""
 
 import asyncio
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal
 
-from pyrit.backend.models.scenario_scans import (
-    ScenarioScanEntryStatus,
-    ScenarioScanListResponse,
-    ScenarioScanResponse,
+from pyrit.backend.models.scenario_suites import (
+    ScenarioSuiteEntryStatus,
+    ScenarioSuiteListResponse,
+    ScenarioSuiteResponse,
 )
-from pyrit.models.catalog import PresetIssue, ScenarioScan, ScenarioScanEntry, StoredScenarioScan
-from pyrit.registry import ScenarioPresetRegistry, ScenarioScanStorage
+from pyrit.models.catalog import PresetIssue, ScenarioSuite, ScenarioSuiteEntry, StoredScenarioSuite
+from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteStorage
 
 
 @dataclass(frozen=True)
 class _PresetProjection:
-    """Current preset metadata reused by duplicate scan references."""
+    """Current preset metadata reused by duplicate suite references."""
 
     origin: Literal["stored", "registered"] | None
     version: str | None
     issues: tuple[PresetIssue, ...]
 
 
-class ScenarioScanService:
-    """Wire adapter over ``ScenarioScanStorage`` with live preset-status projection."""
+class ScenarioSuiteService:
+    """Wire adapter over ``ScenarioSuiteStorage`` with live preset-status projection."""
 
-    def __init__(self, *, storage: ScenarioScanStorage | None = None) -> None:
+    def __init__(self, *, storage: ScenarioSuiteStorage | None = None) -> None:
         """
         Initialize the service.
 
         Args:
-            storage (ScenarioScanStorage | None): Storage to use, constructed lazily by default.
+            storage (ScenarioSuiteStorage | None): Storage to use, constructed lazily by default.
         """
         self._storage = storage
 
     @property
     def source(self) -> str:
-        """Credential-free storage source scans are read from and written to."""
+        """Credential-free storage source suites are read from and written to."""
         return self._get_storage().display_source
 
     def configure_source(self, source: str | None) -> None:
@@ -50,109 +50,109 @@ class ScenarioScanService:
         Args:
             source (str | None): Configured source, or None for the default directory.
         """
-        self._storage = ScenarioScanStorage(source=source)
+        self._storage = ScenarioSuiteStorage(source=source)
 
-    async def list_scans_async(self) -> ScenarioScanListResponse:
+    async def list_suites_async(self) -> ScenarioSuiteListResponse:
         """
-        Read every scenario scan and project current preset metadata.
+        Read every scenario suite and project current preset metadata.
 
         Returns:
-            ScenarioScanListResponse: The configured source and every readable scan.
+            ScenarioSuiteListResponse: The configured source and every readable suite.
         """
         items = await asyncio.to_thread(self._read_all_responses)
-        return ScenarioScanListResponse(source=self.source, items=items)
+        return ScenarioSuiteListResponse(source=self.source, items=items)
 
-    async def get_scan_async(self, *, name: str) -> ScenarioScanResponse | None:
+    async def get_suite_async(self, *, name: str) -> ScenarioSuiteResponse | None:
         """
-        Read one scenario scan.
+        Read one scenario suite.
 
         Returns:
-            ScenarioScanResponse | None: The scan and current entry statuses, or None if absent.
+            ScenarioSuiteResponse | None: The suite and current entry statuses, or None if absent.
         """
-        stored = await asyncio.to_thread(self._get_storage().load_scan, name)
+        stored = await asyncio.to_thread(self._get_storage().load_suite, name)
         return None if stored is None else await asyncio.to_thread(self._to_response, stored)
 
-    async def save_scan_async(
+    async def save_suite_async(
         self,
         *,
-        scan: ScenarioScan,
+        suite: ScenarioSuite,
         expected_version: str | None,
-    ) -> ScenarioScanResponse:
+    ) -> ScenarioSuiteResponse:
         """
-        Persist one scenario scan without enforcing advisory preset issues.
+        Persist one scenario suite without enforcing advisory preset issues.
 
         Returns:
-            ScenarioScanResponse: The persisted scan, its new version, and current entry statuses.
+            ScenarioSuiteResponse: The persisted suite, its new version, and current entry statuses.
         """
         stored = await asyncio.to_thread(
-            self._get_storage().save_scan,
-            scan=scan,
+            self._get_storage().save_suite,
+            suite=suite,
             expected_version=expected_version,
         )
         return await asyncio.to_thread(self._to_response, stored)
 
-    async def delete_scan_async(self, *, name: str) -> bool:
+    async def delete_suite_async(self, *, name: str) -> bool:
         """
-        Delete one stored scenario scan.
+        Delete one stored scenario suite.
 
         Returns:
-            bool: True if a scan was deleted, False if it was already absent.
+            bool: True if a suite was deleted, False if it was already absent.
         """
-        return await asyncio.to_thread(self._get_storage().delete_scan, name)
+        return await asyncio.to_thread(self._get_storage().delete_suite, name)
 
-    def _get_storage(self) -> ScenarioScanStorage:
+    def _get_storage(self) -> ScenarioSuiteStorage:
         """
         Return storage, constructing the default backend on first use.
 
         Returns:
-            ScenarioScanStorage: The configured storage backend.
+            ScenarioSuiteStorage: The configured storage backend.
         """
         if self._storage is None:
-            self._storage = ScenarioScanStorage()
+            self._storage = ScenarioSuiteStorage()
         return self._storage
 
-    def _read_all_responses(self) -> list[ScenarioScanResponse]:
+    def _read_all_responses(self) -> list[ScenarioSuiteResponse]:
         """
-        Read and project every scan in one worker-thread hop.
+        Read and project every suite in one worker-thread hop.
 
         Returns:
-            list[ScenarioScanResponse]: Every readable scan, sorted by name.
+            list[ScenarioSuiteResponse]: Every readable suite, sorted by name.
         """
-        stored = self._get_storage().list_scans()
+        stored = self._get_storage().list_suites()
         return [self._to_response(stored[name]) for name in sorted(stored)]
 
     @staticmethod
-    def _to_response(stored: StoredScenarioScan) -> ScenarioScanResponse:
+    def _to_response(stored: StoredScenarioSuite) -> ScenarioSuiteResponse:
         """
-        Attach current preset metadata to one stored scan.
+        Attach current preset metadata to one stored suite.
 
         Returns:
-            ScenarioScanResponse: The scan response.
+            ScenarioSuiteResponse: The suite response.
         """
-        return ScenarioScanResponse(
-            scan=stored.scan,
+        return ScenarioSuiteResponse(
+            suite=stored.suite,
             version=stored.version,
-            entry_statuses=ScenarioScanService._resolve_entry_statuses(entries=stored.scan.entries),
+            entry_statuses=ScenarioSuiteService._resolve_entry_statuses(entries=stored.suite.entries),
         )
 
     @staticmethod
-    def _resolve_entry_statuses(*, entries: list[ScenarioScanEntry]) -> list[ScenarioScanEntryStatus]:
+    def _resolve_entry_statuses(*, entries: list[ScenarioSuiteEntry]) -> list[ScenarioSuiteEntryStatus]:
         """
         Resolve every distinct preset once while preserving entry order and identity.
 
         Returns:
-            list[ScenarioScanEntryStatus]: Statuses in the same order as ``entries``.
+            list[ScenarioSuiteEntryStatus]: Statuses in the same order as ``entries``.
         """
         registry = ScenarioPresetRegistry.get_registry_singleton()
         projections = {
-            preset_name: ScenarioScanService._resolve_preset_projection(
+            preset_name: ScenarioSuiteService._resolve_preset_projection(
                 preset_name=preset_name,
                 registry=registry,
             )
             for preset_name in dict.fromkeys(entry.preset_name for entry in entries)
         }
         return [
-            ScenarioScanEntryStatus(
+            ScenarioSuiteEntryStatus(
                 entry_id=entry.entry_id,
                 preset_name=entry.preset_name,
                 origin=projections[entry.preset_name].origin,
@@ -169,7 +169,7 @@ class ScenarioScanService:
         registry: ScenarioPresetRegistry,
     ) -> _PresetProjection:
         """
-        Resolve one referenced preset into advisory scan-entry metadata.
+        Resolve one referenced preset into advisory suite-entry metadata.
 
         Returns:
             _PresetProjection: Current preset origin, version, and advisory issues.
@@ -188,7 +188,7 @@ class ScenarioScanService:
         else:
             message = (
                 f"Scenario preset '{preset_name}' exists but is invalid or unreadable; "
-                "repair or replace the preset before running this scan."
+                "repair or replace the preset before running this suite."
             )
         return _PresetProjection(
             origin=None,
@@ -198,11 +198,11 @@ class ScenarioScanService:
 
 
 @lru_cache(maxsize=1)
-def get_scenario_scan_service() -> ScenarioScanService:
+def get_scenario_suite_service() -> ScenarioSuiteService:
     """
-    Get the global scenario scan service instance.
+    Get the global scenario suite service instance.
 
     Returns:
-        ScenarioScanService: The singleton scenario scan service instance.
+        ScenarioSuiteService: The singleton scenario suite service instance.
     """
-    return ScenarioScanService()
+    return ScenarioSuiteService()

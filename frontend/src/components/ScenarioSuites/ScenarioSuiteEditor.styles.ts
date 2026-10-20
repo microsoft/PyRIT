@@ -3,7 +3,7 @@ import { makeStyles, tokens } from '@fluentui/react-components'
 import { mobileTouchTarget, NARROW_VIEWPORT_QUERY } from '@/styles/touchTargets'
 import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
 
-export const useScenarioScanEditorStyles = makeStyles({
+export const useScenarioSuiteEditorStyles = makeStyles({
   root: {
     display: 'flex',
     flexDirection: 'column',

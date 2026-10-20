@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Tests for the scenario scan definition service."""
+"""Tests for the scenario suite definition service."""
 
 from collections.abc import Iterator
 from pathlib import Path
@@ -10,21 +10,21 @@ from uuid import UUID
 
 import pytest
 
-from pyrit.backend.services.scenario_scan_service import ScenarioScanService, get_scenario_scan_service
-from pyrit.models.catalog import PresetEntry, PresetIssue, ScenarioPreset, ScenarioScan, ScenarioScanEntry
-from pyrit.registry import ScenarioPresetRegistry, ScenarioScanConflictError, ScenarioScanStorage
+from pyrit.backend.services.scenario_suite_service import ScenarioSuiteService, get_scenario_suite_service
+from pyrit.models.catalog import PresetEntry, PresetIssue, ScenarioPreset, ScenarioSuite, ScenarioSuiteEntry
+from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteConflictError, ScenarioSuiteStorage
 
 ENTRY_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ENTRY_TWO = UUID("22222222-2222-4222-8222-222222222222")
 
 
-def _scan(*, name: str = "weekly", preset_names: tuple[str, ...] = ("nightly", "nightly")) -> ScenarioScan:
-    """Build a scan with stable entry IDs."""
+def _suite(*, name: str = "weekly", preset_names: tuple[str, ...] = ("nightly", "nightly")) -> ScenarioSuite:
+    """Build a suite with stable entry IDs."""
     entry_ids = (ENTRY_ONE, ENTRY_TWO)
-    return ScenarioScan(
+    return ScenarioSuite(
         name=name,
         entries=[
-            ScenarioScanEntry(entry_id=entry_ids[index], preset_name=preset_name)
+            ScenarioSuiteEntry(entry_id=entry_ids[index], preset_name=preset_name)
             for index, preset_name in enumerate(preset_names)
         ],
     )
@@ -46,17 +46,17 @@ def preset_registry() -> Iterator[MagicMock]:
 
 
 @pytest.fixture
-def service(tmp_path: Path, preset_registry: MagicMock) -> ScenarioScanService:
-    """Create a service backed by isolated scan storage."""
-    return ScenarioScanService(storage=ScenarioScanStorage(source=str(tmp_path)))
+def service(tmp_path: Path, preset_registry: MagicMock) -> ScenarioSuiteService:
+    """Create a service backed by isolated suite storage."""
+    return ScenarioSuiteService(storage=ScenarioSuiteStorage(source=str(tmp_path)))
 
 
 async def test_crud_preserves_order_and_duplicate_preset_references(
-    service: ScenarioScanService,
+    service: ScenarioSuiteService,
 ) -> None:
     """Test the stored definition without deduplicating entries."""
-    created = await service.save_scan_async(scan=_scan(), expected_version=None)
-    loaded = await service.get_scan_async(name="weekly")
+    created = await service.save_suite_async(suite=_suite(), expected_version=None)
+    loaded = await service.get_suite_async(name="weekly")
 
     assert loaded is not None
     assert loaded.version == created.version
@@ -65,14 +65,14 @@ async def test_crud_preserves_order_and_duplicate_preset_references(
 
 
 async def test_duplicate_references_resolve_the_preset_once(
-    service: ScenarioScanService,
+    service: ScenarioSuiteService,
     preset_registry: MagicMock,
 ) -> None:
     """Test that duplicates share one consistent live projection per read."""
-    await service.save_scan_async(scan=_scan(), expected_version=None)
+    await service.save_suite_async(suite=_suite(), expected_version=None)
     preset_registry.reset_mock()
 
-    response = await service.get_scan_async(name="weekly")
+    response = await service.get_suite_async(name="weekly")
 
     assert response is not None
     preset_registry.get_preset.assert_called_once_with(name="nightly")
@@ -80,10 +80,10 @@ async def test_duplicate_references_resolve_the_preset_once(
 
 
 async def test_current_preset_origin_version_and_issues_are_projected(
-    service: ScenarioScanService,
+    service: ScenarioSuiteService,
     preset_registry: MagicMock,
 ) -> None:
-    """Test that scan reads expose the preset registry's current state."""
+    """Test that suite reads expose the preset registry's current state."""
     issue = PresetIssue(field="scenario_name", message="Scenario is not registered.")
     preset_registry.get_preset.return_value = PresetEntry(
         preset=ScenarioPreset(name="nightly", scenario_name="retired.scenario"),
@@ -92,8 +92,8 @@ async def test_current_preset_origin_version_and_issues_are_projected(
     )
     preset_registry.check_preset.return_value = [issue]
 
-    response = await service.save_scan_async(
-        scan=_scan(preset_names=("nightly",)),
+    response = await service.save_suite_async(
+        suite=_suite(preset_names=("nightly",)),
         expected_version=None,
     )
 
@@ -103,34 +103,34 @@ async def test_current_preset_origin_version_and_issues_are_projected(
 
 
 async def test_missing_preset_is_advisory_and_does_not_block_save(
-    service: ScenarioScanService,
+    service: ScenarioSuiteService,
     preset_registry: MagicMock,
 ) -> None:
-    """Test portable scans with a dangling preset reference."""
+    """Test portable suites with a dangling preset reference."""
     preset_registry.get_preset.return_value = None
     preset_registry.get_preset_version.return_value = None
 
-    response = await service.save_scan_async(
-        scan=_scan(preset_names=("missing",)),
+    response = await service.save_suite_async(
+        suite=_suite(preset_names=("missing",)),
         expected_version=None,
     )
 
-    assert response.scan.entries[0].preset_name == "missing"
+    assert response.suite.entries[0].preset_name == "missing"
     assert response.entry_statuses[0].origin is None
     assert "not available" in response.entry_statuses[0].issues[0].message
-    assert await service.get_scan_async(name="weekly") is not None
+    assert await service.get_suite_async(name="weekly") is not None
 
 
 async def test_invalid_stored_preset_is_distinguished_from_absence(
-    service: ScenarioScanService,
+    service: ScenarioSuiteService,
     preset_registry: MagicMock,
 ) -> None:
     """Test actionable advice when a preset document exists but cannot be parsed."""
     preset_registry.get_preset.return_value = None
     preset_registry.get_preset_version.return_value = "broken-version"
 
-    response = await service.save_scan_async(
-        scan=_scan(preset_names=("broken",)),
+    response = await service.save_suite_async(
+        suite=_suite(preset_names=("broken",)),
         expected_version=None,
     )
 
@@ -139,42 +139,42 @@ async def test_invalid_stored_preset_is_distinguished_from_absence(
     assert "invalid or unreadable" in status.issues[0].message
 
 
-async def test_list_is_sorted_by_scan_name(service: ScenarioScanService) -> None:
+async def test_list_is_sorted_by_suite_name(service: ScenarioSuiteService) -> None:
     """Test stable library ordering."""
     for name in ("zebra", "alpha", "middle"):
-        await service.save_scan_async(scan=_scan(name=name), expected_version=None)
+        await service.save_suite_async(suite=_suite(name=name), expected_version=None)
 
-    response = await service.list_scans_async()
+    response = await service.list_suites_async()
 
-    assert [item.scan.name for item in response.items] == ["alpha", "middle", "zebra"]
+    assert [item.suite.name for item in response.items] == ["alpha", "middle", "zebra"]
 
 
-async def test_update_requires_the_version_from_the_read(service: ScenarioScanService) -> None:
+async def test_update_requires_the_version_from_the_read(service: ScenarioSuiteService) -> None:
     """Test optimistic concurrency through the service."""
-    created = await service.save_scan_async(scan=_scan(), expected_version=None)
-    await service.save_scan_async(
-        scan=_scan().model_copy(update={"description": "winner"}),
+    created = await service.save_suite_async(suite=_suite(), expected_version=None)
+    await service.save_suite_async(
+        suite=_suite().model_copy(update={"description": "winner"}),
         expected_version=created.version,
     )
 
-    with pytest.raises(ScenarioScanConflictError):
-        await service.save_scan_async(
-            scan=_scan().model_copy(update={"description": "stale"}),
+    with pytest.raises(ScenarioSuiteConflictError):
+        await service.save_suite_async(
+            suite=_suite().model_copy(update={"description": "stale"}),
             expected_version=created.version,
         )
 
 
-async def test_delete_reports_presence(service: ScenarioScanService) -> None:
+async def test_delete_reports_presence(service: ScenarioSuiteService) -> None:
     """Test the delete result used by the HTTP layer."""
-    await service.save_scan_async(scan=_scan(), expected_version=None)
+    await service.save_suite_async(suite=_suite(), expected_version=None)
 
-    assert await service.delete_scan_async(name="weekly") is True
-    assert await service.delete_scan_async(name="weekly") is False
+    assert await service.delete_suite_async(name="weekly") is True
+    assert await service.delete_suite_async(name="weekly") is False
 
 
 def test_configure_source_replaces_storage(tmp_path: Path, preset_registry: MagicMock) -> None:
     """Test runtime source configuration."""
-    service = ScenarioScanService()
+    service = ScenarioSuiteService()
 
     service.configure_source(str(tmp_path))
 
@@ -183,4 +183,4 @@ def test_configure_source_replaces_storage(tmp_path: Path, preset_registry: Magi
 
 def test_service_factory_is_a_singleton() -> None:
     """Test the backend service lifetime."""
-    assert get_scenario_scan_service() is get_scenario_scan_service()
+    assert get_scenario_suite_service() is get_scenario_suite_service()

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Scenario scan definition models."""
+"""Scenario suite definition models."""
 
 from typing import Self
 from uuid import UUID
@@ -11,16 +11,16 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pyrit.models.identifiers.class_name_utils import validate_registry_name
 from pyrit.models.request_limits import MAX_ITEMS
 
-SCAN_SCHEMA_VERSION = 1
+SUITE_SCHEMA_VERSION = 1
 
 
-class ScenarioScanEntry(BaseModel):
+class ScenarioSuiteEntry(BaseModel):
     """One ordered reference to a scenario preset."""
 
     model_config = ConfigDict(extra="forbid")
 
     entry_id: UUID = Field(..., description="Stable entry identifier, preserved while the entry is reordered")
-    preset_name: str = Field(..., description="Scenario preset name resolved when the scan is read")
+    preset_name: str = Field(..., description="Scenario preset name resolved when the suite is read")
 
     @field_validator("preset_name")
     @classmethod
@@ -38,24 +38,24 @@ class ScenarioScanEntry(BaseModel):
         return value
 
 
-class ScenarioScan(BaseModel):
+class ScenarioSuite(BaseModel):
     """
     A named, ordered collection of scenario preset references.
 
     Only preset names are stored. Preset origin, version, and advisory issues are
-    deployment-specific projections added when the scan is read.
+    deployment-specific projections added when the suite is read.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(..., description="Unique scan name, used as the storage key")
+    name: str = Field(..., description="Unique suite name, used as the storage key")
     schema_version: int = Field(1, ge=1, description="Shape of this document")
-    description: str | None = Field(None, description="Human-readable summary of the scan")
+    description: str | None = Field(None, description="Human-readable summary of the suite")
     author: str | None = Field(
         None,
-        description="Who created this scan; descriptive only, never used to authorize a read or a write",
+        description="Who created this suite; descriptive only, never used to authorize a read or a write",
     )
-    entries: list[ScenarioScanEntry] = Field(
+    entries: list[ScenarioSuiteEntry] = Field(
         default_factory=list,
         max_length=MAX_ITEMS,
         description="Ordered preset references; duplicate preset names are allowed",
@@ -65,10 +65,10 @@ class ScenarioScan(BaseModel):
     @classmethod
     def _validate_name(cls, value: str) -> str:
         """
-        Validate that the scan name is a legal registry name.
+        Validate that the suite name is a legal registry name.
 
         Returns:
-            str: The validated scan name.
+            str: The validated suite name.
 
         Raises:
             ValueError: If the name is not a legal registry name.
@@ -88,10 +88,10 @@ class ScenarioScan(BaseModel):
         Raises:
             ValueError: If the document declares an unsupported schema version.
         """
-        if value > SCAN_SCHEMA_VERSION:
+        if value > SUITE_SCHEMA_VERSION:
             raise ValueError(
-                f"Scenario scan schema version {value} is newer than this build reads "
-                f"(up to {SCAN_SCHEMA_VERSION}); upgrade PyRIT to use this scan."
+                f"Scenario suite schema version {value} is newer than this build reads "
+                f"(up to {SUITE_SCHEMA_VERSION}); upgrade PyRIT to use this suite."
             )
         return value
 
@@ -101,7 +101,7 @@ class ScenarioScan(BaseModel):
         Reject duplicate entry identifiers without constraining preset reuse.
 
         Returns:
-            Self: The validated scan.
+            Self: The validated suite.
 
         Raises:
             ValueError: If two entries share one ``entry_id``.
@@ -109,13 +109,13 @@ class ScenarioScan(BaseModel):
         seen: set[UUID] = set()
         for entry in self.entries:
             if entry.entry_id in seen:
-                raise ValueError(f"Scenario scan entry_id '{entry.entry_id}' is duplicated.")
+                raise ValueError(f"Scenario suite entry_id '{entry.entry_id}' is duplicated.")
             seen.add(entry.entry_id)
         return self
 
 
-class StoredScenarioScan(BaseModel):
-    """A scenario scan together with the version of its stored document."""
+class StoredScenarioSuite(BaseModel):
+    """A scenario suite together with the version of its stored document."""
 
-    scan: ScenarioScan = Field(..., description="The stored scenario scan")
-    version: str = Field(..., description="Opaque version of the document this scan was read from")
+    suite: ScenarioSuite = Field(..., description="The stored scenario suite")
+    version: str = Field(..., description="Opaque version of the document this suite was read from")
