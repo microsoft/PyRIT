@@ -259,7 +259,7 @@ class Execute(Scenario):
             factory = factory.with_prepended_history_converters(
                 enabled=self.params["apply_converters_to_prepended_history"]
             )
-        converters = self._technique_converters.get(name)
+        converters = context.technique_converters.get(name)
         technique = factory.create(
             objective_target=context.objective_target,
             attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),

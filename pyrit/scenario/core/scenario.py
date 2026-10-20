@@ -464,9 +464,6 @@ class Scenario(ABC):
         Implemented as a classmethod so ``--list-scenarios`` can introspect without
         instantiating.
 
-        Note: ``PyRITInitializer.supported_parameters`` is an instance ``@property``;
-        this asymmetry is intentional pending a future alignment.
-
         Returns:
             list[Parameter]: Declared parameters (default: common run inputs + additional).
         """
@@ -1018,13 +1015,15 @@ class Scenario(ABC):
         )
         supplied_labels = dict(self.params.get("memory_labels") or {})
         operation_name = supplied_labels.pop("operation", None)
+        stored_result: ScenarioResult | None = None
         if self._scenario_result_id:
             stored = await self._memory.get_scenario_results_async(scenario_result_ids=[self._scenario_result_id])
             if not stored:
                 raise ValueError(f"Scenario result id '{self._scenario_result_id}' not found in memory")
-            stored_id = stored[0].operation_id
+            stored_result = stored[0]
+            stored_id = stored_result.operation_id
             # A run may be resumed with the name it was started with, or a name of its saved Operation.
-            if operation_name is not None and operation_name != stored[0].labels.get("operation"):
+            if operation_name is not None and operation_name != stored_result.labels.get("operation"):
                 resolved = await self._memory.resolve_operation_id_async(
                     operation_id=None, operation_name=operation_name
                 )
@@ -1033,7 +1032,7 @@ class Scenario(ABC):
             if operation_id is not None and operation_id != stored_id:
                 raise ValueError("Operation attribution is immutable on resume")
             self._operation_id = stored_id
-            operation_name = stored[0].labels.get("operation")
+            operation_name = stored_result.labels.get("operation")
         else:
             if operation_name is None and operation_id is None:
                 operation_name = ast.literal_eval(
@@ -1049,19 +1048,7 @@ class Scenario(ABC):
             supplied_labels["operation"] = operation_name
         self.params["memory_labels"] = supplied_labels
         self._resolve_runtime_configuration(require_objective_target=True)
-        stored_result: ScenarioResult | None = None
-        stored_plan: ScenarioRunPlan | None = None
-        if self._scenario_result_id:
-            existing_results = await self._memory.get_scenario_results_async(
-                scenario_result_ids=[self._scenario_result_id]
-            )
-            if not existing_results:
-                raise ValueError(
-                    f"Scenario result id '{self._scenario_result_id}' not found in memory. "
-                    f"Drop scenario_result_id to start a new scenario."
-                )
-            stored_result = existing_results[0]
-            stored_plan = self._get_stored_run_plan(stored_result=stored_result)
+        stored_plan = self._get_stored_run_plan(stored_result=stored_result) if stored_result is not None else None
 
         # Build atomic attacks: resolve the seed groups once, snapshot the resolved inputs
         # into a ScenarioContext, and hand it to the subclass extension point. Baseline emission
@@ -1575,7 +1562,7 @@ class Scenario(ABC):
         Resolve the seed groups this scenario attacks, keyed by originating dataset.
 
         This is the single place seed resolution happens for a run. The base ``Scenario``
-        calls it once in the bridge, flattens the result into ``context.seed_groups``, and
+        calls it once during initialization, flattens the result into ``context.seed_groups``, and
         reuses the same population for every atomic attack and the baseline — so sampling
         under ``max_dataset_size`` stays consistent across all of them.
 
@@ -1604,8 +1591,8 @@ class Scenario(ABC):
         """
         Snapshot the resolved runtime inputs into a ``ScenarioContext``.
 
-        Called after ``initialize_async`` has populated the objective target, scorer,
-        techniques, dataset config, labels, and baseline flag. The resulting context is
+        Called after ``initialize_async`` has populated the objective target,
+        techniques, converters, dataset config, labels, and baseline flag. The resulting context is
         handed to ``_build_atomic_attacks_async`` so scenario authors never read
         half-initialized ``self._*`` state to build attacks.
 
@@ -1634,6 +1621,7 @@ class Scenario(ABC):
             scenario_techniques=tuple(self._scenario_techniques),
             dataset_config=self._dataset_config,
             memory_labels=dict(self._memory_labels),
+            technique_converters={name: list(converters) for name, converters in self._technique_converters.items()},
             include_baseline=self._include_baseline,
             incompatible_technique_policy=self._incompatible_technique_policy,
             seed_groups=seed_groups,
