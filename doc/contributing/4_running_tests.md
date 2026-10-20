@@ -90,8 +90,10 @@ finite test watchdog to detect deadlocks, not short per-step latency limits.
 Catalog queue-admission and configured-estimate independence tests use the existing
 estimate watchdog fixture. Observe the queued semaphore acquisition before checking
 that its execution deadline has not started, and verify configured completion while
-catalog capacity is still occupied. Release gates and drain owned requests and
-service workers in `finally`, including when a readiness assertion fails.
+catalog capacity is still occupied. Check each deadline against completed admissions
+and spy on catalog acquisition during configured work to assert independence directly.
+Release gates and drain owned requests and service workers in `finally`, including
+when a readiness assertion fails.
 For frontend modal tests, use fake timers and wait for an accessible control on
 the destination page. A route change does not mean that modal cleanup has restored
 background accessibility.

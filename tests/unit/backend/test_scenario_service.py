@@ -967,6 +967,7 @@ class TestScenarioServiceListScenarios:
         second_estimate_queued = asyncio.Event()
         second_timeout_started = asyncio.Event()
         estimate_count = 0
+        admitted_count = 0
         timeout_count = 0
 
         async def estimate_async(
@@ -994,6 +995,7 @@ class TestScenarioServiceListScenarios:
         ) -> tuple[set[asyncio.Task[ScenarioRunSizeEstimate]], set[asyncio.Task[ScenarioRunSizeEstimate]]]:
             nonlocal timeout_count
             assert timeout == estimate_watchdog_seconds
+            assert admitted_count > timeout_count
             timeout_count += 1
             if timeout_count == 2:
                 second_timeout_started.set()
@@ -1007,9 +1009,12 @@ class TestScenarioServiceListScenarios:
         acquire = service._estimate_semaphore.acquire
 
         async def acquire_async() -> bool:
+            nonlocal admitted_count
             if service._estimate_semaphore.locked():
                 second_estimate_queued.set()
-            return await acquire()
+            acquired = await acquire()
+            admitted_count += 1
+            return acquired
 
         with (
             patch.object(service._estimate_semaphore, "acquire", side_effect=acquire_async),
@@ -1034,6 +1039,7 @@ class TestScenarioServiceListScenarios:
                     await service.close_async()
 
         assert second_timeout_started.is_set()
+        assert admitted_count == 2
         assert timeout_count == 2
         assert service._run_default_estimate_async.await_count == 2
         assert all(item.default_run_size == estimate for item in result.items)
@@ -1255,13 +1261,20 @@ class TestScenarioServiceListScenarios:
         try:
             async with asyncio.timeout(estimate_watchdog_seconds):
                 await started.wait()
-                configured_task = asyncio.create_task(
-                    service.estimate_scenario_run_size_async(
-                        scenario_name=metadata.registry_name,
-                        request=ScenarioRunSizeEstimateRequest(),
+                with patch.object(
+                    service._estimate_semaphore,
+                    "acquire",
+                    new_callable=AsyncMock,
+                    wraps=service._estimate_semaphore.acquire,
+                ) as catalog_acquire:
+                    configured_task = asyncio.create_task(
+                        service.estimate_scenario_run_size_async(
+                            scenario_name=metadata.registry_name,
+                            request=ScenarioRunSizeEstimateRequest(),
+                        )
                     )
-                )
-                interactive = await configured_task
+                    interactive = await configured_task
+                    catalog_acquire.assert_not_awaited()
 
                 assert interactive == configured_estimate
                 assert not release.is_set()
