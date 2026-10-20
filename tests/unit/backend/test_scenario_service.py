@@ -49,7 +49,7 @@ from pyrit.scenario.core import (
 from pyrit.scenario.scenarios.airt.scam import Scam
 from pyrit.scenario.scenarios.garak.exploitation import Exploitation
 from pyrit.score import SubStringScorer
-from unit.async_utils import get_defined_tasks
+from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks
 from unit.mocks import MockPromptTarget, make_technique_class
 
 if TYPE_CHECKING:
@@ -1272,19 +1272,30 @@ class TestScenarioServiceListScenarios:
                 request=ScenarioRunSizeEstimateRequest(scenario_params={"first": 1, "second": 2}),
             )
         )
-        await asyncio.wait_for(started.wait(), timeout=1)
-        second = asyncio.create_task(
-            service.estimate_scenario_run_size_async(
-                scenario_name=metadata.registry_name,
-                request=ScenarioRunSizeEstimateRequest(scenario_params={"second": 2, "first": 1}),
-            )
-        )
-        await asyncio.sleep(0)
+        second = None
+        try:
+            async with asyncio.timeout(TEST_WATCHDOG_SECONDS):
+                await started.wait()
+                second = asyncio.create_task(
+                    service.estimate_scenario_run_size_async(
+                        scenario_name=metadata.registry_name,
+                        request=ScenarioRunSizeEstimateRequest(scenario_params={"second": 2, "first": 1}),
+                    )
+                )
+                await asyncio.sleep(0)
 
-        assert service._estimate_configured_run_size_async.await_count == 1
-        release.set()
-        assert await asyncio.gather(first, second) == [estimate, estimate]
-        await asyncio.sleep(0)
+                assert not first.done()
+                assert not second.done()
+                assert service._estimate_configured_run_size_async.await_count == 1
+                release.set()
+                assert await asyncio.gather(first, second) == [estimate, estimate]
+                await asyncio.sleep(0)
+        finally:
+            release.set()
+            async with asyncio.timeout(TEST_WATCHDOG_SECONDS):
+                await asyncio.gather(*get_defined_tasks(first, second), return_exceptions=True)
+                await service.close_async()
+
         assert service._configured_estimate_tasks == {}
 
     async def test_cancelled_configured_waiter_does_not_cancel_shared_task(self) -> None:
@@ -1318,20 +1329,29 @@ class TestScenarioServiceListScenarios:
                 request=request,
             )
         )
-        await asyncio.wait_for(started.wait(), timeout=1)
-        cancelled_waiter.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await cancelled_waiter
+        surviving_waiter = None
+        try:
+            async with asyncio.timeout(TEST_WATCHDOG_SECONDS):
+                await started.wait()
+                cancelled_waiter.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await cancelled_waiter
 
-        surviving_waiter = asyncio.create_task(
-            service.estimate_scenario_run_size_async(
-                scenario_name=metadata.registry_name,
-                request=request,
-            )
-        )
-        release.set()
-        assert await surviving_waiter == estimate
-        await asyncio.sleep(0)
+                assert not next(iter(service._configured_estimate_tasks.values())).done()
+                surviving_waiter = asyncio.create_task(
+                    service.estimate_scenario_run_size_async(
+                        scenario_name=metadata.registry_name,
+                        request=request,
+                    )
+                )
+                release.set()
+                assert await surviving_waiter == estimate
+                await asyncio.sleep(0)
+        finally:
+            release.set()
+            async with asyncio.timeout(TEST_WATCHDOG_SECONDS):
+                await asyncio.gather(*get_defined_tasks(cancelled_waiter, surviving_waiter), return_exceptions=True)
+                await service.close_async()
 
         assert service._estimate_configured_run_size_async.await_count == 1
         assert service._configured_estimate_tasks == {}
@@ -1367,29 +1387,43 @@ class TestScenarioServiceListScenarios:
                 request=request,
             )
         )
-        await asyncio.wait_for(started.wait(), timeout=1)
-        second = asyncio.create_task(
-            service.estimate_scenario_run_size_async(
-                scenario_name=metadata.registry_name,
-                request=request,
-            )
-        )
-        release.set()
+        second = None
+        try:
+            async with asyncio.timeout(TEST_WATCHDOG_SECONDS):
+                await started.wait()
+                second = asyncio.create_task(
+                    service.estimate_scenario_run_size_async(
+                        scenario_name=metadata.registry_name,
+                        request=request,
+                    )
+                )
+                await asyncio.sleep(0)
+                assert not first.done()
+                assert not second.done()
+                assert service._estimate_configured_run_size_async.await_count == 1
+                release.set()
 
-        for waiter in (first, second):
-            with pytest.raises(RuntimeError, match="estimate failed"):
-                await waiter
-        await asyncio.sleep(0)
-        assert service._configured_estimate_tasks == {}
+                for waiter in (first, second):
+                    with pytest.raises(RuntimeError, match="estimate failed"):
+                        await waiter
+                await asyncio.sleep(0)
+                assert service._estimate_configured_run_size_async.await_count == 1
+                assert service._configured_estimate_tasks == {}
 
-        service._estimate_configured_run_size_async = AsyncMock(return_value=estimate)
-        assert (
-            await service.estimate_scenario_run_size_async(
-                scenario_name=metadata.registry_name,
-                request=request,
-            )
-            == estimate
-        )
+                service._estimate_configured_run_size_async = AsyncMock(return_value=estimate)
+                assert (
+                    await service.estimate_scenario_run_size_async(
+                        scenario_name=metadata.registry_name,
+                        request=request,
+                    )
+                    == estimate
+                )
+                service._estimate_configured_run_size_async.assert_awaited_once()
+        finally:
+            release.set()
+            async with asyncio.timeout(TEST_WATCHDOG_SECONDS):
+                await asyncio.gather(*get_defined_tasks(first, second), return_exceptions=True)
+                await service.close_async()
 
     async def test_configured_estimates_use_bounded_parallelism(self) -> None:
         """Configured estimates run concurrently without exceeding their configured bound."""

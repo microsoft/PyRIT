@@ -67,6 +67,7 @@ export interface PieceConversion {
   pieceId: string
   pieceType: string
   converterInstanceIds: string[]
+  converterProvenance?: Array<string | null>
   convertedValue: string
   originalValue: string
   convertedDataType: string
@@ -78,6 +79,8 @@ export type PieceConversionUpdates = Record<string, PieceConversion | null>
 export interface ConverterPipelineStage {
   readonly id: string
   readonly converterId: string
+  readonly temporary?: SourceInstanceSpec
+  readonly identifier?: ConverterIdentifier
 }
 
 export interface ConverterStageResult {
@@ -115,6 +118,7 @@ export interface ChatConverterController {
   addConverter: (pieceType: string, converterId: string) => void
   setPipeline: (pieceType: string, update: (stages: ConverterPipelineStage[]) => ConverterPipelineStage[]) => void
   retainConverters: (availableIds: Set<string>) => void
+  discardTemporarySettings?: () => void
   convert: (pieceType: string) => Promise<PieceConversionUpdates | void>
   convertRemaining: (pieceId: string, stageId: string) => Promise<PieceConversionUpdates | void>
   editInput: (pieceId: string, value: string) => PieceConversionUpdates | void
@@ -300,6 +304,10 @@ export interface TargetIdentifier {
 
 export interface TargetInstance {
   target_registry_name: string
+  reconstructable?: boolean
+  reconstruction_error?: string | null
+  supports_temperature_override?: boolean
+  binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
   capabilities?: TargetCapabilities | null
@@ -380,6 +388,8 @@ export interface ConverterIdentifier {
 
 export interface ConverterInstance {
   converter_id: string
+  reconstructable?: boolean
+  reconstruction_error?: string | null
   identifier: ConverterIdentifier
   is_llm_based?: boolean
   description?: string | null
@@ -393,6 +403,30 @@ export interface CreateConverterRequest {
   name: string
   type: string
   params?: Record<string, unknown>
+}
+
+export interface SourceInstanceSpec {
+  source_name: string
+  source_hash: string
+  params: Record<string, unknown>
+  effective_hash?: string
+}
+
+export interface TargetBinding {
+  version: 1
+  source_name: string
+  source_hash: string
+  temperature: number
+  effective_hash: string
+}
+
+export interface UnregisteredTarget {
+  identifier: TargetIdentifier
+  capabilities: TargetCapabilities
+}
+
+export interface UnregisteredConverter {
+  identifier: ConverterIdentifier
 }
 
 export interface TechniqueInstance {
@@ -478,6 +512,7 @@ export interface ConverterTypeListResponse {
 export interface ConverterPreviewRequest {
   original_value: string
   converter_ids: string[]
+  converter_specs?: Array<SourceInstanceSpec | null>
   original_value_data_type?: string
   start_token?: string
   end_token?: string
@@ -490,6 +525,9 @@ export interface ConverterPreviewStep {  converter_id: string
   input_data_type: string
   output_value: string
   output_data_type: string
+  source?: SourceInstanceSpec | null
+  identifier?: ConverterIdentifier | null
+  provenance?: string | null
 }
 
 export interface ConverterPreviewResponse {
@@ -519,6 +557,7 @@ export interface TargetInfo {
   endpoint?: string | null
   model_name?: string | null
   identifier_hash: string
+  binding?: TargetBinding | null
 }
 
 export type AttackTargetResolutionStatus =
@@ -748,6 +787,7 @@ export interface AttackSummary {
 
 export interface CreateAttackRequest {
   target_registry_name?: string
+  target_binding?: TargetBinding
   name?: string
   operator?: string
   operation_id?: string
@@ -812,6 +852,7 @@ export interface SaveConversationRequest {
   expected_objective?: string
   objective?: string
   target_registry_name?: string
+  target_binding?: TargetBinding
   operator?: string
   operation_id?: string
   labels?: Record<string, string>
@@ -918,6 +959,7 @@ export interface MessagePieceRequest {
   converted_value?: string
   converted_value_data_type?: string
   applied_converter_ids?: string[]
+  applied_converter_provenance?: Array<string | null>
   mime_type?: string
   original_prompt_id?: string
   source_piece_id?: string
@@ -945,6 +987,7 @@ export interface ConverterConfigurationRequest {
 export interface AddMessageRequest extends MessageRequest {
   send: boolean
   target_registry_name?: string
+  target_binding?: TargetBinding
   converter_ids?: string[]
   request_converter_configurations?: ConverterConfigurationRequest[]
   response_converter_configurations?: ConverterConfigurationRequest[]
@@ -1164,7 +1207,7 @@ export interface SeedExampleListParams {
 // --- Scenarios ---
 
 export type ScenarioDatasetLimit = number | 'all' | 'default'
-export type DatasetFetchPolicy = 'never' | 'if_missing'
+export type DatasetFetchPolicy = 'never' | 'if_missing' | 'always'
 
 export interface ScenarioDatasetSourceInput {
   name: string
@@ -1246,6 +1289,74 @@ export interface ScenarioTechniqueSummary {
 export interface ListRegisteredScenariosResponse {
   items: RegisteredScenario[]
   pagination: PaginationInfo
+}
+
+/**
+ * A saved, portable scenario configuration.
+ *
+ * Every optional field is tri-state: absent means "use the scenario's own default",
+ * so a preset only pins what the author deliberately chose. It carries no target,
+ * concurrency, retries or labels — those are launch-time decisions supplied by
+ * `ResolveScenarioPresetRequest`.
+ */
+export interface ScenarioPreset {
+  name: string
+  scenario_name: string
+  description?: string | null
+  /** Who created the preset. Descriptive only; never used to authorize a read or a write. */
+  author?: string | null
+  techniques?: string[] | null
+  /** Dataset sources, limits, fetch policy, and filters. Omit to use the scenario defaults. */
+  datasets?: ScenarioDatasetRequest | null
+  include_baseline?: boolean | null
+  scenario_params?: Record<string, unknown> | null
+}
+
+/** One advisory problem found checking a preset against this deployment's registry. */
+export interface PresetIssue {
+  field: string
+  message: string
+}
+
+export interface ScenarioPresetResponse {
+  preset: ScenarioPreset
+  /**
+   * Whether a stored document or registering code contributed this preset. A
+   * registered preset cannot be updated or deleted through the API.
+   */
+  origin: 'stored' | 'registered'
+  /** Opaque document version; required to update the preset. Null when registered in code. */
+  version: string | null
+  /** Empty when the preset is runnable here. Never blocks a save. */
+  issues: PresetIssue[]
+  /**
+   * How much this preset runs with its own techniques, datasets, and limits.
+   * List responses fill this in only when estimates are explicitly requested
+   * (off by default); it stays null for a preset this deployment cannot resolve.
+   */
+  run_size?: ScenarioRunSizeEstimateResponse | null
+}
+
+export interface ScenarioPresetListResponse {
+  source: string
+  items: ScenarioPresetResponse[]
+}
+
+export interface UpdateScenarioPresetRequest {
+  preset: ScenarioPreset
+  expected_version: string
+}
+
+/** The launch-owned fields a preset deliberately omits. */
+export interface ResolveScenarioPresetRequest {
+  expected_version?: string | null
+  target_name: string
+  adversarial_target_name?: string | null
+  initializers?: string[] | null
+  initializer_args?: Record<string, Record<string, unknown>> | null
+  max_concurrency?: number | null
+  max_retries?: number | null
+  labels?: Record<string, string> | null
 }
 
 export interface RunScenarioRequest {
@@ -1618,7 +1729,33 @@ export interface ScenarioRunPlanSeedPrompt {
   parameters: string[]
 }
 
+export interface PairedOutcomeStatistics {
+  baseline_group_id: string
+  attack_group_id: string
+  planned_pairs: number
+  decided_pairs: number
+  excluded_pairs: number
+  failure_to_success: number
+  success_to_failure: number
+  failure_to_failure: number
+  success_to_success: number
+  baseline_success_rate: number | null
+  attack_success_rate: number | null
+  paired_difference: number | null
+  missing_baseline: number
+  missing_attack: number
+  missing_both: number
+  baseline_errors: number
+  attack_errors: number
+  baseline_undetermined: number
+  attack_undetermined: number
+  unmatched_baseline_seeds: number
+  unmatched_attack_seeds: number
+  unattributed_attempts: number
+}
+
 export interface ScenarioRunPlanAtomicGroup {
+  kind?: 'baseline' | 'attack' | 'adaptive' | 'unknown' | null
   id: string
   atomic_attack_name: string
   display_group: string
@@ -1730,14 +1867,26 @@ export interface OperationCreate {
   description?: string
 }
 
-/** The editable fields of a saved Operation; renaming is not supported yet. */
+/** The editable fields of a saved Operation. Omitted fields are unchanged. */
 export interface OperationUpdate {
-  description: string
+  name?: string
+  description?: string
 }
 
 export interface Operation extends OperationCreate {
   id: string
   created_at: string
+}
+
+/** What refers to an Operation by ID. Only an Operation with no usage can be deleted. */
+export interface OperationUsage {
+  findings: number
+  attacks: number
+  scenario_runs: number
+}
+
+export interface OperationDetail extends Operation {
+  usage: OperationUsage
 }
 
 export interface OperationListItem extends Operation {

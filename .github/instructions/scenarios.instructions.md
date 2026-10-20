@@ -165,9 +165,20 @@ Options:
   `dataset_name` must match the source name. It takes precedence over registry lookup.
   Configuration copies must preserve live providers by identity, not serialize or deep-copy them.
 - `fetch=DatasetFetchPolicy.IF_MISSING` prepares absent configured or registered datasets.
-  `NEVER` requires stored data. A filter miss must never fetch.
-- Stored rows win even if a configured provider's inputs change. Generation count and
-  selection limits are separate; use a new dataset name to keep another generated batch.
+  `NEVER` requires stored data. `ALWAYS` fetches with `cache=False` and atomically replaces
+  the complete stored dataset for a new run. It requires a configured or registered provider,
+  even when data is already stored. A filter miss must never trigger another fetch.
+- With `IF_MISSING`, stored rows win even if a configured provider's inputs change.
+  Refresh can remove manual edits and prevent older runs from resuming. All provider results
+  are fetched and checked before any dataset write. Candidates and retained sources must
+  pass the same filters, custom grouping, and child/compound validators used by normal reads,
+  without sampling. Memory prepares copied candidates first, including checksums, attribution,
+  timestamps, and media metadata. Commit that prepared snapshot without preparing it again.
+  A fetch, preparation, grouping, or validation failure keeps every dataset unchanged.
+  Media preparation may leave unreferenced files when validation fails; stored seed rows remain unchanged.
+  Storage commits remain per dataset: a later write failure does not undo an earlier successful write.
+  Generation count and selection limits are separate; filters and limits do not reduce the
+  replacement. Use a new dataset name to keep another generated batch.
   Use one writer per name; concurrent runs can generate and store different batches.
 - `seed_groups` and `seeds` are inline alternatives. They never use memory or providers.
 - Validators run on full filtered populations before any sampling.
@@ -185,6 +196,8 @@ Options:
 - Estimates expose `dataset_defaults`, `effective_datasets`, and `dataset_options`.
   These are response projections, not incoming edit state. Never read seeds for projections.
   The catalog reads options and defaults from registry metadata, never from an estimate.
+- Explicit `load_datasets_async()` remains missing-only, regardless of the scan's policy.
+  It does not refresh or change that policy.
 - Resume replays the saved launch request; the stored run plan fixes the selected seed groups,
   so caps and fetch policies cannot change a resumed run. Dataset names are checked by the
   stored scenario identity. Resume never prepares datasets.

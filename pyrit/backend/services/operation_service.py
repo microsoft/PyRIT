@@ -14,6 +14,7 @@ from pyrit.backend.models.operations import (
     FindingEvidenceListResponse,
     FindingListItem,
     FindingListResponse,
+    OperationDetail,
     OperationListItem,
     OperationUpdateRequest,
 )
@@ -96,20 +97,48 @@ class OperationService:
         except LookupError as exc:
             raise OperationNotFoundError(f"Operation '{operation_id}' not found.") from exc
 
+    async def get_detail_async(self, operation_id: UUID) -> OperationDetail:
+        """
+        Read one operation with what refers to it by ID.
+
+        Returns:
+            OperationDetail: The operation and its usage.
+        """
+        operation = await self.get_async(operation_id)
+        usage = await CentralMemory.get_memory_instance().get_operation_usage_async(operation_id=operation_id)
+        return OperationDetail(**operation.model_dump(), usage=usage)
+
     async def update_async(self, *, operation_id: UUID, request: OperationUpdateRequest) -> Operation:
         """
-        Replace an operation's description.
+        Rename an operation or replace its description.
 
         Returns:
             Operation: The updated operation.
 
         Raises:
             OperationNotFoundError: If no operation has this ID.
+            DuplicateOperationError: If another operation already has the normalized name.
         """
         try:
-            return await CentralMemory.get_memory_instance().update_operation_async(
-                operation_id=operation_id, description=request.description
+            saved = await CentralMemory.get_memory_instance().update_operation_async(
+                operation_id=operation_id, name=request.name, description=request.description
             )
+        except LookupError as exc:
+            raise OperationNotFoundError(f"Operation '{operation_id}' not found.") from exc
+        if saved.id != operation_id:
+            raise DuplicateOperationError(saved)
+        return saved
+
+    async def delete_async(self, operation_id: UUID) -> None:
+        """
+        Permanently remove an operation that no findings, attacks, or scenario runs refer to by ID.
+
+        Raises:
+            OperationNotFoundError: If no operation has this ID.
+            OperationInUseError: If findings, attacks, or scenario runs refer to the operation by ID.
+        """
+        try:
+            await CentralMemory.get_memory_instance().delete_operation_async(operation_id=operation_id)
         except LookupError as exc:
             raise OperationNotFoundError(f"Operation '{operation_id}' not found.") from exc
 
@@ -131,7 +160,10 @@ class OperationService:
         )
         evidence = await self._new_evidence_async(finding_id=finding.id, request=request)
         memory = CentralMemory.get_memory_instance()
-        saved = await memory.add_finding_async(finding=finding, evidence=evidence)
+        try:
+            saved = await memory.add_finding_async(finding=finding, evidence=evidence)
+        except LookupError as exc:
+            raise OperationNotFoundError(f"Operation '{operation_id}' not found.") from exc
         if saved.model_dump(exclude={"created_at"}) != finding.model_dump(exclude={"created_at"}) or (
             evidence is not None
             and await memory.get_finding_evidence_by_source_async(

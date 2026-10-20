@@ -29,6 +29,7 @@ class DatasetFetchPolicy(str, Enum):
 
     NEVER = "never"
     IF_MISSING = "if_missing"
+    ALWAYS = "always"
 
 
 def _normalize_fetch(value: object) -> object:
