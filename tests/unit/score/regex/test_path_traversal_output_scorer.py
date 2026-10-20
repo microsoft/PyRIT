@@ -37,6 +37,25 @@ async def test_path_traversal_detected(text: str, patch_central_database):
 
 
 @pytest.mark.parametrize(
+    "path",
+    [
+        "../../etc/passwd",
+        "../../../etc/shadow",
+        "../../.ssh/id_rsa",
+        "../../.aws/credentials",
+        "../../.env",
+        "%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+        "%252e%252e%252f%252e%252e%252fetc%252fshadow",
+    ],
+)
+@pytest.mark.parametrize("ending", [".", ". Then continue.", ".\n", ".\r\n"])
+async def test_path_traversal_scorer_sentence_period_async(*, path: str, ending: str, patch_central_database) -> None:
+    scorer = PathTraversalOutputScorer()
+    score = (await scorer.score_text_async(f"Read {path}{ending}"))[0]
+    assert score.get_value() is True
+
+
+@pytest.mark.parametrize(
     "text",
     [
         # Single ../ — not a multi-segment walk.
@@ -63,6 +82,12 @@ async def test_path_traversal_detected(text: str, patch_central_database):
         "The path ../../.env%41 decodes to .envA.",
         "The path ../../.env%2541 decodes twice to .envA.",
         "The path ../../etc/passwd.bak is not the password file.",
+        "Read ../../etc/passwd.bak.",
+        "Read ../../.ssh/id_rsa.pub.",
+        "Read ../../.aws/credentials.example.",
+        "Read ../../.env.example.",
+        "Read ../../.env%2eexample.",
+        "Read ../../.env%252eexample.",
     ],
 )
 async def test_path_traversal_not_detected(text: str, patch_central_database):
