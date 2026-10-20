@@ -6,6 +6,9 @@ import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
   TargetInstance,
+  UnregisteredTarget,
+  UnregisteredConverter,
+  SourceInstanceSpec,
   TargetListResponse,
   TargetTypeListResponse,
   ConverterTypeListResponse,
@@ -43,13 +46,19 @@ import type {
   ChangeMainConversationResponse,
   ListRegisteredScenariosResponse,
   RegisteredScenario,
+  ResolveScenarioPresetRequest,
   RunScenarioRequest,
+  ScenarioPreset,
+  ScenarioPresetListResponse,
+  ScenarioPresetResponse,
+  UpdateScenarioPresetRequest,
   ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
   ScenarioDatasetLoadResponse,
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
+  PairedOutcomeStatistics,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -62,6 +71,19 @@ import type {
   ManualScoreRequest,
   UpdateAttackRequest,
   SaveConversationRequest,
+  Finding,
+  FindingCreate,
+  FindingCreateRequest,
+  FindingListResponse,
+  FindingOptionsResponse,
+  FindingEvidenceCreateRequest,
+  FindingEvidenceAttachResponse,
+  FindingEvidenceListResponse,
+  Operation,
+  OperationCreate,
+  OperationDetail,
+  OperationListResponse,
+  OperationUpdate,
   AttackAnalyticsQuery,
   AttackAnalyticsReport,
   AttackAnalyticsResultsQuery,
@@ -71,6 +93,62 @@ import type {
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+
+const operationPath = (operationId: string): string => `/operations/${encodeURIComponent(operationId)}`
+
+export const operationsApi = {
+  getFindingOptions: async (): Promise<FindingOptionsResponse> => {
+    return (await apiClient.get('/operations/finding-options')).data
+  },
+  list: async (): Promise<OperationListResponse> => {
+    return (await apiClient.get('/operations')).data
+  },
+  get: async (operationId: string): Promise<OperationDetail> => {
+    return (await apiClient.get(operationPath(operationId))).data
+  },
+  create: async (request: OperationCreate): Promise<Operation> => {
+    return (await apiClient.post('/operations', request)).data
+  },
+  update: async (operationId: string, request: OperationUpdate): Promise<Operation> => {
+    return (await apiClient.patch(operationPath(operationId), request)).data
+  },
+  delete: async (operationId: string): Promise<void> => {
+    await apiClient.delete(operationPath(operationId))
+  },
+  listFindings: async (
+    operationId: string, params: { limit: number; offset: number; title?: string },
+  ): Promise<FindingListResponse> => {
+    return (await apiClient.get(`${operationPath(operationId)}/findings`, { params })).data
+  },
+  createFinding: async (operationId: string, request: FindingCreateRequest): Promise<Finding> => {
+    return (await apiClient.post(`${operationPath(operationId)}/findings`, request)).data
+  },
+  updateFinding: async (operationId: string, findingId: string, request: FindingCreate): Promise<Finding> => {
+    return (await apiClient.put(`${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}`, request)).data
+  },
+  deleteFinding: async (operationId: string, findingId: string): Promise<void> => {
+    await apiClient.delete(`${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}`)
+  },
+  attachFindingEvidence: async (
+    operationId: string, findingId: string, request: FindingEvidenceCreateRequest,
+  ): Promise<FindingEvidenceAttachResponse> => {
+    return (await apiClient.post(
+      `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence`, request,
+    )).data
+  },
+  listFindingEvidence: async (
+    operationId: string, findingId: string, params: { limit: number; offset: number },
+  ): Promise<FindingEvidenceListResponse> => {
+    return (await apiClient.get(
+      `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence`, { params },
+    )).data
+  },
+  detachFindingEvidence: async (operationId: string, findingId: string, evidenceId: string): Promise<void> => {
+    await apiClient.delete(
+      `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence/${encodeURIComponent(evidenceId)}`,
+    )
+  },
+}
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -292,6 +370,10 @@ export const targetsApi = {
     const response = await apiClient.post('/targets', request)
     return response.data
   },
+  buildTarget: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredTarget> => {
+    const response = await apiClient.post<UnregisteredTarget>('/targets', { type, source, register: false })
+    return response.data
+  },
 }
 
 export const techniquesApi = {
@@ -324,6 +406,10 @@ export const convertersApi = {
 
   createConverter: async (request: CreateConverterRequest): Promise<ConverterInstance> => {
     const response = await apiClient.post('/converters', request)
+    return response.data
+  },
+  buildConverter: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredConverter> => {
+    const response = await apiClient.post<UnregisteredConverter>('/converters', { type, source, register: false })
     return response.data
   },
 
@@ -387,6 +473,11 @@ export const attacksApi = {
     const response = await apiClient.delete(
       `/attacks/${encodeURIComponent(attackResultId)}/human-score`
     )
+    return response.data
+  },
+
+  getConversation: async (conversationId: string): Promise<AddMessageResponse> => {
+    const response = await apiClient.get(`/attacks/conversations/${encodeURIComponent(conversationId)}`)
     return response.data
   },
 
@@ -463,6 +554,7 @@ export const attacksApi = {
     outcome?: string
     operator?: string[]
     operation?: string[]
+    operation_id?: string[]
     label?: string[]
     min_turns?: number
     max_turns?: number
@@ -577,6 +669,7 @@ export const scenariosApi = {
     scenario_names?: string[]
     run_statuses?: ScenarioRunState[]
     label?: string[]
+    operation_id?: string[]
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,
@@ -599,6 +692,18 @@ export const scenariosApi = {
     return response.data
   },
 
+  getPairedOutcomes: async (
+    scenarioResultId: string,
+    params: { baseline_group_id: string; attack_group_id: string },
+    signal?: AbortSignal,
+  ): Promise<PairedOutcomeStatistics> => {
+    const response = await apiClient.get<PairedOutcomeStatistics>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes`,
+      { params, signal },
+    )
+    return response.data
+  },
+
   getQueue: async (signal?: AbortSignal): Promise<ScenarioQueueSnapshot> => {
     const response = await apiClient.get('/scenarios/runs/queue', { signal })
     return response.data
@@ -615,6 +720,63 @@ export const scenariosApi = {
 
   resumeRun: async (scenarioResultId: string): Promise<ScenarioRunSummary> => {
     const response = await apiClient.post(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/resume`)
+    return response.data
+  },
+}
+
+export const scenarioPresetsApi = {
+  /** Read definitions without run-size calculation unless explicitly requested. */
+  list: async (
+    signal?: AbortSignal,
+    includeEstimates = false,
+  ): Promise<ScenarioPresetListResponse> => {
+    const params = { include_estimates: includeEstimates }
+    const response = await apiClient.get('/scenario-presets', { params, signal })
+    return response.data
+  },
+
+  get: async (name: string): Promise<ScenarioPresetResponse> => {
+    const response = await apiClient.get(`/scenario-presets/${encodeURIComponent(name)}`)
+    return response.data
+  },
+
+  /** Creates a preset that must not already exist; the server returns 409 when the name is taken. */
+  create: async (preset: ScenarioPreset): Promise<ScenarioPresetResponse> => {
+    const response = await apiClient.post('/scenario-presets', preset)
+    return response.data
+  },
+
+  /**
+   * Replaces a preset the caller has read. `expectedVersion` is the version returned
+   * by the read, so a concurrent edit fails with 409 instead of being overwritten.
+   */
+  update: async (
+    name: string,
+    preset: ScenarioPreset,
+    expectedVersion: string,
+  ): Promise<ScenarioPresetResponse> => {
+    const body: UpdateScenarioPresetRequest = { preset, expected_version: expectedVersion }
+    const response = await apiClient.put(`/scenario-presets/${encodeURIComponent(name)}`, body)
+    return response.data
+  },
+
+  remove: async (name: string): Promise<void> => {
+    await apiClient.delete(`/scenario-presets/${encodeURIComponent(name)}`)
+  },
+
+  /**
+   * Combines a stored preset with the launch-owned fields it omits into a runnable request.
+   * Sending `expected_version` fails with 409 when the preset changed after it was read,
+   * so a launch cannot silently run a configuration the operator never saw.
+   */
+  resolve: async (
+    name: string,
+    request: ResolveScenarioPresetRequest,
+  ): Promise<RunScenarioRequest> => {
+    const response = await apiClient.post(
+      `/scenario-presets/${encodeURIComponent(name)}/resolve`,
+      request,
+    )
     return response.data
   },
 }
@@ -688,4 +850,5 @@ export const datasetsApi = {
     return response.data
   },
 }
+
 import type { RuntimeReadiness, RuntimeStatus } from '@/types'

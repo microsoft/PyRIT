@@ -21,6 +21,34 @@ refreshes do not override your open/closed choice. Creating, copying, or repeati
 conversations still opens the desktop drawer. On narrow screens the drawer opens
 only when requested and closes after selecting a conversation.
 
+Each saved turn, including a system turn, has a **Copy or Branch** menu with
+visible descriptions for each action. **Copy to next message** copies only that message
+to the prompt box. **Branch conversation** and **Branch attack** copy history
+including that turn into the same attack or a new attack (a separate group of
+conversations), open the
+conversation panel, and select the copy at its full
+`/attacks/{attack_id}/conversations/{conversation_id}` URL. Copying
+within a target-free attack keeps it target-free until you send a prompt.
+When you save an edited conversation, its final user turn moves to the prompt
+box instead of saved history. Text and attachments retain their metadata,
+including text-only video remix IDs. You can enter and edit prompts without a target.
+Send stays disabled until you select a target; no target-warning box is shown.
+
+**Use in scan** opens the configuration to apply a PyRIT attack technique after
+prepending history including the selected turn. It saves a target-free copy
+and opens `/scanner/technique.execute?prepended_conversation_id={conversation_id}`.
+The scanner configuration fills **prepended_conversation_id** from this URL.
+There is no clipboard step, and opening the configuration does not launch a scan.
+Select **Add new conversation** beside that field to build simulated history,
+or **Edit conversation** to load its current history. **Add to attack** saves all
+turns to a new conversation and updates the field. It does not change the source
+history, send prompts, or launch a scan. These controls are not in Registry.
+Scan launch is disabled while a conversation loads or its editor is open.
+The **Apply converters to conversation** toggle beside **Edit conversation** is
+off by default and disabled when the conversation ID is empty. When enabled,
+request converters run on the stored history during the scan, without changing
+the source conversation. New outgoing turns are always converted.
+
 ## Dataset catalog
 
 The **Datasets** page shows summaries of datasets already loaded into the backend's
@@ -34,8 +62,12 @@ objectives on the server, not dataset names, and it does not search
 simulated-conversation JSON. Filter by that seed type to find those examples.
 Matching ignores ASCII case only. Examples stay in the groups the server
 returns, including multimodal members. Expanding an example loads its stored
-records for inspection only: nothing is executed, imported into chat, or played
-as media. Filters, page size, and the open example stay in the address bar.
+records for inspection only: nothing is executed or imported into chat.
+**Show image/audio/video preview** loads supported media on demand, without
+autoplay. Reopening waits for a fresh display URL, with Show disabled while the
+request is pending. If refreshing fails, the preview stays closed and shows a
+message so you can try again. Hiding a preview stops playback.
+Filters, page size, and the open example stay in the address bar.
 **Back to datasets** returns to the catalog search, facets, and sort you came
 from. A direct link without that return state goes to `/datasets`.
 On narrow screens, scroll the example table horizontally to read its columns.
@@ -217,6 +249,7 @@ npm run test:coverage # Run with coverage report (85%+ threshold)
 # End-to-End Tests (Playwright)
 npm run test:e2e          # Run headless (default local setup uses dev.py)
 npm run test:e2e:headed   # Run with visible browser windows (requires display)
+npm run test:e2e:paired-outcomes # Real SQLite/API paired-outcome acceptance tests
 npm run test:e2e:ui       # Interactive UI mode (requires display)
 ```
 
@@ -251,6 +284,13 @@ E2E_LIVE_MODE=true npx playwright test
 
 The mock and seeded projects run in the **GitHub Actions** pull-request workflow. The live project is intended for a protected pipeline with an Entra identity or API keys.
 
+For ordinary interactions with startup controls, call `waitForAppReady(page)`
+from `e2e/_runtime.ts` after navigation or reload. A visible control can still
+move as runtime readiness and configured defaults arrive. Tests that deliberately
+interact before startup finishes should control those responses instead.
+Before reloading to check a preference change, wait for its value in localStorage;
+an empty Operation picker can mean its saved-ID lookup is still loading.
+
 CI runs two isolated mock shards, one serial seeded job, and one isolated
 analytics job, with one worker per job. Mock and seeded jobs start their own
 Vite server and Python backend because mock specs still depend on backend auth
@@ -281,6 +321,11 @@ servers with reuse disabled, even when `E2E_FRONTEND_PORT` is set.
 
 The frontend proxies API requests to `http://localhost:8000` in development.
 Configure this in `vite.config.ts` if needed.
+
+The Vite development server binds to `127.0.0.1` by default so its `/api`
+proxy cannot expose a local unauthenticated backend to the LAN. Environments
+that already provide an isolated network boundary, such as a devcontainer with
+controlled port forwarding, can explicitly set `PYRIT_FRONTEND_HOST=0.0.0.0`.
 
 The Vite development server disables its own CORS handling. Use the frontend's
 same-origin `/api` proxy for API requests. Cross-origin API preflights pass to

@@ -132,11 +132,11 @@ test.describe("Accessibility", () => {
     await page.getByTitle("Technique.execute").click();
 
     // Input should be accessible
-    const input = page.getByRole("textbox");
+    const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await expect(input).toBeVisible({ timeout: 5000 });
 
     // Send button should have accessible name
-    const sendButton = page.getByRole("button", { name: /send/i });
+    const sendButton = page.getByRole("button", { name: "Send message", exact: true });
     await expect(sendButton).toBeVisible();
 
     // New Attack button should have accessible name
@@ -274,7 +274,7 @@ test.describe("Accessibility", () => {
     await objectiveDefault.selectOption({ index: 1 });
     await page.getByTitle("Technique.execute").click();
 
-    const input = page.getByRole("textbox");
+    const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await expect(input).toBeEnabled({ timeout: 5000 });
 
     // Focus input

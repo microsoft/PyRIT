@@ -283,6 +283,16 @@ class TestListTargetTypes:
         entry = next(item for item in result.items if item.target_type == "HuggingFaceChatTarget")
         assert "trust_remote_code" in {parameter.name for parameter in entry.parameters}
 
+    async def test_types_include_azure_blob_target_with_both_auth_modes_async(self) -> None:
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == "AzureBlobStorageTarget")
+        assert {"container_url", "sas_token"} <= {parameter.name for parameter in entry.parameters}
+        assert "api_key" in entry.supported_auth_modes
+        assert "identity" in entry.supported_auth_modes
+
     @pytest.mark.parametrize(
         ("target_type", "parameter_names"),
         [
@@ -679,6 +689,126 @@ class TestCreateTargetCodeExecution:
             )
 
 
+@pytest.mark.usefixtures("patch_central_database")
+class TestCreateTargetServerCredential:
+    """Admin gate for targets that would authenticate with the server's own stored credentials."""
+
+    @staticmethod
+    def _request(params: dict[str, object] | None = None, *, auth_mode: str = "api_key") -> CreateTargetRequest:
+        return CreateTargetRequest(
+            name="blob",
+            type="AzureBlobStorageTarget",
+            params={"container_url": "https://test.blob.core.windows.net/test", **(params or {})},
+            auth_mode=auth_mode,  # type: ignore[arg-type]
+        )
+
+    @pytest.mark.parametrize("value", ["sas-token", "   leading-space"])
+    def test_caller_supplied_credential_is_allowed_for_non_admin(self, value: str) -> None:
+        service = TargetService()
+
+        service._enforce_server_credential_permission(
+            target_type="AzureBlobStorageTarget", params={"sas_token": value}, is_admin=False
+        )
+
+    @pytest.mark.parametrize("params", [{}, {"sas_token": None}, {"sas_token": ""}])
+    def test_missing_credential_requires_admin(self, params: dict[str, object]) -> None:
+        service = TargetService()
+
+        with pytest.raises(PermissionError, match="requires administrator access"):
+            service._enforce_server_credential_permission(
+                target_type="AzureBlobStorageTarget", params=params, is_admin=False
+            )
+
+    @pytest.mark.parametrize("params", [{}, {"sas_token": ""}])
+    def test_missing_credential_is_allowed_for_admin(self, params: dict[str, object]) -> None:
+        service = TargetService()
+
+        service._enforce_server_credential_permission(
+            target_type="AzureBlobStorageTarget", params=params, is_admin=True
+        )
+
+    def test_target_without_server_credential_parameter_is_untouched(self) -> None:
+        service = TargetService()
+
+        service._enforce_server_credential_permission(
+            target_type="OpenAIChatTarget", params={"endpoint": "https://example.test"}, is_admin=False
+        )
+
+    async def test_create_target_identity_mode_requires_admin_before_construction(self) -> None:
+        service = TargetService()
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            pytest.raises(PermissionError, match="requires administrator access"),
+        ):
+            await service.create_target_async(request=self._request(auth_mode="identity"), is_admin=False)
+
+        create_instance.assert_not_called()
+        assert service.get_target_object(target_registry_name="blob") is None
+
+    async def test_create_target_identity_mode_with_caller_sas_requires_admin(self) -> None:
+        """Identity mode drops the caller SAS, so it still authenticates with the server's credentials."""
+        service = TargetService()
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            pytest.raises(PermissionError, match="requires administrator access"),
+        ):
+            await service.create_target_async(
+                request=self._request({"sas_token": "caller-sas"}, auth_mode="identity"), is_admin=False
+            )
+
+        create_instance.assert_not_called()
+
+    async def test_create_target_api_key_without_sas_requires_admin_before_construction(self) -> None:
+        service = TargetService()
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            pytest.raises(PermissionError, match="requires administrator access"),
+        ):
+            await service.create_target_async(request=self._request(), is_admin=False)
+
+        create_instance.assert_not_called()
+
+    async def test_create_target_without_caller_sas_requires_admin_even_with_environment_sas(self, monkeypatch) -> None:
+        """An environment SAS is a server credential, so a caller who supplies none still needs admin."""
+        monkeypatch.setenv("AZURE_STORAGE_ACCOUNT_SAS_TOKEN", "server-environment-sas")
+        service = TargetService()
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            pytest.raises(PermissionError, match="requires administrator access"),
+        ):
+            await service.create_target_async(request=self._request(), is_admin=False)
+
+        create_instance.assert_not_called()
+
+    async def test_create_target_with_caller_sas_reaches_construction_for_non_admin(self) -> None:
+        service = TargetService()
+        stop = RuntimeError("stop after construction")
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input", side_effect=stop) as create_instance,
+            pytest.raises(RuntimeError, match="stop after construction"),
+        ):
+            await service.create_target_async(request=self._request({"sas_token": "caller-sas"}), is_admin=False)
+
+        create_instance.assert_called_once()
+
+    async def test_create_target_identity_mode_reaches_construction_for_admin(self) -> None:
+        service = TargetService()
+        stop = RuntimeError("stop after construction")
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input", side_effect=stop) as create_instance,
+            pytest.raises(RuntimeError, match="stop after construction"),
+        ):
+            await service.create_target_async(request=self._request(auth_mode="identity"), is_admin=True)
+
+        create_instance.assert_called_once()
+
+
 class TestCreateTarget:
     """Tests for TargetService.create_target method."""
 
@@ -1051,7 +1181,7 @@ class TestCreateTargetEntraAuth:
             auth_mode="identity",
         )
 
-        result = await service.create_target_async(request=request)
+        result = await service.create_target_async(request=request, is_admin=True)
 
         target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
         assert target_obj._auth_mode == "identity"  # type: ignore[attr-defined]
@@ -1068,7 +1198,7 @@ class TestCreateTargetEntraAuth:
             auth_mode="identity",
         )
 
-        result = await service.create_target_async(request=request)
+        result = await service.create_target_async(request=request, is_admin=True)
 
         target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
         assert target_obj._sas_token is None  # type: ignore[attr-defined]

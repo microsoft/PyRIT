@@ -17,6 +17,7 @@ STAGE_TEMPLATE = REPO_ROOT / "infra" / "pipelines" / "deploy-stage.yml"
 WHAT_IF_VALIDATOR = REPO_ROOT / "infra" / "pipelines" / "validate_what_if.py"
 RESOURCE_GROUP_ID = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/copyrit-prod-v2"
 APP_ID = f"{RESOURCE_GROUP_ID}/providers/Microsoft.App/containerApps/copyrit-prod-v2"
+JOB_ID = f"{RESOURCE_GROUP_ID}/providers/Microsoft.App/jobs/copyrit-prod-v2-migrate"
 ENVIRONMENT_ID = f"{RESOURCE_GROUP_ID}/providers/Microsoft.App/managedEnvironments/copyrit-prod-v2-env"
 PIP_ID = f"{RESOURCE_GROUP_ID}/providers/Microsoft.Network/publicIPAddresses/copyrit-prod-v2-egress-pip"
 NAT_ID = f"{RESOURCE_GROUP_ID}/providers/Microsoft.Network/natGateways/copyrit-prod-v2-nat"
@@ -235,6 +236,7 @@ class TestWhatIfPolicies(unittest.TestCase):
                 arguments += ["--deployment-mode", mode]
             if app_id is not None:
                 arguments += ["--expected-app-id", app_id]
+            arguments += ["--expected-job-id", JOB_ID]
             return subprocess.run(arguments, capture_output=True, text=True, check=False)
 
     def test_infrastructure_accepts_read_only_normalization_and_lock_create(self) -> None:
@@ -266,6 +268,10 @@ class TestWhatIfPolicies(unittest.TestCase):
             ("infra", APP_ID, "NoChange", True),
             ("infra", APP_ID.upper() + "/", "Modify", False),
             ("infra", APP_ID + "/authConfigs/current", "Modify", False),
+            ("job", JOB_ID, "Create", True),
+            ("job", JOB_ID, "Modify", True),
+            ("job", APP_ID, "Modify", False),
+            ("job", f"{RESOURCE_GROUP_ID}/providers/Microsoft.App/jobs/other-job", "Create", False),
         ):
             with self.subTest(mode=mode, resource_id=resource_id, change_type=change_type):
                 result = self._run_validator(

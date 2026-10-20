@@ -110,6 +110,57 @@ def test_load_training_rows_rejects_changed_dataset(tmp_path: Path) -> None:
     assert texts == [] and labels == []
 
 
+@pytest.mark.parametrize("record_separator", ["\n", "\r\n", "\r"])
+@pytest.mark.parametrize("cell_separator", ["\n", "\r\n", "\r"])
+def test_load_training_rows_skips_the_whole_leading_comment_block(
+    *, tmp_path: Path, record_separator: str, cell_separator: str
+) -> None:
+    """Every leading '#' line is a comment, not just the first one."""
+    harm_path = tmp_path / "harm"
+    harm_path.mkdir()
+    header = f"harm_category,objective,assistant_response,human_score_1,data_type{record_separator}"
+    response = f"line one{cell_separator}### in-cell heading{cell_separator}line three"
+    bodies = {
+        "violence.csv": (
+            f"{record_separator}"
+            f"# dataset_version=1.0{record_separator}"
+            f"# collected by the eval team{record_separator}"
+            f"{header}"
+            f'violence,# sample objective,"{response}",0,text{record_separator}'
+        ),
+        "violence_multi_score.csv": f"# dataset_version=1.0{record_separator}{header}",
+    }
+    pins = {}
+    for file_name, body in bodies.items():
+        data = body.encode()
+        (harm_path / file_name).write_bytes(data)
+        pins[file_name] = hashlib.sha256(data).hexdigest()
+    with patch.object(module, "_HARM_EVALS_PATH", harm_path), patch.object(module, "_TRAINING_DATASETS", pins):
+        texts, labels = _load_training_rows()
+    assert texts == [f"PROMPT: # sample objective\nRESPONSE: {response}"]
+    assert labels == [0]
+
+
+def test_load_training_rows_accepts_cr_only_record_separators(tmp_path: Path) -> None:
+    """CR-only files still split into records and keep their payload intact."""
+    harm_path = tmp_path / "harm"
+    harm_path.mkdir()
+    header = "harm_category,objective,assistant_response,human_score_1,data_type\r"
+    bodies = {
+        "violence.csv": "# dataset_version=1.0\r" + header + "violence,sample objective,a harmless reply,0,text\r",
+        "violence_multi_score.csv": "# dataset_version=1.0\r" + header,
+    }
+    pins = {}
+    for file_name, body in bodies.items():
+        data = body.encode()
+        (harm_path / file_name).write_bytes(data)
+        pins[file_name] = hashlib.sha256(data).hexdigest()
+    with patch.object(module, "_HARM_EVALS_PATH", harm_path), patch.object(module, "_TRAINING_DATASETS", pins):
+        texts, labels = _load_training_rows()
+    assert texts == ["PROMPT: sample objective\nRESPONSE: a harmless reply"]
+    assert labels == [0]
+
+
 @requires_torch
 def test_train_head_is_deterministic_and_separates() -> None:
     embeddings, labels = _separable_training_data()

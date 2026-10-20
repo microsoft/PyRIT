@@ -16,7 +16,7 @@ from test_support.analytics_benchmark import (  # noqa: F401
     benchmark_directory,
     sqlite_instance,
 )
-from test_support.fixtures import compatibility_headers, compatibility_id  # noqa: F401
+from test_support.fixtures import authentication_policy, compatibility_headers, compatibility_id  # noqa: F401
 
 
 async def test_100k_attack_analytics_performance_async(

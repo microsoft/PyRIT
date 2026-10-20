@@ -246,6 +246,10 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 
 - This is often an LLM, but it doesn't have to be. For Cross-Domain Prompt Injection Attacks, the target might be a storage account that a later target has a reference to. Message and conversation should be generic enough to handle this extra data.
 - Target capabilities should be used to see if a target is compatible with the capabilities that the other components want to use.
+- Editable history means native support for caller-supplied history changes. Its absence does not
+  imply server-side state. Callers that branch stored history use `validate_history_replay()` to check
+  native support, configured adaptation, or provider-specific restoration before creating copies.
+  Targets still check live session and context continuity when sending.
 - Targets should use message_normalizer along with TargetConfiguration to transform `Messages` into formats that target supports.
 - A target may observe an internal, caller-owned send context at the provider-invocation boundary,
   after target-side waits and immediately before irreversible provider I/O, but the caller owns any
@@ -424,6 +428,8 @@ See [message normalizers](./targets/11_message_normalizer) for capability behavi
 
 - If you are creating a component with user input (e.g. via config, REST, or automatically) it should always use the registry
 - If you are storing an instance of a component, it should always use the registry
+- Construction does not require registration. The caller owns temporary instances
+  and their cleanup; the registry does not retain them.
 - The registry accepts only explicitly supported external inputs, permits opaque Python objects only for in-process callers, and leaves component validation to constructors.
 
 ## [Setup](./setup/0_setup)

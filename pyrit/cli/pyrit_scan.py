@@ -19,6 +19,7 @@ import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast, get_args, get_origin
+from uuid import UUID
 
 import aiofiles
 
@@ -312,6 +313,7 @@ def _add_run_arguments(*, parser: ArgumentParser, scenario_params: list[Paramete
     parser.add_argument("--max-concurrency", type=positive_int, help=ARG_HELP["max_concurrency"])
     parser.add_argument("--max-retries", type=non_negative_int, help=ARG_HELP["max_retries"])
     parser.add_argument("--memory-labels", type=str, help=ARG_HELP["memory_labels"])
+    parser.add_argument("--operation-id", type=UUID, help="Saved Operation UUID (see list-operations)")
     parser.add_argument("--dataset-names", type=str, nargs="+", help=ARG_HELP["dataset_names"])
     parser.add_argument("--max-dataset-size", type=parse_dataset_limit, help=ARG_HELP["max_dataset_size"])
     parser.add_argument(
@@ -325,7 +327,9 @@ def _add_run_arguments(*, parser: ArgumentParser, scenario_params: list[Paramete
     )
     parser.add_argument("--max-total", type=parse_dataset_limit, help="Combined attack-group cap")
     parser.add_argument(
-        "--dataset-fetch", choices=["never", "if_missing"], help="Preparation policy for missing datasets"
+        "--dataset-fetch",
+        choices=["never", "if_missing", "always"],
+        help="Dataset preparation policy; omission keeps scenario settings. always replaces stored data.",
     )
     parser.add_argument(
         "--dataset-filters",
@@ -345,6 +349,7 @@ _LIST_VERBS: dict[str, str] = {
     "list-targets": "List all available targets",
     "list-converters": "List all registered converter instances",
     "list-datasets": "List all available datasets",
+    "list-operations": "List saved Operations and their UUIDs",
 }
 
 
@@ -810,6 +815,8 @@ async def _handle_list_commands_async(*, client: Any, parsed_args: Namespace) ->
         _output.print_initializer_list(items=await client.list_initializers_async())
     elif command == "list-targets":
         _output.print_target_list(items=await client.list_targets_async())
+    elif command == "list-operations":
+        _output.print_operation_list(items=await client.list_operations_async())
     elif command == "list-datasets":
         resp = await client.list_datasets_async()
         _output.print_dataset_list(items=resp.get("items", []))
@@ -1021,6 +1028,8 @@ def _build_run_request(*, parsed_args: Namespace, scenario_name: str) -> RunScen
     kwargs.update(build_dataset_request_fields(vars(parsed_args)))
     if parsed_args.memory_labels:
         kwargs["labels"] = parse_memory_labels(json_string=parsed_args.memory_labels)
+    if getattr(parsed_args, "operation_id", None) is not None:
+        kwargs["operation_id"] = parsed_args.operation_id
 
     scenario_params = _extract_scenario_args(parsed=parsed_args)
     if scenario_params:

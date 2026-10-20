@@ -5,7 +5,7 @@ import os
 import uuid
 from collections.abc import AsyncGenerator, MutableSequence, Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,7 +16,7 @@ from sqlalchemy.orm import Query, Session
 from pyrit.common.singleton import Singleton
 from pyrit.converter.base64_converter import Base64Converter
 from pyrit.memory import AzureSQLMemory, EmbeddingDataEntry, PromptMemoryEntry
-from pyrit.memory.memory_interface import AttackResultKeysetCursor
+from pyrit.memory.memory_interface import AttackResultKeysetCursor, _AttackResultQuery
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import Conversation, MessagePiece
@@ -526,6 +526,41 @@ def test_get_condition_json_property_match_bind_params(
     assert list(mv_params.values())[0] == expected_value
 
 
+def test_literal_label_condition_binds_keys_and_values(uninitialized_memory_interface: AzureSQLMemory) -> None:
+    """Non-allowlisted keys go through OPENJSON with the key bound, never into a JSON path."""
+    condition = uninitialized_memory_interface._get_attack_result_literal_label_condition(
+        labels={'team"name': ["red", "blue"], "x')=1 --": "r1", "empty": []}
+    )
+    compiled = str(condition.compile(compile_kwargs={"literal_binds": False}))
+
+    assert 'OPENJSON("AttackResultEntries".labels)' in compiled
+    assert "JSON_VALUE" not in compiled
+    # SQL Server pads strings before comparing, so "team name " would equal "team name" without this.
+    for key_param in ("are_literal_key_0", "are_literal_key_1"):
+        assert f"DATALENGTH(label_entry.[key]) = DATALENGTH(CAST(:{key_param} AS NVARCHAR(MAX)))" in compiled
+    assert 'team"name' not in compiled
+    assert condition.compile().params == {
+        "are_literal_key_0": 'team"name',
+        "are_literal_0_0": "red",
+        "are_literal_0_1": "blue",
+        "are_literal_key_1": "x')=1 --",
+        "are_literal_1_0": "r1",
+    }
+
+
+def test_attack_label_conditions_split_allowlisted_and_literal_keys(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    query = _AttackResultQuery(labels={"phase": "initial", "team name": "red"})
+
+    conditions = uninitialized_memory_interface._build_attack_result_label_conditions(query=query)
+
+    compiled = [str(condition.compile(compile_kwargs={"literal_binds": False})) for condition in conditions]
+    assert len(compiled) == 2
+    assert "JSON_VALUE" in compiled[0]
+    assert "OPENJSON" in compiled[1]
+
+
 def test_get_attack_result_label_condition_with_string_value(memory_interface: AzureSQLMemory):
     """String values produce a single-placeholder IN clause with the stringified value."""
     condition = memory_interface._get_attack_result_label_condition(labels={"operator": "roakey"})
@@ -891,12 +926,38 @@ def test_init_prod_connection_runs_check_only_not_migration():
                 connection_string=prod_conn,
                 results_container_url="https://test.blob.core.windows.net/test",
                 results_sas_token="valid_sas_token",
+                skip_schema_migration=False,
             )
             mock_check.assert_called_once()
             mock_migration.assert_not_called()
     finally:
         Singleton._instances.clear()
         Singleton._instances.update(saved)
+
+
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_internal_deployment_checks_schema_without_upgrade(
+    *, uninitialized_memory_interface: AzureSQLMemory, mismatch: bool
+) -> None:
+    from alembic.util.exc import CommandError
+
+    uninitialized_memory_interface._skip_schema_migration = False
+    with (
+        patch.dict(os.environ, {"PYRIT_REQUIRE_CURRENT_SCHEMA": "true"}),
+        patch.object(
+            uninitialized_memory_interface,
+            "_check_schema_migration",
+            side_effect=CommandError("Schema mismatch") if mismatch else None,
+        ) as check,
+        patch.object(uninitialized_memory_interface, "_run_schema_migration") as upgrade,
+    ):
+        if mismatch:
+            with pytest.raises(CommandError, match="Schema mismatch"):
+                uninitialized_memory_interface._initialize_schema()
+        else:
+            uninitialized_memory_interface._initialize_schema()
+        check.assert_called_once()
+        upgrade.assert_not_called()
 
 
 def test_init_prod_connection_warns_on_schema_mismatch():
@@ -940,8 +1001,8 @@ def test_init_prod_connection_warns_on_schema_mismatch():
         Singleton._instances.update(saved)
 
 
-def test_init_allows_migration_when_connection_does_not_match_prod():
-    """Migration proceeds normally when the connection string does not match the prod env var."""
+def test_init_allows_explicit_migration_when_connection_does_not_match_prod() -> None:
+    """An explicit migration is allowed when the connection does not match production."""
     saved = Singleton._instances.copy()
     Singleton._instances.clear()
     try:
@@ -963,6 +1024,7 @@ def test_init_allows_migration_when_connection_does_not_match_prod():
                 connection_string="Server=tcp:dev.database.windows.net;",
                 results_container_url="https://test.blob.core.windows.net/test",
                 results_sas_token="valid_sas_token",
+                skip_schema_migration=False,
             )
             mock_migration.assert_called_once()
     finally:
@@ -970,8 +1032,8 @@ def test_init_allows_migration_when_connection_does_not_match_prod():
         Singleton._instances.update(saved)
 
 
-def test_init_allows_migration_when_prod_env_var_not_set():
-    """Migration proceeds normally when AZURE_SQL_DB_CONNECTION_STRING_PROD is not set."""
+def test_init_allows_explicit_migration_when_prod_env_var_not_set() -> None:
+    """An explicit migration is allowed when no production connection is configured."""
     saved = Singleton._instances.copy()
     Singleton._instances.clear()
     try:
@@ -994,11 +1056,48 @@ def test_init_allows_migration_when_prod_env_var_not_set():
                 connection_string="Server=tcp:dev.database.windows.net;",
                 results_container_url="https://test.blob.core.windows.net/test",
                 results_sas_token="valid_sas_token",
+                skip_schema_migration=False,
             )
             mock_migration.assert_called_once()
     finally:
         Singleton._instances.clear()
         Singleton._instances.update(saved)
+
+
+@pytest.mark.parametrize("defer_initialization", [False, True])
+@pytest.mark.parametrize("prod_connection", ["", "Server=tcp:prod.database.windows.net;"])
+async def test_init_checks_without_migrating_by_default_async(
+    *, defer_initialization: bool, prod_connection: str
+) -> None:
+    with (
+        patch.object(Singleton, "_instances", {}),
+        patch.object(AzureSQLMemory, "_create_engine"),
+        patch.object(AzureSQLMemory, "_create_auth_token"),
+        patch.object(AzureSQLMemory, "_enable_azure_authorization"),
+        patch.object(AzureSQLMemory, "_check_schema_migration") as check,
+        patch.object(AzureSQLMemory, "_run_schema_migration") as migrate,
+        patch.dict(
+            os.environ,
+            {
+                AzureSQLMemory.AZURE_SQL_DB_CONNECTION_STRING_PROD: prod_connection,
+                "PYRIT_REQUIRE_CURRENT_SCHEMA": "",
+            },
+        ),
+    ):
+        memory = cast(
+            "AzureSQLMemory",
+            AzureSQLMemory(
+                connection_string="Server=tcp:dev.database.windows.net;",
+                results_container_url="https://test.blob.core.windows.net/test",
+                results_sas_token="valid_sas_token",
+                _defer_initialization=defer_initialization,
+            ),
+        )
+        if defer_initialization:
+            check.assert_not_called()
+            await memory.initialize_async()
+        check.assert_called_once()
+        migrate.assert_not_called()
 
 
 def test_init_prod_with_skip_schema_migration_still_checks():

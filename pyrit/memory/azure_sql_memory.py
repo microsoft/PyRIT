@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+import os
 import struct
 import uuid
 from collections.abc import Mapping, Sequence
@@ -85,7 +86,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         results_container_url: str | None = None,
         results_sas_token: str | None = None,
         verbose: bool = False,
-        skip_schema_migration: bool = False,
+        skip_schema_migration: bool = True,
         silent: bool = False,
         _defer_initialization: bool = False,
     ) -> None:
@@ -100,7 +101,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             results_sas_token (str | None): The Shared Access Signature (SAS) token for the storage container.
                 If not provided, falls back to the 'AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN' environment variable.
             verbose (bool): Whether to enable verbose logging for the database engine. Defaults to False.
-            skip_schema_migration (bool): Whether to skip schema migration. Defaults to False.
+            skip_schema_migration (bool): Whether to skip schema migration. Defaults to True.
+                Set to False to explicitly migrate a non-production database during initialization.
             silent (bool): If True, suppresses schema migration console output. Defaults to False.
         """
         self._connection_string = default_values.get_required_value(
@@ -141,6 +143,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         self._initialized = not _defer_initialization
 
     def _initialize_schema(self) -> None:
+        if os.environ.get("PYRIT_REQUIRE_CURRENT_SCHEMA") == "true":
+            self._check_schema_migration()
+            return
         prod_connection_string = default_values.get_non_required_value(
             env_var_name=self.AZURE_SQL_DB_CONNECTION_STRING_PROD
         )
@@ -585,6 +590,48 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 )
             )
         return and_(*are_parts)
+
+    def _get_attack_result_literal_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
+        """
+        Azure SQL implementation that matches label names literally through OPENJSON.
+
+        Keys and values are bound parameters, so no key becomes part of a JSON path or SQL text.
+        DATALENGTH keeps keys that differ only by trailing spaces apart, since SQL Server pads
+        strings before comparing them.
+
+        Returns:
+            Any: SQLAlchemy condition with bound parameters.
+        """
+        literal_conditions: list[str] = []
+        bindparams: dict[str, str] = {}
+        for key_index, (key, raw_value) in enumerate(labels.items()):
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if not values:
+                continue
+            key_param = f"are_literal_key_{key_index}"
+            bindparams[key_param] = key
+            placeholders = []
+            for value_index, value in enumerate(values):
+                value_param = f"are_literal_{key_index}_{value_index}"
+                bindparams[value_param] = str(value)
+                placeholders.append(f":{value_param}")
+            literal_conditions.append(
+                'EXISTS (SELECT 1 FROM OPENJSON("AttackResultEntries".labels) AS label_entry '
+                f"WHERE label_entry.[key] = :{key_param} "
+                f"AND DATALENGTH(label_entry.[key]) = DATALENGTH(CAST(:{key_param} AS NVARCHAR(MAX))) "
+                f"AND label_entry.[value] IN ({', '.join(placeholders)}))"
+            )
+
+        parts: list[Any] = [AttackResultEntry.labels.isnot(None)]
+        if literal_conditions:
+            combined = " AND ".join(literal_conditions)
+            parts.append(
+                cast(
+                    "ColumnElement[bool]",
+                    text(f'ISJSON("AttackResultEntries".labels) = 1 AND {combined}').bindparams(**bindparams),
+                )
+            )
+        return and_(*parts)
 
     def _execute_get_unique_attack_class_names(self) -> list[str]:
         """

@@ -67,6 +67,7 @@ RECOMMENDED_TAGS: frozenset[str] = frozenset(
         "agent_security",  # agentic-AI threat models (tool poisoning, context exfiltration, etc.)
         "prompt_injection",  # direct or indirect prompt-injection payloads
         "ethics",  # moral-judgment / values evaluation (e.g., moral foundations theory)
+        "honesty",  # honesty / deception evaluation (e.g., MASK — does the model state beliefs it doesn't hold)
         "toxicity",  # toxicity / hate-speech / profanity (e.g., RealToxicityPrompts, Perspective API)
         "country_grounded",  # prompts pinned to a specific country / region (e.g., per-country XL-SafetyBench splits)
         "cultural",  # culture-aware evaluation (cultural sensitivities, norms, taboos)
@@ -269,7 +270,9 @@ class SeedDatasetFilter:
         # over criteria in _match_filter_to_metadata vacuously False, so the filter
         # would silently match no dataset at all.
         if not self.criteria:
-            raise ValueError("'criteria' must contain at least one metadata criterion.")
+            raise ValueError(
+                "'criteria' must contain at least one criterion. Omit 'criteria' for an unconstrained filter."
+            )
 
         # An empty set is not a filter. Without strict_match nothing can overlap with it,
         # and with strict_match nothing can be outside it, so the same filter would match

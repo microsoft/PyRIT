@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import {
   Badge,
@@ -17,6 +17,7 @@ import {
   mergeClasses,
   Select,
   Spinner,
+  Switch,
   Text,
   Tooltip,
   ToggleButton,
@@ -27,10 +28,12 @@ import {
   InfoRegular,
   SettingsRegular,
 } from '@fluentui/react-icons'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
+import ConversationEditor, { type ConversationEditorHandle } from '@/components/Chat/ConversationEditor'
 import TargetSelect from '@/components/Config/TargetSelect'
+import { useConversationDraft } from '@/hooks/useConversationDraft'
 import { useRuntime } from '@/hooks/useRuntime'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import ParameterField from '@/components/Parameters/ParameterField'
@@ -41,9 +44,10 @@ import {
   type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
 import type { ViewName } from '@/components/Sidebar/Navigation'
-import { scenariosApi } from '@/services/api'
+import { attacksApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
+  AddMessageResponse,
   Parameter,
   RegisteredScenario,
   RunScenarioRequest,
@@ -58,11 +62,13 @@ import type {
   ScenarioRunSizeEstimateResponse,
   TargetInstance,
 } from '@/types'
+import { newDraftMessage, toConversationDraft } from '@/utils/conversationDraft'
 import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
 import { sameTarget, targetModelName } from '@/utils/targetIdentity'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import { ScenarioRunEstimateDetails } from './ScenarioRunEstimate'
+import { scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
 import { normalizeScenarioMarkdown } from './scenarioMarkdown'
 import { mapScenarioRunEstimate } from './scenarioRunEstimateAdapter'
 import { techniqueSetName } from './scenarioTechniqueSets'
@@ -239,6 +245,7 @@ interface BuildEstimateRequestInput {
 }
 
 interface BuildRunRequestInput extends BuildEstimateRequestInput {
+  operationId: string | null
   maxConcurrency: number
   maxRetries: number
   labels: Record<string, string>
@@ -274,6 +281,7 @@ type EstimateRequestState =
       status: 'resolved'
       requestKey: string
       result: ScenarioRunEstimateResult
+      datasetSettings?: ScenarioDatasetSettings
     }
   | {
       status: 'error'
@@ -371,6 +379,7 @@ function buildRunRequest(input: BuildRunRequestInput): BuildRunRequestResult {
     scenario_name: input.scenario.scenario_name,
     ...estimateRequest,
   }
+  if (input.operationId) request.operation_id = input.operationId
   if (supportsParameter(input.scenario, 'max_concurrency')) {
     request.max_concurrency = input.maxConcurrency
   }
@@ -388,6 +397,8 @@ interface ScenarioDetailProps {
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
+  /** The saved Operation that new runs join, or null for none. */
+  operationId?: string | null
   /** False while the current generation's server defaults are still loading. */
   defaultsReady?: boolean
   onNavigate: (view: ViewName) => void
@@ -395,23 +406,28 @@ interface ScenarioDetailProps {
 
 export default function ScenarioDetail(props: ScenarioDetailProps) {
   const { scenarioName: encodedScenarioName } = useParams<{ scenarioName: string }>()
-  // Keying on the raw URL param forces a full remount (and state reset to the
-  // initial "loading" values) whenever the route navigates from one scenario
-  // detail page directly to another.
-  return <ScenarioDetailContent key={encodedScenarioName} encodedScenarioName={encodedScenarioName} {...props} />
+  const [searchParams] = useSearchParams()
+  const conversationIds = searchParams.getAll('prepended_conversation_id')
+  const initialConversationId = conversationIds.length === 1 ? conversationIds[0].trim() : ''
+  // A new scenario or conversation link starts a fresh configuration form.
+  return <ScenarioDetailContent key={`${encodedScenarioName}:${initialConversationId}`}
+    encodedScenarioName={encodedScenarioName} initialConversationId={initialConversationId} {...props} />
 }
 
 interface ScenarioDetailContentProps extends ScenarioDetailProps {
   encodedScenarioName: string | undefined
+  initialConversationId: string
 }
 
 function ScenarioDetailContent({
   encodedScenarioName,
+  initialConversationId,
   targets,
   defaultObjectiveTarget,
   defaultAdversarialTarget,
   defaultsReady = false,
   labels,
+  operationId = null,
   onNavigate,
 }: ScenarioDetailContentProps) {
   const styles = useScenarioDetailStyles()
@@ -519,10 +535,12 @@ function ScenarioDetailContent({
     <ScenarioLaunchForm
       key={scenario.scenario_name}
       scenario={scenario}
+      initialConversationId={initialConversationId}
       targets={targets}
       defaultObjectiveTarget={defaultObjectiveTarget}
       defaultAdversarialTarget={defaultAdversarialTarget}
       labels={labels}
+      operationId={operationId}
       defaultsReady={defaultsReady}
       onNavigate={onNavigate}
     />
@@ -531,10 +549,12 @@ function ScenarioDetailContent({
 
 interface ScenarioLaunchFormProps {
   scenario: RegisteredScenario
+  initialConversationId: string
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
+  operationId: string | null
   /** False while the current generation's server defaults are still loading. */
   defaultsReady?: boolean
   onNavigate: (view: ViewName) => void
@@ -542,10 +562,12 @@ interface ScenarioLaunchFormProps {
 
 function ScenarioLaunchForm({
   scenario,
+  initialConversationId,
   targets,
   defaultObjectiveTarget,
   defaultAdversarialTarget,
   labels,
+  operationId,
   defaultsReady = false,
   onNavigate,
 }: ScenarioLaunchFormProps) {
@@ -567,6 +589,9 @@ function ScenarioLaunchForm({
     ),
     [scenario],
   )
+  const conversationConvertersParameter = dynamicParameters.some((parameter) => parameter.name === 'prepended_conversation_id')
+    ? dynamicParameters.find((parameter) => parameter.name === 'apply_converters_to_prepended_history')
+    : undefined
   const supportsObjectiveTarget = supportsParameter(scenario, 'objective_target')
   const supportsTechniques = supportsParameter(scenario, 'scenario_techniques')
   const supportsBaseline = supportsParameter(scenario, 'include_baseline')
@@ -606,17 +631,11 @@ function ScenarioLaunchForm({
   const [datasetError, setDatasetError] = useState<string | null>(null)
   const datasetMetadata = useScenarioDatasets()
   const [datasetProjection, setDatasetProjection] = useState<ScenarioRunSizeEstimateResponse | null>(null)
-  const datasetDefaults: ScenarioDatasetSettings = datasetProjection?.dataset_defaults ?? scenario.dataset_defaults ?? {
-    sources: scenario.default_datasets.map((name) => ({ name, max_size: 'all', fetch: 'if_missing', configured_provider: false })),
-    max_per_dataset: 'all', max_total: scenario.default_run_size.dataset_limit.value ?? 'all',
-    fetch: 'if_missing', filters: {},
-  }
+  const datasetDefaults: ScenarioDatasetSettings = datasetProjection?.dataset_defaults
+    ?? scenarioDatasetDefaults(scenario)
   const effectiveDatasets = datasetProjection?.effective_datasets ?? datasetDefaults
-  const datasetOptions: ScenarioDatasetOptions = datasetProjection?.dataset_options ?? scenario.dataset_options ?? {
-    mode: 'any', allowed_names: [], per_dataset_limit: true,
-    total_limit: scenario.default_run_size.dataset_limit.state !== 'not_applicable',
-    supports_overrides: true, filters: true,
-  }
+  const datasetOptions: ScenarioDatasetOptions = datasetProjection?.dataset_options
+    ?? scenarioDatasetOptions(scenario)
   const selectedDatasetNames = (datasetEdits.sources ?? datasetDefaults.sources).map((source) => source.name)
   const datasetSelectionKey = JSON.stringify(selectedDatasetNames)
   const reloadDatasetMetadata = datasetMetadata.reload
@@ -630,12 +649,61 @@ function ScenarioLaunchForm({
   const [maxConcurrency, setMaxConcurrency] = useState(DEFAULT_MAX_CONCURRENCY)
   const [maxRetries, setMaxRetries] = useState(DEFAULT_MAX_RETRIES)
   const [scenarioParamValues, setScenarioParamValues] = useState<Record<string, ParameterFormValue>>(() =>
-    getInitialFormValues(dynamicParameters),
+    getInitialFormValues(dynamicParameters, initialConversationId ? { prepended_conversation_id: initialConversationId } : undefined),
   )
   const [validationError, setValidationError] = useState<string | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(false)
+  const newAttackContext = useMemo(() => ({
+    generation: runtime.generation,
+    ready: runtime.ready && defaultsReady && !staleSelection,
+    labels,
+  }), [runtime.generation, runtime.ready, defaultsReady, staleSelection, labels])
+  const conversation = useConversationDraft(newAttackContext)
+  const conversationEditorRef = useRef<ConversationEditorHandle>(null)
+  const conversationContextRef = useRef(newAttackContext)
+  useLayoutEffect(() => { conversationContextRef.current = newAttackContext }, [newAttackContext])
+  const conversationLoadSequence = useRef(0)
+  useEffect(() => () => { conversationLoadSequence.current += 1 }, [])
+  const [conversationParameter, setConversationParameter] = useState('')
+  const [loadingConversation, setLoadingConversation] = useState(false)
+  const [conversationError, setConversationError] = useState<string | null>(null)
+  const conversationBusy = loadingConversation || conversation.draft !== null
+  const configuredConversationId = scenarioParamValues.prepended_conversation_id
+  const canEditConversation = typeof configuredConversationId === 'string' && Boolean(configuredConversationId.trim())
+
+  const beginConversation = async (parameterName: string, edit: boolean): Promise<void> => {
+    if (conversationBusy || previewOpen || isSubmittingRef.current) return
+    const sequence = ++conversationLoadSequence.current
+    const initialContext = conversationContextRef.current
+    setConversationParameter(parameterName)
+    setConversationError(null)
+    setLoadingConversation(edit)
+    try {
+      const value = scenarioParamValues[parameterName]
+      if (edit && (typeof value !== 'string' || !value.trim())) {
+        throw new Error('Enter a saved conversation ID before editing.')
+      }
+      const source = edit && typeof value === 'string' ? await attacksApi.getConversation(value.trim()) : null
+      if (sequence !== conversationLoadSequence.current) return
+      const currentContext = conversationContextRef.current
+      if (!currentContext.ready || currentContext.generation !== initialContext.generation) {
+        throw new Error('Runtime or default labels changed. Retry after default labels finish loading.')
+      }
+      conversation.begin({
+        messages: source ? toConversationDraft(source.messages.messages) : [newDraftMessage()],
+        objective: '', initialObjective: '',
+        sourceAttackId: source?.attack.attack_result_id ?? null,
+        sourceConversationId: source?.messages.conversation_id ?? null,
+        target: null, labels: currentContext.labels,
+      })
+    } catch (error) {
+      if (sequence === conversationLoadSequence.current) setConversationError(toApiError(error).detail)
+    } finally {
+      if (sequence === conversationLoadSequence.current) setLoadingConversation(false)
+    }
+  }
   const [estimateRequestState, setEstimateRequestState] = useState<EstimateRequestState | null>(null)
   const [lastGoodEstimate, setLastGoodEstimate] = useState<SuccessfulEstimateResult | null>(null)
   // Synchronous guard against a double-submit racing ahead of the state update.
@@ -718,6 +786,7 @@ function ScenarioLaunchForm({
       maxRetries,
       includeBaseline: isBaselineForbidden ? false : baselineChecked,
       labels,
+      operationId,
     }),
     [
       adversarialTargetName,
@@ -729,6 +798,7 @@ function ScenarioLaunchForm({
       labels,
       maxConcurrency,
       maxRetries,
+      operationId,
       scenario,
       scenarioParamValues,
       targetName,
@@ -771,6 +841,7 @@ function ScenarioLaunchForm({
             status: 'resolved',
             requestKey: estimateRequestKey,
             result,
+            datasetSettings: response.effective_datasets,
           })
           if (result.status === 'available' || result.status === 'conditional') {
             setLastGoodEstimate(result)
@@ -907,7 +978,8 @@ function ScenarioLaunchForm({
   }
 
   const handleLaunchConfirmed = async (): Promise<void> => {
-    if (isSubmittingRef.current || !runtime.ready || !defaultsReady || staleSelection || unavailableSelection) {
+    if (isSubmittingRef.current || conversationBusy || !runtime.ready || !defaultsReady || staleSelection || unavailableSelection
+      || checkingRefreshPolicies) {
       return
     }
 
@@ -939,6 +1011,7 @@ function ScenarioLaunchForm({
 
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
+    if (conversationBusy || isSubmittingRef.current) return
     setApiError(null)
     if (!requestResult.ok) {
       setValidationError(requestResult.error)
@@ -964,6 +1037,21 @@ function ScenarioLaunchForm({
   const previewFilters = { ...datasetDefaults.filters, ...datasetEdits.filters }
   const previewHarmCategories = previewFilters.harm_categories ?? []
   const previewDataTypes = previewFilters.data_types ?? []
+  const currentDatasetEstimate = estimateRequestState?.requestKey === estimateRequestKey ? estimateRequestState : null
+  const confirmedDatasetSettings = currentDatasetEstimate?.status === 'resolved'
+    ? currentDatasetEstimate.datasetSettings : undefined
+  const checkingRefreshPolicies = supportsDatasets && selectedDatasetNames.length > 0 && currentDatasetEstimate === null
+  const unconfirmedRefreshPolicies = supportsDatasets && selectedDatasetNames.length > 0
+    && !checkingRefreshPolicies && confirmedDatasetSettings === undefined
+  const refreshDatasets = [...new Set((confirmedDatasetSettings?.sources ?? [])
+    .filter((source) => source.fetch === 'always').map((source) => source.name))]
+  const editedRefreshDatasets = refreshDatasets.filter((name) => {
+    const metadata = datasetMetadata.items.find((item) => item.name === name)
+    return metadata?.loaded && (!metadata.origins?.length
+      || metadata.origins.some((origin) => origin === 'user' || origin === 'unknown'))
+  })
+  const uncheckedRefreshDatasets = refreshDatasets.filter((name) => datasetMetadata.loading || datasetMetadata.error
+    || !datasetMetadata.items.some((item) => item.name === name))
 
   return (
     <section
@@ -1163,7 +1251,10 @@ function ScenarioLaunchForm({
                 datasets={datasetMetadata.items} disabled={submitting}
                 loading={datasetMetadata.loading} metadataError={datasetMetadata.error}
                 preparing={datasetMetadata.preparing} loadError={datasetMetadata.loadError}
-                loadEnabled={runtime.ready && !staleSelection && estimateRequest !== null}
+                loadEnabled={runtime.ready && !staleSelection && estimateRequest !== null
+                  && confirmedDatasetSettings !== undefined
+                  && !confirmedDatasetSettings.sources.some((source) => source.fetch === 'always'
+                    && !datasetMetadata.items.some((item) => item.name === source.name && item.loaded))}
                 onLoad={() => { if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest) }}
                 onReload={datasetMetadata.reload} onChange={setDatasetEdits} onValidationChange={setDatasetError}
               />
@@ -1177,15 +1268,43 @@ function ScenarioLaunchForm({
                 Parameters
               </Text>
               <div className={styles.dynamicParameters}>
-                {dynamicParameters.map((parameter) => (
-                  <ParameterField
-                    key={parameter.name}
-                    parameter={parameter}
-                    value={scenarioParamValues[parameter.name]}
-                    disabled={submitting}
-                    onChange={updateScenarioParam}
-                    testIdPrefix="scenario-param"
-                  />
+                {dynamicParameters.filter((parameter) => parameter.name !== conversationConvertersParameter?.name).map((parameter) => (
+                  <div key={parameter.name} className={styles.dynamicParameters}>
+                    <ParameterField
+                      parameter={parameter}
+                      value={scenarioParamValues[parameter.name]}
+                      disabled={submitting || loadingConversation}
+                      onChange={updateScenarioParam}
+                      testIdPrefix="scenario-param"
+                    />
+                    {parameter.name === 'prepended_conversation_id' && <>
+                      <div className={styles.conversationActions}>
+                        <Button type="button" className={styles.touchTarget}
+                          disabled={submitting || conversationBusy || previewOpen || !newAttackContext.ready}
+                          onClick={() => { void beginConversation(parameter.name, false) }}>
+                          Add new conversation
+                        </Button>
+                        <Button type="button" className={styles.touchTarget}
+                          disabled={submitting || conversationBusy || previewOpen || !newAttackContext.ready || !canEditConversation}
+                          onClick={() => { void beginConversation(parameter.name, true) }}>
+                          Edit conversation
+                        </Button>
+                        {conversationConvertersParameter && (
+                          <Tooltip relationship="description"
+                            content="Apply request converters to stored history when the scan runs. The source conversation does not change. New outgoing turns are always converted.">
+                            <Switch label="Apply converters to conversation" className={styles.selectionControl}
+                              checked={scenarioParamValues[conversationConvertersParameter.name] === 'true'}
+                              disabled={submitting || loadingConversation || !newAttackContext.ready || !canEditConversation}
+                              onChange={(_, data) => updateScenarioParam(conversationConvertersParameter.name, String(data.checked))} />
+                          </Tooltip>
+                        )}
+                      </div>
+                      {loadingConversation && <Spinner size="tiny" label="Loading conversation..." />}
+                      {conversationError && <MessageBar intent="error">
+                        <MessageBarBody>{conversationError}</MessageBarBody>
+                      </MessageBar>}
+                    </>}
+                  </div>
                 ))}
                 {scenario.uses_default_adversarial_target && (
                   <TargetSelect
@@ -1297,13 +1416,32 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan
               </Button>
             </section>
           </form>
+
+          {conversation.draft && <Dialog open onOpenChange={(_, data) => {
+            if (!data.open) conversationEditorRef.current?.cancel()
+          }}>
+            <DialogSurface className={styles.conversationSurface}>
+              <DialogBody>
+                <DialogTitle>{conversation.draft.sourceConversationId ? 'Edit conversation' : 'New conversation'}</DialogTitle>
+                <DialogContent className={styles.conversationContent}>
+                  <ConversationEditor key={conversation.draft.id} ref={conversationEditorRef} controller={conversation}
+                    saveDestination="new_attack" saveLabel="Add to attack"
+                    newAttackDisabledReason={!newAttackContext.ready ? 'Default labels are not ready.' : undefined}
+                    onSaved={(response: AddMessageResponse) => {
+                      updateScenarioParam(conversationParameter, response.messages.conversation_id)
+                      conversation.discard()
+                    }} />
+                </DialogContent>
+              </DialogBody>
+            </DialogSurface>
+          </Dialog>}
 
           <Dialog
             open={previewOpen}
@@ -1320,6 +1458,27 @@ function ScenarioLaunchForm({
               <DialogBody>
                 <DialogTitle>Run preview</DialogTitle>
                 <DialogContent className={styles.dialogContent}>
+                  {checkingRefreshPolicies && <Text role="status">Checking dataset refresh policies...</Text>}
+                  {unconfirmedRefreshPolicies && <MessageBar intent="warning">
+                    <MessageBarBody role="alert">
+                      Cannot confirm which datasets will refresh. The backend settings could not be checked for this
+                      request. A refresh replaces the full stored dataset, can remove manual edits, and can prevent
+                      older runs from resuming. Filters and objective limits do not limit replacement.
+                    </MessageBarBody>
+                  </MessageBar>}
+                  {refreshDatasets.length > 0 && <MessageBar intent="warning">
+                    <MessageBarBody role="alert">
+                      Refresh will replace the full stored datasets: {refreshDatasets.join(', ')}.
+                      Filters and objective limits do not limit replacement. This can remove manual edits
+                      and prevent older runs from resuming. Use a new dataset name to keep both batches.
+                      {editedRefreshDatasets.length > 0 && <Text block>
+                        User or unknown-origin data will be replaced: {editedRefreshDatasets.join(', ')}.
+                      </Text>}
+                      {uncheckedRefreshDatasets.length > 0 && <Text block>
+                        Existing data could not be checked for: {uncheckedRefreshDatasets.join(', ')}.
+                      </Text>}
+                    </MessageBarBody>
+                  </MessageBar>}
                   <dl className={styles.previewList}>
                     <div className={styles.previewGroup}>
                       {supportsObjectiveTarget && <>
@@ -1422,7 +1581,7 @@ function ScenarioLaunchForm({
                   </Button>
                   <Button
                     appearance="primary"
-                    disabled={submitting || !runtime.ready || !defaultsReady || !requestResult.ok}
+                    disabled={submitting || conversationBusy || !runtime.ready || !defaultsReady || !requestResult.ok || checkingRefreshPolicies}
                     onClick={() => void handleLaunchConfirmed()}
                     data-testid="confirm-launch-scenario-btn"
                   >

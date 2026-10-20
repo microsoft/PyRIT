@@ -11,15 +11,18 @@ There are several ways to run CoPyRIT:
 If you have PyRIT installed, use the `pyrit_backend` command to start the server. The bundled frontend is served automatically.
 
 ```bash
-pyrit_backend
+pyrit_backend --auth-mode local
 ```
 
 Then open `http://localhost:8000` in your browser.
 
-Authentication-disabled local servers deny administrator operations by default. To enable administrator operations
-(configuration, initializer administration, and creating targets that run model repository code) for a trusted local
-development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use this
-setting on a network-accessible deployment.
+Local mode deliberately disables incoming-request Entra authentication and is
+restricted to a loopback host by the packaged CLI. Authentication-disabled local
+servers deny administrator operations by default. To enable administrator operations
+(configuration, initializer administration, creating targets that run model repository code, and creating targets
+that authenticate with this server's stored credentials) for a trusted local
+development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use these local settings on a
+network-accessible deployment.
 
 ### Docker
 
@@ -35,8 +38,8 @@ To deploy an isolated instance for an external team, see [Deploy a New Instance]
 
 ## Views
 
-Use the left sidebar to open **Home**, **Technique.execute** (Chat), **History**, **Analytics**, **Scanner**,
-**Datasets**, or the **Registry**. **Configuration** is available to administrators.
+Use the left sidebar to open **Home**, **Technique.execute** (Chat), **History**, **Analytics**,
+**Operations**, **Scanner**, **Datasets**, or the **Registry**. **Configuration** is available to administrators.
 The **Theme** menu is at the bottom of the sidebar.
 
 ### Attack Results Analytics
@@ -134,12 +137,11 @@ CoPyRIT stores these six preferences in one account-scoped browser record:
 | --- | --- |
 | Default objective target | Initial target for new chats and scanner runs |
 | Default adversarial target | Shared adversarial target for supported scanner scenarios |
-| Operation name (`operation`) | Label for new attacks and scanner runs |
+| Selected Operation | Groups new attacks and scanner runs by its saved ID |
 | Custom run labels | Additional labels for new attacks and scanner runs |
 | Theme | System, Light, Dark, or a named preset |
 | Chat display mode | Raw text or rendered Markdown |
 
-The GUI uses `operation` and `operator` as its label names, not `op_name` and `username`.
 For signed-in users, `operator` is the lowercase username before `@`. It is derived
 from the account, cannot be edited, and is not saved as a user preference. With
 authentication disabled, the local profile can save an operator label.
@@ -147,8 +149,8 @@ authentication disabled, the local profile can save an operator label.
 All six preferences use `pyrit.userPreferences.v1.<tenant>:<homeAccountId>` in
 browser local storage. Authentication-disabled use has a separate `local` profile.
 These settings do not follow you to another browser or device. Changes to labels
-apply to future runs, not stored attacks. Backend label defaults still apply when
-there is no user override. Removing a custom default label is also saved.
+apply to future runs, not stored attacks. Backend configuration supplies initial
+defaults. Removing a custom default label is also saved.
 Open tabs synchronize preferences for the same account. Each edit is merged with
 the latest saved values. On HTTPS and localhost, browser locks also serialize
 concurrent saves so edits to different defaults do not overwrite each other.
@@ -171,7 +173,7 @@ The Chat view is the primary workspace for running interactive attacks against c
 
 #### Sending Messages
 
-For a new chat, your default objective target is preselected if it is available. Click the target badge in the shared toolbar beside the label controls to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target. An attack saved without a target uses this dropdown until its first send binds the selected target.
+For a new chat, your default objective target is preselected if it is available. Click the target badge in the chat ribbon below the common labels and above the objective to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target. An attack saved without a target uses this dropdown until its first send binds the selected target.
 
 Clicking **Chat** while already in a new chat keeps its target and draft. Starting
 a new attack resets both. Default changes in another tab apply to the next new
@@ -191,6 +193,22 @@ A warning beside the recovered draft tells you to select and apply converters ag
 
 When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
 
+#### Temperature
+
+Select a target, then set **Temperature** before the first send. Leave it empty
+to keep the source setting. The supported range is 0 to 2. This creates a private
+target configuration for the attack; it does not add or change a registered target.
+Temperature is read-only after the attack is bound. In the conversation editor,
+a temperature change requires **New attack**, not **Same attack**.
+Hover over or click the read-only field to see why it cannot be changed.
+
+Saved attacks retain the source name, source identity, temperature, and effective
+identity, but not credentials. After a restart, the backend tries to reconstruct
+the target from a matching registered source. If reconstruction fails, sending
+is blocked rather than using the source's default temperature. OpenAI-family
+targets with a temperature parameter support this control. Externally owned HTTP
+clients and temperature set through `extra_body_parameters` are not supported.
+
 #### Repeating a Message
 
 Use **n=1** beside Send to choose **1 to 10** repetitions. Enter and Send use the
@@ -205,12 +223,17 @@ not fifteen. Historical messages keep their original-piece lineage and are not
 converted again.
 
 **Convert once, reuse for all** is the default request-converter mode.
-For single sends and shared repeats in the GUI, use **Add converted value** to apply
-conversions before sending. Selected but unapplied pipelines are not run.
+Completed conversions are added to the sendable prompt automatically. Single sends
+and shared repeats use that exact value. Selected pipelines that have not run are not run on send.
 **Convert independently for each** runs selected but unapplied request pipelines
 separately on each conversation's original inputs when the count is greater than 1.
-An explicitly applied preview, including manual edits, is reused exactly
-in either mode. Converter order, repeated stages, and original/converted values
+The repetition control is disabled after a manual conversion edit or a partial
+conversion, including marked text regions. Hover over the disabled control for
+the reason. Send once, or reset the conversions before repeating.
+Repetitions also require a target that can replay the existing history. Configured
+history adapters and provider restoration count as replay support. A fresh
+request with no history can be repeated without editable-history support.
+Converter order, repeated stages, and original/converted values
 are preserved. API response converters always run independently per conversation.
 
 Compact progress links open each conversation in the ordinary chat and sidebar.
@@ -240,6 +263,21 @@ messages endpoint and `send=false` context storage are unchanged.
 
 Open **Converters** and use the picker above the working input to add registered
 converters in the order you want them to run.
+For a stage that supports reconstruction, open **... > Settings** to change its
+constructor settings. Changes create a private converter for that stage. Other
+stages and the registered source keep their settings. **Reset to registered
+converter** removes the stage's overrides. **Use default / not set** clears a
+structured setting's override and restores the registered source's value.
+Changing settings invalidates that stage and its downstream results.
+
+Closing the converter pane discards temporary settings, but keeps content that
+you already applied and the identifiers of the converters that produced it.
+Temporary converters are built for each preview operation, not retained in a
+second registry. A runtime change clears temporary settings and preview results.
+Completed results appear in the converted prompt automatically. Shared repeated
+sends reuse these results; independent repeated conversion supports registered
+stages only.
+
 The top text box is an editable working copy: changing it does not change the original
 chat message. The top **Convert** button runs the active tab's configured pipeline
 and any configured inputs that do not have results yet. After every configured input
@@ -251,7 +289,7 @@ the **Convert** button below it to run **all remaining stages** from that value,
 without rerunning earlier stages. Empty and whitespace-only intermediate values can
 also be passed to the remaining stages. Editing a value invalidates its downstream results
 until you convert again. The final output has no Convert or selection-only button;
-you can edit it directly before applying it.
+edits to the final output take effect immediately.
 
 To convert only part of a text value, select it and click **Convert selection only**.
 This wraps the selection in `⟪` and `⟫`. The next converter transforms only the marked
@@ -314,12 +352,12 @@ Choose markers that are unlikely to appear in prompts or replies. If response
 converters are configured, an unmatched marker in a reply raises before that reply
 is stored. Longer markers reduce accidental matches but do not eliminate them.
 
-Click **Add converted value** to apply the final result, then **Send**. The exact
-applied value is sent and stored alongside the unchanged original; the backend does
+Completed conversion results appear in the sendable prompt automatically. Select
+**Send** when the result is ready. The exact value is sent and stored alongside the unchanged original; the backend does
 not rerun the pipeline. The exact ordered list of applied converters is retained
 as provenance, including duplicates and converters that change the data type, and
 reloading the conversation shows the same original and converted values. You can
-also edit only the top working input and apply it as a manual conversion without
+also edit only the top working input as a manual conversion without
 adding or running a registered converter.
 
 API clients submit this list as `applied_converter_ids` on each preconverted
@@ -327,6 +365,15 @@ message piece. The backend resolves the IDs through the registry. An empty list
 represents a manual conversion. `request_converter_configurations` controls
 conversion of pieces without a preconverted value; it does not describe which
 converters already ran.
+
+For temporary stages, preview requests provide `converter_specs`, aligned with
+`converter_ids`; use `null` for a registered stage. Preview responses include the
+actual temporary identifier and a signed `provenance` token. Pass these tokens
+as `applied_converter_provenance`, aligned with `applied_converter_ids`, when
+sending or saving the converted content. Tokens remain valid after the pane
+closes, without retaining converter objects. A restart invalidates tokens for
+unsaved content; convert it again. Stored messages retain their converter
+identifiers and do not depend on those tokens.
 
 #### Attachments
 
@@ -345,8 +392,9 @@ CoPyRIT renders different response types inline:
 
 #### Editing Conversations
 
-Select **Edit Conversation**, beside the target dropdown in the chat ribbon, to make a local draft.
-Anyone who can view a conversation can edit a draft. The original messages stay
+Select **Edit Conversation**, beside the target dropdown in the chat ribbon, or
+double-click the message area to make a local draft. An unsent prompt also appears
+in the editor. Anyone who can view a conversation can edit a draft. Sent messages stay
 unchanged. Insert or delete messages at any position, change their roles, and use
 the prompt area for text and attachments. The role selector is inside each prompt.
 Use the small **Insert message** control between messages and the **X** at the
@@ -361,8 +409,20 @@ the call ID, name, and JSON arguments. **Add tool response** inserts a separate
 `simulated_tool` message after it and copies the call ID. A response needs a preceding,
 unanswered call. Tool content is stored, not executed.
 
-During editing, targets without editable history are disabled. The target must
-also accept every effective history data type, including audio, video, and tool
+Opening the editor does not require editable-history support. Saving copied
+history requires native support, a configured history adapter, or provider restoration, including for
+`assistant`, `simulated_assistant`, and tool turns. Empty history needs neither.
+An initial system/developer setup is also allowed when the target supports
+system prompts and multiple turns. The final user prompt returns to the composer
+and is not treated as replayed history.
+The normal prompt box keeps its original and converted values separate. Its
+converter pipeline, working input, and stage edits remain available in the same
+tab when you save or leave the editor. Saving does not run converters again.
+Changing the selected messages in the editor does not discard their stage edits.
+If a final user message has multiple text pieces, the prompt box combines them
+and shows a notice because one text input cannot retain separate per-piece stages.
+
+The target must also accept every effective data type, including audio, video, and tool
 pieces. A converted piece is checked using its converted data type. The
 requirements update when pieces are added or removed. An incompatible current
 target shows a warning; select a compatible target or clear the selection to
@@ -375,21 +435,31 @@ compatible target is selected. History validation checks native input support;
 it does not run message normalizers or change the saved content.
 
 Click the objective to edit it, or select **Add objective** on an empty chat.
-Changes made during conversation editing stay local until you save.
+Changes made during conversation editing stay local until you save or leave the editor.
 Unsaved-change protection includes target-only changes. Canceling a draft leaves
 the normal prompt box and its conversions unchanged.
 The draft can have an objective and no messages or target. Sending is disabled
-while you edit. **Save conversation** opens a destination dialog:
+while you edit. **Save** creates a new related conversation in the current attack,
+without a destination dialog. For a chat without a saved attack, it creates a new attack.
+Saving to the current attack is disabled for another operator's attack or a target conflict.
+It is also disabled when the original target cannot replay the retained history.
+Selecting another target does not unlock the original attack: use **Save to new attack**
+with a compatible target, or clear the target and choose a compatible one before sending.
 
-- **Same attack** adds a related conversation without replacing the main one.
-  This option is disabled for another operator's attack or a target conflict.
-- **New attack** creates a separate manual attack. A target is optional. For an
-  unbound attack, select a target from the chat dropdown before the first send.
-  That first send binds the attack and its conversations to the selected target.
+Click outside the editor or select another conversation to save edits automatically.
+If the source conversation has not been sent to a target, this updates the same
+conversation. Repeated edit-and-exit cycles do not create extra branches. Sent
+history always creates a new conversation. A failed save keeps the editor and its
+changes visible. Leaving the page still uses the unsaved-change warning.
+If a send already owns the source conversation, automatic save refuses to replace
+its history. Wait for that send to finish before saving the draft again.
 
-While editing, **Save to new attack** in the ribbon opens the same dialog with
-**New attack** selected. It works for unsaved drafts and converted conversations.
-The save confirmation disappears when you send the next prompt.
+**Save to new attack** in the ribbon creates a separate manual attack immediately,
+without a destination dialog. It works for unsaved drafts and converted conversations.
+A target is optional. For an unbound attack, select a target from the chat dropdown
+before the first send. That send binds the attack and its conversations to the target.
+Save confirmations and other temporary info messages fade after five seconds,
+or clear when you send the next prompt. Warnings and errors remain visible.
 
 The objective is shared by all conversations in an attack. Changing it outside
 conversation editing, or saving a changed objective to **Same attack**, resets the
@@ -406,7 +476,8 @@ The converter icon in a prompt selects only that message. Use the checkboxes in 
 mode, which pairs each **Original message** with its **Converted message**.
 A strong divider separates the converter pipeline from the results; lighter
 dividers separate message pairs. **Select all** and **Clear** control the
-selection. **Add converted values** applies batch results to the draft. Structured
+selection. Completed batch results are added to the draft automatically. Editing
+one piece does not clear existing conversions on other pieces. Structured
 tool content is not passed to text converters.
 Single-message conversion keeps editable stage outputs. After a middle-stage
 edit, rerun only the remaining stages. Converter IDs record the stages used,
@@ -423,6 +494,30 @@ does not change this choice. Saving and copying support histories longer than 20
 Retrying the same failed save or copy reuses its save ID to avoid duplicate results.
 A new copy after a confirmed success gets a new ID.
 Downloads, original/converted views, and score details remain available.
+
+#### Undoing the Last Send
+
+Use the **Undo last send** arrow, directly below the converter button inside
+the **Type prompt here** box, to
+restore the most recent single send from this tab. This creates a conversation
+branch before that user turn, removes the response from the current view, and
+puts the user prompt back in the composer. The original sent conversation stays
+in history. Undo does not reverse any action already taken by the target.
+
+The prompt, converter order, working input, generated stages, and manual
+middle-stage edits are restored from memory. Undo does not run the converters
+again. You can edit a restored stage and convert only the remaining stages.
+This also applies after editing and saving a conversation: Undo keeps the edited
+history and restores the original/converted prompt and its pipeline as they were
+immediately before sending.
+
+The control is hidden when the target cannot replay the history that undo would retain.
+Only that retained prefix counts: an otherwise empty first-turn undo remains available
+even if the target cannot edit history.
+The control is disabled after a reload or runtime change, for repeated or
+incomplete sends, or when a new
+draft or a changed converter pipeline would be overwritten. Hover over the
+disabled control for its reason. Only the most recent send can be undone.
 
 #### Conversations Panel
 
@@ -448,13 +543,20 @@ Export stays available for read-only historical conversations, and is disabled w
 
 #### Labels
 
-The labels bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. Click the labels icon to open **Default Labels** and add, edit, or remove custom labels. The required `operator` and `operation` controls remain in the bar, outside this popover, and cannot be removed. A signed-in operator is read-only.
+The labels bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. Click the labels icon to open **Default Labels** and add, edit, or remove custom labels. **Operator:** is an always-visible text input; **Operation:** is an always-visible searchable dropdown outside this popover. Operator is required; an operation is optional and removable. A signed-in operator is read-only.
 
-In Chat, the active target, Markdown toggle, export menu, conversations panel toggle, and **New Attack** button share the right side of this bar. They wrap below the labels on narrow screens.
+In Chat, a separate ribbon below the labels contains the target, temperature, and **Edit Conversation** controls on the left. The Markdown toggle, export menu, conversations panel toggle, and **New Attack** button are on the right.
 
-Clicking the `operation` label opens a picker listing the operations already recorded in memory, so you can choose one without typing it from memory. Typing a name that doesn't exist yet offers to create it. Very long lists show the first 200 and say how many are left, so type to narrow them. On narrow screens, use the labels icon to view or edit labels that do not fit inline.
+Open the **Operation** dropdown to choose a saved operation. **New operation…** stays first, including while searching, and opens the creation dialog. Typing alone never selects an unsaved name. Very long lists show up to 200 saved choices and say how many match, so type to narrow them. The compact metadata controls wrap on narrow screens; custom labels that do not fit remain available through the labels icon.
 
-Your choices persist in this browser across navigation and refreshes. Backend configuration supplies defaults for labels you have not chosen, and the signed-in account alias takes precedence over the default or remembered operator during initialization. Scanner launches receive the active labels from this bar.
+A configured or remembered name that isn't saved yet is highlighted in yellow,
+like a placeholder operator, and screen readers announce it as not registered.
+Choose **Register** to save it, pick a saved Operation from the **Operation**
+dropdown, or choose **Clear** to run without one. New attacks and scans stay
+blocked until the selection is resolved or cleared. Startup does not create
+Operations.
+
+Your choices persist in this browser across navigation and refreshes. Backend configuration supplies initial defaults, and the signed-in account alias takes precedence over the default or remembered operator during initialization. Scanner launches receive the active labels and selected Operation ID from this bar.
 
 Changing these labels does not relabel existing attacks or scenario runs. History attribution and the **Run configuration** shown for a scenario run still describe that saved run. Operator and target restrictions on existing attacks remain in effect.
 
@@ -489,7 +591,7 @@ Filter attacks by:
 - **Outcome:** Success, failure, or undetermined
 - **Converter:** Which converters were applied
 - **Operator:** Who ran the attack
-- **Operation:** The operation label
+- **Operation:** Saved Operation
 - **Custom labels:** Free-form key:value label filtering with auto-complete
 
 Click "Reset" to clear all filters.
@@ -504,7 +606,7 @@ The table displays:
 | Attack Type | The attack class name |
 | Target | Target type and model name |
 | Operator | Who ran the attack |
-| Operation | Operation label |
+| Operation | Operation name |
 | Msgs | Total message count |
 | Convs | Number of conversations |
 | Converters | Converter badges (truncated with tooltip) |
@@ -543,6 +645,83 @@ technique, or dataset before trying again.
 In active runs and saved scenario results, **Atomic attack groups** defaults to expanded for up to 20 group summaries and collapsed for more than 20, with group and execution counts always visible. Select **Expand** to show all group summaries or **Collapse** to hide the list. Individual groups start collapsed; expand one to inspect its executions and open attack details or conversation links.
 
 Until you expand or collapse the section, its default follows the current group count as progress loads. Once you choose, the section keeps your choice during progress updates for the same run, even if the count crosses 20. Opening a different run resets to that run's count-based default.
+
+### Operations
+
+An operation groups related red-teaming work. Inside it you record findings:
+human assessments, whether or not an attack produced them.
+
+Open **Operations** in the sidebar and choose **New operation**. Names are unique,
+ignoring case and surrounding spaces; if the name is taken, the dialog offers the
+existing operation. An optional description records the engagement's purpose and
+scope. The **Operation** dropdown in the labels bar applies the
+selected operation to new attacks and scanner runs, and **New operation…** at the
+top of that list creates one without leaving the page.
+
+Renaming doesn't update anything that stores the old name: Analytics filters and
+links, history from before Operation IDs, and names set in configuration,
+`GLOBAL_MEMORY_LABELS`, or `--memory-labels`.
+
+**Delete** works only when no findings, attacks, or scanner runs are linked; the
+tooltip shows what's left. History from before Operation IDs doesn't count. SDK
+attacks still running under the operation save their results without one.
+Deleting can't be undone.
+
+#### Findings
+
+Open an operation and choose **New finding**.
+
+| Field | Required | Values |
+| --- | --- | --- |
+| Title | Yes | Free text |
+| Severity | Yes | Critical, Important, Moderate, Low, Informational, or Other (your own text). Defaults to Moderate. |
+| Harm-type | No | A PyRIT harm category, Other (your own text), or Not set |
+| Description | No | Free text |
+| Evidence attack ID | No | A saved attack to attach in the same save. Its ID is in the attack's address. |
+
+Findings are sorted by severity in the order above, newest first within each
+level, 20 per page. **Edit** changes any field; the operation and creation time
+stay fixed. **Delete** asks for confirmation and can't be undone.
+
+**All execution history** opens History filtered by the Operation's ID. The
+filter stays when you switch between Attacks and Scanner.
+
+#### Attack evidence
+
+Evidence is a saved attack. To attach one, open it in Chat, select the outcome
+badge to open **Attack Result Details**, and choose **Add as finding**. Choose
+the finding's Operation, search by title, select a finding, and choose
+**Attach**. The attack can come from any Operation or none.
+
+**New finding** in that dialog opens the same form and saves the finding and its
+evidence together, so neither is saved if the attack can't be attached. Saving
+again after a lost response returns the finding that was already saved rather
+than creating a second one.
+
+Evidence points to the live attack, not a copy, so later messages and scores
+show up too. An attack can support several findings, and attaching the same
+attack to a finding again reports **Already attached**.
+
+On the operation page, **Evidence (n)** under a finding opens a table of its
+attacks. Each row shows the attack's objective, its outcome with the same badge
+as Chat, and the score behind it: the human score if there is one, otherwise
+the automated score. An attack without a score reads **Not scored**. Evidence
+from another Operation shows its source; unassigned activity shows **Not in an
+operation**. **Open attack** opens it in Chat at the conversation that holds the
+score, or at its main conversation, so the transcript matches the result shown.
+If an attack no longer exists, its entry stays, shows the attack's ID and
+attachment time, and reads **Evidence unavailable**. **Remove link** removes only
+the link, never the attack. Deleting a finding removes its links the same way.
+
+#### Upgrading an existing database
+
+One migration adds Operations, findings, evidence, and optional Operation IDs on
+attacks and scanner runs. It registers legacy names without changing historical
+attribution. Legacy activity remains in general history but does not appear in
+Operation-ID filters. The backend applies it automatically when it starts, so
+restart a running backend after upgrading. If you start memory with
+`skip_schema_migration=True`, run the migration yourself. Downgrading refuses to
+drop the tables while any operation exists.
 
 ### Technique Registry
 
@@ -788,3 +967,34 @@ CoPyRIT monitors the backend connection and shows a status banner:
 - **Disconnected (red):** Unable to reach the backend. Check that the server is running.
 - **Degraded (yellow):** Connection is unstable.
 - **Reconnected (green):** Briefly shown after a successful reconnection, then auto-dismissed.
+
+## Paired baseline and attack outcomes
+
+Open a completed run from **Scanner History** and find **Paired outcomes**.
+Choose the saved **Baseline group** and **Attack group**, then select
+**Compare outcomes**. Groups are explicitly marked by the saved execution
+plan; PyRIT does not guess a baseline from its name. If several configurations
+have the same name, the options include their group IDs to distinguish them.
+
+The comparison shows all four baseline-to-attack transitions, both success
+rates, and their difference in percentage points. Rates use the same decided
+pairs. For example, four pairs with one of each transition give 50% success
+on each side and a 0 pp difference, while still showing one failure becoming
+a success and one success becoming a failure.
+
+**Decided pairs** shows the number with success or failure on both sides,
+followed by the number planned on both sides. **Excluded pairs** counts the
+remaining shared pairs. Missing outcomes, errors, and undetermined outcomes
+are listed separately; reason counts can overlap. Seeds planned on only one
+side are unmatched and are not included in the pair denominator.
+
+The panel uses the [paired analytics SDK](../code/analytics/0_attack_results.md)
+and its latest top-level outcome rules. Children and superseded retries do
+not add observations. Empty decided populations display **Unavailable** rates.
+Legacy runs without a complete saved plan, runs without explicit group kinds,
+and runs that have not completed cannot be compared. Incompatible groups
+show the backend's explanation, and **Compare outcomes** can retry a failed
+request. Changing a group clears the comparison.
+
+Missing persisted scoring metadata limits compatibility validation. These
+observed differences do not establish causation.
