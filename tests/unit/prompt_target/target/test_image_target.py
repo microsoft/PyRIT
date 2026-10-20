@@ -65,6 +65,41 @@ def test_initialization_with_required_parameters(image_target: OpenAIImageTarget
     assert image_target._model_name == "gpt-image-1"
 
 
+def test_identifier_includes_output_format(patch_central_database):
+    png_target = OpenAIImageTarget(
+        model_name="gpt-image-1",
+        endpoint="test",
+        api_key="test",
+        output_format="png",
+    )
+    jpeg_target = OpenAIImageTarget(
+        model_name="gpt-image-1",
+        endpoint="test",
+        api_key="test",
+        output_format="jpeg",
+    )
+
+    assert png_target.get_identifier().params["output_format"] == "png"
+    assert jpeg_target.get_identifier().params["output_format"] == "jpeg"
+    assert png_target.get_identifier().hash != jpeg_target.get_identifier().hash
+
+
+def test_identifier_distinguishes_default_output_format(patch_central_database):
+    default_target = OpenAIImageTarget(
+        model_name="gpt-image-1",
+        endpoint="test",
+        api_key="test",
+    )
+    webp_target = OpenAIImageTarget(
+        model_name="gpt-image-1",
+        endpoint="test",
+        api_key="test",
+        output_format="webp",
+    )
+
+    assert default_target.get_identifier().hash != webp_target.get_identifier().hash
+
+
 async def test_send_prompt_async_generate(
     image_target: OpenAIImageTarget,
     sample_conversations: MutableSequence[MessagePiece],

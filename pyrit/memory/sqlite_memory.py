@@ -651,6 +651,28 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             *per_key_are_conditions,
         )
 
+    def _get_attack_result_literal_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
+        """
+        SQLite implementation that matches label names literally through json_each().
+
+        Returns:
+            Any: A SQLAlchemy condition for filtering by labels.
+        """
+        label_entries = func.json_each(AttackResultEntry.labels).table_valued("key", "value")
+        per_key_conditions = []
+        for key, raw_value in labels.items():
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if not values:
+                continue
+            per_key_conditions.append(
+                select(1)
+                .select_from(label_entries)
+                .where(label_entries.c.key == key, label_entries.c.value.in_(values))
+                .correlate(AttackResultEntry)
+                .exists()
+            )
+        return and_(AttackResultEntry.labels.isnot(None), *per_key_conditions)
+
     def _execute_get_unique_attack_class_names(self) -> list[str]:
         """
         SQLite implementation: extract unique class_name values from

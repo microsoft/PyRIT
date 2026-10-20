@@ -71,6 +71,76 @@ def test_training_rejects_changed_data(tmp_path: Path) -> None:
             assert _load_training_rows() == ([(objective, response)] * 2, [1, 1])
 
 
+@pytest.mark.parametrize("record_separator", ["\n", "\r\n", "\r"])
+@pytest.mark.parametrize("cell_separator", ["\n", "\r\n", "\r"])
+def test_load_training_rows_keeps_hash_lines_outside_the_leading_comments(
+    *, tmp_path: Path, record_separator: str, cell_separator: str
+) -> None:
+    """Only leading '#' lines are comments; a '#' starting a row or inside a cell is data (#2974)."""
+    header = f"objective,assistant_response,human_score,data_type{record_separator}"
+    response = f"line one{cell_separator}### in-cell heading{cell_separator}line three"
+    bodies = {
+        "refusal.csv": (
+            f"# dataset_version=1.0{record_separator}"
+            f"{header}"
+            f"# Hash-prefixed objective,refusal response,1,text{record_separator}"
+            f'plain objective,"{response}",0,text{record_separator}'
+        ),
+        "refusal_extra.csv": f"# dataset_version=1.0{record_separator}{header}",
+    }
+    pins = {}
+    for name, body in bodies.items():
+        data = body.encode()
+        (tmp_path / name).write_bytes(data)
+        pins[name] = hashlib.sha256(data).hexdigest()
+    with patch.object(module, "_REFUSAL_EVALS_PATH", tmp_path), patch.object(module, "_TRAINING_DATASETS", pins):
+        pairs, labels = _load_training_rows()
+    assert pairs == [("# Hash-prefixed objective", "refusal response"), ("plain objective", response)]
+    assert labels == [1, 0]
+
+
+def test_load_training_rows_preserves_crlf_and_cr_inside_quoted_responses(tmp_path: Path) -> None:
+    """The leading-comment scan must not rewrite line endings inside quoted data."""
+    response = "line one\r\n### heading\rline three"
+    bodies = {
+        "refusal.csv": (
+            "# dataset_version=1.0\r\n"
+            "objective,assistant_response,human_score,data_type\r\n"
+            f'plain objective,"{response}",0,text\r\n'
+        ),
+        "refusal_extra.csv": "# dataset_version=1.0\r\nobjective,assistant_response,human_score,data_type\r\n",
+    }
+    pins = {}
+    for name, body in bodies.items():
+        data = body.encode()
+        (tmp_path / name).write_bytes(data)
+        pins[name] = hashlib.sha256(data).hexdigest()
+    with patch.object(module, "_REFUSAL_EVALS_PATH", tmp_path), patch.object(module, "_TRAINING_DATASETS", pins):
+        pairs, labels = _load_training_rows()
+    assert pairs == [("plain objective", response)]
+    assert labels == [0]
+
+
+def test_load_training_rows_accepts_cr_only_record_separators(tmp_path: Path) -> None:
+    """CR-only files still split into records and keep their payload intact."""
+    bodies = {
+        "refusal.csv": (
+            "# dataset_version=1.0\robjective,assistant_response,human_score,data_type\r"
+            "plain objective,refusal response,1,text\r"
+        ),
+        "refusal_extra.csv": "# dataset_version=1.0\robjective,assistant_response,human_score,data_type\r",
+    }
+    pins = {}
+    for name, body in bodies.items():
+        data = body.encode()
+        (tmp_path / name).write_bytes(data)
+        pins[name] = hashlib.sha256(data).hexdigest()
+    with patch.object(module, "_REFUSAL_EVALS_PATH", tmp_path), patch.object(module, "_TRAINING_DATASETS", pins):
+        pairs, labels = _load_training_rows()
+    assert pairs == [("plain objective", "refusal response")]
+    assert labels == [1]
+
+
 @requires_torch
 def test_training_is_deterministic_and_preserves_rng() -> None:
     import torch

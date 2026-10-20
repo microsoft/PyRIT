@@ -18,16 +18,17 @@ receive also carries the ``DatasetSourceKind`` (inline vs from memory) and the c
 flags such as ``--objectives`` -- restrict which datasets it will resolve from, or require a
 particular seed type (e.g. ``require_seed_type(SeedObjective)``).
 
-Memory is the source of truth. ``prepare_async`` checks all sources before fetching
-missing configured or registered datasets. Read methods never fetch or write. Selection applies each
-source's limit before the combined ``max_total`` limit. Inline configurations never
-touch memory.
+Memory is the source of truth. ``prepare_async`` checks all sources before loading missing
+datasets or explicitly refreshing them from configured or registered providers. Read methods
+never fetch or write. Selection applies each source's limit before the combined ``max_total``
+limit. Inline configurations never touch memory.
 """
 
 from __future__ import annotations
 
 import copy
 import random
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
@@ -42,6 +43,7 @@ from pyrit.models import (
     IndeterminateDatasetSize,
     ScenarioDatasetSizeEstimate,
     Seed,
+    SeedDataset,
     SeedGroup,
     group_seeds_into_attack_groups,
     scenario_dataset_size_from_limit,
@@ -54,6 +56,7 @@ if TYPE_CHECKING:
 
     from pyrit.datasets import SeedDatasetProvider
     from pyrit.memory import MemoryInterface
+    from pyrit.memory.memory_interface import PreparedSeedBatch
 
 # Dataset-name label that inline ``seeds`` / ``seed_groups`` carry in by-dataset views, since
 # they have no real dataset name. Inline and named sources are mutually exclusive, so this
@@ -62,6 +65,10 @@ INLINE_DATASET_NAME = "inline"
 
 # Internal helper TypeVar for size-capping any homogeneous list.
 _ItemT = TypeVar("_ItemT")
+
+_candidate_populations: ContextVar[dict[str, list[Seed[Any]]] | None] = ContextVar(
+    "dataset_candidate_populations", default=None
+)
 
 
 class _Unset(Enum):
@@ -89,8 +96,8 @@ class DatasetSource:
     """
     A named dataset, with an optional provider, selection limit, and fetch policy.
 
-    A configured provider must use the source name. Preparation uses it only when data
-    is missing and fetching is allowed; stored data wins even if the provider changes.
+    A configured provider must use the source name. Preparation keeps stored data unless
+    the effective fetch policy explicitly requests a refresh.
     Generation count and selection limits are independent. Use one writer per dataset
     name: concurrent runs can otherwise generate and store different batches.
     """
@@ -517,13 +524,17 @@ class DatasetConfiguration:
 
     async def prepare_async(self, *, fetch: DatasetFetchPolicy | None = None) -> None:
         """
-        Check all sources, then populate missing datasets from configured or registered providers.
+        Check all sources, then load or refresh datasets from configured or registered providers.
+
+        A refresh validates candidate and retained populations through the configuration's
+        normal filters, grouping, and validators before any write. Validation does not sample
+        or replace stored seeds.
 
         Args:
             fetch: Optional policy for this operation only. Source settings remain unchanged.
 
         Raises:
-            DatasetConstraintError: If a missing source cannot be fetched or provider data is invalid.
+            DatasetConstraintError: If a source cannot be fetched or provider data is invalid.
         """
         self.validate_configuration()
         if fetch is not None and not isinstance(fetch, DatasetFetchPolicy):
@@ -544,26 +555,38 @@ class DatasetConfiguration:
         if not policies:
             return
         stored_names = set(await self._memory.get_seed_dataset_names_async())
-        missing: list[str] = []
+        to_fetch: list[str] = []
         for name, policy in policies.items():
-            if name in stored_names:
+            if name in stored_names and policy is not DatasetFetchPolicy.ALWAYS:
                 continue
             if policy is DatasetFetchPolicy.NEVER:
                 raise DatasetConstraintError(f"Dataset '{name}' is missing and fetch is 'never'. Import it first.")
-            missing.append(name)
-        if not missing:
+            to_fetch.append(name)
+        if not to_fetch:
             return
         from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 
-        providers = {name: provider for name in missing if (provider := configured_providers[name]) is not None}
-        unresolved = [name for name in missing if name not in providers]
+        providers = {name: provider for name in to_fetch if (provider := configured_providers[name]) is not None}
+        unresolved = [name for name in to_fetch if name not in providers]
         if unresolved:
             providers.update(await SeedDatasetProvider.get_providers_by_name_async(dataset_names=unresolved))
-        unavailable = [name for name in missing if name not in providers]
+        unavailable = [name for name in to_fetch if name not in providers]
+        refresh_unavailable = [name for name in unavailable if policies[name] is DatasetFetchPolicy.ALWAYS]
+        if refresh_unavailable:
+            raise DatasetConstraintError(
+                f"Datasets {refresh_unavailable} have no provider to refresh from. "
+                "Use 'never' or 'if_missing' to keep stored data."
+            )
         if unavailable:
             raise DatasetConstraintError(f"Datasets {unavailable} are missing and have no provider. Import them first.")
-        for name in missing:
-            dataset = await providers[name].fetch_dataset_async()
+        fetched: dict[str, SeedDataset] = {}
+        for name in to_fetch:
+            refresh = policies[name] is DatasetFetchPolicy.ALWAYS
+            dataset = (
+                await providers[name].fetch_dataset_async(cache=False)
+                if refresh
+                else await providers[name].fetch_dataset_async()
+            )
             if (
                 not dataset.seeds
                 or dataset.dataset_name != name
@@ -572,7 +595,47 @@ class DatasetConfiguration:
                 raise DatasetConstraintError(
                     f"Provider for '{name}' must return non-empty seeds with that dataset name."
                 )
+            SeedDataset.group_seed_prompts_by_prompt_group_id(dataset.seeds)
+            fetched[name] = dataset
+        if any(policies[name] is DatasetFetchPolicy.ALWAYS for name in fetched):
+            await self._commit_refresh_candidates_async(fetched=fetched, policies=policies)
+            return
+        for dataset in fetched.values():
             await self._memory.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="DatasetConfiguration")
+
+    async def _commit_refresh_candidates_async(
+        self, *, fetched: dict[str, SeedDataset], policies: dict[str, DatasetFetchPolicy]
+    ) -> None:
+        prepared = {
+            name: await self._memory.prepare_seed_batch_async(seeds=dataset.seeds, added_by="DatasetConfiguration")
+            for name, dataset in fetched.items()
+        }
+        await self._validate_refresh_candidates_async(prepared=prepared)
+        for name, batch in prepared.items():
+            if policies[name] is DatasetFetchPolicy.ALWAYS:
+                await self._memory.replace_prepared_seed_batch_async(dataset_name=name, batch=batch)
+            else:
+                await self._memory.add_prepared_seed_batch_async(batch)
+
+    async def _validate_refresh_candidates_async(self, *, prepared: dict[str, PreparedSeedBatch]) -> None:
+        """Resolve task-local copies of storage-ready snapshots without modifying them."""
+        candidates = {name: batch.seeds for name, batch in prepared.items()}
+        token = _candidate_populations.set(candidates)
+        try:
+            await self.with_overrides()._validate_candidate_population_async()
+        finally:
+            _candidate_populations.reset(token)
+
+    async def _validate_candidate_population_async(self) -> None:
+        """Validate raw configuration populations before replacement."""
+        populations = await self._collect_named_seeds_async()
+        self.validate(
+            ResolvedDataset(
+                seeds=[seed for population in populations.values() for seed in population],
+                source_kind=self.source_kind,
+                dataset_names=tuple(populations),
+            )
+        )
 
     def _default_validators(self) -> list[Callable[[ResolvedDataset], None]]:
         """
@@ -735,9 +798,21 @@ class DatasetConfiguration:
         Raises:
             DatasetConstraintError: If the dataset is absent or its filters match no seeds.
         """
-        found = list(await self._memory.get_seeds_async(dataset_name=dataset_name, **self._get_seeds_filters))
+        candidates = _candidate_populations.get()
+        if candidates is not None and dataset_name in candidates:
+            population = candidates[dataset_name]
+            found = (
+                await self._memory.filter_seed_candidates_async(seeds=population, filters=self._get_seeds_filters)
+                if self._filters
+                else list(population)
+            )
+            unfiltered = population
+        else:
+            found = list(await self._memory.get_seeds_async(dataset_name=dataset_name, **self._get_seeds_filters))
+            unfiltered = (
+                await self._memory.get_seeds_async(dataset_name=dataset_name) if not found and self._filters else []
+            )
         if not found:
-            unfiltered = await self._memory.get_seeds_async(dataset_name=dataset_name) if self._filters else []
             if unfiltered:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' has seeds, but none match the configured filters {self._filters}."
@@ -820,6 +895,10 @@ class DatasetAttackConfiguration(DatasetConfiguration):
     (e.g. synthesizing a per-prompt objective). The default regroups by
     ``prompt_group_id`` via ``group_seeds_into_attack_groups``.
     """
+
+    async def _validate_candidate_population_async(self) -> None:
+        """Reuse unsampled grouping, child shaping, and population validators."""
+        await self.get_attack_groups_by_dataset_async(apply_sampling=False)
 
     def _default_max_total(self) -> ResolvedDatasetLimit:
         return 5 if self._seeds is not None or self._seed_groups is not None else "all"

@@ -10,8 +10,11 @@ from pyrit.converter import (
     LLMGenericTextConverter,
     MaliciousQuestionGeneratorConverter,
     NoiseConverter,
+    ScientificTranslationConverter,
     TenseConverter,
     ToneConverter,
+    TranslationConverter,
+    VariationConverter,
 )
 from pyrit.exceptions import InvalidJsonException
 from pyrit.models import Message, MessagePiece, SeedPrompt
@@ -292,3 +295,46 @@ async def test_send_with_retries_uses_exponential_wait_when_max_seconds_provided
     # waits should be > 0 between attempts (exponential backoff)
     nonzero_waits = [c for c in mock_sleep.call_args_list if c.args[0] > 0]
     assert len(nonzero_waits) >= 1
+
+
+def _custom_template(value: str, *parameters: str) -> SeedPrompt:
+    return SeedPrompt(value=value, data_type="text", parameters=list(parameters))
+
+
+@pytest.mark.parametrize(
+    "converter_class, kwargs, template",
+    [
+        (ToneConverter, {"tone": "angry"}, _custom_template("Rewrite in a {{ tone }} tone, in French.", "tone")),
+        (TenseConverter, {"tense": "past"}, _custom_template("Use the {{ tense }} tense, as a poem.", "tense")),
+        (
+            TranslationConverter,
+            {"language": "french"},
+            _custom_template("Translate to {{ language }} slang.", "language"),
+        ),
+        (
+            NoiseConverter,
+            {},
+            _custom_template("Add {{ number_errors }} typos: {{ noise }}", "noise", "number_errors"),
+        ),
+        (ScientificTranslationConverter, {"mode": "academic"}, _custom_template("Rewrite as a lab report.")),
+        (
+            VariationConverter,
+            {},
+            _custom_template("Give {{ number_iterations }} rhyming variations.", "number_iterations"),
+        ),
+    ],
+)
+def test_llm_converter_identifier_includes_custom_prompt_template(
+    mock_target, converter_class, kwargs, template
+) -> None:
+    default = converter_class(converter_target=mock_target, **kwargs)
+    custom = converter_class(converter_target=mock_target, prompt_template=template, **kwargs)
+    same_custom = converter_class(converter_target=mock_target, prompt_template=template, **kwargs)
+
+    default_params = default.get_identifier().params
+    custom_params = custom.get_identifier().params
+    assert default_params["system_prompt_template_hash"] != custom_params["system_prompt_template_hash"]
+    assert default.get_identifier().hash != custom.get_identifier().hash
+    assert custom.get_identifier().hash == same_custom.get_identifier().hash
+    for key, value in kwargs.items():
+        assert custom_params[key] == value

@@ -93,6 +93,14 @@ class PromptTarget(Identifiable):
     # unaffected.
     code_execution_parameter: ClassVar[str | None] = None
 
+    # Targets that can authenticate with this server's own stored credentials (e.g. an ambient
+    # managed identity) name the constructor parameter a caller supplies to use their own
+    # credential instead (e.g. ``"sas_token"``). When a caller does not supply it, the
+    # create-target API builds the target only for an administrator, so a non-administrator
+    # cannot point the server's credentials at a caller-chosen resource; direct Python use is
+    # unaffected.
+    server_credential_parameter: ClassVar[str | None] = None
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
         Validate that subclasses follow the keyword-only ``__init__`` contract.
