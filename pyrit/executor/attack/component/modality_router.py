@@ -262,7 +262,10 @@ class _ModalityFeedbackRouter:
                         role=role,
                         original_value=piece.original_value,
                         original_value_data_type=piece.original_value_data_type,
+                        converted_value=piece.converted_value,
+                        converted_value_data_type=piece.converted_value_data_type,
                         conversation_id=shared_conversation_id,
+                        prompt_metadata=piece.prompt_metadata,
                     )
                 )
         return Message(message_pieces=new_pieces)

@@ -33,6 +33,7 @@ from pyrit.models import (
     PromptResponseError,
     Score,
 )
+from pyrit.models.component_spec import TargetBinding
 from pyrit.models.results.attack_result import normalize_legacy_attack_attribution
 
 
@@ -44,6 +45,7 @@ class TargetInfo(BaseModel):
     endpoint: str | None = Field(None, description="Target endpoint URL")
     model_name: str | None = Field(None, description="Model or deployment name")
     identifier_hash: str = Field(..., description="Canonical target identifier hash")
+    binding: TargetBinding | None = None
 
 
 class ScoreView(Score):
@@ -294,6 +296,7 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
             endpoint=cast("str | None", target_id.params.get("endpoint") or None),
             model_name=cast("str | None", target_id.params.get("model_name") or None),
             identifier_hash=target_id.hash,
+            binding=TargetBinding.from_metadata(self.metadata),
         )
 
     @computed_field  # type: ignore[prop-decorator]
@@ -388,6 +391,7 @@ class MessagePieceRequest(BaseModel):
         description="Registry IDs of converters already applied, in execution order, including duplicates. "
         "Requires converted_value. Use an empty list for manual edits.",
     )
+    applied_converter_provenance: list[str | None] | None = Field(None, max_length=MAX_ITEMS)
     mime_type: IdentifierStr | None = Field(None, description="MIME type for media content")
     prompt_metadata: dict[IdentifierStr, Any] | None = Field(
         None,
@@ -418,6 +422,11 @@ class MessagePieceRequest(BaseModel):
             raise ValueError("converted_value_data_type requires converted_value")
         if self.applied_converter_ids is not None and self.converted_value is None:
             raise ValueError("applied_converter_ids requires converted_value")
+        if self.applied_converter_provenance is not None and (
+            self.applied_converter_ids is None
+            or len(self.applied_converter_provenance) != len(self.applied_converter_ids)
+        ):
+            raise ValueError("applied_converter_provenance must match applied_converter_ids")
         return self
 
 
@@ -487,6 +496,7 @@ class CreateAttackRequest(_AttackAttributionInput):
     """
 
     name: TextStr | None = Field(None, description="Attack name/label")
+    target_binding: TargetBinding | None = None
     target_registry_name: IdentifierStr | None = Field(
         None, description="Target registry name, or None for a saved unbound attack"
     )
@@ -607,6 +617,7 @@ class SaveConversationRequest(_AttackAttributionInput):
     expected_objective: str | None = None
     objective: str | None = Field(None, description="Omit to keep the destination's objective unchanged")
     target_registry_name: IdentifierStr | None = None
+    target_binding: TargetBinding | None = None
     messages: list[MessageRequest] = Field(default_factory=list)
     reuse_unsent_conversation: bool = False
     expected_source_piece_ids: list[uuid.UUID] | None = None
@@ -698,6 +709,7 @@ class AddMessageRequest(MessageRequest):
         None,
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
+    target_binding: TargetBinding | None = None
     converter_ids: list[IdentifierStr] | None = Field(
         None,
         max_length=MAX_ITEMS,

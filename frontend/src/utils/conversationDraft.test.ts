@@ -26,10 +26,12 @@ describe('conversation drafts', () => {
       id: 'pending', role: 'user', pieces: [{
         draftId: 'pending-text', data_type: 'text', original_value: 'Original text',
         converted_value: 'Edited output', converted_value_data_type: 'text', applied_converter_ids: ['base64'],
+        applied_converter_provenance: ['signed-text'],
         prompt_metadata: { video_id: 'video' },
       }, {
         draftId: 'image', data_type: 'image_path', original_value: '', file, previewUrl: 'blob:original',
         converted_value: 'converted.png', converted_value_data_type: 'image_path', applied_converter_ids: ['image'],
+        applied_converter_provenance: ['signed-image'],
       }],
     }, snapshot)
     expect(prompt.text).toBe('Original text')
@@ -37,9 +39,11 @@ describe('conversation drafts', () => {
     expect(prompt.attachments[0]).toMatchObject({ draftId: 'image', file, url: 'blob:original' })
     expect(prompt.converters.applied.text).toMatchObject({
       pieceId: 'text', originalValue: 'Original text', convertedValue: 'Edited output', converterInstanceIds: ['base64'],
+      converterProvenance: ['signed-text'],
     })
     expect(prompt.converters.applied.image).toMatchObject({
       pieceId: 'image', convertedValue: 'converted.png', converterInstanceIds: ['image'],
+      converterProvenance: ['signed-image'],
     })
     expect(prompt.converters.stageResults.text).toEqual(snapshot.stageResults['pending-text'])
     expect(prompt.converters.workingInputs).toEqual({ text: 'Working text' })

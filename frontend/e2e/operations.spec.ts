@@ -22,6 +22,7 @@ for (const width of [1280, 390]) {
     expect(findingResponse.status()).toBe(201)
 
     await page.goto(`/operations/${operation.id}`)
+    await waitForAppReady(page)
     const heading = page.getByRole('heading', { name: title, exact: true })
     await expect(heading).toBeVisible()
     const finding = page.getByRole('listitem').filter({ has: heading })

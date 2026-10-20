@@ -10,6 +10,7 @@ from pyrit.backend.models.scorers import (
     CreateScorerRequest,
     ScorerListResponse,
     ScorerTypeResponse,
+    UnregisteredScorer,
 )
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.models.catalog.scorer import ScorerInstance
@@ -44,16 +45,18 @@ async def list_scorers(
 
 @router.post(
     "",
-    response_model=ScorerInstance,
+    response_model=ScorerInstance | UnregisteredScorer,
     status_code=status.HTTP_201_CREATED,
     responses={400: {"model": ProblemDetail, "description": "Invalid scorer type, parameters, or name"}},
 )
-async def create_scorer(request: CreateScorerRequest) -> ScorerInstance:  # pyrit-async-suffix-exempt
+async def create_scorer(
+    request: CreateScorerRequest,
+) -> ScorerInstance | UnregisteredScorer:  # pyrit-async-suffix-exempt
     """
-    Construct a scorer through ScorerRegistry and register it under its name.
+    Construct a scorer through ScorerRegistry, with optional registration.
 
     Returns:
-        ScorerInstance: The registered scorer and complete identifier.
+        ScorerInstance | UnregisteredScorer: A named instance or an unregistered descriptor.
     """
     try:
         return await get_scorer_service().create_scorer_async(request=request)

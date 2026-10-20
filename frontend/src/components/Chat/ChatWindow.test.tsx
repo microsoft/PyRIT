@@ -27,7 +27,7 @@ import {
   TargetInstance,
   TargetResponseStatus,
 } from "@/types";
-import { attacksApi, convertersApi, scoresApi } from "@/services/api";
+import { attacksApi, convertersApi, scoresApi, targetsApi } from "@/services/api";
 import * as messageMapper from "@/utils/messageMapper";
 
 jest.mock("./FindingEvidenceDialog", () => ({
@@ -81,6 +81,7 @@ jest.mock("@/services/api", () => ({
     deleteConverter: jest.fn(),
     previewConversion: jest.fn(),
   },
+  targetsApi: { buildTarget: jest.fn() },
   labelsApi: {
     getLabels: jest.fn().mockImplementation(() => new Promise(() => {})),
   },
@@ -2581,6 +2582,144 @@ describe("ChatWindow Integration", () => {
 
     await user.click(screen.getByRole("button", { name: /retry/i }));
     expect(onRetryTargetResolution).toHaveBeenCalledTimes(1);
+  });
+
+  // -----------------------------------------------------------------------
+  // Target info display for various target types
+  // -----------------------------------------------------------------------
+
+  it("should display target without model name", () => {
+    const targetNoModel: TargetInstance = {
+      ...mockTarget,
+      identifier: { ...mockTarget.identifier, model_name: null },
+    };
+
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} activeTarget={targetNoModel} availableTargets={[targetNoModel]} />
+      </TestWrapper>
+    );
+
+    const badge = screen.getByTestId("target-badge");
+    expect(badge).toHaveTextContent(/OpenAIChatTarget/);
+    expect(badge).not.toHaveTextContent(/gpt/);
+  });
+
+  // -----------------------------------------------------------------------
+  // First message → create attack + send
+  // -----------------------------------------------------------------------
+
+  it("builds a private temperature setting before creating the attack", async () => {
+    const user = userEvent.setup();
+    const source = { ...mockTarget, supports_temperature_override: true };
+    const onConversationCreated = jest.fn();
+    jest.mocked(targetsApi.buildTarget).mockResolvedValue({
+      identifier: { ...source.identifier, hash: "private-hash", temperature: 0.8 },
+      capabilities: source.capabilities,
+    });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    mockedMapper.buildMessagePieces.mockResolvedValue([{ data_type: "text", original_value: "Hello" }]);
+    mockSendResult.mockResolvedValue({
+      ...makeTextResponse("Reply"),
+      attack: { attack_result_id: "default-created-attack", conversation_id: "default-created-conversation" },
+    } as never);
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
+      onConversationCreated={onConversationCreated} /></TestWrapper>);
+    expect(screen.getByText("Temperature:")).toBeInTheDocument();
+    expect(screen.queryByText("Empty keeps the source setting.")).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("Temperature"), "0.8");
+    await user.type(screen.getByRole("textbox"), "Hello");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledTimes(1));
+    const binding = {
+      version: 1, source_name: source.target_registry_name, source_hash: source.identifier.hash,
+      temperature: 0.8, effective_hash: "private-hash",
+    };
+    expect(targetsApi.buildTarget).toHaveBeenCalledWith("OpenAIChatTarget", {
+      source_name: source.target_registry_name, source_hash: source.identifier.hash,
+      params: { temperature: 0.8 },
+    });
+    expect(mockedAttacksApi.createAttack.mock.calls[0][0].target_binding).toEqual(binding);
+    expect(onConversationCreated.mock.calls[0][3].binding).toEqual(binding);
+    expect(source.identifier.hash).not.toBe("private-hash");
+  });
+
+  it.each([
+    { ready: true, generation: "gen-1", defaultsReady: false },
+    { ready: true, generation: "gen-2", defaultsReady: true },
+    { ready: false, generation: "gen-1", defaultsReady: true },
+  ])("preserves the first-send draft when launch state becomes %j during temperature construction", async (
+    next: { ready: boolean; generation: string; defaultsReady: boolean },
+  ) => {
+    const user = userEvent.setup();
+    const runtime = jest.spyOn(runtimeHooks, "useRuntime").mockReturnValue({
+      ready: true, state: "ready", generation: "gen-1",
+    });
+    const source = { ...mockTarget, supports_temperature_override: true };
+    const built = {
+      identifier: { ...source.identifier, hash: "private-hash", temperature: 0.8 },
+      capabilities: source.capabilities,
+    };
+    let finish: (value: typeof built) => void = () => {};
+    jest.mocked(targetsApi.buildTarget).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    mockedMapper.buildMessagePieces.mockResolvedValue([{ data_type: "text", original_value: "Prepared prompt" }]);
+    const rendered = render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source} /></TestWrapper>);
+    await user.type(screen.getByLabelText("Temperature"), "0.8");
+    const input = screen.getByRole("textbox");
+    await user.type(input, "Prepared prompt");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(targetsApi.buildTarget).toHaveBeenCalledTimes(1));
+    runtime.mockReturnValue({
+      ready: next.ready, state: next.ready ? "ready" : "unavailable", generation: next.generation,
+    });
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
+      defaultsReady={next.defaultsReady} labels={{ operation: "replacement" }} /></TestWrapper>);
+    await act(async () => { finish(built); });
+    expect(await screen.findByText(/Runtime or default labels changed while preparing this message/)).toBeInTheDocument();
+    expect(input).toHaveValue("Prepared prompt");
+    expect(screen.getByLabelText("Temperature")).toHaveValue(0.8);
+    expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled();
+    expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
+  });
+
+  it("shows saved temperature as read-only", () => {
+    const target = {
+      ...mockTarget, supports_temperature_override: true,
+      identifier: { ...mockTarget.identifier, temperature: 0.8 },
+    };
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
+      attackResultId="existing" conversationId="conversation" /></TestWrapper>);
+    expect(screen.getByLabelText("Temperature")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("Temperature")).toHaveValue(0.8);
+    expect(screen.queryByText("Read-only for this attack.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { interaction: "hover", supportsOverride: true },
+    { interaction: "click", supportsOverride: true },
+    { interaction: "hover", supportsOverride: false },
+    { interaction: "click", supportsOverride: false },
+  ])("explains read-only temperature on $interaction with override support $supportsOverride", async ({
+    interaction, supportsOverride,
+  }: { interaction: string; supportsOverride: boolean }) => {
+    const user = userEvent.setup();
+    const target = {
+      ...mockTarget, supports_temperature_override: supportsOverride,
+      identifier: { ...mockTarget.identifier, temperature: 0.8 },
+    };
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
+      attackResultId="existing" conversationId="conversation" /></TestWrapper>);
+    const input = screen.getByLabelText("Temperature");
+    expect(screen.queryByText("Read-only for this attack.")).not.toBeInTheDocument();
+    if (interaction === "hover") await user.hover(input);
+    else await user.click(input);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Temperature can only be modified in a new attack"
+    );
+    expect(input).toHaveAttribute("readonly");
+    expect(input).toHaveValue(0.8);
+    expect(targetsApi.buildTarget).not.toHaveBeenCalled();
   });
 
   it("should preserve operation attribution when the first message creates the attack", async () => {
@@ -5827,6 +5966,29 @@ describe("ChatWindow Integration", () => {
 
     const toggleBtn = screen.getByRole("button", { name: /toggle conversations panel/i });
     expect(toggleBtn).toBe(screen.getByTestId("toggle-panel-btn"));
+  });
+
+  it("should show only the registered name and LLM badge in the picker and keep stage settings accessible", async () => {
+    const user = userEvent.setup();
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [{
+        ...makeConverterInstance("translation_spanish", "TranslationConverter"),
+        is_llm_based: true,
+        reconstructable: true,
+      }],
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} /></TestWrapper>);
+    await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
+    await user.click(await screen.findByRole("combobox", { name: "Add converter" }));
+    const option = await screen.findByRole("option", { name: /translation_spanish.*TranslationConverter/ });
+    expect(within(option).getByText("translation_spanish")).toBeInTheDocument();
+    expect(within(option).getByText("LLM")).toBeInTheDocument();
+    expect(within(option).queryByText("TranslationConverter")).not.toBeInTheDocument();
+    await user.click(option);
+    expect(screen.getByRole("button", { name: "Reorder converter translation_spanish" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Remove converter translation_spanish" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Settings for converter translation_spanish" }));
+    expect(screen.getByRole("menuitem", { name: "Settings", exact: true })).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it("should share draft inputs with the converter panel and retain edits through both close controls", async () => {

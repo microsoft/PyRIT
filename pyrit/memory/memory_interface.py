@@ -11,6 +11,7 @@ import re
 import threading
 import uuid
 import weakref
+from collections import Counter
 from collections.abc import Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from contextvars import ContextVar
@@ -4740,12 +4741,13 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
-        Seeds with the same value hash, dataset, and canonical conditions already present
-        in storage are skipped. Duplicates *within* ``seeds`` are all inserted, because the
-        check looks at what storage held when the call started.
-        Groups introducing new objective criteria retain the other seeds in the same group
-        even when their content is already stored in another group. When a stored seed is
-        copied to a new group, its caller-visible ID is updated after successful insertion.
+        Standalone seeds with the same value hash, dataset, and canonical conditions already
+        present in storage are skipped. Multi-seed groups are compared as complete groups,
+        including roles, sequence, metadata, and criteria, so shared content cannot strip
+        members from a different conversation. Duplicates *within* ``seeds`` are all inserted,
+        because the check looks at what storage held when the call started.
+        When a stored seed is copied to a new group, its caller-visible ID is updated after
+        successful insertion.
 
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
@@ -4759,11 +4761,17 @@ class MemoryInterface(abc.ABC):
 
     def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
         """Deduplicate and store seeds after their media is prepared."""
-        existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
-        new_condition_group_ids = self._get_new_condition_group_ids(
+        existing_pairs, existing_hashes, existing_seeds = self._get_existing_seed_keys(seeds=seeds)
+        retained_group_ids = self._get_new_condition_group_ids(
             seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
         )
-        retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in new_condition_group_ids]
+        retained_group_ids.update(self._get_new_seed_group_ids(seeds=seeds, existing_seeds=existing_seeds))
+        stored_group_members = {
+            (seed.prompt_group_id, dataset, self._seed_group_member_key(seed))
+            for dataset, seed in existing_seeds
+            if seed.prompt_group_id is not None
+        }
+        retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in retained_group_ids]
         stored_groups = (
             {
                 entry.id: entry.prompt_group_id
@@ -4783,8 +4791,14 @@ class MemoryInterface(abc.ABC):
             conditions_key = self._seed_conditions_key(prompt)
             # A seed without a dataset name matches the hash in any dataset, mirroring the
             # filter that is applied when dataset_name is not supplied.
-            if prompt.prompt_group_id in new_condition_group_ids:
+            if prompt.prompt_group_id in retained_group_ids:
                 if prompt.id in stored_groups and stored_groups[prompt.id] == prompt.prompt_group_id:
+                    continue
+                if (
+                    prompt.prompt_group_id,
+                    prompt.dataset_name or None,
+                    self._seed_group_member_key(prompt),
+                ) in stored_group_members:
                     continue
                 entry = SeedEntry(entry=prompt)
                 if prompt.id in stored_groups:
@@ -4802,6 +4816,106 @@ class MemoryInterface(abc.ABC):
         self._insert_entries(entries=entries)
         for prompt, new_id in copied_seed_ids:
             prompt.id = new_id
+
+    @staticmethod
+    def _seed_group_member_key(seed: Seed[Any]) -> str:
+        """
+        Identify a member by persisted content and context, excluding IDs and import attribution.
+
+        Returns:
+            str: Canonical persisted member identity.
+        """
+        entry = SeedEntry(entry=seed)
+        return json.dumps(
+            {
+                "value_sha256": entry.value_sha256,
+                "data_type": entry.data_type,
+                "seed_type": entry.seed_type,
+                "role": entry.role,
+                "sequence": entry.sequence,
+                "metadata": entry.prompt_metadata or {},
+                "conditions": entry.conditions or [],
+                "parameters": entry.parameters or [],
+                "harm_categories": entry.harm_categories or [],
+                "name": entry.name,
+                "description": entry.description,
+                "authors": entry.authors or [],
+                "groups": entry.groups or [],
+                "source": entry.source,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _get_new_seed_group_ids(
+        self,
+        *,
+        seeds: Sequence[Seed[Any]],
+        existing_seeds: Sequence[tuple[str | None, Seed[Any]]],
+    ) -> set[uuid.UUID]:
+        """
+        Retain multi-seed groups unless an equivalent complete group is already stored.
+
+        Returns:
+            set[uuid.UUID]: Group IDs whose complete input membership must be retained.
+        """
+        members_by_group: dict[uuid.UUID, Counter[tuple[str | None, str]]] = {}
+        for seed in seeds:
+            if seed.prompt_group_id is not None:
+                key = (seed.dataset_name or None, self._seed_group_member_key(seed))
+                members_by_group.setdefault(seed.prompt_group_id, Counter())[key] += 1
+        members_by_group = {group_id: members for group_id, members in members_by_group.items() if members.total() > 1}
+        if not members_by_group:
+            return set()
+
+        matches: dict[tuple[str | None, str], dict[uuid.UUID, set[uuid.UUID | None]]] = {}
+        for dataset, seed in existing_seeds:
+            if seed.prompt_group_id is not None:
+                key = (dataset, self._seed_group_member_key(seed))
+                matches.setdefault(key, {}).setdefault(seed.prompt_group_id, set()).add(seed.id)
+
+        candidate_groups: dict[uuid.UUID, set[uuid.UUID]] = {}
+        for group_id, members in members_by_group.items():
+            candidates: set[uuid.UUID] | None = None
+            for key, count in members.items():
+                matching_groups = {
+                    stored_group_id
+                    for stored_group_id, member_ids in matches.get(key, {}).items()
+                    if len(member_ids) >= count
+                }
+                candidates = matching_groups if candidates is None else candidates & matching_groups
+                if not candidates:
+                    break
+            candidate_groups[group_id] = candidates or set()
+
+        candidate_ids = {candidate_id for candidates in candidate_groups.values() for candidate_id in candidates}
+        stored_sizes = (
+            Counter(
+                entry.prompt_group_id
+                for entry in self._execute_batched_query(
+                    SeedEntry, batch_column=SeedEntry.prompt_group_id, batch_values=list(candidate_ids)
+                )
+            )
+            if candidate_ids
+            else Counter()
+        )
+        new_group_ids: set[uuid.UUID] = set()
+        for group_id, members in members_by_group.items():
+            for candidate_id in candidate_groups[group_id]:
+                if stored_sizes[candidate_id] != members.total():
+                    continue
+                matched_ids: set[uuid.UUID | None] = set()
+                # Match named filters before wildcards; collated dataset names can overlap.
+                for key, count in sorted(members.items(), key=lambda item: item[0][0] is None):
+                    available_ids = matches[key][candidate_id] - matched_ids
+                    if len(available_ids) < count:
+                        break
+                    matched_ids.update(list(available_ids)[:count])
+                else:
+                    break
+            else:
+                new_group_ids.add(group_id)
+        return new_group_ids
 
     @staticmethod
     def _seed_conditions_key(seed: Seed[Any]) -> str:
@@ -4828,7 +4942,8 @@ class MemoryInterface(abc.ABC):
 
         Other seeds in the same group do not own conditions. Their ordinary content
         deduplication must not strip them from a new condition-bearing group, or from a group that
-        removes previously stored criteria. Purely condition-free loading is unchanged.
+        removes previously stored criteria. Other multi-seed groups are compared by full
+        membership separately.
 
         Returns:
             set[uuid.UUID]: Group IDs whose complete input membership must be retained.
@@ -4852,7 +4967,7 @@ class MemoryInterface(abc.ABC):
 
     def _get_existing_seed_keys(
         self, *, seeds: Sequence[Seed[Any]]
-    ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]]]:
+    ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]], list[tuple[str | None, Seed[Any]]]]:
         """
         Look up which value hashes and canonical conditions are already stored.
 
@@ -4871,9 +4986,10 @@ class MemoryInterface(abc.ABC):
             seeds (Sequence[Seed]): The seeds whose hashes should be looked up.
 
         Returns:
-            tuple[set[tuple[str, str, str]], set[tuple[str, str]]]: The stored
+            tuple: The stored
                 (value_sha256, dataset_name, conditions) keys, using the requested
-                dataset name, and (value_sha256, conditions) keys irrespective of dataset.
+                dataset name, (value_sha256, conditions) keys irrespective of dataset,
+                and matched seeds paired with their requested dataset filter.
         """
         hashes_by_dataset: dict[str | None, set[str]] = {}
         for prompt in seeds:
@@ -4885,6 +5001,7 @@ class MemoryInterface(abc.ABC):
 
         existing_pairs: set[tuple[str, str, str]] = set()
         existing_hashes: set[tuple[str, str]] = set()
+        existing_seeds: list[tuple[str | None, Seed[Any]]] = []
         for dataset_name, dataset_hashes in hashes_by_dataset.items():
             hashes = sorted(dataset_hashes)
             # _MAX_BIND_VARS is the whole statement's budget, and the name takes one of those
@@ -4897,6 +5014,7 @@ class MemoryInterface(abc.ABC):
                 ):
                     if not existing.value_sha256:
                         continue
+                    existing_seeds.append((dataset_name, existing))
                     conditions_key = self._seed_conditions_key(existing)
                     if dataset_name:
                         # The database decided the name matched, so record the name that was
@@ -4906,7 +5024,7 @@ class MemoryInterface(abc.ABC):
                     else:
                         existing_hashes.add((existing.value_sha256, conditions_key))
 
-        return existing_pairs, existing_hashes
+        return existing_pairs, existing_hashes, existing_seeds
 
     async def add_seed_datasets_to_memory_async(self, *, datasets: Sequence[SeedDataset], added_by: str) -> None:
         """
