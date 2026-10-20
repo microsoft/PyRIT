@@ -54,6 +54,8 @@ import type {
   ScenarioRunListResponse,
   ScenarioRunProgress,
   PairedOutcomeStatistics,
+  PairedOutcomeDetailPage,
+  PairedOutcomeTransition,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -690,6 +692,24 @@ export const scenariosApi = {
   ): Promise<PairedOutcomeStatistics> => {
     const response = await apiClient.get<PairedOutcomeStatistics>(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  getPairedOutcomeDetails: async (
+    scenarioResultId: string,
+    params: {
+      baseline_group_id: string
+      attack_group_id: string
+      transition: PairedOutcomeTransition
+      cursor?: string
+      limit: number
+    },
+    signal?: AbortSignal,
+  ): Promise<PairedOutcomeDetailPage> => {
+    const response = await apiClient.get<PairedOutcomeDetailPage>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes/details`,
       { params, signal },
     )
     return response.data

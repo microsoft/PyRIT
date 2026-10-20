@@ -977,6 +977,25 @@ pairs. For example, four pairs with one of each transition give 50% success
 on each side and a 0 pp difference, while still showing one failure becoming
 a success and one success becoming a failure.
 
+Each transition row can be expanded to inspect the matched logical objectives
+behind that count. Expanding loads only the selected transition's pairs, with
+the baseline and attack outcomes shown side by side and links to each saved
+conversation. Conversation links retain the originating Scenario run context.
+Use **Load more** to inspect additional pairs, or collapse the row to hide its
+details. Large transitions are loaded in bounded pages; a failed request can
+be retried from the expanded row. Switching selected groups clears the details.
+All results use the same decided-pair cohort and most recent top-level attempt
+as the transition counts, so retries and child attempts are never additional
+pairs.
+
+Expanded paired outcomes on desktop:
+
+![Paired outcomes with an expanded transition, objective, and baseline and attack conversation links](./images/paired-outcomes-desktop.png)
+
+The same transition details stack vertically on a narrow screen:
+
+![Expanded paired outcomes at a mobile viewport width](./images/paired-outcomes-mobile.png)
+
 **Decided pairs** shows the number with success or failure on both sides,
 followed by the number planned on both sides. **Excluded pairs** counts the
 remaining shared pairs. Missing outcomes, errors, and undetermined outcomes

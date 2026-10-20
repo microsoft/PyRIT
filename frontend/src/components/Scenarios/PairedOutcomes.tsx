@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react'
+import { Link } from 'react-router'
 
 import {
   Button,
@@ -18,7 +19,15 @@ import {
 
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { PairedOutcomeStatistics, ScenarioRunPlan, ScenarioRunState } from '@/types'
+import type {
+  PairedOutcomeDetail,
+  PairedOutcomeDetailSide,
+  PairedOutcomeStatistics,
+  PairedOutcomeTransition,
+  ScenarioRunPlan,
+  ScenarioRunState,
+} from '@/types'
+import { attackConversationRoutePath } from '@/utils/routeParams'
 
 import { usePairedOutcomesStyles } from './PairedOutcomes.styles'
 
@@ -33,6 +42,15 @@ interface ComparisonProps {
   readonly baselineId: string
   readonly attackId: string
 }
+
+const DETAIL_PAGE_SIZE = 25
+
+const TRANSITIONS: ReadonlyArray<{ label: string; id: PairedOutcomeTransition }> = [
+  { label: 'Failure → Success', id: 'failure_to_success' },
+  { label: 'Success → Failure', id: 'success_to_failure' },
+  { label: 'Failure → Failure', id: 'failure_to_failure' },
+  { label: 'Success → Success', id: 'success_to_success' },
+]
 
 /** Explicitly select two planned groups; the backend owns all matching and counting. */
 export default function PairedOutcomes({ scenarioResultId, status, plan }: PairedOutcomesProps) {
@@ -151,12 +169,6 @@ function Comparison({ scenarioResultId, baselineId, attackId }: ComparisonProps)
   const difference = report.paired_difference === null
     ? 'Unavailable'
     : `${report.paired_difference > 0 ? '+' : ''}${(report.paired_difference * 100).toFixed(1)} pp`
-  const transitions = [
-    ['Failure → Success', report.failure_to_success],
-    ['Success → Failure', report.success_to_failure],
-    ['Failure → Failure', report.failure_to_failure],
-    ['Success → Success', report.success_to_success],
-  ] as const
   const exclusions = [
     ['Missing baseline', report.missing_baseline],
     ['Missing attack', report.missing_attack],
@@ -191,11 +203,16 @@ function Comparison({ scenarioResultId, baselineId, attackId }: ComparisonProps)
           </TableRow>
         </TableHeader>
         <TableBody>
-          {transitions.map(([label, count]) => (
-            <TableRow key={label}>
-              <TableCell>{label}</TableCell>
-              <TableCell>{count.toLocaleString()}</TableCell>
-            </TableRow>
+          {TRANSITIONS.map(({ label, id }) => (
+            <TransitionRow
+              key={id}
+              label={label}
+              transition={id}
+              count={report[id]}
+              scenarioResultId={scenarioResultId}
+              baselineId={baselineId}
+              attackId={attackId}
+            />
           ))}
         </TableBody>
       </Table>
@@ -212,6 +229,177 @@ function Comparison({ scenarioResultId, baselineId, attackId }: ComparisonProps)
         Missing scoring metadata limits compatibility checks. These observed differences do not establish causation.
       </Text>
     </section>
+  )
+}
+
+interface TransitionRowProps extends ComparisonProps {
+  readonly label: string
+  readonly transition: PairedOutcomeTransition
+  readonly count: number
+}
+
+function TransitionRow({ label, transition, count, scenarioResultId, baselineId, attackId }: TransitionRowProps) {
+  const styles = usePairedOutcomesStyles()
+  const detailsId = useId()
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <>
+      <TableRow>
+        <TableCell>
+          <Button
+            appearance="subtle"
+            className={styles.expandButton}
+            aria-expanded={expanded}
+            aria-controls={detailsId}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            <span aria-hidden="true" className={styles.chevron}>{expanded ? '▾' : '▸'}</span>
+            {label}
+          </Button>
+        </TableCell>
+        <TableCell>{count.toLocaleString()}</TableCell>
+      </TableRow>
+      {expanded && (
+        <TableRow>
+          <TableCell colSpan={2} className={styles.detailsCell}>
+            <div id={detailsId}>
+              <TransitionDetails
+                label={label}
+                transition={transition}
+                count={count}
+                scenarioResultId={scenarioResultId}
+                baselineId={baselineId}
+                attackId={attackId}
+              />
+            </div>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  )
+}
+
+interface DetailState {
+  pairs: PairedOutcomeDetail[]
+  nextCursor: string | null
+  status: 'loading' | 'ready' | 'error'
+  error?: string
+}
+
+function TransitionDetails({ label, transition, count, scenarioResultId, baselineId, attackId }: TransitionRowProps) {
+  const styles = usePairedOutcomesStyles()
+  const [state, setState] = useState<DetailState>({ pairs: [], nextCursor: null, status: 'loading' })
+  const [request, setRequest] = useState<{ cursor?: string; version: number }>({ version: 0 })
+
+  useEffect(() => {
+    if (count === 0) return
+    const controller = new AbortController()
+    void scenariosApi.getPairedOutcomeDetails(scenarioResultId, {
+      baseline_group_id: baselineId,
+      attack_group_id: attackId,
+      transition,
+      limit: DETAIL_PAGE_SIZE,
+      ...(request.cursor ? { cursor: request.cursor } : {}),
+    }, controller.signal).then((page) => {
+      if (controller.signal.aborted) return
+      setState((previous) => {
+        if (page.total_pairs !== count || page.baseline_group_id !== baselineId
+          || page.attack_group_id !== attackId || page.transition !== transition
+          || (page.next_cursor && page.next_cursor === request.cursor)) {
+          return { ...previous, status: 'error', error: 'Pair details changed. Compare outcomes again to refresh.' }
+        }
+        const pairs = [...previous.pairs, ...page.pairs]
+        if (pairs.length > count || new Set(pairs.map((pair) => pair.seed_group_id)).size !== pairs.length
+          || (page.next_cursor !== null && page.pairs.length === 0)) {
+          return { ...previous, status: 'error', error: 'Pair details could not be paged consistently. Compare outcomes again.' }
+        }
+        return { pairs, nextCursor: page.next_cursor, status: 'ready' }
+      })
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        setState((previous) => ({ ...previous, status: 'error', error: toApiError(error).detail }))
+      }
+    })
+    return () => controller.abort()
+  }, [scenarioResultId, baselineId, attackId, transition, count, request])
+
+  const fetchPage = (cursor?: string) => {
+    setState((previous) => ({ ...previous, status: 'loading', error: undefined }))
+    setRequest((previous) => ({ cursor, version: previous.version + 1 }))
+  }
+
+  return (
+    <section aria-label={`${label} pair details`} className={styles.details} aria-live="polite">
+      {count === 0 && <Text>No matching pairs in this transition.</Text>}
+      {state.pairs.map((pair) => (
+        <article key={pair.seed_group_id} className={styles.pairCard}>
+          <div className={styles.pairHeader}>
+            <Text weight="semibold" block>Objective</Text>
+            <Text className={styles.wrappingText} block>{pair.objective || 'Objective unavailable'}</Text>
+            <Text size={200} className={styles.wrappingText} block>Logical seed: {pair.seed_group_id}</Text>
+          </div>
+          {pair.seed_prompts.length > 0 && (
+            <div className={styles.seedPrompts}>
+              <Text weight="semibold" block>Seed prompts</Text>
+              {pair.seed_prompts.map((prompt) => (
+                <div key={prompt.sequence} className={styles.wrappingText}>
+                  <Text size={200} block>
+                    {`#${prompt.sequence}${prompt.role ? ` · ${prompt.role}` : ''}${prompt.data_type ? ` · ${prompt.data_type}` : ''}`}
+                  </Text>
+                  <Text block className={styles.promptValue}>{prompt.value}</Text>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className={styles.sides}>
+            <OutcomeSide label="Baseline" side={pair.baseline} scenarioResultId={scenarioResultId} />
+            <OutcomeSide label="Attack" side={pair.attack} scenarioResultId={scenarioResultId} />
+          </div>
+        </article>
+      ))}
+      {state.status === 'loading' && count > 0 && (
+        <Spinner size="small" label={state.pairs.length ? `Loading more ${label} pairs` : `Loading ${label} pairs`} />
+      )}
+      {state.status === 'error' && (
+        <div className={styles.feedback}>
+          <MessageBar intent="error"><MessageBarBody>{state.error}</MessageBarBody></MessageBar>
+          <Button onClick={() => fetchPage(request.cursor)}>{`Retry ${label} pairs`}</Button>
+        </div>
+      )}
+      {state.status === 'ready' && (
+        <div className={styles.pageControls}>
+          <Text size={200}>{`${state.pairs.length} of ${count.toLocaleString()} pairs shown`}</Text>
+          {state.nextCursor && (
+            <Button onClick={() => fetchPage(state.nextCursor!)}>{`Load more ${label} pairs`}</Button>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function OutcomeSide({ label, side, scenarioResultId }: {
+  label: string
+  side: PairedOutcomeDetailSide
+  scenarioResultId: string
+}) {
+  const styles = usePairedOutcomesStyles()
+  return (
+    <div className={styles.side}>
+      <Text weight="semibold" block>{label}</Text>
+      <Text block>{`Outcome: ${side.outcome}`}</Text>
+      {side.outcome_reason && <Text block className={styles.wrappingText}>{side.outcome_reason}</Text>}
+      <Text size={200} block>{new Date(side.timestamp).toLocaleString()}</Text>
+      {side.attack_result_id && side.conversation_id ? (
+        <Link
+          className={styles.conversationLink}
+          to={attackConversationRoutePath(side.attack_result_id, side.conversation_id, scenarioResultId)}
+        >
+          {`Open ${label.toLowerCase()} conversation`}
+        </Link>
+      ) : <Text size={200}>Conversation unavailable</Text>}
+    </div>
   )
 }
 

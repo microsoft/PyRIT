@@ -17,7 +17,13 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.concurrency import run_in_threadpool
 
-from pyrit.analytics import PairedOutcomeStatistics, compute_paired_outcome_statistics
+from pyrit.analytics import (
+    PairedOutcomeDetailPage,
+    PairedOutcomeStatistics,
+    PairedOutcomeTransition,
+    compute_paired_outcome_statistics,
+    get_paired_outcome_details,
+)
 from pyrit.backend.models.common import MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr, ProblemDetail
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.models.scenarios import (
@@ -439,6 +445,45 @@ async def get_scenario_run_results(scenario_result_id: IdentifierStr) -> Scenari
             detail=f"Scenario run '{scenario_result_id}' not found",
         )
     return result
+
+
+@router.get(
+    "/runs/{scenario_result_id}/paired-outcomes/details",
+    response_model=PairedOutcomeDetailPage,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid selection, pairing evidence, or detail cursor"},
+        404: {"model": ProblemDetail, "description": "Run not found"},
+        409: {"model": ProblemDetail, "description": "Run not yet completed"},
+    },
+)
+async def get_paired_outcome_details_async(
+    *,
+    scenario_result_id: IdentifierStr,
+    baseline_group_id: IdentifierStr = Query(..., description="Saved baseline atomic group ID"),
+    attack_group_id: IdentifierStr = Query(..., description="Saved attack atomic group ID"),
+    transition: PairedOutcomeTransition = Query(..., description="Decided outcome transition"),
+    limit: int = Query(25, ge=1, le=100, description="Maximum matching pairs per page"),
+    cursor: CursorStr | None = Query(None, description="Opaque filter-bound detail cursor"),
+) -> PairedOutcomeDetailPage:
+    """
+    Load a bounded page of objective and conversation details for one transition.
+
+    Returns:
+        PairedOutcomeDetailPage: Pairs selected by the same SDK semantics as aggregate analytics.
+    """
+    result = await get_scenario_run_results(scenario_result_id=scenario_result_id)
+    try:
+        return await run_in_threadpool(
+            get_paired_outcome_details,
+            result,
+            baseline_group_id=baseline_group_id,
+            attack_group_id=attack_group_id,
+            transition=transition,
+            limit=limit,
+            cursor=cursor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 
 
 @router.get(

@@ -7,7 +7,11 @@ from typing import ClassVar
 
 import pytest
 
-from pyrit.analytics.paired_outcome_statistics import compute_paired_outcome_statistics
+from pyrit.analytics.paired_outcome_statistics import (
+    PairedOutcomeTransition,
+    compute_paired_outcome_statistics,
+    get_paired_outcome_details,
+)
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.compound import SequenceCompletionPolicy, SequentialAttackResult
@@ -899,4 +903,137 @@ def test_paired_outcomes_reject_malformed_child_result_ids() -> None:
         _statistics(
             _plan(("a",), ("a",)),
             {"baseline": [_result("a", AttackOutcome.FAILURE)], "attack": [result]},
+        )
+
+
+def _detail_scenario():
+    """Construct pairs with a retry, a child attempt, and an excluded outcome."""
+    return make_scenario_result(
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: _plan().model_dump(mode="json")},
+        attack_results={
+            "baseline": [
+                _result("d", AttackOutcome.FAILURE),
+                _result("c", AttackOutcome.SUCCESS),
+                _result("b", AttackOutcome.FAILURE),
+                _result("a", AttackOutcome.FAILURE),
+            ],
+            "attack": [
+                _result("b", AttackOutcome.SUCCESS),
+                _result("a", AttackOutcome.FAILURE, seconds=-2),
+                _result("d", AttackOutcome.ERROR),
+                _result("a", AttackOutcome.SUCCESS, seconds=1),
+                _result("a", AttackOutcome.FAILURE, seconds=2, attempt_index=1),
+                _result("c", AttackOutcome.SUCCESS),
+            ],
+        },
+    )
+
+
+def test_paired_outcome_details_paginate_same_decided_pairs_as_summary() -> None:
+    saved = _detail_scenario()
+    summary = compute_paired_outcome_statistics(saved, baseline_group_id="base", attack_group_id="attack")
+    assert (summary.failure_to_success, summary.success_to_success, summary.excluded_pairs) == (2, 1, 1)
+
+    first = get_paired_outcome_details(
+        saved,
+        baseline_group_id="base",
+        attack_group_id="attack",
+        transition=PairedOutcomeTransition.FAILURE_TO_SUCCESS,
+        limit=1,
+    )
+    assert first.total_pairs == summary.failure_to_success
+    assert [row.seed_group_id for row in first.pairs] == ["a"]
+    assert first.pairs[0].objective == "a"
+    assert first.pairs[0].attack.outcome == AttackOutcome.SUCCESS
+    assert first.pairs[0].attack.attack_result_id == saved.attack_results["attack"][3].attack_result_id
+    assert first.next_cursor is not None
+
+    second = get_paired_outcome_details(
+        saved,
+        baseline_group_id="base",
+        attack_group_id="attack",
+        transition=PairedOutcomeTransition.FAILURE_TO_SUCCESS,
+        limit=1,
+        cursor=first.next_cursor,
+    )
+    assert [row.seed_group_id for row in second.pairs] == ["b"]
+    assert second.next_cursor is None
+    saved.attack_results["attack"].reverse()
+    again = get_paired_outcome_details(
+        saved,
+        baseline_group_id="base",
+        attack_group_id="attack",
+        transition=PairedOutcomeTransition.FAILURE_TO_SUCCESS,
+        limit=1,
+        cursor=first.next_cursor,
+    )
+    assert again == second
+
+
+def test_paired_outcome_details_reject_wrong_scope_and_nonmember_cursors() -> None:
+    from pyrit.analytics.paired_outcome_statistics import _encode_detail_cursor
+
+    saved = _detail_scenario()
+    valid = get_paired_outcome_details(
+        saved,
+        baseline_group_id="base",
+        attack_group_id="attack",
+        transition=PairedOutcomeTransition.FAILURE_TO_SUCCESS,
+        limit=1,
+    ).next_cursor
+    assert valid
+    with pytest.raises(ValueError, match="cursor"):
+        get_paired_outcome_details(
+            saved,
+            baseline_group_id="base",
+            attack_group_id="attack",
+            transition=PairedOutcomeTransition.SUCCESS_TO_SUCCESS,
+            cursor=valid,
+        )
+    with pytest.raises(ValueError, match="cursor"):
+        get_paired_outcome_details(
+            saved,
+            baseline_group_id="base",
+            attack_group_id="attack",
+            transition=PairedOutcomeTransition.FAILURE_TO_SUCCESS,
+            cursor="!malformed!",
+        )
+    nonmember = _encode_detail_cursor(
+        run_id=str(saved.id),
+        baseline_group_id="base",
+        attack_group_id="attack",
+        transition=PairedOutcomeTransition.FAILURE_TO_SUCCESS,
+        seed_id="c",
+    )
+    with pytest.raises(ValueError, match="seed"):
+        get_paired_outcome_details(
+            saved,
+            baseline_group_id="base",
+            attack_group_id="attack",
+            transition=PairedOutcomeTransition.FAILURE_TO_SUCCESS,
+            cursor=nonmember,
+        )
+
+
+@pytest.mark.parametrize("limit", [0, -1, 101, True])
+def test_paired_outcome_details_reject_invalid_page_size(limit: int) -> None:
+    with pytest.raises(ValueError, match="limit"):
+        get_paired_outcome_details(
+            _detail_scenario(),
+            baseline_group_id="base",
+            attack_group_id="attack",
+            transition=PairedOutcomeTransition.FAILURE_TO_SUCCESS,
+            limit=limit,
+        )
+
+
+def test_paired_outcome_details_preserve_compatibility_checks() -> None:
+    saved = _detail_scenario()
+    saved.attack_results["attack"][0].objective = "different objective"
+    with pytest.raises(ValueError, match="objective"):
+        get_paired_outcome_details(
+            saved,
+            baseline_group_id="base",
+            attack_group_id="attack",
+            transition=PairedOutcomeTransition.FAILURE_TO_SUCCESS,
         )

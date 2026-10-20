@@ -5,8 +5,14 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import json
+from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from pyrit.analytics.scenario_statistics import (
@@ -15,7 +21,7 @@ from pyrit.analytics.scenario_statistics import (
     resolve_attack_result_attempt,
 )
 from pyrit.common.utils import to_sha256
-from pyrit.models import AttackOutcome, ScenarioExecutionUnit, ScenarioRunPlanGroupKind
+from pyrit.models import AttackOutcome, ScenarioExecutionUnit, ScenarioRunPlanGroupKind, ScenarioRunPlanSeedPrompt
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -58,6 +64,217 @@ class PairedOutcomeStatistics:
     unmatched_baseline_seeds: int
     unmatched_attack_seeds: int
     unattributed_attempts: int
+
+
+class PairedOutcomeTransition(str, Enum):
+    """One decided baseline-to-attack outcome transition."""
+
+    FAILURE_TO_SUCCESS = "failure_to_success"
+    SUCCESS_TO_FAILURE = "success_to_failure"
+    FAILURE_TO_FAILURE = "failure_to_failure"
+    SUCCESS_TO_SUCCESS = "success_to_success"
+
+
+_TRANSITION_OUTCOMES = {
+    PairedOutcomeTransition.FAILURE_TO_SUCCESS: (AttackOutcome.FAILURE, AttackOutcome.SUCCESS),
+    PairedOutcomeTransition.SUCCESS_TO_FAILURE: (AttackOutcome.SUCCESS, AttackOutcome.FAILURE),
+    PairedOutcomeTransition.FAILURE_TO_FAILURE: (AttackOutcome.FAILURE, AttackOutcome.FAILURE),
+    PairedOutcomeTransition.SUCCESS_TO_SUCCESS: (AttackOutcome.SUCCESS, AttackOutcome.SUCCESS),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class PairedOutcomeDetailSide:
+    """The effective top-level completion for one side of a logical pair."""
+
+    outcome: AttackOutcome
+    attack_result_id: str
+    conversation_id: str
+    timestamp: datetime
+    outcome_reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class PairedOutcomeDetail:
+    """A shared logical seed and the effective outcomes for both selected groups."""
+
+    seed_group_id: str
+    objective: str
+    seed_prompts: tuple[ScenarioRunPlanSeedPrompt, ...]
+    baseline: PairedOutcomeDetailSide
+    attack: PairedOutcomeDetailSide
+
+
+@dataclass(frozen=True, slots=True)
+class PairedOutcomeDetailPage:
+    """A bounded, seed-ID-ordered page of matching decided pairs."""
+
+    baseline_group_id: str
+    attack_group_id: str
+    transition: PairedOutcomeTransition
+    pairs: tuple[PairedOutcomeDetail, ...]
+    total_pairs: int
+    next_cursor: str | None
+
+
+def _detail_side(result: AttackResult) -> PairedOutcomeDetailSide:
+    """
+    Copy only the effective top-level outcome context needed by the GUI.
+
+    Returns:
+        PairedOutcomeDetailSide: Selected top-level result context.
+    """
+    return PairedOutcomeDetailSide(
+        outcome=result.outcome,
+        attack_result_id=result.attack_result_id,
+        conversation_id=result.conversation_id,
+        timestamp=result.timestamp,
+        outcome_reason=result.outcome_reason,
+    )
+
+
+def _encode_detail_cursor(
+    *, run_id: str, baseline_group_id: str, attack_group_id: str, transition: PairedOutcomeTransition, seed_id: str
+) -> str:
+    """
+    Encode a stable keyset position scoped to this run and comparison.
+
+    Returns:
+        str: Portable, canonical cursor that can be decoded by any worker.
+    """
+    payload = {
+        "v": 1,
+        "scope": _detail_cursor_scope(
+            run_id=run_id,
+            baseline_group_id=baseline_group_id,
+            attack_group_id=attack_group_id,
+            transition=transition,
+        ),
+        "after": seed_id,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(encoded).decode().rstrip("=")
+
+
+def _detail_cursor_scope(
+    *, run_id: str, baseline_group_id: str, attack_group_id: str, transition: PairedOutcomeTransition
+) -> str:
+    """
+    Bind a cursor to a particular saved run and ordered group selection.
+
+    Returns:
+        str: Stable digest of the run, selected groups, and transition.
+    """
+    payload = json.dumps([run_id, baseline_group_id, attack_group_id, transition.value], separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _decode_detail_cursor(
+    cursor: str, *, run_id: str, baseline_group_id: str, attack_group_id: str, transition: PairedOutcomeTransition
+) -> str:
+    """
+    Reject malformed, mismatched, or noncanonical pagination cursors.
+
+    Returns:
+        str: Validated last seed ID; membership is verified against current matches.
+
+    Raises:
+        ValueError: If the cursor is malformed or belongs to another selection.
+    """
+    try:
+        if not cursor or len(cursor) > 1024:
+            raise ValueError
+        raw = base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True)
+        if base64.urlsafe_b64encode(raw).decode().rstrip("=") != cursor:
+            raise ValueError
+        payload = json.loads(raw)
+        if not isinstance(payload, dict) or set(payload) != {"v", "scope", "after"}:
+            raise ValueError
+        if (
+            type(payload["v"]) is not int
+            or payload["v"] != 1
+            or payload["scope"]
+            != _detail_cursor_scope(
+                run_id=run_id,
+                baseline_group_id=baseline_group_id,
+                attack_group_id=attack_group_id,
+                transition=transition,
+            )
+            or not isinstance(payload["after"], str)
+            or not payload["after"]
+        ):
+            raise ValueError
+        return payload["after"]
+    except (ValueError, TypeError, UnicodeDecodeError, binascii.Error) as exc:
+        raise ValueError("Invalid paired-outcome detail cursor for the selected run, groups, and transition.") from exc
+
+
+def get_paired_outcome_details(
+    scenario_result: ScenarioResult,
+    *,
+    baseline_group_id: str,
+    attack_group_id: str,
+    transition: PairedOutcomeTransition,
+    limit: int = 25,
+    cursor: str | None = None,
+) -> PairedOutcomeDetailPage:
+    """
+    Page through one transition using the aggregate's exact pairing and compatibility checks.
+
+    Returns:
+        PairedOutcomeDetailPage: Deterministically ordered effective top-level pairs.
+
+    Raises:
+        ValueError: If the selection, evidence, page size, or cursor is invalid.
+    """
+    if not isinstance(transition, PairedOutcomeTransition):
+        raise ValueError("Unknown paired-outcome transition.")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError("Paired-outcome detail limit must be between 1 and 100.")
+    after = (
+        _decode_detail_cursor(
+            cursor,
+            run_id=str(scenario_result.id),
+            baseline_group_id=baseline_group_id,
+            attack_group_id=attack_group_id,
+            transition=transition,
+        )
+        if cursor is not None
+        else None
+    )
+    matches: list[PairedOutcomeDetail] = []
+    _compute_paired_outcome_statistics(
+        scenario_result,
+        baseline_group_id=baseline_group_id,
+        attack_group_id=attack_group_id,
+        selected_transition=transition,
+        matching_details=matches,
+    )
+    matches.sort(key=lambda item: item.seed_group_id)
+    ids = [item.seed_group_id for item in matches]
+    if after is not None and after not in ids:
+        raise ValueError("Invalid paired-outcome detail cursor: seed is not in the selected transition.")
+    start = bisect_right(ids, after) if after is not None else 0
+    page = matches[start : start + limit]
+    next_cursor = (
+        _encode_detail_cursor(
+            run_id=str(scenario_result.id),
+            baseline_group_id=baseline_group_id,
+            attack_group_id=attack_group_id,
+            transition=transition,
+            seed_id=page[-1].seed_group_id,
+        )
+        if start + limit < len(matches)
+        else None
+    )
+    return PairedOutcomeDetailPage(
+        baseline_group_id=baseline_group_id,
+        attack_group_id=attack_group_id,
+        transition=transition,
+        pairs=tuple(page),
+        total_pairs=len(matches),
+        next_cursor=next_cursor,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,6 +477,28 @@ def compute_paired_outcome_statistics(
         ValueError: If the run plan, selection, attribution, objectives, or available
             scorer identities cannot support an unambiguous comparison.
     """
+    return _compute_paired_outcome_statistics(
+        scenario_result, baseline_group_id=baseline_group_id, attack_group_id=attack_group_id
+    )
+
+
+def _compute_paired_outcome_statistics(
+    scenario_result: ScenarioResult,
+    *,
+    baseline_group_id: str,
+    attack_group_id: str,
+    selected_transition: PairedOutcomeTransition | None = None,
+    matching_details: list[PairedOutcomeDetail] | None = None,
+) -> PairedOutcomeStatistics:
+    """
+    Compute aggregates and optionally collect matching details from the same validated pairs.
+
+    Returns:
+        PairedOutcomeStatistics: Validated aggregate of effective pair outcomes.
+
+    Raises:
+        ValueError: If the plan, selected results, or score evidence are incompatible.
+    """
     baseline, attack, plan, lookup = _selected_groups(
         scenario_result=scenario_result,
         baseline_group_id=baseline_group_id,
@@ -272,6 +511,7 @@ def compute_paired_outcome_statistics(
 
     # The plan validates unique seed IDs. The same run carries the scenario-level
     # target/scorer identity; per-result identities add stronger checks.
+    seed_by_id = {seed.id: seed for seed in plan.seed_groups}
     objectives = {seed.id: seed.objective_sha256 for seed in plan.seed_groups}
     relevant_names = {baseline.atomic_attack_name, attack.atomic_attack_name}
     selected_ids = {baseline.id, attack.id}
@@ -387,6 +627,21 @@ def compute_paired_outcome_statistics(
                         raise ValueError("Decided pairs contain incompatible score types.")
                     observed_score_type = score_type
             transitions[(before[0], after[0])] += 1
+            if (
+                matching_details is not None
+                and selected_transition is not None
+                and _TRANSITION_OUTCOMES[selected_transition] == (before[0], after[0])
+            ):
+                seed = seed_by_id[seed_id]
+                matching_details.append(
+                    PairedOutcomeDetail(
+                        seed_group_id=seed_id,
+                        objective=seed.objective,
+                        seed_prompts=tuple(seed.prompts),
+                        baseline=_detail_side(before[1]),
+                        attack=_detail_side(after[1]),
+                    )
+                )
 
     decided = sum(transitions.values())
     baseline_successes = (

@@ -2,8 +2,9 @@ import { expect, test } from '@playwright/test'
 import { scenarioRunRoutePath } from '../src/utils/routeParams'
 
 const run = scenarioRunRoutePath('00000000-0000-0000-0000-00000000238c')
+const paginatedRun = scenarioRunRoutePath('00000000-0000-0000-0000-00000000238f')
 
-test('compares persisted outcomes through the real API, including retries and exclusions', async ({ page }) => {
+test('compares persisted outcomes through the real API, including retries and exclusions', async ({ page }, testInfo) => {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto(run)
@@ -30,13 +31,52 @@ test('compares persisted outcomes through the real API, including retries and ex
   for (const label of ['Failure → Success', 'Success → Failure', 'Failure → Failure', 'Success → Success']) {
     await expect(comparison.getByRole('row', { name: `${label} 1` })).toBeVisible()
   }
+  const detailRequests: string[] = []
+  page.on('request', (request) => {
+    if (request.url().includes('/paired-outcomes/details?')) detailRequests.push(request.url())
+  })
+  const expand = comparison.getByRole('button', { name: 'Failure → Success' })
+  await expect(expand).toHaveAttribute('aria-expanded', 'false')
+  expect(detailRequests).toEqual([])
+  const detailsResponse = page.waitForResponse((res) => res.url().includes('/paired-outcomes/details?'))
+  await expand.click()
+  const detailResult = await detailsResponse
+  expect(detailResult.status()).toBe(200)
+  expect(await detailResult.json()).toMatchObject({
+    baseline_group_id: 'baseline', attack_group_id: 'attack', transition: 'failure_to_success',
+    total_pairs: 1, pairs: [{ seed_group_id: 'a', objective: 'a', baseline: { outcome: 'failure' }, attack: { outcome: 'success' } }],
+  })
+  const details = panel.getByRole('region', { name: 'Failure → Success pair details' })
+  await expect(details).toContainText('Logical seed: a')
+  await expect(details).toContainText('Outcome: failure')
+  await expect(details).toContainText('Outcome: success')
+  const baselineLink = details.getByRole('link', { name: 'Open baseline conversation' })
+  const attackLink = details.getByRole('link', { name: 'Open attack conversation' })
+  await expect(baselineLink).toHaveAttribute('href', /scenarioResultId=00000000-0000-0000-0000-00000000238c/)
+  await expect(attackLink).toHaveAttribute('href', /scenarioResultId=00000000-0000-0000-0000-00000000238c/)
+  await panel.screenshot({ path: testInfo.outputPath('paired-outcomes-desktop.png') })
+  await attackLink.click()
+  await expect(page).toHaveURL(/\/attacks\/[^/]+\/conversations\/[^/]+\?scenarioResultId=/)
+  await expect(page.getByText('Offline objective: a')).toBeVisible()
+  await page.goto(run)
+  const restored = page.getByRole('region', { name: 'Paired outcomes', exact: true })
+  await restored.getByLabel('Baseline group').selectOption('baseline')
+  await restored.getByLabel('Attack group').selectOption('attack')
+  await restored.getByRole('button', { name: 'Compare outcomes' }).click()
+  const restoredExpand = restored.getByRole('button', { name: 'Failure → Success' })
+  await restoredExpand.click()
+  await expect(restored.getByRole('region', { name: 'Failure → Success pair details' })).toBeVisible()
+  await restoredExpand.click()
+  await expect(restored.getByRole('region', { name: 'Failure → Success pair details' })).toHaveCount(0)
+  await restoredExpand.click()
+  await expect(restored.getByRole('region', { name: 'Failure → Success pair details' })).toContainText('Logical seed: a')
   await panel.getByLabel('Attack group').selectOption('')
   await expect(comparison).toHaveCount(0)
   await expect(panel.getByRole('button', { name: 'Compare outcomes' })).toBeDisabled()
   expect(errors).toEqual([])
 })
 
-test('keeps comparisons usable at a narrow viewport and with keyboard controls', async ({ page }, testInfo) => {
+test('keeps expanded pairs usable at a narrow viewport and with keyboard controls', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(run)
   const panel = page.getByRole('region', { name: 'Paired outcomes', exact: true })
@@ -56,7 +96,35 @@ test('keeps comparisons usable at a narrow viewport and with keyboard controls',
   expect(size?.height).toBeGreaterThanOrEqual(44)
   await panel.getByRole('table', { name: 'Outcome transitions' }).scrollIntoViewIfNeeded()
   await expect(panel.getByRole('row', { name: 'Failure → Success 1' })).toBeVisible()
-  await page.screenshot({ path: testInfo.outputPath('paired-outcomes-mobile.png') })
+  const expand = panel.getByRole('button', { name: 'Failure → Success' })
+  await expand.focus()
+  await page.keyboard.press('Enter')
+  await expect(expand).toHaveAttribute('aria-expanded', 'true')
+  await expect(panel.getByRole('region', { name: 'Failure → Success pair details' })).toContainText('Logical seed: a')
+  expect(await panel.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(false)
+  await panel.screenshot({ path: testInfo.outputPath('paired-outcomes-mobile.png') })
+})
+
+test('paginates matching SQLite pairs', async ({ page }) => {
+  await page.goto(paginatedRun)
+  const panel = page.getByRole('region', { name: 'Paired outcomes', exact: true })
+  await panel.getByLabel('Baseline group').selectOption('baseline')
+  await panel.getByLabel('Attack group').selectOption('attack')
+  await panel.getByRole('button', { name: 'Compare outcomes' }).click()
+  await expect(panel.getByRole('row', { name: 'Failure → Success 31' })).toBeVisible()
+  const expand = panel.getByRole('button', { name: 'Failure → Success' })
+  await expand.click()
+  const details = panel.getByRole('region', { name: 'Failure → Success pair details' })
+  await expect(details).toContainText('25 of 31 pairs shown')
+  await expect(details.getByRole('article')).toHaveCount(25)
+  const nextPage = page.waitForResponse((response) => response.url().includes('/paired-outcomes/details?') && response.url().includes('cursor='))
+  await details.getByRole('button', { name: 'Load more Failure → Success pairs' }).click()
+  const result = await nextPage
+  expect(result.status()).toBe(200)
+  expect(await result.json()).toMatchObject({ total_pairs: 31, next_cursor: null })
+  await expect(details).toContainText('31 of 31 pairs shown')
+  await expect(details.getByRole('article')).toHaveCount(31)
+  await expect(details.getByRole('button', { name: 'Load more Failure → Success pairs' })).toHaveCount(0)
 })
 
 test('explains why legacy or failed runs cannot be compared', async ({ page }) => {
