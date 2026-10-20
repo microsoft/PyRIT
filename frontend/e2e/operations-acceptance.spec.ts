@@ -1,6 +1,6 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 
-import type { AttackSummary, Finding, Operation, ScenarioRunListItem, ScenarioRunSummary } from '../src/types'
+import type { AttackSummary, Finding, Operation, ScenarioRunListItem, ScenarioRunSummary, UserPreferences } from '../src/types'
 import { compatibilityHeaders } from './_compatibility'
 import { waitForAppReady } from './_runtime'
 
@@ -106,15 +106,31 @@ for (const width of [1280, 390]) {
     await expect.poll(() => page.evaluate(() =>
       JSON.parse(localStorage.getItem('pyrit.userPreferences.v1.local') ?? '{}').operation,
     )).toEqual({ id: operation.id })
+  })
 
+  test(`registers an unregistered name restored from browser preferences at ${width}px @seeded`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 })
+    await page.goto('/chat')
+    await waitForAppReady(page)
     const newName = `Restored ${width} ${Date.now()}`
     await page.evaluate((name: string) => {
-      const preferences = JSON.parse(localStorage.getItem('pyrit.userPreferences.v1.local') ?? '{}')
-      localStorage.setItem('pyrit.userPreferences.v1.local', JSON.stringify({ ...preferences, operation: { name } }))
+      const preferences: UserPreferences = {
+        targets: { objective: null, adversarial: null },
+        hiddenTargetRegistryNames: [],
+        labels: {},
+        theme: 'system',
+        chatMarkdown: false,
+        operation: { name },
+      }
+      localStorage.setItem('pyrit.userPreferences.v1.local', JSON.stringify(preferences))
     }, newName)
     await page.reload()
+    await waitForAppReady(page)
+    const bar = page.getByRole('region', { name: 'Default Labels' })
+    await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveValue(newName)
     await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveAccessibleDescription('Not registered')
     await bar.getByRole('button', { name: 'Register', exact: true }).click()
+    const dialog = page.getByRole('dialog')
     await expect(dialog.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(newName)
     const registered = page.waitForResponse(response =>
       new URL(response.url()).pathname === '/api/operations' && response.request().method() === 'POST')
