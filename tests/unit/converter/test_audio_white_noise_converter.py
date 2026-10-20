@@ -11,6 +11,7 @@ from scipy.io import wavfile
 
 from pyrit.common.random_context import configure_random_seed
 from pyrit.converter.audio_white_noise_converter import AudioWhiteNoiseConverter
+from pyrit.registry import ConverterRegistry
 
 
 async def test_white_noise_modifies_signal(sqlite_instance):
@@ -177,3 +178,29 @@ def test_invalid_noise_scale_non_finite(noise_scale: float) -> None:
     """Non-finite noise scales should fail during converter construction."""
     with pytest.raises(ValueError, match="noise_scale must be finite"):
         AudioWhiteNoiseConverter(noise_scale=noise_scale)
+
+
+def test_white_noise_identifier_includes_settings() -> None:
+    params = AudioWhiteNoiseConverter(noise_scale=0.05).get_identifier().params
+    assert params["output_format"] == "wav"
+    assert params["noise_scale"] == 0.05
+
+
+def test_white_noise_identifier_distinguishes_settings() -> None:
+    default = AudioWhiteNoiseConverter()
+    other = AudioWhiteNoiseConverter(noise_scale=0.5)
+    assert default.get_identifier().hash != other.get_identifier().hash
+
+    # Both configurations get their own default registry name instead of colliding.
+    instances = ConverterRegistry().instances
+    instances.register(default)
+    instances.register(other)
+    assert instances.get(default.get_identifier().unique_name) is default
+    assert instances.get(other.get_identifier().unique_name) is other
+
+
+def test_white_noise_identifier_is_stable_for_equal_settings() -> None:
+    assert (
+        AudioWhiteNoiseConverter(noise_scale=0.05).get_identifier().hash
+        == AudioWhiteNoiseConverter(noise_scale=0.05).get_identifier().hash
+    )

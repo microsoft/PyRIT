@@ -266,6 +266,43 @@ class TestFillAdversarialPlaceholders:
         assert filled.message_pieces[1].original_value == "/path/to/base.png"
         assert filled.message_pieces[1].original_value_data_type == "image_path"
 
+    def test_preserves_converted_values_and_metadata_of_passed_through_pieces(self):
+        router = _ModalityFeedbackRouter(
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
+            objective_target=_build_target(input_modalities=[{"text", "image_path"}]),
+        )
+        media_piece = MessagePiece(
+            role="user",
+            original_value="/path/to/original.png",
+            original_value_data_type="image_path",
+            converted_value="/path/to/resized.png",
+            converted_value_data_type="image_path",
+            conversation_id="edit-fill-conv",
+            prompt_metadata={"source": "dataset"},
+        )
+        message = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="user",
+                    original_value="",
+                    original_value_data_type="text",
+                    conversation_id="edit-fill-conv",
+                    prompt_metadata={"adversarial_placeholder": True},
+                ),
+                media_piece,
+            ]
+        )
+
+        filled = router.fill_adversarial_placeholders(
+            message=message,
+            adversarial_text="please edit this image",
+        )
+
+        passed_through = filled.message_pieces[1]
+        assert passed_through.converted_value == "/path/to/resized.png"
+        assert passed_through.converted_value_data_type == "image_path"
+        assert passed_through.prompt_metadata == {"source": "dataset"}
+
     def test_does_not_mutate_input_message(self):
         router = _ModalityFeedbackRouter(
             adversarial_chat=_build_target(input_modalities=[{"text"}]),

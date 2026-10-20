@@ -57,10 +57,14 @@ print(df)
 #
 # - **[Text-to-Text Converters](1_text_to_text_converters.ipynb)**: Non-LLM (encoding, obfuscation) and LLM-based (translation, variation, tone)
 # - **[Audio Converters](2_audio_converters.ipynb)**: Text-to-Audio, Audio-to-Text, Audio-to-Audio
-# - **[Image Converters](3_image_converters.ipynb)**: Text-to-Image, Image-to-Image
+# - **[Image Converters](3_image_converters.ipynb)**: Text-to-Image, Image-to-Text, Image-to-Image
 # - **[Video Converters](4_video_converters.ipynb)**: Image-to-Video
 # - **[File Converters](5_file_converters.ipynb)**: Text-to-File (PDF, URL)
 # - **[Selectively Converting](6_selectively_converting.ipynb)**: Advanced techniques for converting portions of prompts
+#
+# For a reversible text-to-image-to-text pipeline, see the
+# [LSB steganography example](3_image_converters.ipynb#lsb-image-steganography)
+# using `LSBImageStegoConverter` and `LSBImageStegoDecodeConverter`.
 
 # %% [markdown]
 # ## Simple Converter Example

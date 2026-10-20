@@ -12,7 +12,7 @@ from scipy.io import wavfile
 from pyrit.common.random_context import get_random_seed
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.memory import data_serializer_factory
-from pyrit.models import PromptDataType
+from pyrit.models import ComponentIdentifier, PromptDataType
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,20 @@ class AudioWhiteNoiseConverter(Converter):
             raise ValueError("noise_scale must be finite, greater than 0, and at most 1.0.")
         self._output_format = output_format
         self._noise_scale = noise_scale
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with audio white noise parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "output_format": self._output_format,
+                "noise_scale": self._noise_scale,
+            },
+        )
 
     def _add_noise(
         self,

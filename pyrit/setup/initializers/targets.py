@@ -25,6 +25,7 @@ from pyrit.models.identifiers import TARGET_EVAL_PARAM_FALLBACKS, TARGET_EVAL_PA
 from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import (
     AzureMLChatTarget,
+    LiteLLMDecisionTarget,
     OpenAIChatTarget,
     OpenAICompletionTarget,
     OpenAIImageTarget,
@@ -79,6 +80,7 @@ class TargetConfig:
         temperature: Optional temperature override for the target.
         tags: Tags for filtering which targets to register.
         default_objective_target: If True, tags this target as DEFAULT_OBJECTIVE_TARGET in the registry.
+        default_endpoint: Public service endpoint to use when endpoint_var is absent.
     """
 
     registry_name: str
@@ -91,6 +93,7 @@ class TargetConfig:
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
     tags: list[TargetInitializerTags] = field(default_factory=lambda: [TargetInitializerTags.DEFAULT])
     default_objective_target: bool = False
+    default_endpoint: str | None = None
 
 
 # Define all supported target configurations.
@@ -297,6 +300,14 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         endpoint_var="OPEN_ROUTER_ENDPOINT",
         key_var="OPEN_ROUTER_KEY",
         model_var="OPEN_ROUTER_CLAUDE_MODEL",
+    ),
+    TargetConfig(
+        registry_name="microsoft_decision",
+        target_class=LiteLLMDecisionTarget,
+        endpoint_var="MICROSOFT_DECISION_ENDPOINT",
+        key_var="MICROSOFT_DECISION_KEY",
+        default_endpoint="https://openrouter.ai/api",
+        extra_kwargs={"model_name": "openrouter/microsoft/microsoft-decision-1"},
     ),
     TargetConfig(
         registry_name="ollama",
@@ -654,7 +665,7 @@ class TargetInitializer(PyRITInitializer):
         Args:
             config: The target configuration specifying env vars and target class.
         """
-        endpoint = os.getenv(config.endpoint_var)
+        endpoint = os.getenv(config.endpoint_var) or config.default_endpoint
         if not endpoint:
             return
 

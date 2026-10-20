@@ -67,3 +67,14 @@ async def test_invalid_punctuation_list(punctuation_list):
     with pytest.raises(ValueError):
         converter = InsertPunctuationConverter()
         await converter.convert_async(prompt="prompt", punctuation_list=[punctuation_list])
+
+
+# Multi-character runs of string.punctuation and the empty string are substrings of it, but not single punctuations
+@pytest.mark.parametrize(
+    "punctuation_list",
+    [["()"], ["<=>"], ["{|}"], [""], [",", "!?"], []],
+)
+async def test_punctuation_list_rejects_substrings_of_string_punctuation(punctuation_list):
+    converter = InsertPunctuationConverter(seed=1)
+    with pytest.raises(ValueError, match="Invalid punctuations"):
+        await converter.convert_async(prompt="hello big world", punctuation_list=punctuation_list)

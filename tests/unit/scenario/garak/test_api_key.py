@@ -173,7 +173,7 @@ class TestApiKey:
 
         assert isinstance(scorer, CredentialLeakScorer)
         assert scorer._patterns == CredentialLeakScorer.GARAK_PATTERNS
-        assert len(CredentialLeakScorer()._patterns) == 12
+        assert len(CredentialLeakScorer()._patterns) == 15
         assert scorer._excluded_values == frozenset(
             seed.value for name in (DATASET_PARTIAL_KEYS, DATASET_SAFE_PLACEHOLDERS) for seed in corpus_seeds[name]
         )

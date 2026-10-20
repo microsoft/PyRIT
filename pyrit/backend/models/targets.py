@@ -10,11 +10,13 @@ The canonical target instance type (``TargetInstance``) lives in
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
-from pyrit.models import JSONValue, Parameter
+from pyrit.models import JSONValue, Parameter, TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.component_spec import SourceInstanceSpec
+from pyrit.models.target.target_capabilities import TargetCapabilities
 
 __all__ = [
     "CreateTargetRequest",
@@ -67,6 +69,8 @@ class CreateTargetRequest(BaseModel):
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
         description="Unique registry name; omitted only for legacy UI compatibility",
     )
+    register: bool = Field(True, description="Register the object; false returns only its descriptor")
+    source: SourceInstanceSpec | None = None
     type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
     params: dict[IdentifierStr, JSONValue] = Field(
         default_factory=dict, max_length=MAX_ITEMS, description="Target constructor parameters"
@@ -81,3 +85,16 @@ class CreateTargetRequest(BaseModel):
             "AzureBlobStorageTarget, and PromptShieldTarget."
         ),
     )
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> "CreateTargetRequest":
+        if self.source is not None and (self.register or self.params):
+            raise ValueError("source requires register=false and overrides in source.params")
+        return self
+
+
+class UnregisteredTarget(BaseModel):
+    """A constructed target descriptor with no registry key or object handle."""
+
+    identifier: TargetIdentifier
+    capabilities: TargetCapabilities

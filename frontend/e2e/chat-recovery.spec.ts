@@ -665,7 +665,9 @@ test.describe("Chat processing recovery @seeded", () => {
       const failed = await sendFromComposer(page, "Edit this failed prompt");
       const sourceAttackId = failed.attack.attack_result_id;
       if (reload) await page.reload();
-      await page.getByRole("button", { name: "Copy or Branch", exact: true }).last().click();
+      await expect(page.getByRole("button", { name: "Edit Conversation", exact: true })).toBeEnabled();
+      await expect(page.getByTestId("message-bubble-2")).toContainText("Edit this failed prompt");
+      await page.getByTestId("copy-to-input-btn-2").click();
       const [savedResponse] = await Promise.all([
         page.waitForResponse((response) => response.request().method() === "POST"
           && new URL(response.url()).pathname === "/api/attacks/save-conversation"),
@@ -720,7 +722,7 @@ test.describe("Chat processing recovery @seeded", () => {
     await page.getByTestId(`converter-option-${imageConverterId}`).click();
     await panel.getByRole("button", { name: "Convert", exact: true }).click();
     await expect(page.getByTestId("converter-preview-result")).toBeVisible();
-    await panel.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await expect(page.getByTestId("clear-media-conversion-image")).toBeVisible();
     await panel.getByRole("button", { name: "Close converters", exact: true }).click();
     localTarget.setProcessingFailure(true);
     const failed = await sendFromComposer(page, "Restore the original image");
@@ -848,7 +850,7 @@ test.describe("Chat processing recovery @seeded", () => {
     await expect(panel.getByTestId(`converter-item-${imageConverterId}`)).toBeVisible();
     await panel.getByRole("button", { name: "Convert", exact: true }).click();
     await expect(page.getByTestId("converter-preview-result")).toBeVisible();
-    await panel.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await expect(page.getByTestId("clear-media-conversion-image")).toBeVisible();
     await panel.getByRole("button", { name: "Close converters", exact: true }).click();
     localTarget.setProcessingFailure(true);
     const [originalRequest, first] = await Promise.all([

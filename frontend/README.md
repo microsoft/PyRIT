@@ -62,8 +62,12 @@ objectives on the server, not dataset names, and it does not search
 simulated-conversation JSON. Filter by that seed type to find those examples.
 Matching ignores ASCII case only. Examples stay in the groups the server
 returns, including multimodal members. Expanding an example loads its stored
-records for inspection only: nothing is executed, imported into chat, or played
-as media. Filters, page size, and the open example stay in the address bar.
+records for inspection only: nothing is executed or imported into chat.
+**Show image/audio/video preview** loads supported media on demand, without
+autoplay. Reopening waits for a fresh display URL, with Show disabled while the
+request is pending. If refreshing fails, the preview stays closed and shows a
+message so you can try again. Hiding a preview stops playback.
+Filters, page size, and the open example stay in the address bar.
 **Back to datasets** returns to the catalog search, facets, and sort you came
 from. A direct link without that return state goes to `/datasets`.
 On narrow screens, scroll the example table horizontally to read its columns.
@@ -278,6 +282,13 @@ E2E_LIVE_MODE=true npx playwright test
 ```
 
 The mock and seeded projects run in the **GitHub Actions** pull-request workflow. The live project is intended for a protected pipeline with an Entra identity or API keys.
+
+For ordinary interactions with startup controls, call `waitForAppReady(page)`
+from `e2e/_runtime.ts` after navigation or reload. A visible control can still
+move as runtime readiness and configured defaults arrive. Tests that deliberately
+interact before startup finishes should control those responses instead.
+Before reloading to check a preference change, wait for its value in localStorage;
+an empty Operation picker can mean its saved-ID lookup is still loading.
 
 CI runs two isolated mock shards, one serial seeded job, and one isolated
 analytics job, with one worker per job. Mock and seeded jobs start their own
