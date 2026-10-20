@@ -1450,7 +1450,7 @@ def test_set_model_name_boundaries(
     client.create_session.assert_not_awaited()
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("patch_central_database", "mock_copilot_startup_io")
 async def test_direct_send_captures_model_identity_before_startup_async(
     *,
     client: NonCallableMagicMock,
@@ -1474,7 +1474,7 @@ async def test_direct_send_captures_model_identity_before_startup_async(
         )
     )
     try:
-        await asyncio.wait_for(startup_entered.wait(), timeout=2.0)
+        await asyncio.wait_for(startup_entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
         with pytest.raises(RuntimeError, match="new target"):
             target.set_model_name(model_name="gpt-5.4")
 

@@ -44,6 +44,18 @@ export const useAttackHistoryStyles = makeStyles({
     alignItems: 'center',
     minHeight: MINIMUM_TOUCH_TARGET_SIZE,
   },
+  // Inner scrolling surface for the virtualized label list. The bound lives here
+  // rather than on the listbox element because autoSize writes an inline max
+  // height on the popup, which would override a class level limit.
+  labelScrollSurface: {
+    // A flex column keeps the virtualizer's spacer elements from collapsing
+    // the visible height when the list shrinks to a few short rows, which
+    // clipped the only option of a one match search by half its height.
+    display: 'flex',
+    flexDirection: 'column',
+    maxHeight: '250px',
+    overflowY: 'auto',
+  },
   filterDropdown: {
     minWidth: '160px',
     ...mobileTouchTargetHeight,

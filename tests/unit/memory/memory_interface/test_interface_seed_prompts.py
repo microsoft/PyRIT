@@ -4,6 +4,8 @@
 import os
 import tempfile
 from collections.abc import Sequence
+from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -15,10 +17,175 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import SeedEntry
-from pyrit.models import MessagePiece, SeedDataset, SeedGroup, SeedObjective, SeedPrompt
+from pyrit.models import MessagePiece, SeedDataset, SeedGroup, SeedObjective, SeedOrigin, SeedPrompt
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {},
+        {"harm_categories": ["hate"]},
+        {"harm_categories": ["HATE%"]},
+        {"harm_categories": ["other", "ä"]},
+        {"data_types": ["text"]},
+        {"data_types": ["audio_path"]},
+        {"harm_categories": ["hate"], "data_types": ["text"]},
+        {"metadata": {"scope.key": "selected"}},
+        {"authors": ["Jones"]},
+        {"origin": SeedOrigin.USER},
+        {"value": "candidate-2"},
+        {"value_sha256": [sha256(b"candidate-2").hexdigest()]},
+        {"added_by": "test"},
+        {"value_sha256": [sha256(b"candidate-2").hexdigest()], "added_by": "test"},
+    ],
+)
+async def test_candidate_filters_match_stored_queries_without_writes_async(
+    *, sqlite_instance: MemoryInterface, filters: dict[str, object]
+) -> None:
+    seeds = [
+        SeedObjective(
+            value=f"candidate-{index}",
+            dataset_name="candidate",
+            harm_categories=["Hate_Speech" if index % 2 else "other", "Ä"],
+            authors=["A. Jones"],
+            metadata={"scope.key": "selected" if index % 3 else "other"},
+            origin=SeedOrigin.USER if index % 2 else SeedOrigin.LOCAL,
+        )
+        for index in range(250)
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[seed.model_copy(deep=True) for seed in seeds], added_by="test"
+    )
+    expected = await sqlite_instance.get_seeds_async(dataset_name="candidate", **filters)
+    await sqlite_instance.remove_seeds_from_memory_async(dataset_name="candidate")
+    statements: list[ClauseElement] = []
+
+    def capture(
+        connection: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: "ExecutionContext",
+        executemany: bool,
+    ) -> None:
+        if context.compiled is not None:
+            statements.append(context.compiled.statement)
+
+    event.listen(sqlite_instance.engine, "before_cursor_execute", capture)
+    try:
+        prepared = await sqlite_instance.prepare_seed_batch_async(seeds=seeds, added_by="test")
+        assert all(seed.value_sha256 is None and seed.added_by is None for seed in seeds)
+        assert all(seed.value_sha256 is not None and seed.added_by == "test" for seed in prepared.seeds)
+        actual = await sqlite_instance.filter_seed_candidates_async(seeds=prepared.seeds, filters=filters)
+    finally:
+        event.remove(sqlite_instance.engine, "before_cursor_execute", capture)
+    assert [seed.id for seed in actual] == [seed.id for seed in seeds if seed.id in {item.id for item in expected}]
+    assert await sqlite_instance.get_seeds_async(dataset_name="candidate") == []
+    for statement in statements:
+        assert not statement.is_dml
+        compiled = str(statement.compile(dialect=mssql.dialect()))
+        assert "FROM [SeedPromptEntries]" not in compiled
+
+
+@pytest.mark.parametrize("replace", [False, True])
+async def test_prepared_seed_snapshot_is_committed_without_reprocessing_async(
+    *, sqlite_instance: MemoryInterface, replace: bool
+) -> None:
+    source = SeedObjective(
+        value="Fresh apple", dataset_name="candidate", added_by="provider", metadata={"scope": "original"}
+    )
+    prepared = await sqlite_instance.prepare_seed_batch_async(seeds=[source], added_by="test")
+    validated = prepared.seeds[0]
+    assert validated.added_by == "test"
+    assert validated.date_added is not None
+    assert validated.value_sha256 == sha256(b"Fresh apple").hexdigest()
+    expected = validated.model_dump(mode="json")
+    source.value = "Changed by caller"
+    validated.value = "Changed by validator"
+    validated.metadata["scope"] = "changed"
+    with patch.object(
+        sqlite_instance, "_prepare_seed_for_storage_async", side_effect=AssertionError("Must prepare only once")
+    ):
+        if replace:
+            await sqlite_instance.replace_prepared_seed_batch_async(dataset_name="candidate", batch=prepared)
+        else:
+            await sqlite_instance.add_prepared_seed_batch_async(prepared)
+    stored = await sqlite_instance.get_seeds_async(dataset_name="candidate")
+    assert len(stored) == 1
+    assert stored[0].model_dump(mode="json") == expected
+    assert source.value_sha256 is None and source.added_by == "provider"
+
+
+@pytest.mark.parametrize("replace", [False, True])
+@pytest.mark.usefixtures("patch_central_database")
+async def test_prepared_media_keeps_the_validated_path_hash_and_metadata_async(
+    *, sqlite_instance: MemoryInterface, tmp_path: Path, replace: bool
+) -> None:
+    import asyncio
+
+    from PIL import Image
+
+    path = tmp_path / "source.png"
+
+    def save_image() -> bytes:
+        Image.new("RGB", (2, 2), color="red").save(path)
+        return path.read_bytes()
+
+    content = await asyncio.to_thread(save_image)
+    source = SeedPrompt(value=str(path), dataset_name="candidate", data_type="image_path")
+    with patch.object(
+        sqlite_instance, "_serialize_seed_value_async", wraps=sqlite_instance._serialize_seed_value_async
+    ) as serialize:
+        prepared = await sqlite_instance.prepare_seed_batch_async(seeds=[source], added_by="test")
+        candidate = prepared.seeds[0]
+        assert candidate.value != str(path)
+        assert candidate.value_sha256 == sha256(content).hexdigest()
+        assert candidate.metadata["format"] == "png"
+        assert serialize.await_count == 1
+        assert await sqlite_instance.get_seeds_async(dataset_name="candidate") == []
+        selected = await sqlite_instance.filter_seed_candidates_async(
+            seeds=prepared.seeds,
+            filters={
+                "value_sha256": [candidate.value_sha256],
+                "metadata": {"format": "png"},
+                "added_by": "test",
+                "data_types": ["image_path"],
+            },
+        )
+        assert len(selected) == 1 and selected[0].id == source.id
+        if replace:
+            await sqlite_instance.replace_prepared_seed_batch_async(dataset_name="candidate", batch=prepared)
+        else:
+            await sqlite_instance.add_prepared_seed_batch_async(prepared)
+        assert serialize.await_count == 1
+    stored = (await sqlite_instance.get_seeds_async(dataset_name="candidate"))[0]
+    assert stored.model_dump(mode="json") == candidate.model_dump(mode="json")
+    assert await asyncio.to_thread(Path(stored.value).read_bytes) == content
+    assert source.value == str(path) and source.value_sha256 is None
+    assert not source.metadata.get("format")
+
+
+async def test_replacement_rejects_invalid_group_without_deleting_old_rows_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    before = SeedObjective(value="Keep me", dataset_name="candidate")
+    await sqlite_instance.add_seeds_to_memory_async(seeds=[before], added_by="user")
+    shared_id = uuid4()
+    candidates = [
+        SeedObjective(value=str(index), dataset_name="candidate", prompt_group_id=shared_id) for index in range(2)
+    ]
+    with pytest.raises(ValueError, match="only have one objective"):
+        await sqlite_instance.replace_seeds_for_dataset_async(
+            dataset_name="candidate", seeds=candidates, added_by="test"
+        )
+    after = await sqlite_instance.get_seeds_async(dataset_name="candidate")
+    assert [(seed.id, seed.value) for seed in after] == [(before.id, before.value)]
+
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Dialect
+    from sqlalchemy.engine.interfaces import ExecutionContext
+    from sqlalchemy.sql.elements import ClauseElement
 
 
 def assert_original_value_in_list(original_value: str, message_pieces: Sequence[MessagePiece]):

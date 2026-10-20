@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, ParamSpec,
 from urllib.parse import urlparse
 
 from sqlalchemy import (
+    Column,
     MetaData,
     String,
     Unicode,
@@ -36,6 +37,7 @@ from sqlalchemy import (
     or_,
     select,
     type_coerce,
+    union_all,
     update,
 )
 from sqlalchemy import cast as sql_cast
@@ -46,6 +48,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
 from sqlalchemy.orm.session import Session
+from sqlalchemy.sql import visitors
+from sqlalchemy.sql.elements import ClauseElement
 
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
@@ -150,6 +154,18 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PreparedSeedBatch:
+    """A storage-ready seed snapshot created by memory, before database writes."""
+
+    _seeds: tuple[Seed[Any], ...]
+
+    @property
+    def seeds(self) -> list[Seed[Any]]:
+        """Independent copies of the prepared seeds for candidate validation."""
+        return [seed.model_copy(deep=True) for seed in self._seeds]
 
 
 def _deprecate_message_labels(*, method: str) -> None:
@@ -4200,6 +4216,69 @@ class MemoryInterface(abc.ABC):
 
         return conditions
 
+    async def filter_seed_candidates_async(
+        self, *, seeds: Sequence[Seed[Any]], filters: Mapping[str, Any]
+    ) -> list[Seed[Any]]:
+        """
+        Apply the backend's seed predicates to storage-ready candidates without storing them.
+
+        Use ``prepare_seed_batch_async`` before this read so storage-derived fields have
+        the same values as persisted rows.
+
+        Returns:
+            list[Seed]: Matching candidates in input order, with their original identities.
+        """
+        if not seeds or not filters:
+            return list(seeds)
+        return await self._run_database_operation_async(self._filter_seed_candidates, seeds=seeds, filters=filters)
+
+    def _filter_seed_candidates(self, *, seeds: Sequence[Seed[Any]], filters: Mapping[str, Any]) -> list[Seed[Any]]:
+        if self.engine is None:
+            raise RuntimeError("Memory engine is not initialized.")
+        conditions = self._build_seed_filter_conditions(**filters)
+        referenced = [
+            element
+            for condition in conditions
+            for element in visitors.iterate(condition)
+            if isinstance(element, Column) and element.table is SeedEntry.__table__
+        ]
+        columns = [
+            column for column in SeedEntry.__table__.columns if any(column.shares_lineage(ref) for ref in referenced)
+        ]
+        filter_binds = len(
+            select(literal(1))
+            .where(*conditions)
+            .compile(dialect=self.engine.dialect, compile_kwargs={"render_postcompile": True})
+            .params
+        )
+        chunk_size = min(100, max(1, (self._MAX_BIND_VARS - filter_binds - 1) // (len(columns) + 1)))
+        matched: set[int] = set()
+        with closing(self._get_session()) as session:
+            for start in range(0, len(seeds), chunk_size):
+                rows = []
+                for index in range(start, min(start + chunk_size, len(seeds))):
+                    entry = SeedEntry(entry=seeds[index])
+                    rows.append(
+                        select(
+                            literal(index).label("candidate_index"),
+                            *[
+                                literal(getattr(entry, column.key), type_=column.type).label(column.name)
+                                for column in columns
+                            ],
+                        )
+                    )
+                candidates = union_all(*rows).subquery()
+                replacements = {column: candidates.c[column.name] for column in referenced}
+
+                def replace_column(
+                    element: ClauseElement, *, mapping: Mapping[Column[Any], ClauseElement] = replacements, **kw: Any
+                ) -> ClauseElement | None:
+                    return mapping.get(element) if isinstance(element, Column) else None
+
+                predicates = [visitors.replacement_traverse(condition, {}, replace_column) for condition in conditions]
+                matched.update(session.scalars(select(candidates.c.candidate_index).where(*predicates)).all())
+        return [seed for index, seed in enumerate(seeds) if index in matched]
+
     def _execute_get_seeds(
         self,
         *,
@@ -4621,6 +4700,42 @@ class MemoryInterface(abc.ABC):
 
         await set_seed_sha256_async(prompt)
 
+    async def _prepare_seeds_for_storage_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None) -> None:
+        current_time = datetime.now(tz=UTC)
+        for seed in seeds:
+            await self._prepare_seed_for_storage_async(prompt=seed, added_by=added_by, current_time=current_time)
+
+    async def prepare_seed_batch_async(
+        self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None
+    ) -> PreparedSeedBatch:
+        """
+        Prepare copied seeds once for validation and subsequent persistence.
+
+        Computes checksums, attribution, timestamps, and encoding metadata through the
+        normal storage path. Media may be copied into managed storage; no database rows
+        are written. Rejected batches can leave unreferenced media, not changed seed rows.
+
+        Args:
+            seeds (Sequence[Seed]): Caller-owned seeds to copy and prepare.
+            added_by (str | None): Attribution override, matching normal insertion.
+
+        Returns:
+            PreparedSeedBatch: Storage-ready seeds, isolated from caller and validator mutations.
+        """
+        copies = [seed.model_copy(deep=True) for seed in seeds]
+        SeedDataset.group_seed_prompts_by_prompt_group_id(copies)
+        await self._prepare_seeds_for_storage_async(seeds=copies, added_by=added_by)
+        return PreparedSeedBatch(_seeds=tuple(SeedEntry(entry=seed).get_seed() for seed in copies))
+
+    async def add_prepared_seed_batch_async(self, batch: PreparedSeedBatch) -> None:
+        """
+        Insert prepared seeds with normal deduplication, without preparing them again.
+
+        Args:
+            batch (PreparedSeedBatch): The snapshot returned by ``prepare_seed_batch_async``.
+        """
+        await self._run_database_operation_async(self._insert_prepared_seeds, seeds=batch.seeds)
+
     async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None) -> None:
         """
         Insert a list of seeds into the memory storage.
@@ -4639,10 +4754,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the 'added_by' attribute is not set for each prompt.
         """
-        current_time = datetime.now(tz=UTC)
-        for prompt in seeds:
-            await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
-
+        await self._prepare_seeds_for_storage_async(seeds=seeds, added_by=added_by)
         await self._run_database_operation_async(self._insert_prepared_seeds, seeds=seeds)
 
     def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
@@ -5154,10 +5266,36 @@ class MemoryInterface(abc.ABC):
             int: The number of ``SeedPromptEntries`` deleted before the new seeds were inserted.
 
         Raises:
-            ValueError: If ``dataset_name`` is empty, ``seeds`` is empty, or any seed's
-                ``dataset_name`` does not match ``dataset_name``.
+            ValueError: If ``dataset_name`` is empty, ``seeds`` is empty, a seed belongs
+                to another dataset, or the seed groups are structurally invalid.
             SQLAlchemyError: If the replacement fails; the transaction is rolled back first.
         """
+        self._validate_seed_replacement(dataset_name=dataset_name, seeds=seeds)
+        await self._prepare_seeds_for_storage_async(seeds=seeds, added_by=added_by)
+        return await self.replace_prepared_seed_batch_async(
+            dataset_name=dataset_name, batch=PreparedSeedBatch(_seeds=tuple(seeds))
+        )
+
+    async def replace_prepared_seed_batch_async(self, *, dataset_name: str, batch: PreparedSeedBatch) -> int:
+        """
+        Atomically replace a dataset with the prepared snapshot, without reprocessing media or hashes.
+
+        Args:
+            dataset_name (str): Dataset whose rows are replaced.
+            batch (PreparedSeedBatch): The snapshot returned by ``prepare_seed_batch_async``.
+
+        Returns:
+            int: The number of replaced seed rows.
+        """
+        seeds = batch.seeds
+        self._validate_seed_replacement(dataset_name=dataset_name, seeds=seeds)
+        entries = [SeedEntry(entry=seed) for seed in seeds]
+        return await self._run_database_operation_async(
+            self._replace_prepared_seeds, dataset_name=dataset_name, entries=entries
+        )
+
+    @staticmethod
+    def _validate_seed_replacement(*, dataset_name: str, seeds: Sequence[Seed[Any]]) -> None:
         if not dataset_name:
             raise ValueError("dataset_name must be a non-empty string.")
         if not seeds:
@@ -5173,15 +5311,7 @@ class MemoryInterface(abc.ABC):
                 "seeds tagged for another dataset."
             )
 
-        current_time = datetime.now(tz=UTC)
-        entries: list[SeedEntry] = []
-        for prompt in seeds:
-            await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
-            entries.append(SeedEntry(entry=prompt))
-
-        return await self._run_database_operation_async(
-            self._replace_prepared_seeds, dataset_name=dataset_name, entries=entries
-        )
+        SeedDataset.group_seed_prompts_by_prompt_group_id(seeds)
 
     def _replace_prepared_seeds(self, *, dataset_name: str, entries: Sequence[SeedEntry]) -> int:
         """
