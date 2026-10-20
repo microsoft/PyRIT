@@ -238,7 +238,9 @@ test('identifies Operations by ID and marks legacy names', async ({ page }: { pa
   const report = await openReport(page)
   expect(report.groups).toEqual(expect.arrayContaining([
     expect.objectContaining({ key: BASELINE.values[0], label: 'Synthetic baseline' }),
-    expect.objectContaining({ key: { kind: 'legacy_operation_name', value: 'Synthetic follow-up' }, label: 'Synthetic follow-up' }),
+    expect.objectContaining({
+      key: { kind: 'legacy_operation_name', value: 'Synthetic follow-up' }, label: 'Synthetic follow-up (legacy name)',
+    }),
   ]))
   await expect(page.getByRole('button', { name: 'Filter to Synthetic baseline', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Filter to Synthetic follow-up (legacy name)', exact: true })).toBeVisible()

@@ -15,7 +15,8 @@ import type {
 } from '@/types'
 import {
   ANALYTICS_MAX_VALUES, ANALYTICS_OUTCOMES, analyticsDateRangeError, analyticsDimensionKey, analyticsDimensionLabel,
-  analyticsOptionLabel, analyticsValueKey, analyticsValueLabel, formatAnalyticsTime, hasAnalyticsFilters,
+  analyticsLegacyOperationLabel, analyticsOptionLabel, analyticsOptionLabelKey, analyticsValueKey, analyticsValueLabel,
+  formatAnalyticsTime, hasAnalyticsFilters,
 } from '@/utils/attackAnalytics'
 
 import AnalyticsDimensionPicker from './AnalyticsDimensionPicker'
@@ -31,16 +32,14 @@ interface AnalyticsFacetPickerProps {
   readonly onApply: (filter: AttackAnalyticsFilter, fetchedOptions: AttackAnalyticsOption[]) => void
 }
 
-/** Friendly labels are cached per typed dimension/value, never used to identify or merge predicates. */
-function optionLabelKey(dimension: AttackAnalyticsDimension, value: AttackAnalyticsValue): string {
-  return JSON.stringify([analyticsDimensionKey(dimension), analyticsValueKey(value)])
-}
-
-/** Base label for a restored value without a fetched label; analyticsOptionLabel adds its suffix once. */
+/**
+ * Server-form label for a restored value without a fetched label: analyticsOptionLabel adds the
+ * absence suffixes, while a legacy name carries its own suffix as server labels do.
+ */
 function restoredOptionLabel(value: AttackAnalyticsValue): string {
   if (value.kind === 'missing') return 'Unknown'
   if (value.kind === 'no_converters') return 'No converters'
-  if (value.kind === 'legacy_operation_name') return value.value
+  if (value.kind === 'legacy_operation_name') return analyticsLegacyOperationLabel(value.value)
   return analyticsValueLabel(value)
 }
 
@@ -55,7 +54,7 @@ function AnalyticsFacetPicker({
   const [restored] = useState<AttackAnalyticsOption[]>(() =>
     initial?.values.map((value: AttackAnalyticsValue) => ({
       key: value,
-      label: knownLabels[optionLabelKey(dimension, value)] ?? restoredOptionLabel(value),
+      label: knownLabels[analyticsOptionLabelKey(dimension, value)] ?? restoredOptionLabel(value),
     })) ?? [],
   )
   const [selected, setSelected] = useState(restored)
@@ -264,6 +263,8 @@ interface AnalyticsFiltersProps {
   readonly filters: AttackAnalyticsFilters
   readonly refreshVersion: number
   readonly onChange: (filters: AttackAnalyticsFilters) => boolean
+  /** Server labels of drilled-down options, keyed by `analyticsOptionLabelKey`. */
+  readonly drilldownLabels?: Record<string, string>
 }
 
 interface FilterEditorState {
@@ -277,17 +278,18 @@ interface FilterEditorState {
  * Existing chips edit one predicate; Add filter can append another on the same
  * dimension. The boolean onChange result keeps rejected edits open for correction.
  */
-export default function AnalyticsFilters({ filters, refreshVersion, onChange }: AnalyticsFiltersProps) {
+export default function AnalyticsFilters({ filters, refreshVersion, onChange, drilldownLabels }: AnalyticsFiltersProps) {
   const styles = useAnalyticsFiltersStyles()
   const [editor, setEditor] = useState<FilterEditorState | null>(null)
   const [datesOpen, setDatesOpen] = useState(false)
   const [knownLabels, setKnownLabels] = useState<Record<string, string>>({})
   const operationLabels = useAnalyticsOperationLabels(filters)
-  // Fetched option labels win; restored Operation IDs fall back to their current names.
+  // Fetched facet labels win over drilled-down server labels; restored Operation IDs fall back to their current names.
   const labels: Record<string, string> = {
     ...Object.fromEntries(Object.entries(operationLabels).map(([id, name]: [string, string]) => [
-      optionLabelKey({ name: 'operation' }, { kind: 'value', value: id }), name,
+      analyticsOptionLabelKey({ name: 'operation' }, { kind: 'value', value: id }), name,
     ])),
+    ...drilldownLabels,
     ...knownLabels,
   }
   const [expanded, setExpanded] = useState(false)
@@ -318,7 +320,7 @@ export default function AnalyticsFilters({ filters, refreshVersion, onChange }: 
     setKnownLabels((previous: Record<string, string>) => ({
       ...previous,
       ...Object.fromEntries(fetchedOptions.map((option: AttackAnalyticsOption) => [
-        optionLabelKey(filter.dimension, option.key), option.label,
+        analyticsOptionLabelKey(filter.dimension, option.key), option.label,
       ])),
     }))
     setEditor(null)
@@ -369,8 +371,8 @@ export default function AnalyticsFilters({ filters, refreshVersion, onChange }: 
           occurrences.set(fingerprint, occurrence + 1)
           const label = `${analyticsDimensionLabel(predicate.dimension)} (${predicate.match_mode.toUpperCase()}): ` +
             predicate.values.map((value: AttackAnalyticsValue) =>
-              labels[optionLabelKey(predicate.dimension, value)]
-                ? analyticsOptionLabel({ key: value, label: labels[optionLabelKey(predicate.dimension, value)] })
+              labels[analyticsOptionLabelKey(predicate.dimension, value)]
+                ? analyticsOptionLabel({ key: value, label: labels[analyticsOptionLabelKey(predicate.dimension, value)] })
                 : analyticsValueLabel(value),
             ).join(', ')
           return (

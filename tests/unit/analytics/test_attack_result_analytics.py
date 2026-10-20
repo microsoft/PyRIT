@@ -352,6 +352,7 @@ async def test_operation_option_labels(analytics: AttackResultAnalytics, sqlite_
             make_result(operation=None, operation_id=saved.id),
             make_result(index=2, operation=None, operation_id=removed.id),
             make_result(index=3, operation="  "),
+            make_result(index=4, operation="Engagement"),
         ],
     )
     async with sqlite_instance._get_async_engine().begin() as connection:
@@ -361,7 +362,8 @@ async def test_operation_option_labels(analytics: AttackResultAnalytics, sqlite_
     assert {(group.key.kind.value, group.key.value): group.label for group in report.groups} == {
         ("value", str(saved.id)): "Saved",
         ("value", str(removed.id)): str(removed.id),
-        ("legacy_operation_name", "  "): "(Blank)",
+        ("legacy_operation_name", "  "): "(Blank) (legacy name)",
+        ("legacy_operation_name", "Engagement"): "Engagement (legacy name)",
     }
     assert all(group.drilldown_filters[0].values[0] == group.key for group in report.groups)
 

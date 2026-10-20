@@ -112,7 +112,7 @@ export function makeAnalyticsFacets(overrides: Partial<AttackAnalyticsFacets> = 
   return {
     items: [
       { key: { kind: 'value', value: ANALYTICS_NIGHTLY_ID }, label: 'Nightly' },
-      { key: { kind: 'legacy_operation_name', value: 'Unknown' }, label: 'Unknown' },
+      { key: { kind: 'legacy_operation_name', value: 'Unknown' }, label: 'Unknown (legacy name)' },
       { key: { kind: 'missing', value: null }, label: 'Unknown' },
     ],
     has_more: false,

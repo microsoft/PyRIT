@@ -125,8 +125,10 @@ describe('attack analytics view state', () => {
   })
 
   it('should label legacy Operation names with one suffix', () => {
-    expect(analyticsOptionLabel({ key: { kind: 'legacy_operation_name', value: 'Nightly' }, label: 'Nightly' })).toBe('Nightly (legacy name)')
-    expect(analyticsOptionLabel({ key: { kind: 'legacy_operation_name', value: '  ' }, label: '(Blank)' })).toBe('(Blank) (legacy name)')
+    expect(analyticsOptionLabel({ key: { kind: 'legacy_operation_name', value: 'Nightly' }, label: 'Nightly (legacy name)' }))
+      .toBe('Nightly (legacy name)')
+    expect(analyticsOptionLabel({ key: { kind: 'legacy_operation_name', value: '  ' }, label: '(Blank) (legacy name)' }))
+      .toBe('(Blank) (legacy name)')
     expect(analyticsValueLabel({ kind: 'legacy_operation_name', value: 'Nightly' })).toBe('Nightly (legacy name)')
     expect(analyticsOptionLabel({ key: { kind: 'value', value: ANALYTICS_NIGHTLY_ID }, label: 'Nightly' })).toBe('Nightly')
     expect(analyticsLegacyOperationLabel('')).toBe('(Blank) (legacy name)')

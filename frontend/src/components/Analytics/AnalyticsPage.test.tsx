@@ -533,11 +533,82 @@ describe('AnalyticsPage', () => {
     expect(mockList).toHaveBeenCalledTimes(1)
   })
 
+  it('should name a drill-down Operation chip while its Operation lookup is pending', async () => {
+    const user = userEvent.setup()
+    mockList.mockReturnValue(new Promise(() => {}))
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Filter to Nightly' }))
+    expect(screen.getByRole('button', { name: 'Operation (ANY): Nightly' })).toBeInTheDocument()
+    expect(mockList).toHaveBeenCalledTimes(1)
+  })
+
+  it('should name heatmap drill-down chips from the report row and column labels', async () => {
+    const user = userEvent.setup()
+    const row: AttackAnalyticsFilter = {
+      dimension: DEFAULT_ANALYTICS_VIEW.heatmapRow, values: [{ kind: 'value', value: 'privacy' }], match_mode: 'any',
+    }
+    const column: AttackAnalyticsFilter = {
+      dimension: DEFAULT_ANALYTICS_VIEW.heatmapColumn, values: [{ kind: 'value', value: 'promptsendingattack' }], match_mode: 'any',
+    }
+    mockQuery.mockImplementation(async (query: AttackAnalyticsQuery) => makeAnalyticsReport({
+      ...echoQuery(query),
+      rows: [{ key: row.values[0], label: 'Privacy' }],
+      columns: [{ key: column.values[0], label: 'PromptSendingAttack' }],
+      cells: [{ row: row.values[0], column: column.values[0], statistics: ANALYTICS_TEST_STATISTICS, drilldown_filters: [row, column] }],
+    }))
+    renderPage({ ...DEFAULT_ANALYTICS_VIEW, chart: 'heatmap' })
+    await user.click(await screen.findByRole('button', { name: /^Privacy \/ PromptSendingAttack: 10 results/ }))
+    expect(screen.getByRole('button', { name: 'Targeted harm category (ANY): Privacy' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Attack type (ANY): PromptSendingAttack' })).toBeInTheDocument()
+  })
+
+  it('should name a Scenario drill-down chip from the report label instead of the run ID', async () => {
+    const user = userEvent.setup()
+    const runId = '7f0c4e2a-5b1d-4c3e-9f8a-2d6b1e4c8a90'
+    const scenario: AttackAnalyticsFilter = {
+      dimension: { name: 'scenario' }, values: [{ kind: 'value', value: runId }], match_mode: 'any',
+    }
+    mockQuery.mockImplementation(async (query: AttackAnalyticsQuery) => makeAnalyticsReport({
+      ...echoQuery(query),
+      groups: [{
+        key: scenario.values[0], label: 'Nightly scan (1e4c8a90)',
+        statistics: ANALYTICS_TEST_STATISTICS, drilldown_filters: [scenario],
+      }],
+    }))
+    renderPage({ ...DEFAULT_ANALYTICS_VIEW, groupBy: scenario.dimension })
+    await user.click(await screen.findByRole('button', { name: 'Filter to Nightly scan (1e4c8a90)' }))
+    expect(screen.getByRole('button', { name: 'Scenario run (ANY): Nightly scan (1e4c8a90)' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: `Scenario run (ANY): ${runId}` })).not.toBeInTheDocument()
+  })
+
+  it('should show a legacy Operation name suffix once on heatmap axes, drill-down chips and the chip editor', async () => {
+    const user = userEvent.setup()
+    const row: AttackAnalyticsFilter = {
+      dimension: { name: 'operation' }, values: [{ kind: 'legacy_operation_name', value: 'Retired' }], match_mode: 'any',
+    }
+    const column: AttackAnalyticsFilter = {
+      dimension: { name: 'attack_type' }, values: [{ kind: 'value', value: 'promptsendingattack' }], match_mode: 'any',
+    }
+    mockQuery.mockImplementation(async (query: AttackAnalyticsQuery) => makeAnalyticsReport({
+      ...echoQuery(query),
+      rows: [{ key: row.values[0], label: 'Retired (legacy name)' }],
+      columns: [{ key: column.values[0], label: 'PromptSendingAttack' }],
+      cells: [{ row: row.values[0], column: column.values[0], statistics: ANALYTICS_TEST_STATISTICS, drilldown_filters: [row, column] }],
+    }))
+    renderPage({ ...DEFAULT_ANALYTICS_VIEW, chart: 'heatmap', heatmapRow: row.dimension, heatmapColumn: column.dimension })
+    expect(await screen.findByRole('rowheader', { name: 'Retired (legacy name)' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^Retired \(legacy name\) \/ PromptSendingAttack: 10 results/ }))
+    await user.click(screen.getByRole('button', { name: 'Operation (ANY): Retired (legacy name)' }))
+    const selected = screen.getByRole('group', { name: 'Selected filter values' })
+    expect(within(selected).getByRole('checkbox', { name: 'Retired (legacy name)' })).toBeChecked()
+    expect(mockList).not.toHaveBeenCalled()
+  })
+
   it('should invalidate a stale filter editor when browser Back restores a different predicate', async () => {
     const user = userEvent.setup()
     renderPage()
     await user.click(await screen.findByRole('button', { name: 'Filter to Nightly' }))
-    await user.click(await screen.findByRole('button', { name: /^Operation \(ANY\): Nightly/ }))
+    await user.click(screen.getByRole('button', { name: /^Operation \(ANY\): Nightly/ }))
     expect(screen.getByRole('region', { name: 'Filter editor' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Browser back' }))
     expect(screen.queryByRole('region', { name: 'Filter editor' })).not.toBeInTheDocument()

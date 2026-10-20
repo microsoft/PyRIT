@@ -10,10 +10,13 @@ import { useLocation, useNavigate } from 'react-router'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useAttackAnalytics } from '@/hooks/useAttackAnalytics'
 import { useRuntime } from '@/hooks/useRuntime'
-import type { AttackAnalyticsDimension, AttackAnalyticsFilter, AttackAnalyticsFilters, AttackAnalyticsViewState, AttackOutcome } from '@/types'
+import type {
+  AttackAnalyticsDimension, AttackAnalyticsFilter, AttackAnalyticsFilters, AttackAnalyticsOption,
+  AttackAnalyticsReport, AttackAnalyticsViewState, AttackOutcome,
+} from '@/types'
 import {
   ANALYTICS_ASR_NOTE, DEFAULT_ANALYTICS_VIEW, analyticsAsrDefinition,
-  analyticsDimensionKey, analyticsQuery, analyticsQueryKey, analyticsViewError, analyticsViewFromLocation,
+  analyticsDimensionKey, analyticsOptionLabelKey, analyticsQuery, analyticsQueryKey, analyticsViewError, analyticsViewFromLocation,
   analyticsViewToHash, appendAnalyticsDrilldown, formatAnalyticsTime, hasAnalyticsFilters,
 } from '@/utils/attackAnalytics'
 
@@ -32,6 +35,28 @@ interface AnalyticsPageProps {
 interface GroupPageState {
   readonly query: { readonly key: string }
   readonly offset: number
+}
+
+/** The report's server labels for the clicked keys, so new drill-down chips need no lookup. */
+function drilldownOptionLabels(report: AttackAnalyticsReport, predicates: AttackAnalyticsFilter[]): Record<string, string> {
+  const axes: Array<[AttackAnalyticsDimension | null, AttackAnalyticsOption[]]> = [
+    [report.group_by, [...report.groups, ...report.rows]],
+    [report.compare_by, report.columns],
+  ]
+  const reportLabels = new Map<string, string>()
+  for (const [dimension, options] of axes) {
+    if (!dimension) continue
+    for (const option of options) reportLabels.set(analyticsOptionLabelKey(dimension, option.key), option.label)
+  }
+  const labels: Record<string, string> = {}
+  for (const predicate of predicates) {
+    for (const value of predicate.values) {
+      const key = analyticsOptionLabelKey(predicate.dimension, value)
+      const label = reportLabels.get(key)
+      if (label !== undefined) labels[key] = label
+    }
+  }
+  return labels
 }
 
 /**
@@ -53,6 +78,7 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
   const groupQuery = useMemo(() => ({ key: groupQueryKey }), [groupQueryKey])
   const [groupPage, setGroupPage] = useState<GroupPageState | null>(null)
   const [rejectedEdit, setRejectedEdit] = useState<{ locationKey: string; message: string } | null>(null)
+  const [drilldownLabels, setDrilldownLabels] = useState<Record<string, string>>({})
   const interactionError = rejectedEdit?.locationKey === location.key ? rejectedEdit.message : null
   const offset = groupPage?.query === groupQuery ? groupPage.offset : 0
   const query = parsed.error ? null : analyticsQuery(view, offset)
@@ -83,7 +109,9 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
   }
 
   function drilldown(predicates: AttackAnalyticsFilter[], outcome?: AttackOutcome): void {
-    changeFilters(appendAnalyticsDrilldown(view.filters, predicates, outcome))
+    if (!changeFilters(appendAnalyticsDrilldown(view.filters, predicates, outcome)) || !report) return
+    const labels = drilldownOptionLabels(report, predicates)
+    setDrilldownLabels((previous: Record<string, string>) => ({ ...previous, ...labels }))
   }
 
   function reload(): void {
@@ -132,7 +160,8 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
               Every saved AttackResult ID, across operations, targets, and result roles.
               Scenario filters retain this population, including retries. Filters apply to the entire dashboard.
             </Text>
-            <AnalyticsFilters filters={view.filters} refreshVersion={analytics.refreshVersion} onChange={changeFilters} />
+            <AnalyticsFilters filters={view.filters} refreshVersion={analytics.refreshVersion} onChange={changeFilters}
+              drilldownLabels={drilldownLabels} />
             {interactionError && <MessageBar intent="error"><MessageBarBody>{interactionError}</MessageBarBody></MessageBar>}
             <div className={styles.toolbar} aria-label="Chart controls">
               <Field label="Chart view" className={styles.control}>

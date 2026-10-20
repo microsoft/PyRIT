@@ -70,6 +70,11 @@ export function analyticsValueKey(value: AttackAnalyticsValue): string {
   return JSON.stringify([value.kind, value.value])
 }
 
+/** Friendly labels are cached per typed dimension/value, never used to identify or merge predicates. */
+export function analyticsOptionLabelKey(dimension: AttackAnalyticsDimension, value: AttackAnalyticsValue): string {
+  return JSON.stringify([analyticsDimensionKey(dimension), analyticsValueKey(value)])
+}
+
 export function analyticsDimensionLabel(dimension: AttackAnalyticsDimension): string {
   if (dimension.name === 'label') return `Label: ${dimension.label_key}`
   return ANALYTICS_DIMENSIONS.find(
@@ -79,8 +84,8 @@ export function analyticsDimensionLabel(dimension: AttackAnalyticsDimension): st
 }
 
 /**
- * Marks Operation activity saved with only a name wherever it is shown.
- * Blank names read "(Blank)", like the SDK's option label, so chips and table rows match facets.
+ * Marks a raw Operation name saved without an Operation ID, for restored selections and result rows.
+ * Server labels for legacy keys already carry this suffix. Blank names read "(Blank)", like the SDK's option label.
  */
 export function analyticsLegacyOperationLabel(name: string): string {
   return `${name.trim() ? name : '(Blank)'} (legacy name)`
@@ -94,11 +99,13 @@ export function analyticsValueLabel(value: AttackAnalyticsValue): string {
   return value.value || '(Empty value)'
 }
 
-/** Keep the server's friendly label, but distinguish typed absences from literal "Unknown"/"No converters" values. */
+/**
+ * Keep the server's friendly label, but distinguish typed absences from literal "Unknown"/"No converters" values.
+ * Legacy Operation labels are shown as sent, because the SDK already appends " (legacy name)".
+ */
 export function analyticsOptionLabel(option: AttackAnalyticsOption): string {
   if (option.key.kind === 'missing') return `${option.label} (missing metadata)`
   if (option.key.kind === 'no_converters') return `${option.label} (empty pipeline)`
-  if (option.key.kind === 'legacy_operation_name') return analyticsLegacyOperationLabel(option.label)
   return option.label || '(Empty value)'
 }
 
