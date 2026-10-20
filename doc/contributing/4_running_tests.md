@@ -84,6 +84,12 @@ timeout coverage expires the real cancellation path only after the request start
 Event-controlled analytics expiry tests freeze both deadline clocks so floating-point
 rounding cannot turn a valid query budget into a failed assertion.
 
+Backend manual-send completion and first-request analytics correctness tests also
+use the shared watchdog. Manual sends are polled until a terminal snapshot, including
+finalization. Expiring the test's wait does not cancel the send; its lifecycle owner
+still drains pending work before mocks and memory close. Explicit zero-timeout tests
+check this ownership without requiring the send to finish quickly.
+
 For scenario correctness tests, wait for the owned task to finish, including
 persistence and scheduler handoff. Use events to control concurrent steps and a
 finite test watchdog to detect deadlocks, not short per-step latency limits.

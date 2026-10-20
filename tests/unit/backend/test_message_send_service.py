@@ -4,6 +4,7 @@
 """Tests for the shared synchronous manual-message owner."""
 
 import asyncio
+import inspect
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
@@ -64,7 +65,7 @@ from pyrit.models.target.target_capabilities import TargetCapabilities
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from unit.async_utils import wait_for_completion_async
+from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async
 from unit.backend.mocks import (
     _make_matching_target_mock,
     _settle_send_async,
@@ -2868,6 +2869,45 @@ class TestAsyncMessageSend:
             for call in service.get_status_async.await_args_list
         )
 
+    def test_settle_send_defaults_to_shared_watchdog(self) -> None:
+        parameter = inspect.signature(_settle_send_async).parameters["timeout_seconds"]
+        assert parameter.default == TEST_WATCHDOG_SECONDS
+
+    async def test_settle_send_timeout_preserves_send_until_success_async(
+        self,
+        *,
+        message_send_service: MessageSendService,
+        send_dependencies: tuple[MagicMock, AsyncMock],
+    ) -> None:
+        started: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        release = asyncio.Event()
+
+        async def hold_send_async(**_: Any) -> None:
+            started.set_result(None)
+            await release.wait()
+
+        send_dependencies[1].side_effect = hold_send_async
+        async with message_send_lifecycle_async(message_send_service):
+            try:
+                status = await message_send_service.submit_async(attack_result_id="attack", request=_submission())
+                await wait_for_completion_async(future=started)
+                task = message_send_service._sends[status.send_id].task
+                assert task is not None
+
+                with pytest.raises(TimeoutError):
+                    await _settle_send_async(service=message_send_service, status=status, timeout_seconds=0)
+                assert not task.done()
+                assert task.cancelling() == 0
+
+                release.set()
+                final = await _settle_send_async(service=message_send_service, status=status)
+                assert final.state == MessageSendState.COMPLETED
+                assert task.done()
+                assert not task.cancelled()
+                assert not message_send_service._scheduler._conversations
+            finally:
+                release.set()
+
     @pytest.mark.parametrize("failure", ["assertion", "timeout"])
     async def test_send_lifecycle_drains_pending_work_on_test_failure_async(
         self,
@@ -2898,9 +2938,10 @@ class TestAsyncMessageSend:
                 if failure == "assertion":
                     raise AssertionError("controlled test failure")
                 try:
-                    await _settle_send_async(service=message_send_service, status=status, timeout_seconds=0.01)
+                    await _settle_send_async(service=message_send_service, status=status, timeout_seconds=0)
                 except TimeoutError:
                     assert not task.done()
+                    assert task.cancelling() == 0
                     assert not cancelled.is_set()
                     raise
 
