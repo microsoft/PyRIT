@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.converter import RandomTranslationConverter
+from pyrit.converter import (
+    RandomTranslationConverter,
+    WordPositionSelectionStrategy,
+    WordProportionSelectionStrategy,
+)
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 
@@ -70,3 +74,25 @@ def test_random_translation_converter_identifier_distinguishes_language_pools(mo
     different = RandomTranslationConverter(converter_target=mock_target, languages=["German", "Japanese"])
 
     assert first.get_identifier().hash != different.get_identifier().hash
+
+
+def test_random_translation_converter_identifier_includes_word_selection_strategy(mock_target) -> None:
+    strategy = WordPositionSelectionStrategy(start_proportion=0.0, end_proportion=0.5)
+    converter = RandomTranslationConverter(converter_target=mock_target, word_selection_strategy=strategy)
+    identifier = converter.get_identifier()
+
+    assert identifier.params["word_selection_strategy"] == "WordPositionSelectionStrategy"
+    assert identifier.params["word_selection_strategy_params"] == {"start_proportion": 0.0, "end_proportion": 0.5}
+
+
+def test_random_translation_converter_identifier_distinguishes_word_selection_strategies(mock_target) -> None:
+    first = RandomTranslationConverter(
+        converter_target=mock_target,
+        word_selection_strategy=WordPositionSelectionStrategy(start_proportion=0.0, end_proportion=0.5),
+    )
+    second = RandomTranslationConverter(
+        converter_target=mock_target,
+        word_selection_strategy=WordProportionSelectionStrategy(proportion=0.5),
+    )
+
+    assert first.get_identifier().hash != second.get_identifier().hash

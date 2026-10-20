@@ -12,7 +12,7 @@ jest.mock('@/hooks/useRuntime', () => ({
 }))
 
 jest.mock('@/services/api', () => ({
-  targetsApi: { getTarget: jest.fn() },
+  targetsApi: { getTarget: jest.fn(), buildTarget: jest.fn() },
 }))
 
 jest.mock('@/services/targetRegistry', () => ({
@@ -38,6 +38,36 @@ describe('useAttackTargetResolution', () => {
     jest.clearAllMocks()
     mockRuntimeGeneration = 'generation-1'
     jest.mocked(targetsApi.getTarget).mockResolvedValue(replacementTarget)
+  })
+
+  it('reconstructs a saved temperature without selecting the registered default', async () => {
+    const binding = {
+      version: 1 as const, source_name: 'target', source_hash: 'source-hash',
+      temperature: 0.8, effective_hash: 'effective-hash',
+    }
+    jest.mocked(targetsApi.buildTarget).mockResolvedValue({
+      identifier: { class_name: 'OpenAIChatTarget', hash: 'effective-hash', temperature: 0.8 },
+    })
+    const savedTarget: TargetInfo = {
+      ...targetInfo, target_type: 'OpenAIChatTarget', identifier_hash: 'effective-hash', binding,
+    }
+    const { result, rerender } = renderHook(() => useAttackTargetResolution({
+      attackId: 'saved', attackLoadSequence: 1,
+      attackTarget: savedTarget,
+      attackTargetSource: 'persisted',
+    }))
+    await waitFor(() => expect(result.current.activeTarget?.binding).toEqual(binding))
+    expect(targetsApi.getTarget).not.toHaveBeenCalled()
+    expect(targetsApi.buildTarget).toHaveBeenCalledWith('OpenAIChatTarget', {
+      source_name: 'target', source_hash: 'source-hash', params: { temperature: 0.8 },
+      effective_hash: 'effective-hash',
+    })
+    jest.mocked(targetsApi.buildTarget).mockRejectedValue(new Error('Source missing'))
+    mockRuntimeGeneration = 'generation-2'
+    rerender()
+    expect(result.current.activeTarget).toBeNull()
+    await waitFor(() => expect(result.current.resolutionStatus).toBe('error'))
+    expect(result.current.activeTarget).toBeNull()
   })
 
   it('resolves a created attack from the new registry after the runtime generation changes', async () => {

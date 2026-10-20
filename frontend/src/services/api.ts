@@ -6,6 +6,9 @@ import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
   TargetInstance,
+  UnregisteredTarget,
+  UnregisteredConverter,
+  SourceInstanceSpec,
   TargetListResponse,
   TargetTypeListResponse,
   ConverterTypeListResponse,
@@ -50,6 +53,7 @@ import type {
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
+  PairedOutcomeStatistics,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -72,6 +76,7 @@ import type {
   FindingEvidenceListResponse,
   Operation,
   OperationCreate,
+  OperationDetail,
   OperationListResponse,
   OperationUpdate,
   AttackAnalyticsQuery,
@@ -93,7 +98,7 @@ export const operationsApi = {
   list: async (): Promise<OperationListResponse> => {
     return (await apiClient.get('/operations')).data
   },
-  get: async (operationId: string): Promise<Operation> => {
+  get: async (operationId: string): Promise<OperationDetail> => {
     return (await apiClient.get(operationPath(operationId))).data
   },
   create: async (request: OperationCreate): Promise<Operation> => {
@@ -101,6 +106,9 @@ export const operationsApi = {
   },
   update: async (operationId: string, request: OperationUpdate): Promise<Operation> => {
     return (await apiClient.patch(operationPath(operationId), request)).data
+  },
+  delete: async (operationId: string): Promise<void> => {
+    await apiClient.delete(operationPath(operationId))
   },
   listFindings: async (
     operationId: string, params: { limit: number; offset: number; title?: string },
@@ -357,6 +365,10 @@ export const targetsApi = {
     const response = await apiClient.post('/targets', request)
     return response.data
   },
+  buildTarget: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredTarget> => {
+    const response = await apiClient.post<UnregisteredTarget>('/targets', { type, source, register: false })
+    return response.data
+  },
 }
 
 export const techniquesApi = {
@@ -389,6 +401,10 @@ export const convertersApi = {
 
   createConverter: async (request: CreateConverterRequest): Promise<ConverterInstance> => {
     const response = await apiClient.post('/converters', request)
+    return response.data
+  },
+  buildConverter: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredConverter> => {
+    const response = await apiClient.post<UnregisteredConverter>('/converters', { type, source, register: false })
     return response.data
   },
 
@@ -666,6 +682,18 @@ export const scenariosApi = {
   ): Promise<ScenarioRunProgress> => {
     const response = await apiClient.get(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/progress`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  getPairedOutcomes: async (
+    scenarioResultId: string,
+    params: { baseline_group_id: string; attack_group_id: string },
+    signal?: AbortSignal,
+  ): Promise<PairedOutcomeStatistics> => {
+    const response = await apiClient.get<PairedOutcomeStatistics>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes`,
       { params, signal },
     )
     return response.data

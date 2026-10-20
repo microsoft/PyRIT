@@ -325,7 +325,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   }, [location.pathname, location.search, location.hash])
 
   const handleFiltersChange = useCallback((filters: HistoryFilters) => {
-    setSearchParams(filtersToSearchParams(filters), { replace: true })
+    // The label search is controlled by this URL state and must not lag behind typing.
+    setSearchParams(filtersToSearchParams(filters), { replace: true, flushSync: true })
   }, [setSearchParams])
 
   const handleScenarioHistoryFiltersChange = useCallback((filters: ScenarioHistoryFilters) => {
@@ -569,6 +570,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           endpoint: targetEndpoint(createdTarget),
           model_name: targetModelName(createdTarget),
           identifier_hash: targetIdentifierHash(createdTarget),
+          binding: createdTarget.binding,
         }
       : null
     skipNextLoadForAttackId.current = arId
@@ -848,7 +850,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <Route path="/analytics" element={<AnalyticsPage onOpenAttack={handleOpenAttack} />} />
               <Route path="/history" element={<LegacyAttackHistoryRedirect />} />
               <Route path="/operations" element={<OperationsPage />} />
-              <Route path="/operations/:operationId" element={<OperationDetailPage />} />
+              <Route path="/operations/:operationId" element={<OperationDetailPage onOperationChanged={operation.retry} />} />
               <Route path="/findings" element={<Navigate to="/operations" replace />} />
               <Route
                 path={HISTORY_ATTACKS_PATH}

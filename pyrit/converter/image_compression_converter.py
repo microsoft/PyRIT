@@ -128,7 +128,7 @@ class ImageCompressionConverter(Converter):
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
-        Build identifier with image compression parameters.
+        Build identifier with image compression parameters, preserving the historical default hash.
 
         Returns:
             ComponentIdentifier: The identifier for this converter.
@@ -142,6 +142,11 @@ class ImageCompressionConverter(Converter):
                 "compress_level": self._compress_level,
                 "lossless": self._lossless,
                 "method": self._method,
+                "background_color": self._background_color if self._background_color != (0, 0, 0) else None,
+                "min_compression_threshold": (
+                    self._min_compression_threshold if self._min_compression_threshold != 1024 else None
+                ),
+                "fallback_to_original": self._fallback_to_original if not self._fallback_to_original else None,
             }
         )
 
