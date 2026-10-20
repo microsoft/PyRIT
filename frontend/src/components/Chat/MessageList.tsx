@@ -36,6 +36,7 @@ import { useMessageListStyles } from './MessageList.styles'
 import { formatStructuredMessage, getRenderMessagePieces } from './messageViewModel'
 
 interface MessageListProps {
+  onEditConversation?: () => void
   messages: Message[]
   /** Copy this message to the input box of the current conversation */
   onCopyToInput?: (messageIndex: number) => void
@@ -44,6 +45,7 @@ interface MessageListProps {
   onUseInTechnique?: (messageIndex: number) => void
   copyConversationDisabled?: boolean
   newConversationDisabledReason?: string
+  getBranchConversationDisabledReason?: (messageIndex: number) => string | undefined
   /** True while loading a historical attack's messages */
   isLoading?: boolean
   /** Conversation-wide default: render message text as Markdown. */
@@ -434,7 +436,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
  */
 export default function MessageList({
   messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
-  newConversationDisabledReason, isLoading, globalMarkdown = false,
+  newConversationDisabledReason, getBranchConversationDisabledReason, isLoading, globalMarkdown = false, onEditConversation,
 }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -474,7 +476,7 @@ export default function MessageList({
 
   if (messages.length === 0) {
     return (
-      <div className={styles.emptyState}>
+      <div className={styles.emptyState} data-testid="message-list" onDoubleClick={onEditConversation}>
         <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
           There are no messages in this conversation yet.
         </Text>
@@ -483,8 +485,12 @@ export default function MessageList({
   }
 
   return (
-    <div className={styles.root} data-testid="message-list">
+    <div className={styles.root} data-testid="message-list" onDoubleClick={(event) => {
+      if (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, audio, video, [role="button"]')) return
+      onEditConversation?.()
+    }}>
       {messages.map((message, index) => {
+        const branchDisabledReason = newConversationDisabledReason ?? getBranchConversationDisabledReason?.(index)
         const isUser = message.role === 'user'
         const isSimulated = message.role === 'simulated_assistant' || message.role === 'simulated_tool'
         const timestamp = new Date(message.timestamp).toLocaleTimeString()
@@ -678,10 +684,10 @@ export default function MessageList({
                           subText={{ id: `${copyMenuId}-${index}-prompt`, children: 'Copy only this message to the prompt box.' }}>
                           Copy to next message
                         </MenuItem>
-                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewConversation || copyConversationDisabled || Boolean(newConversationDisabledReason)}
+                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewConversation || copyConversationDisabled || Boolean(branchDisabledReason)}
                           aria-label="Branch conversation" aria-describedby={`${copyMenuId}-${index}-conversation`}
                           subText={{ id: `${copyMenuId}-${index}-conversation`,
-                            children: `Copy history including this turn into the same attack.${newConversationDisabledReason ? ` ${newConversationDisabledReason}` : ''}` }}
+                            children: `Copy history including this turn into the same attack.${branchDisabledReason ? ` ${branchDisabledReason}` : ''}` }}
                           onClick={() => onCopyToNewConversation?.(index)}>Branch conversation</MenuItem>
                         <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewAttack || copyConversationDisabled}
                           aria-label="Branch attack" aria-describedby={`${copyMenuId}-${index}-attack`}

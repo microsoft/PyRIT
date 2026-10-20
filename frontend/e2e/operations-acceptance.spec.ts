@@ -2,6 +2,7 @@ import { test, expect, type APIRequestContext, type Page } from '@playwright/tes
 
 import type { AttackSummary, Finding, Operation, ScenarioRunListItem, ScenarioRunSummary } from '../src/types'
 import { compatibilityHeaders } from './_compatibility'
+import { waitForAppReady } from './_runtime'
 
 const LEGACY_ATTACK_ID = '11111111-1111-4111-8111-111111111111'
 const PROPOSED_NAME = 'browser_proposed'
@@ -88,13 +89,23 @@ for (const width of [1280, 390]) {
     )).toEqual({ id: operation.id })
 
     await bar.getByRole('button', { name: 'Clear operation', exact: true }).click()
+    await expect.poll(() => page.evaluate(() =>
+      JSON.parse(localStorage.getItem('pyrit.userPreferences.v1.local') ?? '{}').operation,
+    )).toBeNull()
     await page.reload()
+    await waitForAppReady(page)
     await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveValue('')
     await page.evaluate(() => localStorage.removeItem('pyrit.userPreferences.v1.local'))
     await page.reload()
+    await waitForAppReady(page)
+    await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveValue(PROPOSED_NAME)
+    await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveAccessibleDescription('Not registered')
     await bar.getByRole('combobox', { name: 'Operation', exact: true }).click()
     await page.getByRole('option', { name: PROPOSED_NAME, exact: true }).click()
     await expect(bar.getByText('Not registered', { exact: true })).toHaveCount(0)
+    await expect.poll(() => page.evaluate(() =>
+      JSON.parse(localStorage.getItem('pyrit.userPreferences.v1.local') ?? '{}').operation,
+    )).toEqual({ id: operation.id })
 
     const newName = `Restored ${width} ${Date.now()}`
     await page.evaluate((name: string) => {
@@ -122,9 +133,13 @@ test('persists selected IDs for chat and scanner history, and clear survives rel
   test.setTimeout(90_000)
   const operation = await createOperation(request, `Activity ${Date.now()}`)
   await page.goto('/')
+  await waitForAppReady(page)
   const bar = page.getByRole('region', { name: 'Default Labels' })
   await bar.getByRole('combobox', { name: 'Operation', exact: true }).click()
   await page.getByRole('option', { name: operation.name, exact: true }).click()
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('pyrit.userPreferences.v1.local') ?? '{}').operation,
+  )).toEqual({ id: operation.id })
   const chat = await sendChat(page, request, 'Selected Operation chat.')
   expect(chat.operation_id).toBe(operation.id)
 
@@ -159,7 +174,11 @@ test('persists selected IDs for chat and scanner history, and clear survives rel
   await expect(page.getByTestId(`scenario-history-row-${run.scenario_result_id}`)).toBeVisible()
 
   await bar.getByRole('button', { name: 'Clear operation', exact: true }).click()
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('pyrit.userPreferences.v1.local') ?? '{}').operation,
+  )).toBeNull()
   await page.reload()
+  await waitForAppReady(page)
   await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveValue('')
   const unassigned = await sendChat(page, request, 'Unassigned after reload.')
   expect(unassigned.operation_id).toBeNull()

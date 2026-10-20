@@ -454,7 +454,7 @@ class PyRITShell(cmd.Cmd):
             --datasets <name[:N|:all]> ...  Select sources and optional caps
             --max-per-dataset <N|all>       Default per-source cap
             --max-total <N|all>             Combined attack-group cap
-            --dataset-fetch <policy>       never or if_missing
+            --dataset-fetch <policy>       never, if_missing, or always (replace stored data)
             --dataset-names <name> ...      Deprecated source selection
             --max-dataset-size <N>          Deprecated total cap
             --<scenario-flag> <value>       Scenario-declared parameters (see list-scenarios)

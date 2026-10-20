@@ -31,6 +31,7 @@ from pyrit.converter.text_selection_strategy import (
 )
 from pyrit.models import Message, PromptDataType
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
+from pyrit.registry import ConverterRegistry
 
 
 @pytest.mark.parametrize("token_entry", [False, True])
@@ -773,3 +774,40 @@ class TestSelectiveTextConverter:
         params = converter.get_identifier().params
         assert params["selection_strategy"] == "IndexSelectionStrategy"
         assert params["selection_strategy_params"] == {}
+
+
+def test_identifier_distinguishes_word_separator_for_word_level_strategies() -> None:
+    space = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=WordIndexSelectionStrategy(indices=[0]),
+    )
+    comma = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=WordIndexSelectionStrategy(indices=[0]),
+        word_separator=",",
+    )
+    assert space.get_identifier().params["word_separator"] == " "
+    assert comma.get_identifier().params["word_separator"] == ","
+    assert space.get_identifier().hash != comma.get_identifier().hash
+
+    # Both configurations get their own default registry name instead of colliding.
+    instances = ConverterRegistry().instances
+    instances.register(space)
+    instances.register(comma)
+    assert instances.get(space.get_identifier().unique_name) is space
+    assert instances.get(comma.get_identifier().unique_name) is comma
+
+
+def test_identifier_ignores_word_separator_for_char_level_strategies() -> None:
+    # Character-level strategies never split on the separator, so it does not change the output.
+    space = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=IndexSelectionStrategy(start=0, end=5),
+    )
+    comma = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=IndexSelectionStrategy(start=0, end=5),
+        word_separator=",",
+    )
+    assert "word_separator" not in space.get_identifier().params
+    assert space.get_identifier().hash == comma.get_identifier().hash

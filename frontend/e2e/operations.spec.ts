@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 import type { Finding, Operation } from '../src/types'
+import { waitForAppReady } from './_runtime'
 
 for (const width of [1280, 390]) {
   test(`wraps long finding text in detail and evidence picker at ${width}px @seeded`, async ({ page, request }) => {
@@ -21,6 +22,7 @@ for (const width of [1280, 390]) {
     expect(findingResponse.status()).toBe(201)
 
     await page.goto(`/operations/${operation.id}`)
+    await waitForAppReady(page)
     const heading = page.getByRole('heading', { name: title, exact: true })
     await expect(heading).toBeVisible()
     const finding = page.getByRole('listitem').filter({ has: heading })
@@ -37,12 +39,9 @@ for (const width of [1280, 390]) {
     await expect(finding.getByText(`Harm-type: ${harmType}`, { exact: true })).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
 
-    const targetResponse = await request.post('/api/targets', { headers, data: { type: 'TextTarget', params: {} } })
-    expect(targetResponse.ok()).toBeTruthy()
-    const target = await targetResponse.json()
     const attackResponse = await request.post('/api/attacks', {
       headers, data: {
-        target_registry_name: target.target_registry_name,
+        target_registry_name: 'browser_offline',
         operation_id: operation.id,
         prepended_conversation: [{ role: 'user', pieces: [{ original_value: 'Saved offline evidence.' }] }],
       },
@@ -178,6 +177,7 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
   test.setTimeout(90_000)
   const name = `Engagement / α% & ${Date.now()}`
   await page.goto('/')
+  await waitForAppReady(page)
   const bar = page.getByRole('region', { name: 'Default Labels' })
   await bar.getByRole('combobox', { name: 'Operation', exact: true }).click()
   await page.getByRole('option', { name: 'New operation…', exact: true }).click()
@@ -191,6 +191,9 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
   await expect(bar.getByRole('combobox', { name: 'Operation' })).toHaveValue(name)
   await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toBeFocused()
   await expect(page).toHaveURL(/\/$/)
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('pyrit.userPreferences.v1.local') ?? '{}').operation,
+  )).toEqual({ id: operation.id })
   await page.reload()
   await expect(bar.getByRole('combobox', { name: 'Operation' })).toHaveValue(name)
 
@@ -211,7 +214,7 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
 
   const version = await (await request.get('/api/version')).json()
   const headers = { 'PyRIT-Compatibility-ID': version.compatibility_id }
-  const targetResponse = await request.post('/api/targets', { headers, data: { type: 'TextTarget', params: {} } })
+  const targetResponse = await request.get('/api/targets/browser_offline', { headers })
   expect(targetResponse.ok()).toBeTruthy()
   const target = await targetResponse.json()
   let sourceAttack: { attack_result_id: string; conversation_id: string } | null = null

@@ -136,6 +136,7 @@ class OpenAIImageTarget(OpenAITarget):
         return self._create_identifier(
             params={
                 "image_size": self.image_size,
+                "output_format": self.output_format,
                 "quality": self.quality,
                 "background": self.background,
             },
