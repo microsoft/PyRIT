@@ -1,8 +1,27 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { scenarioRunRoutePath } from '../src/utils/routeParams'
 
 const run = scenarioRunRoutePath('00000000-0000-0000-0000-00000000238c')
 const paginatedRun = scenarioRunRoutePath('00000000-0000-0000-0000-00000000238f')
+
+async function captureExpandedTransition(page: Page, table: Locator, details: Locator, path: string): Promise<void> {
+  const header = table.getByRole('row').first()
+  await header.evaluate((element) => element.scrollIntoView({ block: 'start' }))
+  await expect(details.getByRole('link', { name: 'Open baseline conversation' })).toBeInViewport({ ratio: 1 })
+  await expect(details.getByRole('link', { name: 'Open attack conversation' })).toBeInViewport({ ratio: 1 })
+  const headerBox = await header.boundingBox()
+  const detailsBox = await details.boundingBox()
+  const viewport = page.viewportSize()
+  if (!headerBox || !detailsBox || !viewport) throw new Error('Missing screenshot bounds')
+  const clip = {
+    x: headerBox.x, y: headerBox.y, width: headerBox.width,
+    height: detailsBox.y + detailsBox.height - headerBox.y + 8,
+  }
+  expect(clip.y).toBeGreaterThanOrEqual(0)
+  expect(clip.y + clip.height).toBeLessThanOrEqual(viewport.height)
+  expect(clip.height).toBeLessThanOrEqual(700)
+  await page.screenshot({ path, clip })
+}
 
 test('compares persisted outcomes through the real API, including retries and exclusions', async ({ page }, testInfo) => {
   const errors: string[] = []
@@ -54,7 +73,8 @@ test('compares persisted outcomes through the real API, including retries and ex
   const attackLink = details.getByRole('link', { name: 'Open attack conversation' })
   await expect(baselineLink).toHaveAttribute('href', /scenarioResultId=00000000-0000-0000-0000-00000000238c/)
   await expect(attackLink).toHaveAttribute('href', /scenarioResultId=00000000-0000-0000-0000-00000000238c/)
-  await panel.screenshot({ path: testInfo.outputPath('paired-outcomes-desktop.png') })
+  await captureExpandedTransition(page, comparison.getByRole('table', { name: 'Outcome transitions' }), details,
+    testInfo.outputPath('paired-outcomes-desktop.png'))
   await attackLink.click()
   await expect(page).toHaveURL(/\/attacks\/[^/]+\/conversations\/[^/]+\?scenarioResultId=/)
   await expect(page.getByText('Offline objective: a')).toBeVisible()
@@ -90,6 +110,9 @@ test('keeps expanded pairs usable at a narrow viewport and with keyboard control
   await expect(button).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(panel.getByRole('region', { name: 'Paired comparison' })).toBeVisible()
+  const baselineMetric = await panel.getByRole('group', { name: 'Baseline success rate' }).boundingBox()
+  const attackMetric = await panel.getByRole('group', { name: 'Attack success rate' }).boundingBox()
+  expect(baselineMetric?.y).toBe(attackMetric?.y)
   const overflow = await panel.evaluate((element) => element.scrollWidth > element.clientWidth)
   expect(overflow).toBe(false)
   const size = await button.boundingBox()
@@ -100,9 +123,11 @@ test('keeps expanded pairs usable at a narrow viewport and with keyboard control
   await expand.focus()
   await page.keyboard.press('Enter')
   await expect(expand).toHaveAttribute('aria-expanded', 'true')
+  expect((await expand.boundingBox())?.height).toBeLessThanOrEqual(44)
   await expect(panel.getByRole('region', { name: 'Failure → Success pair details' })).toContainText('Logical seed: a')
   expect(await panel.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(false)
-  await panel.screenshot({ path: testInfo.outputPath('paired-outcomes-mobile.png') })
+  await captureExpandedTransition(page, panel.getByRole('table', { name: 'Outcome transitions' }),
+    panel.getByRole('region', { name: 'Failure → Success pair details' }), testInfo.outputPath('paired-outcomes-mobile.png'))
 })
 
 test('paginates matching SQLite pairs', async ({ page }) => {

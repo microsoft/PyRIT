@@ -16,6 +16,7 @@ import {
   TableRow,
   Text,
 } from '@fluentui/react-components'
+import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
 
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -197,11 +198,11 @@ function Comparison({ scenarioResultId, baselineId, attackId }: ComparisonProps)
         <Metric label="Excluded pairs" value={report.excluded_pairs.toLocaleString()} />
       </div>
       <Text>Rates use the same decided pairs. Difference = attack − baseline, in percentage points (pp).</Text>
-      <Table aria-label="Outcome transitions">
+      <Table aria-label="Outcome transitions" className={styles.transitions}>
         <TableHeader>
           <TableRow>
             <TableHeaderCell>Baseline → Attack</TableHeaderCell>
-            <TableHeaderCell>Pairs</TableHeaderCell>
+            <TableHeaderCell className={styles.countCell}>Pairs</TableHeaderCell>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -254,13 +255,13 @@ function TransitionRow({ label, transition, count, scenarioResultId, baselineId,
             className={styles.expandButton}
             aria-expanded={expanded}
             aria-controls={detailsId}
+            icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
             onClick={() => setExpanded((current) => !current)}
           >
-            <span aria-hidden="true" className={styles.chevron}>{expanded ? '▾' : '▸'}</span>
             {label}
           </Button>
         </TableCell>
-        <TableCell>{count.toLocaleString()}</TableCell>
+        <TableCell className={styles.countCell}>{count.toLocaleString()}</TableCell>
       </TableRow>
       {expanded && (
         <TableRow>

@@ -993,7 +993,9 @@ All results use the same decided-pair cohort and most recent top-level attempt
 as the transition counts, so retries and child attempts are never additional
 pairs.
 
-Expanded paired outcomes on desktop:
+The following focused screenshots show one expanded transition and its conversation links.
+
+Expanded transition details on desktop:
 
 ![Paired outcomes with an expanded transition, objective, and baseline and attack conversation links](./images/paired-outcomes-desktop.png)
 

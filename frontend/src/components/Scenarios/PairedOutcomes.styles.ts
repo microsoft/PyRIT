@@ -35,17 +35,25 @@ export const usePairedOutcomesStyles = makeStyles({
   },
   metrics: {
     display: 'grid',
+    overflowWrap: 'anywhere',
     gridTemplateColumns: 'repeat(auto-fit, minmax(9rem, 1fr))',
     gap: tokens.spacingHorizontalL,
+    [NARROW_VIEWPORT_QUERY]: { gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' },
   },
+  transitions: { tableLayout: 'fixed', width: '100%' },
+  countCell: { width: '3.5rem', textAlign: 'end', whiteSpace: 'nowrap' },
   expandButton: {
     minHeight: MINIMUM_TOUCH_TARGET_SIZE,
     maxWidth: '100%',
     textAlign: 'start',
     whiteSpace: 'normal',
+    justifyContent: 'flex-start',
   },
-  chevron: { marginRight: tokens.spacingHorizontalXS },
-  detailsCell: { padding: tokens.spacingVerticalM, minWidth: 0 },
+  detailsCell: {
+    padding: tokens.spacingVerticalM,
+    minWidth: 0,
+    [NARROW_VIEWPORT_QUERY]: { padding: tokens.spacingVerticalS },
+  },
   details: {
     display: 'flex',
     flexDirection: 'column',
