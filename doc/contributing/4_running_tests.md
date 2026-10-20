@@ -84,11 +84,15 @@ timeout coverage expires the real cancellation path only after the request start
 Event-controlled analytics expiry tests freeze both deadline clocks so floating-point
 rounding cannot turn a valid query budget into a failed assertion.
 
-The cold target-type route test signals readiness back to the event loop without
-occupying another discovery worker. Startup and draining use the shared finite
-watchdog; the separate 10-second health-response check runs while discovery is
-explicitly held. Single-worker and failure-path cases check that the request and
-worker finish before test patches and the client are released.
+The target-type route test starts target metadata discovery, waits for a signal
+that it has started, and keeps it paused while checking that `/api/health`
+responds within 10 seconds. Waiting for that signal does not use an extra worker
+thread. The waits for discovery to start and for background work to finish use
+the shared 300-second timeout, so the test fails rather than waiting forever if
+work gets stuck. This timeout is separate from the health-response requirement.
+The test runs with one or two worker threads, including failure and cancellation
+cases. In every case, the request and discovery worker finish before the test
+restores patched functions and closes the HTTP client.
 
 For scenario correctness tests, wait for the owned task to finish, including
 persistence and scheduler handoff. Use events to control concurrent steps and a
