@@ -23,6 +23,7 @@ import {
 
 import { convertersApi, targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import { useTargetPreferences } from '@/hooks/useTargetPreferences'
 import type {
   ConverterInstance, ConverterTypeEntry, Parameter, TargetInstance, SourceInstanceSpec, ConverterIdentifier,
 } from '@/types'
@@ -75,7 +76,7 @@ interface CreateConverterDialogProps {
 
 interface ParameterInputProps {
   parameter: Parameter
-  referenceOptions: Array<{ name: string; type: string }>
+  referenceOptions: Array<{ name: string; type: string; isDefault?: boolean }>
   value: string
   showError: boolean
   onChange: (value: string) => void
@@ -165,14 +166,16 @@ function ParameterInput({
     return (
       <Field
         label={label}
-        hint={`Select a registered ${parameter.reference_type}.`}
+        hint={parameter.reference_type === 'target'
+          ? `${parameter.name} is the target used by the converter to convert or rewrite the prompt. It uses the default adversarial target when available. You can select a different target.`
+          : `Select a registered ${parameter.reference_type}.`}
         validationMessage={showError ? 'Required' : undefined}
       >
         <Select value={value} onChange={(_, data) => onChange(data.value)}>
           <option value="">Select a registered {parameter.reference_type}</option>
           {referenceOptions.map((option) => (
             <option key={option.name} value={option.name}>
-              {option.name} ({option.type})
+              {option.name} ({option.type}){option.isDefault ? ' (default)' : ''}
             </option>
           ))}
         </Select>
@@ -260,6 +263,7 @@ export default function CreateConverterDialog({
   const styles = useCreateConverterDialogStyles()
   const [converterTypes, setConverterTypes] = useState<ConverterTypeEntry[]>([])
   const [targets, setTargets] = useState<TargetInstance[]>([])
+  const { adversarialTarget } = useTargetPreferences(targets)
   const [converters, setConverters] = useState<ConverterInstance[]>([])
   const [selectedType, setSelectedType] = useState('')
   const [registryName, setRegistryName] = useState('')
@@ -356,11 +360,12 @@ export default function CreateConverterDialog({
       }))
   }, [converterTypes])
 
-  const referenceOptions = (parameter: Parameter): Array<{ name: string; type: string }> => {
+  const referenceOptions = (parameter: Parameter): Array<{ name: string; type: string; isDefault?: boolean }> => {
     if (parameter.reference_type === 'target') {
       return targets.map((target) => ({
         name: target.target_registry_name,
         type: target.identifier.class_name,
+        isDefault: target.target_registry_name === adversarialTarget?.target_registry_name,
       }))
     }
     if (parameter.reference_type === 'converter') {
@@ -400,6 +405,12 @@ export default function CreateConverterDialog({
             && isEditableParameter(parameter) && parameter.default != null)
           .map((parameter) => [parameter.name, parameterDefaultValue(parameter)]),
       ),
+      ...(adversarialTarget ? Object.fromEntries(
+        parameters
+          .filter((parameter: Parameter) => !parameter.variants
+            && parameter.reference_type === 'target')
+          .map((parameter: Parameter) => [parameter.name, adversarialTarget.target_registry_name]),
+      ) : {}),
     })
     setShowValidation(false)
     setError(null)
