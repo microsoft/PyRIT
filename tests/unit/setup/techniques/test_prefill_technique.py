@@ -122,6 +122,9 @@ def test_prefill_rejects_additional_dataset_history_without_mutation() -> None:
     factory = _prefill_factory()
     with pytest.raises(IncompatibleTechniqueError, match="only an objective"):
         _atomic_with_group(factory, seed_group)
+    assert factory.seed_technique is not None
+    with pytest.raises(ValueError, match="objective-only"):
+        seed_group.with_technique(technique=factory.seed_technique)
     assert len(seed_group.prompts) == 1
 
 
@@ -296,8 +299,11 @@ async def test_response_conversion_and_scoring_use_generated_continuation() -> N
 
 
 async def test_distinct_prefixes_have_distinct_persisted_evaluation_hashes() -> None:
-    first = _atomic(_prefill_factory("Sure:"), _RecordingTarget())
-    second = _atomic(_prefill_factory("Absolutely:"), _RecordingTarget())
+    first_factory = _prefill_factory("Sure:")
+    second_factory = _prefill_factory("Absolutely:")
+    assert first_factory.get_identifier().hash != second_factory.get_identifier().hash
+    first = _atomic(first_factory, _RecordingTarget())
+    second = _atomic(second_factory, _RecordingTarget())
     assert first.technique_eval_hash != second.technique_eval_hash
     a = (await first.run_async()).completed_results[0]
     b = (await second.run_async()).completed_results[0]

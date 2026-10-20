@@ -939,6 +939,7 @@ async def discover_target_capabilities_async(
         supports_editable_history=resolved_editable_history,
         supports_system_prompt=_resolve(CapabilityName.SYSTEM_PROMPT),
         supports_streaming_audio=declared.supports_streaming_audio,
+        supports_prefill=declared.supports_prefill,
         input_modalities=resolved_input_modalities,
         # Output modalities are still declarative because probing them would
         # require target-specific response inspection.
