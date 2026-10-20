@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
 import {
@@ -162,7 +162,9 @@ function Comparison({ scenarioResultId, baselineId, attackId }: ComparisonProps)
 
   if (state.status === 'loading') return <Spinner size="small" label="Comparing outcomes" />
   if (state.status === 'error') {
-    return <MessageBar intent="error"><MessageBarBody>{state.error}</MessageBarBody></MessageBar>
+    return <MessageBar intent="error" layout="multiline" className={styles.errorMessage}>
+      <MessageBarBody>{state.error}</MessageBarBody>
+    </MessageBar>
   }
 
   const report = state.report
@@ -282,6 +284,7 @@ function TransitionRow({ label, transition, count, scenarioResultId, baselineId,
 
 interface DetailState {
   pairs: PairedOutcomeDetail[]
+  pageStart: number
   nextCursor: string | null
   status: 'loading' | 'ready' | 'error'
   error?: string
@@ -289,8 +292,10 @@ interface DetailState {
 
 function TransitionDetails({ label, transition, count, scenarioResultId, baselineId, attackId }: TransitionRowProps) {
   const styles = usePairedOutcomesStyles()
-  const [state, setState] = useState<DetailState>({ pairs: [], nextCursor: null, status: 'loading' })
+  const [state, setState] = useState<DetailState>({ pairs: [], pageStart: 0, nextCursor: null, status: 'loading' })
   const [request, setRequest] = useState<{ cursor?: string; version: number }>({ version: 0 })
+  const detailsRegion = useRef<HTMLElement>(null)
+  const firstNewPair = useRef<HTMLElement>(null)
 
   useEffect(() => {
     if (count === 0) return
@@ -311,10 +316,11 @@ function TransitionDetails({ label, transition, count, scenarioResultId, baselin
         }
         const pairs = [...previous.pairs, ...page.pairs]
         if (pairs.length > count || new Set(pairs.map((pair) => pair.seed_group_id)).size !== pairs.length
-          || (page.next_cursor !== null && page.pairs.length === 0)) {
+          || (page.next_cursor === null && pairs.length !== count)
+          || (page.next_cursor !== null && (page.pairs.length === 0 || pairs.length === count))) {
           return { ...previous, status: 'error', error: 'Pair details could not be paged consistently. Compare outcomes again.' }
         }
-        return { pairs, nextCursor: page.next_cursor, status: 'ready' }
+        return { pairs, pageStart: previous.pairs.length, nextCursor: page.next_cursor, status: 'ready' }
       })
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) {
@@ -324,16 +330,29 @@ function TransitionDetails({ label, transition, count, scenarioResultId, baselin
     return () => controller.abort()
   }, [scenarioResultId, baselineId, attackId, transition, count, request])
 
+  useEffect(() => {
+    if (state.status === 'ready' && document.activeElement === detailsRegion.current) {
+      // Restore focus lost with the loading button, without interrupting navigation elsewhere.
+      firstNewPair.current?.focus()
+    }
+  }, [state.status, state.pairs])
+
   const fetchPage = (cursor?: string) => {
+    if (document.activeElement instanceof HTMLButtonElement) detailsRegion.current?.focus({ preventScroll: true })
     setState((previous) => ({ ...previous, status: 'loading', error: undefined }))
     setRequest((previous) => ({ cursor, version: previous.version + 1 }))
   }
 
   return (
-    <section aria-label={`${label} pair details`} className={styles.details} aria-live="polite">
+    <section ref={detailsRegion} tabIndex={-1} aria-label={`${label} pair details`} className={styles.details} aria-live="polite">
       {count === 0 && <Text>No matching pairs in this transition.</Text>}
-      {state.pairs.map((pair) => (
-        <article key={pair.seed_group_id} className={styles.pairCard}>
+      {state.pairs.map((pair, position) => (
+        <article
+          key={pair.seed_group_id}
+          className={styles.pairCard}
+          ref={position === state.pageStart ? firstNewPair : undefined}
+          tabIndex={-1}
+        >
           <div className={styles.pairHeader}>
             <Text weight="semibold" block>Objective</Text>
             <Text className={styles.wrappingText} block>{pair.objective || 'Objective unavailable'}</Text>
@@ -342,8 +361,9 @@ function TransitionDetails({ label, transition, count, scenarioResultId, baselin
           {pair.seed_prompts.length > 0 && (
             <div className={styles.seedPrompts}>
               <Text weight="semibold" block>Seed prompts</Text>
-              {pair.seed_prompts.map((prompt) => (
-                <div key={prompt.sequence} className={styles.wrappingText}>
+              {/* Multimodal pieces share sequences; positions are fixed in this saved prompt list. */}
+              {pair.seed_prompts.map((prompt, position) => (
+                <div key={`${prompt.sequence}:${position}`} className={styles.wrappingText}>
                   <Text size={200} block>
                     {`#${prompt.sequence}${prompt.role ? ` · ${prompt.role}` : ''}${prompt.data_type ? ` · ${prompt.data_type}` : ''}`}
                   </Text>
@@ -363,7 +383,9 @@ function TransitionDetails({ label, transition, count, scenarioResultId, baselin
       )}
       {state.status === 'error' && (
         <div className={styles.feedback}>
-          <MessageBar intent="error"><MessageBarBody>{state.error}</MessageBarBody></MessageBar>
+          <MessageBar intent="error" layout="multiline" className={styles.errorMessage}>
+            <MessageBarBody>{state.error}</MessageBarBody>
+          </MessageBar>
           <Button onClick={() => fetchPage(request.cursor)}>{`Retry ${label} pairs`}</Button>
         </div>
       )}
@@ -371,7 +393,7 @@ function TransitionDetails({ label, transition, count, scenarioResultId, baselin
         <div className={styles.pageControls}>
           <Text size={200}>{`${state.pairs.length} of ${count.toLocaleString()} pairs shown`}</Text>
           {state.nextCursor && (
-            <Button onClick={() => fetchPage(state.nextCursor!)}>{`Load more ${label} pairs`}</Button>
+            <Button onClick={() => fetchPage(state.nextCursor ?? undefined)}>{`Load more ${label} pairs`}</Button>
           )}
         </div>
       )}
@@ -398,6 +420,18 @@ function OutcomeSide({ label, side, scenarioResultId }: {
         >
           {`Open ${label.toLowerCase()} conversation`}
         </Link>
+      ) : side.child_conversation ? (
+        <>
+          <Text size={200} block>{`Linked child outcome: ${side.child_conversation.outcome}`}</Text>
+          <Link
+            className={styles.conversationLink}
+            to={attackConversationRoutePath(
+              side.child_conversation.attack_result_id, side.child_conversation.conversation_id, scenarioResultId,
+            )}
+          >
+            {`Open ${label.toLowerCase()} child conversation`}
+          </Link>
+        </>
       ) : <Text size={200}>Conversation unavailable</Text>}
     </div>
   )

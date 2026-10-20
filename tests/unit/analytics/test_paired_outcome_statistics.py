@@ -23,6 +23,7 @@ from pyrit.models import (
     AttackResult,
     AttackSeedGroup,
     ComponentIdentifier,
+    ScenarioResult,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanGroupKind,
@@ -906,7 +907,7 @@ def test_paired_outcomes_reject_malformed_child_result_ids() -> None:
         )
 
 
-def _detail_scenario():
+def _detail_scenario() -> ScenarioResult:
     """Construct pairs with a retry, a child attempt, and an excluded outcome."""
     return make_scenario_result(
         metadata={SCENARIO_RUN_PLAN_METADATA_KEY: _plan().model_dump(mode="json")},
@@ -1037,3 +1038,60 @@ def test_paired_outcome_details_preserve_compatibility_checks() -> None:
             attack_group_id="attack",
             transition=PairedOutcomeTransition.FAILURE_TO_SUCCESS,
         )
+
+
+@pytest.mark.parametrize("seed_id", ["a" + "x" * 900, "a" + "雪" * 200], ids=["long-ascii", "long-unicode"])
+def test_paired_outcome_details_can_continue_after_long_seed_ids(seed_id: str) -> None:
+    seeds = (seed_id, "z")
+    saved = make_scenario_result(
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: _plan(seeds, seeds).model_dump(mode="json")},
+        attack_results={
+            "baseline": [_result(seed, AttackOutcome.FAILURE) for seed in seeds],
+            "attack": [_result(seed, AttackOutcome.SUCCESS) for seed in seeds],
+        },
+    )
+    first = get_paired_outcome_details(
+        saved,
+        baseline_group_id="base",
+        attack_group_id="attack",
+        transition=PairedOutcomeTransition.FAILURE_TO_SUCCESS,
+        limit=1,
+    )
+    assert first.next_cursor is not None
+    assert len(first.next_cursor) <= 1024
+    second = get_paired_outcome_details(
+        saved,
+        baseline_group_id="base",
+        attack_group_id="attack",
+        transition=PairedOutcomeTransition.FAILURE_TO_SUCCESS,
+        limit=1,
+        cursor=first.next_cursor,
+    )
+    assert [pair.seed_group_id for pair in first.pairs + second.pairs] == [seed_id, "z"]
+    assert second.next_cursor is None
+
+
+@pytest.mark.parametrize("live", [False, True])
+def test_paired_outcome_details_link_nested_compound_conversation_without_counting_children(live: bool) -> None:
+    outer, inner, leaf = _nested_compound_outcome()
+    outer.conversation_id = inner.conversation_id = ""
+    unrelated = _result("a", AttackOutcome.SUCCESS, seconds=100, group="attack", attempt_index=2)
+    results = [outer, unrelated] if live else _saved_compound_results([outer, inner, leaf, unrelated])
+    saved = make_scenario_result(
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: _plan(("a",), ("a",)).model_dump(mode="json")},
+        attack_results={"baseline": [_result("a", AttackOutcome.FAILURE)], "attack": results},
+    )
+    page = get_paired_outcome_details(
+        saved,
+        baseline_group_id="base",
+        attack_group_id="attack",
+        transition=PairedOutcomeTransition.FAILURE_TO_SUCCESS,
+    )
+    assert page.total_pairs == len(page.pairs) == 1
+    side = page.pairs[0].attack
+    assert side.attack_result_id == outer.attack_result_id
+    assert side.outcome == AttackOutcome.SUCCESS
+    assert side.child_conversation is not None
+    assert side.child_conversation.attack_result_id == leaf.attack_result_id
+    assert side.child_conversation.conversation_id == leaf.conversation_id
+    assert side.child_conversation.outcome == AttackOutcome.SUCCESS

@@ -981,6 +981,11 @@ Each transition row can be expanded to inspect the matched logical objectives
 behind that count. Expanding loads only the selected transition's pairs, with
 the baseline and attack outcomes shown side by side and links to each saved
 conversation. Conversation links retain the originating Scenario run context.
+When a compound result has no conversation of its own, the panel links to one
+of its recorded child conversations and labels the child's outcome separately.
+It prefers the last linked conversation matching the compound outcome, falling
+back to the last linked conversation when none matches. The displayed pair
+outcome and observation count still belong to the top-level result.
 Use **Load more** to inspect additional pairs, or collapse the row to hide its
 details. Large transitions are loaded in bounded pages; a failed request can
 be retried from the expanded row. Switching selected groups clears the details.

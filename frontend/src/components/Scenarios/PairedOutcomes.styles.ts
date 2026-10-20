@@ -86,7 +86,14 @@ export const usePairedOutcomesStyles = makeStyles({
     color: tokens.colorBrandForegroundLink,
     ':focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
   },
-  feedback: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: tokens.spacingVerticalS },
+  feedback: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: tokens.spacingVerticalS,
+    '& button': { minHeight: MINIMUM_TOUCH_TARGET_SIZE },
+  },
+  errorMessage: { width: '100%', minWidth: 0, overflowWrap: 'anywhere' },
   pageControls: {
     display: 'flex',
     alignItems: 'center',

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from pyrit.analytics.conversation_analytics import ConversationAnalytics
     from pyrit.analytics.outcome_statistics import combine_outcome_statistics, compute_outcome_statistics
     from pyrit.analytics.paired_outcome_statistics import (
+        PairedOutcomeChildConversation,
         PairedOutcomeDetail,
         PairedOutcomeDetailPage,
         PairedOutcomeDetailSide,
@@ -50,6 +51,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "count_execution_units": "pyrit.analytics.scenario_statistics",
     "ConversationAnalytics": "pyrit.analytics.conversation_analytics",
     "PairedOutcomeStatistics": "pyrit.analytics.paired_outcome_statistics",
+    "PairedOutcomeChildConversation": "pyrit.analytics.paired_outcome_statistics",
     "PairedOutcomeDetail": "pyrit.analytics.paired_outcome_statistics",
     "PairedOutcomeDetailPage": "pyrit.analytics.paired_outcome_statistics",
     "PairedOutcomeDetailSide": "pyrit.analytics.paired_outcome_statistics",

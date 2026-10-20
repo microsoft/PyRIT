@@ -9,7 +9,6 @@ import base64
 import binascii
 import hashlib
 import json
-from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -84,6 +83,15 @@ _TRANSITION_OUTCOMES = {
 
 
 @dataclass(frozen=True, slots=True)
+class PairedOutcomeChildConversation:
+    """One linked child conversation for a compound completion without its own conversation."""
+
+    attack_result_id: str
+    conversation_id: str
+    outcome: AttackOutcome
+
+
+@dataclass(frozen=True, slots=True)
 class PairedOutcomeDetailSide:
     """The effective top-level completion for one side of a logical pair."""
 
@@ -92,6 +100,7 @@ class PairedOutcomeDetailSide:
     conversation_id: str
     timestamp: datetime
     outcome_reason: str | None
+    child_conversation: PairedOutcomeChildConversation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,19 +126,35 @@ class PairedOutcomeDetailPage:
     next_cursor: str | None
 
 
-def _detail_side(result: AttackResult) -> PairedOutcomeDetailSide:
+def _detail_side(result: AttackResult, *, attempts_by_id: dict[str, AttackResult]) -> PairedOutcomeDetailSide:
     """
     Copy only the effective top-level outcome context needed by the GUI.
 
     Returns:
         PairedOutcomeDetailSide: Selected top-level result context.
     """
+    child_conversation = None
+    if not result.conversation_id:
+        fallback = matching = None
+        for linked in _linked_outcome_results(result, attempts_by_id=attempts_by_id):
+            if linked.conversation_id:
+                fallback = linked
+                if linked.outcome == result.outcome:
+                    matching = linked
+        selected = matching or fallback
+        if selected is not None:
+            child_conversation = PairedOutcomeChildConversation(
+                attack_result_id=selected.attack_result_id,
+                conversation_id=selected.conversation_id,
+                outcome=selected.outcome,
+            )
     return PairedOutcomeDetailSide(
         outcome=result.outcome,
         attack_result_id=result.attack_result_id,
         conversation_id=result.conversation_id,
         timestamp=result.timestamp,
         outcome_reason=result.outcome_reason,
+        child_conversation=child_conversation,
     )
 
 
@@ -150,7 +175,7 @@ def _encode_detail_cursor(
             attack_group_id=attack_group_id,
             transition=transition,
         ),
-        "after": seed_id,
+        "after": to_sha256(seed_id),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return base64.urlsafe_b64encode(encoded).decode().rstrip("=")
@@ -176,7 +201,7 @@ def _decode_detail_cursor(
     Reject malformed, mismatched, or noncanonical pagination cursors.
 
     Returns:
-        str: Validated last seed ID; membership is verified against current matches.
+        str: Validated last seed digest; membership is verified against current matches.
 
     Raises:
         ValueError: If the cursor is malformed or belongs to another selection.
@@ -201,7 +226,8 @@ def _decode_detail_cursor(
                 transition=transition,
             )
             or not isinstance(payload["after"], str)
-            or not payload["after"]
+            or len(payload["after"]) != 64
+            or any(character not in "0123456789abcdef" for character in payload["after"])
         ):
             raise ValueError
         return payload["after"]
@@ -251,10 +277,10 @@ def get_paired_outcome_details(
         matching_details=matches,
     )
     matches.sort(key=lambda item: item.seed_group_id)
-    ids = [item.seed_group_id for item in matches]
+    ids = [to_sha256(item.seed_group_id) for item in matches]
     if after is not None and after not in ids:
         raise ValueError("Invalid paired-outcome detail cursor: seed is not in the selected transition.")
-    start = bisect_right(ids, after) if after is not None else 0
+    start = ids.index(after) + 1 if after is not None else 0
     page = matches[start : start + limit]
     next_cursor = (
         _encode_detail_cursor(
@@ -638,8 +664,8 @@ def _compute_paired_outcome_statistics(
                         seed_group_id=seed_id,
                         objective=seed.objective,
                         seed_prompts=tuple(seed.prompts),
-                        baseline=_detail_side(before[1]),
-                        attack=_detail_side(after[1]),
+                        baseline=_detail_side(before[1], attempts_by_id=before[2]),
+                        attack=_detail_side(after[1], attempts_by_id=after[2]),
                     )
                 )
 

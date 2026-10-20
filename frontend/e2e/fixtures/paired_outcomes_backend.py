@@ -32,6 +32,7 @@ async def _seed_async(memory: SQLiteMemory) -> None:
         ScenarioRunPlanAtomicGroup,
         ScenarioRunPlanGroupKind,
         ScenarioRunPlanSeedGroup,
+        ScenarioRunPlanSeedPrompt,
         ScenarioRunState,
         TargetIdentifier,
     )
@@ -48,10 +49,20 @@ async def _seed_async(memory: SQLiteMemory) -> None:
         )
     )
     for index, state in enumerate(
-        [ScenarioRunState.COMPLETED, ScenarioRunState.COMPLETED, ScenarioRunState.FAILED, ScenarioRunState.COMPLETED]
+        [
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.FAILED,
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.COMPLETED,
+        ]
     ):
         scenario_id = UUID(int=9100 + index)
-        page_seeds = [f"page-{number:02d}" for number in range(30)] if index == 3 else []
+        page_seeds = (
+            [f"page-{number:02d}" + ("x" * 900 if index == 4 and number == 23 else "") for number in range(30)]
+            if index in (3, 4)
+            else []
+        )
         selected_seeds = shared + page_seeds
         plan = ScenarioRunPlan(
             atomic_groups=[
@@ -69,7 +80,16 @@ async def _seed_async(memory: SQLiteMemory) -> None:
                 ]
             ],
             seed_groups=[
-                ScenarioRunPlanSeedGroup(id=seed, objective=seed, objective_sha256=to_sha256(seed))
+                ScenarioRunPlanSeedGroup(
+                    id=seed,
+                    objective=seed,
+                    objective_sha256=to_sha256(seed),
+                    prompts=[
+                        ScenarioRunPlanSeedPrompt(value="LongPrompt" * 80, sequence=0, data_type="text", role="user")
+                    ]
+                    if index == 4 and seed == "a"
+                    else [],
+                )
                 for seed in selected_seeds + ["base-only", "attack-only"]
             ],
         )
@@ -152,7 +172,19 @@ async def _seed_async(memory: SQLiteMemory) -> None:
                 },
             )
         )
+        if index == 4:
+            parent = rows["attack"][0]
+            child = parent.model_copy(deep=True)
+            child.attack_result_id = str(uuid4())
+            child.conversation_id = str(uuid4())
+            assert child.attribution_data is not None
+            child.attribution_data["attempt_index"] = 1
+            parent.conversation_id = ""
+            parent.metadata["child_attack_result_ids"] = [child.attack_result_id]
+            rows["attack"].append(child)
         for attack_result in (item for group in rows.values() for item in group):
+            if not attack_result.conversation_id:
+                continue
             await memory.add_conversation_to_memory_async(
                 conversation=Conversation(
                     conversation_id=attack_result.conversation_id,

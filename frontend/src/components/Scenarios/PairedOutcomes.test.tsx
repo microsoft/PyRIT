@@ -25,13 +25,14 @@ const report: PairedOutcomeStatistics = {
   baseline_errors: 0, attack_errors: 1, baseline_undetermined: 0, attack_undetermined: 0,
   unmatched_baseline_seeds: 1, unmatched_attack_seeds: 0, unattributed_attempts: 0,
 }
-function mount(props: Partial<React.ComponentProps<typeof PairedOutcomes>> = {}) {
+function mount(props: Partial<React.ComponentProps<typeof PairedOutcomes>> = {}, reactStrictMode: boolean = false) {
   return render(
     <MemoryRouter>
       <FluentProvider theme={webLightTheme}>
         <PairedOutcomes scenarioResultId={runId} status="COMPLETED" plan={plan} {...props} />
       </FluentProvider>
     </MemoryRouter>,
+    { reactStrictMode },
   )
 }
 async function compare() {
@@ -63,6 +64,19 @@ function detailPage(pairs: PairedOutcomeDetail[] = [pair], next_cursor: string |
 beforeEach(() => {
   request.mockReset(); request.mockResolvedValue(report)
   detailsRequest.mockReset(); detailsRequest.mockResolvedValue(detailPage())
+})
+
+test('ignores the cancelled Strict Mode request without duplicating pair details', async () => {
+  let resolve!: (value: PairedOutcomeDetailPage) => void
+  detailsRequest.mockReturnValueOnce(new Promise<PairedOutcomeDetailPage>((done) => { resolve = done }))
+  mount({}, true)
+  const user = await compare()
+  await user.click(await screen.findByRole('button', { name: 'Failure → Success' }))
+  expect(await screen.findByText('1 of 1 pairs shown')).toBeInTheDocument()
+  expect((detailsRequest.mock.calls[0][2] as AbortSignal).aborted).toBe(true)
+  await act(async () => resolve(detailPage([{ ...pair, objective: 'Stale cancelled objective' }])))
+  expect(screen.queryByText('Stale cancelled objective')).not.toBeInTheDocument()
+  expect(screen.getAllByText('Logical seed: seed-1')).toHaveLength(1)
 })
 
 test('requires explicit groups and shows backend transitions, paired rates and exclusions', async () => {
@@ -131,6 +145,7 @@ test('paginates with bounded requests, stable cursors and no duplicate pairs', a
   expect(await screen.findByText('25 of 31 pairs shown')).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Load more Failure → Success pairs' }))
   expect(await screen.findByText('31 of 31 pairs shown')).toBeInTheDocument()
+  expect(screen.getAllByRole('article')[25]).toHaveFocus()
   expect(screen.getAllByText('Logical seed: seed-01')).toHaveLength(1)
   expect(screen.queryByRole('button', { name: 'Load more Failure → Success pairs' })).not.toBeInTheDocument()
   expect(detailsRequest).toHaveBeenNthCalledWith(2, runId, {
@@ -257,4 +272,56 @@ test('cancels requests on unmount', async () => {
   const signal = request.mock.calls[0][2] as AbortSignal
   view.unmount()
   expect(signal.aborted).toBe(true)
+})
+
+test('links a compound outcome to its linked child conversation in Scenario context', async () => {
+  const compoundPair = {
+    ...pair,
+    attack: {
+      ...pair.attack,
+      conversation_id: '',
+      child_conversation: {
+        attack_result_id: 'linked-child', conversation_id: 'child-conversation', outcome: 'success' as const,
+      },
+    },
+  }
+  detailsRequest.mockResolvedValueOnce(detailPage([compoundPair]))
+  mount()
+  const user = await compare()
+  await user.click(await screen.findByRole('button', { name: 'Failure → Success' }))
+  const link = await screen.findByRole('link', { name: 'Open attack child conversation' })
+  expect(link).toHaveAttribute('href', `/attacks/linked-child/conversations/child-conversation?scenarioResultId=${runId}`)
+  expect(screen.getByText('Linked child outcome: success')).toBeInTheDocument()
+  expect(screen.getByText('1 of 1 pairs shown')).toBeInTheDocument()
+})
+
+test('rejects a truncated final page instead of silently hiding remaining pairs', async () => {
+  request.mockResolvedValue({ ...report, failure_to_success: 2 })
+  detailsRequest.mockResolvedValueOnce(detailPage([pair], null, 2))
+  mount()
+  const user = await compare()
+  await user.click(await screen.findByRole('button', { name: 'Failure → Success' }))
+  expect(await screen.findByText(/could not be paged consistently/)).toBeInTheDocument()
+  expect(screen.queryByText('1 of 2 pairs shown')).not.toBeInTheDocument()
+})
+
+test('renders multimodal prompt pieces sharing a sequence without duplicate React keys', async () => {
+  const consoleError = jest.spyOn(console, 'error')
+  detailsRequest.mockResolvedValueOnce(detailPage([{
+    ...pair,
+    seed_prompts: [
+      { sequence: 0, value: 'Text piece', role: 'user', data_type: 'text', parameters: [] },
+      { sequence: 0, value: 'Image piece', role: 'user', data_type: 'image_path', parameters: [] },
+    ],
+  }]))
+  try {
+    mount()
+    const user = await compare()
+    await user.click(await screen.findByRole('button', { name: 'Failure → Success' }))
+    expect(await screen.findByText('Text piece')).toBeInTheDocument()
+    expect(screen.getByText('Image piece')).toBeInTheDocument()
+    expect(consoleError).not.toHaveBeenCalled()
+  } finally {
+    consoleError.mockRestore()
+  }
 })

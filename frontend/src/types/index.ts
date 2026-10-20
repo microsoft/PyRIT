@@ -1699,6 +1699,11 @@ export interface PairedOutcomeDetailSide {
   conversation_id: string
   timestamp: string
   outcome_reason: string | null
+  child_conversation?: {
+    attack_result_id: string
+    conversation_id: string
+    outcome: AttackOutcome
+  } | null
 }
 
 export interface PairedOutcomeDetail {
