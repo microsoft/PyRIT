@@ -68,6 +68,10 @@ class PuzzledConverter(Converter):
         - ``crossword``: shared letters across the masked words are replaced by symbols the model
           must deduce.
 
+    Each puzzle uses the same letter units as its clues: canonically equivalent spellings
+    are normalized, and combining marks stay attached to their letters during encoding.
+    Alphanumeric tokens, underscores, and words containing joiners are not partially masked.
+
     Keyword selection uses spaCy's ``en_core_web_sm`` model when it is installed and degrades to a
     length-based heuristic when it is not, so the converter has no hard dependency on spaCy. Run
     ``python -m spacy download en_core_web_sm`` to enable the paper's part-of-speech-aware

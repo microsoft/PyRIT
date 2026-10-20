@@ -12,6 +12,7 @@ import pytest
 from scipy.io import wavfile
 
 from pyrit.converter.audio_echo_converter import AudioEchoConverter
+from pyrit.registry import ConverterRegistry
 
 
 @pytest.mark.usefixtures("sqlite_instance")
@@ -172,3 +173,32 @@ async def test_echo_unsupported_input_type(sqlite_instance):
     converter = AudioEchoConverter(delay=0.3, decay=0.5)
     with pytest.raises(ValueError, match="Input type not supported"):
         await converter.convert_async(prompt="some_file.wav", input_type="text")
+
+
+def test_echo_identifier_includes_settings() -> None:
+    params = AudioEchoConverter(delay=0.2, decay=0.4).get_identifier().params
+    assert params["output_format"] == "wav"
+    assert params["delay"] == 0.2
+    assert params["decay"] == 0.4
+
+
+@pytest.mark.parametrize(
+    "other", [AudioEchoConverter(delay=0.6), AudioEchoConverter(decay=0.8)], ids=["delay", "decay"]
+)
+def test_echo_identifier_distinguishes_settings(other: AudioEchoConverter) -> None:
+    default = AudioEchoConverter()
+    assert default.get_identifier().hash != other.get_identifier().hash
+
+    # Both configurations get their own default registry name instead of colliding.
+    instances = ConverterRegistry().instances
+    instances.register(default)
+    instances.register(other)
+    assert instances.get(default.get_identifier().unique_name) is default
+    assert instances.get(other.get_identifier().unique_name) is other
+
+
+def test_echo_identifier_is_stable_for_equal_settings() -> None:
+    assert (
+        AudioEchoConverter(delay=0.2, decay=0.4).get_identifier().hash
+        == AudioEchoConverter(delay=0.2, decay=0.4).get_identifier().hash
+    )

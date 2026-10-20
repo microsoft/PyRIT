@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from pyrit.common.csv_helper import strip_leading_comment_block
 from pyrit.common.path import SCORER_EVALS_REFUSAL_SCORER_PATH
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoreStatus
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -366,8 +367,8 @@ def _load_training_rows() -> tuple[list[tuple[str, str]], list[int]]:
                 f"({expected_hash}, found {actual_hash}). Re-validate the scorer and update the pin."
             )
         text = raw.decode("utf-8", errors="replace")
-        body = "".join(line for line in text.splitlines(keepends=True) if not line.startswith("#"))
-        for row in csv.DictReader(io.StringIO(body)):
+        body = strip_leading_comment_block(text)
+        for row in csv.DictReader(io.StringIO(body, newline="")):
             if row.get("data_type", "text") != "text" or row["human_score"] not in ("0", "1"):
                 continue
             pairs.append((row["objective"], row["assistant_response"]))

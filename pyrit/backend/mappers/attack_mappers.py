@@ -332,6 +332,25 @@ async def _resolve_and_sign_media_async(*, value: str | None, data_type: str) ->
     return resolved
 
 
+async def resolve_client_media_url_async(*, value: str | None, data_type: str) -> str | None:
+    """
+    Resolve a stored media value to a client-fetchable display URL.
+
+    This is the shared mapper for chat messages and dataset seed details.
+    Local files that exist become ``/api/media`` URLs. Azure Blob URLs are
+    signed. Data URIs and other HTTP URLs pass through. The stored value is
+    not modified; callers keep it as the stable source reference.
+
+    Args:
+        value: The stored file path, blob URL, data URI, or text.
+        data_type: The prompt data type (for example ``image_path`` or ``text``).
+
+    Returns:
+        The display URL, or ``None`` when the value is empty or not media.
+    """
+    return await _resolve_and_sign_media_async(value=value, data_type=data_type)
+
+
 def _score_lookup_key(*, piece: MessagePiece) -> str:
     """
     Compute the score-lookup key for a piece.

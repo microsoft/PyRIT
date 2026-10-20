@@ -85,12 +85,7 @@ export default function SelectConverterInput({
                 <div className={styles.registeredOption}>
                   <div className={styles.optionHeader}>
                     <Text weight="semibold">{converter.converter_id}</Text>
-                    <div className={styles.optionBadges}>
-                      <Text size={200} className={styles.optionType}>
-                        {converter.identifier.class_name}
-                      </Text>
-                      {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
-                    </div>
+                    {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
                   </div>
                   <Text size={200} className={styles.hintText}>
                     {description}

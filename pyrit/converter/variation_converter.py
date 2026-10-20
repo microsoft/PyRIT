@@ -77,7 +77,9 @@ class VariationConverter(LLMGenericTextConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        base_identifier = super()._build_identifier()
         return self._create_identifier(
+            params={**base_identifier.params},
             converter_target=self.converter_target.get_identifier(),
         )
 

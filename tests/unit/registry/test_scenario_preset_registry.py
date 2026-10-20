@@ -13,6 +13,7 @@ import pytest
 
 from pyrit.models import Parameter
 from pyrit.models.catalog.scenario_preset import ScenarioPreset
+from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetRequest
 from pyrit.registry.components.converter_registry import ConverterRegistry
 from pyrit.registry.components.scenario_preset_registry import (
     ScenarioPresetNameRegisteredError,
@@ -107,9 +108,11 @@ class TestPresetCrud:
             description="Nightly smoke",
             author="tester",
             techniques=["crescendo"],
-            dataset_names=["harmbench"],
-            max_dataset_size=25,
-            dataset_filters={"harm_categories": ["violence"]},
+            datasets=ScenarioDatasetRequest(
+                sources=[DatasetSourceInput(name="harmbench")],
+                max_total=25,
+                filters={"harm_categories": ["violence"]},
+            ),
             include_baseline=True,
             scenario_params={"max_turns": 3},
         )

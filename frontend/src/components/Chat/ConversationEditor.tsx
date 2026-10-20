@@ -1,4 +1,4 @@
-import { useCallback, useImperativeHandle, useMemo, useState, type ReactNode, type Ref } from 'react'
+import { useCallback, useEffect, useImperativeHandle, useMemo, useState, type ReactNode, type Ref } from 'react'
 
 import {
   Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
@@ -10,12 +10,12 @@ import { useBeforeUnload, useBlocker } from 'react-router'
 import { usePieceConverters } from '@/hooks/useChatConverters'
 import type { useConversationDraft } from '@/hooks/useConversationDraft'
 import type {
-  AddMessageResponse, ConversationDraftMessage, ConversationDraftPiece, MessageAttachment, SaveConversationRequest,
+  AddMessageResponse, ChatConverterSnapshot, ConversationDraftMessage, ConversationDraftPiece, MessageAttachment,
+  PieceConversionUpdates, SaveConversationRequest, TargetInstance,
 } from '@/types'
 import {
   NEW_MESSAGE_ROLES, draftAttachment, draftConverterInputs, editorTargetDisabledReason, unansweredToolCallId,
 } from '@/utils/conversationDraft'
-import { buildAppliedConversions } from '@/utils/conversionResults'
 import { basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from '@/utils/media'
 
 import PromptEditor from './PromptEditor'
@@ -162,27 +162,31 @@ interface ConversationEditorProps {
   ref?: Ref<ConversationEditorHandle>
   sameAttackDisabledReason?: string
   newAttackDisabledReason?: string
-  onSaved: (response: AddMessageResponse) => void
+  onSaved: (response: AddMessageResponse, target?: TargetInstance | null) => void
   onSave?: (destination: SaveConversationRequest['destination']) => void
+  onExit?: () => Promise<boolean>
   saveDestination?: SaveConversationRequest['destination']
   saveLabel?: string
+  initialConverters?: ChatConverterSnapshot
 }
 
 export interface ConversationEditorHandle {
   convertConversation: () => void
   saveToNewAttack: () => void
   cancel: () => void
+  finishEditing: () => Promise<boolean>
+  getConverters: () => ChatConverterSnapshot
 }
 
 export default function ConversationEditor({
-  controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved, onSave,
+  controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved, onSave, onExit,
   saveDestination: directSaveDestination, saveLabel = 'Save conversation',
+  initialConverters,
 }: ConversationEditorProps) {
   const styles = useConversationEditorStyles()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [convertersOpen, setConvertersOpen] = useState(false)
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
-  const [saveDestination, setSaveDestination] = useState<SaveConversationRequest['destination']>()
   const [discardOpen, setDiscardOpen] = useState(false)
   const { draft, saving, error, dirty, validationError, targetError, changePiece, changeAttachments, insert, addPiece } = controller
   const messages = useMemo(() => draft?.messages ?? [], [draft?.messages])
@@ -194,8 +198,27 @@ export default function ConversationEditor({
       event.returnValue = ''
     }
   }, [controller]))
-  const inputs = useMemo(() => draftConverterInputs(messages, selected), [messages, selected])
-  const converters = usePieceConverters(inputs, [...selected].sort().join(','))
+  const inputs = useMemo(
+    () => draftConverterInputs(messages, new Set(messages.map((message: ConversationDraftMessage) => message.id))),
+    [messages],
+  )
+  const selectedIds = useMemo(() => new Set(messages.filter(
+    (message: ConversationDraftMessage) => selected.has(message.id),
+  ).flatMap((message: ConversationDraftMessage) => message.pieces.map(
+    (piece: ConversationDraftPiece) => piece.draftId,
+  ))), [messages, selected])
+  const converters = usePieceConverters(inputs, undefined, { initialSnapshot: initialConverters, selectedIds })
+  useEffect(() => {
+    if (!onExit) return
+    const leaveEditor = (event: PointerEvent): void => {
+      const target = event.target
+      if (saving || converters.isConverting || !(target instanceof Element)
+        || target.closest('button, a, input, textarea, select, [role="button"], [role="dialog"], [role="menu"], [role="listbox"], [data-conversation-editor-controls], [data-conversation-editor-message], [data-testid="converter-panel"]')) return
+      void onExit()
+    }
+    document.addEventListener('pointerdown', leaveEditor)
+    return () => document.removeEventListener('pointerdown', leaveEditor)
+  }, [onExit, saving, converters.isConverting])
   const openConverters = (messageId?: string): void => {
     setSelected(new Set(messageId ? [messageId] : messages.map((message: ConversationDraftMessage) => message.id)))
     setConvertersOpen(true)
@@ -206,27 +229,44 @@ export default function ConversationEditor({
     else controller.discard()
   }
   const save = (destination: SaveConversationRequest['destination']): void => {
+    if (converters.isConverting) return
     if (onSave) onSave(destination)
     else void controller.save(destination, onSaved)
   }
   useImperativeHandle(ref, () => ({
     convertConversation: () => openConverters(),
     saveToNewAttack: () => {
-      setSaveDestination('new_attack')
-      setSaveDialogOpen(true)
+      if (!saving && !converters.isConverting && !validationError && !targetError && !newAttackDisabledReason) save('new_attack')
     },
+    finishEditing: () => converters.isConverting ? Promise.resolve(false) : onExit?.() ?? Promise.resolve(true),
+    getConverters: converters.snapshot,
     cancel,
   }))
   const removeMessage = (messageId: string): void => {
     controller.removeMessage(messageId)
     setSelected((previous: Set<string>) => new Set([...previous].filter((id: string) => id !== messageId)))
   }
-  const applyConversions = (): void => {
-    controller.applyConversions(buildAppliedConversions(converters.inputs, converters.results))
-    setConvertersOpen(false)
+  const applyConversions = (updates: PieceConversionUpdates): void => {
+    controller.changeMessages((current: ConversationDraftMessage[]) => current.map((message: ConversationDraftMessage) => ({
+      ...message,
+      pieces: message.pieces.map((piece: ConversationDraftPiece) => {
+        if (!Object.prototype.hasOwnProperty.call(updates, piece.draftId)) return piece
+        const conversion = updates[piece.draftId]
+        return {
+          ...piece,
+          converted_value: conversion?.convertedValue,
+          converted_value_data_type: conversion?.convertedDataType,
+          applied_converter_ids: conversion?.converterInstanceIds ?? [],
+          applied_converter_provenance: conversion?.converterProvenance,
+        }
+      }),
+    })))
   }
   const unsupportedSelected = messages.some((message: ConversationDraftMessage) => selected.has(message.id)
     && message.pieces.some((piece: ConversationDraftPiece) => piece.data_type !== 'text' && !isPathDataType(piece.data_type)))
+  const saveDisabledReason = (converters.isConverting ? 'Wait for conversion to finish before saving.' : undefined)
+    ?? validationError ?? targetError
+    ?? (directSaveDestination === 'same_attack' ? sameAttackDisabledReason : newAttackDisabledReason)
   return (
     <div className={styles.root} data-testid="conversation-editor">
       {convertersOpen && <div className={styles.converterPane}>
@@ -252,7 +292,7 @@ export default function ConversationEditor({
         </div>
         {messages.map((message: ConversationDraftMessage, index: number) => (
           <div key={message.id}>
-            <section className={styles.card} aria-label={`Message ${index + 1}`}>
+            <section className={styles.card} aria-label={`Message ${index + 1}`} data-conversation-editor-message>
               {message.pieces.map((piece: ConversationDraftPiece, pieceIndex: number) => (
                 <div key={piece.draftId} className={styles.piece}>
                   <DraftPieceEditor piece={piece} disabled={saving} onChange={changePiece}
@@ -317,19 +357,24 @@ export default function ConversationEditor({
       </div>
       <div className={styles.footer}>
         <Button className={styles.button} disabled={saving} onClick={cancel}>Cancel</Button>
+        <Tooltip content={saveDisabledReason ?? 'Save a new conversation without changing the original sent history.'}
+          relationship="description">
+        <span tabIndex={saveDisabledReason ? 0 : undefined} aria-label={saveDisabledReason ?? undefined}>
         <Button className={styles.button} appearance="primary"
-          disabled={saving || Boolean(validationError)
-            || Boolean(directSaveDestination && (!messages.length || targetError || newAttackDisabledReason))}
+          disabled={saving || converters.isConverting || Boolean(validationError)
+            || Boolean(directSaveDestination && (!messages.length || targetError
+              || (directSaveDestination === 'same_attack' ? sameAttackDisabledReason : newAttackDisabledReason)))}
           onClick={() => { if (directSaveDestination) save(directSaveDestination); else setSaveDialogOpen(true) }}>
           {saveLabel}
         </Button>
+        </span>
+        </Tooltip>
       </div>
-      {directSaveDestination && error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
+      {!saveDialogOpen && error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       </div>
       {saveDialogOpen && <SaveConversationDialog sameAttackDisabledReason={sameAttackDisabledReason}
         newAttackDisabledReason={newAttackDisabledReason}
         validationError={validationError ?? targetError}
-        initialDestination={saveDestination}
         objectiveChanged={draft?.objective.trim() !== draft?.initialObjective} saving={saving} error={error}
         onClose={() => setSaveDialogOpen(false)} onSave={save} />}
       <Dialog open={discardOpen || blocker.state === 'blocked'} onOpenChange={(_event, data) => {

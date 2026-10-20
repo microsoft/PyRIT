@@ -16,7 +16,7 @@ from sqlalchemy.orm import Query, Session
 from pyrit.common.singleton import Singleton
 from pyrit.converter.base64_converter import Base64Converter
 from pyrit.memory import AzureSQLMemory, EmbeddingDataEntry, PromptMemoryEntry
-from pyrit.memory.memory_interface import AttackResultKeysetCursor
+from pyrit.memory.memory_interface import AttackResultKeysetCursor, _AttackResultQuery
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import Conversation, MessagePiece
@@ -524,6 +524,41 @@ def test_get_condition_json_property_match_bind_params(
     assert list(pp_params.values())[0] == "$.key"
     assert len(mv_params) == 1
     assert list(mv_params.values())[0] == expected_value
+
+
+def test_literal_label_condition_binds_keys_and_values(uninitialized_memory_interface: AzureSQLMemory) -> None:
+    """Non-allowlisted keys go through OPENJSON with the key bound, never into a JSON path."""
+    condition = uninitialized_memory_interface._get_attack_result_literal_label_condition(
+        labels={'team"name': ["red", "blue"], "x')=1 --": "r1", "empty": []}
+    )
+    compiled = str(condition.compile(compile_kwargs={"literal_binds": False}))
+
+    assert 'OPENJSON("AttackResultEntries".labels)' in compiled
+    assert "JSON_VALUE" not in compiled
+    # SQL Server pads strings before comparing, so "team name " would equal "team name" without this.
+    for key_param in ("are_literal_key_0", "are_literal_key_1"):
+        assert f"DATALENGTH(label_entry.[key]) = DATALENGTH(CAST(:{key_param} AS NVARCHAR(MAX)))" in compiled
+    assert 'team"name' not in compiled
+    assert condition.compile().params == {
+        "are_literal_key_0": 'team"name',
+        "are_literal_0_0": "red",
+        "are_literal_0_1": "blue",
+        "are_literal_key_1": "x')=1 --",
+        "are_literal_1_0": "r1",
+    }
+
+
+def test_attack_label_conditions_split_allowlisted_and_literal_keys(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    query = _AttackResultQuery(labels={"phase": "initial", "team name": "red"})
+
+    conditions = uninitialized_memory_interface._build_attack_result_label_conditions(query=query)
+
+    compiled = [str(condition.compile(compile_kwargs={"literal_binds": False})) for condition in conditions]
+    assert len(compiled) == 2
+    assert "JSON_VALUE" in compiled[0]
+    assert "OPENJSON" in compiled[1]
 
 
 def test_get_attack_result_label_condition_with_string_value(memory_interface: AzureSQLMemory):

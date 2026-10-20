@@ -96,6 +96,36 @@ def test_leetspeak_empty_custom_substitutions(input_text, expected_output):
     assert result.output_text == expected_output
 
 
+@pytest.mark.parametrize("deterministic", [True, False])
+def test_leetspeak_custom_substitutions_match_uppercase_keys(deterministic):
+    converter = LeetspeakConverter(deterministic=deterministic, custom_substitutions={"A": ["4"], "T": ["7"]})
+    result = asyncio.run(converter.convert_async(prompt="That cat"))
+    assert result.output_text == "7h47 c47"
+
+
+def test_leetspeak_custom_substitutions_keep_identifier_of_lowercase_keys():
+    uppercase = LeetspeakConverter(custom_substitutions={"A": ["4"]})
+    lowercase = LeetspeakConverter(custom_substitutions={"a": ["4"]})
+    assert uppercase.get_identifier().unique_name == lowercase.get_identifier().unique_name
+
+
+@pytest.mark.parametrize(
+    "custom_substitutions",
+    [
+        {"e": []},  # failed with IndexError on the first "e"
+        {"e": "3"},
+        {"e": ["3", 3]},
+        {"th": ["7"]},  # never matched, because characters are looked up one at a time
+        {"": ["7"]},
+        {"a": ["4"], "A": ["@"]},
+    ],
+)
+@pytest.mark.parametrize("deterministic", [True, False])
+def test_leetspeak_rejects_invalid_custom_substitutions(custom_substitutions, deterministic):
+    with pytest.raises(ValueError, match="custom_substitutions"):
+        LeetspeakConverter(deterministic=deterministic, custom_substitutions=custom_substitutions)
+
+
 def test_leetspeak_input_supported():
     converter = LeetspeakConverter()
     assert converter.input_supported("text") is True

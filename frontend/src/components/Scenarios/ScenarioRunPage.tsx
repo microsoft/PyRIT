@@ -73,6 +73,7 @@ import AttackExecutionTable from './AttackExecutionTable'
 import { ObjectiveDetailsDialog, TechniqueDetailsDialog } from './ScenarioRunDialogs'
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
 import ScenarioQueue from './ScenarioQueue'
+import PairedOutcomes from './PairedOutcomes'
 
 const CLOCK_REFRESH_INTERVAL_MS = 1_000
 const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
@@ -541,6 +542,8 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
             {queued ? progressText : isTerminalRunState(run.status) ? `Run ${formatRunState(run.status)}` : ''}
           </span>
         </section>
+
+        <PairedOutcomes scenarioResultId={scenarioResultId} status={run.status} plan={state.planComplete ? state.plan : null} />
 
         <section className={styles.section} aria-labelledby="atomic-groups-heading">
           <div className={styles.sectionHeading}>
