@@ -292,13 +292,24 @@ async def test_scalar_facet_filter_uses_index_and_preserves_exact_any_values(sql
     assert {item.key.value for item in result.items} == {"first", "second"}
 
 
-async def test_operation_id_filter_uses_operation_id_index(sqlite_instance: SQLiteMemory) -> None:
+@pytest.mark.parametrize(
+    ("legacy_names", "expected"),
+    [([], {"first"}), (["Engagement"], {"first", "second"})],
+    ids=["id_only", "id_and_legacy_name"],
+)
+async def test_operation_id_filter_uses_operation_id_index(
+    *, sqlite_instance: SQLiteMemory, legacy_names: list[str], expected: set[str]
+) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
     linked = make_result(index=1, operation=None, operation_id=operation.id, labels={"case": "first"})
     legacy = make_result(index=2, operation="Engagement", labels={"case": "second"})
     await add_legacy_attack_results_async(sqlite_instance, attack_results=[linked, legacy])
+    values = [
+        {"value": str(operation.id)},
+        *({"kind": "legacy_operation_name", "value": name} for name in legacy_names),
+    ]
     filters = AttackAnalyticsFilters.model_validate(
-        {"dimensions": [predicate(name="operation", values=[str(operation.id)])]}
+        {"dimensions": [{"dimension": {"name": "operation"}, "values": values}]}
     )
     query = AttackAnalyticsFacetQuery(
         filters=filters, dimension=AttackAnalyticsDimension(name="label", label_key="case"), search="s"
@@ -309,8 +320,10 @@ async def test_operation_id_filter_uses_operation_id_index(sqlite_instance: SQLi
         plan = await session.execute(text("EXPLAIN QUERY PLAN " + compiled))
         steps = [row[3] for row in plan]
     assert any("USING INDEX ix_AttackResultEntries_operation_id " in step for step in steps), steps
+    if legacy_names:
+        assert any("SEARCH analytics_results" in step and "operation=?" in step for step in steps), steps
     result = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(query=query, control=control())
-    assert {item.key.value for item in result.items} == {"first"}
+    assert {item.key.value for item in result.items} == expected
 
 
 @pytest.mark.parametrize("version", [(3, 34, 0), (3, 35, 0)])
@@ -812,10 +825,10 @@ async def test_operation_options_list_saved_before_legacy(sqlite_instance: SQLit
     groups = await reader.report_async(query=AttackAnalyticsQuery(group_by=operation), control=control())
     assert [typed_key(group.option) for group in groups.groups] == [
         ("legacy_operation_name", "Bravo"),
-        ("legacy_operation_name", "Alpha"),
         ("missing", None),
-        ("value", str(uuid.UUID(int=1))),
         ("value", str(uuid.UUID(int=2))),
+        ("value", str(uuid.UUID(int=1))),
+        ("legacy_operation_name", "Alpha"),
     ]
 
 
@@ -898,6 +911,18 @@ def test_mssql_operation_profiles_group_kind_without_bind_parameters(compare_by:
     ]
     assert any("'legacy_operation_name'" in expression for expression in grouped)
     assert not any("?" in expression for expression in grouped)
+    if compare_by is None:
+        order = [
+            str(expression.compile(dialect=dialect, compile_kwargs={"render_postcompile": True}))
+            for expression in statement._order_by_clauses
+        ]
+        assert order[0] == "group_members_counts.total DESC"
+        assert re.fullmatch(r"CASE WHEN \(\S+ = 'missing'\) THEN 0 WHEN \(\S+ = 'value'\) THEN 1 ELSE 2 END", order[1])
+        assert order[2:] == [
+            "group_members_counts.label0 COLLATE Latin1_General_100_BIN2",
+            "group_members_counts.value0",
+        ]
+        assert not any("?" in term for term in order)
 
 
 @pytest.mark.parametrize(

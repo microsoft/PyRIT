@@ -398,8 +398,9 @@ class AttackAnalyticsQueryCompiler:
         Select one bounded page of grouped raw outcome counts.
 
         Memberships are deduplicated within each profile before its weight is
-        added to a bucket. Groups sort by total count, then typed key; the extra
-        row indicates another page without changing cohort totals.
+        added to a bucket. Groups sort by total count; ties break by typed key, or
+        by option order for label-ordered dimensions. The extra row indicates
+        another page without changing cohort totals.
 
         Args:
             query (AttackAnalyticsQuery): Group dimension, offset, and visible group limit.
@@ -414,9 +415,12 @@ class AttackAnalyticsQueryCompiler:
         profiles = self._profiles(sources)
         members = self._memberships(profiles=profiles, sources=sources, dimensions=[0], name="group_members")
         grouped = self._aggregate(members, dimensions=[0])
+        ties = self._option_order(
+            source=sources[0], kind=grouped.c.kind0, value=grouped.c.value0, label=self._collate(grouped.c.label0)
+        )
         return (
             select(grouped)
-            .order_by(grouped.c.total.desc(), grouped.c.kind0, grouped.c.value0)
+            .order_by(grouped.c.total.desc(), *ties)
             .offset(query.group_offset)
             .limit(query.group_limit + 1)
         )

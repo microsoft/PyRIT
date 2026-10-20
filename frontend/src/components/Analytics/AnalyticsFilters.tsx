@@ -145,7 +145,7 @@ function AnalyticsFacetPicker({
       <Text size={200} className={styles.note}>
         {matchMode === 'all' ? 'All selected converters must match.' : 'Selected values are alternatives within this filter.'}
         {' '}Separate filter chips are combined with AND.
-        {dimension.name === 'operation' && ' History from before Operation IDs is listed separately as (legacy name).'}
+        {dimension.name === 'operation' && ' Activity saved with only an Operation name is listed separately as (legacy name).'}
       </Text>
       <div>
         <Button

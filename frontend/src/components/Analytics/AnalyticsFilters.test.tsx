@@ -20,7 +20,7 @@ const mockFacets = jest.mocked(analyticsApi.facets)
 const mockList = jest.mocked(operationsApi.list)
 
 const OTHER_OPERATION_ID = '0b6f2d8e-8a0e-4b8c-9a51-3f3d2b7c9e10'
-const LEGACY_HINT = /History from before Operation IDs is listed separately as \(legacy name\)\./
+const LEGACY_HINT = /Activity saved with only an Operation name is listed separately as \(legacy name\)\./
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>

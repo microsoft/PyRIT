@@ -79,7 +79,7 @@ export function analyticsDimensionLabel(dimension: AttackAnalyticsDimension): st
 }
 
 /**
- * Marks Operation activity saved with only a name, before Operation IDs, wherever it is shown.
+ * Marks Operation activity saved with only a name wherever it is shown.
  * Blank names read "(Blank)", like the SDK's option label, so chips and table rows match facets.
  */
 export function analyticsLegacyOperationLabel(name: string): string {

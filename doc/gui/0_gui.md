@@ -53,8 +53,9 @@ retries. It does not switch to the scanner's latest-execution-unit statistics.
 Use **Operation**, **Operator**, **Objective target**, or **Add filter** to select
 saved metadata. Operation filters and charts identify saved Operations by ID and
 show their current names, so saved views and links keep working after a rename.
-Activity saved with only an Operation name, from before Operation IDs, appears
-separately as **(legacy name)**; select it too to include that history.
+Activity saved with only an Operation name, such as history from before Operation
+IDs, appears separately as **(legacy name)**; select it too to include that
+activity.
 Additional dimensions include model, targeted harm category,
 attack type, request or response converters, scenario run, and arbitrary label
 keys. Targeted harms describe intended coverage, not harms detected by scorers.
