@@ -63,6 +63,7 @@ export interface ConverterInputPiece {
 }
 
 export interface PieceConversion {
+  manuallyEdited?: boolean
   pieceId: string
   pieceType: string
   converterInstanceIds: string[]
@@ -70,6 +71,9 @@ export interface PieceConversion {
   originalValue: string
   convertedDataType: string
 }
+
+/** Only touched pieces are present; null explicitly clears a stale conversion. */
+export type PieceConversionUpdates = Record<string, PieceConversion | null>
 
 export interface ConverterPipelineStage {
   readonly id: string
@@ -82,7 +86,23 @@ export interface ConverterStageResult {
   value: string
 }
 
+export interface ChatConverterSnapshot {
+  generation: string
+  workingInputs: Record<string, string>
+  pipelines: Record<string, ConverterPipelineStage[]>
+  stageResults: Record<string, ConverterStageResult[]>
+  errors: Record<string, string>
+  applied: Record<string, PieceConversion>
+}
+
+export interface UndoLastSendAction {
+  readonly disabledReason?: string
+  readonly isUndoing: boolean
+  readonly onUndo: () => void
+}
+
 export interface ChatConverterController {
+  readonly repeatDisabledReason?: string
   readonly editRevision: number
   inputs: ConverterInputPiece[]
   workingInputs: Record<string, string>
@@ -95,10 +115,10 @@ export interface ChatConverterController {
   addConverter: (pieceType: string, converterId: string) => void
   setPipeline: (pieceType: string, update: (stages: ConverterPipelineStage[]) => ConverterPipelineStage[]) => void
   retainConverters: (availableIds: Set<string>) => void
-  convert: (pieceType: string) => Promise<void>
-  convertRemaining: (pieceId: string, stageId: string) => Promise<void>
-  editInput: (pieceId: string, value: string) => void
-  editStageOutput: (pieceId: string, stageId: string, value: string) => void
+  convert: (pieceType: string) => Promise<PieceConversionUpdates | void>
+  convertRemaining: (pieceId: string, stageId: string) => Promise<PieceConversionUpdates | void>
+  editInput: (pieceId: string, value: string) => PieceConversionUpdates | void
+  editStageOutput: (pieceId: string, stageId: string, value: string) => PieceConversionUpdates | void
   apply: () => void
   clear: (pieceId: string) => void
   clearAll: () => void
@@ -107,6 +127,8 @@ export interface ChatConverterController {
     text: string, attachments: MessageAttachment[], conversions: Record<string, PieceConversion>,
     pipelines?: Record<string, ConverterPipelineStage[]>,
   ) => void
+  snapshot: () => ChatConverterSnapshot
+  restoreSnapshot: (snapshot: ChatConverterSnapshot, text: string, attachments: MessageAttachment[]) => void
 }
 
 export interface MessageTextDisplayPiece {
@@ -281,6 +303,8 @@ export interface TargetInstance {
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
   capabilities?: TargetCapabilities | null
+  /** Effective replay support, including configured adapters and provider restoration. */
+  supports_history_replay?: boolean
   /** Non-promoted constructor params, curated for display (e.g., RoundRobin weights). */
   target_specific_params?: Record<string, unknown> | null
   /** Inner targets for composite targets like RoundRobinTarget. */
@@ -750,6 +774,7 @@ export interface ConversationDraftPiece extends MessagePieceRequest {
 }
 
 export interface ConversationSaveInput {
+  sourcePieceIds?: string[]
   messages: ConversationDraftMessage[]
   objective: string
   initialObjective: string
@@ -791,6 +816,8 @@ export interface SaveConversationRequest {
   operation_id?: string
   labels?: Record<string, string>
   messages: MessageRequest[]
+  reuse_unsent_conversation?: boolean
+  expected_source_piece_ids?: string[]
 }
 
 export interface CreateAttackResponse {
@@ -1137,7 +1164,7 @@ export interface SeedExampleListParams {
 // --- Scenarios ---
 
 export type ScenarioDatasetLimit = number | 'all' | 'default'
-export type DatasetFetchPolicy = 'never' | 'if_missing'
+export type DatasetFetchPolicy = 'never' | 'if_missing' | 'always'
 
 export interface ScenarioDatasetSourceInput {
   name: string

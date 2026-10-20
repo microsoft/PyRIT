@@ -53,6 +53,10 @@ class TargetInstance(BaseModel):
         ),
     )
     capabilities: TargetCapabilities = Field(..., description="Structured snapshot of target capabilities")
+    supports_history_replay: bool = Field(
+        False,
+        description="Effective history replay support, including configured adapters and provider restoration",
+    )
     target_specific_params: dict[str, JSONValue] | None = Field(
         None,
         description="Non-promoted constructor parameters, curated for display (e.g., RoundRobin weights)",

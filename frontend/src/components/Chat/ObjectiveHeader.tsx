@@ -310,7 +310,7 @@ export default function ObjectiveHeader({
     const canShowObjective = (canAdd || isEditing) && Boolean(onAdd)
     if (!canShowObjective && !outcome) return null
     return (
-      <div className={mergeClasses(styles.root, styles.emptyRoot)} data-testid="objective-header">
+      <div className={mergeClasses(styles.root, styles.emptyRoot)} data-testid="objective-header" data-conversation-editor-controls>
         {canShowObjective && (
           <div className={mergeClasses(styles.headerSection, styles.emptyHeaderSection)}>
             <Badge className={styles.label} appearance="tint" color="brand" size="small">
@@ -350,7 +350,7 @@ export default function ObjectiveHeader({
   const showToggle = overflowing || expanded
 
   return (
-    <div className={styles.root} data-testid="objective-header">
+    <div className={styles.root} data-testid="objective-header" data-conversation-editor-controls>
       <div className={styles.headerSection}>
         <Badge className={styles.label} appearance="tint" color="brand" size="small">
           Objective

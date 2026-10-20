@@ -19,6 +19,7 @@ const TARGETS = [
     model_name: "mobile-router",
     capabilities: {
       supports_multi_turn: true,
+      supports_editable_history: true,
       supports_system_prompt: true,
       supported_input_modalities: ["text", "image_path"],
       supported_output_modalities: ["text"],
@@ -46,6 +47,7 @@ const TARGETS = [
     model_name: "gpt-4o-mobile",
     capabilities: {
       supports_multi_turn: true,
+      supports_editable_history: true,
       supports_system_prompt: true,
       supported_input_modalities: ["text", "image_path"],
       supported_output_modalities: ["text"],
@@ -718,6 +720,7 @@ test.describe("Mobile touch targets", () => {
           '[data-testid="new-attack-btn"]',
           '[aria-label="Attach files"]',
           '[data-testid="toggle-converter-panel-btn"]',
+          '[data-testid="undo-last-send-btn"]',
           '[data-testid="toggle-objective-header-btn"]',
           '[data-testid="chat-input"]',
           '[data-testid="send-message-btn"]',

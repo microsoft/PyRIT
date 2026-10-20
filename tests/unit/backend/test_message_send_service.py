@@ -60,6 +60,7 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
 )
+from pyrit.models.target.target_capabilities import TargetCapabilities
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -2773,6 +2774,81 @@ def _submission(
 @pytest.mark.timeout(20)
 @pytest.mark.usefixtures("patch_central_database")
 class TestAsyncMessageSend:
+    async def test_repetitions_cannot_bypass_original_capabilities_through_an_alias_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        sqlite_instance: SQLiteMemory,
+    ) -> None:
+        service, attack, original, _ = real_send_context
+        alias = MockPromptTarget()
+        original.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=True))
+        assert original.get_identifier().hash == alias.get_identifier().hash
+        await sqlite_instance.update_attack_result_by_id_async(
+            attack_result_id=attack.attack_result_id,
+            update_fields={"attack_metadata": {"target_registry_name": "origin"}},
+        )
+        await sqlite_instance.add_message_to_memory_async(
+            request=MessagePiece(
+                role="assistant", original_value="Existing response", conversation_id=attack.conversation_id
+            ).to_message()
+        )
+        target_service = MagicMock(spec=TargetService)
+        target_service.get_target_object.side_effect = lambda target_registry_name: (
+            original if target_registry_name == "origin" else alias
+        )
+        with patch("pyrit.backend.services.message_send_service.get_target_service", return_value=target_service):
+            with pytest.raises(ValueError, match="editable history"):
+                await service.submit_async(
+                    attack_result_id=attack.attack_result_id,
+                    request=_submission(conversation_id=attack.conversation_id, count=2),
+                )
+        assert original.prompt_sent == alias.prompt_sent == []
+        [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        assert stored.get_active_conversation_ids() == {attack.conversation_id}
+
+    @pytest.mark.parametrize("with_history,count", [(False, 2), (True, 2), (True, 1)])
+    async def test_repetitions_require_replay_but_live_continuation_does_not_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        sqlite_instance: SQLiteMemory,
+        with_history: bool,
+        count: int,
+    ) -> None:
+        service, attack, target, _ = real_send_context
+        target.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=True))
+        if with_history:
+            for role in ("user", "assistant"):
+                await sqlite_instance.add_message_to_memory_async(
+                    request=MessagePiece(
+                        role=role,
+                        original_value="Previous turn",
+                        conversation_id=attack.conversation_id,
+                    ).to_message()
+                )
+        before = list(await sqlite_instance.get_message_pieces_async(conversation_id=attack.conversation_id))
+        if with_history and count > 1:
+            with pytest.raises(ValueError, match="editable history"):
+                await service.submit_async(
+                    attack_result_id=attack.attack_result_id,
+                    request=_submission(conversation_id=attack.conversation_id, count=count),
+                )
+            assert target.prompt_sent == []
+            assert (
+                list(await sqlite_instance.get_message_pieces_async(conversation_id=attack.conversation_id)) == before
+            )
+        else:
+            status = await service.submit_async(
+                attack_result_id=attack.attack_result_id,
+                request=_submission(conversation_id=attack.conversation_id, count=count),
+            )
+            status = await _settle_send_async(service=service, status=status)
+            assert status.state == MessageSendState.COMPLETED
+            assert target.prompt_sent == ["Hello"] * count
+        [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        assert len(stored.get_active_conversation_ids()) == (1 if with_history and count > 1 else count)
+
     @pytest.mark.parametrize(
         "terminal_state", [MessageSendState.COMPLETED, MessageSendState.FAILED, MessageSendState.INTERRUPTED]
     )

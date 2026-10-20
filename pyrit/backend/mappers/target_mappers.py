@@ -69,11 +69,18 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         TargetInstance DTO with metadata derived from the object.
     """
     target_identifier = TargetIdentifier.from_component_identifier(target_obj.get_identifier())
+    try:
+        target_obj.validate_history_replay()
+    except ValueError:
+        supports_history_replay = False
+    else:
+        supports_history_replay = True
 
     return TargetInstance(
         target_registry_name=target_registry_name,
         identifier=target_identifier,
         capabilities=target_obj.capabilities,
+        supports_history_replay=supports_history_replay,
         target_specific_params=_target_specific_params(target_identifier),
         inner_targets=_build_inner_targets(target_obj),
     )

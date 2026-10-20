@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, ParamSpec,
 from urllib.parse import urlparse
 
 from sqlalchemy import (
+    Column,
     MetaData,
     String,
     Unicode,
@@ -37,6 +38,7 @@ from sqlalchemy import (
     or_,
     select,
     type_coerce,
+    union_all,
     update,
 )
 from sqlalchemy import cast as sql_cast
@@ -47,6 +49,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
 from sqlalchemy.orm.session import Session
+from sqlalchemy.sql import visitors
+from sqlalchemy.sql.elements import ClauseElement
 
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
@@ -151,6 +155,37 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PreparedSeedBatch:
+    """A storage-ready seed snapshot created by memory, before database writes."""
+
+    _seeds: tuple[Seed[Any], ...]
+
+    @property
+    def seeds(self) -> list[Seed[Any]]:
+        """Independent copies of the prepared seeds for candidate validation."""
+        return [seed.model_copy(deep=True) for seed in self._seeds]
+
+
+def _deprecate_message_labels(*, method: str) -> None:
+    """
+    Warn that message-level label filtering is going away.
+
+    Labels live on attack results, so callers should pick conversations from those results.
+
+    Args:
+        method (str): The memory method that received ``labels``.
+    """
+    print_deprecation_message(
+        old_item=f"MemoryInterface.{method}(labels=...)",
+        new_item=(
+            "MemoryInterface.get_attack_results_async(labels=...), then fetch messages for each result's "
+            "conversation_id, get_active_conversation_ids() or get_all_conversation_ids()"
+        ),
+        removed_in="1.4.0",
+    )
 
 
 class AttackStateConflictError(ValueError):
@@ -2475,6 +2510,25 @@ class MemoryInterface(abc.ABC):
             Database-specific SQLAlchemy condition.
         """
 
+    def _get_attack_result_literal_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
+        """
+        Return a condition matching AttackResult label names literally.
+
+        Same semantics as ``_get_attack_result_label_condition``, but each key is compared to the
+        stored label names as a bound value instead of being turned into a JSON path, so any key
+        string is safe. Backends that don't override it can still filter by allowlisted keys.
+
+        Args:
+            labels: Label-name-to-value(s) map.
+
+        Raises:
+            NotImplementedError: If the memory backend does not support literal label keys.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _get_attack_result_literal_label_condition "
+            "to filter attack results by label keys outside [A-Za-z0-9_.-]+."
+        )
+
     def _execute_get_unique_attack_class_names(self) -> list[str]:
         """
         Return sorted unique attack class names from all stored attack results.
@@ -4163,6 +4217,69 @@ class MemoryInterface(abc.ABC):
 
         return conditions
 
+    async def filter_seed_candidates_async(
+        self, *, seeds: Sequence[Seed[Any]], filters: Mapping[str, Any]
+    ) -> list[Seed[Any]]:
+        """
+        Apply the backend's seed predicates to storage-ready candidates without storing them.
+
+        Use ``prepare_seed_batch_async`` before this read so storage-derived fields have
+        the same values as persisted rows.
+
+        Returns:
+            list[Seed]: Matching candidates in input order, with their original identities.
+        """
+        if not seeds or not filters:
+            return list(seeds)
+        return await self._run_database_operation_async(self._filter_seed_candidates, seeds=seeds, filters=filters)
+
+    def _filter_seed_candidates(self, *, seeds: Sequence[Seed[Any]], filters: Mapping[str, Any]) -> list[Seed[Any]]:
+        if self.engine is None:
+            raise RuntimeError("Memory engine is not initialized.")
+        conditions = self._build_seed_filter_conditions(**filters)
+        referenced = [
+            element
+            for condition in conditions
+            for element in visitors.iterate(condition)
+            if isinstance(element, Column) and element.table is SeedEntry.__table__
+        ]
+        columns = [
+            column for column in SeedEntry.__table__.columns if any(column.shares_lineage(ref) for ref in referenced)
+        ]
+        filter_binds = len(
+            select(literal(1))
+            .where(*conditions)
+            .compile(dialect=self.engine.dialect, compile_kwargs={"render_postcompile": True})
+            .params
+        )
+        chunk_size = min(100, max(1, (self._MAX_BIND_VARS - filter_binds - 1) // (len(columns) + 1)))
+        matched: set[int] = set()
+        with closing(self._get_session()) as session:
+            for start in range(0, len(seeds), chunk_size):
+                rows = []
+                for index in range(start, min(start + chunk_size, len(seeds))):
+                    entry = SeedEntry(entry=seeds[index])
+                    rows.append(
+                        select(
+                            literal(index).label("candidate_index"),
+                            *[
+                                literal(getattr(entry, column.key), type_=column.type).label(column.name)
+                                for column in columns
+                            ],
+                        )
+                    )
+                candidates = union_all(*rows).subquery()
+                replacements = {column: candidates.c[column.name] for column in referenced}
+
+                def replace_column(
+                    element: ClauseElement, *, mapping: Mapping[Column[Any], ClauseElement] = replacements, **kw: Any
+                ) -> ClauseElement | None:
+                    return mapping.get(element) if isinstance(element, Column) else None
+
+                predicates = [visitors.replacement_traverse(condition, {}, replace_column) for condition in conditions]
+                matched.update(session.scalars(select(candidates.c.candidate_index).where(*predicates)).all())
+        return [seed for index, seed in enumerate(seeds) if index in matched]
+
     def _execute_get_seeds(
         self,
         *,
@@ -4584,6 +4701,42 @@ class MemoryInterface(abc.ABC):
 
         await set_seed_sha256_async(prompt)
 
+    async def _prepare_seeds_for_storage_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None) -> None:
+        current_time = datetime.now(tz=UTC)
+        for seed in seeds:
+            await self._prepare_seed_for_storage_async(prompt=seed, added_by=added_by, current_time=current_time)
+
+    async def prepare_seed_batch_async(
+        self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None
+    ) -> PreparedSeedBatch:
+        """
+        Prepare copied seeds once for validation and subsequent persistence.
+
+        Computes checksums, attribution, timestamps, and encoding metadata through the
+        normal storage path. Media may be copied into managed storage; no database rows
+        are written. Rejected batches can leave unreferenced media, not changed seed rows.
+
+        Args:
+            seeds (Sequence[Seed]): Caller-owned seeds to copy and prepare.
+            added_by (str | None): Attribution override, matching normal insertion.
+
+        Returns:
+            PreparedSeedBatch: Storage-ready seeds, isolated from caller and validator mutations.
+        """
+        copies = [seed.model_copy(deep=True) for seed in seeds]
+        SeedDataset.group_seed_prompts_by_prompt_group_id(copies)
+        await self._prepare_seeds_for_storage_async(seeds=copies, added_by=added_by)
+        return PreparedSeedBatch(_seeds=tuple(SeedEntry(entry=seed).get_seed() for seed in copies))
+
+    async def add_prepared_seed_batch_async(self, batch: PreparedSeedBatch) -> None:
+        """
+        Insert prepared seeds with normal deduplication, without preparing them again.
+
+        Args:
+            batch (PreparedSeedBatch): The snapshot returned by ``prepare_seed_batch_async``.
+        """
+        await self._run_database_operation_async(self._insert_prepared_seeds, seeds=batch.seeds)
+
     async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None) -> None:
         """
         Insert a list of seeds into the memory storage.
@@ -4603,10 +4756,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the 'added_by' attribute is not set for each prompt.
         """
-        current_time = datetime.now(tz=UTC)
-        for prompt in seeds:
-            await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
-
+        await self._prepare_seeds_for_storage_async(seeds=seeds, added_by=added_by)
         await self._run_database_operation_async(self._insert_prepared_seeds, seeds=seeds)
 
     def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
@@ -5234,10 +5384,36 @@ class MemoryInterface(abc.ABC):
             int: The number of ``SeedPromptEntries`` deleted before the new seeds were inserted.
 
         Raises:
-            ValueError: If ``dataset_name`` is empty, ``seeds`` is empty, or any seed's
-                ``dataset_name`` does not match ``dataset_name``.
+            ValueError: If ``dataset_name`` is empty, ``seeds`` is empty, a seed belongs
+                to another dataset, or the seed groups are structurally invalid.
             SQLAlchemyError: If the replacement fails; the transaction is rolled back first.
         """
+        self._validate_seed_replacement(dataset_name=dataset_name, seeds=seeds)
+        await self._prepare_seeds_for_storage_async(seeds=seeds, added_by=added_by)
+        return await self.replace_prepared_seed_batch_async(
+            dataset_name=dataset_name, batch=PreparedSeedBatch(_seeds=tuple(seeds))
+        )
+
+    async def replace_prepared_seed_batch_async(self, *, dataset_name: str, batch: PreparedSeedBatch) -> int:
+        """
+        Atomically replace a dataset with the prepared snapshot, without reprocessing media or hashes.
+
+        Args:
+            dataset_name (str): Dataset whose rows are replaced.
+            batch (PreparedSeedBatch): The snapshot returned by ``prepare_seed_batch_async``.
+
+        Returns:
+            int: The number of replaced seed rows.
+        """
+        seeds = batch.seeds
+        self._validate_seed_replacement(dataset_name=dataset_name, seeds=seeds)
+        entries = [SeedEntry(entry=seed) for seed in seeds]
+        return await self._run_database_operation_async(
+            self._replace_prepared_seeds, dataset_name=dataset_name, entries=entries
+        )
+
+    @staticmethod
+    def _validate_seed_replacement(*, dataset_name: str, seeds: Sequence[Seed[Any]]) -> None:
         if not dataset_name:
             raise ValueError("dataset_name must be a non-empty string.")
         if not seeds:
@@ -5253,15 +5429,7 @@ class MemoryInterface(abc.ABC):
                 "seeds tagged for another dataset."
             )
 
-        current_time = datetime.now(tz=UTC)
-        entries: list[SeedEntry] = []
-        for prompt in seeds:
-            await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
-            entries.append(SeedEntry(entry=prompt))
-
-        return await self._run_database_operation_async(
-            self._replace_prepared_seeds, dataset_name=dataset_name, entries=entries
-        )
+        SeedDataset.group_seed_prompts_by_prompt_group_id(seeds)
 
     def _replace_prepared_seeds(self, *, dataset_name: str, entries: Sequence[SeedEntry]) -> int:
         """
@@ -5490,6 +5658,7 @@ class MemoryInterface(abc.ABC):
         expected_fields: Mapping[str, Any] | None = None,
         update_fields: Mapping[str, Any] | None = None,
         request_fingerprint: str | None = None,
+        replace_conversation_pieces: Mapping[str, Sequence[MessagePiece]] | None = None,
     ) -> bool:
         """
         Atomically store initial or related conversations, pieces, and attack references.
@@ -5511,6 +5680,9 @@ class MemoryInterface(abc.ABC):
         conversation_ids = [conversation.conversation_id for conversation in conversations]
         if len(set(conversation_ids)) != len(conversation_ids):
             raise ValueError("Prepared branch conversation IDs must be unique")
+        replacements = replace_conversation_pieces or {}
+        if not set(replacements).issubset(conversation_ids):
+            raise ValueError("Replacement snapshots must belong to the prepared conversations")
         if source_conversation and source_conversation.conversation_id in conversation_ids:
             raise ValueError("A prepared branch cannot replace the source conversation")
         if any(not piece.not_in_memory and piece.conversation_id not in conversation_ids for piece in message_pieces):
@@ -5530,7 +5702,10 @@ class MemoryInterface(abc.ABC):
                 if (
                     request_fingerprint
                     and entry is not None
-                    and (entry.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                    and (
+                        (entry.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                        or (entry.attack_metadata or {}).get(f"{receipt_key}:{request_fingerprint}")
+                    )
                 ):
                     return False
                 if new_attack is not None:
@@ -5540,6 +5715,27 @@ class MemoryInterface(abc.ABC):
                 elif entry is None:
                     return False
                 self._check_attack_fields(entry=entry, expected_fields=expected_fields or {})
+                if replacements:
+                    active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
+                    if not set(replacements).issubset(active_ids):
+                        raise ValueError("Replacement conversations must belong to the destination attack")
+                    self._check_conversation_history(session=session, expected=replacements)
+                    piece_ids = [piece.id for pieces in replacements.values() for piece in pieces]
+                    if piece_ids:
+                        if (
+                            session.query(ScoreEntry.id)
+                            .filter(ScoreEntry.prompt_request_response_id.in_(piece_ids))
+                            .first()
+                        ):
+                            raise AttackStateConflictError(
+                                "Scored history cannot be replaced. Save a new conversation."
+                            )
+                        session.query(EmbeddingDataEntry).filter(EmbeddingDataEntry.id.in_(piece_ids)).delete(
+                            synchronize_session=False
+                        )
+                        session.query(PromptMemoryEntry).filter(PromptMemoryEntry.id.in_(piece_ids)).delete(
+                            synchronize_session=False
+                        )
                 if source_conversation is not None:
                     active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
                     if source_conversation.conversation_id not in active_ids:
@@ -5549,7 +5745,11 @@ class MemoryInterface(abc.ABC):
                         conversation=source_conversation.model_copy(update={"attack_result_id": attack_result_id}),
                     )
                 for conversation in conversations:
-                    if request_fingerprint and session.get(ConversationEntry, conversation.conversation_id) is not None:
+                    if (
+                        request_fingerprint
+                        and conversation.conversation_id not in replacements
+                        and session.get(ConversationEntry, conversation.conversation_id) is not None
+                    ):
                         raise AttackStateConflictError("The creation identity is already in use")
                     self._insert_conversation_in_session(
                         session=session,
@@ -5563,7 +5763,11 @@ class MemoryInterface(abc.ABC):
                 entry.pruned_conversation_ids = pruned_ids or None
                 self._apply_attack_fields_in_session(session=session, entry=entry, update_fields=update_fields or {})
                 if request_fingerprint:
-                    entry.attack_metadata = {**(entry.attack_metadata or {}), receipt_key: request_fingerprint}
+                    entry.attack_metadata = {
+                        **(entry.attack_metadata or {}),
+                        receipt_key: request_fingerprint,
+                        f"{receipt_key}:{request_fingerprint}": True,
+                    }
                 entry.timestamp = datetime.now(UTC)
             return True
         except IntegrityError:
@@ -5573,7 +5777,10 @@ class MemoryInterface(abc.ABC):
                 if (
                     request_fingerprint
                     and existing is not None
-                    and (existing.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                    and (
+                        (existing.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                        or (existing.attack_metadata or {}).get(f"{receipt_key}:{request_fingerprint}")
+                    )
                 ):
                     return False
             raise
@@ -6120,8 +6327,9 @@ class MemoryInterface(abc.ABC):
         Returns:
             list[Any]: The backend-specific label condition, if labels are effective.
 
-        Raises:
-            ValueError: If a label key falls outside the safe allowlist.
+        Keys in the ``[A-Za-z0-9_.-]+`` allowlist use the JSON-path condition. Other keys, such as
+        ones with spaces, quotes or non-ASCII characters, are matched literally against the stored
+        label names with bound parameters, so they never become part of a JSON path or SQL text.
         """
         if not query.labels:
             return []
@@ -6130,14 +6338,14 @@ class MemoryInterface(abc.ABC):
             for key, value in query.labels.items()
             if not (isinstance(value, (list, tuple)) and len(value) == 0)
         }
-        invalid_keys = [key for key in effective_labels if not self._LABEL_KEY_PATTERN.match(key)]
-        if invalid_keys:
-            raise ValueError(
-                f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
-            )
-        if not effective_labels:
-            return []
-        return [self._get_attack_result_label_condition(labels=effective_labels)]
+        path_labels = {key: value for key, value in effective_labels.items() if self._LABEL_KEY_PATTERN.match(key)}
+        literal_labels = {key: value for key, value in effective_labels.items() if key not in path_labels}
+        conditions: list[Any] = []
+        if path_labels:
+            conditions.append(self._get_attack_result_label_condition(labels=path_labels))
+        if literal_labels:
+            conditions.append(self._get_attack_result_literal_label_condition(labels=literal_labels))
+        return conditions
 
     def _build_attack_result_category_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
         """
@@ -8641,7 +8849,9 @@ class MemoryInterface(abc.ABC):
             conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
             prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
                 Defaults to None.
-            labels (dict[str, str] | None, optional): A dictionary of labels. Defaults to None.
+            labels (dict[str, str] | None, optional): Deprecated. Labels live on attack results, so
+                query ``get_attack_results_async(labels=...)`` and fetch their conversations instead.
+                Defaults to None.
             prompt_metadata (dict[str, str | int] | None, optional): The metadata associated with the prompt.
                 Defaults to None.
             sent_after (datetime | None, optional): Filter for prompts sent after this datetime. Defaults to None.
@@ -8657,6 +8867,8 @@ class MemoryInterface(abc.ABC):
         Returns:
             Sequence[Score]: A list of scores extracted from the message pieces.
         """
+        if labels is not None:
+            _deprecate_message_labels(method="get_prompt_scores_async")
         return await self._run_database_operation_async(
             self._execute_get_prompt_scores,
             role=role,
@@ -8817,7 +9029,9 @@ class MemoryInterface(abc.ABC):
             conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
             prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
                 Defaults to None.
-            labels (dict[str, str] | None, optional): A dictionary of labels. Defaults to None.
+            labels (dict[str, str] | None, optional): Deprecated. Labels live on attack results, so
+                query ``get_attack_results_async(labels=...)`` and fetch their conversations instead.
+                Defaults to None.
             prompt_metadata (dict[str, str | int] | None, optional): The metadata associated with the prompt.
                 Defaults to None.
             sent_after (datetime | None, optional): Filter for prompts sent after this datetime. Defaults to None.
@@ -8841,6 +9055,8 @@ class MemoryInterface(abc.ABC):
             Exception: If there is an error retrieving the prompts,
                 an exception is logged and an empty list is returned.
         """
+        if labels is not None:
+            _deprecate_message_labels(method="get_message_pieces_async")
         return await self._run_database_operation_async(
             self._execute_get_message_pieces,
             role=role,
@@ -9796,6 +10012,7 @@ class MemoryInterface(abc.ABC):
         expected_fields: Mapping[str, Any] | None = None,
         update_fields: Mapping[str, Any] | None = None,
         request_fingerprint: str | None = None,
+        replace_conversation_pieces: Mapping[str, Sequence[MessagePiece]] | None = None,
     ) -> bool:
         """
         Use ``add_conversation_branches_to_attack_async``.
@@ -9819,6 +10036,7 @@ class MemoryInterface(abc.ABC):
             expected_fields=expected_fields,
             update_fields=update_fields,
             request_fingerprint=request_fingerprint,
+            replace_conversation_pieces=replace_conversation_pieces,
         )
 
     @legacy_sync_override(lambda: MemoryInterface.add_conversation_branches_to_attack)
@@ -9833,6 +10051,7 @@ class MemoryInterface(abc.ABC):
         expected_fields: Mapping[str, Any] | None = None,
         update_fields: Mapping[str, Any] | None = None,
         request_fingerprint: str | None = None,
+        replace_conversation_pieces: Mapping[str, Sequence[MessagePiece]] | None = None,
     ) -> bool:
         """
         Atomically store initial or related conversations, pieces, and attack references.
@@ -9861,6 +10080,7 @@ class MemoryInterface(abc.ABC):
             expected_fields=expected_fields,
             update_fields=update_fields,
             request_fingerprint=request_fingerprint,
+            replace_conversation_pieces=replace_conversation_pieces,
         )
 
     async def update_attack_result_conditionally_async(

@@ -7,6 +7,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router'
 
 import { attacksApi, convertersApi } from '@/services/api'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
+import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import type { AddMessageResponse, BackendMessage, ConversationDraftMessage, TargetInstance } from '@/types'
 import { toConversationDraft } from '@/utils/conversationDraft'
 
@@ -56,7 +57,13 @@ function setupEditor(
     path: '/',
     element: <EditorHarness />,
   }, { path: '/next', element: <p>Next page</p> }])
-  const { unmount } = render(<FluentProvider theme={webLightTheme}><RouterProvider router={router} /></FluentProvider>)
+  const { unmount } = render(
+    <FluentProvider theme={webLightTheme}>
+      <UserPreferencesProvider accountKey={null}>
+        <RouterProvider router={router} />
+      </UserPreferencesProvider>
+    </FluentProvider>,
+  )
   return { onSaved, router, unmount }
 }
 
@@ -85,6 +92,37 @@ describe('ConversationEditor', () => {
     expect(request.messages[0].pieces[1].converted_value).toBe('Converted second')
     expect(request.messages[1].role).toBe('simulated_assistant')
     expect(source[0].message_pieces[0].original_value).toBe('First piece')
+  })
+
+  it('preserves an untouched converted piece when editing and clearing another working input', async () => {
+    const user = userEvent.setup()
+    const messages = toConversationDraft(source)
+    messages[0].pieces[0] = {
+      ...messages[0].pieces[0], converted_value: 'Converted first',
+      converted_value_data_type: 'text', applied_converter_ids: ['first-converter'],
+    }
+    messages[0].pieces[1].applied_converter_ids = ['second-converter']
+    setupEditor(messages)
+    const first = within(screen.getByRole('region', { name: 'Message 1' }))
+    await user.click(first.getAllByRole('button', { name: 'Toggle converter panel' })[0])
+    const input = screen.getAllByRole('textbox', { name: 'Working input - Message 1: text' })[0]
+    await user.clear(input)
+    await user.type(input, 'Manual first')
+    expect(first.getAllByRole('textbox', { name: 'Converted prompt' })[1]).toHaveValue('Converted second')
+    await user.clear(input)
+    await user.type(input, 'First piece')
+    expect(first.getAllByRole('textbox', { name: 'Converted prompt' })).toHaveLength(1)
+    expect(first.getByRole('textbox', { name: 'Converted prompt' })).toHaveValue('Converted second')
+    await user.click(screen.getByRole('button', { name: 'Close converters' }))
+    await user.click(screen.getByRole('button', { name: 'Save conversation' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' }))
+    await waitFor(() => expect(attacksApi.saveConversation).toHaveBeenCalledTimes(1))
+    const pieces = jest.mocked(attacksApi.saveConversation).mock.calls[0][0].messages[0].pieces
+    expect(pieces[0].converted_value).toBeUndefined()
+    expect(pieces[1]).toMatchObject({
+      original_value: 'Second piece', converted_value: 'Converted second', converted_value_data_type: 'text',
+      applied_converter_ids: ['second-converter'], source_piece_id: 'source-2',
+    })
   })
 
   it('switches from one-message stage view to batch final-only view through chat selection', async () => {
@@ -135,7 +173,7 @@ describe('ConversationEditor', () => {
     setupEditor(undefined, 'No saved attack exists yet.', undefined, 'Default labels are not ready.')
     await user.click(screen.getByRole('button', { name: 'Save conversation' }))
     expect(screen.getByRole('radio', { name: 'New attack' })).toBeChecked()
-    expect(screen.getByText('Default labels are not ready.')).toBeInTheDocument()
+    expect(within(screen.getByRole('dialog')).getByText('Default labels are not ready.')).toBeInTheDocument()
     const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' })
     expect(confirm).toBeDisabled()
     await user.click(confirm)
