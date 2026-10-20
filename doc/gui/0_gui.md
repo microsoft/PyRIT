@@ -569,7 +569,8 @@ links, history from before Operation IDs, and names set in configuration,
 `GLOBAL_MEMORY_LABELS`, or `--memory-labels`.
 
 **Delete** works only when no findings, attacks, or scanner runs are linked; the
-tooltip shows what's left. History from before Operation IDs doesn't count.
+tooltip shows what's left. History from before Operation IDs doesn't count. SDK
+attacks still running under the operation save their results without one.
 Deleting can't be undone.
 
 #### Findings

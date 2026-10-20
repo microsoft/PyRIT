@@ -10,7 +10,8 @@ import time
 import traceback
 import uuid
 from abc import ABC
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
@@ -54,7 +55,7 @@ from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score.observation.lifecycle import AttemptObserver
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable
+    from collections.abc import AsyncGenerator, Callable, Collection, Generator
     from types import TracebackType
 
     from pyrit.executor.attack.component.prepended_conversation_config import (
@@ -75,6 +76,32 @@ if TYPE_CHECKING:
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
 AttackStrategyResultT = TypeVar("AttackStrategyResultT", bound="AttackResult")
+
+#: Operations that an enclosing execution or batch already admitted.
+_admitted_operation_ids: ContextVar[frozenset[uuid.UUID]] = ContextVar(
+    "pyrit_admitted_operation_ids", default=frozenset()
+)
+
+
+@contextmanager
+def _operation_admission_scope(operation_ids: Collection[uuid.UUID]) -> Generator[None, None, None]:
+    """
+    Treat these Operations as admitted for executions started within this scope.
+
+    Executions given an admitted Operation skip the existence check, so deleting it mid-run lets them finish
+    and save their results without it. Executions given any other Operation are still checked.
+
+    Args:
+        operation_ids (Collection[uuid.UUID]): The Operations to admit.
+
+    Yields:
+        None: Control returns to the caller with the Operations admitted.
+    """
+    token = _admitted_operation_ids.set(_admitted_operation_ids.get() | frozenset(operation_ids))
+    try:
+        yield
+    finally:
+        _admitted_operation_ids.reset(token)
 
 
 def attack_outcome_from_score(score: Score) -> AttackOutcome:
@@ -993,10 +1020,14 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             logger=self._logger,
         )
         context._objective_target_conversation_lifecycle = lifecycle
+        admitted = {context.params.operation_id} if context.params.operation_id is not None else set()
         try:
             async with lifecycle:
                 try:
-                    with attack_result_id_scope(attack_result_id=context._attack_result_id):
+                    with (
+                        attack_result_id_scope(attack_result_id=context._attack_result_id),
+                        _operation_admission_scope(admitted),
+                    ):
                         result = await super().execute_with_context_async(context=context)
                 except Exception as attack_error:
                     persistence_error = context._error_result_persistence_error
@@ -1028,7 +1059,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         An explicit ID wins, and a ``memory_labels["operation"]`` name is then removed. Otherwise the name,
         or one from ``GLOBAL_MEMORY_LABELS``, stays in the labels so prompts and the result keep it, and
         links the execution to the saved Operation with that name when one exists. Executions attributed
-        by a parent, such as a scenario, keep the labels and ID the parent resolved.
+        by a parent, such as a scenario, keep the labels and ID the parent resolved. An ID that an enclosing
+        execution or batch already admitted is not checked again, so a mid-run deletion doesn't stop the run.
 
         Raises:
             ValueError: If the ID is malformed.
@@ -1047,11 +1079,40 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         elif operation_name is None and self._global_operation_name is not None:
             operation_name = self._global_operation_name
             context.memory_labels = {**labels, "operation": operation_name}
+        if operation_id is not None and operation_id in _admitted_operation_ids.get():
+            return
         resolved = await CentralMemory.get_memory_instance().resolve_operation_id_async(
             operation_id=operation_id, operation_name=operation_name
         )
         if resolved != operation_id:
             context.params = dataclasses.replace(context.params, operation_id=resolved)
+
+    @asynccontextmanager
+    async def _admit_saved_operations_async(
+        self, *, operation_ids: Collection[uuid.UUID]
+    ) -> AsyncGenerator[None, None]:
+        """
+        Admit the given Operations that exist now for every execution started within this scope.
+
+        A batch admitted this way runs to completion if one of its Operations is deleted midway, and saves the
+        remaining results without it. Operations that don't exist when the scope opens are not admitted, so
+        executions given them are still rejected.
+
+        Args:
+            operation_ids (Collection[uuid.UUID]): The Operations the batch's executions refer to.
+
+        Yields:
+            None: Control returns to the caller with the saved Operations admitted.
+        """
+        pending = set(operation_ids) - _admitted_operation_ids.get()
+        memory = CentralMemory.get_memory_instance()
+        saved = (
+            {operation.id for operation in await memory.get_operations_async(operation_ids=list(pending))}
+            if pending
+            else set()
+        )
+        with _operation_admission_scope(saved):
+            yield
 
     @asynccontextmanager
     async def _execution_context_async(self, context: AttackStrategyContextT) -> AsyncGenerator[None, None]:

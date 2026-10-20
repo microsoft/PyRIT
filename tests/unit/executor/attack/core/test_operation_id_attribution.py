@@ -9,8 +9,8 @@ from uuid import uuid4
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.executor.attack import PromptSendingAttack
-from pyrit.executor.attack.compound import SequentialAttack, SequentialChildAttack
+from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
+from pyrit.executor.attack.compound import SequenceCompletionPolicy, SequentialAttack, SequentialChildAttack
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
@@ -212,3 +212,63 @@ class TestOperationDeletedDuringRun:
             with pytest.raises(LookupError, match="identifier"):
                 await AdmissionProbe().execute_async(objective="objective", operation_id=operation.id)
         save.assert_awaited_once()
+
+    async def test_in_flight_sequence_runs_every_child_without_the_deleted_operation_async(
+        self, sqlite_instance: MemoryInterface
+    ) -> None:
+        operation = await sqlite_instance.add_operation_async(Operation(name="Deleted mid-sequence"))
+        target = _PausedTarget()
+        children = [
+            SequentialChildAttack(
+                strategy=PromptSendingAttack(objective_target=target),
+                seed_group=AttackSeedGroup(seeds=[SeedObjective(value=f"Say hello {index}.")]),
+            )
+            for index in range(2)
+        ]
+        sequence = SequentialAttack(
+            objective_target=target, child_attacks=children, completion_policy=SequenceCompletionPolicy.EXHAUSTIVE
+        )
+        running = asyncio.create_task(sequence.execute_async(objective="Say hello.", operation_id=operation.id))
+        await asyncio.wait_for(target.sending.wait(), timeout=10)
+        await sqlite_instance.delete_operation_async(operation_id=operation.id)
+        target.release.set()
+        result = await asyncio.wait_for(running, timeout=10)
+        assert result.operation_id is None
+        assert len(target.prompt_sent) == 2
+        saved = await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS)
+        assert len(saved) == 3
+        assert all(row.operation_id is None for row in saved)
+
+    async def test_in_flight_batch_runs_every_objective_without_the_deleted_operation_async(
+        self, sqlite_instance: MemoryInterface
+    ) -> None:
+        operation = await sqlite_instance.add_operation_async(Operation(name="Deleted mid-batch"))
+        target = _PausedTarget()
+        running = asyncio.create_task(
+            AttackExecutor().execute_attack_async(
+                attack=PromptSendingAttack(objective_target=target),
+                objectives=["Say hello.", "Say goodbye."],
+                operation_id=operation.id,
+            )
+        )
+        await asyncio.wait_for(target.sending.wait(), timeout=10)
+        await sqlite_instance.delete_operation_async(operation_id=operation.id)
+        target.release.set()
+        executor_result = await asyncio.wait_for(running, timeout=10)
+        assert [result.operation_id for result in executor_result.completed_results] == [None, None]
+        assert len(target.prompt_sent) == 2
+        saved = await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS)
+        assert [row.operation_id for row in saved] == [None, None]
+
+    async def test_batch_given_a_missing_operation_still_rejects_every_objective_async(
+        self, sqlite_instance: MemoryInterface
+    ) -> None:
+        attack = AdmissionProbe()
+        executor_result = await AttackExecutor().execute_attack_async(
+            attack=attack, objectives=["first", "second"], operation_id=uuid4(), return_partial_on_failure=True
+        )
+        assert executor_result.completed_results == []
+        assert all(isinstance(error, LookupError) for _, error in executor_result.incomplete_objectives)
+        assert len(executor_result.incomplete_objectives) == 2
+        assert attack.setup_count == attack.perform_count == 0
+        assert await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS) == []
