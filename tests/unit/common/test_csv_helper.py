@@ -57,3 +57,27 @@ def test_write_csv_writes_header_and_rows():
     lines = file.getvalue().strip().splitlines()
     assert lines[0] == "name,role"
     assert lines[1] == "alice,admin"
+
+
+def test_write_csv_covers_keys_only_later_rows_have():
+    output = StringIO()
+    examples = [
+        {"name": "Alice"},
+        {"name": "Bob", "note": "extra"},
+    ]
+    write_csv(output, examples)
+    output.seek(0)
+    result = read_csv(output)
+    assert result == [{"name": "Alice", "note": ""}, {"name": "Bob", "note": "extra"}]
+
+
+def test_write_csv_keeps_first_seen_column_order():
+    output = StringIO()
+    examples = [
+        {"a": "1", "b": "2"},
+        {"c": "3", "a": "4"},
+    ]
+    write_csv(output, examples)
+    output.seek(0)
+    lines = output.read().strip().splitlines()
+    assert lines[0] == "a,b,c"

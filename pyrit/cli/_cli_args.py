@@ -204,8 +204,11 @@ def parse_dataset_fetch(value: str) -> str:
     Raises:
         ValueError: If the policy is unsupported.
     """
-    if value not in {"never", "if_missing"}:
-        raise ValueError("Dataset fetch must be 'never' or 'if_missing'.")
+    from pyrit.models.scenario_dataset import DatasetFetchPolicy
+
+    if value not in {policy.value for policy in DatasetFetchPolicy}:
+        choices = ", ".join(f"'{policy.value}'" for policy in DatasetFetchPolicy)
+        raise ValueError(f"Dataset fetch must be one of: {choices}.")
     return value
 
 

@@ -558,16 +558,19 @@ class GitHubCopilotTarget(PromptTarget):
                 try:
                     await self._release_session_async(client=client, conversation=conversation)
                 except BaseException as error:
+                    error.add_note("Copilot cleanup phase: session release.")
                     errors.append(error)
             try:
                 await client.stop()
             except BaseException as error:
+                error.add_note("Copilot cleanup phase: active client stop.")
                 errors.append(error)
 
         for failed_client in tuple(self._failed_startup_clients):
             try:
                 await failed_client.stop()
             except BaseException as error:
+                error.add_note("Copilot cleanup phase: failed startup client stop.")
                 errors.append(error)
             else:
                 self._failed_startup_clients.remove(failed_client)

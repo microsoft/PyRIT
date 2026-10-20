@@ -147,8 +147,15 @@ export const useMainLayoutStyles = makeStyles({
     },
   },
   toolbarSlot: {
+    display: 'flex',
+    alignItems: 'center',
+    flexShrink: 0,
+    minWidth: 0,
+    minHeight: '48px',
     maxWidth: '100%',
-    marginLeft: 'auto',
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
+    backgroundColor: tokens.colorNeutralBackground3,
     ':empty': {
       display: 'none',
     },
