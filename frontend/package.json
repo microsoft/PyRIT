@@ -16,6 +16,7 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:paired-outcomes": "npm run build && playwright test --config playwright.paired-outcomes.config.ts",
     "test:e2e:analytics": "npm run build && playwright test --config playwright.analytics.config.ts",
     "test:e2e:seeded": "playwright test --project seeded",
     "test:e2e:live": "E2E_LIVE_MODE=true playwright test --project live",
@@ -25,6 +26,8 @@
   "dependencies": {
     "@azure/msal-browser": "^5.25.0",
     "@azure/msal-react": "^5.7.2",
+    "@fluentui-contrib/react-virtualizer": "^1.0.0",
+    "@fluentui/react-aria": "9.17.15",
     "@fluentui/react-components": "9.74.9",
     "@fluentui/react-icons": "2.0.343",
     "axios": "1.20.0",

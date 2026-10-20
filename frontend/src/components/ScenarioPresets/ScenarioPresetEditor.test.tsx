@@ -442,7 +442,7 @@ describe('ScenarioPresetEditor edit mode', () => {
     renderEdit()
 
     await user.click(await screen.findByRole('combobox', { name: 'Add dataset' }))
-    await user.click(screen.getByRole('option', { name: 'xstest', exact: true }))
+    await user.click(screen.getByRole('option', { name: 'xstest (unknown)', exact: true }))
     await editLimit(user, 'Maximum objectives', '25')
     await user.click(screen.getByTestId('save-preset-btn'))
 

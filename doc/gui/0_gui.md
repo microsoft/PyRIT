@@ -173,7 +173,7 @@ The Chat view is the primary workspace for running interactive attacks against c
 
 #### Sending Messages
 
-For a new chat, your default objective target is preselected if it is available. Click the target badge in the shared toolbar beside the label controls to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target. An attack saved without a target uses this dropdown until its first send binds the selected target.
+For a new chat, your default objective target is preselected if it is available. Click the target badge in the chat ribbon below the common labels and above the objective to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target. An attack saved without a target uses this dropdown until its first send binds the selected target.
 
 Clicking **Chat** while already in a new chat keeps its target and draft. Starting
 a new attack resets both. Default changes in another tab apply to the next new
@@ -192,6 +192,22 @@ After a reload or runtime change, converter choices cannot be restored.
 A warning beside the recovered draft tells you to select and apply converters again before sending.
 
 When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
+
+#### Temperature
+
+Select a target, then set **Temperature** before the first send. Leave it empty
+to keep the source setting. The supported range is 0 to 2. This creates a private
+target configuration for the attack; it does not add or change a registered target.
+Temperature is read-only after the attack is bound. In the conversation editor,
+a temperature change requires **New attack**, not **Same attack**.
+Hover over or click the read-only field to see why it cannot be changed.
+
+Saved attacks retain the source name, source identity, temperature, and effective
+identity, but not credentials. After a restart, the backend tries to reconstruct
+the target from a matching registered source. If reconstruction fails, sending
+is blocked rather than using the source's default temperature. OpenAI-family
+targets with a temperature parameter support this control. Externally owned HTTP
+clients and temperature set through `extra_body_parameters` are not supported.
 
 #### Repeating a Message
 
@@ -247,6 +263,21 @@ messages endpoint and `send=false` context storage are unchanged.
 
 Open **Converters** and use the picker above the working input to add registered
 converters in the order you want them to run.
+For a stage that supports reconstruction, open **... > Settings** to change its
+constructor settings. Changes create a private converter for that stage. Other
+stages and the registered source keep their settings. **Reset to registered
+converter** removes the stage's overrides. **Use default / not set** clears a
+structured setting's override and restores the registered source's value.
+Changing settings invalidates that stage and its downstream results.
+
+Closing the converter pane discards temporary settings, but keeps content that
+you already applied and the identifiers of the converters that produced it.
+Temporary converters are built for each preview operation, not retained in a
+second registry. A runtime change clears temporary settings and preview results.
+Completed results appear in the converted prompt automatically. Shared repeated
+sends reuse these results; independent repeated conversion supports registered
+stages only.
+
 The top text box is an editable working copy: changing it does not change the original
 chat message. The top **Convert** button runs the active tab's configured pipeline
 and any configured inputs that do not have results yet. After every configured input
@@ -258,7 +289,7 @@ the **Convert** button below it to run **all remaining stages** from that value,
 without rerunning earlier stages. Empty and whitespace-only intermediate values can
 also be passed to the remaining stages. Editing a value invalidates its downstream results
 until you convert again. The final output has no Convert or selection-only button;
-you can edit it directly before applying it.
+edits to the final output take effect immediately.
 
 To convert only part of a text value, select it and click **Convert selection only**.
 This wraps the selection in `⟪` and `⟫`. The next converter transforms only the marked
@@ -334,6 +365,15 @@ message piece. The backend resolves the IDs through the registry. An empty list
 represents a manual conversion. `request_converter_configurations` controls
 conversion of pieces without a preconverted value; it does not describe which
 converters already ran.
+
+For temporary stages, preview requests provide `converter_specs`, aligned with
+`converter_ids`; use `null` for a registered stage. Preview responses include the
+actual temporary identifier and a signed `provenance` token. Pass these tokens
+as `applied_converter_provenance`, aligned with `applied_converter_ids`, when
+sending or saving the converted content. Tokens remain valid after the pane
+closes, without retaining converter objects. A restart invalidates tokens for
+unsaved content; convert it again. Stored messages retain their converter
+identifiers and do not depend on those tokens.
 
 #### Attachments
 
@@ -505,7 +545,7 @@ Export stays available for read-only historical conversations, and is disabled w
 
 The labels bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. Click the labels icon to open **Default Labels** and add, edit, or remove custom labels. **Operator:** is an always-visible text input; **Operation:** is an always-visible searchable dropdown outside this popover. Operator is required; an operation is optional and removable. A signed-in operator is read-only.
 
-In Chat, the active target, Markdown toggle, export menu, conversations panel toggle, and **New Attack** button share the right side of this bar. They wrap below the labels on narrow screens.
+In Chat, a separate ribbon below the labels contains the target, temperature, and **Edit Conversation** controls on the left. The Markdown toggle, export menu, conversations panel toggle, and **New Attack** button are on the right.
 
 Open the **Operation** dropdown to choose a saved operation. **New operation…** stays first, including while searching, and opens the creation dialog. Typing alone never selects an unsaved name. Very long lists show up to 200 saved choices and say how many match, so type to narrow them. The compact metadata controls wrap on narrow screens; custom labels that do not fit remain available through the labels icon.
 
@@ -922,3 +962,34 @@ CoPyRIT monitors the backend connection and shows a status banner:
 - **Disconnected (red):** Unable to reach the backend. Check that the server is running.
 - **Degraded (yellow):** Connection is unstable.
 - **Reconnected (green):** Briefly shown after a successful reconnection, then auto-dismissed.
+
+## Paired baseline and attack outcomes
+
+Open a completed run from **Scanner History** and find **Paired outcomes**.
+Choose the saved **Baseline group** and **Attack group**, then select
+**Compare outcomes**. Groups are explicitly marked by the saved execution
+plan; PyRIT does not guess a baseline from its name. If several configurations
+have the same name, the options include their group IDs to distinguish them.
+
+The comparison shows all four baseline-to-attack transitions, both success
+rates, and their difference in percentage points. Rates use the same decided
+pairs. For example, four pairs with one of each transition give 50% success
+on each side and a 0 pp difference, while still showing one failure becoming
+a success and one success becoming a failure.
+
+**Decided pairs** shows the number with success or failure on both sides,
+followed by the number planned on both sides. **Excluded pairs** counts the
+remaining shared pairs. Missing outcomes, errors, and undetermined outcomes
+are listed separately; reason counts can overlap. Seeds planned on only one
+side are unmatched and are not included in the pair denominator.
+
+The panel uses the [paired analytics SDK](../code/analytics/0_attack_results.md)
+and its latest top-level outcome rules. Children and superseded retries do
+not add observations. Empty decided populations display **Unavailable** rates.
+Legacy runs without a complete saved plan, runs without explicit group kinds,
+and runs that have not completed cannot be compared. Incompatible groups
+show the backend's explanation, and **Compare outcomes** can retry a failed
+request. Changing a group clears the comparison.
+
+Missing persisted scoring metadata limits compatibility validation. These
+observed differences do not establish causation.
