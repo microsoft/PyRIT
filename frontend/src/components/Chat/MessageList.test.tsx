@@ -11,10 +11,21 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
 
+function mockScoreTabBarWidth(width: number): void {
+  Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+    configurable: true,
+    get(this: HTMLElement): number {
+      return this.hasAttribute("data-score-tab-bar") ? width : 0;
+    },
+  });
+}
+
 describe("MessageList", () => {
   afterEach(() => {
     if (originalClientWidthDescriptor) {
       Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidthDescriptor);
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
     }
   });
 
@@ -659,6 +670,7 @@ describe("MessageList", () => {
   });
 
   it("should show every score tab when they fit in the available space", async () => {
+    mockScoreTabBarWidth(1000);
     const user = userEvent.setup();
     const scores = ["FirstScorer", "ObjectiveScorer", "ThirdScorer", "OverflowScorer"].map(
       (scorerType, index) => ({
@@ -701,12 +713,7 @@ describe("MessageList", () => {
   });
 
   it("should move only score tabs that do not fit into the More menu", async () => {
-    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
-      configurable: true,
-      get() {
-        return this.hasAttribute("data-score-tab-bar") ? 250 : 0;
-      },
-    });
+    mockScoreTabBarWidth(250);
     const user = userEvent.setup();
     const scores = ["FirstScorer", "ObjectiveScorer", "ThirdScorer", "OverflowScorer"].map(
       (scorerType, index) => ({
@@ -776,12 +783,7 @@ describe("MessageList", () => {
   });
 
   it("should keep another score tab visible when only one tab fits naturally", async () => {
-    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
-      configurable: true,
-      get() {
-        return this.hasAttribute("data-score-tab-bar") ? 150 : 0;
-      },
-    });
+    mockScoreTabBarWidth(150);
 
     const user = userEvent.setup();
     const scores = ["FirstScorer", "ObjectiveScorer", "ThirdScorer"].map(
@@ -830,12 +832,7 @@ describe("MessageList", () => {
   });
 
   it("should number identical overflow scores independently", async () => {
-    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
-      configurable: true,
-      get() {
-        return this.hasAttribute("data-score-tab-bar") ? 150 : 0;
-      },
-    });
+    mockScoreTabBarWidth(150);
     const user = userEvent.setup();
     const scores = [
       {

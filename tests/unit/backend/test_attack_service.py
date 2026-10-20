@@ -23,6 +23,7 @@ from sqlalchemy import select, update
 import pyrit
 import pyrit.backend.services.pagination as backend_pagination
 import pyrit.common.pagination as common_pagination
+from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AttackSummary,
@@ -1008,7 +1009,7 @@ class TestCreateAttack:
             request=MessagePiece(role="user", original_value="history", conversation_id=source_id).to_message()
         )
         with patch("pyrit.backend.services.attack_service.get_target_service") as targets:
-            targets.return_value.get_target_async = AsyncMock(return_value=object())
+            targets.return_value.get_target_async = AsyncMock(return_value=target_object_to_instance("target", target))
             targets.return_value.get_target_object.return_value = target
             created = await AttackService().create_attack_async(
                 request=CreateAttackRequest(
@@ -1073,12 +1074,11 @@ class TestCreateAttack:
     async def test_create_attack_stores_prepended_conversation(self, attack_service, mock_memory) -> None:
         """Test that create_attack stores prepended conversation messages."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
-            mock_target_obj = MagicMock()
-            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
-                class_name="TextTarget", class_module="pyrit.prompt_target"
-            )
+            mock_target_obj = MockPromptTarget()
             mock_target_service = MagicMock()
-            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_async = AsyncMock(
+                return_value=target_object_to_instance("target-1", mock_target_obj)
+            )
             mock_target_service.get_target_object.return_value = mock_target_obj
             mock_get_target_service.return_value = mock_target_service
 
@@ -1100,12 +1100,11 @@ class TestCreateAttack:
     async def test_create_attack_lowers_system_prompt_to_system_message(self, attack_service, mock_memory) -> None:
         """Test that system_prompt is lowered to a single system-role message at sequence 0."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
-            mock_target_obj = MagicMock()
-            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
-                class_name="TextTarget", class_module="pyrit.prompt_target"
-            )
+            mock_target_obj = MockPromptTarget()
             mock_target_service = MagicMock()
-            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_async = AsyncMock(
+                return_value=target_object_to_instance("target-1", mock_target_obj)
+            )
             mock_target_service.get_target_object.return_value = mock_target_obj
             mock_get_target_service.return_value = mock_target_service
 
@@ -1143,12 +1142,11 @@ class TestCreateAttack:
     ) -> None:
         """Test that system_prompt is inserted at sequence 0, ahead of prepended_conversation messages."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
-            mock_target_obj = MagicMock()
-            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
-                class_name="TextTarget", class_module="pyrit.prompt_target"
-            )
+            mock_target_obj = MockPromptTarget()
             mock_target_service = MagicMock()
-            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_async = AsyncMock(
+                return_value=target_object_to_instance("target-1", mock_target_obj)
+            )
             mock_target_service.get_target_object.return_value = mock_target_obj
             mock_get_target_service.return_value = mock_target_service
 
@@ -1221,12 +1219,11 @@ class TestCreateAttack:
     ) -> None:
         """Test that multiple prepended messages get incrementing sequence numbers and preserve lineage."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
-            mock_target_obj = MagicMock()
-            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
-                class_name="TextTarget", class_module="pyrit.prompt_target"
-            )
+            mock_target_obj = MockPromptTarget()
             mock_target_service = MagicMock()
-            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_async = AsyncMock(
+                return_value=target_object_to_instance("target-1", mock_target_obj)
+            )
             mock_target_service.get_target_object.return_value = mock_target_obj
             mock_get_target_service.return_value = mock_target_service
 
@@ -2888,10 +2885,11 @@ class TestCreateRelatedConversation:
 
         source_id = source.conversation_id
         for _ in range(2):
-            branch = await service.create_related_conversation_async(
-                attack_result_id=attack.attack_result_id,
-                request=CreateConversationRequest(source_conversation_id=source_id, cutoff_index=0),
-            )
+            with patch.object(service, "_validate_editor_target_async", return_value=MockPromptTarget()):
+                branch = await service.create_related_conversation_async(
+                    attack_result_id=attack.attack_result_id,
+                    request=CreateConversationRequest(source_conversation_id=source_id, cutoff_index=0),
+                )
             assert branch is not None
             async with await sqlite_instance.get_session_async() as session:
                 rows = (
@@ -3019,7 +3017,10 @@ class TestCreateRelatedConversation:
         mock_memory.duplicate_messages_async.return_value = ("branch", [copied])
         mock_memory.add_conversation_branches_to_attack_async.side_effect = RuntimeError("branch insertion failed")
 
-        with pytest.raises(RuntimeError, match="branch insertion failed"):
+        with (
+            patch.object(attack_service, "_validate_editor_target_async", return_value=MockPromptTarget()),
+            pytest.raises(RuntimeError, match="branch insertion failed"),
+        ):
             await attack_service.create_related_conversation_async(
                 attack_result_id="ar-attack-1",
                 request=CreateConversationRequest(source_conversation_id="attack-1", cutoff_index=0),
@@ -3396,9 +3397,14 @@ class TestAttackServiceAdditionalCoverage:
         prepared = Conversation(conversation_id="branch-dup", target_identifier=expected_target)
         pieces = [MessagePiece(conversation_id="branch-dup", role="user", original_value="copy")] if has_pieces else []
 
-        with patch.object(
-            attack_service, "_prepare_conversation_up_to_async", return_value=(prepared, pieces)
-        ) as mock_dup:
+        with (
+            patch.object(
+                attack_service, "_prepare_conversation_up_to_async", return_value=(prepared, pieces)
+            ) as mock_dup,
+            patch.object(
+                attack_service, "_validate_editor_target_async", return_value=MockPromptTarget()
+            ) as resolve_target,
+        ):
             result = await attack_service.create_related_conversation_async(
                 attack_result_id="attack-1",
                 request=CreateConversationRequest(source_conversation_id="attack-1", cutoff_index=2),
@@ -3406,6 +3412,7 @@ class TestAttackServiceAdditionalCoverage:
 
         assert result is not None
         assert result.conversation_id == "branch-dup"
+        assert resolve_target.await_count == int(bool(pieces) and expected_target is not None)
         mock_dup.assert_called_once()
         assert mock_dup.call_args.kwargs == {
             "source_conversation_id": "attack-1",

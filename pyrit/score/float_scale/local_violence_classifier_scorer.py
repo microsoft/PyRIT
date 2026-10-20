@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from pyrit.common.csv_helper import strip_leading_comment_block
 from pyrit.common.path import SCORER_EVALS_HARM_PATH
 from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoreStatus
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
@@ -307,9 +308,8 @@ def _load_training_rows() -> tuple[list[str], list[int]]:
                 "If the dataset was updated deliberately, re-validate the scorer and update "
                 "LocalViolenceClassifierScorer's pinned hashes rather than scoring with an unchecked model."
             )
-        lines = raw.decode("utf-8").splitlines()
-        start = 1 if lines and lines[0].startswith("#") else 0
-        for row in csv.DictReader(io.StringIO("\n".join(lines[start:]))):
+        body = strip_leading_comment_block(raw.decode("utf-8"))
+        for row in csv.DictReader(io.StringIO(body, newline="")):
             raw_scores = [row.get(key) for key in ("human_score", "human_score_1", "human_score_2", "human_score_3")]
             scores = [float(value) for value in raw_scores if value not in (None, "")]
             response = (row.get("assistant_response") or "").strip()

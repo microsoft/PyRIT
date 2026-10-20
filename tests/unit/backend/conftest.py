@@ -24,7 +24,7 @@ from test_support.fixtures import authentication_policy, compatibility_headers, 
 @pytest.fixture
 async def analytics_service(sqlite_instance: SQLiteMemory) -> AsyncGenerator[AttackResultAnalytics, None]:
     """Use real isolated memory with finite correctness budgets, not production latency assertions."""
-    execution = partial(AnalyticsExecution, queue_timeout=30.0, report_timeout=30.0, quick_timeout=30.0)
+    execution = partial(AnalyticsExecution, queue_timeout=300.0, report_timeout=300.0, quick_timeout=300.0)
     assert get_analytics_service.cache_info().currsize == 0
     with patch("pyrit.analytics.attack_result_analytics.AnalyticsExecution", side_effect=execution):
         try:

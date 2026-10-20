@@ -280,6 +280,7 @@ type EstimateRequestState =
       status: 'resolved'
       requestKey: string
       result: ScenarioRunEstimateResult
+      datasetSettings?: ScenarioDatasetSettings
     }
   | {
       status: 'error'
@@ -845,6 +846,7 @@ function ScenarioLaunchForm({
             status: 'resolved',
             requestKey: estimateRequestKey,
             result,
+            datasetSettings: response.effective_datasets,
           })
           if (result.status === 'available' || result.status === 'conditional') {
             setLastGoodEstimate(result)
@@ -981,7 +983,8 @@ function ScenarioLaunchForm({
   }
 
   const handleLaunchConfirmed = async (): Promise<void> => {
-    if (isSubmittingRef.current || conversationBusy || !runtime.ready || !defaultsReady || staleSelection || unavailableSelection) {
+    if (isSubmittingRef.current || conversationBusy || !runtime.ready || !defaultsReady || staleSelection || unavailableSelection
+      || checkingRefreshPolicies) {
       return
     }
 
@@ -1039,6 +1042,21 @@ function ScenarioLaunchForm({
   const previewFilters = { ...datasetDefaults.filters, ...datasetEdits.filters }
   const previewHarmCategories = previewFilters.harm_categories ?? []
   const previewDataTypes = previewFilters.data_types ?? []
+  const currentDatasetEstimate = estimateRequestState?.requestKey === estimateRequestKey ? estimateRequestState : null
+  const confirmedDatasetSettings = currentDatasetEstimate?.status === 'resolved'
+    ? currentDatasetEstimate.datasetSettings : undefined
+  const checkingRefreshPolicies = supportsDatasets && selectedDatasetNames.length > 0 && currentDatasetEstimate === null
+  const unconfirmedRefreshPolicies = supportsDatasets && selectedDatasetNames.length > 0
+    && !checkingRefreshPolicies && confirmedDatasetSettings === undefined
+  const refreshDatasets = [...new Set((confirmedDatasetSettings?.sources ?? [])
+    .filter((source) => source.fetch === 'always').map((source) => source.name))]
+  const editedRefreshDatasets = refreshDatasets.filter((name) => {
+    const metadata = datasetMetadata.items.find((item) => item.name === name)
+    return metadata?.loaded && (!metadata.origins?.length
+      || metadata.origins.some((origin) => origin === 'user' || origin === 'unknown'))
+  })
+  const uncheckedRefreshDatasets = refreshDatasets.filter((name) => datasetMetadata.loading || datasetMetadata.error
+    || !datasetMetadata.items.some((item) => item.name === name))
 
   return (
     <section
@@ -1238,7 +1256,10 @@ function ScenarioLaunchForm({
                 datasets={datasetMetadata.items} disabled={submitting}
                 loading={datasetMetadata.loading} metadataError={datasetMetadata.error}
                 preparing={datasetMetadata.preparing} loadError={datasetMetadata.loadError}
-                loadEnabled={runtime.ready && !staleSelection && estimateRequest !== null}
+                loadEnabled={runtime.ready && !staleSelection && estimateRequest !== null
+                  && confirmedDatasetSettings !== undefined
+                  && !confirmedDatasetSettings.sources.some((source) => source.fetch === 'always'
+                    && !datasetMetadata.items.some((item) => item.name === source.name && item.loaded))}
                 onLoad={() => { if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest) }}
                 onReload={datasetMetadata.reload} onChange={setDatasetEdits} onValidationChange={setDatasetError}
               />
@@ -1442,6 +1463,27 @@ function ScenarioLaunchForm({
               <DialogBody>
                 <DialogTitle>Run preview</DialogTitle>
                 <DialogContent className={styles.dialogContent}>
+                  {checkingRefreshPolicies && <Text role="status">Checking dataset refresh policies...</Text>}
+                  {unconfirmedRefreshPolicies && <MessageBar intent="warning">
+                    <MessageBarBody role="alert">
+                      Cannot confirm which datasets will refresh. The backend settings could not be checked for this
+                      request. A refresh replaces the full stored dataset, can remove manual edits, and can prevent
+                      older runs from resuming. Filters and objective limits do not limit replacement.
+                    </MessageBarBody>
+                  </MessageBar>}
+                  {refreshDatasets.length > 0 && <MessageBar intent="warning">
+                    <MessageBarBody role="alert">
+                      Refresh will replace the full stored datasets: {refreshDatasets.join(', ')}.
+                      Filters and objective limits do not limit replacement. This can remove manual edits
+                      and prevent older runs from resuming. Use a new dataset name to keep both batches.
+                      {editedRefreshDatasets.length > 0 && <Text block>
+                        User or unknown-origin data will be replaced: {editedRefreshDatasets.join(', ')}.
+                      </Text>}
+                      {uncheckedRefreshDatasets.length > 0 && <Text block>
+                        Existing data could not be checked for: {uncheckedRefreshDatasets.join(', ')}.
+                      </Text>}
+                    </MessageBarBody>
+                  </MessageBar>}
                   <dl className={styles.previewList}>
                     <div className={styles.previewGroup}>
                       {supportsObjectiveTarget && <>
@@ -1544,7 +1586,7 @@ function ScenarioLaunchForm({
                   </Button>
                   <Button
                     appearance="primary"
-                    disabled={submitting || conversationBusy || !runtime.ready || !defaultsReady || !requestResult.ok}
+                    disabled={submitting || conversationBusy || !runtime.ready || !defaultsReady || !requestResult.ok || checkingRefreshPolicies}
                     onClick={() => void handleLaunchConfirmed()}
                     data-testid="confirm-launch-scenario-btn"
                   >

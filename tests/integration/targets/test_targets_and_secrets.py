@@ -1,16 +1,18 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import os
 import tempfile
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from PIL import Image
 
-from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
+from pyrit.auth import get_azure_openai_auth, get_azure_token_provider, is_azure_openai_endpoint
 from pyrit.common.path import HOME_PATH
 from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
 from pyrit.memory.sqlite_memory import SQLiteMemory
@@ -61,6 +63,15 @@ def _get_openai_auth(
     if api_key_env_var:
         return _get_required_env_var(api_key_env_var)
     return get_azure_openai_auth(endpoint)
+
+
+def _assert_image_format(*, image_path: Path, output_format: str) -> None:
+    """Validate the saved image's extension and encoded format."""
+    assert image_path.is_file(), f"Image file not found at path: {image_path}"
+    assert image_path.suffix == f".{output_format}"
+    with Image.open(image_path) as image:
+        assert image.format == output_format.upper()
+        image.verify()
 
 
 async def _assert_can_send_prompt(
@@ -624,6 +635,7 @@ async def test_connect_openai_completion(sqlite_instance: SQLiteMemory) -> None:
     await _assert_can_send_prompt(target=target, check_if_llm_interpreted_request=False)
 
 
+@pytest.mark.parametrize("output_format", ["png", "jpeg", "webp"])
 @pytest.mark.parametrize(
     ("endpoint", "api_key_env_var", "model_name"),
     [
@@ -662,14 +674,19 @@ async def test_connect_image(
     endpoint: str,
     api_key_env_var: str | None,
     model_name: str,
+    output_format: Literal["png", "jpeg", "webp"],
 ) -> None:
     endpoint_value = _get_required_env_var(endpoint)
+    if output_format == "webp" and is_azure_openai_endpoint(endpoint_value):
+        pytest.skip("Azure OpenAI supports only PNG and JPEG image output.")
     model_name_value = os.getenv(model_name) if model_name else ""
 
     target = OpenAIImageTarget(
         endpoint=endpoint_value,
         api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
+        output_format=output_format,
+        quality="low",
     )
 
     image_prompt = "A simple test image of a raccoon"
@@ -683,10 +700,14 @@ async def test_connect_image(
         f"Expected successful response, got error: {result.last_response.response_error}"
     )
 
-    # Validate we got a valid image file path
     image_path = Path(result.last_response.converted_value)
-    assert image_path.exists(), f"Image file not found at path: {image_path}"
-    assert image_path.is_file(), f"Path exists but is not a file: {image_path}"
+    await asyncio.to_thread(_assert_image_format, image_path=image_path, output_format=output_format)
+
+    conversation = await sqlite_instance.get_conversation_metadata_async(conversation_id=result.conversation_id)
+    assert conversation is not None
+    assert conversation.target_identifier is not None
+    assert conversation.target_identifier.params["output_format"] == output_format
+    assert conversation.target_identifier.hash == target.get_identifier().hash
 
 
 @pytest.mark.parametrize(

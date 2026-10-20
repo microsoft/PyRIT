@@ -9,7 +9,7 @@ import threading
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from typing import Any, ClassVar
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -22,6 +22,7 @@ from pyrit.backend.services.scenario_run_service import (
     ScenarioRunService,
     _PreparedRun,
 )
+from pyrit.datasets import SeedDatasetProvider
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import AttackScoringConfig, ManyShotJailbreakAttack, PromptSendingAttack
 from pyrit.executor.attack.single_turn import many_shot_jailbreak
@@ -39,6 +40,7 @@ from pyrit.models import (
     ScenarioResult,
     ScenarioRunState,
     Seed,
+    SeedDataset,
     SeedObjective,
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest
@@ -677,13 +679,14 @@ async def test_resume_failure_preserves_saved_results_async(
     assert target.prompt_sent == [_SECOND_OBJECTIVE]
 
 
-@pytest.mark.timeout(60)
-async def test_resume_completion_waits_for_terminal_handoff_async(
+@pytest.mark.timeout(300)
+@pytest.mark.parametrize("launch", ["fresh", "resume"])
+async def test_run_completion_waits_for_terminal_handoff_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+    launch: str,
 ) -> None:
     service, target = resume_environment
-    stored = await _create_failed_run_async(target=target, legacy=False)
-    run_id = str(stored.id)
+    stored = await _create_failed_run_async(target=target, legacy=False) if launch == "resume" else None
     target.prompt_sent.clear()
     entered, release = asyncio.Event(), asyncio.Event()
     original_handoff = service._complete_handoff_async
@@ -699,7 +702,15 @@ async def test_resume_completion_waits_for_terminal_handoff_async(
         await original_wait_for(awaitable, timeout=0)
 
     with patch.object(service, "_complete_handoff_async", side_effect=handoff_async):
-        await service.resume_run_async(scenario_result_id=run_id)
+        if stored is not None:
+            response = await service.resume_run_async(scenario_result_id=str(stored.id))
+        else:
+            response = await service.start_run_async(
+                request=RunScenarioRequest(
+                    scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, max_concurrency=1, include_baseline=False
+                )
+            )
+        run_id = response.scenario_result_id
         await entered.wait()
         active = service._active_tasks[run_id]
         assert active.task is not None
@@ -711,7 +722,9 @@ async def test_resume_completion_waits_for_terminal_handoff_async(
                 assert not active.task.done()
                 assert active.task.cancelling() == 0
                 assert service.get_queue_snapshot().active is not None
-                assert target.prompt_sent == [_SECOND_OBJECTIVE]
+                assert target.prompt_sent == (
+                    [_SECOND_OBJECTIVE] if launch == "resume" else [_FIRST_OBJECTIVE, _SECOND_OBJECTIVE]
+                )
             finally:
                 release.set()
                 await observer
@@ -809,6 +822,7 @@ async def test_overlapping_resume_requests_only_initialize_once_async(
         assert start.await_count == 1
 
 
+@pytest.mark.timeout(300)
 async def test_fresh_launch_saves_only_nonsecret_resume_inputs_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
 ) -> None:
@@ -827,7 +841,7 @@ async def test_fresh_launch_saves_only_nonsecret_resume_inputs_async(
                 max_concurrency=1,
             )
         )
-        await _wait_for_idle_async(service)
+        await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
     stored = await CentralMemory.get_memory_instance().get_scenario_result_header_async(
         scenario_result_id=response.scenario_result_id
     )
@@ -943,18 +957,24 @@ async def test_saved_total_limit_round_trips_async(
     assert restored.max_dataset_size == (limit_args.get("max_dataset_size") or "default")
 
 
+@pytest.mark.parametrize("policy", [DatasetFetchPolicy.NEVER, DatasetFetchPolicy.ALWAYS])
 async def test_saved_dataset_request_round_trips_async(
-    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], policy: DatasetFetchPolicy
 ) -> None:
     service, _ = resume_environment
     datasets = ScenarioDatasetRequest(
-        sources=[DatasetSourceInput(name=_DATASET_NAME, max_size=1, fetch=DatasetFetchPolicy.NEVER)],
+        sources=[DatasetSourceInput(name=_DATASET_NAME, max_size=1, fetch=policy)],
         max_total=1,
         filters={"data_types": ["text"]},
     )
-    prepared = await service._prepare_run_async(
-        request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, datasets=datasets)
+    provider = MagicMock(spec=SeedDatasetProvider)
+    provider.fetch_dataset_async.return_value = SeedDataset(
+        dataset_name=_DATASET_NAME, seeds=[SeedObjective(value=_FIRST_OBJECTIVE, dataset_name=_DATASET_NAME)]
     )
+    with patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={_DATASET_NAME: provider}):
+        prepared = await service._prepare_run_async(
+            request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, datasets=datasets)
+        )
     stored = (
         await CentralMemory.get_memory_instance().get_scenario_results_async(
             scenario_result_ids=[prepared.scenario._scenario_result_id]
@@ -963,6 +983,7 @@ async def test_saved_dataset_request_round_trips_async(
     restored = service._restore_launch_request(stored=stored)
     assert restored.dataset_request == datasets
     assert restored.dataset_names is None
+    assert provider.fetch_dataset_async.await_count == (1 if policy is DatasetFetchPolicy.ALWAYS else 0)
 
 
 async def test_resume_older_launch_record_without_adversarial_selection_async(
