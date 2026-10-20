@@ -29,8 +29,10 @@ if sys.platform == "win32":
 
     from test_support.event_loop import new_test_event_loop
 
-    def pytest_asyncio_loop_factories() -> dict[str, Callable[[], AbstractEventLoop]]:
-        return {"proactor": new_test_event_loop}
+    @pytest.fixture(scope="session")
+    def _asyncio_loop_factory() -> Callable[[], AbstractEventLoop]:
+        # pytest-asyncio 1.4's hook does not select factories for fixture-only runners.
+        return new_test_event_loop
 
 
 @contextmanager
