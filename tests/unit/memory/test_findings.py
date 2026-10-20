@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import sqlite3
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import func, insert, select
 from sqlalchemy.dialects import mssql
 from sqlalchemy.engine import ScalarResult
@@ -17,6 +20,7 @@ from pyrit.memory.memory_models import (
     AttackResultEntry,
     FindingEntry,
     FindingEvidenceEntry,
+    OperationEntry,
     PromptMemoryEntry,
     ScoreEntry,
 )
@@ -35,13 +39,71 @@ async def test_operations_are_unique_by_trimmed_case_folded_name(sqlite_instance
     assert await sqlite_instance.require_operation_async(operation_id=saved.id) == saved
 
 
-async def test_update_operation_replaces_only_the_description(sqlite_instance: SQLiteMemory) -> None:
+async def test_update_operation_renames_and_replaces_the_description(sqlite_instance: SQLiteMemory) -> None:
     saved = await sqlite_instance.add_operation_async(Operation(name="Scoped", description="First draft"))
-    updated = await sqlite_instance.update_operation_async(operation_id=saved.id, description="Final scope")
-    assert updated == saved.model_copy(update={"description": "Final scope"})
-    assert await sqlite_instance.require_operation_async(operation_id=saved.id) == updated
+    described = await sqlite_instance.update_operation_async(operation_id=saved.id, description="Final scope")
+    assert described == saved.model_copy(update={"description": "Final scope"})
+    recased = await sqlite_instance.update_operation_async(operation_id=saved.id, name="  SCOPED ")
+    assert recased == described.model_copy(update={"name": "SCOPED"})
+    renamed = await sqlite_instance.update_operation_async(operation_id=saved.id, name="Engagement", description="")
+    assert renamed == saved.model_copy(update={"name": "Engagement", "description": ""})
+    assert await sqlite_instance.get_operations_async(name="scoped") == []
+    assert await sqlite_instance.get_operations_async(name="engagement") == [renamed]
+
+
+async def test_update_operation_keeps_names_unique_and_valid(sqlite_instance: SQLiteMemory) -> None:
+    saved = await sqlite_instance.add_operation_async(Operation(name="Scoped"))
+    other = await sqlite_instance.add_operation_async(Operation(name="Other"))
+    taken = await sqlite_instance.update_operation_async(operation_id=saved.id, name=" OTHER ", description="Lost")
+    assert taken == other
+    assert await sqlite_instance.require_operation_async(operation_id=saved.id) == saved
+    with pytest.raises(ValidationError):
+        await sqlite_instance.update_operation_async(operation_id=saved.id, name=" ")
     with pytest.raises(LookupError):
         await sqlite_instance.update_operation_async(operation_id=uuid4(), description="Missing")
+    assert await sqlite_instance.get_operations_async() == [other, saved]
+
+
+async def test_add_finding_rejects_a_missing_operation(sqlite_instance: SQLiteMemory) -> None:
+    with pytest.raises(LookupError, match="Operation"):
+        await sqlite_instance.add_finding_async(finding=Finding(operation_id=uuid4(), title="Orphan", severity="low"))
+    assert await sqlite_instance.get_findings_async() == []
+
+
+async def test_add_finding_maps_a_foreign_key_failure_to_a_missing_operation(sqlite_instance: SQLiteMemory) -> None:
+    # SQL Server rejects the insert at flush when the Operation was deleted after the service checked it.
+    failure = AsyncMock(side_effect=IntegrityError("INSERT", {}, Exception("FOREIGN KEY constraint failed")))
+    saved = await sqlite_instance.add_operation_async(Operation(name="Saved"))
+    with patch.object(AsyncSession, "flush", failure), pytest.raises(LookupError, match="Operation"):
+        await sqlite_instance.add_finding_async(finding=Finding(operation_id=uuid4(), title="Orphan", severity="low"))
+    with patch.object(AsyncSession, "flush", failure), pytest.raises(IntegrityError):
+        await sqlite_instance.add_finding_async(finding=Finding(operation_id=saved.id, title="Other", severity="low"))
+
+
+async def test_update_operation_deleted_after_it_was_read_is_not_found(tmp_path: Path) -> None:
+    db_path = tmp_path / "update-race.db"
+    # A second connection needs a real file, and SQLiteMemory(...) would return the fixture's singleton.
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    with patch.object(memory, "cleanup"):
+        memory.__init__(db_path=db_path, silent=True)
+    try:
+        operation = await memory.add_operation_async(Operation(name="Racing"))
+        read = OperationEntry.get_operation
+
+        def read_then_delete(entry: OperationEntry) -> Operation:
+            other = sqlite3.connect(db_path, timeout=5)
+            try:
+                other.execute("DELETE FROM OperationEntries")
+                other.commit()
+            finally:
+                other.close()
+            return read(entry)
+
+        with patch.object(OperationEntry, "get_operation", read_then_delete), pytest.raises(LookupError):
+            await memory.update_operation_async(operation_id=operation.id, name="Renamed")
+        assert await memory.get_operations_async() == []
+    finally:
+        await memory.dispose_engine_async()
 
 
 @pytest.mark.parametrize(
