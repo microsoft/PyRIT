@@ -283,6 +283,13 @@ E2E_LIVE_MODE=true npx playwright test
 
 The mock and seeded projects run in the **GitHub Actions** pull-request workflow. The live project is intended for a protected pipeline with an Entra identity or API keys.
 
+For ordinary interactions with startup controls, call `waitForAppReady(page)`
+from `e2e/_runtime.ts` after navigation or reload. A visible control can still
+move as runtime readiness and configured defaults arrive. Tests that deliberately
+interact before startup finishes should control those responses instead.
+Before reloading to check a preference change, wait for its value in localStorage;
+an empty Operation picker can mean its saved-ID lookup is still loading.
+
 CI runs two isolated mock shards, one serial seeded job, and one isolated
 analytics job, with one worker per job. Mock and seeded jobs start their own
 Vite server and Python backend because mock specs still depend on backend auth

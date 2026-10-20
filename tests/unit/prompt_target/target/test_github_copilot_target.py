@@ -895,6 +895,20 @@ async def test_reset_during_cleanup_propagates_only_selected_session_failure_asy
                 else:
                     await asyncio.wait_for(reset_task, timeout=2.0)
 
+        if failure_kind != "caller-cancel":
+            release_failure = (
+                a_failure
+                if failure_kind == "error" and failed_conversation == "conversation-a"
+                else b_failure
+                if failure_kind == "error"
+                else selected_cancellation
+                if failed_conversation == "conversation-a"
+                else unrelated_cancellation
+            )
+            assert getattr(release_failure, "__notes__", None) == ["Copilot cleanup phase: session release."]
+        if failure_kind == "release-cancel-stop-error":
+            assert getattr(stop_failure, "__notes__", None) == ["Copilot cleanup phase: active client stop."]
+
         assert client.create_session.await_count == 2
         session_a.send_and_wait.assert_awaited_once()
         session_b.send_and_wait.assert_awaited_once()
@@ -1450,7 +1464,7 @@ def test_set_model_name_boundaries(
     client.create_session.assert_not_awaited()
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("patch_central_database", "mock_copilot_startup_io")
 async def test_direct_send_captures_model_identity_before_startup_async(
     *,
     client: NonCallableMagicMock,
@@ -1474,7 +1488,7 @@ async def test_direct_send_captures_model_identity_before_startup_async(
         )
     )
     try:
-        await asyncio.wait_for(startup_entered.wait(), timeout=2.0)
+        await asyncio.wait_for(startup_entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
         with pytest.raises(RuntimeError, match="new target"):
             target.set_model_name(model_name="gpt-5.4")
 
@@ -2268,6 +2282,26 @@ async def test_failed_startup_stop_preserves_cancellation_and_ownership_async(
         await _cancel_tasks_async(send_task)
         with suppress(Exception):
             await asyncio.wait_for(target.cleanup_target_async(), timeout=2.0)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_cleanup_labels_failed_startup_client_stop_error_async(
+    *,
+    sdk: Any,
+) -> None:
+    failed_startup_client = create_autospec(sdk.CopilotClient, instance=True)
+    assert isinstance(failed_startup_client, NonCallableMagicMock)
+    stop_error = RuntimeError("failed startup client stop failed")
+    failed_startup_client.stop.side_effect = stop_error
+    target = GitHubCopilotTarget(model_name="gpt-5-mini")
+    target._failed_startup_clients.append(failed_startup_client)
+
+    with pytest.raises(RuntimeError) as cleanup_error:
+        await target.cleanup_target_async()
+
+    assert cleanup_error.value is stop_error
+    assert getattr(stop_error, "__notes__", None) == ["Copilot cleanup phase: failed startup client stop."]
+    failed_startup_client.stop.assert_awaited_once()
 
 
 @pytest.mark.usefixtures("patch_central_database", "mock_copilot_startup_io")

@@ -142,12 +142,26 @@
 # ```
 #
 # Scanner and shell share `--datasets name[:N|:all]`, `--max-per-dataset`, `--max-total`,
-# and `--dataset-fetch never|if_missing`. Source limits apply before the combined total.
+# and `--dataset-fetch never|if_missing|always`. Source limits apply before the combined total.
 # Omitted, empty, or `default` keeps the scenario setting; `all` removes only its own cap.
 # `list-scenarios` displays allowed sources and defaults. Ingredient/compound scenarios
 # restrict controls to preserve their shaping. `--dataset-filters` works with either form.
 # Deprecated `--dataset-names` and `--max-dataset-size` cannot be mixed with the new flags.
-# Discovery and estimates never fetch; only a new run prepares absent registered datasets.
+# Discovery, estimates, and resume never fetch. A new run prepares missing datasets or
+# explicitly refreshes them. For example:
+#
+# ```shell
+# pyrit_scan run garak.figstep --target openai_chat --datasets figstep_pro --max-total 1 --dataset-fetch always
+# ```
+#
+# `always` bypasses the provider cache and replaces the complete stored dataset, not only
+# the filtered or sampled objectives. Before any dataset write, fetched and retained sources
+# pass the configuration's filters, grouping, and validators without sampling. A fetch,
+# grouping, or validation failure keeps every selected dataset unchanged.
+# Replacement can remove manual edits and prevent older runs from resuming. A memory-only
+# dataset cannot refresh without a provider. Storage commits are per dataset: a later write
+# failure does not undo an earlier successful write. Explicit "Load datasets" in the GUI
+# remains missing-only and is disabled while a missing source is set to refresh on launch.
 #
 # Custom initialization scripts are loaded by the backend at startup: list them in the
 # `initialization_scripts` section of the config the server loads (paths are relative to your
@@ -258,7 +272,9 @@ MyCustomScenario()
 # # Run it with parameter overrides
 # pyrit_scan run my_custom_scenario --max-concurrency 10
 #
-# ```The scenario name is automatically converted from the class name (e.g., `MyCustomScenario` becomes `my_custom_scenario`).
+# ```
+#
+# The scenario name is automatically converted from the class name (e.g., `MyCustomScenario` becomes `my_custom_scenario`).
 #
 
 # %% [markdown]
