@@ -125,6 +125,88 @@ separate: an error followed by a successful retry contributes one historical err
 but no latest-unit error. Never derive the decided denominator by subtracting
 historical errors from completed units.
 
+### Compare matched baseline and attack outcomes
+
+For scenarios that saved a normalized run plan with explicit baseline and attack
+groups, `compute_paired_outcome_statistics` shows what changed for the **same
+logical seed groups**. Supply the two atomic-group IDs from
+`scenario_result.metadata["run_plan"]["atomic_groups"]`; this deliberately
+avoids guessing which baseline belongs to a particular attack configuration.
+
+```python
+from pyrit.analytics import compute_paired_outcome_statistics
+from pyrit.models import ScenarioRunPlan, ScenarioRunPlanGroupKind
+
+# scenario_result is an already loaded ScenarioResult containing hydrated AttackResults.
+plan = ScenarioRunPlan.model_validate(scenario_result.metadata["run_plan"])
+baseline = next(group for group in plan.atomic_groups if group.kind == ScenarioRunPlanGroupKind.BASELINE)
+attack = next(group for group in plan.atomic_groups if group.kind == ScenarioRunPlanGroupKind.ATTACK)
+# If several groups share a kind, choose the intended pair explicitly.
+report = compute_paired_outcome_statistics(
+    scenario_result,
+    baseline_group_id=baseline.id,
+    attack_group_id=attack.id,
+)
+print(report.failure_to_success, report.success_to_failure)
+print(report.failure_to_failure, report.success_to_success)
+print(report.baseline_success_rate, report.attack_success_rate, report.paired_difference)
+print(report.decided_pairs, report.excluded_pairs)
+```
+
+The four transitions are **failure→success**, **success→failure**,
+**failure→failure**, and **success→success**. The denominator for both rates
+(`baseline_success_rate` and `attack_success_rate`) is `decided_pairs`:
+seed-group IDs scheduled in **both** selected atomic groups whose latest
+top-level baseline and attack outcomes are both success or failure. The
+`paired_difference` is attack rate minus baseline rate over that same cohort,
+in proportions (not percentage points); for example, `0.25` means 25
+percentage points. If there are no decided pairs, all three values are `None`.
+Unlike a subtraction of two overall success rates, the transition counts show
+which outcomes changed, even when the marginal rates are identical.
+For example, with four decided pairs (one of each transition), both success
+rates are `0.5` and the paired difference is `0.0`, but one previously failed
+objective succeeds and one previously successful objective fails.
+
+The function selects the effective **latest top-level result** per
+`(atomic_group_id, seed_group_id)`, ordering by timestamp then result ID as
+`compute_scenario_statistics` does. Child results and superseded retries never
+create extra pairs. `planned_pairs` covers the **intersection** of planned seed IDs;
+`decided_pairs` is the decided shared subset, and
+`excluded_pairs = planned_pairs - decided_pairs`. The
+`unmatched_baseline_seeds` and `unmatched_attack_seeds` counts cover seed IDs
+planned on one side only, and are not included in `excluded_pairs`.
+For shared IDs, `missing_both`, `missing_baseline`,
+and `missing_attack` count absent top-level completions (the latter two
+are exclusive of `missing_both`). `baseline_errors`, `attack_errors`,
+`baseline_undetermined`, and `attack_undetermined` count each side's latest
+outcomes, including when the other side is absent or undecided. These reason
+counts can overlap across sides, so do not sum them to reconstruct exclusions.
+`unattributed_attempts` counts results recorded under the selected atomic
+names that resolve to neither selected planned group.
+
+Comparisons require one valid saved plan, distinct explicitly marked baseline
+and attack groups, and overlapping logical seed-group IDs (unless both
+groups are empty). Ambiguous group configurations, duplicated result IDs,
+conflicting seed attribution, malformed attempt metadata, or incompatible
+scoring evidence raise `ValueError` rather than silently pairing observations.
+When scores are available, the comparison checks scorer identities and score
+types both within pairs and across the decided cohort. Within each pair, it
+also checks complete scoring expectations, including their conditions and any
+optional scoring context, which may legitimately differ from the attack objective.
+For compound outcomes, these checks follow all explicitly linked descendants,
+including nested compounds. Missing child results or cyclic links are rejected;
+descendants still do not add pairs or change the rate denominator.
+The groups belong to the **same** ScenarioResult and share its scenario-level
+target and scorer identity. When a run uses different per-group scorers,
+persisted per-result scorer identities can reveal incompatibility; if scorer
+identity, score type, or scoring expectation is absent, compatibility cannot be
+fully verified. Different matched seed groups may use different scoring contexts
+if each individual baseline/attack pair has the same expectation.
+Older runs without a saved run plan and separately executed runs are not
+supported. The reported difference is descriptive and does not establish that
+the attack caused an outcome to change. No confidence interval is provided,
+because small and constant paired samples need careful uncertainty treatment.
+
 ### Scenario producer accounting
 
 Scenario counts also expose `producer_counts`, separating target-facing,

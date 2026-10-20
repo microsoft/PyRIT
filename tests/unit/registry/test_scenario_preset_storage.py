@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.models.catalog.scenario_preset import PRESET_SCHEMA_VERSION, ScenarioPreset
+from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetRequest
 from pyrit.registry.file_document_storage import _release_exclusive_lock, _try_acquire_exclusive_lock
 from pyrit.registry.scenario_preset_storage import ScenarioPresetConflictError, ScenarioPresetStorage
 
@@ -34,9 +35,11 @@ def test_local_storage_round_trips_a_preset(tmp_path: Path) -> None:
     storage = ScenarioPresetStorage(source=str(tmp_path))
     preset = _make_preset(
         techniques=["crescendo"],
-        dataset_names=["harmbench"],
-        max_dataset_size=25,
-        dataset_filters={"harm_categories": ["violence"]},
+        datasets=ScenarioDatasetRequest(
+            sources=[DatasetSourceInput(name="harmbench", max_size=10)],
+            max_total=25,
+            filters={"harm_categories": ["violence"]},
+        ),
         include_baseline=True,
         scenario_params={"max_turns": 3},
         description="Nightly smoke suite",
@@ -47,9 +50,12 @@ def test_local_storage_round_trips_a_preset(tmp_path: Path) -> None:
 
     assert loaded is not None
     assert loaded.preset.techniques == ["crescendo"]
-    assert loaded.preset.dataset_names == ["harmbench"]
-    assert loaded.preset.max_dataset_size == 25
-    assert loaded.preset.dataset_filters == {"harm_categories": ["violence"]}
+    assert loaded.preset.datasets is not None
+    assert loaded.preset.datasets.sources is not None
+    assert loaded.preset.datasets.sources[0].name == "harmbench"
+    assert loaded.preset.datasets.sources[0].max_size == 10
+    assert loaded.preset.datasets.max_total == 25
+    assert loaded.preset.datasets.filters == {"harm_categories": ["violence"]}
     assert loaded.preset.include_baseline is True
     assert loaded.preset.scenario_params == {"max_turns": 3}
     assert loaded.preset.description == "Nightly smoke suite"
@@ -64,12 +70,12 @@ def test_unset_fields_round_trip_as_none_not_false(tmp_path: Path) -> None:
 
     assert loaded is not None
     assert loaded.preset.include_baseline is None
-    assert loaded.preset.max_dataset_size is None
+    assert loaded.preset.datasets is None
     assert loaded.preset.techniques is None
 
     stored = json.loads((tmp_path / "nightly.json").read_text(encoding="utf-8"))
     assert "include_baseline" not in stored
-    assert "max_dataset_size" not in stored
+    assert "datasets" not in stored
 
 
 def test_explicit_false_round_trips_as_false(tmp_path: Path) -> None:

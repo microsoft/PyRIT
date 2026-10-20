@@ -327,7 +327,9 @@ def _add_run_arguments(*, parser: ArgumentParser, scenario_params: list[Paramete
     )
     parser.add_argument("--max-total", type=parse_dataset_limit, help="Combined attack-group cap")
     parser.add_argument(
-        "--dataset-fetch", choices=["never", "if_missing"], help="Preparation policy for missing datasets"
+        "--dataset-fetch",
+        choices=["never", "if_missing", "always"],
+        help="Dataset preparation policy; omission keeps scenario settings. always replaces stored data.",
     )
     parser.add_argument(
         "--dataset-filters",

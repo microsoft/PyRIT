@@ -9,13 +9,15 @@ multiple function calls, which is critical for the Responses API.
 
 import json
 import uuid
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from openai.types.responses import ResponseOutputText
 
-from pyrit.memory import CentralMemory
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import OpenAIResponseTarget
 
 
@@ -67,6 +69,93 @@ def create_mock_text_response(text: str) -> MagicMock:
     ]
     mock_response.output = [mock_msg_section]
     return mock_response
+
+
+def _tool_turn_responses(*, prefix: str, answer: str, parallel: bool) -> list[MagicMock]:
+    first = create_mock_function_call_response(f"{prefix}_1", "get_weather", {})
+    second = create_mock_function_call_response(f"{prefix}_2", "get_weather", {})
+    if parallel:
+        first.output.extend(second.output)
+        return [first, create_mock_text_response(answer)]
+    return [first, second, create_mock_text_response(answer)]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("parallel", [False, True], ids=["chained-calls", "parallel-calls"])
+@pytest.mark.parametrize("retain_prior_turn", [False, True], ids=["first-turn", "later-turn"])
+async def test_normalizer_send_after_backtracking_tool_turn_async(
+    *,
+    response_target: OpenAIResponseTarget,
+    sqlite_instance: MemoryInterface,
+    parallel: bool,
+    retain_prior_turn: bool,
+) -> None:
+    async def get_weather_async(arguments: dict[str, Any]) -> dict[str, str]:
+        return {"weather": "sunny"}
+
+    response_target._custom_functions["get_weather"] = get_weather_async
+    normalizer = PromptNormalizer()
+    conversation_id = str(uuid.uuid4())
+    responses: list[MagicMock] = []
+    questions: list[str] = []
+    if retain_prior_turn:
+        questions.append("Weather in Test Town?")
+        responses.extend(_tool_turn_responses(prefix="kept", answer="It is sunny.", parallel=parallel))
+    questions.append("Refused weather question.")
+    responses.extend(
+        _tool_turn_responses(prefix="removed", answer="Please rephrase the weather question.", parallel=parallel)
+    )
+    responses.append(create_mock_text_response("Retry weather: sunny."))
+
+    try:
+        await sqlite_instance.add_message_to_memory_async(
+            request=MessagePiece(
+                role="system", original_value="Discuss fictional weather.", conversation_id=conversation_id
+            ).to_message()
+        )
+        with patch.object(
+            response_target._client.responses, "create", new_callable=AsyncMock, side_effect=responses
+        ) as create_response:
+            for question in questions:
+                await normalizer.send_prompt_async(
+                    message=MessagePiece(role="user", original_value=question).to_message(),
+                    target=response_target,
+                    conversation_id=conversation_id,
+                )
+            source = await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)
+            refused_index = next(
+                index for index, piece in enumerate(source) if piece.original_value == "Refused weather question."
+            )
+            branch_id = await sqlite_instance.duplicate_conversation_excluding_last_turn_async(
+                conversation_id=conversation_id
+            )
+            branch = await sqlite_instance.get_message_pieces_async(conversation_id=branch_id)
+            assert [piece.original_value for piece in branch] == [
+                piece.original_value for piece in source[:refused_index]
+            ]
+
+            response = await normalizer.send_prompt_async(
+                message=MessagePiece(role="user", original_value="Try the weather summary again.").to_message(),
+                target=response_target,
+                conversation_id=branch_id,
+            )
+
+        assert response.get_value() == "Retry weather: sunny."
+        assert create_response.call_count == len(responses)
+        payload = create_response.call_args.kwargs["input"]
+        expected_calls = ["kept_1", "kept_2"] if retain_prior_turn else []
+        assert [item["call_id"] for item in payload if item.get("type") == "function_call"] == expected_calls
+        assert [item["call_id"] for item in payload if item.get("type") == "function_call_output"] == expected_calls
+        assert "Discuss fictional weather." in json.dumps(payload)
+        assert "Refused weather question." not in json.dumps(payload)
+        assert "Please rephrase the weather question." not in json.dumps(payload)
+        assert payload[-1]["role"] == "user"
+        assert [
+            piece.model_dump()
+            for piece in await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)
+        ] == [piece.model_dump() for piece in source]
+    finally:
+        await response_target._client.close()
 
 
 async def test_single_function_call_preserves_history(response_target, patch_central_database):

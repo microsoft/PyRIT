@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid  # noqa: TC003  (runtime-required by Pydantic field annotations)
 from abc import ABC
-from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
@@ -66,7 +66,7 @@ class MessageScorable(Scorable):
     def from_message(
         cls,
         message: Message,
-    ) -> MessageScorable:
+    ) -> Self:
         """
         Name the pieces of a persisted message.
 
@@ -74,7 +74,7 @@ class MessageScorable(Scorable):
             message (Message): The message whose pieces to name.
 
         Returns:
-            MessageScorable: A scorable naming the message's pieces.
+            Self: A scorable naming the message's pieces.
         """
         return cls(message_piece_ids=tuple(piece.id for piece in message.message_pieces))
 
@@ -93,7 +93,7 @@ class ContentScorable(Scorable):
     data_type: PromptDataType = "text"
 
     @classmethod
-    def from_message(cls, message: Message) -> ContentScorable:
+    def from_message(cls, message: Message) -> Self:
         """
         Describe the converted content of a single-piece ephemeral message.
 
@@ -107,7 +107,7 @@ class ContentScorable(Scorable):
             message (Message): The ephemeral message whose converted content to take.
 
         Returns:
-            ContentScorable: A scorable holding the converted message content.
+            Self: A scorable holding the converted message content.
         """
         piece = message.get_piece()
         return cls(value=piece.converted_value, data_type=piece.converted_value_data_type)

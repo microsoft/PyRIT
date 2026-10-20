@@ -16,6 +16,7 @@ from functools import lru_cache
 from uuid import UUID
 
 from pyrit.backend.mappers import format_last_message_preview
+from pyrit.backend.mappers.attack_mappers import resolve_client_media_url_async
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.datasets import (
     DatasetInfo,
@@ -23,6 +24,7 @@ from pyrit.backend.models.datasets import (
     SeedExampleDetailResponse,
     SeedExampleListResponse,
     SeedExampleSummary,
+    SeedMemberView,
 )
 from pyrit.common.pagination import decode_keyset_cursor, encode_keyset_cursor, fingerprint_filters
 from pyrit.datasets import SeedDatasetProvider
@@ -204,7 +206,21 @@ class DatasetService:
         if not seeds:
             return None
         summary = self._summarize(example_id=example_id, seeds=seeds)
-        return SeedExampleDetailResponse(**summary.model_dump(), members=seeds)
+        members = [await self._seed_member_view_async(seed) for seed in seeds]
+        return SeedExampleDetailResponse(**summary.model_dump(), members=members)
+
+    @staticmethod
+    async def _seed_member_view_async(seed: SeedRecord) -> SeedMemberView:
+        """
+        Attach a display URL without changing the stored seed value.
+
+        List rows do not call this. Media bytes are resolved only when one example is opened.
+
+        Returns:
+            The stored seed plus ``value_url`` for media, or null for everything else.
+        """
+        value_url = await resolve_client_media_url_async(value=seed.value, data_type=seed.data_type)
+        return SeedMemberView.model_validate({**seed.model_dump(), "value_url": value_url})
 
     @staticmethod
     def _parse_selection_key(selection_key: str) -> str | None:

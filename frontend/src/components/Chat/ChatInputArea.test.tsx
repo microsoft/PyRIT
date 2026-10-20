@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatInputArea from "./ChatInputArea";
@@ -27,7 +27,7 @@ const buildCapabilities = (
 });
 
 // Helper to get the send button specifically
-const getSendButton = () => screen.getByRole("button", { name: /send/i });
+const getSendButton = () => screen.getByRole("button", { name: "Send message", exact: true });
 
 describe("ChatInputArea", () => {
   const sentOutcome = { status: "sent", clearDraft: true } as const;
@@ -88,6 +88,45 @@ describe("ChatInputArea", () => {
     expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
   });
 
+  it("should place Undo directly after the converter button inside the prompt box without opening the panel", async () => {
+    const user = userEvent.setup();
+    const onUndo = jest.fn();
+    render(<TestWrapper><ChatInputArea {...defaultProps}
+      undoLastSend={{ isUndoing: false, onUndo }} /></TestWrapper>);
+    const prompt = screen.getByTestId("prompt-editor");
+    const converter = within(prompt).getByRole("button", { name: "Toggle converter panel" });
+    const undo = within(prompt).getByRole("button", { name: "Undo last send" });
+    expect(converter.compareDocumentPosition(undo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(undo);
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    expect(defaultProps.onToggleConverterPanel).not.toHaveBeenCalled();
+  });
+
+  it("should keep Undo reachable for an eligible first-turn undo when a single-turn prompt is disabled", async () => {
+    const user = userEvent.setup();
+    const onUndo = jest.fn();
+    render(<TestWrapper><ChatInputArea {...defaultProps} disabled singleTurnLimitReached
+      undoLastSend={{ isUndoing: false, onUndo }} /></TestWrapper>);
+    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Toggle converter panel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Undo last send" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Undo last send" }));
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("single-turn-banner")).toBeInTheDocument();
+  });
+
+  it("should retain the disabled Undo explanation in the prompt box", async () => {
+    const user = userEvent.setup();
+    const onUndo = jest.fn();
+    const reason = "The converter state is no longer available.";
+    render(<TestWrapper><ChatInputArea {...defaultProps}
+      undoLastSend={{ isUndoing: false, disabledReason: reason, onUndo }} /></TestWrapper>);
+    expect(screen.getByRole("button", { name: "Undo last send" })).toBeDisabled();
+    await user.hover(screen.getByLabelText(reason));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+    expect(onUndo).not.toHaveBeenCalled();
+  });
+
   it("should allow drafting without a target and keep Send disabled without a warning box", async () => {
     const user = userEvent.setup();
     render(
@@ -118,6 +157,45 @@ describe("ChatInputArea", () => {
     composer.focus();
     await user.keyboard("{Enter}");
     expect(await screen.findByText("Prompt input is disabled")).toBeInTheDocument();
+  });
+
+  it("should wait 700 ms before opening the disabled-input explanation on hover", async () => {
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const rendered = render(<TestWrapper><ChatInputArea {...defaultProps} disabled /></TestWrapper>);
+    try {
+      await user.hover(screen.getByLabelText("Why the prompt box is disabled"));
+      act(() => { jest.advanceTimersByTime(699); });
+      expect(screen.queryByText("Prompt input is disabled")).not.toBeInTheDocument();
+      act(() => { jest.advanceTimersByTime(1); });
+      expect(screen.getByText("Prompt input is disabled")).toBeInTheDocument();
+    } finally {
+      rendered.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it("should cancel a brief hover and still open immediately on click or Enter", async () => {
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const rendered = render(<TestWrapper><ChatInputArea {...defaultProps} disabled /></TestWrapper>);
+    try {
+      const overlay = screen.getByLabelText("Why the prompt box is disabled");
+      await user.hover(overlay);
+      act(() => { jest.advanceTimersByTime(300); });
+      await user.unhover(overlay);
+      act(() => { jest.advanceTimersByTime(700); });
+      expect(screen.queryByText("Prompt input is disabled")).not.toBeInTheDocument();
+      await user.click(overlay);
+      expect(screen.getByText("Prompt input is disabled")).toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      overlay.focus();
+      await user.keyboard("{Enter}");
+      expect(screen.getByText("Prompt input is disabled")).toBeInTheDocument();
+    } finally {
+      rendered.unmount();
+      jest.useRealTimers();
+    }
   });
 
   it("should explain a temporary disabled state even when no reason was supplied", async () => {
@@ -211,15 +289,33 @@ describe("ChatInputArea", () => {
     const increase = screen.getByRole("button", { name: "Increase repetitions" });
     expect(decrease).toBeDisabled();
     expect(screen.getByRole("radio", { name: "Convert once, reuse for all" })).toBeChecked();
-    const converterHelp = screen.getByText(/single sends and shared repeats use only applied conversions/i);
-    expect(converterHelp).toHaveTextContent("Use Add converted value before sending.");
+    const converterHelp = screen.getByText(/completed conversions are added to the prompt automatically/i);
+    expect(converterHelp).toHaveTextContent("Shared repeats use that prompt.");
     expect(converterHelp).toHaveTextContent("Independent repeats run unapplied pipelines on original inputs.");
-    expect(converterHelp).toHaveTextContent("Applied previews stay unchanged in either mode.");
+    expect(converterHelp).toHaveTextContent("Repeated sends are unavailable for edited or partially converted prompts.");
     for (let count = 1; count < 10; count++) await user.click(increase);
     expect(increase).toBeDisabled();
     expect(screen.getByRole("button", { name: "Repetitions: 10" })).toHaveTextContent("n=10");
     for (let count = 10; count > 1; count--) await user.click(decrease);
     expect(decrease).toBeDisabled();
+  });
+
+  it("should disable repeated sends with a hover explanation and submit edited text only once", async () => {
+    const user = userEvent.setup();
+    const onSend = jest.fn().mockResolvedValue(sentOutcome);
+    const reason = "Repeated sends are unavailable for edited or partially converted prompts.";
+    const { rerender } = render(<TestWrapper><ChatInputArea {...defaultProps} onSend={onSend} /></TestWrapper>);
+    await user.type(screen.getByRole("textbox"), "Source prompt");
+    await user.click(screen.getByRole("button", { name: "Repetitions: 1" }));
+    await user.click(screen.getByRole("button", { name: "Increase repetitions" }));
+    await user.keyboard("{Escape}");
+    rerender(<TestWrapper><ChatInputArea {...defaultProps} onSend={onSend}
+      convertedValue="Edited output" repeatDisabledReason={reason} /></TestWrapper>);
+    expect(screen.getByRole("button", { name: "Repetitions: 1" })).toBeDisabled();
+    await user.hover(screen.getByLabelText(reason));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+    await user.click(getSendButton());
+    expect(onSend).toHaveBeenCalledWith("Source prompt", "Edited output", []);
   });
 
   it.each(["Enter", "Send"])("should submit the same repeat options with %s and reset before completion", async (action: string) => {
@@ -1402,6 +1498,33 @@ describe("ChatInputArea", () => {
   // ---------------------------------------------------------------------------
   // Unsupported modality warnings
   // ---------------------------------------------------------------------------
+
+  it("validates converted attachment types while retaining their unsupported originals", async () => {
+    const user = userEvent.setup();
+    const ref = { current: null as ChatInputAreaHandle | null };
+    const props = {
+      ...defaultProps,
+      activeTarget: makeTarget({
+        target_registry_name: "text", capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
+      }),
+    };
+    const rendered = render(<TestWrapper><ChatInputArea ref={ref} {...props}
+      mediaConversions={[{ pieceId: "image", convertedValue: "Image transcript", convertedDataType: "text" }]} />
+    </TestWrapper>);
+    act(() => { ref.current?.restoreDraft("", [{
+      draftId: "image", type: "image", name: "original.png", url: "/original.png", mimeType: "image/png",
+    }]); });
+    expect(screen.queryByTestId("unsupported-modality-warning")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(defaultProps.onSend).toHaveBeenCalled();
+    rendered.rerender(<TestWrapper><ChatInputArea ref={ref} {...props} mediaConversions={[]} /></TestWrapper>);
+    act(() => { ref.current?.restoreDraft("", [{
+      draftId: "image", type: "image", name: "original.png", url: "/original.png", mimeType: "image/png",
+    }]); });
+    expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  });
 
   it("should show warning when attaching image to text-only target", async () => {
     const user = userEvent.setup();
