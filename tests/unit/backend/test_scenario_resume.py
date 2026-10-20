@@ -9,7 +9,7 @@ import threading
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from typing import Any, ClassVar
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -22,6 +22,7 @@ from pyrit.backend.services.scenario_run_service import (
     ScenarioRunService,
     _PreparedRun,
 )
+from pyrit.datasets import SeedDatasetProvider
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import AttackScoringConfig, ManyShotJailbreakAttack, PromptSendingAttack
 from pyrit.executor.attack.single_turn import many_shot_jailbreak
@@ -39,6 +40,7 @@ from pyrit.models import (
     ScenarioResult,
     ScenarioRunState,
     Seed,
+    SeedDataset,
     SeedObjective,
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest
@@ -955,18 +957,24 @@ async def test_saved_total_limit_round_trips_async(
     assert restored.max_dataset_size == (limit_args.get("max_dataset_size") or "default")
 
 
+@pytest.mark.parametrize("policy", [DatasetFetchPolicy.NEVER, DatasetFetchPolicy.ALWAYS])
 async def test_saved_dataset_request_round_trips_async(
-    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], policy: DatasetFetchPolicy
 ) -> None:
     service, _ = resume_environment
     datasets = ScenarioDatasetRequest(
-        sources=[DatasetSourceInput(name=_DATASET_NAME, max_size=1, fetch=DatasetFetchPolicy.NEVER)],
+        sources=[DatasetSourceInput(name=_DATASET_NAME, max_size=1, fetch=policy)],
         max_total=1,
         filters={"data_types": ["text"]},
     )
-    prepared = await service._prepare_run_async(
-        request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, datasets=datasets)
+    provider = MagicMock(spec=SeedDatasetProvider)
+    provider.fetch_dataset_async.return_value = SeedDataset(
+        dataset_name=_DATASET_NAME, seeds=[SeedObjective(value=_FIRST_OBJECTIVE, dataset_name=_DATASET_NAME)]
     )
+    with patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={_DATASET_NAME: provider}):
+        prepared = await service._prepare_run_async(
+            request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, datasets=datasets)
+        )
     stored = (
         await CentralMemory.get_memory_instance().get_scenario_results_async(
             scenario_result_ids=[prepared.scenario._scenario_result_id]
@@ -975,6 +983,7 @@ async def test_saved_dataset_request_round_trips_async(
     restored = service._restore_launch_request(stored=stored)
     assert restored.dataset_request == datasets
     assert restored.dataset_names is None
+    assert provider.fetch_dataset_async.await_count == (1 if policy is DatasetFetchPolicy.ALWAYS else 0)
 
 
 async def test_resume_older_launch_record_without_adversarial_selection_async(

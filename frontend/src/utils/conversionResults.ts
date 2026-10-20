@@ -13,6 +13,9 @@ export function buildAppliedConversions(
       pieceId: input.id,
       pieceType: input.pieceType,
       converterInstanceIds: result.steps.map((step: ConverterPreviewStep) => step.converter_id),
+      ...(result.steps.some((step: ConverterPreviewStep) => step.provenance) ? {
+        converterProvenance: result.steps.map((step: ConverterPreviewStep) => step.provenance ?? null),
+      } : {}),
       originalValue: input.value,
       convertedValue: result.converted_value,
       convertedDataType: result.converted_value_data_type,
