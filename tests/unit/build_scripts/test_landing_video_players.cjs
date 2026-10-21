@@ -8,73 +8,94 @@ const { test } = require("node:test");
 const vm = require("node:vm");
 
 const playerPath = path.resolve(__dirname, "..", "..", "..", "doc", "assets", "videos", "player.js");
-const source = fs.readFileSync(playerPath, "utf8");
-const setup = `
-const events = {};
-const windowEvents = {};
-const video = {
-  paused: false,
-  pause() { this.paused = true; },
-  addEventListener(name, callback) { events[name] = callback; },
-};
-const siblingVideo = { paused: false, pause() { this.paused = true; } };
-const sibling = { contentDocument: { querySelector: () => siblingVideo } };
-const unloaded = { contentDocument: null };
-let visible = true;
-const tabSet = { querySelectorAll: () => [frame, sibling, unloaded] };
-const frame = {
-  closest: () => tabSet,
-  getClientRects: () => visible ? [{}] : [],
-};
-let observer;
-class MutationObserver {
-  constructor(callback) { this.callback = callback; observer = this; }
-  observe(target, options) {
-    assert.equal(target, tabSet);
-    assert.deepEqual(Array.from(options.attributeFilter), ["class", "hidden", "style"]);
-    assert.equal(options.subtree, true);
-    this.disconnected = false;
-  }
-  disconnect() { this.disconnected = true; }
-}
-const document = { querySelector: () => video };
-const window = {
-  frameElement: scenario === "standalone" ? null : frame,
-  addEventListener(name, callback) { windowEvents[name] = callback; },
-};
-`;
-const checks = `
-assert.equal(video.paused, false);
-assert.equal(siblingVideo.paused, false);
-if (scenario === "standalone") {
-  assert.equal(observer, undefined);
-} else if (scenario === "pagehide") {
-  windowEvents.pagehide();
-  assert.equal(observer.disconnected, true);
-} else if (scenario === "restore") {
-  windowEvents.pagehide();
-  windowEvents.pageshow();
-  assert.equal(observer.disconnected, false);
-  visible = false;
-  observer.callback();
-  assert.equal(video.paused, true);
-} else if (scenario === "play" || scenario === "hidden_play") {
-  visible = scenario === "play";
-  events.play();
-  assert.equal(video.paused, !visible);
-  assert.equal(siblingVideo.paused, visible);
-} else {
-  visible = scenario === "visible";
-  observer.callback();
-  assert.equal(video.paused, !visible);
-  assert.equal(siblingVideo.paused, false);
-}
-`;
-const script = new vm.Script(setup + source + checks, { filename: playerPath });
+const script = new vm.Script(fs.readFileSync(playerPath, "utf8"), { filename: playerPath });
 
-for (const scenario of ["play", "hidden_play", "hide", "visible", "standalone", "pagehide", "restore"]) {
-  test(scenario, () => {
-    // Include event callbacks in the execution limit; Node startup has a separate deadline.
-    script.runInNewContext({ assert, scenario }, { timeout: 1000 });
+function createPlayer({ standalone = false } = {}) {
+  const events = {};
+  const windowEvents = {};
+  const video = {
+    paused: false,
+    pause() { this.paused = true; },
+    addEventListener(name, callback) { events[name] = callback; },
+  };
+  const siblingVideo = { paused: false, pause() { this.paused = true; } };
+  const sibling = { contentDocument: { querySelector: () => siblingVideo } };
+  const unloaded = { contentDocument: null };
+  const tabSet = { querySelectorAll: () => [frame, sibling, unloaded] };
+  const frame = {
+    visible: true,
+    closest: () => tabSet,
+    getClientRects() { return this.visible ? [{}] : []; },
+  };
+  const context = vm.createContext({
+    events,
+    windowEvents,
+    document: { querySelector: () => video },
+    window: {
+      frameElement: standalone ? null : frame,
+      addEventListener(name, callback) { windowEvents[name] = callback; },
+    },
+    MutationObserver: class {
+      constructor(callback) { this.callback = callback; context.observer = this; }
+      observe(target, options) {
+        assert.equal(target, tabSet);
+        assert.deepEqual(Array.from(options.attributeFilter), ["class", "hidden", "style"]);
+        assert.equal(options.subtree, true);
+        this.disconnected = false;
+      }
+      disconnect() { this.disconnected = true; }
+    },
+  });
+  script.runInContext(context, { timeout: 1000 });
+  return {
+    video, siblingVideo, frame,
+    get observer() { return context.observer; },
+    // Event callbacks need the same execution limit as initialization.
+    run(code) { vm.runInContext(code, context, { timeout: 1000 }); },
+  };
+}
+
+test("initialization does not pause videos", () => {
+  const player = createPlayer();
+  assert.equal(player.video.paused, false);
+  assert.equal(player.siblingVideo.paused, false);
+});
+
+for (const visible of [true, false]) {
+  const state = visible ? "visible" : "hidden";
+  test(`play in a ${state} frame pauses only the appropriate video`, () => {
+    const player = createPlayer();
+    player.frame.visible = visible;
+    player.run("events.play()");
+    assert.equal(player.video.paused, !visible);
+    assert.equal(player.siblingVideo.paused, visible);
+  });
+
+  test(`tab mutation in a ${state} frame affects only its own video`, () => {
+    const player = createPlayer();
+    player.frame.visible = visible;
+    player.run("observer.callback()");
+    assert.equal(player.video.paused, !visible);
+    assert.equal(player.siblingVideo.paused, false);
   });
 }
+
+test("standalone player does not observe tabs", () => {
+  const player = createPlayer({ standalone: true });
+  assert.equal(player.observer, undefined);
+});
+
+test("pagehide disconnects the observer", () => {
+  const player = createPlayer();
+  player.run("windowEvents.pagehide()");
+  assert.equal(player.observer.disconnected, true);
+});
+
+test("pageshow restores observation after pagehide", () => {
+  const player = createPlayer();
+  player.run("windowEvents.pagehide(); windowEvents.pageshow()");
+  assert.equal(player.observer.disconnected, false);
+  player.frame.visible = false;
+  player.run("observer.callback()");
+  assert.equal(player.video.paused, true);
+});

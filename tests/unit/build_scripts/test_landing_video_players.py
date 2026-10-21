@@ -3,8 +3,6 @@
 """Regression tests for the landing page's embedded walkthroughs."""
 
 import re
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -37,16 +35,3 @@ def test_player_assets_are_published() -> None:
         assert f"{{iframe}} videos/{name}-player.html" in (DOC_ROOT / "index.md").read_text(encoding="utf-8")
     for asset in ["player.js", "player.css"]:
         assert (DOC_ROOT / "assets" / "videos" / asset).is_file()
-
-
-@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_player_coordinates_playback() -> None:
-    """Run all isolated scenarios with one Node startup, as in the CodeQL tests."""
-    result = subprocess.run(
-        ["node", "--test-reporter=tap", str(Path(__file__).with_suffix(".cjs"))],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "# tests 7" in result.stdout and "# pass 7" in result.stdout

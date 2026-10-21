@@ -65,7 +65,7 @@ for (const [functionName, cases] of [
   for (const [name, ...values] of cases) {
     const expected = values.pop();
     test(`${functionName}: ${name}`, () => {
-      const actual = script.runInNewContext({ args: values }, { timeout: 1000 });
+      const actual = script.runInNewContext({ args: structuredClone(values) }, { timeout: 1000 });
       assert.equal(actual, expected);
     });
   }
