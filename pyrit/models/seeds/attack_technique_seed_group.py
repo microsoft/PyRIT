@@ -131,6 +131,18 @@ class AttackTechniqueSeedGroup(SeedGroup):
         self._enforce_all_general_strategy()
         self._enforce_no_objectives()
 
+    @property
+    def fixed_final_user_prompt(self) -> SeedPrompt | None:
+        """The single user text prompt immediately after a simulation without a generated final turn."""
+        simulation = self.simulated_conversation_config
+        if simulation is None or simulation.next_message_system_prompt is not None:
+            return None
+        candidates = [prompt for prompt in self.prompts if prompt.sequence == simulation.sequence_range.stop]
+        if len(candidates) != 1:
+            return None
+        prompt = candidates[0]
+        return prompt if prompt.role == "user" and prompt.data_type == "text" else None
+
     def with_simulation_changes(self, changes: SimulationChanges) -> Self:
         """
         Rebuild simulation settings and a fixed final turn without changing the source group.
@@ -144,11 +156,8 @@ class AttackTechniqueSeedGroup(SeedGroup):
         simulation = next((seed for seed in self.seeds if isinstance(seed, SeedSimulatedConversation)), None)
         if simulation is None:
             raise ValueError("This technique has no simulated conversation")
-        final_prompts = [prompt for prompt in self.prompts if prompt.sequence == simulation.sequence_range.stop]
-        final = final_prompts[0] if len(final_prompts) == 1 and simulation.next_message_system_prompt is None else None
-        if "final_user_message" in changes.model_fields_set and (
-            final is None or final.role != "user" or final.data_type != "text"
-        ):
+        final = self.fixed_final_user_prompt
+        if "final_user_message" in changes.model_fields_set and final is None:
             raise ValueError("This simulation has no editable fixed final user message")
         prompt_names = (
             "adversarial_chat_system_prompt",

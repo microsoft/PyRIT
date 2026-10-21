@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -14,6 +15,7 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from pyrit.backend.models.techniques import TechniqueConfiguration, TechniqueEditResponse
 from pyrit.backend.services.technique_service import TechniqueService
 from pyrit.common import get_global_default_values
+from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.executor.attack import AttackConverterConfig
 from pyrit.models import AttackIdentifier, ComponentIdentifier, Parameter, SeedPrompt, SeedSimulatedConversation
 from pyrit.models.parameter import ComponentType
@@ -121,7 +123,6 @@ class TechniqueEditService:
                     component_type=ComponentType.TARGET, value=value, owner="Technique", name=name
                 )
             setattr(settings, name, value)
-        config = settings.attack_kwargs.get("attack_converter_config") or AttackConverterConfig()
         converter_edits = {}
         for name in ("request_converters", "response_converters"):
             if name in supplied:
@@ -136,6 +137,7 @@ class TechniqueEditService:
                 ]
                 converter_edits[name] = ConverterConfiguration.from_converters(converters=converters)
         if converter_edits:
+            config = cls._converter_config(attack_class=source.attack_class, attack_kwargs=settings.attack_kwargs)
             settings.attack_kwargs["attack_converter_config"] = replace(config, **converter_edits)
         factory = source.with_settings(settings=settings, simulation=changes.simulation)
         dependencies = cls._dependencies(factory=factory)
@@ -190,7 +192,7 @@ class TechniqueEditService:
                 else:
                     readonly[prompt_name] = "Opaque prompt; retained unchanged."
         if "attack_converter_config" in accepted:
-            config = settings.attack_kwargs.get("attack_converter_config") or AttackConverterConfig()
+            config = cls._converter_config(attack_class=factory.attack_class, attack_kwargs=settings.attack_kwargs)
             for key in ("request_converters", "response_converters"):
                 names = cls._converter_names(getattr(config, key))
                 if names is not None:
@@ -212,7 +214,7 @@ class TechniqueEditService:
                 else ()
             )
             if simulation is not None and all(prompt is None or prompt.data_type == "text" for prompt in prompts):
-                final = [p for p in factory.seed_technique.prompts if p.sequence == simulation.sequence_range.stop]
+                final = factory.seed_technique.fixed_final_user_prompt
                 editable.append("simulation")
                 values["simulation"] = SimulationChanges(
                     num_turns=simulation.num_turns,
@@ -221,14 +223,7 @@ class TechniqueEditService:
                     next_message_system_prompt=(
                         simulation.next_message_system_prompt.value if simulation.next_message_system_prompt else None
                     ),
-                    final_user_message=(
-                        final[0].value
-                        if len(final) == 1
-                        and final[0].role == "user"
-                        and final[0].data_type == "text"
-                        and simulation.next_message_system_prompt is None
-                        else None
-                    ),
+                    final_user_message=final.value if final is not None else None,
                 )
             else:
                 readonly["technique seeds"] = "Existing seed group and prompt templates stay unchanged."
@@ -243,6 +238,20 @@ class TechniqueEditService:
             read_only=readonly,
             supports_prepended_conversation=factory.supports_prepended_conversation,
         )
+
+    @staticmethod
+    def _converter_config(*, attack_class: type[object], attack_kwargs: dict[str, Any]) -> AttackConverterConfig:
+        arguments = resolve_constructor_defaults(
+            class_type=attack_class,
+            arguments=attack_kwargs,
+            excluded_parameters=set(inspect.signature(attack_class.__init__).parameters) - {"attack_converter_config"},
+        )
+        config = arguments.get("attack_converter_config")
+        if config is None:
+            return AttackConverterConfig()
+        if not isinstance(config, AttackConverterConfig):
+            raise TypeError("attack_converter_config must be an AttackConverterConfig")
+        return config
 
     @classmethod
     def _parameter_value(cls, *, parameter: Parameter, value: Any) -> JsonValue:

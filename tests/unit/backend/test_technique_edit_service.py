@@ -17,9 +17,17 @@ from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfi
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
 from pyrit.backend.services.scenario_service import ScenarioService
 from pyrit.backend.services.technique_edit_service import TechniqueEditService
+from pyrit.common.apply_defaults import GlobalDefaultValues
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH, EXECUTOR_SIMULATED_TARGET_PATH
 from pyrit.converter import Base64Converter, ROT13Converter
-from pyrit.executor.attack import AttackConverterConfig, AttackParameters, PromptSendingAttack, RedTeamingAttack
+from pyrit.executor.attack import (
+    AttackConverterConfig,
+    AttackParameters,
+    AttackScoringConfig,
+    AttackStrategy,
+    PromptSendingAttack,
+    RedTeamingAttack,
+)
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackTechniqueSeedGroup,
@@ -347,6 +355,102 @@ def test_opaque_converter_settings_are_retained_and_rejected_for_edit(edit_catal
     assert copy.get_effective_settings().attack_kwargs["attack_converter_config"] is advanced
     with pytest.raises(ValueError, match="read-only"):
         TechniqueEditService.validate(spec.model_copy(update={"changes": TechniqueChanges(request_converters=[])}))
+
+
+@pytest.mark.parametrize("config_source", ["inherited", "explicit_none", "explicit", "empty"])
+@pytest.mark.parametrize("field", ["request_converters", "response_converters"])
+@pytest.mark.parametrize("clear", [False, True])
+def test_converter_edits_preserve_effective_unedited_chain(
+    edit_catalog: AttackTechniqueRegistry, config_source: str, field: str, clear: bool
+) -> None:
+    converters = ConverterRegistry.get_registry_singleton().instances
+    base64 = converters.get("base64")
+    rot13 = converters.get("rot13")
+    inherited = AttackConverterConfig(
+        request_converters=ConverterConfiguration.from_converters(converters=[base64]),
+        response_converters=ConverterConfiguration.from_converters(converters=[rot13]),
+    )
+    explicit = AttackConverterConfig(
+        request_converters=ConverterConfiguration.from_converters(converters=[rot13]),
+        response_converters=ConverterConfiguration.from_converters(converters=[base64]),
+    )
+    kwargs = {
+        "inherited": {},
+        "explicit_none": {"attack_converter_config": None},
+        "explicit": {"attack_converter_config": explicit},
+        "empty": {"attack_converter_config": AttackConverterConfig()},
+    }[config_source]
+    source = AttackTechniqueFactory(name="converter_defaults", attack_class=PromptSendingAttack, attack_kwargs=kwargs)
+    edit_catalog.register_from_factories([source])
+    defaults = GlobalDefaultValues()
+    defaults.set_default_value(class_type=AttackStrategy, parameter_name="attack_converter_config", value=inherited)
+    with patch("pyrit.common.apply_defaults._global_default_values", defaults):
+        expected = kwargs.get("attack_converter_config") or inherited
+        before = source.get_configuration_identity()
+        revision = edit_catalog.catalog_revision
+        configuration = TechniqueEditService.configuration(source.name)
+        noop = TechniqueEditService.validate(
+            TechniqueOverride(source_name=source.name, source_identity=configuration.source_identity)
+        )
+        assert TechniqueEditService.resolve(noop.override).get_effective_settings().attack_kwargs == kwargs
+        for key in ("request_converters", "response_converters"):
+            assert getattr(configuration.settings, key) == [
+                "base64" if converter is base64 else "rot13"
+                for entry in getattr(expected, key)
+                for converter in entry.converters
+            ]
+        changes = TechniqueChanges.model_validate({field: [] if clear else ["base64", "rot13"]})
+        admitted = TechniqueEditService.validate(
+            TechniqueOverride(source_name=source.name, source_identity=configuration.source_identity, changes=changes)
+        )
+        saved = TechniqueOverride.model_validate_json(admitted.override.model_dump_json())
+        restored = TechniqueEditService.resolve(saved)
+        config = restored.get_effective_settings().attack_kwargs["attack_converter_config"]
+        other = "response_converters" if field == "request_converters" else "request_converters"
+        assert getattr(config, other) is getattr(expected, other)
+        assert [converter for entry in getattr(config, field) for converter in entry.converters] == (
+            [] if clear else [base64, rot13]
+        )
+        assert source.get_configuration_identity() == before
+        assert edit_catalog.catalog_revision == revision
+        technique = restored.create(
+            objective_target=TargetRegistry.get_registry_singleton().instances.get("objective"),
+            attack_scoring_config=AttackScoringConfig(),
+        )
+        assert technique.attack._request_converters is config.request_converters
+        assert technique.attack._response_converters is config.response_converters
+        assert inherited.request_converters[0].converters == [base64]
+        assert inherited.response_converters[0].converters == [rot13]
+        defaults.set_default_value(
+            class_type=PromptSendingAttack, parameter_name="attack_converter_config", value=AttackConverterConfig()
+        )
+        with pytest.raises(ValueError, match="Source technique configuration changed"):
+            TechniqueEditService.resolve(saved)
+
+
+def test_inherited_conditional_converter_chain_is_read_only(edit_catalog: AttackTechniqueRegistry) -> None:
+    converter = ConverterRegistry.get_registry_singleton().instances.get("base64")
+    inherited = AttackConverterConfig(
+        request_converters=[ConverterConfiguration(converters=[converter], indexes_to_apply=[1])]
+    )
+    defaults = GlobalDefaultValues()
+    defaults.set_default_value(class_type=AttackStrategy, parameter_name="attack_converter_config", value=inherited)
+    with patch("pyrit.common.apply_defaults._global_default_values", defaults):
+        configuration = TechniqueEditService.configuration("plain")
+        assert "request_converters" in configuration.read_only
+        specification = TechniqueOverride(
+            source_name="plain",
+            source_identity=configuration.source_identity,
+            changes=TechniqueChanges(response_converters=["rot13"]),
+        )
+        restored = TechniqueEditService.resolve(TechniqueEditService.validate(specification).override)
+        config = restored.get_effective_settings().attack_kwargs["attack_converter_config"]
+        assert config.request_converters is inherited.request_converters
+        assert config.request_converters[0].indexes_to_apply == [1]
+        with pytest.raises(ValueError, match="read-only"):
+            TechniqueEditService.validate(
+                specification.model_copy(update={"changes": TechniqueChanges(request_converters=[])})
+            )
 
 
 async def test_isolated_run_overrides_estimate_and_resume_async(edit_catalog: AttackTechniqueRegistry) -> None:
