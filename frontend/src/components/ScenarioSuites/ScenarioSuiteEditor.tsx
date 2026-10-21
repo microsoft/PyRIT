@@ -383,7 +383,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
 
         <section className={styles.section} aria-labelledby="suite-entries-title">
           <div className={styles.sectionHeader}>
-            <div>
+            <div className={styles.sectionHeading}>
               <Text id="suite-entries-title" as="h2" size={400} weight="semibold">
                 Entries
               </Text>

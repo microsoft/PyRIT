@@ -49,6 +49,11 @@ export const useScenarioSuiteEditorStyles = makeStyles({
     flexWrap: 'wrap',
     gap: tokens.spacingHorizontalS,
   },
+  sectionHeading: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+  },
   control: {
     maxWidth: '32rem',
   },
