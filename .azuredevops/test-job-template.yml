@@ -24,6 +24,22 @@ jobs:
   steps:
   - checkout: self
     fetchDepth: 1
+  # Microsoft-hosted agents only guarantee ~10 GB of free disk, which `uv sync --extra all` plus the
+  # models and datasets downloaded during the tests can exhaust. Remove large preinstalled toolchains
+  # these jobs never use; rm -rf ignores paths missing from future images.
+  - bash: |
+      set -euo pipefail
+      df -h /
+      sudo rm -rf \
+        /usr/local/lib/android \
+        /usr/share/dotnet \
+        /opt/ghc \
+        /usr/local/.ghcup \
+        /opt/hostedtoolcache/CodeQL \
+        /usr/share/swift
+      df -h /
+    displayName: "Free disk space on hosted agent"
+    name: free_disk_space
   - task: UsePythonVersion@0
     inputs:
       versionSpec: '3.12'
