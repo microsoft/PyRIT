@@ -612,7 +612,7 @@ class TestTemporaryComponents:
                 )
                 status = await _settle_send_async(service=sender, status=status)
             assert status.state == MessageSendState.COMPLETED
-            targets = [call.kwargs["target"] for call in execute.await_args_list]
+            targets = [call.kwargs["validated"].target for call in execute.await_args_list]
             assert len(targets) == 3
             assert len({id(target) for target in targets}) == 3
             assert all(target._temperature == 0.8 and target._client.is_closed() for target in targets)

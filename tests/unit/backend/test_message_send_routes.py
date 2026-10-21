@@ -61,6 +61,8 @@ def test_submission_returns_accepted_handle(
         "state": "queued",
         "error": None,
         "failure_stage": None,
+        "scoring_error": None,
+        "is_scoring": False,
         "count": 1,
         "conversations": [],
     }

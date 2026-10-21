@@ -643,7 +643,8 @@ class AttackService:
         if not results:
             return None
 
-        get_chat_scoring_service().require_manual(results[0])
+        if request.objective is not None or "chat_scorer" in request.model_fields_set:
+            get_chat_scoring_service().require_manual(results[0])
         update_fields: dict[str, Any] = {"timestamp": datetime.now(UTC)}
         expected_fields: dict[str, Any] = {"objective": results[0].objective}
         if request.outcome is not None:
