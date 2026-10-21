@@ -118,6 +118,7 @@ def test_invalid_fields_are_not_admitted(
         (ManualSendConflictError("Conversation busy"), 409),
         (AttackStateConflictError("History changed"), 409),
         (ManualSendQueueFullError("Queue full"), 429),
+        (PermissionError("Automated results are read-only. Choose Continue manually."), 403),
         (RuntimeError("sensitive failure"), 500),
     ],
 )
@@ -128,6 +129,8 @@ def test_admission_errors(
     response = client.post("/api/attacks/attack/message-sends", json=payload)
     assert response.status_code == status
     assert "sensitive failure" not in response.text
+    if status != 500:
+        assert response.json()["detail"] == str(error)
 
 
 @pytest.mark.parametrize("wait_ms", [0, 1000])
