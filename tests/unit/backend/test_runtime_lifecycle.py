@@ -169,6 +169,8 @@ async def test_shutdown_disposes_memory_after_services_even_on_failure(
         order.attach_mock(memory.dispose_engine_async, "memory")
         errors = tuple(asyncio.CancelledError(name) if cancelled else RuntimeError(name) for name in failures)
         for name, error in zip(failures, errors, strict=True):
+            if name in {"scenarios", "memory"}:
+                error.add_note(f"Existing {name} note.")
             getattr(order, name).side_effect = error
         if len(errors) == 1:
             with pytest.raises(type(errors[0])) as single_error:
@@ -182,6 +184,13 @@ async def test_shutdown_disposes_memory_after_services_even_on_failure(
             await runtime.shutdown_async()
 
     assert order.mock_calls == [call.scenarios(), call.services(), call.memory()]
+    expected_notes = {
+        "scenarios": "Runtime shutdown phase: scenario service shutdown.",
+        "memory": "Runtime shutdown phase: memory disposal.",
+    }
+    for name, error in zip(failures, errors, strict=True):
+        expected = [f"Existing {name} note.", expected_notes[name]] if name in expected_notes else None
+        assert getattr(error, "__notes__", None) == expected
 
 
 async def test_shutdown_repeated_failure_preserves_original_error_async(runtime: RuntimeLifecycle) -> None:

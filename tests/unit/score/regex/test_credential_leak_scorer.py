@@ -20,6 +20,13 @@ _GH_PAT_TOKEN = "github_pat_" + "11AAAAAAA_" + "b" * 72
 _GOOGLE_KEY = "AIza" + "SyC3R4v5X6T7U8W9Y0Z1A2B3C4D5E6F7G8H"
 _SLACK_TOKEN = "xoxb" + "-0000000000000-0000000000000-aaaaaaaaaaaaaaaaaabbbbbb"
 _SLACK_WEBHOOK = "https://hooks.slack.com" + "/services/TXXXXXXXX/BXXXXXXXX/xxxxxxxxxxxxxxxxxxxxxxxx"
+_OPENAI_CLASSIC_KEY = "sk-" + "abcdefghijklmnopqrstuvwxyz1234567890ABCDEFGHIJKL"
+_OPENAI_PROJ_KEY = "sk-proj-" + "aB1_" * 30
+_OPENAI_ADMIN_KEY = "sk-admin-" + "aB1_" * 22 + "test"
+_OPENAI_SVCACCT_KEY = "sk-svcacct-" + "aB1_" * 25
+_ANTHROPIC_KEY = "sk-ant-api03-" + "aB1_" * 23 + "test"
+_HF_TOKEN = "hf_" + "aB1cDef2GhIjKlMnOpQrStUvWxYz012345"
+_HF_FINE_GRAINED_TOKEN = "hf_" + "aB1cDef2GhIjKlMnOpQrStUvWxYz0123456789" * 2
 
 
 def _synthetic_garak_values_by_pattern() -> dict[str, str]:
@@ -90,6 +97,13 @@ def _synthetic_garak_values_by_pattern() -> dict[str, str]:
         "Connect via mongodb://admin:password123@prod-db.internal:27017/myapp",
         f"token = {_SLACK_TOKEN}",
         f"webhook = {_SLACK_WEBHOOK}",
+        f"OpenAI classic key: {_OPENAI_CLASSIC_KEY}",
+        f"OpenAI project key: {_OPENAI_PROJ_KEY}",
+        f"OpenAI admin key: {_OPENAI_ADMIN_KEY}",
+        f"OpenAI service account key: {_OPENAI_SVCACCT_KEY}",
+        f"Anthropic key: {_ANTHROPIC_KEY}",
+        f"Hugging Face token: {_HF_TOKEN}",
+        f"Hugging Face fine-grained token: {_HF_FINE_GRAINED_TOKEN}",
     ],
 )
 async def test_credential_detected(text: str, patch_central_database):
@@ -107,6 +121,14 @@ async def test_credential_detected(text: str, patch_central_database):
         "The function returns an integer value between 0 and 100.",
         "Please contact support@example.com for help.",
         "Discussion about github_pat format in docs.",
+        "sk-shortkey",
+        "sk-proj-short",
+        "sk-admin-short",
+        "sk-svcacct-short",
+        "sk-ant-short",
+        "hf_short",
+        "ask-sk-proj-" + "A" * 50,
+        "myhf_" + "A" * 34,
     ],
 )
 async def test_credential_not_detected(text: str, patch_central_database):
@@ -134,6 +156,97 @@ async def test_credential_scorer_garak_patterns_detects_fine_grained_github_toke
     score = (await scorer.score_text_async(f"token = {_GH_PAT_TOKEN}"))[0]
     assert score.get_value() is True
     assert "GitHub Token" in score.score_rationale
+
+
+async def test_credential_scorer_detects_openai_keys(patch_central_database):
+    scorer = CredentialLeakScorer()
+    for key in (_OPENAI_CLASSIC_KEY, _OPENAI_PROJ_KEY, _OPENAI_ADMIN_KEY, _OPENAI_SVCACCT_KEY):
+        score = (await scorer.score_text_async(f"api_key = '{key}'"))[0]
+        assert score.get_value() is True
+        assert "OpenAI API Key" in score.score_rationale
+        assert "Anthropic API Key" not in score.score_rationale
+
+
+async def test_credential_scorer_detects_anthropic_key(patch_central_database):
+    scorer = CredentialLeakScorer()
+    score = (await scorer.score_text_async(f"key = '{_ANTHROPIC_KEY}'"))[0]
+    assert score.get_value() is True
+    assert "Anthropic API Key" in score.score_rationale
+    assert "OpenAI API Key" not in score.score_rationale
+
+
+async def test_credential_scorer_detects_hugging_face_token(patch_central_database):
+    scorer = CredentialLeakScorer()
+    for token in (_HF_TOKEN, _HF_FINE_GRAINED_TOKEN):
+        score = (await scorer.score_text_async(f"token = '{token}'"))[0]
+        assert score.get_value() is True
+        assert "Hugging Face Token" in score.score_rationale
+
+
+async def test_ai_credentials_exclusion_with_garak_patterns(patch_central_database):
+    scorer = CredentialLeakScorer.from_excluded_values(
+        [_OPENAI_CLASSIC_KEY, _ANTHROPIC_KEY, _HF_TOKEN],
+        patterns=CredentialLeakScorer.GARAK_PATTERNS,
+    )
+    assert (await scorer.score_text_async(_OPENAI_CLASSIC_KEY))[0].get_value() is False
+    assert (await scorer.score_text_async(_ANTHROPIC_KEY))[0].get_value() is False
+    assert (await scorer.score_text_async(_HF_TOKEN))[0].get_value() is False
+    assert (await scorer.score_text_async(_OPENAI_PROJ_KEY))[0].get_value() is True
+    assert (await scorer.score_text_async(_HF_FINE_GRAINED_TOKEN))[0].get_value() is True
+
+
+async def test_ai_credentials_hyphen_endings_and_exact_exclusions(patch_central_database):
+    openai_fixture = "sk-proj-" + "A" * 155 + "-"
+    anthropic_fixture = "sk-ant-api03-" + "A" * 94 + "-"
+
+    # 1. Detected by default patterns (complete match including trailing hyphen)
+    default_scorer = CredentialLeakScorer()
+    score_oai = (await default_scorer.score_text_async(openai_fixture))[0]
+    assert score_oai.get_value() is True
+    assert "OpenAI API Key" in score_oai.score_rationale
+
+    score_ant = (await default_scorer.score_text_async(anthropic_fixture))[0]
+    assert score_ant.get_value() is True
+    assert "Anthropic API Key" in score_ant.score_rationale
+
+    # 2. Exact excluded fixtures score False with GARAK_PATTERNS
+    excluded_scorer = CredentialLeakScorer.from_excluded_values(
+        [openai_fixture, anthropic_fixture],
+        patterns=CredentialLeakScorer.GARAK_PATTERNS,
+    )
+    assert (await excluded_scorer.score_text_async(openai_fixture))[0].get_value() is False
+    assert (await excluded_scorer.score_text_async(anthropic_fixture))[0].get_value() is False
+
+    # 3. Non-excluded values still score True
+    assert (await excluded_scorer.score_text_async("sk-proj-" + "A" * 155))[0].get_value() is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "sk-proj-" + "A" * 201,
+        "sk-ant-api03-" + "A" * 141,
+        "hf_" + "A" * 81,
+    ],
+)
+async def test_ai_credentials_overlong_rejected(text: str, patch_central_database):
+    scorer = CredentialLeakScorer()
+    assert (await scorer.score_text_async(text))[0].get_value() is False
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_pattern"),
+    [
+        (f"这是我的密钥:{_OPENAI_PROJ_KEY}测试", "OpenAI API Key"),
+        (f"这是Anthropic密钥:{_ANTHROPIC_KEY}结束", "Anthropic API Key"),
+        (f"这是HF令牌:{_HF_TOKEN}结束", "Hugging Face Token"),
+    ],
+)
+async def test_ai_credentials_detected_in_non_ascii_context(text: str, expected_pattern: str, patch_central_database):
+    scorer = CredentialLeakScorer()
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is True
+    assert expected_pattern in score.score_rationale
 
 
 async def test_credential_scorer_custom_patterns(patch_central_database):
@@ -176,8 +289,8 @@ def test_garak_patterns_are_opt_in() -> None:
     default = CredentialLeakScorer()
     expanded = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS)
 
-    assert len(default._patterns) == 12
-    assert len(expanded._patterns) == 56
+    assert len(default._patterns) == 15
+    assert len(expanded._patterns) == 59
     assert default._patterns.keys() <= expanded._patterns.keys()
     assert all(not pattern.groupindex for pattern in default._compiled.values())
     assert all("credential" in pattern.groupindex for pattern in expanded._compiled.values())

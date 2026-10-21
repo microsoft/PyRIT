@@ -831,8 +831,8 @@ async def test_responses_probes_suppress_provider_io_and_preserve_state(
         patch.object(target._client.responses, "create", new_callable=AsyncMock) as create,
     ):
 
-        async def probe_async() -> None:
-            await discover_target_capabilities_async(
+        async def probe_async() -> TargetCapabilities:
+            return await discover_target_capabilities_async(
                 target=target,
                 capabilities=[CapabilityName.JSON_OUTPUT],
                 test_modalities=set(),
@@ -845,11 +845,13 @@ async def test_responses_probes_suppress_provider_io_and_preserve_state(
                 await probe_async()
         elif outcome == "timeout":
             with patch.object(asyncio, "wait_for", side_effect=expire_once_requested_async) as deadline:
-                await probe_async()
+                result = await probe_async()
             deadline.assert_awaited_once()
             assert cancelled.is_set()
+            assert not result.supports_json_output
         else:
-            await probe_async()
+            result = await probe_async()
+            assert result.supports_json_output is (outcome == "success")
         send.assert_awaited_once()
         await send.call_args.kwargs["api_call"]()
         assert not {"tools", "tool_choice", "parallel_tool_calls"} & create.call_args.kwargs.keys()

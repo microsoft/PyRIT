@@ -39,7 +39,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          version: "0.9.17"
+          version-file: uv.lock
           enable-cache: true
       - name: Install default dependencies without LiteLLM
         run: uv sync --frozen
@@ -110,15 +110,16 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pre-commit
-          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          # pre-commit-uv rebuilds hook environments that virtualenv created, so the
+          # "uv" prefix keeps older caches from being restored and rebuilt on every run.
+          key: pre-commit-uv-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
           restore-keys: |
-            pre-commit-${{ runner.os }}-
+            pre-commit-uv-${{ runner.os }}-
 
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          # Install a specific version of uv.
-          version: "0.9.17"
+          version-file: uv.lock
           enable-cache: true
           cache-dependency-glob: |
             **/pyproject.toml
@@ -177,8 +178,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          # Install a specific version of uv.
-          version: "0.9.17"
+          version-file: uv.lock
           cache-dependency-glob: |
             **/pyproject.toml
             **/uv.lock

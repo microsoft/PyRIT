@@ -82,6 +82,15 @@
   pointer-events: none;
 }
 
+.myst-card:has(img.discord-community-logo) {
+  border-color: #5865f2;
+}
+
+.myst-card:has(img.discord-community-logo):focus-within {
+  outline: 3px solid #5865f2;
+  outline-offset: 4px;
+}
+
 /* Ecosystem section: logos float behind the text as full-bleed watermarks. */
 /* Scope via :has() so paper thumbnail cards (no .ecosystem-logo) are unaffected. */
 .myst-card:has(img.ecosystem-logo) {
