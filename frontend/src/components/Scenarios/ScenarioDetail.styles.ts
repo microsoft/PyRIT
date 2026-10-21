@@ -267,9 +267,6 @@ export const useScenarioDetailStyles = makeStyles({
   errorText: {
     color: tokens.colorPaletteRedForeground1,
   },
-  requiredMarker: {
-    color: tokens.colorPaletteRedForeground1,
-  },
   launchButton: {
     width: '100%',
     minHeight: '3.5rem',

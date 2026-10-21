@@ -5,7 +5,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
 import type { TechniqueConfiguration, TechniqueOverride } from '@/types'
 
-import TechniqueEditorDialog from './TechniqueEditorDialog'
+import TechniqueEditor from './TechniqueEditor'
 
 jest.mock('@/services/api', () => ({
   techniquesApi: { validateEdit: jest.fn(), createTechnique: jest.fn(), listTypes: jest.fn() },
@@ -31,16 +31,17 @@ function configuration(): TechniqueConfiguration {
     parameters: [{ name: 'max_attempts_on_failure', type_name: 'int', required: false, default: '1' }],
     supplied_parameters: [], editable_fields: ['description', 'simulation', 'request_converters', 'response_converters'],
     read_only: { requirements: 'Retained unchanged.', policy: 'Retained unchanged.' },
+    supports_prepended_conversation: false,
   }
 }
 
 function tree(original = configuration(), onApplied = jest.fn(), initial?: TechniqueConfiguration, onClose = jest.fn()) {
   return <FluentProvider theme={webLightTheme}>
-    <TechniqueEditorDialog original={original} initial={initial} onApplied={onApplied} onClose={onClose} />
+    <TechniqueEditor original={original} initial={initial} onApplied={onApplied} onClose={onClose} />
   </FluentProvider>
 }
 
-describe('TechniqueEditorDialog', () => {
+describe('TechniqueEditor', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     techniques.validateEdit.mockImplementation(async (override: TechniqueOverride) => ({
@@ -189,5 +190,63 @@ describe('TechniqueEditorDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Apply to run' }))
     await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
     expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({ params: { text_setting: '' } })
+  })
+
+  it('should auto-apply inline edits and ignore an obsolete validation response', async () => {
+    const user = userEvent.setup()
+    const onApplied = jest.fn()
+    const onPending = jest.fn()
+    const original = configuration()
+    let resolveFirst: (value: Awaited<ReturnType<typeof techniquesApi.validateEdit>>) => void = () => {
+      throw new Error('First validation has not started')
+    }
+    techniques.validateEdit.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve }))
+    render(<FluentProvider theme={webLightTheme}>
+      <TechniqueEditor original={original} autoApply onApplied={onApplied} onPending={onPending} />
+    </FluentProvider>)
+    const turns = await screen.findByRole('spinbutton', { name: 'Turn count' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Apply to run' })).not.toBeInTheDocument()
+    await user.clear(turns)
+    await user.type(turns, '3')
+    expect(onPending).toHaveBeenCalled()
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(1))
+    await user.clear(turns)
+    await user.type(turns, '4')
+    await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
+    expect(onApplied.mock.calls[0][0].override.changes).toEqual({ simulation: { num_turns: 4 } })
+    resolveFirst({
+      configuration: original, override: {
+        source_name: original.source_name, source_identity: original.source_identity,
+        changes: { simulation: { num_turns: 3 } }, dependencies: {}, effective_identity: 'obsolete',
+      },
+    })
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Technique settings applied'))
+    expect(onApplied).toHaveBeenCalledTimes(1)
+    expect(turns).toHaveValue(4)
+  })
+
+  it('should not apply an inline draft after it unmounts', async () => {
+    const user = userEvent.setup()
+    const onApplied = jest.fn()
+    const original = configuration()
+    let resolveEdit: (value: Awaited<ReturnType<typeof techniquesApi.validateEdit>>) => void = () => {
+      throw new Error('Validation has not started')
+    }
+    techniques.validateEdit.mockImplementationOnce(() => new Promise((resolve) => { resolveEdit = resolve }))
+    const view = render(<FluentProvider theme={webLightTheme}>
+      <TechniqueEditor original={original} autoApply onApplied={onApplied} />
+    </FluentProvider>)
+    await user.type(await screen.findByLabelText('Description'), ' changed')
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(1))
+    view.unmount()
+    resolveEdit({
+      configuration: original, override: {
+        source_name: original.source_name, source_identity: original.source_identity,
+        changes: { description: 'Changed' }, dependencies: {}, effective_identity: 'obsolete',
+      },
+    })
+    await Promise.resolve()
+    expect(onApplied).not.toHaveBeenCalled()
   })
 })

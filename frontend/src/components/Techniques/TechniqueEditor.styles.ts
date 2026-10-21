@@ -2,7 +2,7 @@ import { makeStyles, tokens } from '@fluentui/react-components'
 
 import { mobileTouchTargetHeight, NARROW_VIEWPORT_QUERY } from '@/styles/touchTargets'
 
-export const useTechniqueEditorDialogStyles = makeStyles({
+export const useTechniqueEditorStyles = makeStyles({
   surface: {
     width: '100%', minWidth: 0, maxWidth: '37.5rem', maxHeight: '90vh',
     [NARROW_VIEWPORT_QUERY]: {

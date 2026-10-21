@@ -33,7 +33,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import ConversationEditor, { type ConversationEditorHandle } from '@/components/Chat/ConversationEditor'
 import TargetSelect from '@/components/Config/TargetSelect'
-import TechniqueEditorDialog from '@/components/Techniques/TechniqueEditorDialog'
+import TechniqueEditor from '@/components/Techniques/TechniqueEditor'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import { useRuntime } from '@/hooks/useRuntime'
 import { useRunTechniqueEditor } from '@/hooks/useRunTechniqueEditor'
@@ -104,6 +104,8 @@ const MAX_MAX_RETRIES = 20
 const DEFAULT_MAX_CONCURRENCY = 10
 const DEFAULT_MAX_RETRIES = 0
 const ESTIMATE_DEBOUNCE_MS = 300
+const CONVERSATION_PARAMETER_NAMES = new Set(['prepended_conversation_id', 'apply_converters_to_prepended_history'])
+const OBJECTIVE_PARAMETER_NAMES = new Set(['objective', 'harm_categories'])
 
 function supportsParameter(scenario: RegisteredScenario, name: string): boolean {
   return scenario.supported_parameter_names.includes(name)
@@ -248,6 +250,7 @@ interface BuildEstimateRequestInput {
   includeBaseline: boolean
   techniqueOverride?: TechniqueOverride
   techniqueEditError?: string
+  supportsPrependedConversation?: boolean
 }
 
 interface BuildRunRequestInput extends BuildEstimateRequestInput {
@@ -307,6 +310,7 @@ function buildEstimateRequest({
   includeBaseline,
   techniqueOverride,
   techniqueEditError,
+  supportsPrependedConversation = true,
 }: BuildEstimateRequestInput): BuildEstimateRequestResult {
   if (techniqueEditError) return { ok: false, error: techniqueEditError }
   if (supportsParameter(scenario, 'scenario_techniques') && techniques.length === 0) {
@@ -319,7 +323,14 @@ function buildEstimateRequest({
 
   let scenarioParams: Record<string, unknown> | null = null
   if (dynamicParameters.length > 0) {
-    const result = buildParametersFromForm(dynamicParameters, scenarioParamValues)
+    const history = scenarioParamValues.prepended_conversation_id
+    if (!supportsPrependedConversation && typeof history === 'string' && history.trim()) {
+      return { ok: false, error: 'This technique does not support a prepended conversation. Clear the saved conversation before launch.' }
+    }
+    const result = buildParametersFromForm(
+      dynamicParameters.filter((parameter) => supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(parameter.name)),
+      scenarioParamValues,
+    )
     if (!result.ok) {
       return result
     }
@@ -636,7 +647,14 @@ function ScenarioLaunchForm({
   const [pendingTechnique, setPendingTechnique] = useState<string | null>(null)
   const techniqueEditError = techniqueEditor.unresolved
     ? techniqueEditor.error ?? 'Loading selected technique settings.'
-    : techniqueEditor.editing ? 'Apply or cancel technique edits before launch.' : undefined
+    : techniqueEditor.pending ? 'Wait for valid technique settings before launch.' : undefined
+  const supportsPrependedConversation = !singleTechnique
+    || techniqueEditor.configuration?.supports_prepended_conversation === true
+  const objectiveParameters = dynamicParameters.filter((parameter) => OBJECTIVE_PARAMETER_NAMES.has(parameter.name))
+  const historyParameters = dynamicParameters.filter((parameter) => CONVERSATION_PARAMETER_NAMES.has(parameter.name)
+    && parameter.name !== conversationConvertersParameter?.name)
+  const generalParameters = dynamicParameters.filter((parameter) =>
+    !OBJECTIVE_PARAMETER_NAMES.has(parameter.name) && !CONVERSATION_PARAMETER_NAMES.has(parameter.name))
   const unavailableSelection = (
     supportsObjectiveTarget && targetName !== ''
     && !targets.some((target) => target.target_registry_name === targetName)
@@ -773,6 +791,7 @@ function ScenarioLaunchForm({
       techniques,
       techniqueOverride: techniqueEditor.override,
       techniqueEditError,
+      supportsPrependedConversation,
       dynamicParameters,
       scenarioParamValues,
       datasetEdits,
@@ -792,6 +811,7 @@ function ScenarioLaunchForm({
       techniques,
       techniqueEditor.override,
       techniqueEditError,
+      supportsPrependedConversation,
     ],
   )
   const requestResult = useMemo(
@@ -802,6 +822,7 @@ function ScenarioLaunchForm({
       techniques,
       techniqueOverride: techniqueEditor.override,
       techniqueEditError,
+      supportsPrependedConversation,
       dynamicParameters,
       scenarioParamValues,
       datasetEdits,
@@ -829,6 +850,7 @@ function ScenarioLaunchForm({
       techniques,
       techniqueEditor.override,
       techniqueEditError,
+      supportsPrependedConversation,
     ],
   )
   const estimateRequest = useMemo(
@@ -953,7 +975,7 @@ function ScenarioLaunchForm({
     if (technique.isBaseline) {
       setBaselineChecked(checked)
     } else {
-      if (singleTechnique && checked && technique.name !== selectedTechniques[0] && techniqueEditor.edited) {
+      if (singleTechnique && checked && technique.name !== selectedTechniques[0] && techniqueEditor.hasChanges) {
         setPendingTechnique(technique.name)
         return
       }
@@ -1086,6 +1108,45 @@ function ScenarioLaunchForm({
   const uncheckedRefreshDatasets = refreshDatasets.filter((name) => datasetMetadata.loading || datasetMetadata.error
     || !datasetMetadata.items.some((item) => item.name === name))
 
+  const renderScenarioParameter = (parameter: Parameter): React.ReactElement => (
+    <div key={parameter.name} className={styles.dynamicParameters}>
+      <ParameterField
+        parameter={parameter}
+        value={scenarioParamValues[parameter.name]}
+        disabled={submitting || loadingConversation}
+        onChange={updateScenarioParam}
+        testIdPrefix="scenario-param"
+      />
+      {parameter.name === 'prepended_conversation_id' && <>
+        <div className={styles.conversationActions}>
+          <Button type="button" className={styles.touchTarget}
+            disabled={submitting || conversationBusy || previewOpen || !newAttackContext.ready}
+            onClick={() => { void beginConversation(parameter.name, false) }}>
+            Add new conversation
+          </Button>
+          <Button type="button" className={styles.touchTarget}
+            disabled={submitting || conversationBusy || previewOpen || !newAttackContext.ready || !canEditConversation}
+            onClick={() => { void beginConversation(parameter.name, true) }}>
+            Edit conversation
+          </Button>
+          {conversationConvertersParameter && (
+            <Tooltip relationship="description"
+              content="Apply request converters to stored history when the scan runs. The source conversation does not change. New outgoing turns are always converted.">
+              <Switch label="Apply converters to conversation" className={styles.selectionControl}
+                checked={scenarioParamValues[conversationConvertersParameter.name] === 'true'}
+                disabled={submitting || loadingConversation || !newAttackContext.ready || !canEditConversation}
+                onChange={(_, data) => updateScenarioParam(conversationConvertersParameter.name, String(data.checked))} />
+            </Tooltip>
+          )}
+        </div>
+        {loadingConversation && <Spinner size="tiny" label="Loading conversation..." />}
+        {conversationError && <MessageBar intent="error">
+          <MessageBarBody>{conversationError}</MessageBarBody>
+        </MessageBar>}
+      </>}
+    </div>
+  )
+
   return (
     <section
       className={styles.root}
@@ -1146,47 +1207,6 @@ function ScenarioLaunchForm({
                 testId="scenario-detail-description"
               />
             </section>
-
-            {supportsObjectiveTarget && (
-            <section className={styles.section} aria-labelledby="target-section-title">
-              <Text id="target-section-title" as="h2" size={400} weight="semibold">
-                Objective Target <span className={styles.requiredMarker} aria-hidden="true">*</span>
-              </Text>
-              <Field hint="The registered target this scenario will run against.">
-                <Select
-                  className={styles.control}
-                  value={targetName}
-                  disabled={submitting}
-                  onChange={(_, data) => { setTargetName(data.value); setSelectionGeneration(runtime.generation) }}
-                  data-testid="scenario-target-select"
-                  aria-label="Objective Target"
-                  required
-                >
-                  {!targets.some((target) => target.target_registry_name === targetName) && (
-                    <option value={targetName} disabled>
-                      {targets.length === 0 ? 'No targets configured' : 'Select an available target'}
-                    </option>
-                  )}
-                  {targets.map((target) => (
-                    <option key={target.target_registry_name} value={target.target_registry_name}>
-                      {targetOptionLabel(target)}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              {targets.length === 0 && (
-                <Button
-                  className={styles.touchTarget}
-                  appearance="secondary"
-                  icon={<SettingsRegular />}
-                  type="button"
-                  onClick={() => onNavigate('registry')}
-                >
-                  Configure target to launch
-                </Button>
-              )}
-            </section>
-            )}
 
             {(supportsTechniques || supportsBaseline) && (
             <section className={styles.section} aria-labelledby="techniques-section-title">
@@ -1275,25 +1295,77 @@ function ScenarioLaunchForm({
                   )
                 })}
               </div>
-              {singleTechnique && supportsTechniques && selectedTechniques.length === 1 && (
-                <div className={styles.previewStack} aria-label="Selected technique settings">
+            </section>
+            )}
+
+            {(supportsObjectiveTarget || objectiveParameters.length > 0) && (
+              <section className={styles.section} aria-labelledby="objective-section-title">
+                <Text id="objective-section-title" as="h2" size={400} weight="semibold">Objective</Text>
+                {supportsObjectiveTarget && <>
+                  <Field label="Objective Target" required hint="The registered target this scenario will run against.">
+                    <Select
+                      className={styles.control}
+                      value={targetName}
+                      disabled={submitting}
+                      onChange={(_, data) => { setTargetName(data.value); setSelectionGeneration(runtime.generation) }}
+                      data-testid="scenario-target-select"
+                    >
+                      {!targets.some((target) => target.target_registry_name === targetName) && (
+                        <option value={targetName} disabled>
+                          {targets.length === 0 ? 'No targets configured' : 'Select an available target'}
+                        </option>
+                      )}
+                      {targets.map((target) => (
+                        <option key={target.target_registry_name} value={target.target_registry_name}>
+                          {targetOptionLabel(target)}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  {targets.length === 0 && (
+                    <Button className={styles.touchTarget} appearance="secondary" icon={<SettingsRegular />}
+                      type="button" onClick={() => onNavigate('registry')}>
+                      Configure target to launch
+                    </Button>
+                  )}
+                </>}
+                {objectiveParameters.map(renderScenarioParameter)}
+              </section>
+            )}
+
+            {((singleTechnique && supportsTechniques) || historyParameters.length > 0) && (
+              <section className={styles.section} aria-labelledby="technique-parameters-section-title">
+                <Text id="technique-parameters-section-title" as="h2" size={400} weight="semibold">
+                  Technique Parameters
+                </Text>
+                {singleTechnique && supportsTechniques && <>
                   {techniqueEditor.unresolved && !techniqueEditor.error && <Spinner size="tiny" label="Loading technique settings..." />}
                   {techniqueEditor.error && <MessageBar intent="error"><MessageBarBody>
                     {techniqueEditor.error}
                     <Button className={styles.touchTarget} type="button" onClick={techniqueEditor.retry}>Retry technique settings</Button>
                   </MessageBarBody></MessageBar>}
-                  <div className={styles.previewBadges}>
-                    <Button className={styles.touchTarget} type="button" onClick={techniqueEditor.open}
-                      disabled={!runtime.ready || techniqueEditor.unresolved || submitting || previewOpen || conversationBusy}>
-                      Edit technique
-                    </Button>
-                    {techniqueEditor.edited && <><Badge appearance="outline">Edited for this run</Badge>
-                      <Button className={styles.touchTarget} type="button" disabled={submitting || previewOpen}
-                        onClick={techniqueEditor.reset}>Reset to original</Button></>}
-                  </div>
-                </div>
-              )}
-            </section>
+                  {techniqueEditor.hasChanges && <div className={styles.previewBadges}>
+                    {techniqueEditor.edited && <Badge appearance="outline">Edited for this run</Badge>}
+                    <Button className={styles.touchTarget} type="button" disabled={submitting || previewOpen}
+                      onClick={techniqueEditor.reset}>Reset to original</Button>
+                  </div>}
+                  {techniqueEditor.original && <TechniqueEditor key={techniqueEditor.formKey}
+                    original={techniqueEditor.original} initial={techniqueEditor.configuration}
+                    autoApply onPending={techniqueEditor.markPending} onApplied={techniqueEditor.apply}
+                    disabled={!runtime.ready || staleSelection || submitting || previewOpen || conversationBusy} />}
+                </>}
+                {supportsPrependedConversation ? historyParameters.map(renderScenarioParameter)
+                  : historyParameters.length > 0 && <>
+                    <Text>This technique does not accept a prepended conversation.</Text>
+                    {canEditConversation && <MessageBar intent="warning"><MessageBarBody>
+                      Clear the saved conversation before launch. It is not compatible with this technique.
+                      <Button className={styles.touchTarget} type="button" disabled={submitting}
+                        onClick={() => setScenarioParamValues((current) => ({
+                          ...current, prepended_conversation_id: '', apply_converters_to_prepended_history: 'false',
+                        }))}>Clear saved conversation</Button>
+                    </MessageBarBody></MessageBar>}
+                  </>}
+              </section>
             )}
 
             {(supportsDatasets || datasetDefaults.sources.length > 0) && (
@@ -1315,51 +1387,14 @@ function ScenarioLaunchForm({
             </section>
             )}
 
-            {(dynamicParameters.length > 0 || scenario.uses_default_adversarial_target
+            {(generalParameters.length > 0 || scenario.uses_default_adversarial_target
               || supportsConcurrency || supportsRetries) && (
             <section className={styles.section} aria-labelledby="parameters-section-title">
               <Text id="parameters-section-title" as="h2" size={400} weight="semibold">
                 Parameters
               </Text>
               <div className={styles.dynamicParameters}>
-                {dynamicParameters.filter((parameter) => parameter.name !== conversationConvertersParameter?.name).map((parameter) => (
-                  <div key={parameter.name} className={styles.dynamicParameters}>
-                    <ParameterField
-                      parameter={parameter}
-                      value={scenarioParamValues[parameter.name]}
-                      disabled={submitting || loadingConversation}
-                      onChange={updateScenarioParam}
-                      testIdPrefix="scenario-param"
-                    />
-                    {parameter.name === 'prepended_conversation_id' && <>
-                      <div className={styles.conversationActions}>
-                        <Button type="button" className={styles.touchTarget}
-                          disabled={submitting || conversationBusy || previewOpen || !newAttackContext.ready}
-                          onClick={() => { void beginConversation(parameter.name, false) }}>
-                          Add new conversation
-                        </Button>
-                        <Button type="button" className={styles.touchTarget}
-                          disabled={submitting || conversationBusy || previewOpen || !newAttackContext.ready || !canEditConversation}
-                          onClick={() => { void beginConversation(parameter.name, true) }}>
-                          Edit conversation
-                        </Button>
-                        {conversationConvertersParameter && (
-                          <Tooltip relationship="description"
-                            content="Apply request converters to stored history when the scan runs. The source conversation does not change. New outgoing turns are always converted.">
-                            <Switch label="Apply converters to conversation" className={styles.selectionControl}
-                              checked={scenarioParamValues[conversationConvertersParameter.name] === 'true'}
-                              disabled={submitting || loadingConversation || !newAttackContext.ready || !canEditConversation}
-                              onChange={(_, data) => updateScenarioParam(conversationConvertersParameter.name, String(data.checked))} />
-                          </Tooltip>
-                        )}
-                      </div>
-                      {loadingConversation && <Spinner size="tiny" label="Loading conversation..." />}
-                      {conversationError && <MessageBar intent="error">
-                        <MessageBarBody>{conversationError}</MessageBarBody>
-                      </MessageBar>}
-                    </>}
-                  </div>
-                ))}
+                {generalParameters.map(renderScenarioParameter)}
                 {scenario.uses_default_adversarial_target && (
                   <TargetSelect
                     targets={adversarialTargets}
@@ -1478,9 +1513,6 @@ function ScenarioLaunchForm({
             </section>
           </form>
 
-          {techniqueEditor.editing && techniqueEditor.original && <TechniqueEditorDialog
-            original={techniqueEditor.original} initial={techniqueEditor.configuration}
-            onClose={techniqueEditor.close} onApplied={techniqueEditor.apply} />}
           <Dialog open={pendingTechnique !== null} onOpenChange={(_, data) => {
             if (!data.open) setPendingTechnique(null)
           }}>

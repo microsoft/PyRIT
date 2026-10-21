@@ -734,6 +734,29 @@ class AttackTechniqueFactory(Identifiable):
             adversarial_prompt_template=self._adversarial_prompt_template,
         )
 
+    @property
+    def supports_prepended_conversation(self) -> bool:
+        """Whether the declared attack and seed contracts permit caller-supplied history."""
+        allowed = (
+            "prepended_conversation_config" in self._compatibility_helper.accepted_params
+            and not self._requirements.seed_group.objective_only
+            and not (self._seed_technique is not None and self._seed_technique.has_simulated_conversation)
+        )
+        if not allowed:
+            return False
+        parameter = inspect.signature(self._attack_class.__init__).parameters.get("params_type")
+        if parameter is None:
+            return True
+        params_type = self._attack_kwargs.get("params_type")
+        if params_type is None:
+            found, default = get_global_default_values().get_default_value(
+                class_type=self._attack_class, parameter_name="params_type"
+            )
+            params_type = default if found else parameter.default
+        if not isinstance(params_type, type) or not is_dataclass(params_type):
+            return False
+        return any(field.name == "prepended_conversation" for field in fields(params_type))
+
     @_capture_creation
     def with_settings(
         self, *, settings: TechniqueFactorySettings, simulation: SimulationChanges | None = None

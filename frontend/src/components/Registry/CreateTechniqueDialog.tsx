@@ -1,4 +1,4 @@
-import TechniqueEditorDialog from '@/components/Techniques/TechniqueEditorDialog'
+import TechniqueEditor from '@/components/Techniques/TechniqueEditor'
 
 interface CreateTechniqueDialogProps {
   onClose: () => void
@@ -7,5 +7,5 @@ interface CreateTechniqueDialogProps {
 
 /** Registry creation uses the shared form, but retains its global admission path. */
 export default function CreateTechniqueDialog(props: CreateTechniqueDialogProps) {
-  return <TechniqueEditorDialog {...props} />
+  return <TechniqueEditor {...props} />
 }

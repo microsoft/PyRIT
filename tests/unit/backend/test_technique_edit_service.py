@@ -19,14 +19,21 @@ from pyrit.backend.services.scenario_service import ScenarioService
 from pyrit.backend.services.technique_edit_service import TechniqueEditService
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH, EXECUTOR_SIMULATED_TARGET_PATH
 from pyrit.converter import Base64Converter, ROT13Converter
-from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
+from pyrit.executor.attack import AttackConverterConfig, AttackParameters, PromptSendingAttack, RedTeamingAttack
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackTechniqueSeedGroup, SeedPrompt, SeedSimulatedConversation, load_next_message_prompt
+from pyrit.models import (
+    AttackTechniqueSeedGroup,
+    SeedGroupRequirements,
+    SeedPrompt,
+    SeedSimulatedConversation,
+    load_next_message_prompt,
+)
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioRunSizeEstimateRequest
 from pyrit.models.technique_edit import SimulationChanges, TechniqueChanges, TechniqueOverride
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, Registry, TargetRegistry
 from pyrit.scenario.core import AttackTechniqueFactory
+from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 from pyrit.scenario.scenarios.technique.execute import Execute
 from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget
@@ -107,6 +114,39 @@ def test_effective_projection_noop_and_original_immutability(edit_catalog: Attac
         assert copy.get_configuration_identity() == source.get_configuration_identity()
     assert source.seed_technique.model_dump() == before
     assert edit_catalog.catalog_revision == revision
+
+
+def test_history_support_projection_uses_source_contracts_without_constructing_attacks(
+    edit_catalog: AttackTechniqueRegistry,
+) -> None:
+    plain = edit_catalog.instances.get("plain")
+    simulated = edit_catalog.instances.get("role_play_movie_script")
+    assert plain is not None and simulated is not None
+    factories = [
+        plain,
+        simulated,
+        AttackTechniqueFactory(
+            name="objective_only",
+            attack_class=PromptSendingAttack,
+            requirements=TechniqueRequirements(
+                seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True),
+            ),
+        ),
+        AttackTechniqueFactory(
+            name="no_history",
+            attack_class=PromptSendingAttack,
+            attack_kwargs={
+                "params_type": AttackParameters.excluding("prepended_conversation"),
+            },
+        ),
+        AttackTechniqueFactory(name="red_team", attack_class=RedTeamingAttack),
+    ]
+    edit_catalog.register_from_factories(factories[2:])
+    for factory, supported in zip(factories, (True, False, False, False, True), strict=True):
+        with patch.object(factory, "create", side_effect=AssertionError("Must not construct an attack")):
+            projection = TechniqueEditService.configuration(factory.name)
+        assert projection.supports_prepended_conversation is supported
+        assert projection.model_dump(mode="json")["supports_prepended_conversation"] is supported
 
 
 def test_simulation_roundtrip_preserves_templates_and_metadata(edit_catalog: AttackTechniqueRegistry) -> None:

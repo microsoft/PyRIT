@@ -508,6 +508,7 @@ export interface TechniqueConfiguration {
   editable_fields: string[]
   supplied_parameters: string[]
   read_only: Record<string, string>
+  supports_prepended_conversation: boolean
 }
 
 export interface TechniqueEditResponse {

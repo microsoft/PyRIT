@@ -241,6 +241,7 @@ class TechniqueEditService:
             editable_fields=editable,
             supplied_parameters=list(settings.attack_kwargs),
             read_only=readonly,
+            supports_prepended_conversation=factory.supports_prepended_conversation,
         )
 
     @classmethod

@@ -14,6 +14,7 @@ function configuration(name: string): TechniqueConfiguration {
     source_name: name, source_identity: name, attack_type: 'prompt_sending',
     settings: { description: name }, parameters: [], editable_fields: ['description'],
     supplied_parameters: [], read_only: {},
+    supports_prepended_conversation: true,
   }
 }
 

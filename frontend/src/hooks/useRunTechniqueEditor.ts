@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { techniquesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -8,7 +8,8 @@ interface TechniqueResource {
   key: string
   original?: TechniqueConfiguration
   applied?: TechniqueEditResponse
-  editing?: boolean
+  pending?: boolean
+  revision?: number
   error?: string
 }
 
@@ -31,21 +32,28 @@ export function useRunTechniqueEditor(source: string | undefined, generation: st
   const current = ready && resource?.key === key ? resource : null
   const applied = current?.applied
   const edited = applied !== undefined && Object.keys(applied.override.changes).length > 0
+  const markPending = useCallback((): void => {
+    setResource((value) => value?.key === key ? { ...value, pending: true } : value)
+  }, [key])
+  const apply = useCallback((result: TechniqueEditResponse): void => {
+    setResource((value) => value?.key === key ? { ...value, applied: result, pending: false } : value)
+  }, [key])
   return {
     original: current?.original,
     configuration: applied?.configuration ?? current?.original,
     override: edited ? applied.override : undefined,
     edited,
-    editing: current?.editing === true,
+    hasChanges: edited || current?.pending === true,
+    pending: current?.pending === true,
+    formKey: `${key}:${current?.revision ?? 0}`,
     error: current?.error,
     unresolved: Boolean(source) && !current?.original,
     retry: (): void => { setResource(null); setRetry((value) => value + 1) },
-    open: (): void => { setResource((value) => value?.key === key ? { ...value, editing: true } : value) },
-    close: (): void => { setResource((value) => value?.key === key ? { ...value, editing: false } : value) },
-    reset: (): void => { setResource((value) => value?.key === key ? { ...value, applied: undefined, editing: false } : value) },
+    reset: (): void => { setResource((value) => value?.key === key ? {
+      ...value, applied: undefined, pending: false, revision: (value.revision ?? 0) + 1,
+    } : value) },
     discard: (): void => { setResource(null) },
-    apply: (result: TechniqueEditResponse): void => {
-      setResource((value) => value?.key === key ? { ...value, applied: result, editing: false } : value)
-    },
+    markPending,
+    apply,
   }
 }

@@ -57,6 +57,7 @@ function techniqueConfiguration(name: string): TechniqueConfiguration {
     } },
     parameters: [], editable_fields: ['description', 'simulation'],
     supplied_parameters: [], read_only: { policy: 'Retained unchanged.' },
+    supports_prepended_conversation: true,
   }
 }
 
@@ -828,7 +829,7 @@ describe('ScenarioDetail', () => {
     expect(await screen.findByRole('combobox', { name: 'Objective Target' })).toHaveValue('target-b')
     const parameters = screen.getByRole('region', { name: 'Parameters' })
     const fallback = within(parameters).getByRole('combobox', { name: 'Adversarial Target' })
-    expect(within(screen.getByRole('region', { name: 'Objective Target' })).queryByRole(
+    expect(within(screen.getByRole('region', { name: 'Objective' })).queryByRole(
       'combobox', { name: 'Adversarial Target' },
     )).not.toBeInTheDocument()
     const datasetsSection = screen.getByRole('region', { name: 'Datasets' })
@@ -1175,16 +1176,17 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
     renderDetail('/scanner/technique.execute')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit technique' })).toBeEnabled())
+    await screen.findByRole('spinbutton', { name: 'Turn count' })
     expect(mockTechniques.getConfiguration).toHaveBeenCalledWith('default_technique')
-    await user.click(screen.getByRole('button', { name: 'Edit technique' }))
-    const editor = await screen.findByRole('dialog')
+    const editor = screen.getByRole('region', { name: 'Technique Parameters' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(within(editor).queryByRole('combobox', { name: 'Attack type' })).not.toBeInTheDocument()
     expect(await within(editor).findByRole('spinbutton', { name: 'Turn count' })).toHaveValue(2)
     expect(within(editor).getByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }}')
     await user.clear(within(editor).getByRole('spinbutton', { name: 'Turn count' }))
     await user.type(within(editor).getByRole('spinbutton', { name: 'Turn count' }), '4')
-    await user.click(within(editor).getByRole('button', { name: 'Apply to run' }))
+    expect(within(editor).queryByRole('button', { name: 'Apply to run' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
     await screen.findByText('Edited for this run')
     expect(mockTechniques.validateEdit).toHaveBeenCalledWith({
       source_name: 'default_technique', source_identity: 'default_technique-identity',
@@ -1205,19 +1207,13 @@ describe('ScenarioDetail', () => {
     }))
   })
 
-  it('should preserve applied edits on cancel, confirm before switching, and reset to the source', async () => {
+  it('should keep inline edits when a switch is cancelled and reset to the source', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
     renderDetail('/scanner/technique.execute')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit technique' })).toBeEnabled())
-    await user.click(await screen.findByRole('button', { name: 'Edit technique' }))
     await user.type(await screen.findByLabelText('Description'), ' edited')
-    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
     await screen.findByText('Edited for this run')
-    await user.click(await screen.findByRole('button', { name: 'Edit technique' }))
     expect(await screen.findByLabelText('Description')).toHaveValue('default_technique settings edited')
-    await user.type(screen.getByLabelText('Description'), ' unapplied')
-    await user.click(screen.getByRole('button', { name: 'Cancel' }))
     await user.click(await screen.findByRole('radio', { name: 'crescendo' }))
     expect(await screen.findByText('Discard technique edits?')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -1227,6 +1223,7 @@ describe('ScenarioDetail', () => {
     expect(screen.getByText('Edited for this run')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Reset to original' }))
     expect(screen.queryByText('Edited for this run')).not.toBeInTheDocument()
+    expect(await screen.findByLabelText('Description')).toHaveValue('default_technique settings')
     await user.click(screen.getByRole('radio', { name: 'crescendo' }))
     expect(screen.getByRole('radio', { name: 'crescendo' })).toBeChecked()
     await waitFor(() => expect(mockTechniques.getConfiguration).toHaveBeenCalledWith('crescendo'))
@@ -1236,7 +1233,105 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
     expect(screen.queryByRole('button', { name: 'Edit technique' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Technique Parameters' })).not.toBeInTheDocument()
     expect(mockTechniques.getConfiguration).not.toHaveBeenCalled()
+  })
+
+  it('should group the launch form in technique, objective, technique parameters, parameters, and estimate order', async () => {
+    mockGetScenario.mockResolvedValue(makeScenario({
+      max_concrete_techniques: 1, default_datasets: [],
+      supported_parameter_names: [
+        'objective_target', 'scenario_techniques', 'include_baseline', 'max_concurrency', 'max_retries',
+        'objective', 'prepended_conversation_id', 'apply_converters_to_prepended_history', 'retries_on_objective_failure',
+      ],
+      supported_parameters: [
+        { name: 'objective', type_name: 'str', required: true, multiline: true },
+        { name: 'prepended_conversation_id', type_name: 'str', required: false },
+        { name: 'apply_converters_to_prepended_history', type_name: 'bool', required: false, default: 'False' },
+        { name: 'retries_on_objective_failure', type_name: 'int', required: false, default: '0' },
+      ],
+    }))
+    renderDetail('/scanner/technique.execute')
+    await screen.findByRole('spinbutton', { name: 'Turn count' })
+    const form = screen.getByRole('form', { name: 'Scenario run configuration' })
+    expect(within(form).getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual([
+      'Techniques', 'Objective', 'Technique Parameters', 'Parameters', 'Run estimate',
+    ])
+    expect(within(screen.getByRole('region', { name: 'Objective' })).getByRole('textbox', { name: 'objective' })).toBeRequired()
+    expect(within(screen.getByRole('region', { name: 'Technique Parameters' }))
+      .getByRole('textbox', { name: 'prepended_conversation_id' })).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Parameters' }))
+      .queryByRole('textbox', { name: 'objective' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('should block preview while edits are invalid, awaiting validation, or rejected by the server', async () => {
+    const user = userEvent.setup()
+    let resolveEdit: (result: Awaited<ReturnType<typeof techniquesApi.validateEdit>>) => void = () => {
+      throw new Error('Validation has not started')
+    }
+    mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
+    mockTechniques.validateEdit.mockImplementationOnce(() => new Promise((resolve) => { resolveEdit = resolve }))
+    renderDetail('/scanner/technique.execute')
+    const turns = await screen.findByRole('spinbutton', { name: 'Turn count' })
+    await user.clear(turns)
+    await user.type(turns, '0')
+    expect(screen.getByRole('alert')).toHaveTextContent('Turn count must be a positive integer.')
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    expect(mockTechniques.validateEdit).not.toHaveBeenCalled()
+    await user.clear(turns)
+    await user.type(turns, '3')
+    await waitFor(() => expect(mockTechniques.validateEdit).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    const configuration = techniqueConfiguration('default_technique')
+    await act(async () => {
+      resolveEdit({
+        configuration, override: {
+          source_name: configuration.source_name, source_identity: configuration.source_identity,
+          changes: { simulation: { num_turns: 3 } }, dependencies: {}, effective_identity: 'edited',
+        },
+      })
+    })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+    mockTechniques.validateEdit.mockRejectedValueOnce(new Error('Cannot validate this draft'))
+    await user.clear(turns)
+    await user.type(turns, '4')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cannot validate this draft')
+    expect(turns).toHaveValue(4)
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    expect(mockStartRun).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Reset to original' }))
+    expect(await screen.findByRole('spinbutton', { name: 'Turn count' })).toHaveValue(2)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+  })
+
+  it('should hide unsupported history controls without silently discarding an existing conversation', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      max_concrete_techniques: 1,
+      supported_parameters: [
+        { name: 'prepended_conversation_id', type_name: 'str', required: false, default: 'saved-history' },
+        { name: 'apply_converters_to_prepended_history', type_name: 'bool', required: false, default: 'False' },
+      ],
+    }))
+    mockTechniques.getConfiguration.mockImplementation(async (name: string) => ({
+      ...techniqueConfiguration(name), supports_prepended_conversation: false,
+    }))
+    renderDetail('/scanner/technique.execute')
+    await screen.findByRole('spinbutton', { name: 'Turn count' })
+    expect(screen.queryByRole('textbox', { name: 'prepended_conversation_id' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add new conversation' })).not.toBeInTheDocument()
+    expect(screen.getByText('This technique does not accept a prepended conversation.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Clear the saved conversation before launch')
+    await user.click(screen.getByRole('button', { name: 'Clear saved conversation' }))
+    const preview = await openRunPreview(user)
+    await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+    await user.click(within(preview).getByRole('button', { name: 'Launch scan' }))
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0].scenario_params ?? {}).not.toHaveProperty('prepended_conversation_id')
+    expect(mockStartRun.mock.calls[0][0].scenario_params ?? {}).not.toHaveProperty('apply_converters_to_prepended_history')
   })
 
   it('allows keyboard changes to a single technique without changing baseline', async () => {
@@ -1267,7 +1362,7 @@ describe('ScenarioDetail', () => {
     )).toBe(true)
     expect(mockStartRun).not.toHaveBeenCalled()
     await timedUser.click(screen.getByRole('radio', { name: 'default_technique' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit technique' })).toBeEnabled())
+    await screen.findByRole('spinbutton', { name: 'Turn count' })
     await advanceTimers(300)
     expect(mockEstimateRun).toHaveBeenCalledWith(
       'foundry.red_team_agent',
@@ -2277,7 +2372,7 @@ describe('ScenarioDetail', () => {
     expect(screen.getByText('objective', { selector: 'label' })).toHaveTextContent('*')
     if (value) await user.click(objective)
     if (value) await user.paste(value)
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit technique' })).toBeEnabled())
+    await screen.findByRole('spinbutton', { name: 'Turn count' })
     await user.click(screen.getByRole('button', { name: 'Launch scan' }))
     expect(screen.getByRole('alert')).toHaveTextContent('objective is required.')
     expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument()

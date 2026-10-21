@@ -61,6 +61,7 @@ class TechniqueConfiguration(BaseModel):
     editable_fields: list[str]
     supplied_parameters: list[str]
     read_only: dict[str, str]
+    supports_prepended_conversation: bool = False
 
 
 class TechniqueEditResponse(BaseModel):
