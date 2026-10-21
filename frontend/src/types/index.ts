@@ -1296,8 +1296,8 @@ export interface ListRegisteredScenariosResponse {
  *
  * Every optional field is tri-state: absent means "use the scenario's own default",
  * so a preset only pins what the author deliberately chose. It carries no target,
- * concurrency, retries or labels — those are launch-time decisions supplied by
- * `ResolveScenarioPresetRequest`.
+ * Operation attribution, concurrency, retries or labels — those are launch-time
+ * decisions supplied by `ResolveScenarioPresetRequest`.
  */
 export interface ScenarioPreset {
   name: string
@@ -1356,6 +1356,7 @@ export interface ResolveScenarioPresetRequest {
   initializer_args?: Record<string, Record<string, unknown>> | null
   max_concurrency?: number | null
   max_retries?: number | null
+  operation_id?: string | null
   labels?: Record<string, string> | null
 }
 
