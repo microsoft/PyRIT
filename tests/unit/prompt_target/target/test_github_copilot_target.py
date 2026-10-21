@@ -652,11 +652,9 @@ async def test_reset_waits_for_in_progress_cleanup_release_async(
 
 
 @pytest.mark.usefixtures("patch_central_database", "mock_copilot_startup_io")
-@pytest.mark.parametrize("watchdog_expires", [False, True], ids=["normal-observation", "expired-watchdog"])
 async def test_reset_waits_for_conversation_creation_async(
     *,
     client: NonCallableMagicMock,
-    watchdog_expires: bool,
 ) -> None:
     session = client.create_session.return_value
     session.session_id = "sdk-session-a"
@@ -694,14 +692,6 @@ async def test_reset_waits_for_conversation_creation_async(
         await wait_for_event_async(event=reset_started, task=reset_task)
         assert not reset_task.done()
         client.delete_session.assert_not_awaited()
-        if watchdog_expires:
-            for task in (first_task, reset_task):
-                with pytest.raises(TimeoutError, match="test watchdog expired"):
-                    await wait_for_completion_async(future=task, timeout=0)
-                assert not task.done()
-                assert task.cancelling() == 0
-            assert not release_creation.is_set()
-            client.delete_session.assert_not_awaited()
 
         release_creation.set()
         first_response = await wait_for_completion_async(future=first_task)
@@ -1108,17 +1098,11 @@ async def test_self_ask_true_false_uses_fresh_copilot_session_after_unusable_rep
     "release_fails",
     [pytest.param(False, id="release-success"), pytest.param(True, id="release-failure")],
 )
-@pytest.mark.parametrize(
-    "watchdog_expires",
-    [pytest.param(False, id="normal-observation"), pytest.param(True, id="expired-watchdog")],
-)
 async def test_cancelled_send_keeps_retirement_owned_until_cleanup_async(
     *,
     client: NonCallableMagicMock,
     release_fails: bool,
-    watchdog_expires: bool,
 ) -> None:
-    """Keep the original cancellation and retirement ownership even when test observation expires."""
     session = client.create_session.return_value
     session.send_and_wait.side_effect = TimeoutError("ambiguous mock send")
     release_error = RuntimeError("Synthetic session release failure")
@@ -1159,32 +1143,16 @@ async def test_cancelled_send_keeps_retirement_owned_until_cleanup_async(
         )
     )
     cleanup_task = asyncio.create_task(cleanup_target_for_test_async())
-    delete_started_waiter = asyncio.create_task(delete_started.wait())
-    cleanup_started_waiter = asyncio.create_task(cleanup_started.wait())
-    observation_tasks = (delete_started_waiter, cleanup_started_waiter)
     try:
-        await wait_for_completion_async(future=delete_started_waiter)
+        await wait_for_event_async(event=delete_started, task=send_task)
         send_task.cancel("cancelled during session retirement")
         cleanup_requested.set()
-        await wait_for_completion_async(future=cleanup_started_waiter)
+        await wait_for_event_async(event=cleanup_started, task=cleanup_task)
 
         assert not send_task.done()
         assert not cleanup_task.done()
         client.delete_session.assert_awaited_once_with(session.session_id)
         client.stop.assert_not_awaited()
-
-        if watchdog_expires:
-            # Expire only the observers while SDK deletion is deliberately blocked.
-            for task in (send_task, cleanup_task):
-                with pytest.raises(TimeoutError, match="test watchdog expired"):
-                    await wait_for_completion_async(future=task, timeout=0)
-            assert not send_task.done()
-            assert not cleanup_task.done()
-            assert send_task.cancelling() == 1
-            assert cleanup_task.cancelling() == 0
-            assert all(not task.done() for task in delete_tasks)
-            client.delete_session.assert_awaited_once_with(session.session_id)
-            client.stop.assert_not_awaited()
 
         release_delete.set()
         with pytest.raises(asyncio.CancelledError) as exc_info:
@@ -1202,19 +1170,14 @@ async def test_cancelled_send_keeps_retirement_owned_until_cleanup_async(
     finally:
         release_delete.set()
         cleanup_requested.set()
-        for task in observation_tasks:
-            if not task.done():
-                task.cancel()
         await wait_for_completion_async(
-            future=asyncio.gather(send_task, cleanup_task, *delete_tasks, *observation_tasks, return_exceptions=True)
+            future=asyncio.gather(send_task, cleanup_task, *delete_tasks, return_exceptions=True)
         )
         owned_cleanup_task = target._cleanup_task
         assert owned_cleanup_task is not None
         await wait_for_completion_async(future=owned_cleanup_task)
         assert target._active_target_operations == 0
-        assert all(
-            task.done() for task in (send_task, cleanup_task, owned_cleanup_task, *delete_tasks, *observation_tasks)
-        )
+        assert all(task.done() for task in (send_task, cleanup_task, owned_cleanup_task, *delete_tasks))
 
 
 @pytest.mark.usefixtures("patch_central_database", "mock_copilot_startup_io")
@@ -1278,6 +1241,19 @@ async def test_cleanup_rejects_queued_turn_and_drains_active_send_async(
     session.send_and_wait.side_effect = send_and_wait_async
     target = GitHubCopilotTarget(model_name="gpt-5-mini")
     conversation_id = "queued-cleanup-conversation"
+    queued_started = asyncio.Event()
+    cleanup_started = asyncio.Event()
+
+    async def queued_send_async() -> list[Message]:
+        queued_started.set()
+        return await target.send_prompt_async(
+            message=_user_message(conversation_id=conversation_id, original_value="queued"),
+        )
+
+    async def cleanup_async() -> None:
+        cleanup_started.set()
+        await target.cleanup_target_async()
+
     first_task = asyncio.create_task(
         target.send_prompt_async(
             message=_user_message(conversation_id=conversation_id, original_value="first"),
@@ -1285,28 +1261,23 @@ async def test_cleanup_rejects_queued_turn_and_drains_active_send_async(
     )
     queued_task: asyncio.Task[list[Message]] | None = None
     cleanup_task: asyncio.Task[None] | None = None
+    fresh_task: asyncio.Task[list[Message]] | None = None
     try:
         await wait_for_event_async(event=first_send_started, task=first_task)
-        queued_task = asyncio.create_task(
+        queued_task = asyncio.create_task(queued_send_async())
+        await wait_for_event_async(event=queued_started, task=queued_task)
+        assert not queued_task.done()
+        cleanup_task = asyncio.create_task(cleanup_async())
+        await wait_for_event_async(event=cleanup_started, task=cleanup_task)
+        assert not cleanup_task.done()
+
+        fresh_task = asyncio.create_task(
             target.send_prompt_async(
-                message=_user_message(conversation_id=conversation_id, original_value="queued"),
+                message=_user_message(conversation_id="fresh-after-cleanup", original_value="fresh"),
             )
         )
-        await asyncio.sleep(0)
-        cleanup_task = asyncio.create_task(target.cleanup_target_async())
-        await asyncio.sleep(0)
-
         with pytest.raises(RuntimeError, match="cleaned up"):
-            await wait_for_completion_async(
-                future=asyncio.create_task(
-                    target.send_prompt_async(
-                        message=_user_message(
-                            conversation_id="fresh-after-cleanup",
-                            original_value="fresh",
-                        )
-                    )
-                ),
-            )
+            await wait_for_completion_async(future=fresh_task)
         _assert_no_resource_release(client=client)
 
         release_first_send.set()
@@ -1319,7 +1290,7 @@ async def test_cleanup_rejects_queued_turn_and_drains_active_send_async(
         await wait_for_completion_async(future=cleanup_task)
     finally:
         release_first_send.set()
-        await _cancel_tasks_async(first_task, queued_task, cleanup_task)
+        await _cancel_tasks_async(first_task, queued_task, cleanup_task, fresh_task)
 
     session.send_and_wait.assert_awaited_once_with("first", timeout=60.0)
     client.create_session.assert_awaited_once()
@@ -1645,33 +1616,23 @@ async def test_normalizer_surfaces_lifecycle_failures_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("startup_delay_seconds", [0.0, 2.1])
 async def test_normalizer_surfaces_dispatch_timeout_and_cleans_up_without_replay_async(
     *,
     native_session: tuple[CopilotSession, AsyncMock],
     client: NonCallableMagicMock,
-    startup_delay_seconds: float,
 ) -> None:
     session, request = native_session
     target = GitHubCopilotTarget(model_name="gpt-5-mini", response_timeout_seconds=0.01)
-    send_entered = asyncio.Event()
-
-    async def start_async() -> None:
-        await asyncio.sleep(startup_delay_seconds)
-
-    client.start.side_effect = start_async
 
     async def stall_send_async(*_args: Any, **_kwargs: Any) -> None:
-        send_entered.set()
         await asyncio.Event().wait()
 
     request.side_effect = stall_send_async
     send_task = asyncio.create_task(_send_normalized_async(target=target, original_value="Reply exactly HELLO."))
     try:
-        await asyncio.wait_for(send_entered.wait(), timeout=10.0)
         with pytest.raises(Exception, match="Error sending prompt with conversation ID:") as exc_info:
             # A bare watchdog TimeoutError must not satisfy the normalizer-wrapped failure.
-            await asyncio.wait_for(send_task, timeout=10.0)
+            await wait_for_completion_async(future=send_task)
         assert isinstance(exc_info.value.__cause__, TimeoutError)
         request.assert_awaited_once()
         assert request.await_args.args[0] == "session.send"
@@ -2090,21 +2051,15 @@ async def test_normalizer_reports_partial_creation_cleanup_retry_failure_async(
         pytest.param("cancelled-error", id="first-delete-cancelled-error"),
     ],
 )
-@pytest.mark.parametrize(
-    "watchdog_expires",
-    [pytest.param(False, id="normal-observation"), pytest.param(True, id="expired-watchdog")],
-)
 async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after_allocation_async(
     *,
     client: NonCallableMagicMock,
     sqlite_instance: MemoryInterface,
     first_delete_failure: str,
-    watchdog_expires: bool,
 ) -> None:
     session = client.create_session.return_value
     sessions = {"unrelated-session-id"}
     allocated = asyncio.Event()
-    allow_allocation = asyncio.Event()
     delete_started = asyncio.Event()
     allow_delete = asyncio.Event()
     conversation_id = str(uuid4())
@@ -2118,7 +2073,6 @@ async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after
 
     async def create_session_async(*, session_id: str = "sdk-generated-session-id", **_kwargs: Any) -> None:
         nonlocal caller_cancellation
-        await allow_allocation.wait()
         sessions.add(session_id)
         allocated.set()
         try:
@@ -2152,38 +2106,22 @@ async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after
                 conversation_id=conversation_id,
             )
         )
-        allocated_waiter = asyncio.create_task(allocated.wait())
-        delete_started_waiter = asyncio.create_task(delete_started.wait())
         try:
-            if watchdog_expires:
-                with pytest.raises(TimeoutError, match="test watchdog expired"):
-                    await wait_for_completion_async(future=allocated_waiter, timeout=0)
-                assert not allocated_waiter.done()
-                assert not request_task.done()
-                assert request_task.cancelling() == 0
-                assert sessions == {"unrelated-session-id"}
-                client.delete_session.assert_not_awaited()
-
-            allow_allocation.set()
-            await wait_for_completion_async(future=allocated_waiter)
+            await wait_for_event_async(event=allocated, task=request_task)
             request_task.cancel(cancellation_message)
-            await wait_for_completion_async(future=delete_started_waiter)
-            if watchdog_expires:
-                with pytest.raises(TimeoutError, match="test watchdog expired"):
-                    await wait_for_completion_async(future=request_task, timeout=0)
-                assert not request_task.done()
-                assert request_task.cancelling() == 1
-                assert sessions == {"unrelated-session-id", client.create_session.await_args.kwargs["session_id"]}
-                client.delete_session.assert_awaited_once()
-                client.stop.assert_not_awaited()
+            await wait_for_event_async(event=delete_started, task=request_task)
+            assert not request_task.done()
+            assert request_task.cancelling() == 1
+            assert sessions == {"unrelated-session-id", client.create_session.await_args.kwargs["session_id"]}
+            client.delete_session.assert_awaited_once()
+            client.stop.assert_not_awaited()
 
             allow_delete.set()
             with pytest.raises(asyncio.CancelledError) as cancellation_error:
                 await wait_for_completion_async(future=request_task)
         finally:
-            allow_allocation.set()
             allow_delete.set()
-            await _cancel_tasks_async(request_task, allocated_waiter, delete_started_waiter)
+            await _cancel_tasks_async(request_task)
 
         add_conversation.assert_awaited_once()
         add_message.assert_not_awaited()

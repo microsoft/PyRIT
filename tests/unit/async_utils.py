@@ -35,13 +35,14 @@ async def wait_for_event_async(
     waiter = asyncio.create_task(event.wait())
     try:
         done, _ = await asyncio.wait({waiter, task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
-        if waiter in done:
-            waiter.result()
-            return
         if task in done:
-            task.result()
-            raise AssertionError("The operation under test finished before reaching the expected event.")
-        raise TimeoutError("The expected event was not reached before the test watchdog expired.")
+            result = task.result()
+            if not event.is_set():
+                raise AssertionError(
+                    f"The operation under test finished before reaching the expected event: {result!r}"
+                )
+        elif not event.is_set():
+            raise TimeoutError("The expected event was not reached before the test watchdog expired.")
     finally:
         waiter.cancel()
         await asyncio.gather(waiter, return_exceptions=True)

@@ -83,13 +83,52 @@ async def test_wait_for_event_observes_checkpoint_before_completion_async() -> N
         await release.wait()
 
     task = asyncio.create_task(operation_async())
+    before = asyncio.all_tasks()
     try:
         await wait_for_event_async(event=reached, task=task)
         assert not task.done()
         assert task.cancelling() == 0
+        assert asyncio.all_tasks() == before
     finally:
         release.set()
         await wait_for_completion_async(future=task)
+
+
+async def test_wait_for_event_observes_already_reached_checkpoint_with_zero_timeout_async() -> None:
+    event = asyncio.Event()
+    event.set()
+    future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+    await wait_for_event_async(event=event, task=future, timeout=0)
+    assert not future.done()
+    future.set_result(None)
+
+
+async def test_wait_for_event_accepts_completion_after_checkpoint_async() -> None:
+    event = asyncio.Event()
+
+    async def operation_async() -> None:
+        event.set()
+
+    task = asyncio.create_task(operation_async())
+    await wait_for_event_async(event=event, task=task)
+    await task
+
+
+@pytest.mark.parametrize("cancel_operation", [False, True], ids=["error", "cancellation"])
+async def test_wait_for_event_preserves_failure_at_checkpoint_async(cancel_operation: bool) -> None:
+    event = asyncio.Event()
+    event.set()
+    future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    if cancel_operation:
+        future.cancel("operation failed")
+        expected_error = asyncio.CancelledError
+    else:
+        future.set_exception(RuntimeError("operation failed"))
+        expected_error = RuntimeError
+
+    with pytest.raises(expected_error, match="operation failed"):
+        await wait_for_event_async(event=event, task=future)
 
 
 @pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
