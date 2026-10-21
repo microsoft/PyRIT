@@ -1,6 +1,6 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 
-import type { AttackSummary, Finding, Operation, ScenarioRunListItem, ScenarioRunSummary } from '../src/types'
+import type { AttackSummary, Finding, Operation, ScenarioRunListItem, ScenarioRunSummary, UserPreferences } from '../src/types'
 import { compatibilityHeaders } from './_compatibility'
 import { waitForAppReady } from './_runtime'
 
@@ -90,6 +90,7 @@ for (const width of [1280, 390]) {
   })
 
   test(`keeps clearing an operation across reloads and resolves the restored default at ${width}px @seeded`, async ({ page, request }) => {
+    await page.setViewportSize({ width, height: 844 })
     const directory = await (await request.get('/api/operations')).json()
     const existing: Operation | undefined = directory.items.find((item: Operation) => item.name === PROPOSED_NAME)
     const operation = existing ?? await createOperation(request, PROPOSED_NAME)
@@ -122,16 +123,23 @@ for (const width of [1280, 390]) {
   })
 
   test(`registers an operation name restored from preferences at ${width}px @seeded`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 })
+    const newName = `Restored ${width} ${Date.now()}`
+    await page.addInitScript((name: string) => {
+      const preferences: UserPreferences = {
+        targets: { objective: null, adversarial: null },
+        hiddenTargetRegistryNames: [],
+        labels: {},
+        theme: 'system',
+        chatMarkdown: false,
+        operation: { name },
+      }
+      localStorage.setItem('pyrit.userPreferences.v1.local', JSON.stringify(preferences))
+    }, newName)
     await page.goto('/chat')
-    await waitForAppReady(page)
     const bar = page.getByRole('region', { name: 'Default Labels' })
     const dialog = page.getByRole('dialog')
-    const newName = `Restored ${width} ${Date.now()}`
-    await page.evaluate((name: string) => {
-      const preferences = JSON.parse(localStorage.getItem('pyrit.userPreferences.v1.local') ?? '{}')
-      localStorage.setItem('pyrit.userPreferences.v1.local', JSON.stringify({ ...preferences, operation: { name } }))
-    }, newName)
-    await page.reload()
+    await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveValue(newName)
     await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveAccessibleDescription('Not registered')
     await bar.getByRole('button', { name: 'Register', exact: true }).click()
     await expect(dialog.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(newName)
