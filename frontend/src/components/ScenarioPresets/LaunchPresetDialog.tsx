@@ -40,6 +40,10 @@ interface LaunchPresetDialogProps {
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
+  /** The saved Operation that this run joins, or null for an unassigned run. */
+  operationId: string | null
+  /** False while server defaults or the global Operation selection are unresolved. */
+  defaultsReady: boolean
   onDismiss: () => void
   onPresetChanged: () => void
 }
@@ -102,6 +106,8 @@ export default function LaunchPresetDialog({
   defaultObjectiveTarget,
   defaultAdversarialTarget,
   labels,
+  operationId,
+  defaultsReady,
   onDismiss,
   onPresetChanged,
 }: LaunchPresetDialogProps) {
@@ -123,7 +129,7 @@ export default function LaunchPresetDialog({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
-    if (targetName === '' || submitting) {
+    if (targetName === '' || submitting || !defaultsReady) {
       return
     }
     setSubmitting(true)
@@ -136,6 +142,7 @@ export default function LaunchPresetDialog({
         ...(adversarialTargetName === '' ? {} : { adversarial_target_name: adversarialTargetName }),
         max_concurrency: maxConcurrency,
         max_retries: maxRetries,
+        ...(operationId ? { operation_id: operationId } : {}),
         ...(Object.keys(labels).length > 0 ? { labels } : {}),
       })
     } catch (err) {
@@ -233,7 +240,7 @@ export default function LaunchPresetDialog({
               <Button
                 appearance="primary"
                 type="submit"
-                disabled={targetName === '' || submitting}
+                disabled={targetName === '' || submitting || !defaultsReady}
                 data-testid="confirm-launch-preset"
               >
                 {submitting ? 'Launching...' : 'Launch'}

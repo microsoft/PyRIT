@@ -57,6 +57,15 @@ def test_training_dataset_pins() -> None:
     assert LocalRefusalClassifierScorer.compute_dataset_hashes() == module._TRAINING_DATASETS
 
 
+def test_compute_dataset_hashes_reads_current_files(tmp_path: Path) -> None:
+    contents = {file_name: f"{file_name}\n".encode() * 50_000 for file_name in module._TRAINING_DATASETS}
+    for file_name, data in contents.items():
+        (tmp_path / file_name).write_bytes(data)
+    with patch.object(module, "_REFUSAL_EVALS_PATH", tmp_path):
+        hashes = LocalRefusalClassifierScorer.compute_dataset_hashes()
+    assert hashes == {file_name: hashlib.sha256(data).hexdigest() for file_name, data in contents.items()}
+
+
 def test_training_rejects_changed_data(tmp_path: Path) -> None:
     objective = "context " * 2000
     response = "response " * 1000

@@ -66,7 +66,7 @@ function makeRunSize(attacks: number): ScenarioRunSizeEstimateResponse {
   }
 }
 
-function renderLibrary() {
+function renderLibrary({ defaultsReady = true }: { defaultsReady?: boolean } = {}) {
   return render(
     <FluentProvider theme={webLightTheme}>
       <MemoryRouter>
@@ -75,6 +75,8 @@ function renderLibrary() {
           defaultObjectiveTarget={null}
           defaultAdversarialTarget={null}
           labels={{}}
+          operationId={null}
+          defaultsReady={defaultsReady}
         />
       </MemoryRouter>
     </FluentProvider>,
@@ -299,6 +301,14 @@ describe('ScenarioPresetLibrary', () => {
 
     expect(await screen.findByTestId('launch-preset-nightly_probe')).toBeEnabled()
     expect(screen.queryByTestId('preset-issues-nightly_probe')).not.toBeInTheDocument()
+  })
+
+  it('blocks launch while the global launch context is unresolved', async () => {
+    mockList.mockResolvedValue({ source: 'presets.yaml', items: [makeItem()] })
+
+    renderLibrary({ defaultsReady: false })
+
+    expect(await screen.findByTestId('launch-preset-nightly_probe')).toBeDisabled()
   })
 
   it('offers no edit or delete for a preset defined in code, but still allows launch', async () => {

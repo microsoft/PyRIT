@@ -46,6 +46,7 @@ const ADVERSARIAL_TARGET: TargetInstance = makeTarget({
     supported_output_modalities: ['text'],
   },
 })
+const OPERATION_ID = '11111111-1111-4111-8111-111111111111'
 
 interface RenderOptions {
   preset?: ScenarioPreset
@@ -53,6 +54,8 @@ interface RenderOptions {
   defaultObjectiveTarget?: TargetInstance | null
   defaultAdversarialTarget?: TargetInstance | null
   labels?: Record<string, string>
+  operationId?: string | null
+  defaultsReady?: boolean
 }
 
 const onDismiss = jest.fn()
@@ -64,6 +67,8 @@ function renderDialog({
   defaultObjectiveTarget = OBJECTIVE_TARGET,
   defaultAdversarialTarget = null,
   labels = {},
+  operationId = null,
+  defaultsReady = true,
 }: RenderOptions = {}) {
   return render(
     <FluentProvider theme={webLightTheme}>
@@ -75,6 +80,8 @@ function renderDialog({
           defaultObjectiveTarget={defaultObjectiveTarget}
           defaultAdversarialTarget={defaultAdversarialTarget}
           labels={labels}
+          operationId={operationId}
+          defaultsReady={defaultsReady}
           onDismiss={onDismiss}
           onPresetChanged={onPresetChanged}
         />
@@ -166,7 +173,32 @@ describe('LaunchPresetDialog', () => {
     })
   })
 
-  it('omits the adversarial target and labels when neither is set', async () => {
+  it('preserves the selected Operation through preset resolution and run launch', async () => {
+    const user = userEvent.setup()
+    mockResolve.mockResolvedValueOnce({
+      scenario_name: 'foundry.red_team_agent',
+      target_name: 'gpt4o',
+      operation_id: OPERATION_ID,
+    })
+    renderDialog({ operationId: OPERATION_ID })
+
+    await user.click(screen.getByTestId('confirm-launch-preset'))
+
+    await waitFor(() => expect(mockResolve).toHaveBeenCalledWith('nightly_probe', {
+      expected_version: 'v1',
+      target_name: 'gpt4o',
+      max_concurrency: 10,
+      max_retries: 0,
+      operation_id: OPERATION_ID,
+    }))
+    expect(mockStartRun).toHaveBeenCalledWith({
+      scenario_name: 'foundry.red_team_agent',
+      target_name: 'gpt4o',
+      operation_id: OPERATION_ID,
+    })
+  })
+
+  it('omits the adversarial target, labels, and Operation attribution when none are set', async () => {
     const user = userEvent.setup()
     renderDialog()
 
@@ -178,6 +210,12 @@ describe('LaunchPresetDialog', () => {
       max_concurrency: 10,
       max_retries: 0,
     }))
+  })
+
+  it('blocks launching while the global launch context is unresolved', () => {
+    renderDialog({ defaultsReady: false })
+
+    expect(screen.getByTestId('confirm-launch-preset')).toBeDisabled()
   })
 
   it('hands a preset edited mid-launch back to the library instead of running it', async () => {
