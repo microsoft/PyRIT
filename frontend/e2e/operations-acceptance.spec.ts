@@ -91,7 +91,7 @@ for (const width of [1280, 390]) {
     )).toEqual({ id: operation.id })
   })
 
-  test(`preserves a cleared selection and restores only an absent preference at ${width}px @seeded`, async ({ page, request }) => {
+  test(`keeps clearing an operation across reloads and resolves the restored default at ${width}px @seeded`, async ({ page, request }) => {
     await page.setViewportSize({ width, height: 844 })
     const directory = await (await request.get('/api/operations')).json()
     const existing: Operation | undefined = directory.items.find((item: Operation) => item.name === PROPOSED_NAME)
@@ -99,6 +99,7 @@ for (const width of [1280, 390]) {
     await page.goto('/chat')
     await waitForAppReady(page)
     const bar = page.getByRole('region', { name: 'Default Labels' })
+    await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveAccessibleDescription('Not registered')
     await bar.getByRole('combobox', { name: 'Operation', exact: true }).click()
     await page.getByRole('option', { name: PROPOSED_NAME, exact: true }).click()
     await expect.poll(() => page.evaluate(() =>
@@ -124,12 +125,10 @@ for (const width of [1280, 390]) {
     )).toEqual({ id: operation.id })
   })
 
-  test(`registers a restored name-only preference at ${width}px @seeded`, async ({ page }) => {
+  test(`registers an operation name restored from preferences at ${width}px @seeded`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 })
-    await page.goto('/chat')
-    await waitForAppReady(page)
     const newName = `Restored ${width} ${Date.now()}`
-    await page.evaluate((name: string) => {
+    await page.addInitScript((name: string) => {
       const preferences: UserPreferences = {
         targets: { objective: null, adversarial: null },
         hiddenTargetRegistryNames: [],
@@ -140,13 +139,13 @@ for (const width of [1280, 390]) {
       }
       localStorage.setItem('pyrit.userPreferences.v1.local', JSON.stringify(preferences))
     }, newName)
-    await page.reload()
+    await page.goto('/chat')
     await waitForAppReady(page)
     const bar = page.getByRole('region', { name: 'Default Labels' })
+    const dialog = page.getByRole('dialog')
     await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveValue(newName)
     await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveAccessibleDescription('Not registered')
     await bar.getByRole('button', { name: 'Register', exact: true }).click()
-    const dialog = page.getByRole('dialog')
     await expect(dialog.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(newName)
     const registered = page.waitForResponse(response =>
       new URL(response.url()).pathname === '/api/operations' && response.request().method() === 'POST')
