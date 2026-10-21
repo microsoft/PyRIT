@@ -552,9 +552,13 @@ async def test_operation_keys_use_ids_and_legacy_names(sqlite_instance: SQLiteMe
     linked_name = make_result(
         index=2, operation=" ENGAGEMENT", operation_id=operation.id, outcome=AttackOutcome.FAILURE
     )
+    # The same name as the legacy row, but linked by ID: only the ID filter may select it.
+    linked_exact = make_result(index=5, operation="Engagement", operation_id=operation.id)
     by_name = make_result(index=3, operation="Engagement")
     unassigned = make_result(index=4, operation=None)
-    await add_legacy_attack_results_async(sqlite_instance, attack_results=[by_id, linked_name, by_name, unassigned])
+    await add_legacy_attack_results_async(
+        sqlite_instance, attack_results=[by_id, linked_name, linked_exact, by_name, unassigned]
+    )
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     saved = ("value", str(operation.id))
 
@@ -562,13 +566,14 @@ async def test_operation_keys_use_ids_and_legacy_names(sqlite_instance: SQLiteMe
     groups = {typed_key(group.option): group.counts for group in report.groups}
     labels = {typed_key(group.option): group.option.label for group in report.groups}
     assert groups == {
-        saved: {"success": 1, "failure": 1},
+        saved: {"success": 2, "failure": 1},
         ("legacy_operation_name", "Engagement"): {"success": 1},
         ("missing", None): {"success": 1},
     }
     assert labels[saved] == "Engagement"
     assert sorted(item.operation or "" for item in report.results.items) == [
         "",
+        "Engagement",
         "Engagement",
         "Engagement",
         "Engagement",
@@ -587,10 +592,14 @@ async def test_operation_keys_use_ids_and_legacy_names(sqlite_instance: SQLiteMe
         ],
     }
     for selected, counts, results in (
-        (predicate(name="operation", values=[str(operation.id)]), {"success": 1, "failure": 1}, [by_id, linked_name]),
+        (
+            predicate(name="operation", values=[str(operation.id)]),
+            {"success": 2, "failure": 1},
+            [by_id, linked_name, linked_exact],
+        ),
         (predicate(name="operation", values=["Engagement"], kind="legacy_operation_name"), {"success": 1}, [by_name]),
         (predicate(name="operation", values=[None]), {"success": 1}, [unassigned]),
-        (all_kinds, {"success": 3, "failure": 1}, [by_id, linked_name, by_name, unassigned]),
+        (all_kinds, {"success": 4, "failure": 1}, [by_id, linked_name, linked_exact, by_name, unassigned]),
     ):
         filters = AttackAnalyticsFilters.model_validate({"dimensions": [selected]})
         filtered = await reader.report_async(query=AttackAnalyticsQuery(filters=filters), control=control())
