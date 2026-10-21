@@ -343,12 +343,69 @@ class TestIsReferenceTo:
         assert p.is_reference_to(ComponentType.TARGET) is False
 
 
+class TestValidateValue:
+    @pytest.mark.parametrize(
+        ("annotation", "value"),
+        [(int, "7"), (int, 0.5), (bool, "false"), (str, 7), (list[str], [7]), (_Speed, "fast")],
+    )
+    def test_rejects_values_that_still_need_coercion(self, annotation: Any, value: Any) -> None:
+        parameter = Parameter(name="value", description="Input", param_type=annotation)
+        with pytest.raises(ValueError, match="expects"):
+            parameter.validate_value(value)
+
+    def test_preserves_resolved_list_and_enum_identity(self) -> None:
+        parameter = Parameter(name="speeds", description="Speeds", param_type=list[_Speed])
+        values = [_Speed.FAST]
+        parameter.validate_value(values)
+        assert values == [_Speed.FAST]
+        assert values[0] is _Speed.FAST
+
+    @pytest.mark.parametrize("reference", [False, True])
+    def test_live_values_are_not_coerced(self, reference: bool) -> None:
+        parameter = Parameter(
+            name="value",
+            description="Live object",
+            reference=RegistryReference(component_type=ComponentType.TARGET) if reference else None,
+            opaque=not reference,
+        )
+        parameter.validate_value(object())
+
+
 class TestCoerceValueScalars:
     """``Parameter.coerce_value`` coerces plain scalars."""
 
     def test_int(self) -> None:
         p = Parameter(name="n", description="d", param_type=int)
         assert p.coerce_value("5") == 5
+
+    @pytest.mark.parametrize("value", [0.5, -0.5, 3.5, float("inf"), float("-inf"), float("nan")])
+    def test_int_rejects_non_integral_numbers(self, value: float) -> None:
+        parameter = Parameter(name="count", description="Count", param_type=int)
+        with pytest.raises(ValueError):
+            parameter.coerce_value(value)
+
+    @pytest.mark.parametrize("value", [0, 7, 7.0, "7"])
+    def test_int_preserves_integral_inputs(self, value: int | float | str) -> None:
+        parameter = Parameter(name="count", description="Count", param_type=int)
+        result = parameter.coerce_value(value)
+        assert result == int(value)
+        assert type(result) is int
+
+    def test_int_list_rejects_fractional_elements(self) -> None:
+        parameter = Parameter(name="counts", description="Counts", param_type=list[int])
+        with pytest.raises(ValueError):
+            parameter.coerce_value([1, 0.5])
+
+    def test_int_rejects_fractional_decimal_and_fraction(self) -> None:
+        from decimal import Decimal
+        from fractions import Fraction
+
+        parameter = Parameter(name="count", description="Count", param_type=int)
+        for value in (Decimal("0.5"), Fraction(-1, 2)):
+            with pytest.raises(ValueError, match="fractional part"):
+                parameter.coerce_value(value)
+        assert parameter.coerce_value(Decimal("7")) == 7
+        assert parameter.coerce_value(Fraction(7, 1)) == 7
 
     def test_float(self) -> None:
         p = Parameter(name="r", description="d", param_type=float)

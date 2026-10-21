@@ -466,7 +466,12 @@ class AttackExecutor:
                     persisted_result_ids[index] = context._persisted_attack_result_id
 
         tasks = [run_one_async(i, p) for i, p in enumerate(params_list)]
-        results_or_exceptions = await asyncio.gather(*tasks, return_exceptions=True)
+        # Admitting the batch's Operations once lets every objective finish if one is deleted midway.
+        operation_ids = {
+            operation_id for p in params_list if (operation_id := getattr(p, "operation_id", None)) is not None
+        }
+        async with attack._admit_saved_operations_async(operation_ids=operation_ids):
+            results_or_exceptions = await asyncio.gather(*tasks, return_exceptions=True)
 
         return self._process_execution_results(
             objectives=[p.objective for p in params_list],

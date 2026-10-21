@@ -11,7 +11,7 @@ Extends SeedGroup to enforce that all seeds have is_general_technique=True.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import Field
 
@@ -48,7 +48,7 @@ class AttackTechniqueSeedGroup(SeedGroup):
     )
 
     @classmethod
-    def from_system_prompt(cls, system_prompt: str, *, insertion_index: int | None = None) -> AttackTechniqueSeedGroup:
+    def from_system_prompt(cls, system_prompt: str, *, insertion_index: int | None = None) -> Self:
         """
         Build a technique group carrying a single system-role instruction.
 
@@ -83,7 +83,7 @@ class AttackTechniqueSeedGroup(SeedGroup):
         starting_sequence: int = 0,
         insertion_index: int | None = None,
         prompt_placement: Literal["preserve", "prepend"] = "prepend",
-    ) -> AttackTechniqueSeedGroup:
+    ) -> Self:
         """
         Build a technique group from conversation messages.
 

@@ -373,7 +373,7 @@ test.describe("Error: accepted send with target processing failure", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Error: backend 500 on send message", () => {
-  test("should show error bubble and preserve input text", async ({
+  test("should show the send error and preserve input without resending", async ({
     page,
   }) => {
     // First message succeeds, second fails with 500.
@@ -415,15 +415,18 @@ test.describe("Error: backend 500 on send message", () => {
     await input.fill("This should fail");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
 
-    // Error message should appear in chat
-    await expect(
-      page.getByText(/Internal server error/i),
-    ).toBeVisible({ timeout: 10000 });
+    const status = page.getByRole("group", { name: "Message send status" });
+    await expect(status).toContainText("Internal server error");
 
     // Retain the draft, but uncertain acceptance permits only evidence refresh.
-    await expect(input).toHaveValue("This should fail", { timeout: 5000 });
-    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await expect(input).toHaveValue("This should fail");
+    const send = page.getByRole("button", { name: "Send message", exact: true });
+    await expect(send).toBeDisabled();
+    await send.hover();
+    await expect(page.getByRole("tooltip")).toContainText("Send message: Internal server error");
+    await expect(status).toBeVisible();
     await expect(page.getByRole("button", { name: "Refresh saved messages" })).toBeVisible();
+    expect(callCount).toBe(2);
   });
 
   test("should recover cleanly when the first send fails", async ({ page }) => {
@@ -442,11 +445,9 @@ test.describe("Error: backend 500 on send message", () => {
     await input.fill("First send fails");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
 
-    await expect(page.getByText(/Internal server error/i)).toBeVisible({
-      timeout: 10000,
-    });
+    await expect(page.getByRole("group", { name: "Message send status" })).toContainText("Internal server error");
     await expect(page.getByTestId("loading-state")).toHaveCount(0);
-    await expect(input).toHaveValue("First send fails", { timeout: 5000 });
+    await expect(input).toHaveValue("First send fails");
   });
 });
 
@@ -488,9 +489,10 @@ test.describe("Error: network error on send message", () => {
     await page.getByRole("button", { name: "Send message", exact: true }).click();
 
     // Network error message should appear
-    await expect(
-      page.getByText(/network error|backend is running/i),
-    ).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("group", { name: "Message send status" })).toContainText(/network error|backend is running/i);
+    await expect(input).toHaveValue("Network fail test");
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    expect(callCount).toBe(2);
   });
 });
 

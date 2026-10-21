@@ -25,10 +25,14 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
     TargetTypeEntry,
     TargetTypeResponse,
+    UnregisteredTarget,
 )
+from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.common import REQUIRED_VALUE, default_values
 from pyrit.common.auth_mode import AUTH_MODES, AuthMode
+from pyrit.models import TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
 from pyrit.registry import TargetRegistry
@@ -231,6 +235,29 @@ class TargetService:
         ]
         return TargetTypeResponse(items=items)
 
+    async def build_from_source_async(self, spec: SourceInstanceSpec) -> PromptTarget:
+        """
+        Rebuild a private target and verify its saved effective identity.
+
+        Returns:
+            PromptTarget: The caller-owned target.
+        """
+        source = self._registry.resolve_source(name=spec.source_name, identifier_hash=spec.source_hash)
+        target = self._registry.recreate_instance(source=source, params=spec.params, external_input=True)
+        if spec.effective_hash and target.get_identifier().hash != spec.effective_hash:
+            await release_component_async(target)
+            raise ValueError("The saved target configuration cannot be reconstructed")
+        return target
+
+    async def resolve_binding_async(self, binding: TargetBinding) -> PromptTarget:
+        """
+        Rebuild an attack-owned configuration from its current source.
+
+        Returns:
+            PromptTarget: The caller-owned target.
+        """
+        return await self.build_from_source_async(binding.to_spec())
+
     def _has_upload_directory(self, *, target_type: str, upload_directory: str | None) -> bool:
         """
         Return whether a target type uploads no local files or the server gives it an upload folder.
@@ -280,7 +307,7 @@ class TargetService:
 
     async def create_target_async(
         self, *, request: CreateTargetRequest, upload_directory: str | None = None, is_admin: bool = False
-    ) -> TargetInstance:
+    ) -> TargetInstance | UnregisteredTarget:
         """
         Create a new target instance from API request.
 
@@ -373,17 +400,57 @@ class TargetService:
                     "GITHUB_TOKEN for this CoPyRIT instance through its environment or loaded .env/.env.local files."
                 )
 
-        await self._enforce_code_execution_permission_async(target_type=request.type, params=params, is_admin=is_admin)
-        self._enforce_server_credential_permission(target_type=request.type, params=params, is_admin=is_admin)
+        permission_params = params
+        if request.source is not None:
+            source = self._registry.resolve_source(
+                name=request.source.source_name, identifier_hash=request.source.source_hash
+            )
+            permission_params = {
+                **self._registry.get_reconstruction_parameters(source),
+                **request.source.params,
+            }
+        await self._enforce_code_execution_permission_async(
+            target_type=request.type, params=permission_params, is_admin=is_admin
+        )
+        self._enforce_server_credential_permission(
+            target_type=request.type, params=permission_params, is_admin=is_admin
+        )
 
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
-        self._registry.instances.validate_name_available(target_registry_name)
-        target_obj = self._registry.create_instance_from_external_input(request.type, params=params)
-        target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
-        self._registry.instances.register(target_obj, name=target_registry_name)
-        return target
+        if request.register:
+            self._registry.instances.validate_name_available(target_registry_name)
+        if (
+            request.source
+            and type(
+                self._registry.resolve_source(
+                    name=request.source.source_name, identifier_hash=request.source.source_hash
+                )
+            )
+            is not target_cls
+        ):
+            raise ValueError("The source target type does not match the requested type")
+        target_obj = (
+            await self.build_from_source_async(request.source)
+            if request.source
+            else self._registry.create_instance_from_external_input(request.type, params=params)
+        )
+        if not request.register:
+            try:
+                return UnregisteredTarget(
+                    identifier=TargetIdentifier.from_component_identifier(target_obj.get_identifier()),
+                    capabilities=target_obj.capabilities,
+                )
+            finally:
+                await release_component_async(target_obj)
+        try:
+            target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
+            self._registry.instances.register(target_obj, name=target_registry_name)
+            return target
+        except Exception:
+            await release_component_async(target_obj)
+            raise
 
     async def _enforce_code_execution_permission_async(
         self, *, target_type: str, params: dict[str, Any], is_admin: bool

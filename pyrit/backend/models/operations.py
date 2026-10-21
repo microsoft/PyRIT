@@ -7,8 +7,17 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.backend.models.attacks import ScoreView
-from pyrit.models import AttackOutcome, Finding, FindingCreate, FindingEvidence, FindingSeverity, Operation
+from pyrit.models import (
+    AttackOutcome,
+    Finding,
+    FindingCreate,
+    FindingEvidence,
+    FindingSeverity,
+    Operation,
+    OperationUsage,
+)
 from pyrit.models.harm_category import HarmCategory
+from pyrit.models.operation import OperationName
 
 
 class FindingOptionsResponse(BaseModel):
@@ -29,12 +38,19 @@ class OperationListResponse(BaseModel):
     items: list[OperationListItem]
 
 
+class OperationDetail(Operation):
+    """An operation with what refers to it by ID. Only an operation with no usage can be deleted."""
+
+    usage: OperationUsage
+
+
 class OperationUpdateRequest(BaseModel):
-    """The editable fields of an operation. The name cannot be changed here."""
+    """The editable fields of an operation. Omitted fields are unchanged."""
 
     model_config = ConfigDict(extra="forbid")
 
-    description: str
+    name: OperationName | None = None
+    description: str | None = None
 
 
 class FindingListItem(Finding):

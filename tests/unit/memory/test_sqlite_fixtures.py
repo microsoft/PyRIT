@@ -242,12 +242,16 @@ async def test_sqlite_instance_cleans_up_on_failure(
     _assert_closed(sqlite_connections)
 
 
-async def test_sqlite_instance_does_not_retain_process_exit_cleanup(sqlite_template: sqlite3.Connection) -> None:
-    async with _sqlite_instance(sqlite_template=sqlite_template) as memory:
-        assert memory.cleanup.__func__ is MemoryInterface.cleanup
-        assert "cleanup" not in memory.__dict__
-        memory_reference = weakref.ref(memory)
-    del memory
+def test_sqlite_instance_does_not_retain_process_exit_cleanup(sqlite_template: sqlite3.Connection) -> None:
+    async def release_memory_async() -> weakref.ReferenceType[SQLiteMemory]:
+        async with _sqlite_instance(sqlite_template=sqlite_template) as memory:
+            assert memory.cleanup.__func__ is MemoryInterface.cleanup
+            assert "cleanup" not in memory.__dict__
+            return weakref.ref(memory)
+
+    # Disposal's future can finish before its worker releases the bound method.
+    with asyncio.Runner() as runner:
+        memory_reference = runner.run(release_memory_async())
     gc.collect()
     assert memory_reference() is None
 

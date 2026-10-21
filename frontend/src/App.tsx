@@ -25,6 +25,9 @@ import ScenarioHistory from './components/History/ScenarioHistory'
 import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
 import ScenarioDetail from './components/Scenarios/ScenarioDetail'
 import ScenarioRunPage from './components/Scenarios/ScenarioRunPage'
+import ScenarioPresetEditor from './components/ScenarioPresets/ScenarioPresetEditor'
+import ScenarioPresetLibrary from './components/ScenarioPresets/ScenarioPresetLibrary'
+import { presetEditorRoutePath } from './components/ScenarioPresets/presetRoutes'
 import DatasetCatalog from './components/Datasets/DatasetCatalog'
 import DatasetSelection from './components/Datasets/DatasetSelection'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
@@ -125,6 +128,11 @@ function viewFromPath(pathname: string): ViewName {
 function LegacyScenarioRunRedirect() {
   const { scenarioResultId } = useParams<{ scenarioResultId: string }>()
   return <Navigate replace to={scenarioRunRoutePath(routerPathParamValue(scenarioResultId))} />
+}
+
+function LegacyPresetEditorRedirect() {
+  const { presetName } = useParams<{ presetName: string }>()
+  return <Navigate replace to={presetEditorRoutePath(routerPathParamValue(presetName))} />
 }
 
 function LegacyScenarioHistoryRedirect() {
@@ -325,7 +333,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   }, [location.pathname, location.search, location.hash])
 
   const handleFiltersChange = useCallback((filters: HistoryFilters) => {
-    setSearchParams(filtersToSearchParams(filters), { replace: true })
+    // The label search is controlled by this URL state and must not lag behind typing.
+    setSearchParams(filtersToSearchParams(filters), { replace: true, flushSync: true })
   }, [setSearchParams])
 
   const handleScenarioHistoryFiltersChange = useCallback((filters: ScenarioHistoryFilters) => {
@@ -569,6 +578,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           endpoint: targetEndpoint(createdTarget),
           model_name: targetModelName(createdTarget),
           identifier_hash: targetIdentifierHash(createdTarget),
+          binding: createdTarget.binding,
         }
       : null
     skipNextLoadForAttackId.current = arId
@@ -813,11 +823,29 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 />
                 <Route path="converters" element={<ConverterRegistry />} />
                 <Route path="techniques" element={<TechniqueRegistry />} />
+                <Route
+                  path="scenario-presets"
+                  element={
+                    <ScenarioPresetLibrary
+                      targets={registry.targets}
+                      defaultObjectiveTarget={targetDefaults.objectiveTarget}
+                      defaultAdversarialTarget={targetDefaults.adversarialTarget}
+                      labels={globalLabels}
+                      operationId={operationId}
+                      defaultsReady={newActivityReady}
+                    />
+                  }
+                />
+                <Route path="scenario-presets/new" element={<ScenarioPresetEditor mode="create" />} />
+                <Route path="scenario-presets/:presetName/edit" element={<ScenarioPresetEditor mode="edit" />} />
               </Route>
               <Route path="/targets" element={<Navigate to="/registry/targets" replace />} />
               <Route path="/scanner" element={<ScenarioCatalog />} />
               <Route path={DATASETS_PATH} element={<DatasetCatalog />} />
               <Route path={DATASET_DETAIL_PATH} element={<DatasetSelection />} />
+              <Route path="/scanner/presets" element={<Navigate to="/registry/scenario-presets" replace />} />
+              <Route path="/scanner/presets/new" element={<Navigate to="/registry/scenario-presets/new" replace />} />
+              <Route path="/scanner/presets/:presetName/edit" element={<LegacyPresetEditorRedirect />} />
               <Route
                 path="/scanner/:scenarioName"
                 element={
@@ -848,7 +876,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <Route path="/analytics" element={<AnalyticsPage onOpenAttack={handleOpenAttack} />} />
               <Route path="/history" element={<LegacyAttackHistoryRedirect />} />
               <Route path="/operations" element={<OperationsPage />} />
-              <Route path="/operations/:operationId" element={<OperationDetailPage />} />
+              <Route path="/operations/:operationId" element={<OperationDetailPage onOperationChanged={operation.retry} />} />
               <Route path="/findings" element={<Navigate to="/operations" replace />} />
               <Route
                 path={HISTORY_ATTACKS_PATH}
