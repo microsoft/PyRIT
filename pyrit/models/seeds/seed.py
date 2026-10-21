@@ -22,7 +22,6 @@ from jinja2.sandbox import SandboxedEnvironment
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
 from typing_extensions import TypeVar
 
-from pyrit.common.template_binding import bind_template_path_operations
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.seeds.seed_origin import SeedOrigin
 
@@ -204,14 +203,6 @@ def _serialize_template_binding(value: Any) -> str:
     """
     if isinstance(value, PurePath):
         return f"{str(value)!r} | pyrit_path(windows={isinstance(value, PureWindowsPath)!r})"
-    if isinstance(value, list | tuple):
-        items = ", ".join(_serialize_template_binding(item) for item in value)
-        return f"[{items}]" if isinstance(value, list) else (f"({items},)" if value else "()")
-    if isinstance(value, dict):
-        items = ", ".join(
-            f"{_serialize_template_binding(key)}: {_serialize_template_binding(item)}" for key, item in value.items()
-        )
-        return f"{{{items}}}"
     return repr(value)
 
 
@@ -398,8 +389,8 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
         a loop, a comparison, a Jinja test or the `default` filter. Then the template is kept as-is, with a
         `{% set %}` in front for each supplied parameter it uses, so later renders and stored copies keep them.
         Supplied concrete paths reach the template as filesystem-free ``PurePath`` views, so it can format and
-        manipulate them but cannot read, write, or list files. Fully bound path operations are evaluated at load
-        time. Remaining path bindings preserve lexical operations and platform flavor.
+        manipulate them but cannot read, write, or list files. Their `{% set %}` bindings keep the lexical
+        operations and platform flavor.
 
         Args:
             kwargs: Key-value pairs to replace in the SeedPrompt value.
@@ -414,18 +405,14 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
         env.filters["default"] = env.filters["d"] = _deferring(env.filters["default"])
 
         try:
-            try:
-                return env.from_string(self.value).render(**kwargs)
-            except _DeferRenderError:
-                value = bind_template_path_operations(
-                    value=self.value, parameters=kwargs, environment=env, serialize=_serialize_template_binding
-                )
-                used = meta.find_undeclared_variables(env.parse(value))
-                bindings = "".join(
-                    f"{{% set {name} = {_serialize_template_binding(kwargs[name])} %}}"
-                    for name in sorted(used & kwargs.keys())
-                )
-                return bindings + value
+            return env.from_string(self.value).render(**kwargs)
+        except _DeferRenderError:
+            used = meta.find_undeclared_variables(env.parse(self.value))
+            bindings = "".join(
+                f"{{% set {name} = {_serialize_template_binding(kwargs[name])} %}}"
+                for name in sorted(used & kwargs.keys())
+            )
+            return bindings + self.value
         except Exception as e:
             logger.error("Error rendering template: %s", e)
             return self.value

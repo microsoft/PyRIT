@@ -480,6 +480,39 @@ def test_trusted_template_cannot_reach_the_os_module_through_a_supplied_path(
 
 
 @pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+@pytest.mark.parametrize(
+    "access",
+    [
+        "{{ (datasets_path / 'secret.txt').read_text() }}",
+        "{{ (datasets_path / 'pwned.txt').write_text('owned') }}",
+        "{{ datasets_path.parser.os.environ['PYRIT_TEST_SECRET'] }}",
+    ],
+)
+def test_deferred_template_cannot_reach_the_filesystem_through_a_supplied_path(
+    *, seed_class: type[SeedPrompt | SeedObjective], access: str, tmp_path: pathlib.Path
+) -> None:
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP-SECRET", encoding="utf-8")
+    source = "{% if flag %}{{ prompt }}{% endif %}" + access
+    with (
+        patch.dict("os.environ", {"PYRIT_TEST_SECRET": "leaked-env-value"}),
+        patch("pyrit.models.seeds.seed_prompt.PATHS_DICT", {"datasets_path": tmp_path}),
+        patch("pyrit.models.seeds.seed_objective.PATHS_DICT", {"datasets_path": tmp_path}),
+    ):
+        template = seed_class(value=source, data_type="text", is_jinja_template=True)
+        reloaded = seed_class(value=template.value, data_type="text")
+        with pytest.raises(ValueError, match="Error rendering template") as error:
+            reloaded.render_template_value(flag=True, prompt="rainbows")
+
+    assert template.value.startswith("{% set datasets_path = ")
+    assert template.value.endswith(source)
+    leaked = template.value + str(error.value)
+    assert "TOP-SECRET" not in leaked
+    assert "leaked-env-value" not in leaked
+    assert list(tmp_path.iterdir()) == [secret]
+
+
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
 def test_untrusted_template_path_filter_does_not_expose_the_os_module(
     seed_class: type[SeedPrompt | SeedObjective],
 ) -> None:
