@@ -12,7 +12,7 @@ import os
 import secrets
 import stat
 import threading
-from dataclasses import asdict
+from dataclasses import MISSING, asdict, fields
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -26,6 +26,7 @@ from pyrit.score.scorer_evaluation.scorer_metrics import (
     ObjectiveScorerMetrics,
     ScorerMetrics,
     ScorerMetricsWithIdentity,
+    non_finite_to_none,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,13 @@ def _metrics_to_registry_dict(metrics: ScorerMetrics) -> dict[str, Any]:
     Excludes:
     - trial_scores (too large for registry storage)
     - Internal fields starting with '_'
+    - None values for fields with defaults
+
+    A statistic that is not a number (``NaN``) is kept, written as ``None`` so it serializes to
+    JSON ``null``: it carries the information that the value is undefined, which dropping the key
+    would lose, and the loading side declares those fields ``float | None``.
+    Required fields retain ``None`` when loaded metrics are saved again, so the entry can still
+    be loaded through the metrics constructor.
 
     Args:
         metrics (ScorerMetrics): The metrics object to convert.
@@ -58,7 +66,17 @@ def _metrics_to_registry_dict(metrics: ScorerMetrics) -> dict[str, Any]:
     """
     metrics_dict = asdict(metrics)
     excluded_keys = {"trial_scores"}
-    return {k: v for k, v in metrics_dict.items() if k not in excluded_keys and v is not None and not k.startswith("_")}
+    required_keys = {
+        metric_field.name
+        for metric_field in fields(metrics)
+        if metric_field.init and metric_field.default is MISSING and metric_field.default_factory is MISSING
+    }
+    kept = {
+        k: v
+        for k, v in metrics_dict.items()
+        if k not in excluded_keys and not k.startswith("_") and (v is not None or k in required_keys)
+    }
+    return non_finite_to_none(kept)
 
 
 def get_all_objective_metrics(
@@ -327,7 +345,9 @@ def _append_jsonl_entry(file_path: Path, lock: threading.Lock, entry: dict[str, 
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry) + "\n")
+                # allow_nan=False: the registry is checked-in data that other tools read, and the
+                # bare NaN token json.dumps would emit for it is not JSON.
+                f.write(json.dumps(entry, allow_nan=False) + "\n")
         except Exception as e:
             logger.error(f"Failed to write to registry {file_path}: {e}")
             raise
@@ -510,7 +530,7 @@ def replace_evaluation_results(
         output_lines = [*preserved]
         if output_lines and not output_lines[-1].endswith(("\n", "\r")):
             output_lines[-1] += line_ending
-        output_lines.append(json.dumps(new_entry) + line_ending)
+        output_lines.append(json.dumps(new_entry, allow_nan=False) + line_ending)
 
         # Rewrite the file with the surviving lines plus the new entry
         _rewrite_jsonl_atomically(file_path, output_lines)

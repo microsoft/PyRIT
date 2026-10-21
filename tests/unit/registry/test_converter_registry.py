@@ -206,6 +206,24 @@ class TestConverterRegistryRegisterInstance:
         assert entry.instance is converter
         assert entry.metadata == {"owned_artifact_paths": ["managed.dat"]}
 
+    def test_create_instance_from_external_input_rejects_object_parameters(self, registry: ConverterRegistry):
+        with pytest.raises(ValueError, match="'jailbreak_template' of 'TextJailbreakConverter' cannot be set"):
+            registry.create_instance_from_external_input(
+                "TextJailbreakConverter", params={"jailbreak_template": {"template": "x"}}
+            )
+
+    def test_create_named_instance_selects_external_input_explicitly(self, registry: ConverterRegistry):
+        with pytest.raises(ValueError, match="cannot be set through the API"):
+            registry.create_named_instance(
+                name="math", type_name="MathObfuscationConverter", params={"rng": None}, external_input=True
+            )
+        assert registry.instances.get("math") is None
+
+        converter = registry.create_named_instance(
+            name="caesar", type_name="CaesarConverter", params={"caesar_offset": "3"}, external_input=True
+        )
+        assert registry.instances.get("caesar") is converter
+
     @pytest.mark.parametrize("name", ["preview", "types"])
     def test_create_named_instance_rejects_reserved_name(self, registry: ConverterRegistry, name: str):
         with pytest.raises(ValueError, match="reserved"):

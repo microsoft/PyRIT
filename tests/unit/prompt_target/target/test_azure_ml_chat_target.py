@@ -43,6 +43,19 @@ def test_initialization_with_extra_model_parameters(aml_online_chat: AzureMLChat
     assert aml_online_chat._extra_parameters == {"extra_param1": "sample", "extra_param2": 1.0}
 
 
+def test_get_identifier_distinguishes_extra_model_parameters(patch_central_database):
+    def build(**kwargs) -> AzureMLChatTarget:
+        return AzureMLChatTarget(endpoint="http://aml-test-endpoint.com", api_key="valid_api_key", **kwargs)
+
+    llama = build(stop=["<|eot_id|>"])
+    mistral = build(stop=["</s>"])
+
+    assert llama.get_identifier().params["extra_parameters"] == {"stop": ["<|eot_id|>"]}
+    assert llama.get_identifier().hash != mistral.get_identifier().hash
+    assert build(stop=["</s>"]).get_identifier().hash == mistral.get_identifier().hash
+    assert build().get_identifier().params.get("extra_parameters") is None
+
+
 def test_initialization_with_no_key_raises():
     os.environ[AzureMLChatTarget.api_key_environment_variable] = ""
     with pytest.raises(ValueError):
@@ -55,25 +68,66 @@ def test_initialization_with_no_api_raises():
         AzureMLChatTarget(api_key="xxxxx")
 
 
-def test_no_key_recognized_aml_endpoint_auto_mints_entra(patch_central_database):
-    """With no key and a recognized *.inference.ml.azure.com endpoint, the target
-    auto-mints an Entra token provider for the AML scope."""
+def test_no_key_recognized_aml_endpoint_falls_back_with_deprecation_warning(patch_central_database):
+    """Keyless AML configurations predate explicit auth modes, so they keep working until 1.4.0."""
+    with (
+        patch.dict(os.environ, {AzureMLChatTarget.api_key_environment_variable: ""}),
+        patch(
+            "pyrit.prompt_target.azure_ml_chat_target.get_azure_async_token_provider",
+        ) as mock_provider,
+    ):
+        with pytest.warns(DeprecationWarning, match="1.4.0"):
+            target = AzureMLChatTarget(endpoint="https://my-aml.region.inference.ml.azure.com/score")
+
+    mock_provider.assert_called_once()
+    assert target._api_key == ""
+
+
+def test_identity_auth_mode_ignores_env_key(patch_central_database):
+    """An explicit identity choice must not be downgraded to the AZURE_ML_KEY env var."""
 
     async def _provider() -> str:
         return "aml-entra-token"
 
     with (
-        patch.dict(os.environ, {AzureMLChatTarget.api_key_environment_variable: ""}),
+        patch.dict(os.environ, {AzureMLChatTarget.api_key_environment_variable: "key-from-dotenv"}),
         patch(
             "pyrit.prompt_target.azure_ml_chat_target.get_azure_async_token_provider",
             return_value=_provider,
-        ) as mock_provider,
+        ),
     ):
-        target = AzureMLChatTarget(endpoint="https://my-aml.region.inference.ml.azure.com/score")
+        target = AzureMLChatTarget(
+            endpoint="https://my-aml.region.inference.ml.azure.com/score",
+            auth_mode="identity",
+        )
 
-    mock_provider.assert_called_once_with(AzureMLChatTarget._AZURE_ML_SCOPE)
     assert target._api_key_provider is _provider
     assert target._api_key == ""
+
+
+@pytest.mark.parametrize(
+    "explicit_key",
+    ["key-passed-anyway", lambda: "caller-supplied-token"],
+    ids=["key_string", "token_provider"],
+)
+def test_identity_auth_mode_with_explicit_key_raises(patch_central_database, explicit_key):
+    """A caller's own credential must not be silently replaced by a default Entra token."""
+    with patch(
+        "pyrit.prompt_target.azure_ml_chat_target.get_azure_async_token_provider",
+    ) as mock_provider:
+        with pytest.raises(ValueError, match="cannot be combined with an explicit api_key"):
+            AzureMLChatTarget(
+                endpoint="https://my-aml.region.inference.ml.azure.com/score",
+                api_key=explicit_key,
+                auth_mode="identity",
+            )
+
+    mock_provider.assert_not_called()
+
+
+def test_identity_auth_mode_non_aml_endpoint_raises(patch_central_database):
+    with pytest.raises(ValueError, match="Identity-based authentication requires a recognized Azure ML"):
+        AzureMLChatTarget(endpoint="http://aml-test-endpoint.com", auth_mode="identity")
 
 
 def test_no_key_non_aml_endpoint_raises(patch_central_database):

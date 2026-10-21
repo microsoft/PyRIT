@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar
 
 from pyrit.common import default_values
 from pyrit.common.logger import logger
@@ -25,7 +25,7 @@ from pyrit.exceptions.retry_collector import (
 from pyrit.models import StrategyResultT
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, MutableMapping
+    from collections.abc import AsyncGenerator, MutableMapping
 
 StrategyContextT = TypeVar("StrategyContextT", bound="StrategyContext")
 
@@ -38,12 +38,12 @@ class _StrategyRuntimeError(RuntimeError):
 class StrategyContext(ABC):  # noqa: B024
     """Base class for all strategy contexts."""
 
-    def duplicate(self: StrategyContextT) -> StrategyContextT:
+    def duplicate(self) -> Self:
         """
         Create a deep copy of the context.
 
         Returns:
-            StrategyContext: A deep copy of the context.
+            Self: A deep copy of the context.
         """
         return deepcopy(self)
 
@@ -279,7 +279,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
             await asyncio.gather(*tasks, return_exceptions=True)
 
     @asynccontextmanager
-    async def _execution_context_async(self, context: StrategyContextT) -> AsyncIterator[None]:
+    async def _execution_context_async(self, context: StrategyContextT) -> AsyncGenerator[None, None]:
         """
         Manage the complete lifecycle of a strategy execution as an async context manager.
 

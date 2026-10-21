@@ -2,10 +2,13 @@
 # Licensed under the MIT license.
 
 import inspect
+import io
 import json
-from collections.abc import AsyncIterator
+import sys
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TextIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx2
@@ -195,7 +198,8 @@ def test_from_config_accepts_validated_config() -> None:
     assert provider.server_config is config.servers["notes"]
 
 
-async def test_create_session_async_uses_stdio_transport() -> None:
+@pytest.mark.parametrize("stream_state", ["normal", "captured", "missing", "closed"])
+async def test_create_session_async_uses_stdio_transport(stream_state: str) -> None:
     provider = MCPToolProvider(
         server_name="notes",
         server_config=MCPStdioServerConfig(
@@ -207,21 +211,41 @@ async def test_create_session_async_uses_stdio_transport() -> None:
     )
     streams = (MagicMock(), MagicMock())
     stdio_parameters: StdioServerParameters | None = None
+    original_stderr = MagicMock(spec=io.TextIOWrapper)
+    original_stderr.fileno.return_value = 2
+    current_stderr: TextIO | None
+    if stream_state == "normal":
+        current_stderr = MagicMock(spec=io.TextIOWrapper)
+        current_stderr.fileno.return_value = 5
+    elif stream_state == "missing":
+        current_stderr = None
+    elif stream_state == "closed":
+        current_stderr = io.TextIOWrapper(io.BytesIO())
+        current_stderr.close()
+    else:
+        current_stderr = io.StringIO()
+    expected_stderr = current_stderr if stream_state == "normal" else original_stderr
 
     @asynccontextmanager
-    async def fake_stdio_client(parameters: StdioServerParameters) -> AsyncIterator[tuple[MagicMock, MagicMock]]:
+    async def fake_stdio_client_async(
+        parameters: StdioServerParameters, *, errlog: TextIO
+    ) -> AsyncGenerator[tuple[MagicMock, MagicMock], None]:
         nonlocal stdio_parameters
         stdio_parameters = parameters
+        assert errlog is expected_stderr
+        assert errlog.fileno() == (5 if stream_state == "normal" else 2)
         yield streams
 
-    session = MagicMock()
+    session = MagicMock(spec=ClientSession)
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=None)
     session.initialize = AsyncMock()
     client_session = MagicMock(return_value=session)
 
     with (
-        patch("pyrit.prompt_target.common.mcp_tool_provider.stdio_client", fake_stdio_client),
+        patch.object(sys, "stderr", current_stderr),
+        patch.object(sys, "__stderr__", original_stderr),
+        patch("pyrit.prompt_target.common.mcp_tool_provider.stdio_client", fake_stdio_client_async),
         patch("pyrit.prompt_target.common.mcp_tool_provider.ClientSession", client_session),
     ):
         async with provider._create_session_async() as created_session:
@@ -234,6 +258,25 @@ async def test_create_session_async_uses_stdio_transport() -> None:
     assert stdio_parameters.cwd == Path("tools")
     client_session.assert_called_once_with(*streams)
     session.initialize.assert_awaited_once()
+
+
+@pytest.mark.parametrize("stream_state", ["missing", "captured", "closed"])
+async def test_create_session_async_rejects_unusable_stderr(stream_state: str) -> None:
+    provider = MCPToolProvider(server_name="notes", server_config=MCPStdioServerConfig(command="python"))
+    stream = None if stream_state == "missing" else io.TextIOWrapper(io.BytesIO())
+    if stream_state == "closed":
+        assert stream is not None
+        stream.close()
+
+    with (
+        patch.object(sys, "stderr", stream),
+        patch.object(sys, "__stderr__", stream),
+        patch("pyrit.prompt_target.common.mcp_tool_provider.stdio_client") as client,
+    ):
+        with pytest.raises(RuntimeError, match="MCP stdio requires a stderr stream with a file descriptor"):
+            async with provider._create_session_async():
+                pytest.fail("An MCP session must not start without usable stderr")
+    client.assert_not_called()
 
 
 async def test_create_session_async_uses_mcp_http_timeouts() -> None:
@@ -250,7 +293,7 @@ async def test_create_session_async_uses_mcp_http_timeouts() -> None:
     @asynccontextmanager
     async def fake_streamable_http_client_async(
         url: str, *, http_client: httpx2.AsyncClient
-    ) -> AsyncIterator[tuple[MagicMock, MagicMock]]:
+    ) -> AsyncGenerator[tuple[MagicMock, MagicMock], None]:
         nonlocal http_client_used
         assert url == "http://127.0.0.1:8000/mcp/notes"
         assert isinstance(http_client, httpx2.AsyncClient)

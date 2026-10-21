@@ -11,6 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
+from pyrit.common.deprecation import print_deprecation_message
+
 # Runtime-required by Pydantic field / computed-field annotations.
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier  # noqa: TC001
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier  # noqa: TC001
@@ -80,6 +82,7 @@ class ScenarioResult(BaseModel):
     scenario_run_state: ScenarioRunState = ScenarioRunState.CREATED
     #: Optional labels.
     labels: dict[str, str] = Field(default_factory=dict)
+    operation_id: uuid.UUID | None = None
     #: When the scenario result was created.
     creation_time: datetime = Field(default_factory=lambda: datetime.now(UTC))
     #: Optional completion timestamp.
@@ -229,7 +232,16 @@ class ScenarioResult(BaseModel):
         Returns:
             int: Success rate as a percentage (0-100).
 
+        .. deprecated:: 1.2.0
+            Counts every persisted attempt, including ERROR attempts that were later retried or resumed.
+            Use ``pyrit.analytics.compute_scenario_statistics(result)``, which counts each execution unit
+            once and is shared with the GUI backend and the reports. Removed in 1.4.0.
         """
+        print_deprecation_message(
+            old_item="ScenarioResult.objective_achieved_rate",
+            new_item="pyrit.analytics.compute_scenario_statistics",
+            removed_in="1.4.0",
+        )
         if not atomic_attack_name:
             # Calculate rate across all atomic attacks
             all_results = []
@@ -247,7 +259,7 @@ class ScenarioResult(BaseModel):
             return 0
 
         successful_results = sum(1 for result in all_results if result.outcome == AttackOutcome.SUCCESS)
-        return int((successful_results / total_results) * 100)
+        return successful_results * 100 // total_results
 
     @staticmethod
     def normalize_scenario_name(scenario_name: str) -> str:

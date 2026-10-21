@@ -8,6 +8,7 @@ import os
 from collections.abc import MutableSequence
 from tempfile import NamedTemporaryFile
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -847,33 +848,25 @@ def test_set_auth_with_api_key(patch_central_database):
     assert target._api_key == "test_api_key_456"
 
 
-def test_no_key_recognized_azure_endpoint_auto_mints_entra(patch_central_database):
-    """With no key and a recognized Azure OpenAI endpoint, the target auto-mints
-    an Entra token provider for that endpoint."""
-
-    async def _provider() -> str:
-        return "aoai-entra-token"
-
+def test_no_key_recognized_azure_endpoint_falls_back_with_deprecation_warning(patch_central_database):
+    """Keyless Azure OpenAI configurations keep working until 1.4.0, but now announce it."""
     with (
         patch.dict(os.environ, {}, clear=True),
-        patch(
-            "pyrit.auth.openai_auth.get_azure_openai_auth",
-            return_value=_provider,
-        ) as mock_get_auth,
+        patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value="minted-token") as mock_get_auth,
     ):
-        target = OpenAIChatTarget(
-            model_name="gpt-4",
-            endpoint="https://test.openai.azure.com/",
-        )
+        with pytest.warns(DeprecationWarning, match="1.4.0"):
+            OpenAIChatTarget(
+                model_name="gpt-4",
+                endpoint="https://test.openai.azure.com/",
+            )
 
-    mock_get_auth.assert_called_once_with("https://test.openai.azure.com/")
-    assert target._api_key is _provider
+    mock_get_auth.assert_called_once()
 
 
 def test_no_key_non_azure_endpoint_raises(patch_central_database):
     """With no key and a non-Azure endpoint, the target refuses to mint a token."""
     with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError, match="non-Azure endpoints"):
+        with pytest.raises(ValueError, match="No API key available"):
             OpenAIChatTarget(model_name="gpt-4", endpoint="https://api.openai.com/")
 
 
@@ -881,7 +874,7 @@ def test_no_key_substring_lookalike_endpoint_raises(patch_central_database):
     """A hostname merely containing 'azure' (but not a recognized suffix) must not
     trigger auto-Entra minting (loose->strict hardening)."""
     with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError, match="non-Azure endpoints"):
+        with pytest.raises(ValueError, match="No API key available"):
             OpenAIChatTarget(model_name="gpt-4", endpoint="https://evil-azure.example.com/")
 
 
@@ -1277,6 +1270,22 @@ async def test_construct_message_from_response(target: OpenAIChatTarget, dummy_t
 
 
 # Tests for underlying_model parameter and get_identifier
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_get_identifier_distinguishes_extra_body_parameters() -> None:
+    def build(**kwargs: Any) -> OpenAIChatTarget:
+        return OpenAIChatTarget(model_name="o4-mini", endpoint="https://mock.azure.com/", api_key="k", **kwargs)
+
+    low = build(extra_body_parameters={"reasoning_effort": "low"})
+    high = build(extra_body_parameters={"reasoning_effort": "high"})
+    alloy = build(audio_response_config=OpenAIChatAudioConfig(voice="alloy"))
+    echo = build(audio_response_config=OpenAIChatAudioConfig(voice="echo"))
+
+    assert low.get_identifier().params["extra_body_parameters"] == {"reasoning_effort": "low"}
+    assert low.get_identifier().hash != high.get_identifier().hash
+    assert alloy.get_identifier().hash != echo.get_identifier().hash
+    assert build().get_identifier().params.get("extra_body_parameters") is None
 
 
 def test_get_identifier_uses_model_name_when_no_underlying_model(patch_central_database):

@@ -61,6 +61,11 @@ def mock_objective_scorer():
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestSystemPromptExtractionInitialization:
+    @pytest.mark.parametrize("cap", [0, -1, True, 1.5, "unlimited"])
+    def test_invalid_prompt_cap_raises(self, cap: object) -> None:
+        with pytest.raises(ValueError, match="positive integer"):
+            SystemPromptExtraction(prompt_cap=cap)
+
     def test_no_arg_construction_for_registry(self):
         scenario = SystemPromptExtraction()
         assert scenario.name == "SystemPromptExtraction"
@@ -100,11 +105,16 @@ class TestSystemPromptExtractionInitialization:
 class TestSystemPromptExtractionAtomicAttacks:
     async def _init(self, scenario, mock_objective_target, techniques=None):
         with (
-            patch.object(scenario._dataset_config, "_collect_named_seeds_async", new_callable=AsyncMock),
-            patch.object(SystemPromptExtraction, "_load_system_prompts_async", return_value=list(SYSTEM_PROMPTS)),
+            patch.object(scenario._dataset_config, "prepare_async", new_callable=AsyncMock),
+            patch.object(
+                scenario._dataset_config,
+                "_collect_named_seeds_async",
+                return_value={DATASET_EXTRACTION_TEMPLATES: []},
+            ),
+            patch.object(SystemPromptExtraction, "_sample_system_prompts", return_value=list(SYSTEM_PROMPTS)),
             patch.object(
                 SystemPromptExtraction,
-                "_load_templates_by_category_async",
+                "_group_templates",
                 return_value={k: list(v) for k, v in TEMPLATES_BY_CATEGORY.items()},
             ),
         ):
@@ -177,8 +187,8 @@ class TestSystemPromptExtractionAtomicAttacks:
         total = sum(len(a.seed_groups) for a in scenario._atomic_attacks)
         assert total == 5
 
-    async def test_prompt_cap_none_runs_every_combination(self, mock_objective_target, mock_objective_scorer):
-        scenario = SystemPromptExtraction(objective_scorer=mock_objective_scorer, prompt_cap=None)
+    async def test_prompt_cap_all_runs_every_combination(self, mock_objective_target, mock_objective_scorer):
+        scenario = SystemPromptExtraction(objective_scorer=mock_objective_scorer, prompt_cap="all")
         await self._init(scenario, mock_objective_target)
 
         total = sum(len(a.seed_groups) for a in scenario._atomic_attacks)

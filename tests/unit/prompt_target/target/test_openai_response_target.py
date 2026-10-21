@@ -4,15 +4,22 @@
 import json
 import logging
 import os
+import uuid
 from collections.abc import MutableSequence
 from tempfile import NamedTemporaryFile
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, get_type_hints
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from openai import BadRequestError, RateLimitError
-from openai.types.responses import ResponseOutputMessage, ResponseOutputRefusal, ResponseOutputText
+from openai.types.responses import (
+    Response,
+    ResponseFunctionWebSearchParam,
+    ResponseOutputMessage,
+    ResponseOutputRefusal,
+    ResponseOutputText,
+)
 from unit.mocks import (
     get_audio_message_piece,
     get_image_message_piece,
@@ -37,12 +44,13 @@ from pyrit.models import (
     ToolExecutionMetadata,
     flatten_to_message_pieces,
 )
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
 from pyrit.prompt_target.openai.openai_response_target import _ToolDispatchResult, token_usage_from_responses
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 
 
-def create_mock_response(response_dict: dict = None) -> MagicMock:
+def create_mock_response(response_dict: dict | None = None) -> MagicMock:
     """
     Helper function to create a mock OpenAI SDK response object.
 
@@ -53,8 +61,6 @@ def create_mock_response(response_dict: dict = None) -> MagicMock:
     Returns:
         A mock object that simulates the OpenAI SDK response with Pydantic-style attribute access.
     """
-    from openai.types.responses import Response
-
     if response_dict is None:
         response_dict = openai_response_json_dict()
 
@@ -970,7 +976,15 @@ async def test_build_input_for_multi_modal_async_preserves_mixed_payload_contrac
                 ),
                 MessagePiece(
                     role="assistant",
-                    original_value=json.dumps({"type": "web_search_call", "call_id": "web-1", "id": "drop-id"}),
+                    original_value=json.dumps(
+                        {
+                            "type": "web_search_call",
+                            "id": "ws-1",
+                            "status": "completed",
+                            "action": {"type": "search", "query": "query"},
+                            "extra": "drop",
+                        }
+                    ),
                     original_value_data_type="tool_call",
                 ),
                 MessagePiece(
@@ -1036,7 +1050,12 @@ async def test_build_input_for_multi_modal_async_preserves_mixed_payload_contrac
             "name": "lookup",
             "arguments": '{"value":1}',
         },
-        {"type": "web_search_call", "call_id": "web-1", "query": None},
+        {
+            "id": "ws-1",
+            "type": "web_search_call",
+            "status": "completed",
+            "action": {"type": "search", "query": "query"},
+        },
         {
             "type": "provider_tool_call",
             "call_id": "tool-1",
@@ -1053,6 +1072,149 @@ async def test_build_input_for_multi_modal_async_preserves_mixed_payload_contrac
             ],
         },
     ]
+
+
+_WEB_SEARCH_ACTIONS = [
+    {"type": "search", "query": "pyrit release"},
+    {"type": "open_page", "url": "https://example.com/pyrit"},
+    {"type": "find_in_page", "pattern": "release", "url": "https://example.com/pyrit"},
+]
+
+
+def _answer_response(*, text: str, extra_output: list[dict[str, Any]] | None = None) -> Response:
+    return Response.model_validate(
+        {
+            "id": "resp-2",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-4.1",
+            "parallel_tool_calls": True,
+            "tool_choice": "auto",
+            "tools": [{"type": "web_search_preview"}],
+            "status": "completed",
+            "output": [
+                *(extra_output or []),
+                {
+                    "type": "message",
+                    "id": "msg-2",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": text, "annotations": []}],
+                },
+            ],
+        }
+    )
+
+
+def _web_search_response(*, action: dict[str, Any] | None = None) -> Response:
+    return Response.model_validate(
+        {
+            "id": "resp-1",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-4.1",
+            "parallel_tool_calls": True,
+            "tool_choice": "auto",
+            "tools": [{"type": "web_search_preview"}],
+            "status": "completed",
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "id": "ws-1",
+                    "status": "completed",
+                    "action": action or _WEB_SEARCH_ACTIONS[0],
+                },
+                {
+                    "type": "message",
+                    "id": "msg-1",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "PyRIT 0.13 is out.", "annotations": []}],
+                },
+            ],
+        }
+    )
+
+
+async def test_web_search_answer_is_the_response_value_async(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+) -> None:
+    reply = await target._construct_message_from_response_async(_web_search_response(), dummy_text_message_piece)
+
+    assert reply.get_value() == "PyRIT 0.13 is out."
+    assert [piece.converted_value_data_type for piece in reply.message_pieces] == ["text", "tool_call"]
+
+
+async def test_web_search_call_replays_as_a_valid_input_item_async(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+) -> None:
+    reply = await target._construct_message_from_response_async(_web_search_response(), dummy_text_message_piece)
+    follow_up = Message.from_prompt(prompt="Anything else?", role="user")
+
+    items = await target._build_input_for_multi_modal_async([dummy_text_message_piece.to_message(), reply, follow_up])
+
+    web_search = {
+        "id": "ws-1",
+        "type": "web_search_call",
+        "status": "completed",
+        "action": {"type": "search", "query": "pyrit release"},
+    }
+    assert items[1] == web_search
+    assert set(web_search) == set(get_type_hints(ResponseFunctionWebSearchParam))
+    assert items[2] == {"role": "assistant", "content": [{"type": "output_text", "text": "PyRIT 0.13 is out."}]}
+
+
+@pytest.mark.parametrize("action", _WEB_SEARCH_ACTIONS)
+async def test_web_search_conversation_continues_through_send_prompt_async(
+    *, target: OpenAIResponseTarget, sqlite_instance: MemoryInterface, action: dict[str, Any]
+) -> None:
+    create = AsyncMock(side_effect=[_web_search_response(action=action), _answer_response(text="Nothing else is new.")])
+    target._async_client.responses.create = create  # type: ignore[method-assign]
+    normalizer = PromptNormalizer()
+    conversation_id = str(uuid.uuid4())
+
+    first = await normalizer.send_prompt_async(
+        message=Message.from_prompt(prompt="What's new in PyRIT?", role="user"),
+        target=target,
+        conversation_id=conversation_id,
+    )
+    second = await normalizer.send_prompt_async(
+        message=Message.from_prompt(prompt="Anything else?", role="user"),
+        target=target,
+        conversation_id=conversation_id,
+    )
+
+    web_search = {"id": "ws-1", "type": "web_search_call", "status": "completed", "action": action}
+    assert first.get_value() == "PyRIT 0.13 is out."
+    assert second.get_value() == "Nothing else is new."
+    replayed = create.await_args_list[1].kwargs["input"]
+    assert replayed[1] == web_search
+    assert replayed[2]["role"] == "assistant"
+    stored = await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)
+    [tool_call] = [piece for piece in stored if piece.converted_value_data_type == "tool_call"]
+    assert json.loads(tool_call.converted_value) == web_search
+
+
+async def test_web_search_call_stored_without_its_action_is_skipped_on_replay_async(
+    target: OpenAIResponseTarget, caplog: pytest.LogCaptureFixture
+) -> None:
+    reply = Message(
+        message_pieces=[
+            MessagePiece(role="assistant", original_value="answer", conversation_id="c-1"),
+            MessagePiece(
+                role="assistant",
+                original_value='{"type":"web_search_call","id":"ws-1"}',
+                original_value_data_type="tool_call",
+                conversation_id="c-1",
+            ),
+        ]
+    )
+
+    with caplog.at_level(logging.WARNING):
+        items = await target._build_input_for_multi_modal_async([reply])
+
+    assert items == [{"role": "assistant", "content": [{"type": "output_text", "text": "answer"}]}]
+    assert "Skipping web_search_call" in caplog.text
 
 
 @pytest.mark.parametrize("data_type", ["function_call", "tool_call", "function_call_output"])
@@ -1674,6 +1836,92 @@ async def test_construct_message_truncated_skips_partial_tool_call(
     assert "function_call" not in data_types
     assert "reasoning" in data_types
     assert any(p.original_value_data_type == "text" and p.response_error == "empty" for p in result.message_pieces)
+
+
+def _make_unreadable_section() -> MagicMock:
+    """A completed section PyRIT does not model, e.g. the ``image_generation_call`` item the
+    Responses API returns once a run enables the built-in image_generation tool."""
+    section = MagicMock()
+    section.type = "image_generation_call"
+    return section
+
+
+def _make_completed_response(output: list | None) -> MagicMock:
+    response = MagicMock()
+    response.error = None
+    response.status = "completed"
+    response.incomplete_details = None
+    response.output = output
+    return response
+
+
+async def test_construct_message_completed_without_readable_output_returns_empty_marker(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """A completed response with nothing PyRIT can read degrades to an empty marker piece."""
+    response = _make_completed_response(output=[_make_reasoning_section(), _make_unreadable_section()])
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    # Nothing raises here, so @pyrit_target_retry does not re-send a deterministic
+    # outcome; the empty marker is first and the reasoning piece is retained.
+    assert result.message_pieces[0].original_value == ""
+    assert result.message_pieces[0].response_error == "empty"
+    assert result.message_pieces[0].original_value_data_type == "text"
+    reasoning_pieces = [p for p in result.message_pieces if p.original_value_data_type == "reasoning"]
+    assert len(reasoning_pieces) == 1
+
+
+async def test_construct_message_completed_reasoning_only_returns_empty_marker(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """Real regression shape: the model answered with reasoning only, no visible text."""
+    response = _make_completed_response(output=[_make_reasoning_section()])
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    assert result.message_pieces[0].original_value == ""
+    assert result.message_pieces[0].response_error == "empty"
+    reasoning_pieces = [p for p in result.message_pieces if p.original_value_data_type == "reasoning"]
+    assert len(reasoning_pieces) == 1
+
+
+async def test_construct_message_completed_keeps_readable_output_next_to_unreadable(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """A readable section alongside an unmodelled one is still returned."""
+    response = _make_completed_response(
+        output=[_make_reasoning_section(), _make_unreadable_section(), _make_message_section("An answer")]
+    )
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    text_pieces = [p for p in result.message_pieces if p.original_value_data_type == "text"]
+    assert [p.original_value for p in text_pieces] == ["An answer"]
+
+
+async def test_construct_message_completed_without_readable_output_warns(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece, caplog: pytest.LogCaptureFixture
+):
+    """A completed response degrades silently, so the warning is the operator's only signal."""
+    response = _make_completed_response(output=[_make_reasoning_section()])
+
+    with caplog.at_level(logging.WARNING):
+        await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    assert "completed with no readable section" in caplog.text
+
+
+async def test_construct_message_truncated_without_readable_output_does_not_warn(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece, caplog: pytest.LogCaptureFixture
+):
+    """Hitting the token cap is an expected outcome, so the same fallback stays quiet."""
+    response = _make_truncated_response(output=[_make_reasoning_section()])
+
+    with caplog.at_level(logging.WARNING):
+        await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    assert "no readable section" not in caplog.text
 
 
 async def test_construct_message_from_response(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):

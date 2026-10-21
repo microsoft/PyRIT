@@ -197,6 +197,20 @@ class TestSystemPromptExtractionScorer:
         with pytest.raises(ValueError, match="excerpt_threshold must be finite and between 0.0 and 1.0"):
             SystemPromptExtractionScorer(excerpt_threshold=excerpt_threshold)
 
+    @pytest.mark.parametrize("n", [0, -1])
+    def test_init_rejects_non_positive_n(self, n):
+        # With n=0 every response scores 1.0, so an innocent reply is reported as a total
+        # system-prompt leak. Fail at construction instead of mid-scan.
+        with pytest.raises(ValueError, match="n must be a positive integer"):
+            SystemPromptExtractionScorer(n=n)
+
+    @pytest.mark.parametrize("min_prompt_len", [-1, -20])
+    def test_init_rejects_negative_min_prompt_len(self, min_prompt_len):
+        # A negative minimum can never gate the excerpt rule, so a one-character response
+        # appearing anywhere in the system prompt would score as a near-total leak.
+        with pytest.raises(ValueError, match="min_prompt_len must be a non-negative integer"):
+            SystemPromptExtractionScorer(min_prompt_len=min_prompt_len)
+
     @pytest.mark.parametrize("excerpt_threshold", [0.0, 1.0])
     async def test_excerpt_threshold_bounds_are_valid_scores(self, excerpt_threshold):
         memory = _memory_with_system_prompt(SYSTEM_PROMPT)

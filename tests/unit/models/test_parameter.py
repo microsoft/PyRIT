@@ -3,9 +3,10 @@
 
 """Unit tests for the unified Parameter model and its coercion methods."""
 
+from collections.abc import Callable, Collection, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import Literal, Union
+from typing import Any, Literal, Union
 
 import pytest
 from pydantic import ValidationError
@@ -87,6 +88,9 @@ class TestParameterSerialization:
             "is_list": False,
             "reference_type": None,
             "variants": None,
+            "sensitive": False,
+            "multiline": False,
+            "identity_conflicting": False,
         }
 
     def test_excludes_live_only_fields(self) -> None:
@@ -110,6 +114,22 @@ class TestParameterSerialization:
         assert dumped["is_list"] is False
         assert restored.reference == RegistryReference(component_type=ComponentType.TARGET, annotation=str)
         assert restored.reference_type == "target"
+
+    def test_sensitive_round_trips(self) -> None:
+        parameter = Parameter(
+            name="token",
+            description="d",
+            param_type=str,
+            sensitive=True,
+            multiline=True,
+            identity_conflicting=True,
+        )
+
+        restored = Parameter.model_validate_json(parameter.model_dump_json())
+
+        assert restored.sensitive is True
+        assert restored.multiline is True
+        assert restored.identity_conflicting is True
 
     def test_list_reference_shape_round_trips(self) -> None:
         parameter = Parameter(
@@ -521,3 +541,145 @@ class TestCoercionParity:
         param = next(p for p in derive_parameters(cls=_Holder) if p.name == "value")
 
         assert param.coerce_value(raw) == expected
+
+
+class TestIsExternalInput:
+    """``is_external_input`` marks the parameters REST, CLI, and GUI callers may supply."""
+
+    @pytest.mark.parametrize(
+        "param_type",
+        [
+            str,
+            int | None,
+            Path,
+            Path | str,
+            Literal["a", "b"],
+            _Speed,
+            list[str],
+            list[_Speed] | None,
+            Sequence[str],
+            Collection[str] | None,
+            Sequence[_Speed],
+            str | list[str],
+            str | Callable[[], str] | None,
+            _Speed | str,
+            int | tuple[int, int],
+            int | Literal["4", "8"],
+            str | dict[str, str],
+            str | _Unsupported,
+            Collection[str] | _Unsupported,
+        ],
+    )
+    def test_supported_external_types(self, param_type: object) -> None:
+        assert Parameter(name="p", description="d", param_type=param_type).is_external_input
+
+    @pytest.mark.parametrize(
+        "param_type",
+        [
+            None,
+            Any,
+            "SeedPrompt | None",
+            _Unsupported,
+            Callable[[], str],
+            tuple[int, int],
+            dict[str, str],
+            set[str],
+            list[Path],
+            list[Path | str],
+            Collection[Path],
+            Sequence[Path | str] | None,
+            _Speed | Path,
+            str | Path | int,
+            str | list[Path],
+            _Unsupported | Path,
+            list[list[str]],
+            Sequence[list[str]],
+            tuple[int, int] | _Unsupported,
+        ],
+    )
+    def test_other_types_take_python_objects_only(self, param_type: object) -> None:
+        assert not Parameter(name="p", description="d", param_type=param_type).is_external_input
+
+    def test_references_and_structured_inputs_are_external(self) -> None:
+        reference = Parameter(
+            name="t", description="d", reference=RegistryReference(component_type=ComponentType.TARGET)
+        )
+        structured = Parameter(name="s", description="d", param_type=_Unsupported, variants={"one": []})
+
+        assert reference.is_external_input
+        assert structured.is_external_input
+
+    def test_opaque_parameter_is_not_external(self) -> None:
+        assert not Parameter(name="o", description="d", param_type=str, opaque=True).is_external_input
+
+
+class TestForExternalCatalog:
+    """``for_external_catalog`` describes a parameter in the form external callers send it."""
+
+    @pytest.mark.parametrize(
+        ("param_type", "type_name", "is_list", "choices"),
+        [
+            (Collection[str], "list[str]", True, None),
+            (Sequence[int] | None, "list[int]", True, None),
+            (Collection[_Speed], "list[str]", True, ["fast", "slow"]),
+            (int | tuple[int, int], "int", False, None),
+            (int | Literal["4", "8", "12"], "int", False, None),
+            (str | list[str], "str", False, None),
+            (Sequence[str] | str, "list[str]", True, None),
+            (_Speed | str, "_Speed", False, ["fast", "slow"]),
+            (str | Callable[[], str] | None, "str", False, None),
+        ],
+    )
+    def test_describes_the_external_form(
+        self, param_type: object, type_name: str, is_list: bool, choices: list[str] | None
+    ) -> None:
+        parameter = Parameter(name="p", description="d", param_type=param_type, default=None)
+
+        described = parameter.for_external_catalog().model_dump(mode="json")
+
+        assert (described["type_name"], described["is_list"], described["choices"]) == (type_name, is_list, choices)
+        assert parameter.param_type == param_type
+
+    def test_flat_enum_collection_matches_the_enum_list_contract(self) -> None:
+        listed = Parameter(name="p", description="d", param_type=list[_Speed]).model_dump(mode="json")
+        collected = Parameter(name="p", description="d", param_type=Collection[_Speed]).for_external_catalog()
+
+        assert collected.model_dump(mode="json") == listed
+
+    @pytest.mark.parametrize("param_type", [str, int | None, Path | str, list[str], Literal["a", "b"], _Speed])
+    def test_external_forms_are_returned_unchanged(self, param_type: object) -> None:
+        parameter = Parameter(name="p", description="d", param_type=param_type)
+
+        assert parameter.for_external_catalog() is parameter
+
+    def test_references_and_structured_inputs_are_returned_unchanged(self) -> None:
+        reference = Parameter(
+            name="t",
+            description="d",
+            param_type=Collection[str],
+            reference=RegistryReference(component_type=ComponentType.TARGET),
+        )
+        structured = Parameter(name="s", description="d", param_type=_Unsupported, variants={"one": []})
+
+        assert reference.for_external_catalog() is reference
+        assert structured.for_external_catalog() is structured
+
+    def test_keeps_defaults_the_external_form_can_hold(self) -> None:
+        parameter = Parameter(name="font_size", description="d", param_type=int | tuple[int, int], default=15)
+
+        assert parameter.for_external_catalog().model_dump(mode="json")["default"] == "15"
+
+    def test_leaves_out_defaults_the_external_form_cannot_hold(self) -> None:
+        parameter = Parameter(name="font_size", description="d", param_type=int | tuple[int, int], default=(8, 20))
+
+        described = parameter.for_external_catalog()
+
+        assert described.model_dump(mode="json")["default"] is None
+        assert not described.required
+        assert parameter.default == (8, 20)
+
+    def test_coercion_keeps_every_alternative(self) -> None:
+        parameter = Parameter(name="replace", description="d", param_type=str | list[str], default=REQUIRED_VALUE)
+
+        assert parameter.for_external_catalog().required
+        assert parameter.coerce_value(["a", "b"]) == ["a", "b"]

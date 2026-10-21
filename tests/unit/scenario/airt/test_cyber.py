@@ -217,7 +217,7 @@ class TestCyberBasic:
         # Neutralize the provider fetch so the empty-memory path raises loudly instead of fetching
         # the real default dataset from the provider.
         with patch(
-            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
+            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration.prepare_async",
             new_callable=AsyncMock,
         ):
             scenario.set_params_from_args(args={"objective_target": mock_objective_target})

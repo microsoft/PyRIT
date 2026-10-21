@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from enum import StrEnum
 from typing import cast
 
-import yaml
+from pyrit.common.yaml_helper import safe_load_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ _CANONICAL_LOOKUP: "dict[str, HarmCategory]" = {}
 _SEPARATOR_REMOVAL_TABLE = str.maketrans("", "", "_- ")
 
 with open(os.path.join(os.path.dirname(__file__), "harm_category_definitions.yaml")) as f:
-    _HARM_CATEGORY_YAML: dict = yaml.safe_load(f) or {}
+    _HARM_CATEGORY_YAML: dict = safe_load_yaml(f) or {}
     _HARM_CATEGORY_DEFINITIONS: dict[str, str] = _HARM_CATEGORY_YAML.get("definitions", {})
 
 HARM_CATEGORY_TAXONOMY_VERSION: str = _HARM_CATEGORY_YAML.get("version", "v1.0.0")

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Text,
   Avatar,
@@ -23,88 +23,33 @@ import {
 } from '@fluentui/react-components'
 import {
   ArrowDownloadRegular,
-  ArrowReplyRegular,
-  EditRegular,
+  BranchForkRegular,
   MoreHorizontalRegular,
   OpenRegular,
 } from '@fluentui/react-icons'
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
+import MediaPreview from '@/components/Media/MediaPreview'
 
-import type {
-  DisplayScore,
-  Message,
-  MessageAttachment,
-  MessageDisplayPiece,
-} from '../../types'
+import type { DisplayScore, Message, MessageAttachment } from '@/types'
+
 import { useMessageListStyles } from './MessageList.styles'
-
-interface ProcessingErrorRecovery {
-  messageIndex: number
-  actionLabel: string
-  description: string
-  disabled?: boolean
-  onRecover: () => void | Promise<void>
-}
+import { formatStructuredMessage, getRenderMessagePieces } from './messageViewModel'
 
 interface MessageListProps {
+  onEditConversation?: () => void
   messages: Message[]
   /** Copy this message to the input box of the current conversation */
   onCopyToInput?: (messageIndex: number) => void
   onCopyToNewConversation?: (messageIndex: number) => void
   onCopyToNewAttack?: (messageIndex: number) => void
+  onUseInTechnique?: (messageIndex: number) => void
   copyConversationDisabled?: boolean
   newConversationDisabledReason?: string
+  getBranchConversationDisabledReason?: (messageIndex: number) => string | undefined
   /** True while loading a historical attack's messages */
   isLoading?: boolean
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
-  /** Recovery action for the processing error caused by the most recent send. */
-  processingErrorRecovery?: ProcessingErrorRecovery
-}
-
-/** Image that shows a spinner while loading. */
-function ImageWithSpinner({ src, alt, className, hiddenClassName, containerClassName, spinnerClassName }: {
-  src: string
-  alt: string
-  className: string
-  hiddenClassName: string
-  containerClassName: string
-  spinnerClassName: string
-}) {
-  const [loaded, setLoaded] = useState(false)
-  const [error, setError] = useState(false)
-  const onLoad = useCallback(() => setLoaded(true), [])
-  const onError = useCallback(() => { setError(true); setLoaded(true) }, [])
-
-  return (
-    <div className={containerClassName}>
-      {!loaded && <Spinner size="small" className={spinnerClassName} />}
-      {error
-        ? <Text size={200} italic>Image failed to load</Text>
-        : <img
-            src={src}
-            alt={alt}
-            className={loaded ? className : hiddenClassName}
-            onLoad={onLoad}
-            onError={onError}
-          />
-      }
-    </div>
-  )
-}
-
-function MediaWithFallback({ type, src, className }: { type: 'video' | 'audio'; src: string; className?: string }) {
-  const [error, setError] = useState(false)
-  const handleError = useCallback(() => setError(true), [])
-
-  if (error) {
-    return <Text size={200} italic data-testid={`${type}-error`}>{type === 'video' ? 'Video' : 'Audio'} failed to load</Text>
-  }
-
-  if (type === 'video') {
-    return <video src={src} controls className={className} onError={handleError} data-testid="video-player" />
-  }
-  return <audio src={src} controls className={className} onError={handleError} data-testid="audio-player" />
 }
 
 function scoreDisplayValue(score: DisplayScore): string {
@@ -489,75 +434,13 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
  * responses (e.g. PromptShield verdicts) as readable JSON instead of a single
  * line of compact text.
  */
-function tryFormatJson(text: string): string | null {
-  const trimmed = text.trim()
-  if (!trimmed) return null
-  const first = trimmed[0]
-  const last = trimmed[trimmed.length - 1]
-  // Cheap pre-check: only attempt parsing for object- or array-shaped content
-  // so things like "1" or "true" (which are valid JSON) are still rendered as
-  // plain text.
-  if (!((first === '{' && last === '}') || (first === '[' && last === ']'))) {
-    return null
-  }
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2)
-  } catch {
-    return null
-  }
-}
-
-interface RenderMessagePiece {
-  piece: MessageDisplayPiece
-  groupId: string | number
-  markdownTestId: string
-}
-
-function getRenderMessagePieces(message: Message, messageIndex: number): RenderMessagePiece[] {
-  if (message.displayPieces) {
-    const hasMultiplePieces = message.displayPieces.length > 1
-    return message.displayPieces.map((piece) => ({
-      piece,
-      groupId: hasMultiplePieces ? `${messageIndex}-piece-${piece.pieceIndex}` : messageIndex,
-      markdownTestId: `message-markdown-${messageIndex}-${piece.pieceIndex}`,
-    }))
-  }
-
-  const pieces: RenderMessagePiece[] = []
-  if (message.content || message.scores?.length) {
-    pieces.push({
-      piece: {
-        type: 'text',
-        pieceId: `message-${messageIndex}-text`,
-        pieceIndex: 0,
-        content: message.content,
-        scores: message.scores,
-      },
-      groupId: messageIndex,
-      markdownTestId: `message-markdown-${messageIndex}`,
-    })
-  }
-  message.attachments?.forEach((attachment, attachmentIndex) => {
-    pieces.push({
-      piece: {
-        type: 'media',
-        pieceId: attachment.pieceId ?? `message-${messageIndex}-attachment-${attachmentIndex}`,
-        pieceIndex: attachmentIndex,
-        attachment,
-      },
-      groupId: `${messageIndex}-att-${attachmentIndex}`,
-      markdownTestId: `message-markdown-${messageIndex}-att-${attachmentIndex}`,
-    })
-  })
-  return pieces
-}
-
 export default function MessageList({
-  messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, copyConversationDisabled = false,
-  newConversationDisabledReason, isLoading, globalMarkdown = false, processingErrorRecovery,
+  messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
+  newConversationDisabledReason, getBranchConversationDisabledReason, isLoading, globalMarkdown = false, onEditConversation,
 }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const copyMenuId = useId()
 
   const handleDownload = async (att: MessageAttachment) => {
     try {
@@ -593,7 +476,7 @@ export default function MessageList({
 
   if (messages.length === 0) {
     return (
-      <div className={styles.emptyState}>
+      <div className={styles.emptyState} data-testid="message-list" onDoubleClick={onEditConversation}>
         <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
           There are no messages in this conversation yet.
         </Text>
@@ -602,8 +485,12 @@ export default function MessageList({
   }
 
   return (
-    <div className={styles.root} data-testid="message-list">
+    <div className={styles.root} data-testid="message-list" onDoubleClick={(event) => {
+      if (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, audio, video, [role="button"]')) return
+      onEditConversation?.()
+    }}>
       {messages.map((message, index) => {
+        const branchDisabledReason = newConversationDisabledReason ?? getBranchConversationDisabledReason?.(index)
         const isUser = message.role === 'user'
         const isSimulated = message.role === 'simulated_assistant' || message.role === 'simulated_tool'
         const timestamp = new Date(message.timestamp).toLocaleTimeString()
@@ -611,8 +498,6 @@ export default function MessageList({
           : isUser ? 'User' : isSimulated ? 'Simulated'
           : message.role === 'system' ? 'System' : message.role === 'tool' ? 'Tool'
             : message.role === 'developer' ? 'Developer' : 'Assistant'
-        const canRecoverProcessingError = message.error?.type === 'processing'
-          && processingErrorRecovery?.messageIndex === index
         const renderPieces = getRenderMessagePieces(message, index)
 
         return (
@@ -635,25 +520,7 @@ export default function MessageList({
                     <MessageBarBody>
                       <Text weight="semibold">{message.error.type}</Text>
                       {message.error.description && (
-                        <Text>: {message.error.description}</Text>
-                      )}
-                      {canRecoverProcessingError && processingErrorRecovery && (
-                        <div className={styles.errorRecovery}>
-                          <Text block>
-                            {processingErrorRecovery.description}
-                          </Text>
-                          <Button
-                            appearance="primary"
-                            size="small"
-                            icon={<EditRegular />}
-                            className={styles.errorRecoveryButton}
-                            onClick={() => { void processingErrorRecovery.onRecover() }}
-                            disabled={processingErrorRecovery.disabled}
-                            data-testid={`recover-processing-error-btn-${index}`}
-                          >
-                            {processingErrorRecovery.actionLabel}
-                          </Button>
-                        </div>
+                        <Text className={styles.errorDetails}>: {message.error.description}</Text>
                       )}
                     </MessageBarBody>
                   </MessageBar>
@@ -683,9 +550,9 @@ export default function MessageList({
                     <div className={styles.attachmentsContainer}>
                       {message.originalAttachments.map((att, i) => (
                         <div key={i} className={styles.attachmentItem}>
-                          {att.type === 'image' && <ImageWithSpinner src={att.url} alt={att.name} className={styles.attachmentPreview} hiddenClassName={styles.attachmentPreviewHidden} containerClassName={styles.imageContainer} spinnerClassName={styles.imageSpinner} />}
-                          {att.type === 'video' && <MediaWithFallback type="video" src={att.url} className={styles.videoPreview} />}
-                          {att.type === 'audio' && <MediaWithFallback type="audio" src={att.url} className={styles.audioPreview} />}
+                          {att.type === 'image' && <MediaPreview type="image" src={att.url} alt={att.name} className={styles.attachmentPreview} hiddenClassName={styles.attachmentPreviewHidden} containerClassName={styles.imageContainer} spinnerClassName={styles.imageSpinner} />}
+                          {att.type === 'video' && <MediaPreview type="video" src={att.url} className={styles.videoPreview} />}
+                          {att.type === 'audio' && <MediaPreview type="audio" src={att.url} className={styles.audioPreview} />}
                           {att.type === 'file' && <div className={styles.attachmentFile}><Text size={200}>📄 {att.name}</Text></div>}
                         </div>
                       ))}
@@ -710,7 +577,7 @@ export default function MessageList({
                   {renderPieces.map(({ piece, groupId, markdownTestId }) => {
                     if (piece.type === 'text') {
                       const formatted = !message.isLoading && !globalMarkdown && !isUser
-                        ? tryFormatJson(piece.content)
+                        ? formatStructuredMessage(piece.content)
                         : null
                       return (
                         <div
@@ -751,7 +618,8 @@ export default function MessageList({
                         data-testid={`message-piece-${index}-${piece.pieceIndex}`}
                       >
                         {att?.type === 'image' && att.url && (
-                          <ImageWithSpinner
+                          <MediaPreview
+                            type="image"
                             src={att.url}
                             alt={att.name}
                             className={styles.attachmentPreview}
@@ -761,10 +629,10 @@ export default function MessageList({
                           />
                         )}
                         {att?.type === 'video' && att.url && (
-                          <MediaWithFallback type="video" src={att.url} className={styles.videoPreview} />
+                          <MediaPreview type="video" src={att.url} className={styles.videoPreview} />
                         )}
                         {att?.type === 'audio' && att.url && (
-                          <MediaWithFallback type="audio" src={att.url} className={styles.audioPreview} />
+                          <MediaPreview type="audio" src={att.url} className={styles.audioPreview} />
                         )}
                         {att?.type === 'file' && (
                           <div className={styles.attachmentFile}>
@@ -798,28 +666,37 @@ export default function MessageList({
 
               {!message.isLoading && !message.error && (
                 <div className={styles.messageActions} data-testid={`message-actions-${index}`}>
-                  {onCopyToInput && (isUser || isSimulated || message.role === 'assistant') && (
+                  {onCopyToInput && (
                     <Menu>
                       <MenuTrigger disableButtonEnhancement>
                         <Button
                           appearance="subtle"
                           size="small"
-                          icon={<ArrowReplyRegular />}
+                          icon={<BranchForkRegular />}
                           data-testid={`copy-to-input-btn-${index}`}
                           className={styles.messageActionButton}
-                          aria-label="Copy conversation"
-                        >Copy conversation</Button>
+                          aria-label="Copy or Branch"
+                        >Copy or Branch</Button>
                       </MenuTrigger>
                       <MenuPopover><MenuList>
-                        <MenuItem className={styles.copyMenuItem} onClick={() => onCopyToInput(index)} title="Copy this message to the prompt box">
-                          This conversation
+                        <MenuItem className={styles.copyMenuItem} onClick={() => onCopyToInput(index)}
+                          aria-label="Copy to next message" aria-describedby={`${copyMenuId}-${index}-prompt`}
+                          subText={{ id: `${copyMenuId}-${index}-prompt`, children: 'Copy only this message to the prompt box.' }}>
+                          Copy to next message
                         </MenuItem>
-                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewConversation || copyConversationDisabled || Boolean(newConversationDisabledReason)}
-                          title={newConversationDisabledReason ?? 'Copy the conversation through this message into the same attack'}
-                          onClick={() => onCopyToNewConversation?.(index)}>New conversation</MenuItem>
+                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewConversation || copyConversationDisabled || Boolean(branchDisabledReason)}
+                          aria-label="Branch conversation" aria-describedby={`${copyMenuId}-${index}-conversation`}
+                          subText={{ id: `${copyMenuId}-${index}-conversation`,
+                            children: `Copy history including this turn into the same attack.${branchDisabledReason ? ` ${branchDisabledReason}` : ''}` }}
+                          onClick={() => onCopyToNewConversation?.(index)}>Branch conversation</MenuItem>
                         <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewAttack || copyConversationDisabled}
-                          title="Copy the conversation through this message into a new attack"
-                          onClick={() => onCopyToNewAttack?.(index)}>New attack</MenuItem>
+                          aria-label="Branch attack" aria-describedby={`${copyMenuId}-${index}-attack`}
+                          subText={{ id: `${copyMenuId}-${index}-attack`, children: 'Copy history including this turn into a new attack (i.e., separate group of conversations).' }}
+                          onClick={() => onCopyToNewAttack?.(index)}>Branch attack</MenuItem>
+                        {onUseInTechnique && <MenuItem className={styles.copyMenuItem} disabled={copyConversationDisabled}
+                          aria-label="Use in scan" aria-describedby={`${copyMenuId}-${index}-scan`}
+                          subText={{ id: `${copyMenuId}-${index}-scan`, children: 'Apply a PyRIT attack technique after prepending history including this turn.' }}
+                          onClick={() => onUseInTechnique(index)}>Use in scan</MenuItem>}
                       </MenuList></MenuPopover>
                     </Menu>
                   )}

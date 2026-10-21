@@ -9,6 +9,7 @@ This is the attack-centric API design.
 """
 
 import logging
+import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -33,6 +34,7 @@ from pyrit.backend.models.attacks import (
     UpdateMainConversationResponse,
 )
 from pyrit.backend.models.common import (
+    MAX_IDENTIFIER_LENGTH,
     MAX_ITEMS,
     CursorStr,
     IdentifierStr,
@@ -41,7 +43,9 @@ from pyrit.backend.models.common import (
 )
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError, get_attack_service
+from pyrit.backend.services.history_replay import HistoryReplayError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
+from pyrit.backend.services.media_persistence import MediaAccessDeniedError
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory.memory_interface import AttackStateConflictError
 
@@ -65,10 +69,28 @@ async def save_conversation_async(*, body: SaveConversationRequest, request: Req
         return await get_attack_service().save_conversation_async(request=body)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except AttackStateConflictError as exc:
+    except (AttackStateConflictError, ManualSendConflictError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ManualSendQueueFullError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise FileNotFoundError(str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/conversations/{conversation_id}", response_model=AddMessageResponse)
+async def get_saved_conversation_async(conversation_id: IdentifierStr) -> AddMessageResponse:
+    """
+    Get a saved chat conversation and its attack for the scanner editor.
+
+    Returns:
+        The stored attack and conversation.
+    """
+    response = await get_attack_service().get_saved_conversation_async(conversation_id=conversation_id)
+    if response is None:
+        raise HTTPException(status_code=404, detail="Saved chat conversation not found")
+    return response
 
 
 @router.get(
@@ -114,6 +136,9 @@ async def list_attacks(  # pyrit-async-suffix-exempt
     ),
     operation: list[Annotated[str, Field(max_length=128)]] | None = Query(
         None, max_length=MAX_ITEMS, description="Filter by dedicated operation values"
+    ),
+    operation_id: list[uuid.UUID] | None = Query(
+        None, max_length=MAX_ITEMS, description="Filter by saved Operation IDs; legacy name-only attacks never match"
     ),
     label: list[LabelFilterStr] | None = Query(
         None,
@@ -180,6 +205,7 @@ async def list_attacks(  # pyrit-async-suffix-exempt
         outcome=outcome,
         operator=operator,
         operation=operation,
+        operation_ids=operation_id,
         labels=labels or None,
         min_turns=min_turns,
         max_turns=max_turns,
@@ -250,6 +276,12 @@ async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:  
 
     try:
         return await service.create_attack_async(request=request)
+    except LookupError as e:
+        raise FileNotFoundError(str(e)) from e
+    except MediaAccessDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except HistoryReplayError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -352,7 +384,9 @@ async def remove_human_score(attack_result_id: IdentifierStr) -> AttackSummary: 
 )
 async def get_conversation_messages(  # pyrit-async-suffix-exempt
     attack_result_id: IdentifierStr,
-    conversation_id: IdentifierStr = Query(..., description="The conversation_id whose messages to return"),
+    conversation_id: str = Query(
+        ..., max_length=MAX_IDENTIFIER_LENGTH, description="The conversation_id whose messages to return"
+    ),
 ) -> ConversationMessagesResponse:
     """
     Get all messages for a conversation belonging to an attack.

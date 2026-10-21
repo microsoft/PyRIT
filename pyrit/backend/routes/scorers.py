@@ -5,11 +5,12 @@
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from pyrit.backend.models.common import ProblemDetail
+from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
 from pyrit.backend.models.scorers import (
     CreateScorerRequest,
     ScorerListResponse,
     ScorerTypeResponse,
+    UnregisteredScorer,
 )
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.models.catalog.scorer import ScorerInstance
@@ -31,7 +32,7 @@ async def list_scorer_types() -> ScorerTypeResponse:  # pyrit-async-suffix-exemp
 @router.get("", response_model=ScorerListResponse)
 async def list_scorers(
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
-    cursor: str | None = Query(None, description="Scorer registry name to start after"),
+    cursor: CursorStr | None = Query(None, description="Scorer registry name to start after"),
 ) -> ScorerListResponse:  # pyrit-async-suffix-exempt
     """
     List named scorer instances with pagination.
@@ -44,16 +45,18 @@ async def list_scorers(
 
 @router.post(
     "",
-    response_model=ScorerInstance,
+    response_model=ScorerInstance | UnregisteredScorer,
     status_code=status.HTTP_201_CREATED,
     responses={400: {"model": ProblemDetail, "description": "Invalid scorer type, parameters, or name"}},
 )
-async def create_scorer(request: CreateScorerRequest) -> ScorerInstance:  # pyrit-async-suffix-exempt
+async def create_scorer(
+    request: CreateScorerRequest,
+) -> ScorerInstance | UnregisteredScorer:  # pyrit-async-suffix-exempt
     """
-    Construct a scorer through ScorerRegistry and register it under its name.
+    Construct a scorer through ScorerRegistry, with optional registration.
 
     Returns:
-        ScorerInstance: The registered scorer and complete identifier.
+        ScorerInstance | UnregisteredScorer: A named instance or an unregistered descriptor.
     """
     try:
         return await get_scorer_service().create_scorer_async(request=request)
@@ -71,7 +74,7 @@ async def create_scorer(request: CreateScorerRequest) -> ScorerInstance:  # pyri
     response_model=ScorerInstance,
     responses={404: {"model": ProblemDetail, "description": "Scorer not found"}},
 )
-async def get_scorer(scorer_registry_name: str) -> ScorerInstance:  # pyrit-async-suffix-exempt
+async def get_scorer(scorer_registry_name: IdentifierStr) -> ScorerInstance:  # pyrit-async-suffix-exempt
     """
     Get a named scorer instance.
 

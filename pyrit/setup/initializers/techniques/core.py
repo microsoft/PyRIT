@@ -32,12 +32,14 @@ from pyrit.executor.attack import (
 from pyrit.models import (
     AttackTechniqueSeedGroup,
     Message,
+    SeedGroupRequirements,
     SeedPrompt,
     load_next_message_prompt,
     load_simulated_target_prompt,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
 _BIJECTION_PRACTICE_PHRASES: tuple[str, ...] = (
     "orange",
@@ -180,6 +182,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             attack_class=ManyShotJailbreakAttack,
             description="Primes the target with many fake example exchanges that model compliance before the ask.",
             technique_tags=["multi_turn", "light"],
+            requirements=TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True)),
         ),
         AttackTechniqueFactory(
             name="tap",

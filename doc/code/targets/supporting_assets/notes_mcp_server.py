@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""A standalone FastMCP example with in-memory notes."""
+"""A standalone MCP example with in-memory notes."""
 
 import argparse
-from typing import Literal
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel
 
@@ -15,16 +14,11 @@ class NoteText(BaseModel):
     text: str
 
 
-def create_server(*, port: int = 8000) -> FastMCP[None]:
-    server: FastMCP[None] = FastMCP(
-        "example-notes",
-        host="127.0.0.1",
-        port=port,
-        streamable_http_path="/mcp/notes",
-    )
+def create_server() -> MCPServer[None]:
+    server: MCPServer[None] = MCPServer("example-notes")
     notes = {"welcome": "Welcome to the example notebook."}
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
+    @server.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False))
     def get_note(id: str) -> NoteText:
         """Read a note by ID. Unknown IDs return an error."""
         if id not in notes:
@@ -43,5 +37,13 @@ if __name__ == "__main__":
         default="streamable-http",
     )
     args = parser.parse_args()
-    transport: Literal["stdio", "streamable-http"] = args.transport
-    create_server(port=args.port).run(transport=transport)
+    server = create_server()
+    if args.transport == "stdio":
+        server.run(transport="stdio")
+    else:
+        server.run(
+            transport="streamable-http",
+            host="127.0.0.1",
+            port=args.port,
+            streamable_http_path="/mcp/notes",
+        )

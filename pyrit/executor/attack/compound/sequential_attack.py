@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -32,13 +32,23 @@ from pydantic import Field
 
 from pyrit.executor.attack.core.attack_executor import AttackExecutor
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack.core.attack_result_attribution import enrich_attack_result_identifier_async
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
-from pyrit.models import AttackOutcome, AttackResult, AttackSeedGroup, ScoringExpectation
+from pyrit.memory import CentralMemory
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    AttackResultRole,
+    AttackResultSelection,
+    AttackSeedGroup,
+    ScoringExpectation,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+    from pyrit.models import AtomicAttackIdentifier, ComponentIdentifier
     from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
 
@@ -102,6 +112,13 @@ class SequentialChildAttack:
             executor for inner attacks that need an objective scorer.
         memory_labels (Mapping[str, str]): Per-entry labels merged on top
             of the compound's ``context.memory_labels`` for this call.
+        atomic_attack_identifier (AtomicAttackIdentifier | None): Caller-prepared source
+            identity, passed unchanged to the existing result-recording path.
+        result_metadata (Mapping[str, Any]): Caller-prepared result metadata.
+        technique_identifier (ComponentIdentifier | None): Optional packaged technique
+            identity used for the compound configuration and persisted child results.
+        identity_seed_group (AttackSeedGroup | None): Source seeds before technique merging.
+            Defaults to ``seed_group`` when no separate source group is supplied.
     """
 
     strategy: AttackStrategy[Any, AttackResult]
@@ -109,6 +126,10 @@ class SequentialChildAttack:
     adversarial_chat: PromptTarget | None = None
     objective_scorer: TrueFalseScorer | None = None
     memory_labels: Mapping[str, str] = field(default_factory=dict)
+    atomic_attack_identifier: AtomicAttackIdentifier | None = None
+    result_metadata: Mapping[str, Any] = field(default_factory=dict)
+    technique_identifier: ComponentIdentifier | None = None
+    identity_seed_group: AttackSeedGroup | None = None
 
 
 class SequentialAttackResult(AttackResult):
@@ -191,6 +212,8 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
 
     DELEGATES_SCORING: ClassVar[bool] = True
 
+    RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.ORCHESTRATION
+
     CHILD_ATTACK_RESULT_IDS_KEY: str = "child_attack_result_ids"
     """Metadata key under which the per-child-attack result IDs are stored."""
 
@@ -220,8 +243,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         Raises:
             ValueError: If ``child_attacks`` is empty.
         """
-        if not child_attacks:
-            raise ValueError("child_attacks must contain at least one SequentialChildAttack")
+        SequentialAttack.validate_constructor_parameters({"child_attacks": child_attacks})
 
         super().__init__(
             objective_target=objective_target,
@@ -235,6 +257,47 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         self._child_attacks: list[SequentialChildAttack] = list(child_attacks)
         self._completion_policy = completion_policy
         self._executor = AttackExecutor(max_concurrency=1)
+        self._memory = CentralMemory.get_memory_instance()
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Include explicitly packaged child configurations and the completion policy.
+
+        Returns:
+            ComponentIdentifier: The sequence configuration.
+        """
+        # Keep existing run identities stable unless the caller supplies packaged techniques.
+        if not any(child.technique_identifier is not None for child in self._child_attacks):
+            child_hashes = [
+                child.atomic_attack_identifier.eval_hash if child.atomic_attack_identifier is not None else None
+                for child in self._child_attacks
+            ]
+            return self._create_identifier(
+                params={"child_technique_eval_hashes": child_hashes} if any(child_hashes) else None
+            )
+        return self._create_identifier(
+            params={"completion_policy": self._completion_policy.value},
+            children={
+                "child_attacks": [
+                    child.technique_identifier
+                    if child.technique_identifier is not None
+                    else child.strategy.get_identifier()
+                    for child in self._child_attacks
+                ]
+            },
+        )
+
+    @classmethod
+    def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
+        """
+        Validate the child selection without constructing or executing child attacks.
+
+        Raises:
+            ValueError: If the child selection is empty.
+        """
+        super().validate_constructor_parameters(params)
+        if "child_attacks" in params and not params["child_attacks"]:
+            raise ValueError("child_attacks must contain at least one SequentialChildAttack")
 
     def _validate_context(self, *, context: AttackContext[AttackParameters]) -> None:
         if not context.objective or context.objective.isspace():
@@ -248,16 +311,29 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
 
     async def _perform_async(self, *, context: AttackContext[AttackParameters]) -> SequentialAttackResult:
         results: list[AttackResult] = []
+        child_ids: list[str] = []
+        context._error_result_metadata.update(
+            {
+                self.CHILD_ATTACK_RESULT_IDS_KEY: child_ids,
+                self.COMPLETION_POLICY_KEY: self._completion_policy.value,
+            }
+        )
 
-        for child_attack in self._child_attacks:
+        for attempt_index, child_attack in enumerate(self._child_attacks, start=1):
             labels = {**context.memory_labels, **dict(child_attack.memory_labels)}
+            # Each child shares the parent's attribution plus its own position.
+            attribution = replace(context._attribution, attempt_index=attempt_index) if context._attribution else None
             result = await self._run_child_attack_async(
                 child_attack=child_attack,
                 memory_labels=labels,
-                attribution=context._attribution,
+                attribution=attribution,
                 expectation=context.params.expectation,
+                child_result_ids=child_ids,
+                operation_id=context.params.operation_id,
             )
             results.append(result)
+            child_ids.append(result.attack_result_id)
+            await self._enrich_child_result_async(child_attack=child_attack, result=result)
             if self._should_stop_after(result=result):
                 break
 
@@ -277,6 +353,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             automated_score=None,
             executed_turns=sum(r.executed_turns for r in results),
             outcome=outcome,
+            labels=context.memory_labels,
             child_attack_results=results,
             completion_policy=self._completion_policy,
             metadata={
@@ -290,8 +367,10 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         *,
         child_attack: SequentialChildAttack,
         memory_labels: dict[str, str],
+        child_result_ids: list[str],
         attribution: AttackResultAttribution | None = None,
         expectation: ScoringExpectation | None = None,
+        operation_id: uuid.UUID | None = None,
     ) -> AttackResult:
         """
         Execute one child attack via ``AttackExecutor`` and return its result.
@@ -312,6 +391,9 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 parent linkage.
             expectation (ScoringExpectation | None): Explicit scoring input forwarded unchanged.
                 Omission leaves the child's seed preparation and objective fallback in control.
+            operation_id (uuid.UUID | None): Run-owned saved Operation reference.
+            child_result_ids (list[str]): This execution's ordered child links. A confirmed
+                persisted result from a failed dispatch is appended before its exception is re-raised.
 
         Returns:
             AttackResult: The ``AttackResult`` produced by the inner
@@ -324,23 +406,55 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             RuntimeError: If the executor returned neither a completed
                 result nor an incomplete objective (defensive guard).
         """
-        expectation_override = {"expectation": expectation} if expectation is not None else {}
+        executor_kwargs: dict[str, Any] = {}
+        if expectation is not None:
+            executor_kwargs["expectation"] = expectation
+        if child_attack.atomic_attack_identifier is not None:
+            executor_kwargs["atomic_attack_identifiers"] = [child_attack.atomic_attack_identifier]
+        if child_attack.result_metadata:
+            executor_kwargs["result_metadata"] = [child_attack.result_metadata]
         executor_result = await self._executor.execute_attack_from_seed_groups_async(
             attack=child_attack.strategy,
             seed_groups=[child_attack.seed_group],
             adversarial_chat=child_attack.adversarial_chat,
             objective_scorer=child_attack.objective_scorer,
             memory_labels=memory_labels,
+            operation_id=operation_id,
+            return_partial_on_failure=True,
             attribution=attribution,
-            **expectation_override,
+            **executor_kwargs,
         )
         if executor_result.completed_results:
             return executor_result.completed_results[0]
         if executor_result.incomplete_objectives:
+            if executor_result.incomplete_result_ids and executor_result.incomplete_result_ids[0] is not None:
+                result_id = executor_result.incomplete_result_ids[0]
+                child_result_ids.append(result_id)
+                if child_attack.technique_identifier is not None:
+                    stored = await self._memory.get_attack_results_async(
+                        attack_result_ids=[result_id],
+                        result_selection=AttackResultSelection.ALL_RESULTS,
+                    )
+                    if not stored:
+                        raise RuntimeError(f"Persisted child attack result '{result_id}' could not be loaded")
+                    await self._enrich_child_result_async(child_attack=child_attack, result=stored[0])
             raise executor_result.incomplete_objectives[0][1]
         raise RuntimeError(  # pragma: no cover - defensive
             "AttackExecutor returned neither completed nor incomplete results."
         )
+
+    async def _enrich_child_result_async(self, *, child_attack: SequentialChildAttack, result: AttackResult) -> None:
+        if child_attack.technique_identifier is not None:
+            await enrich_attack_result_identifier_async(
+                result=result,
+                technique_identifier=child_attack.technique_identifier,
+                seed_group=(
+                    child_attack.identity_seed_group
+                    if child_attack.identity_seed_group is not None
+                    else child_attack.seed_group
+                ),
+                memory=self._memory,
+            )
 
     def _should_stop_after(self, *, result: AttackResult) -> bool:
         if self._completion_policy is SequenceCompletionPolicy.FIRST_SUCCESS:

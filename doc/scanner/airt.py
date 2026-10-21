@@ -21,7 +21,7 @@
 # %%
 from pyrit.output import output_scenario_async
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import ScorerInitializer, TargetInitializer, TechniqueInitializer
 
@@ -43,8 +43,8 @@ objective_target = OpenAIChatTarget()
 #   --initializers target \
 #   --target openai_chat \
 #   --techniques role_play_movie_script \
-#   --dataset-names airt_hate \
-#   --max-dataset-size 1
+#   --datasets airt_hate \
+#   --max-total 1
 # ```
 #
 # **Available techniques:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, role_play_movie_script, many_shot, tap
@@ -52,7 +52,7 @@ objective_target = OpenAIChatTarget()
 # %%
 from pyrit.scenario.airt import RapidResponse, RapidResponseTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_hate"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="airt_hate")], max_total=1)
 
 scenario = RapidResponse()
 scenario.set_params_from_args(  # type: ignore
@@ -84,8 +84,8 @@ await output_scenario_async(scenario_result)
 #
 # Each sub-harm escalates a simulated multi-turn conversation toward the objective, then layers the
 # selected converter techniques on top (natural-language rewrites that preserve emotional framing;
-# obfuscation converters like base64/morse are excluded). Datasets are bound to the sub-harms, so
-# `--dataset-names` is ignored (`--max-dataset-size` still applies).
+# obfuscation converters like base64/morse are excluded). `--datasets` can select a subset of the
+# selected sub-harms' datasets; `--max-total` must cover each selected sub-harm.
 #
 # **Available techniques:** ALL, DEFAULT, tone, language, persuasion, deterministic, crescendo
 
@@ -94,7 +94,7 @@ from pyrit.scenario.airt import Psychosocial, PsychosocialTechnique
 
 # Minimal demo: a single sub-harm, one technique (the bare simulated-crescendo base), and one
 # objective. Omit `scenario_techniques` to run the DEFAULT converter sweep across the full dataset.
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_imminent_crisis"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="airt_imminent_crisis")], max_total=1)
 
 scenario = Psychosocial()
 scenario.set_params_from_args(  # type: ignore
@@ -124,7 +124,7 @@ await output_scenario_async(scenario_result)
 #   --initializers target \
 #   --target openai_chat \
 #   --techniques role_play_movie_script \
-#   --max-dataset-size 1
+#   --max-total 1
 # ```
 #
 # **Available techniques:** Use `pyrit_scan run airt.cyber --list-scenario-parameters` to inspect
@@ -133,7 +133,7 @@ await output_scenario_async(scenario_result)
 # %%
 from pyrit.scenario.airt import Cyber, CyberTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_malware"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="airt_malware")], max_total=1)
 
 scenario = Cyber()
 scenario.set_params_from_args(  # type: ignore
@@ -169,8 +169,8 @@ await output_scenario_async(scenario_result)
 # pyrit_scan run airt.jailbreak \
 #   --initializers target \
 #   --target openai_chat \
-#   --dataset-names harmbench \
-#   --max-dataset-size 1
+#   --datasets harmbench \
+#   --max-total 1
 # ```
 #
 # **Available technique selectors:** ALL, DEFAULT, and SINGLE_TURN currently select both
@@ -181,7 +181,7 @@ await output_scenario_async(scenario_result)
 # %%
 from pyrit.scenario.airt import Jailbreak, JailbreakTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="harmbench")], max_total=1)
 
 scenario = Jailbreak()
 scenario.set_params_from_args(  # type: ignore
@@ -213,8 +213,8 @@ await output_scenario_async(scenario_result)
 # pyrit_scan airt.multilingual \
 #   --initializers target \
 #   --target openai_chat \
-#   --dataset-names harmbench \
-#   --max-dataset-size 1
+#   --datasets harmbench \
+#   --max-total 1
 # ```
 #
 # **Available techniques:** `prompt_sending` is the default. Every registry technique (`role_play_*`,
@@ -228,7 +228,7 @@ await output_scenario_async(scenario_result)
 # %%
 from pyrit.scenario.airt import Multilingual
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="harmbench")], max_total=1)
 
 scenario = Multilingual()
 scenario.set_params_from_args(  # type: ignore
@@ -254,7 +254,7 @@ await output_scenario_async(scenario_result)
 # plagiarism detection.
 #
 # ```bash
-# pyrit_scan run airt.leakage --target openai_chat --techniques first_letter --max-dataset-size 1
+# pyrit_scan run airt.leakage --target openai_chat --techniques first_letter --max-total 1
 # ```
 #
 # **Available techniques:** ALL, SINGLE_TURN, MULTI_TURN, IP, SENSITIVE_DATA, FirstLetter, Image, RolePlay, Crescendo
@@ -281,7 +281,7 @@ await output_scenario_async(scenario_result)
 # %%
 from pyrit.scenario.airt import Leakage, LeakageTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_leakage"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="airt_leakage")], max_total=1)
 
 scenario = Leakage()
 scenario.set_params_from_args(  # type: ignore
@@ -308,7 +308,7 @@ await output_scenario_async(scenario_result)
 #   --initializers target \
 #   --target openai_chat \
 #   --techniques context_compliance \
-#   --max-dataset-size 1
+#   --max-total 1
 # ```
 #
 # **Available techniques:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, ContextCompliance, RolePlay,
@@ -318,7 +318,7 @@ await output_scenario_async(scenario_result)
 # %%
 from pyrit.scenario.airt import Scam, ScamTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_scams"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="airt_scams")], max_total=1)
 
 scenario = Scam()
 scenario.set_params_from_args(  # type: ignore

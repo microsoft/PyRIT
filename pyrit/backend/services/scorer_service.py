@@ -13,6 +13,7 @@ from pyrit.backend.models.scorers import (
     ScorerListResponse,
     ScorerTypeEntry,
     ScorerTypeResponse,
+    UnregisteredScorer,
 )
 from pyrit.models.catalog.scorer import ScorerInstance
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
@@ -36,21 +37,30 @@ class ScorerService:
 
     async def list_scorer_types_async(self) -> ScorerTypeResponse:
         """
-        List registered scorer class metadata without constructing scorers.
+        List the scorer types external callers can build, without constructing scorers.
+
+        Each entry lists only the parameters external callers may supply, each
+        described in the form callers send it; types that need a Python object for a
+        required parameter are left out.
 
         Returns:
-            ScorerTypeResponse: All registered scorer type metadata.
+            ScorerTypeResponse: Scorer type metadata for external callers.
         """
 
         def list_types() -> ScorerTypeResponse:
             items = [
                 ScorerTypeEntry(
                     scorer_type=metadata.class_name,
-                    parameters=list(metadata.parameters),
+                    parameters=[
+                        parameter.for_external_catalog()
+                        for parameter in metadata.parameters
+                        if parameter.is_external_input
+                    ],
                     is_llm_based=metadata.is_llm_based,
                     description=metadata.class_description or None,
                 )
                 for metadata in self._registry.get_all_registered_class_metadata()
+                if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
             ]
             return ScorerTypeResponse(items=items)
 
@@ -95,7 +105,7 @@ class ScorerService:
 
         return await asyncio.to_thread(get_instance)
 
-    async def create_scorer_async(self, *, request: CreateScorerRequest) -> ScorerInstance:
+    async def create_scorer_async(self, *, request: CreateScorerRequest) -> ScorerInstance | UnregisteredScorer:
         """
         Build and register a scorer through the shared registry resolver.
 
@@ -103,13 +113,21 @@ class ScorerService:
             ScorerInstance: The registered scorer and its identifier.
         """
 
-        def create() -> ScorerInstance:
+        def create() -> ScorerInstance | UnregisteredScorer:
             if request.type not in self._registry:
                 raise ValueError(f"Scorer type '{request.type}' not found")
+            if not request.register:
+                scorer = self._registry.create_instance_from_external_input(request.type, params=request.params)
+                return UnregisteredScorer(
+                    identifier=ScorerIdentifier.from_component_identifier(scorer.get_identifier())
+                )
+            if request.name is None:
+                raise ValueError("name is required when register=true")
             scorer = self._registry.create_named_instance(
                 name=request.name,
                 type_name=request.type,
                 params=request.params,
+                external_input=True,
             )
             return self._build_instance(name=request.name, scorer=scorer)
 

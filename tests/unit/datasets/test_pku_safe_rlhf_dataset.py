@@ -121,3 +121,31 @@ async def test_fetch_dataset_standardizes_all_native_harm_categories(native_labe
 
     assert len(dataset.seeds) == 1
     assert dataset.seeds[0].harm_categories == expected_categories
+
+
+async def test_fetch_dataset_merges_repeated_prompts():
+    """A prompt appears once per response pair; it should load as one seed with every pair's categories."""
+    rows = [
+        {
+            "prompt": "Same prompt",
+            "is_response_0_safe": False,
+            "is_response_1_safe": True,
+            "response_0_harm_category": {"Cybercrime": True, "Violence": False},
+            "response_1_harm_category": {"Cybercrime": False, "Violence": False},
+        },
+        {
+            "prompt": "Same prompt",
+            "is_response_0_safe": True,
+            "is_response_1_safe": False,
+            "response_0_harm_category": {"Cybercrime": False, "Violence": False},
+            "response_1_harm_category": {"Cybercrime": False, "Violence": True},
+        },
+    ]
+    loader = _PKUSafeRLHFDataset()
+
+    with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=rows):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 1
+    assert dataset.seeds[0].metadata == {"pku_categories": "Cybercrime, Violence"}
+    assert set(dataset.seeds[0].harm_categories) == {"MALWARE", "COORDINATION_HARM", "VIOLENT_CONTENT"}

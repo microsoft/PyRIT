@@ -4,6 +4,7 @@
 import dataclasses
 import json
 from pathlib import Path
+from typing import assert_type
 from unittest.mock import patch
 
 import numpy as np
@@ -46,6 +47,7 @@ class TestScorerMetricsSerialization:
         with open(file_path, "w") as f:
             f.write(json_str)
         loaded = HarmScorerMetrics.from_json_file(str(file_path))
+        assert_type(loaded, HarmScorerMetrics)
         assert loaded == metrics
 
     def test_objective_metrics_to_json_and_from_json_file(self, tmp_path):
@@ -66,6 +68,7 @@ class TestScorerMetricsSerialization:
         with open(file_path, "w") as f:
             f.write(json_str)
         loaded = ObjectiveScorerMetrics.from_json_file(str(file_path))
+        assert_type(loaded, ObjectiveScorerMetrics)
         assert loaded == metrics
 
     def test_harm_metrics_to_json_serializes_trial_scores(self, tmp_path):
@@ -101,6 +104,7 @@ class TestScorerMetricsSerialization:
         metrics = ObjectiveScorerMetrics(
             num_responses=2,
             num_human_raters=1,
+            num_input_responses=3,
             accuracy=0.9,
             accuracy_standard_error=0.05,
             f1_score=0.8,
@@ -118,6 +122,7 @@ class TestScorerMetricsSerialization:
         with open(file_path, "w") as f:
             f.write(json_str)
         loaded = ObjectiveScorerMetrics.from_json_file(str(file_path))
+        assert loaded.num_input_responses == 3
 
         expected = dataclasses.asdict(metrics)
         expected.pop("trial_scores")
@@ -165,6 +170,8 @@ class TestScorerMetricsWithIdentity:
             metrics=metrics,
         )
 
+        assert_type(result, ScorerMetricsWithIdentity[ObjectiveScorerMetrics])
+        assert_type(result.metrics, ObjectiveScorerMetrics)
         assert result.scorer_identifier.class_name == "TestScorer"
         assert result.metrics.accuracy == 0.9
         assert result.metrics.f1_score == 0.85
@@ -190,6 +197,8 @@ class TestScorerMetricsWithIdentity:
             metrics=metrics,
         )
 
+        assert_type(result, ScorerMetricsWithIdentity[HarmScorerMetrics])
+        assert_type(result.metrics, HarmScorerMetrics)
         assert result.scorer_identifier.class_name == "HarmScorer"
         assert result.metrics.mean_absolute_error == 0.15
         assert result.metrics.harm_category == "hate_speech"
@@ -668,3 +677,59 @@ class TestReplaceEvaluationResults:
         assert scorer2.hash in hashes
         assert hashes[scorer1.hash]["metrics"]["accuracy"] == 0.95
         assert hashes[scorer2.hash]["metrics"]["accuracy"] == 0.85
+
+
+def _reject_constant(token: str):
+    """Refuse the ``NaN``/``Infinity`` tokens the way a strict JSON reader (``JSON.parse``) does."""
+    raise ValueError(f"Not valid JSON (RFC 8259): bare {token} token")
+
+
+def test_harm_metrics_to_json_writes_null_for_undefined_statistics(tmp_path):
+    """A statistic that is undefined (NaN) has no JSON number, so it must be written as null."""
+    metrics = HarmScorerMetrics(
+        num_responses=2,
+        num_human_raters=2,
+        mean_absolute_error=0.05,
+        mae_standard_error=0.0,
+        t_statistic=float("nan"),
+        p_value=float("nan"),
+        krippendorff_alpha_combined=0.77,
+        trial_scores=np.array([[0.15, float("nan")]]),
+    )
+
+    json_str = metrics.to_json()
+
+    assert "NaN" not in json_str
+    data = json.loads(json_str, parse_constant=_reject_constant)
+    assert data["t_statistic"] is None
+    assert data["p_value"] is None
+    assert data["trial_scores"] == [[0.15, None]]
+
+    file_path = tmp_path / "metrics.json"
+    file_path.write_text(json_str, encoding="utf-8")
+    loaded = HarmScorerMetrics.from_json_file(str(file_path))
+    assert loaded.t_statistic is None
+    assert loaded.p_value is None
+
+
+def test_to_json_flattens_numpy_scalars_and_drops_infinite_ones():
+    """
+    ``ScorerEvaluator._compute_metrics`` hands over numpy scalars (``np.mean`` and friends), so the
+    serialization boundary has to flatten them and treat a non-finite one like any other NaN.
+    """
+    metrics = HarmScorerMetrics(
+        num_responses=2,
+        num_human_raters=2,
+        mean_absolute_error=np.float64(0.05),
+        mae_standard_error=np.float64(0.0),
+        t_statistic=np.float64("inf"),
+        p_value=np.float64("nan"),
+        krippendorff_alpha_combined=np.float64(0.77),
+    )
+
+    data = json.loads(metrics.to_json(), parse_constant=_reject_constant)
+
+    assert data["mean_absolute_error"] == 0.05
+    assert data["krippendorff_alpha_combined"] == 0.77
+    assert data["t_statistic"] is None
+    assert data["p_value"] is None

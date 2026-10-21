@@ -9,10 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, overload
 
-import yaml
-
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.common.utils import combine_dict, get_kwarg_param
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.executor.core.config import StrategyConverterConfig
 from pyrit.executor.promptgen.core import (
     PromptGeneratorStrategy,
@@ -332,7 +331,7 @@ class AnecdoctorGenerator(
         """
         prompt_path = Path(EXECUTOR_SEED_PROMPT_PATH, self._ANECDOCTOR_PROMPT_PATH, yaml_filename)
         prompt_data = prompt_path.read_text(encoding="utf-8")
-        yaml_data = yaml.safe_load(prompt_data)
+        yaml_data = safe_load_yaml(prompt_data)
         return str(yaml_data["value"])
 
     def _format_few_shot_examples(self, *, evaluation_data: list[str]) -> str:

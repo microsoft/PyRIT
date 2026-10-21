@@ -73,14 +73,16 @@ for index, seed in enumerate(dataset.seeds, start=1):
 # The objective scorer evaluates whether each response fulfills its generated objective.
 # A successful attack means the target provided the requested assistance, not that
 # it handled the request safely. These model-based judgments can be wrong.
+# The named source selects five objectives by default; generation stored all ten.
+# Set `max_size=10` on the source to select ten.
 
 # %%
 from pyrit.output import output_scenario_async, output_scenario_attacks_async
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration, DatasetFetchPolicy, DatasetSource
 from pyrit.scenario.airt import RapidResponse, RapidResponseTechnique
 from pyrit.score import SelfAskTrueFalseScorer
 
-dataset_config = DatasetAttackConfiguration(dataset_names=[dataset_name], auto_fetch=False)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name=dataset_name)], fetch=DatasetFetchPolicy.NEVER)
 scenario = RapidResponse(objective_scorer=SelfAskTrueFalseScorer(chat_target=OpenAIChatTarget()))
 scenario.set_params_from_args(
     args={
@@ -95,3 +97,98 @@ await scenario.initialize_async()  # type: ignore
 result = await scenario.run_async()  # type: ignore
 await output_scenario_async(result)  # type: ignore
 await output_scenario_attacks_async(result)  # type: ignore
+
+# %% [markdown]
+# ## Let a Scenario Prepare Missing Data
+#
+# Attach a configured provider to a source instead of fetching and storing it yourself.
+# This separate dataset tests a customer-support assistant's return-policy explanations.
+# The source name must match the provider's `dataset_name`.
+#
+# The default `IF_MISSING` policy calls the provider only if that name is absent from
+# memory. The scenario validates and stores the complete result with
+# `added_by="DatasetConfiguration"`, then selects stored seeds. The provider still marks
+# generated seeds as `GENERATED`. Generation count and selection limits are independent:
+# `count=10` generates ten objectives; `max_size=10` selects up to ten instead of five.
+#
+# Use one writer per dataset name. Two concurrent runs with the same missing name can
+# generate and store different batches. Provider failures do not leave a partial dataset.
+# Estimates, reads, and resume never call the provider to prepare missing data.
+
+# %%
+automatic_dataset_name = "generated_support_objectives"
+automatic_provider = TargetObjectiveProvider(
+    dataset_name=automatic_dataset_name,
+    target=get_default_adversarial_target(),
+    instructions=(
+        "Create ten distinct requests to test whether a customer-support assistant "
+        "explains its return policy clearly. Generate requests only, not answers."
+    ),
+    count=10,
+)
+automatic_config = DatasetAttackConfiguration(
+    sources=[DatasetSource(name=automatic_dataset_name, max_size=10, provider=automatic_provider)]
+)
+automatic_params = {
+    "objective_target": OpenAIChatTarget(),
+    "dataset_config": automatic_config,
+    "scenario_techniques": [RapidResponseTechnique("flip")],
+    "include_baseline": False,
+    "max_concurrency": 2,
+}
+automatic_scenario = RapidResponse(objective_scorer=SelfAskTrueFalseScorer(chat_target=OpenAIChatTarget()))
+automatic_scenario.set_params_from_args(args=automatic_params)
+await automatic_scenario.initialize_async()  # type: ignore
+automatic_result = await automatic_scenario.run_async()  # type: ignore
+automatic_seeds = await memory.get_seeds_async(dataset_name=automatic_dataset_name)  # type: ignore
+print(f"Stored {len(automatic_seeds)} objectives through scenario preparation.")
+
+# %% [markdown]
+# ## Reuse Stored Data
+#
+# A later run with the same source name reuses the stored rows without generation.
+# Existing rows and manual edits win, even if you change the provider's instructions.
+# Use a new dataset name to generate and keep another batch.
+#
+# `NEVER` also uses stored data, but fails if the dataset is missing, even when a provider
+# is attached. Use `ALWAYS` below only when replacement is intended.
+#
+# The next scenario initializes from the same configuration. It does not run the attacks
+# again. Seed IDs stay unchanged because preparation did not replace or append data.
+
+# %%
+reused_scenario = RapidResponse(objective_scorer=SelfAskTrueFalseScorer(chat_target=OpenAIChatTarget()))
+reused_scenario.set_params_from_args(args=automatic_params)
+await reused_scenario.initialize_async()  # type: ignore
+reused_seeds = await memory.get_seeds_async(dataset_name=automatic_dataset_name)  # type: ignore
+assert {seed.id for seed in reused_seeds} == {seed.id for seed in automatic_seeds}
+print(f"Reused {len(reused_seeds)} stored objectives without generation.")
+
+# %% [markdown]
+# ## Explicitly Refresh a Dataset
+#
+# `ALWAYS` calls the configured provider with caching disabled when a new scenario
+# initializes. It generates a fresh batch and atomically replaces all stored seeds
+# for that dataset. It also works with registered providers, but a memory-only
+# dataset without a provider cannot refresh.
+#
+# Before any dataset write, fetched and retained sources pass the configuration's filters,
+# grouping, and validators without sampling. A fetch, grouping, or validation failure keeps
+# every selected dataset unchanged. Storage writes are atomic
+# per dataset, not across all selected datasets: a later write failure does not undo
+# an earlier successful write. Filters and selection limits do not reduce replacement.
+# Refresh removes manual edits and can prevent older runs from resuming if their seed
+# identities are no longer present.
+# Use a new dataset name to keep both batches. Require one writer per dataset name.
+#
+# This initialization incurs another generation call, but does not run another attack
+# batch. Reads, estimates, discovery, and resume never refresh. Explicit missing-only
+# loading does not consume or change this refresh policy.
+
+# %%
+refresh_config = automatic_config.with_overrides(fetch=DatasetFetchPolicy.ALWAYS)
+refresh_scenario = RapidResponse(objective_scorer=SelfAskTrueFalseScorer(chat_target=OpenAIChatTarget()))
+refresh_scenario.set_params_from_args(args={**automatic_params, "dataset_config": refresh_config})
+await refresh_scenario.initialize_async()  # type: ignore
+refreshed_seeds = await memory.get_seeds_async(dataset_name=automatic_dataset_name)  # type: ignore
+print(f"Refreshed {len(refreshed_seeds)} stored objectives.")

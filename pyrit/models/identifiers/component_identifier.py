@@ -413,6 +413,36 @@ class ComponentIdentifier(BaseModel):
         return references
 
     @classmethod
+    def get_sensitive_parameter_names(cls) -> frozenset[str]:
+        """
+        Get constructor parameter names whose values must be obscured in user interfaces.
+
+        Returns:
+            frozenset[str]: Sensitive constructor parameter names.
+        """
+        return frozenset({"api_key", "auth_token", "github_token", "hf_access_token", "sas_token"})
+
+    @classmethod
+    def get_multiline_parameter_names(cls) -> frozenset[str]:
+        """
+        Get constructor parameter names whose values require multiline controls.
+
+        Returns:
+            frozenset[str]: Multiline constructor parameter names.
+        """
+        return frozenset[str]()
+
+    @classmethod
+    def get_identity_conflicting_parameter_names(cls) -> frozenset[str]:
+        """
+        Get constructor parameter names that override identity-based authentication.
+
+        Returns:
+            frozenset[str]: Identity-conflicting constructor parameter names.
+        """
+        return frozenset[str]()
+
+    @classmethod
     def get_class_attribute_values(cls, target_cls: type) -> dict[str, Any]:
         """
         Read each ``Param.ClassAttr``-marked field's value off a target class.

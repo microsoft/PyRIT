@@ -15,9 +15,10 @@
 #
 # ## Overview
 #
-# This notebook covers two categories of image converters:
+# This notebook covers the following image transformations:
 #
-# - **[Text to Image](#text-to-image)**: Convert text into images (grid composite, QR codes, text overlays)
+# - **[Text to Image](#text-to-image)**: Convert text into images (grid composite, QR codes, text overlays, LSB steganography)
+# - **[Image to Text](#lsb-image-steganography)**: Recover text encoded by the LSB steganography converter
 # - **[Image to Image](#image-to-image)**: Modify or transform existing images
 
 # %% [markdown]
@@ -72,6 +73,45 @@ print(f"QR code saved to: {qr_result.output_text}")
 # Display the QR code
 qr_image = Image.open(qr_result.output_text)
 display(qr_image)
+
+# %% [markdown]
+# (lsb-image-steganography)=
+# ### LSBImageStegoConverter and LSBImageStegoDecodeConverter
+#
+# `LSBImageStegoConverter` encodes UTF-8 text in the least significant bits of
+# RGB or RGBA pixel channels and returns a lossless PNG. It generates a carrier
+# sized to fit the payload by default. Set `carrier_image_path` to use an existing
+# image instead; the image must have enough channel capacity for the text and
+# delimiter.
+#
+# `LSBImageStegoDecodeConverter` reverses this transformation (`image_path` to
+# `text`). The encoder and decoder must use the same `channels` and `delimiter`.
+# The example below uses their defaults (`"RGBA"` and `"====EOF===="`) and runs
+# locally without a model or external service.
+#
+# Keep the PNG bytes intact between encoding and decoding. Resizing, lossy
+# compression, or alpha-channel removal can destroy the payload. Encoding text
+# this way does not mean a vision model can read it without a decoding tool.
+# Prompts containing the delimiter or an overlapping suffix are rejected; choose
+# a different delimiter when needed.
+
+# %%
+from pyrit.converter import LSBImageStegoConverter, LSBImageStegoDecodeConverter
+
+lsb_prompt = "The secret ingredient is cinnamon."
+lsb_encoder = LSBImageStegoConverter()
+lsb_decoder = LSBImageStegoDecodeConverter()
+
+lsb_encoded = await lsb_encoder.convert_async(prompt=lsb_prompt)  # type: ignore
+with Image.open(lsb_encoded.output_text) as lsb_image:
+    print(f"Encoded image: {lsb_image.format}, {lsb_image.mode}, {lsb_image.size}")
+    display(lsb_image)
+
+lsb_decoded = await lsb_decoder.convert_async(  # type: ignore
+    prompt=lsb_encoded.output_text, input_type=lsb_encoded.output_type
+)
+assert lsb_decoded.output_text == lsb_prompt
+print(f"Decoded text: {lsb_decoded.output_text}")
 
 # %% [markdown]
 # ### AddImageTextConverter

@@ -4,7 +4,7 @@
 """Isolated request tracing without a global SDK provider."""
 
 import secrets
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -23,7 +23,9 @@ class TargetTraceConfig:
 
 
 @contextmanager
-def target_trace_context(*, config: TargetTraceConfig, request: Message, normalized_request: Message) -> Iterator[None]:
+def target_trace_context(
+    *, config: TargetTraceConfig, request: Message, normalized_request: Message
+) -> Generator[None, None, None]:
     """
     Record and activate a fresh context only for this target invocation.
 

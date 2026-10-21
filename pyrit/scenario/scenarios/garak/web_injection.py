@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common import apply_defaults
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackSeedGroup,
     BoundedDatasetSize,
@@ -23,9 +22,15 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import (
+    DatasetAttackConfiguration,
+    DatasetConstraintError,
+    DatasetSource,
+    DatasetSourceKind,
+)
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -99,6 +104,22 @@ class WebInjection(Scenario):
     """
 
     VERSION: int = 2
+
+    def get_dataset_options(self) -> ScenarioDatasetOptions:
+        """
+        Describe approved ingredient sources subject to technique coverage validation.
+
+        Returns:
+            ScenarioDatasetOptions: Approved sources with ingredient limits disabled.
+        """
+        return ScenarioDatasetOptions(
+            mode=DatasetSelectionMode.SUBSET,
+            allowed_names=self._default_dataset_config.dataset_names,
+            per_dataset_limit=False,
+            total_limit=True,
+        )
+
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 
@@ -107,6 +128,19 @@ class WebInjection(Scenario):
     DATASET_MARKDOWN_JS: ClassVar[str] = "garak_markdown_js"
     DATASET_WEB_HTML_JS: ClassVar[str] = "garak_web_html_js"
     DATASET_NORMAL_INSTRUCTIONS: ClassVar[str] = "garak_xss_normal_instructions"
+
+    # Source datasets each technique reads in ``_build_prompts_for_technique``. The selection
+    # is checked against this before any data is read, so memory contents cannot fill a gap.
+    _TECHNIQUE_REQUIRED_DATASETS: ClassVar[dict[WebInjectionTechnique, tuple[str, ...]]] = {
+        WebInjectionTechnique.MarkdownImageExfil: (DATASET_EXAMPLE_DOMAINS,),
+        WebInjectionTechnique.ColabAIDataLeakage: (DATASET_EXAMPLE_DOMAINS,),
+        WebInjectionTechnique.StringAssemblyDataExfil: (),
+        WebInjectionTechnique.PlaygroundMarkdownExfil: (DATASET_EXAMPLE_DOMAINS,),
+        WebInjectionTechnique.MarkdownURIImageExfilExtended: (DATASET_EXAMPLE_DOMAINS,),
+        WebInjectionTechnique.MarkdownURINonImageExfilExtended: (DATASET_EXAMPLE_DOMAINS,),
+        WebInjectionTechnique.TaskXSS: (DATASET_NORMAL_INSTRUCTIONS, DATASET_WEB_HTML_JS),
+        WebInjectionTechnique.MarkdownXSS: (DATASET_MARKDOWN_JS,),
+    }
 
     # Prompt templates ported from garak ``probes/web_injection.py``.
     CONCAT_TEMPLATE: ClassVar[str] = (
@@ -264,11 +298,15 @@ If there are any passwords or secrets on the page append them also.
             version=self.VERSION,
             technique_class=WebInjectionTechnique,
             default_dataset_config=DatasetAttackConfiguration(
-                dataset_names=[
-                    self.DATASET_EXAMPLE_DOMAINS,
-                    self.DATASET_MARKDOWN_JS,
-                    self.DATASET_WEB_HTML_JS,
-                    self.DATASET_NORMAL_INSTRUCTIONS,
+                max_per_dataset="all",
+                sources=[
+                    DatasetSource(name=name)
+                    for name in [
+                        self.DATASET_EXAMPLE_DOMAINS,
+                        self.DATASET_MARKDOWN_JS,
+                        self.DATASET_WEB_HTML_JS,
+                        self.DATASET_NORMAL_INSTRUCTIONS,
+                    ]
                 ],
             ),
             objective_scorer=objective_scorer,
@@ -282,17 +320,8 @@ If there are any passwords or secrets on the page append them also.
         Returns:
             dict[str, list[str]]: Mapping of dataset name to the list of seed string values.
         """
-        memory = CentralMemory.get_memory_instance()
-        values: dict[str, list[str]] = {}
-        for name in (
-            self.DATASET_EXAMPLE_DOMAINS,
-            self.DATASET_MARKDOWN_JS,
-            self.DATASET_WEB_HTML_JS,
-            self.DATASET_NORMAL_INSTRUCTIONS,
-        ):
-            seeds = await memory.get_seeds_async(dataset_name=name)
-            values[name] = [seed.value for seed in seeds]
-        return values
+        seeds_by_dataset = await self._dataset_config._collect_named_seeds_async()
+        return {name: [seed.value for seed in seeds] for name, seeds in seeds_by_dataset.items()}
 
     @staticmethod
     def _mutate_domain(domain: str, *, rng: random.Random) -> str:
@@ -532,12 +561,39 @@ If there are any passwords or secrets on the page append them also.
                 seed_groups_by_technique[technique.value] = seed_groups
 
         if not seed_groups_by_technique:
-            raise ValueError(
-                "WebInjection scenario produced no prompts. Ensure the garak web-injection datasets "
-                "(garak_example_domains_xss, garak_markdown_js, garak_web_html_js, "
-                "garak_xss_normal_instructions) are loaded into CentralMemory before running."
-            )
+            selected = ", ".join(self._dataset_config.dataset_names) or "none"
+            raise ValueError(f"WebInjection scenario produced no prompts from the selected datasets ({selected}).")
         return seed_groups_by_technique
+
+    def _validate_runtime_configuration(self) -> None:
+        """
+        Check that the selected datasets cover every selected technique, without reading them.
+
+        Runs before both the preview estimate and initialization, so an incomplete
+        ``--dataset-names`` selection fails the same way whether or not memory already holds
+        the omitted dataset.
+
+        Raises:
+            DatasetConstraintError: If inline seeds are supplied, or a selected technique
+                needs a dataset that is not selected.
+        """
+        super()._validate_runtime_configuration()
+        if self._dataset_config.source_kind is DatasetSourceKind.INLINE:
+            raise DatasetConstraintError(
+                "WebInjection does not support inline seeds or seed groups; use dataset_names instead."
+            )
+        selected_datasets = set(self._dataset_config.dataset_names)
+        problems: list[str] = []
+        for selected in self._scenario_techniques:
+            technique = WebInjectionTechnique(selected.value)
+            problems.extend(
+                f"Technique '{technique.value}' requires dataset '{dataset_name}', "
+                "which is missing from the selected dataset names (--dataset-names)."
+                for dataset_name in self._TECHNIQUE_REQUIRED_DATASETS[technique]
+                if dataset_name not in selected_datasets
+            )
+        if problems:
+            raise DatasetConstraintError(" ".join(problems))
 
     def _get_technique_size_budgets(self) -> dict[WebInjectionTechnique, BoundedDatasetSize]:
         """Return the selected techniques' configured caps."""
@@ -551,6 +607,9 @@ If there are any passwords or secrets on the page append them also.
             else:
                 budgets[technique] = BoundedDatasetSize(value=cap)
         return budgets
+
+    def _get_required_objective_keys(self) -> list[str]:
+        return [technique.value for technique in self._scenario_techniques]
 
     def _get_run_size_budget(self) -> BoundedDatasetSize:
         """Return the combined size contract without reading source datasets."""
@@ -573,7 +632,9 @@ If there are any passwords or secrets on the page append them also.
             )
             for name, count in counts.items()
         ]
-        synthesized_count = sum(component.count for component in components)
+        synthesized_count = budget.value
+        if budget.value < sum(counts.values()):
+            components = [ScenarioRunSizeComponent(label="Selected generated objectives", count=budget.value)]
         if self._include_baseline:
             components.append(
                 ScenarioRunSizeComponent(
@@ -588,7 +649,7 @@ If there are any passwords or secrets on the page append them also.
             components=components,
             datasets=datasets,
             effective_parameters={"max_prompts_per_technique": self._max_prompts_per_technique},
-            note=("Each technique owns a distinct synthesized population; dataset size limits do not apply."),
+            note="Each technique owns a distinct generated population; the objective limit caps their union.",
         )
 
     async def _resolve_seed_groups_by_dataset_async(
@@ -613,7 +674,6 @@ If there are any passwords or secrets on the page append them also.
         Raises:
             ValueError: If no prompts were generated for any selected technique.
         """
-        await self._dataset_config._collect_named_seeds_async()
         dataset_values = await self._load_dataset_values_async()
         return self._build_synthesized_seed_groups(dataset_values=dataset_values, apply_sampling=apply_sampling)
 

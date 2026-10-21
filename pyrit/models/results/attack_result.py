@@ -6,9 +6,10 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic
 
 from pydantic import AwareDatetime, Field, field_serializer, model_validator
+from typing_extensions import TypeVar
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
@@ -22,6 +23,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 AttackResultT = TypeVar("AttackResultT", bound="AttackResult")
+_ResponsePieceT = TypeVar("_ResponsePieceT", bound=MessagePiece, default=MessagePiece)
+_ScoreT = TypeVar("_ScoreT", bound=Score, default=Score)
 
 ATTRIBUTION_FIELDS: tuple[str, str] = ("operator", "operation")
 ATTRIBUTION_VALUE_MAX_LENGTH: int = 128
@@ -67,7 +70,8 @@ def normalize_legacy_attack_attribution(
                 raise ValueError(f"{field} conflicts with legacy labels.{field}: {current!r} != {legacy_value!r}")
             print_deprecation_message(
                 old_item=f"labels.{field}",
-                new_item=field,
+                # The dedicated operation name is itself deprecated in favor of a saved Operation's ID.
+                new_item="operation_id" if field == "operation" else field,
                 removed_in="1.4.0",
             )
             resolved[field] = legacy_value
@@ -95,7 +99,28 @@ class AttackOutcome(str, Enum):
     UNDETERMINED = "undetermined"
 
 
-class AttackResult(StrategyResult):
+class AttackResultRole(str, Enum):
+    """
+    What a persisted attack result represents, recorded by the strategy that produced it.
+
+    The role says which kind of record this is, not what happened. A target-facing result
+    can still end before any request reaches the objective target (for example, a preparation
+    failure), so the role is not proof that the target was called.
+    """
+
+    #: Produced by a strategy that sends its own requests to the objective target.
+    TARGET_FACING = "target_facing"
+
+    #: Produced by a strategy that only coordinates other attacks and has no target
+    #: conversation of its own, such as ``SequentialAttack``.
+    ORCHESTRATION = "orchestration"
+
+    #: Read-side value for records that carry no recognized role, such as rows persisted
+    #: before roles were recorded. Producers never write it.
+    UNKNOWN = "unknown"
+
+
+class AttackResult(StrategyResult, Generic[_ResponsePieceT, _ScoreT]):
     """Base class for all attack results."""
 
     ATTRIBUTION_VALUE_MAX_LENGTH: ClassVar[int] = ATTRIBUTION_VALUE_MAX_LENGTH
@@ -118,13 +143,13 @@ class AttackResult(StrategyResult):
 
     # Evidence
     # Model response generated in the final turn of the attack
-    last_response: MessagePiece | None = None
+    last_response: _ResponsePieceT | None = None
 
     # Score assigned to the final response by an automated scorer component
-    automated_score: Score | None = None
+    automated_score: _ScoreT | None = None
 
     # Score assigned to the final response by a human
-    human_score: Score | None = None
+    human_score: _ScoreT | None = None
 
     # Metrics
     # Total number of turns that were executed
@@ -152,7 +177,9 @@ class AttackResult(StrategyResult):
     # First-class attribution fields. These are deliberately separate from
     # arbitrary labels so they can be indexed and queried efficiently.
     operator: str | None = Field(default=None, max_length=ATTRIBUTION_VALUE_MAX_LENGTH)
+    # TODO(PyRIT 1.4): Remove this name with Operation name attribution; use operation_id.
     operation: str | None = Field(default=None, max_length=ATTRIBUTION_VALUE_MAX_LENGTH)
+    operation_id: uuid.UUID | None = None
 
     # labels associated with this attack result
     labels: dict[str, str] = Field(default_factory=dict)
@@ -171,11 +198,8 @@ class AttackResult(StrategyResult):
     retry_events: list[RetryEvent] = Field(default_factory=list)
     total_retries: int = 0
 
-    # Attribution / parent linkage (infrastructure-managed). Set by the attack
-    # persistence path when an AttackResultAttribution is present on the
-    # AttackContext. User code should not set these directly; ad-hoc
-    # AttackResults created outside an orchestrator leave both fields as None
-    # and the corresponding DB columns remain NULL.
+    # Infrastructure-managed parent linkage and producer metadata. Strategies
+    # record their role even without an orchestrator; the parent ID stays None.
     attribution_parent_id: str | None = None
     attribution_data: dict[str, Any] | None = None
 

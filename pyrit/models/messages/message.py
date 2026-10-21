@@ -6,9 +6,10 @@ from __future__ import annotations
 import copy
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Generic, Self, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
+from typing_extensions import TypeVar
 
 from pyrit.models.messages.message_piece import MessagePiece
 
@@ -16,7 +17,10 @@ if TYPE_CHECKING:
     from pyrit.models.literals import ChatMessageRole, PromptDataType
 
 
-class Message(BaseModel):
+_MessagePieceT = TypeVar("_MessagePieceT", bound=MessagePiece, default=MessagePiece)
+
+
+class Message(BaseModel, Generic[_MessagePieceT]):
     """
     Represents a message in a conversation, for example a prompt or a response to a prompt.
 
@@ -29,13 +33,13 @@ class Message(BaseModel):
         validate_assignment=False,
     )
 
-    message_pieces: list[MessagePiece]
+    message_pieces: list[_MessagePieceT]
 
     # ------------------------------------------------------------------ #
     # Validators
     # ------------------------------------------------------------------ #
     @model_validator(mode="after")
-    def _validate_after(self) -> Message:
+    def _validate_after(self) -> Self:
         """
         Enforce internal consistency of the message pieces after construction.
 
@@ -306,7 +310,7 @@ class Message(BaseModel):
         prompt: str,
         role: ChatMessageRole,
         prompt_metadata: dict[str, str | int] | None = None,
-    ) -> Message:
+    ) -> Self:
         """
         Build a single-piece message from prompt text.
 
@@ -316,14 +320,14 @@ class Message(BaseModel):
             prompt_metadata (dict[str, str | int] | None): Optional prompt metadata.
 
         Returns:
-            Message: Constructed message instance.
+            Self: Constructed message instance.
 
         """
         piece = MessagePiece(original_value=prompt, role=role, prompt_metadata=prompt_metadata or {})
         return cls(message_pieces=[piece])
 
     @classmethod
-    def from_system_prompt(cls, system_prompt: str) -> Message:
+    def from_system_prompt(cls, system_prompt: str) -> Self:
         """
         Build a message from a system prompt.
 
@@ -331,13 +335,13 @@ class Message(BaseModel):
             system_prompt (str): System instruction text.
 
         Returns:
-            Message: Constructed system-role message.
+            Self: Constructed system-role message.
 
         """
         return cls.from_prompt(prompt=system_prompt, role="system")
 
     @classmethod
-    def from_system_prompts(cls, *system_prompts: str) -> list[Message]:
+    def from_system_prompts(cls, *system_prompts: str) -> list[Self]:
         """
         Build a list of system-role messages, ready to pass as ``prepended_conversation``.
 
@@ -345,7 +349,7 @@ class Message(BaseModel):
             *system_prompts (str): System instruction texts. When omitted, returns an empty list.
 
         Returns:
-            list[Message]: One system-role message per input, in order.
+            list[Self]: One system-role message per input, in order.
 
         """
         return [cls.from_system_prompt(system_prompt) for system_prompt in system_prompts]

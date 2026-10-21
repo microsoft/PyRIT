@@ -3,6 +3,7 @@
 
 import os
 import sqlite3
+import sys
 import tempfile
 from collections.abc import AsyncGenerator, Generator
 from contextlib import closing, contextmanager
@@ -12,15 +13,26 @@ import pytest
 from sqlalchemy import Engine, create_engine
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.common.singleton import Singleton
 from pyrit.memory import CentralMemory, SQLiteMemory, migration
 from pyrit.models import SeedDataset
+from test_support.fixtures import use_sqlite_memory
 
 # This limits retries and speeds up execution
 os.environ["CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS"] = "5"
 os.environ["RETRY_MAX_NUM_ATTEMPTS"] = "2"
 os.environ["RETRY_WAIT_MIN_SECONDS"] = "0"
 os.environ["RETRY_WAIT_MAX_SECONDS"] = "1"
+
+if sys.platform == "win32":
+    from asyncio import AbstractEventLoop
+    from collections.abc import Callable
+
+    from test_support.event_loop import new_test_event_loop
+
+    @pytest.fixture(scope="session")
+    def _asyncio_loop_factory() -> Callable[[], AbstractEventLoop]:
+        # pytest-asyncio 1.4's hook does not select factories for fixture-only runners.
+        return new_test_event_loop
 
 
 @contextmanager
@@ -43,21 +55,6 @@ def sqlite_template() -> Generator[sqlite3.Connection, None, None]:
             yield connection
     finally:
         engine.dispose()
-
-
-@contextmanager
-def _use_sqlite_memory(sqlite_memory: SQLiteMemory) -> Generator[None, None, None]:
-    previous_instance = Singleton._instances.get(SQLiteMemory)
-    Singleton._instances[SQLiteMemory] = sqlite_memory
-    try:
-        with patch.object(CentralMemory, "_memory_instance", None):
-            CentralMemory.set_memory_instance(sqlite_memory)
-            yield
-    finally:
-        if previous_instance is None:
-            Singleton._instances.pop(SQLiteMemory, None)
-        else:
-            Singleton._instances[SQLiteMemory] = previous_instance
 
 
 @pytest.fixture
@@ -87,7 +84,7 @@ async def sqlite_instance(sqlite_template: sqlite3.Connection) -> AsyncGenerator
             sqlite_memory.disable_embedding()
             with _sqlite_connection(sqlite_memory.engine) as connection:
                 sqlite_template.backup(connection)
-            with _use_sqlite_memory(sqlite_memory):
+            with use_sqlite_memory(sqlite_memory):
                 yield sqlite_memory
         finally:
             await sqlite_memory.dispose_engine_async()

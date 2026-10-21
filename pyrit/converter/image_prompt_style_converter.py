@@ -5,11 +5,10 @@ import logging
 from pathlib import Path
 from typing import Any, ClassVar
 
-import yaml
-
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.common.random_context import get_random_generator
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.converter.converter import ConverterResult
 from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.models import (
@@ -98,7 +97,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
             resolved_path = self.IMAGE_PROMPT_STYLE_DIR / f"{self._filter_name}.yaml"
 
         with open(resolved_path, encoding="utf-8") as f:
-            filter_data = yaml.safe_load(f)
+            filter_data = safe_load_yaml(f)
         self._validate_filter_data(filter_data, resolved_path)
 
         self._style_instructions: str = filter_data["style_instructions"]
@@ -234,7 +233,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
             raise ValueError(f"Filter '{filter_name}' not found. Available filters: {available}")
 
         with open(resolved_path, encoding="utf-8") as f:
-            filter_data = yaml.safe_load(f)
+            filter_data = safe_load_yaml(f)
         cls._validate_filter_data(filter_data, resolved_path)
 
         return sorted(filter_data["variations"].keys())

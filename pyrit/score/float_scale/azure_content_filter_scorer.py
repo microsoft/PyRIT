@@ -259,7 +259,7 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
         Raises:
             ValueError: If converted_value_data_type is not "text" or "image_path" or image isn't in supported format.
         """
-        filter_results: list[AnalyzeTextResult | AnalyzeImageResult] = []
+        filter_results: list[tuple[AnalyzeTextResult | AnalyzeImageResult, float]] = []
 
         if message_piece.converted_value_data_type == "text":
             text = message_piece.converted_value
@@ -271,7 +271,7 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
                     output_type="EightSeverityLevels",
                 )
                 text_result = await self._azure_cf_client.analyze_text(text_request_options)
-                filter_results.append(text_result)
+                filter_results.append((text_result, 7.0))
 
         elif message_piece.converted_value_data_type == "image_path":
             base64_encoded_data = await self._get_base64_image_data_async(message_piece)
@@ -281,15 +281,15 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
                 image=image_data, categories=self._category_values, output_type="FourSeverityLevels"
             )
             image_result = await self._azure_cf_client.analyze_image(image_request_options)
-            filter_results.append(image_result)
+            filter_results.append((image_result, 6.0))
 
         # Collect all scores from all chunks/images
         all_scores = []
-        for filter_result in filter_results:
+        for filter_result, severity_max in filter_results:
             for score in filter_result["categoriesAnalysis"]:
                 value = score["severity"]
                 category = score["category"]
-                normalized_value = self.scale_value_float(float(value), 0, 7)
+                normalized_value = self.scale_value_float(float(value), 0, severity_max)
 
                 # Severity as defined here
                 # https://learn.microsoft.com/en-us/azure/ai-services/content-safety/concepts/harm-categories?tabs=definitions#severity-levels

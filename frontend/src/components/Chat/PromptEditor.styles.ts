@@ -26,6 +26,40 @@ export const usePromptEditorStyles = makeStyles({
     maxWidth: '900px',
     margin: '0 auto',
   },
+  composerTrigger: {
+    position: 'relative',
+  },
+  disabledComposerOverlay: {
+    position: 'absolute',
+    inset: 0,
+    cursor: 'help',
+  },
+  disabledReasonsPopover: {
+    maxWidth: '420px',
+  },
+  disabledReasonsHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+    color: tokens.colorNeutralForeground3,
+    paddingBottom: tokens.spacingVerticalS,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  disabledReasonsList: {
+    listStyleType: 'none',
+    padding: 0,
+    margin: 0,
+  },
+  disabledReason: {
+    paddingTop: tokens.spacingVerticalS,
+    color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase300,
+    lineHeight: tokens.lineHeightBase300,
+    ':not(:last-child)': {
+      paddingBottom: tokens.spacingVerticalS,
+      borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+    },
+  },
   attachmentsContainer: {
     display: 'flex',
     flexDirection: 'column',
@@ -85,6 +119,11 @@ export const usePromptEditorStyles = makeStyles({
     alignItems: 'center',
     marginRight: tokens.spacingHorizontalS,
     alignSelf: 'center',
+  },
+  undoAction: {
+    // Keep Undo reachable above the overlay when only the prompt is disabled.
+    position: 'relative',
+    zIndex: 1,
   },
   columnCenter: {
     display: 'flex',
@@ -158,6 +197,9 @@ export const usePromptEditorStyles = makeStyles({
     ...mobileTouchTarget,
   },
   sendButton: {
+    position: 'relative',
+    // Keep the tooltip reachable above the disabled-composer overlay.
+    zIndex: 1,
     minWidth: '32px',
     width: '32px',
     height: '32px',

@@ -19,9 +19,11 @@ from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    AttackResultSelection,
     AttackSeedGroup,
     ComponentIdentifier,
     Message,
+    ScenarioRunPlanGroupKind,
     ScenarioRunState,
     SeedObjective,
     config_hash,
@@ -150,6 +152,8 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
     mock_attack_strategy.get_attack_scoring_config.return_value = MagicMock()
 
     attack = MagicMock(spec=AtomicAttack)
+    attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
+    attack.seed_group_adaptations = {}
     attack.atomic_attack_name = name
     attack.display_group = name
     attack.technique_eval_hash = config_hash({"name": name, "objectives": objectives})
@@ -551,7 +555,9 @@ class TestScenarioResumption:
             remaining = await scenario._get_remaining_atomic_attacks_async()
 
         assert remaining == attacks[5:]
-        read_results.assert_called_once_with(scenario_result_id=scenario._scenario_result_id)
+        read_results.assert_called_once_with(
+            scenario_result_id=scenario._scenario_result_id, result_selection=AttackResultSelection.ALL_RESULTS
+        )
 
     async def test_parameter_build_partial_result_persists_linkage_before_retry(
         self,
@@ -1099,6 +1105,7 @@ class TestApplyPersistedObjectives:
 
     def test_noop_when_metadata_has_no_persisted_hashes(self):
         atomic = MagicMock(spec=AtomicAttack)
+        atomic.group_kind = ScenarioRunPlanGroupKind.ATTACK
         scenario = self._make_scenario_with_atomics([atomic])
         stored = MagicMock()
         stored.metadata = {}
@@ -1107,8 +1114,10 @@ class TestApplyPersistedObjectives:
 
     def test_replays_persisted_subset_across_atomics(self):
         atomic_a = MagicMock(spec=AtomicAttack)
+        atomic_a.group_kind = ScenarioRunPlanGroupKind.ATTACK
         atomic_a.keep_seed_groups_with_hashes.return_value = {"h1", "h2"}
         atomic_b = MagicMock(spec=AtomicAttack)
+        atomic_b.group_kind = ScenarioRunPlanGroupKind.ATTACK
         atomic_b.keep_seed_groups_with_hashes.return_value = {"h3"}
         scenario = self._make_scenario_with_atomics([atomic_a, atomic_b])
 
@@ -1121,6 +1130,7 @@ class TestApplyPersistedObjectives:
 
     def test_raises_when_persisted_hash_is_missing(self):
         atomic = MagicMock(spec=AtomicAttack)
+        atomic.group_kind = ScenarioRunPlanGroupKind.ATTACK
         atomic.keep_seed_groups_with_hashes.return_value = {"h1"}  # h2 missing
         scenario = self._make_scenario_with_atomics([atomic])
 

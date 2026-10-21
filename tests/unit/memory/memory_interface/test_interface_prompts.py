@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 
+import json
 import uuid
 from collections.abc import MutableSequence, Sequence
 from datetime import UTC, datetime
@@ -20,6 +21,7 @@ from pyrit.memory.memory_models import (
 )
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
+    ChatMessageRole,
     ComponentIdentifier,
     Conversation,
     ConverterIdentifier,
@@ -27,6 +29,7 @@ from pyrit.models import (
     IdentifierType,
     Message,
     MessagePiece,
+    PromptDataType,
     Score,
     SeedPrompt,
     TargetIdentifier,
@@ -398,6 +401,119 @@ async def test_duplicate_conversation_excluding_last_turn(sqlite_instance: Memor
 
     for piece in duplicate_conversation:
         assert piece.sequence < 2
+
+
+def _backtrack_history_pieces(
+    *, history: Sequence[str], conversation_id: str, sequence_step: int
+) -> list[MessagePiece]:
+    roles: dict[str, ChatMessageRole] = {"s": "system", "u": "user", "a": "assistant", "t": "assistant", "r": "tool"}
+    pending_calls: list[str] = []
+    pieces: list[MessagePiece] = []
+    for sequence, message_roles in enumerate(history):
+        for role in message_roles:
+            data_type: PromptDataType = "text"
+            value = f"message {len(pieces)}"
+            if role == "t":
+                call_id = f"call_{len(pieces)}"
+                pending_calls.append(call_id)
+                data_type = "function_call"
+                value = json.dumps({"type": data_type, "call_id": call_id, "name": "lookup", "arguments": "{}"})
+            elif role == "r":
+                data_type = "function_call_output"
+                value = json.dumps({"type": data_type, "call_id": pending_calls.pop(0), "output": "sunny"})
+            pieces.append(
+                MessagePiece(
+                    role=roles[role],
+                    original_value=value,
+                    original_value_data_type=data_type,
+                    conversation_id=conversation_id,
+                    sequence=sequence * sequence_step,
+                )
+            )
+    return pieces
+
+
+# s: system, u: user, a: assistant, t: function call, r: tool result.
+# Each element is one message; repeated letters represent pieces sharing its sequence.
+@pytest.mark.parametrize("sequence_step", [1, 3], ids=["consecutive", "gapped"])
+@pytest.mark.parametrize(
+    "history, expected",
+    [
+        ("", ""),
+        ("s", ""),
+        ("u", ""),
+        ("ua", ""),
+        ("sua", "s"),
+        ("uaua", "ua"),
+        ("suauaua", "suaua"),
+        ("suauau", "suaua"),
+        ("sut", "s"),
+        ("sutr", "s"),
+        ("sutra", "s"),
+        ("utra", ""),
+        ("suautra", "sua"),
+        ("sutraua", "sutra"),
+        ("utrautra", "utra"),
+        ("sutrautra", "sutra"),
+        ("sutratra", "s"),
+        ("suautratra", "sua"),
+        ("suttrra", "s"),
+        ("suauttrra", "sua"),
+        ("sutrautr", "sutra"),
+        ("sutrau", "sutra"),
+        ("suas", "sua"),
+        ("suaa", "s"),
+        ("aa", ""),
+        ("ssua", "ss"),
+        pytest.param(("s", "uu", "tt", "rr", "aa"), ("s",), id="first-multipiece-turn"),
+        pytest.param(
+            ("s", "uu", "tt", "rr", "aa", "uu", "tt", "rr", "aa"),
+            ("s", "uu", "tt", "rr", "aa"),
+            id="retain-multipiece-tool-turn",
+        ),
+        pytest.param(
+            ("s", "uu", "tt", "rr", "aa", "uu"),
+            ("s", "uu", "tt", "rr", "aa"),
+            id="multipiece-half-turn",
+        ),
+        pytest.param(("s", "uu", "tt"), ("s",), id="multipiece-pending-calls"),
+    ],
+)
+async def test_duplicate_conversation_excluding_last_turn_role_sequences_async(
+    *,
+    sqlite_instance: MemoryInterface,
+    history: Sequence[str],
+    expected: Sequence[str],
+    sequence_step: int,
+) -> None:
+    conversation_id = str(uuid4())
+    pieces = _backtrack_history_pieces(history=history, conversation_id=conversation_id, sequence_step=sequence_step)
+    if pieces:
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+    source = await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)
+
+    new_conversation_id = await sqlite_instance.duplicate_conversation_excluding_last_turn_async(
+        conversation_id=conversation_id,
+    )
+
+    duplicate_conversation = await sqlite_instance.get_message_pieces_async(conversation_id=new_conversation_id)
+    retained = source[: sum(len(message_roles) for message_roles in expected)]
+    assert list(history[: len(expected)]) == list(expected)
+    assert new_conversation_id != conversation_id
+    assert all(piece.conversation_id == new_conversation_id for piece in duplicate_conversation)
+    assert [piece.role for piece in duplicate_conversation] == [piece.role for piece in retained]
+    assert [piece.original_value for piece in duplicate_conversation] == [piece.original_value for piece in retained]
+    assert [piece.original_value_data_type for piece in duplicate_conversation] == [
+        piece.original_value_data_type for piece in retained
+    ]
+    assert [piece.sequence for piece in duplicate_conversation] == [piece.sequence for piece in retained]
+    assert [piece.original_prompt_id for piece in duplicate_conversation] == [
+        piece.original_prompt_id for piece in retained
+    ]
+    assert {piece.id for piece in duplicate_conversation}.isdisjoint(piece.id for piece in source)
+    assert [
+        piece.model_dump() for piece in await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)
+    ] == [piece.model_dump() for piece in source]
 
 
 async def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: MemoryInterface):
@@ -977,7 +1093,7 @@ async def test_insert_prompt_memories_not_inserts_embedding(
     ):
         (await sqlite_instance.add_message_to_memory_async(request=request))
 
-        assert mock_embedding.assert_not_called
+        mock_embedding.assert_not_called()
 
 
 async def test_get_message_pieces_metadata(sqlite_instance: MemoryInterface):
@@ -1041,6 +1157,206 @@ async def test_get_message_pieces_captured_response_metadata(sqlite_instance: Me
 
     assert len(retrieved) == 1
     assert retrieved[0].prompt_metadata[key] == value
+
+
+@pytest.mark.parametrize("key", ["attack.id", "a-b", "sp ace", "with:colon"])
+async def test_get_message_pieces_prompt_metadata_key_with_non_identifier_character(
+    sqlite_instance: MemoryInterface, key: str
+):
+    """A free-form metadata key must be queryable whatever characters it holds.
+
+    The key used to be spelled into the JSON path and reused as the bind-parameter
+    name, so a dot read as a path step and a hyphen was not a legal parameter name:
+    the query raised ``ArgumentError: This text() construct doesn't define a bound
+    parameter named ...`` instead of filtering.
+    """
+    matching = MessagePiece(
+        conversation_id=str(uuid4()),
+        role="user",
+        original_value="targeted",
+        prompt_metadata={key: "value"},
+    )
+    other = MessagePiece(
+        conversation_id=str(uuid4()),
+        role="user",
+        original_value="unrelated",
+        prompt_metadata={key: "something_else"},
+    )
+    sqlite_instance._insert_entries(entries=[PromptMemoryEntry(entry=matching), PromptMemoryEntry(entry=other)])
+
+    retrieved = await sqlite_instance.get_message_pieces_async(prompt_metadata={key: "value"})
+
+    assert len(retrieved) == 1
+    assert retrieved[0].original_value == "targeted"
+
+
+async def test_get_message_pieces_prompt_metadata_multiple_non_identifier_keys(sqlite_instance: MemoryInterface):
+    """Several free-form keys in one query each get their own bound path and value."""
+    metadata = {"attack.id": "a", "a-b": "b", "plain": "c"}
+    piece = MessagePiece(
+        conversation_id=str(uuid4()),
+        role="user",
+        original_value="hit",
+        prompt_metadata=metadata,
+    )
+    sqlite_instance._insert_entries(entries=[PromptMemoryEntry(entry=piece)])
+
+    assert len(await sqlite_instance.get_message_pieces_async(prompt_metadata=metadata)) == 1
+    assert len(await sqlite_instance.get_message_pieces_async(prompt_metadata={"attack.id": "a", "a-b": "b"})) == 1
+    assert len(await sqlite_instance.get_message_pieces_async(prompt_metadata={"attack.id": "a", "a-b": "nope"})) == 0
+
+
+@pytest.mark.parametrize(
+    ("literal_key", "other_metadata"),
+    [
+        ('branch"."leaf', {"branch": {"leaf": "value"}}),
+        (r"\u0061", {"a": "value"}),
+        ("plain", {"plain ": "value"}),
+        ("plain ", {"plain": "value"}),
+        ("", {" ": "value"}),
+        (" ", {"": "value"}),
+        ("café", {"café ": "value"}),
+        ("café ", {"café": "value"}),
+    ],
+)
+async def test_get_message_pieces_prompt_metadata_matches_literal_json_keys(
+    sqlite_instance: MemoryInterface, literal_key: str, other_metadata: dict[str, object]
+):
+    matching = MessagePiece(
+        conversation_id=str(uuid4()),
+        role="user",
+        original_value="literal",
+        prompt_metadata={literal_key: "value"},
+    )
+    other = MessagePiece(
+        conversation_id=str(uuid4()),
+        role="user",
+        original_value="other",
+        prompt_metadata=other_metadata,
+    )
+    sqlite_instance._insert_entries(entries=[PromptMemoryEntry(entry=matching), PromptMemoryEntry(entry=other)])
+
+    retrieved = await sqlite_instance.get_message_pieces_async(prompt_metadata={literal_key: "value"})
+
+    assert [piece.original_value for piece in retrieved] == ["literal"]
+
+
+@pytest.mark.parametrize(
+    ("literal_key", "other_metadata"),
+    [
+        ('branch"."leaf', {"branch": {"leaf": "value"}}),
+        (r"\u0061", {"a": "value"}),
+        ("plain", {"plain ": "value"}),
+        ("plain ", {"plain": "value"}),
+        ("", {" ": "value"}),
+        (" ", {"": "value"}),
+        ("café", {"café ": "value"}),
+        ("café ", {"café": "value"}),
+    ],
+)
+async def test_seed_metadata_retrieval_matches_literal_json_keys(
+    sqlite_instance: MemoryInterface, literal_key: str, other_metadata: dict[str, object]
+):
+    literal_group_id, nested_group_id = uuid4(), uuid4()
+    seeds = [
+        SeedPrompt(
+            value="literal first",
+            data_type="text",
+            metadata={literal_key: "value"},
+            prompt_group_id=literal_group_id,
+        ),
+        SeedPrompt(
+            value="literal second",
+            data_type="text",
+            metadata={literal_key: "value"},
+            prompt_group_id=literal_group_id,
+        ),
+        SeedPrompt(
+            value="nested",
+            data_type="text",
+            metadata=other_metadata,
+            prompt_group_id=nested_group_id,
+        ),
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(seeds=seeds, added_by="tester")
+
+    retrieved = await sqlite_instance.get_seeds_async(metadata={literal_key: "value"})
+    assert {seed.value for seed in retrieved} == {"literal first", "literal second"}
+
+
+@pytest.mark.parametrize(
+    ("literal_key", "other_metadata"),
+    [
+        ('branch"."leaf', {"branch": {"leaf": "value"}}),
+        (r"\u0061", {"a": "value"}),
+        ("plain", {"plain ": "value"}),
+        ("plain ", {"plain": "value"}),
+        ("", {" ": "value"}),
+        (" ", {"": "value"}),
+        ("café", {"café ": "value"}),
+        ("café ", {"café": "value"}),
+    ],
+)
+async def test_seed_removal_matches_literal_json_keys(
+    sqlite_instance: MemoryInterface, literal_key: str, other_metadata: dict[str, object]
+):
+    seeds = [
+        SeedPrompt(value="literal", data_type="text", metadata={literal_key: "value"}),
+        SeedPrompt(value="nested", data_type="text", metadata=other_metadata),
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(seeds=seeds, added_by="tester")
+
+    removed = await sqlite_instance.remove_seeds_from_memory_async(metadata={literal_key: "value"})
+
+    remaining = await sqlite_instance.get_seeds_async()
+    assert [seed.value for seed in remaining] == ["nested"]
+    assert removed == 1
+
+
+@pytest.mark.parametrize(
+    ("literal_key", "other_metadata"),
+    [
+        ('branch"."leaf', {"branch": {"leaf": "value"}}),
+        (r"\u0061", {"a": "value"}),
+        ("plain", {"plain ": "value"}),
+        ("plain ", {"plain": "value"}),
+        ("", {" ": "value"}),
+        (" ", {"": "value"}),
+        ("café", {"café ": "value"}),
+        ("café ", {"café": "value"}),
+    ],
+)
+async def test_seed_group_removal_matches_literal_json_keys(
+    sqlite_instance: MemoryInterface, literal_key: str, other_metadata: dict[str, object]
+):
+    literal_group_id, nested_group_id = uuid4(), uuid4()
+    seeds = [
+        SeedPrompt(
+            value="literal first",
+            data_type="text",
+            metadata={literal_key: "value"},
+            prompt_group_id=literal_group_id,
+        ),
+        SeedPrompt(
+            value="literal second",
+            data_type="text",
+            metadata={literal_key: "value"},
+            prompt_group_id=literal_group_id,
+        ),
+        SeedPrompt(
+            value="nested",
+            data_type="text",
+            metadata=other_metadata,
+            prompt_group_id=nested_group_id,
+        ),
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(seeds=seeds, added_by="tester")
+
+    removed = await sqlite_instance.remove_seed_groups_from_memory_async(metadata={literal_key: "value"})
+
+    remaining = await sqlite_instance.get_seeds_async()
+    assert [seed.value for seed in remaining] == ["nested"]
+    assert removed == 2
 
 
 async def test_get_message_pieces_id(sqlite_instance: MemoryInterface):
@@ -1491,6 +1807,106 @@ async def test_get_request_from_response_raises_error_for_sequence_less_than_one
 
     with pytest.raises(ValueError, match="The provided request does not have a preceding request \\(sequence < 1\\)."):
         (await sqlite_instance.get_request_from_response_async(response=response_without_request))
+
+
+async def test_get_request_from_response_with_non_zero_starting_sequence(sqlite_instance: MemoryInterface):
+    """Test get_request_from_response when conversation starts at a non-zero sequence number."""
+    conversation_id = str(uuid4())
+
+    pieces = [
+        MessagePiece(
+            role="user",
+            original_value="Starting question at sequence 10",
+            converted_value="Starting question at sequence 10",
+            conversation_id=conversation_id,
+            sequence=10,
+        ),
+        MessagePiece(
+            role="assistant",
+            original_value="Starting answer at sequence 11",
+            converted_value="Starting answer at sequence 11",
+            conversation_id=conversation_id,
+            sequence=11,
+        ),
+    ]
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+
+    conversation = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
+    response = conversation[1]
+
+    request = await sqlite_instance.get_request_from_response_async(response=response)
+
+    assert request.api_role == "user"
+    assert request.sequence == 10
+    assert request.get_value() == "Starting question at sequence 10"
+
+
+async def test_get_request_from_response_with_sequence_gaps(sqlite_instance: MemoryInterface):
+    """Test get_request_from_response when conversation contains gaps in sequence numbers."""
+    conversation_id = str(uuid4())
+
+    pieces = [
+        MessagePiece(
+            role="user",
+            original_value="First question",
+            converted_value="First question",
+            conversation_id=conversation_id,
+            sequence=0,
+        ),
+        MessagePiece(
+            role="assistant",
+            original_value="First answer",
+            converted_value="First answer",
+            conversation_id=conversation_id,
+            sequence=1,
+        ),
+        MessagePiece(
+            role="user",
+            original_value="Question after gap",
+            converted_value="Question after gap",
+            conversation_id=conversation_id,
+            sequence=5,
+        ),
+        MessagePiece(
+            role="assistant",
+            original_value="Answer after gap",
+            converted_value="Answer after gap",
+            conversation_id=conversation_id,
+            sequence=8,
+        ),
+    ]
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+
+    conversation = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
+    response = conversation[3]
+
+    request = await sqlite_instance.get_request_from_response_async(response=response)
+
+    assert request.api_role == "user"
+    assert request.sequence == 5
+    assert request.get_value() == "Question after gap"
+
+
+async def test_get_request_from_response_raises_error_when_no_preceding_messages(sqlite_instance: MemoryInterface):
+    """Test get_request_from_response raises ValueError when no preceding messages exist even if sequence >= 1."""
+    conversation_id = str(uuid4())
+
+    pieces = [
+        MessagePiece(
+            role="assistant",
+            original_value="Orphaned response",
+            converted_value="Orphaned response",
+            conversation_id=conversation_id,
+            sequence=5,
+        ),
+    ]
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+
+    conversation = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
+    response = conversation[0]
+
+    with pytest.raises(ValueError, match="does not have a preceding request"):
+        await sqlite_instance.get_request_from_response_async(response=response)
 
 
 async def test_get_message_pieces_by_attack_identifier_filter(sqlite_instance: MemoryInterface):

@@ -196,9 +196,6 @@ class HTTPTarget(PromptTarget):
         header_dict, http_body, url, http_method, http_version = self.parse_raw_http_request(http_request_w_prompt)
         self._validate_destination(url)
 
-        if "Content-Length" in header_dict:
-            header_dict["Content-Length"] = str(len(http_body))
-
         http2_version = False
         if http_version and "HTTP/2" in http_version:
             http2_version = True
@@ -268,14 +265,12 @@ class HTTPTarget(PromptTarget):
 
         body = ""
 
-        # Split the request into headers and body by finding the double newlines (\n\n).
-        # Preserve body whitespace exactly as provided in the raw request.
+        # Split before normalizing headers so CRLF in non-JSON bodies is preserved.
         # Support both LF and CRLF raw HTTP requests (e.g. copied from Burp).
-        normalized = http_request.replace("\r\n", "\n")
-        request_parts = normalized.split("\n\n", 1)
+        request_parts = re.split(r"\r?\n\r?\n", http_request, maxsplit=1)
 
         # Parse out the header components
-        header_lines = request_parts[0].strip().split("\n")
+        header_lines = request_parts[0].replace("\r\n", "\n").strip().split("\n")
         http_req_info_line = header_lines[0].split(" ")  # get 1st line like POST /url_ending HTTP_VSN
         header_lines = header_lines[1:]  # rest of the raw request is the headers info
 
@@ -284,8 +279,8 @@ class HTTPTarget(PromptTarget):
             key, value = line.split(":", 1)
             headers_dict[key.strip().lower()] = value.strip()
 
-        if "content-length" in headers_dict:
-            del headers_dict["content-length"]
+        for framing_header in ("content-length", "transfer-encoding"):
+            headers_dict.pop(framing_header, None)
 
         if len(request_parts) > 1:
             # Parse as JSON object if it can be parsed that way

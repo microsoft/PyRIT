@@ -5,7 +5,21 @@ from unittest.mock import patch
 
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_session import MemorySession
-from pyrit.models import SeedPrompt
+from pyrit.models import SeedOrigin, SeedPrompt
+
+
+async def test_dataset_origins_aggregate_without_seed_hydration(sqlite_instance: MemoryInterface) -> None:
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            SeedPrompt(value="local", dataset_name="mixed", origin=SeedOrigin.LOCAL),
+            SeedPrompt(value="unknown", dataset_name="mixed", origin=SeedOrigin.UNKNOWN),
+        ],
+        added_by="test",
+    )
+    with patch.object(sqlite_instance, "get_seeds_async", side_effect=AssertionError("No hydration")):
+        summaries = await sqlite_instance.get_seed_dataset_summaries_async()
+    assert summaries[0].origins == ("local", "unknown")
+    assert summaries[0].logical_examples == summaries[0].seed_pieces == 2
 
 
 async def test_get_seed_dataset_summaries_avoids_metadata_row_multiplication(
@@ -28,6 +42,24 @@ async def test_get_seed_dataset_summaries_avoids_metadata_row_multiplication(
 
     def execute(session, statement, *args, **kwargs):
         result = original_execute(session, statement, *args, **kwargs)
+
+        original_mappings = getattr(result, "mappings", None)
+        if original_mappings:
+
+            def mappings_wrapper():
+                m_result = original_mappings()
+                original_all = m_result.all
+
+                def all_rows():
+                    rows = original_all()
+                    captured_rows.extend(rows)
+                    return rows
+
+                m_result.all = all_rows
+                return m_result
+
+            result.mappings = mappings_wrapper
+
         original_all = result.all
 
         def all_rows():

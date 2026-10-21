@@ -48,6 +48,20 @@ describe('getParameterControlKind', () => {
     expect(getParameterControlKind(makeParameter({ name: 'label' }))).toBe('text')
   })
 
+  it('returns multiline for a raw HTTP request template', () => {
+    expect(getParameterControlKind(makeParameter({ name: 'request_template', multiline: true }))).toBe('multiline')
+  })
+
+  it('does not infer multiline behavior from a parameter name', () => {
+    expect(getParameterControlKind(makeParameter({ name: 'http_request' }))).toBe('text')
+  })
+
+  it('returns json for dictionary parameters', () => {
+    expect(getParameterControlKind(
+      makeParameter({ name: 'extra', type_name: 'dict[str, typing.Any]' }),
+    )).toBe('json')
+  })
+
   it('returns structured for parameters with declared variants', () => {
     const param = makeParameter({
       name: 'strategy',
@@ -135,6 +149,15 @@ describe('getInitialFormValues', () => {
       strategy: { type: 'counted', values: { count: '3' } },
     })
   })
+
+  it('formats an initial JSON object for editing', () => {
+    const params = [makeParameter({ name: 'extra', type_name: 'dict[str, typing.Any]' })]
+    expect(getInitialFormValues(params, {
+      extra: { reasoning: { effort: 'high' } },
+    })).toEqual({
+      extra: '{\n  "reasoning": {\n    "effort": "high"\n  }\n}',
+    })
+  })
 })
 
 describe('buildParametersFromForm', () => {
@@ -148,6 +171,27 @@ describe('buildParametersFromForm', () => {
     const params = [makeParameter({ name: 'days', type_name: 'int' })]
     const result = buildParametersFromForm(params, { days: '7' })
     expect(result).toEqual({ ok: true, parameters: { days: 7 } })
+  })
+
+  it('preserves a multiline value verbatim, including a significant trailing blank line', () => {
+    const params = [makeParameter({ name: 'http_request', multiline: true })]
+    // The trailing "\n\n" is the CRLF-CRLF boundary that ends the headers
+    // section of a bodyless raw HTTP request; it must not be trimmed away.
+    const template = 'GET /health HTTP/1.1\nHost: example.com\n\n'
+    const result = buildParametersFromForm(params, { http_request: template })
+    expect(result).toEqual({ ok: true, parameters: { http_request: template } })
+  })
+
+  it('omits an optional multiline value left blank', () => {
+    const params = [makeParameter({ name: 'http_request', multiline: true })]
+    const result = buildParametersFromForm(params, { http_request: '   \n  ' })
+    expect(result).toEqual({ ok: true, parameters: null })
+  })
+
+  it('reports a required multiline value left blank', () => {
+    const params = [makeParameter({ name: 'http_request', required: true, multiline: true })]
+    const result = buildParametersFromForm(params, { http_request: '' })
+    expect(result).toEqual({ ok: false, error: 'http_request is required.' })
   })
 
   it('builds a structured variant recursively', () => {
@@ -182,6 +226,46 @@ describe('buildParametersFromForm', () => {
     const params = [makeParameter({ name: 'ratio', type_name: 'float' })]
     const result = buildParametersFromForm(params, { ratio: '1.5' })
     expect(result).toEqual({ ok: true, parameters: { ratio: 1.5 } })
+  })
+
+  it('parses a valid JSON object', () => {
+    const params = [makeParameter({ name: 'extra', type_name: 'dict[str, typing.Any]' })]
+    const result = buildParametersFromForm(params, {
+      extra: '{"reasoning":{"effort":"high"},"include":["usage"]}',
+    })
+    expect(result).toEqual({
+      ok: true,
+      parameters: {
+        extra: {
+          reasoning: { effort: 'high' },
+          include: ['usage'],
+        },
+      },
+    })
+  })
+
+  it('omits an optional JSON object left empty', () => {
+    const params = [makeParameter({ name: 'extra', type_name: 'dict[str, typing.Any]' })]
+    expect(buildParametersFromForm(params, { extra: '' })).toEqual({
+      ok: true,
+      parameters: null,
+    })
+  })
+
+  it('rejects malformed JSON', () => {
+    const params = [makeParameter({ name: 'extra', type_name: 'dict[str, typing.Any]' })]
+    expect(buildParametersFromForm(params, { extra: '{"reasoning":' })).toEqual({
+      ok: false,
+      error: 'extra must contain valid JSON.',
+    })
+  })
+
+  it.each(['null', '[]', '"text"', '42'])('rejects non-object JSON: %s', (value) => {
+    const params = [makeParameter({ name: 'extra', type_name: 'dict[str, typing.Any]' })]
+    expect(buildParametersFromForm(params, { extra: value })).toEqual({
+      ok: false,
+      error: 'extra must be a JSON object.',
+    })
   })
 
   it('splits a comma-separated list', () => {

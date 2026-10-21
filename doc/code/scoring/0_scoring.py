@@ -107,6 +107,25 @@ print(df.to_string(index=False))
 # accepts a `MessageTrueFalseScorer` or `MessageFloatScaleScorer` and builds a compatible
 # subclass that evaluates a whole conversation.
 #
+# ### Custom scorer migration
+#
+# Concrete judge constructors still accept `chat_target`. Generic `Scorer` and message-family
+# bases accept it with a deprecation warning until 1.4.0. This parameter only validates target
+# requirements; it does not store a target or create a judge. To migrate, remove the target
+# argument from the base call, initialize the message validator through the base, then compose
+# `TargetJudge(target=chat_target, requirements=self.TARGET_REQUIREMENTS)` at the concrete scorer.
+# Keep `_prompt_target` for `get_chat_target()` compatibility. Pass the effective expectation
+# in `JudgmentRequest` from `_score_piece_with_expectation_async`; keep prompt rendering and
+# verdict conversion in the scorer. Call `_capture_judgment_evidence` before sending a prepared
+# request. The request itself does not read ambient context. Raw sources do not receive criteria.
+#
+# **Hook migration is required:** a subclass of a migrated scorer that overrides only
+# `_score_piece_async` raises `TypeError` at construction, including for objective-only use.
+# Move that override and its `super()` call to `_score_piece_with_expectation_async`, and
+# forward the complete expectation. PyRIT does not silently bypass the old override or infer
+# how to combine both hooks. Legacy hooks on unmigrated leaves still work for objective-only
+# calls, but cannot accept other typed criteria.
+#
 # Generic family scorers consume a `Scorable` without assuming that it resolves to a
 # message. Message scorers also support message-specific entry points and policy. Generic
 # wrappers do not inherit those message APIs from their children; use their canonical
@@ -121,6 +140,13 @@ print(df.to_string(index=False))
 # storage and stores its SHA-256 digest. The score remains resolvable after the source file is
 # removed.
 #
+# `ConversationScorable(conversation_id=...)` names the whole current conversation.
+# Each acquisition records exact ordered piece IDs and digests in a conversation observation.
+# A fresh score can include new turns; an earlier snapshot cannot. The wrapper retains any child
+# judgment separately, with its rendered-content anchor. That child can replay its judgment
+# under the existing strict rules. A raw conversation snapshot alone does not make an arbitrary
+# wrapped scorer replayable.
+#
 # Target-backed scorers over text evidence also persist an `Observation` that references and hashes
 # the retained response in the SCORE conversation. The observation and its first score are
 # committed together. Capture requires durable scored evidence. A custom general-scorer template
@@ -134,7 +160,8 @@ print(df.to_string(index=False))
 # response-handler contract. `ScorerTargetResponsePayload` references the scorer's target response;
 # the target need not be a language model. Its kind is `scorer_target_response`.
 # Media observation capture remains deferred until its evidence can be snapshotted.
-# Trace-backed tool observations are covered in [Tool-call scoring](5_tool_call_scorer.ipynb).
+# Trace-backed tool observations are covered in [Tool-call scoring](5_tool_call_scorer.ipynb), and file-system
+# observations in [File-write scoring](6_file_write_scorer.ipynb).
 #
 # Replaying a judgment is different from evaluating a stored run against a new expectation.
 # A retained target judgment answers the original expectation; changing that expectation

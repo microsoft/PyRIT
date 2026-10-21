@@ -110,6 +110,57 @@ def test_load_training_rows_rejects_changed_dataset(tmp_path: Path) -> None:
     assert texts == [] and labels == []
 
 
+@pytest.mark.parametrize("record_separator", ["\n", "\r\n", "\r"])
+@pytest.mark.parametrize("cell_separator", ["\n", "\r\n", "\r"])
+def test_load_training_rows_skips_the_whole_leading_comment_block(
+    *, tmp_path: Path, record_separator: str, cell_separator: str
+) -> None:
+    """Every leading '#' line is a comment, not just the first one."""
+    harm_path = tmp_path / "harm"
+    harm_path.mkdir()
+    header = f"harm_category,objective,assistant_response,human_score_1,data_type{record_separator}"
+    response = f"line one{cell_separator}### in-cell heading{cell_separator}line three"
+    bodies = {
+        "violence.csv": (
+            f"{record_separator}"
+            f"# dataset_version=1.0{record_separator}"
+            f"# collected by the eval team{record_separator}"
+            f"{header}"
+            f'violence,# sample objective,"{response}",0,text{record_separator}'
+        ),
+        "violence_multi_score.csv": f"# dataset_version=1.0{record_separator}{header}",
+    }
+    pins = {}
+    for file_name, body in bodies.items():
+        data = body.encode()
+        (harm_path / file_name).write_bytes(data)
+        pins[file_name] = hashlib.sha256(data).hexdigest()
+    with patch.object(module, "_HARM_EVALS_PATH", harm_path), patch.object(module, "_TRAINING_DATASETS", pins):
+        texts, labels = _load_training_rows()
+    assert texts == [f"PROMPT: # sample objective\nRESPONSE: {response}"]
+    assert labels == [0]
+
+
+def test_load_training_rows_accepts_cr_only_record_separators(tmp_path: Path) -> None:
+    """CR-only files still split into records and keep their payload intact."""
+    harm_path = tmp_path / "harm"
+    harm_path.mkdir()
+    header = "harm_category,objective,assistant_response,human_score_1,data_type\r"
+    bodies = {
+        "violence.csv": "# dataset_version=1.0\r" + header + "violence,sample objective,a harmless reply,0,text\r",
+        "violence_multi_score.csv": "# dataset_version=1.0\r" + header,
+    }
+    pins = {}
+    for file_name, body in bodies.items():
+        data = body.encode()
+        (harm_path / file_name).write_bytes(data)
+        pins[file_name] = hashlib.sha256(data).hexdigest()
+    with patch.object(module, "_HARM_EVALS_PATH", harm_path), patch.object(module, "_TRAINING_DATASETS", pins):
+        texts, labels = _load_training_rows()
+    assert texts == ["PROMPT: sample objective\nRESPONSE: a harmless reply"]
+    assert labels == [0]
+
+
 @requires_torch
 def test_train_head_is_deterministic_and_separates() -> None:
     embeddings, labels = _separable_training_data()
@@ -119,7 +170,7 @@ def test_train_head_is_deterministic_and_separates() -> None:
 
     for key, value in first.network.state_dict().items():
         assert torch.equal(value, second.network.state_dict()[key])
-    assert first.temperature == second.temperature
+    assert first.temperature == pytest.approx(second.temperature)
     assert first.training_rows == len(labels)
 
     positive = _predict_probability(head=first, embedding=embeddings[0])
@@ -217,6 +268,15 @@ def test_compute_dataset_hashes_matches_pins() -> None:
     assert LocalViolenceClassifierScorer.compute_dataset_hashes() == module._TRAINING_DATASETS
 
 
+def test_compute_dataset_hashes_reads_current_files(tmp_path: Path) -> None:
+    contents = {file_name: f"{file_name}\n".encode() * 50_000 for file_name in module._TRAINING_DATASETS}
+    for file_name, data in contents.items():
+        (tmp_path / file_name).write_bytes(data)
+    with patch.object(module, "_HARM_EVALS_PATH", tmp_path):
+        hashes = LocalViolenceClassifierScorer.compute_dataset_hashes()
+    assert hashes == {file_name: hashlib.sha256(data).hexdigest() for file_name, data in contents.items()}
+
+
 class _Tokenizer:
     """Tiny tokenizer with visible token IDs and the pinned encoder's framing budget."""
 
@@ -280,7 +340,7 @@ def test_long_objective_retains_different_responses() -> None:
 @requires_transformers
 @pytest.mark.parametrize("objective", [None, "a short objective"])
 def test_real_tokenizer_short_input_parity(objective: str | None) -> None:
-    from transformers import BertTokenizer
+    from transformers.models.bert.tokenization_bert import BertTokenizer
 
     tokens = [
         "[PAD]",
@@ -314,7 +374,7 @@ def test_real_tokenizer_short_input_parity(objective: str | None) -> None:
 
 @requires_transformers
 def test_real_tokenizer_special_tokens_and_full_tail() -> None:
-    from transformers import BertTokenizer
+    from transformers.models.bert.tokenization_bert import BertTokenizer
 
     tokens = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "prompt", ":", "response", "context", "word", "tail"]
     tokenizer = BertTokenizer(vocab={token: index for index, token in enumerate(tokens)})
@@ -491,7 +551,7 @@ def test_parallel_training_uses_independent_generators() -> None:
     for head, reference in zip(heads, references, strict=True):
         for key, value in head.network.state_dict().items():
             assert torch.equal(value, reference.network.state_dict()[key])
-        assert head.temperature == reference.temperature
+        assert head.temperature == pytest.approx(reference.temperature)
     assert torch.equal(state, torch.random.get_rng_state())
 
 

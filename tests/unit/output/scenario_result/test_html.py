@@ -40,11 +40,12 @@ def _payload(*, piece_value: str = "hello world") -> dict[str, Any]:
             "scorer": None,
             "stats": {
                 "total_techniques": 2,
-                "total_results": 3,
+                "total_objective_executions": 3,
+                "total_attempts": 4,
                 "overall_success_rate": 67,
                 "unique_objectives": 2,
             },
-            "groups": [{"name": "g1", "num_results": 3, "success_rate": 67}],
+            "groups": [{"name": "g1", "num_objective_executions": 3, "num_attempts": 4, "success_rate": 67}],
         },
         "conversations": [
             {
@@ -240,3 +241,31 @@ async def test_html_report_renders_payload_from_real_builders(patch_central_data
     assert "chain-of-thought" in html  # p.reasoning_summary
     assert "ContractScorer" in html  # score.scorer
     assert "rationale-text" in html  # score.score_rationale
+    assert "Target-facing attempts" in html
+    assert "Orchestration attempts" in html
+    assert "Target-facing" in html
+    assert "Orchestration" in html
+
+
+async def test_html_report_renders_role_aware_accounting():
+    target_facing_attack = AttackResult(
+        conversation_id=str(uuid.uuid4()),
+        objective="obj",
+        outcome=AttackOutcome.SUCCESS,
+        attribution_data={"result_role": "target_facing"},
+    )
+    orch_attack = AttackResult(
+        conversation_id=str(uuid.uuid4()),
+        objective="obj",
+        outcome=AttackOutcome.SUCCESS,
+        attribution_data={"result_role": "orchestration"},
+    )
+    result = make_scenario_result(
+        attack_results={"tech": [target_facing_attack, orch_attack]},
+    )
+    overview = JsonScenarioResultPrinter().build(result, view="overview")
+    payload = build_scenario_full_payload(result=result, overview=overview, entries=[])
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert "Target-facing attempts" in html
+    assert "Orchestration attempts" in html

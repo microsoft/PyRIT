@@ -66,7 +66,7 @@ class BinAsciiConverter(WordLevelConverter):
         elif encoding_func == "quoted-printable":
             self._encoded_separator = binascii.b2a_qp(separator.encode("utf-8")).decode("ascii")
         else:
-            self._encoded_separator = ""
+            self._encoded_separator = self._uuencode_chunk(separator)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -75,13 +75,12 @@ class BinAsciiConverter(WordLevelConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
-        return self._create_identifier(
-            params={
-                "word_selection_strategy": self._word_selection_strategy.__class__.__name__,
-                "word_split_separator": self._word_split_separator,
-                "encoding_func": self._encoding_func,
-            }
-        )
+        params = dict(super()._build_identifier().params)
+        if not params["word_selection_strategy_params"]:
+            # Preserve existing identities for parameterless selection strategies.
+            del params["word_selection_strategy_params"]
+        params["encoding_func"] = self._encoding_func
+        return self._create_identifier(params=params)
 
     async def convert_word_async(self, word: str) -> str:
         """
@@ -125,6 +124,9 @@ class BinAsciiConverter(WordLevelConverter):
         """
         Join words appropriately based on the encoding type and selection mode.
 
+        Empty words do not emit UU records, since zero-length records terminate
+        stream decoders. Encoded separators still preserve the original spacing.
+
         Args:
             words (list[str]): The list of encoded words to join.
 
@@ -137,5 +139,11 @@ class BinAsciiConverter(WordLevelConverter):
         if all_words_selected:
             if self._encoding_func in ("hex", "quoted-printable"):
                 return self._encoded_separator.join(words)
-            return "".join(words)  # UUencode handles spaces within encoding
+            encoded_parts: list[str] = []
+            for index, word in enumerate(words):
+                if index:
+                    encoded_parts.append(self._encoded_separator)
+                if word:
+                    encoded_parts.append(word)
+            return "\n".join(encoded_parts)
         return super().join_words(words=words)

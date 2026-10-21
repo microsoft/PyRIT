@@ -66,6 +66,7 @@ def validate_reinitialization_memory(*, memory_db_type: str, environment: dict[s
 def reset_setup_registries() -> None:
     """Discard only PyRIT's setup-owned registries, not persistence singletons."""
     from pyrit.registry import (
+        AttackRegistry,
         AttackTechniqueRegistry,
         ConverterRegistry,
         InitializerRegistry,
@@ -78,6 +79,7 @@ def reset_setup_registries() -> None:
     reset_dynamic_technique_caches()
 
     for registry in (
+        AttackRegistry,
         AttackTechniqueRegistry,
         ConverterRegistry,
         InitializerRegistry,
@@ -186,6 +188,8 @@ async def initialize_pyrit_async(
         raise_on_initializer_error (bool): If True, raise when loading or executing an initializer fails.
             If False, log each failure and continue with the remaining initializers. Defaults to True.
         **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.
+            Azure SQL checks the schema without migrating by default. Pass ``skip_schema_migration=False``
+            to explicitly migrate a non-production database. SQLite retains automatic initialization.
 
     Raises:
         TypeError: If ``env_akv_strict`` is not a bool or seed is not an int or None.

@@ -89,6 +89,10 @@ class MessagePieceType(str, Enum):
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
 
 
+# Fields of a web_search_call input item (all required); the output item has the same ones.
+_WEB_SEARCH_CALL_INPUT_FIELDS: tuple[str, ...] = ("id", "type", "status", "action")
+
+
 class _ResponseToolCallContent(BaseModel):
     model_config = ConfigDict(extra="allow")
     type: str = Field(min_length=1, pattern=r"\S")
@@ -191,8 +195,9 @@ class OpenAIResponseTarget(OpenAITarget):
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
-             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
-                constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
+            httpx_client_kwargs (dict, Optional): Additional ``AsyncOpenAI`` constructor options.
+                For example, ``{"timeout": 180}`` sets a three-minute timeout. Custom ``http_client``
+                instances use HTTPX on SDK 2, or HTTPX2 / legacy HTTPX on SDK 3.
 
 
         Raises:
@@ -347,14 +352,14 @@ class OpenAIResponseTarget(OpenAITarget):
             "arguments": call.function.arguments,
         }
 
-    def _serialize_tool_call(self, piece: MessagePiece) -> dict[str, Any]:
+    def _serialize_tool_call(self, piece: MessagePiece) -> dict[str, Any] | None:
         stored = _ResponseToolCallContent.model_validate_json(piece.converted_value).model_dump(exclude_unset=True)
         if stored.get("type") == "web_search_call":
-            return {
-                "type": stored["type"],
-                "call_id": stored.get("call_id"),
-                "query": stored.get("query"),
-            }
+            # The input item takes exactly the output item's fields, and all of them are required. Older rows
+            # kept only type and id, which the API rejects, so those can't be replayed.
+            if any(stored.get(key) is None for key in _WEB_SEARCH_CALL_INPUT_FIELDS):
+                return None
+            return {key: stored[key] for key in _WEB_SEARCH_CALL_INPUT_FIELDS}
         filtered = {"type": stored["type"]}
         filtered.update({key: stored[key] for key in ("call_id", "query", "name", "arguments") if key in stored})
         return filtered
@@ -377,7 +382,14 @@ class OpenAIResponseTarget(OpenAITarget):
         if data_type == "function_call":
             return _SerializedPiece(item=dict(self._serialize_function_call(piece)), placement="top_level")
         if data_type == "tool_call":
-            return _SerializedPiece(item=self._serialize_tool_call(piece), placement="top_level")
+            tool_call = self._serialize_tool_call(piece)
+            if tool_call is None:
+                logger.warning(
+                    "Skipping web_search_call in message index %d: it lacks the id, status or action the API needs.",
+                    message_index,
+                )
+                return None
+            return _SerializedPiece(item=tool_call, placement="top_level")
         if data_type == "function_call_output":
             return _SerializedPiece(item=dict(self._serialize_function_call_output(piece)), placement="top_level")
         raise ValueError(f"Unsupported data type '{data_type}' in message index {message_index}")
@@ -550,10 +562,11 @@ class OpenAIResponseTarget(OpenAITarget):
         """
         Construct a Message from a Response API response.
 
-        For a truncated response (see ``_is_truncated_response``), empty output sections are
-        tolerated, partial tool/function calls are skipped so an incomplete call cannot re-enter the
-        agentic loop, and a graceful empty text piece is appended when no visible response was
-        produced. Reasoning, any partial text, and structured refusals are always preserved.
+        Empty output sections are tolerated on a truncated response (see
+        ``_is_truncated_response``), where partial tool/function calls are also skipped so an
+        incomplete call cannot re-enter the agentic loop. Whenever no visible response was
+        produced — truncated or completed — a graceful empty text piece is appended. Reasoning,
+        any partial text, and structured refusals are always preserved.
 
         Args:
             response: The Response object from OpenAI SDK.
@@ -592,7 +605,16 @@ class OpenAIResponseTarget(OpenAITarget):
             if piece.original_value and piece.original_value_data_type != "reasoning":
                 has_visible_response = True
 
-        if truncated and not has_visible_response:
+        if not has_visible_response:
+            # Append a graceful empty marker piece and keep any reasoning pieces when a
+            # response with no readable section is found
+            if not truncated:
+                logger.warning(
+                    "Responses output for conversation %s completed with no readable section; "
+                    "returning an empty response marker. Reasoning-only output or a section type "
+                    "PyRIT does not model can cause this.",
+                    request.conversation_id,
+                )
             empty_piece = build_empty_truncated_response(request=request).message_pieces[0]
             extracted_response_pieces.append(empty_piece)
 
@@ -600,7 +622,14 @@ class OpenAIResponseTarget(OpenAITarget):
         # reasoning commonly precedes the actual message in provider output, so
         # retain it for memory/debugging after the actionable response pieces.
         # This must stay ahead of the metadata writes below, which target the first piece.
-        extracted_response_pieces.sort(key=lambda piece: piece.converted_value_data_type == "reasoning")
+        # Hosted tool records (e.g. web_search_call) also precede the answer; keep them after it too. Replay
+        # order is unaffected because tool records are always emitted before the message item.
+        extracted_response_pieces.sort(
+            key=lambda piece: (
+                piece.converted_value_data_type == "reasoning",
+                piece.converted_value_data_type == "tool_call",
+            )
+        )
 
         # Capture token usage and the stop reason in the first piece's metadata. This also runs on
         # the truncated path: usage is populated on token-limit responses and is most valuable
@@ -824,20 +853,9 @@ class OpenAIResponseTarget(OpenAITarget):
             piece_type = "function_call"
 
         elif section_type == MessagePieceType.WEB_SEARCH_CALL:
-            # Forward web_search_call with only API-expected fields
-            # Note: web search may have different field structure than function calls
-            web_search_data = {
-                "type": "web_search_call",
-            }
-            # Add optional fields if they exist
-            if hasattr(section, "call_id") and section.call_id:
-                web_search_data["call_id"] = section.call_id
-            if hasattr(section, "query") and section.query:
-                web_search_data["query"] = section.query
-            if hasattr(section, "id") and section.id:
-                web_search_data["id"] = section.id
-
-            piece_value = json.dumps(web_search_data, separators=(",", ":"))
+            # Keep the whole item (id, status and the search action). The API needs all of it to accept the
+            # call back as input on the next turn.
+            piece_value = json.dumps(section.model_dump(mode="json", exclude_none=True), separators=(",", ":"))
             piece_type = "tool_call"
 
         elif section_type == "custom_tool_call":

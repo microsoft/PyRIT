@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 import copy
 import logging
 from typing import TYPE_CHECKING, cast
@@ -11,6 +10,7 @@ if TYPE_CHECKING:
 
     from pyrit.prompt_target import PromptTarget
 
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.models import (
     ComponentIdentifier,
     Scorable,
@@ -39,8 +39,9 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
     Children are true/false scorers of any evidence kind, so a scorer over a message can be
     composed with one over evidence that is not a message at all.
 
-    Built-in AND, OR, and MAJORITY aggregators opt into order-independent evaluation
-    identity. Duplicates remain significant; custom aggregators and execution stay ordered.
+    Built-in AND, OR, and MAJORITY aggregators, including their raise-on-empty variants,
+    opt into order-independent evaluation identity. Duplicates remain significant;
+    custom aggregators and execution stay ordered.
     """
 
     def __init__(
@@ -87,6 +88,9 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
                 TrueFalseScoreAggregator.AND,
                 TrueFalseScoreAggregator.OR,
                 TrueFalseScoreAggregator.MAJORITY,
+                TrueFalseScoreAggregator.AND_RAISE_ON_EMPTY,
+                TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY,
+                TrueFalseScoreAggregator.MAJORITY_RAISE_ON_EMPTY,
             )
         )
         return self._create_identifier(
@@ -148,13 +152,11 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             list[Score]: ``[]`` when every child is non-applicable; otherwise, a list
                 containing one completed or undetermined aggregate score.
         """
-        score_list_results = await asyncio.gather(
-            *(
-                scorer._score_nested_async(
-                    scorable=scorable, expectation=scorer._select_expectation(expectation=expectation)
-                )
-                for scorer in self._scorers
+        score_list_results = await gather_with_cleanup_async(
+            scorer._score_nested_async(
+                scorable=scorable, expectation=scorer._select_expectation(expectation=expectation)
             )
+            for scorer in self._scorers
         )
         applicable_results = [scores for scores in score_list_results if scores]
         skipped_count = len(score_list_results) - len(applicable_results)

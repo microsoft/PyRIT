@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -174,3 +175,27 @@ class TestBeaverTailsDataset:
                 )
                 == expected
             )
+
+
+async def test_fetch_dataset_merges_repeated_prompts():
+    """BeaverTails repeats a prompt once per response; each prompt should be one seed with merged labels."""
+    flags_a = {"animal_abuse": True, "financial_crime,property_crime,theft": False}
+    flags_b = {"animal_abuse": False, "financial_crime,property_crime,theft": True}
+    rows = [
+        {"prompt": "Same prompt", "response": "a", "category": flags_a, "is_safe": False},
+        {"prompt": "Same prompt", "response": "b", "category": flags_b, "is_safe": False},
+        {"prompt": "Same prompt", "response": "c", "category": flags_b, "is_safe": True},
+        {"prompt": "Other prompt", "response": "d", "category": flags_a, "is_safe": False},
+    ]
+    loader = _BeaverTailsDataset()
+
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
+        dataset = await loader.fetch_dataset_async()
+
+    assert [seed.value for seed in dataset.seeds] == ["Same prompt", "Other prompt"]
+    merged = dataset.seeds[0]
+    assert merged.metadata["beaver_tails_categories"] == "animal_abuse,financial_crime,property_crime,theft"
+    assert json.loads(merged.metadata["beaver_tails_category_flags"]) == {
+        "animal_abuse": True,
+        "financial_crime,property_crime,theft": True,
+    }

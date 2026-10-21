@@ -55,6 +55,7 @@ CORE_TECHNIQUE_NAMES: list[str] = [
 ]
 
 EXTRA_TECHNIQUE_NAMES: list[str] = [
+    "crescendo",
     "pair",
     "skeleton_key",
     "best_of_n",

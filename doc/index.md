@@ -133,7 +133,7 @@ Run security assessments from the command line with `pyrit_scan` or the interact
 pyrit_scan run airt.scam --target openai_chat
 ```
 
-```{iframe} https://commandline.microsoft.com/wp-content/uploads/2026/08/scanner_walkthrough.mp4
+```{iframe} videos/scanner-player.html
 :width: 100%
 :title: PyRIT Scanner walkthrough
 :placeholder: scanner-demo.png
@@ -154,7 +154,7 @@ Start the local web app and give it a try:
 ```bash
 pyrit_backend # serves webapp on http://localhost:8000/
 ```
-```{iframe} https://commandline.microsoft.com/wp-content/uploads/2026/08/CoPyRIT-GUI-walkthrough.mp4
+```{iframe} videos/copyrit-player.html
 :width: 100%
 :title: CoPyRIT GUI walkthrough
 :placeholder: copyrit-demo.png
@@ -200,6 +200,21 @@ Builders, contributors, consumers
 ## Ecosystem
 
 PyRIT is part of a growing community of GenAI security tools, programs, and research. Whether you're shipping AI products, hunting vulnerabilities, or studying the space, here's where to plug in.
+
+::::{card}
+:link: https://discord.gg/9fMpq3tc8u
+
+:::{image} assets/ecosystem/discord.svg
+:alt: Discord
+:class: ecosystem-logo discord-community-logo
+:::
+
+**Join us on Discord**
+
+Ask questions, share what you're building, and chat with the PyRIT team and community.
+
+**Join the conversation &rarr;**
+::::
 
 ### 🧩 Built on PyRIT
 

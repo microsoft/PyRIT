@@ -39,6 +39,7 @@ from typing import Any
 import yaml
 
 from pyrit.common.path import JSON_SCHEMAS_PATH
+from pyrit.common.yaml_helper import safe_load_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ def _load_yaml_schemas() -> dict[str, JsonSchemaDefinition]:
         name = yaml_file.stem
         try:
             with open(yaml_file, encoding="utf-8") as f:
-                data = yaml.safe_load(f)
+                data = safe_load_yaml(f)
         except (OSError, yaml.YAMLError) as e:
             logger.warning(f"Failed to load JSON schema file {yaml_file}: {e}")
             continue

@@ -28,11 +28,13 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    RequestTraceContext,
     construct_response_from_request,
 )
 from pyrit.prompt_target import PromptTarget, limit_requests_per_minute
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,10 @@ class WebSocketCopilotTarget(PromptTarget):
     ``session_id`` and ``conversation_id`` values, enabling Copilot to preserve conversational
     context across multiple turns.
 
+    Request tracing is off by default. With ``TargetTraceConfig(enabled=True)``, each send records
+    a fresh trace context, carries its trace ID in the prompt payload's ``traceId`` field, and sends
+    the ``traceparent`` header on the WebSocket handshake.
+
     Because conversation state is managed entirely on the Copilot server, this target does
     not resend conversation history with each request and does not support programmatic
     inspection or manipulation of that history. At present, there appears to be no supported
@@ -112,6 +118,7 @@ class WebSocketCopilotTarget(PromptTarget):
             BrowserSessionCopilotAuthenticator | CopilotAuthenticator | ManualCopilotAuthenticator | None
         ) = None,
         custom_configuration: TargetConfiguration | None = None,
+        trace_config: TargetTraceConfig | None = None,
     ) -> None:
         """
         Initialize the WebSocketCopilotTarget.
@@ -121,13 +128,18 @@ class WebSocketCopilotTarget(PromptTarget):
                 Defaults to ``wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub``.
             max_requests_per_minute (int | None): Maximum number of requests per minute.
             model_name (str): The model name. Defaults to "copilot".
-            response_timeout_seconds (int): Timeout for receiving responses in seconds. Defaults to 60s.
+            response_timeout_seconds (int): Timeout in seconds for each receive loop. The user-response
+                loop shares one overall budget across streamed messages rather than resetting between
+                messages. The handshake has its own budget. Defaults to 60s.
             authenticator (Authenticator | None): Copilot authentication strategy. Supported
                 implementations are ``BrowserSessionCopilotAuthenticator``,
                 ``CopilotAuthenticator``, and ``ManualCopilotAuthenticator``. If None, a new
                 ``CopilotAuthenticator`` is created.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+            trace_config (TargetTraceConfig | None): Request tracing configuration. Tracing is
+                disabled by default. Enable it only for an endpoint that is known to accept the
+                propagated context.
 
         Raises:
             ValueError: If ``response_timeout_seconds`` is not a positive integer.
@@ -151,6 +163,7 @@ class WebSocketCopilotTarget(PromptTarget):
             endpoint=self._websocket_base_url,
             model_name=model_name,
             custom_configuration=custom_configuration,
+            trace_config=trace_config,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -379,6 +392,7 @@ class WebSocketCopilotTarget(PromptTarget):
         session_id: str,
         copilot_conversation_id: str,
         is_start_of_session: bool,
+        trace_context: RequestTraceContext | None = None,
     ) -> dict[str, Any]:
         """
         Construct the prompt message payload for Copilot WebSocket API.
@@ -391,11 +405,14 @@ class WebSocketCopilotTarget(PromptTarget):
             session_id (str): Copilot session identifier.
             copilot_conversation_id (str): Copilot conversation identifier.
             is_start_of_session (bool): Whether this is the first message in the conversation.
+            trace_context (RequestTraceContext | None): The recorded request trace context. When
+                present, its trace ID is sent as the payload's ``traceId``.
 
         Returns:
             dict: The complete message payload ready to be sent via WebSocket.
         """
-        request_id = trace_id = uuid.uuid4().hex
+        request_id = uuid.uuid4().hex
+        trace_id = trace_context.trace_id if trace_context else request_id
 
         text_parts: list[str] = []
         message_annotations: list[dict[str, Any]] = []
@@ -495,24 +512,29 @@ class WebSocketCopilotTarget(PromptTarget):
         session_id: str,
         copilot_conversation_id: str,
         is_start_of_session: bool,
+        trace_context: RequestTraceContext | None = None,
     ) -> str:
         """
         Establish WebSocket connection, send prompt, and await response.
 
         The method polls for messages, ignoring PARTIAL_RESPONSE streaming updates
         until it receives either FINAL_CONTENT (success), STREAM_END, or UNKNOWN (error).
+        Each input has one receive timeout budget; streaming messages do not reset the
+        response deadline.
 
         Args:
             message_pieces (list[MessagePiece]): List of message pieces containing text and/or images.
             session_id (str): Copilot session identifier.
             copilot_conversation_id (str): Copilot conversation identifier.
             is_start_of_session (bool): Whether this is the first message in the conversation.
+            trace_context (RequestTraceContext | None): The recorded request trace context. When
+                present, it is sent in the payload and as the handshake ``traceparent`` header.
 
         Returns:
             str: The final response text from Copilot.
 
         Raises:
-            TimeoutError: If no response received within the specified timeout period.
+            TimeoutError: If receiving a complete response exceeds the overall timeout period.
             RuntimeError: If WebSocket connection closes unexpectedly, protocol violation occurs,
                 or maximum message iterations exceeded.
         """
@@ -527,14 +549,19 @@ class WebSocketCopilotTarget(PromptTarget):
                 session_id=session_id,
                 copilot_conversation_id=copilot_conversation_id,
                 is_start_of_session=is_start_of_session,
+                trace_context=trace_context,
             ),
         ]
         response = ""
+        connect_options: dict[str, Any] = {}
+        if trace_context:
+            connect_options["additional_headers"] = {"traceparent": trace_context.traceparent}
 
         async with websockets.connect(
             websocket_url,
             open_timeout=self.CONNECTION_TIMEOUT_SECONDS,
             close_timeout=self.CONNECTION_TIMEOUT_SECONDS,
+            **connect_options,
         ) as websocket:
             for input_msg in inputs:
                 payload = self._dict_to_websocket(input_msg)
@@ -544,55 +571,60 @@ class WebSocketCopilotTarget(PromptTarget):
                 max_message_iterations = 1000
                 iteration_count = 0
                 stop_polling = False
+                timeout_message = (
+                    f"Timed out waiting for Copilot response after {self._response_timeout_seconds} seconds."
+                )
+                timeout_scope = asyncio.timeout(self._response_timeout_seconds)
 
-                while not stop_polling:
-                    # Prevent infinite loops (e.g. if Copilot somehow never sends a terminating message)
-                    iteration_count += 1
-                    if iteration_count > max_message_iterations:
-                        raise RuntimeError(
-                            f"Exceeded maximum message iterations ({max_message_iterations}) "
-                            "while waiting for Copilot response."
-                        )
+                try:
+                    async with timeout_scope:
+                        while not stop_polling:
+                            # Prevent infinite loops (e.g. if Copilot somehow never sends a terminating message)
+                            iteration_count += 1
+                            if iteration_count > max_message_iterations:
+                                raise RuntimeError(
+                                    f"Exceeded maximum message iterations ({max_message_iterations}) "
+                                    "while waiting for Copilot response."
+                                )
 
-                    try:
-                        raw_message = await asyncio.wait_for(
-                            websocket.recv(),
-                            timeout=self._response_timeout_seconds,
-                        )
-                    except TimeoutError:
-                        raise TimeoutError(
-                            f"Timed out waiting for Copilot response after {self._response_timeout_seconds} seconds."
-                        ) from None
+                            try:
+                                raw_message = await websocket.recv()
+                            except TimeoutError:
+                                raise TimeoutError(timeout_message) from None
 
-                    if raw_message is None:
-                        raise RuntimeError(
-                            "WebSocket connection closed unexpectedly: received None from websocket.recv()"
-                        )
+                            if raw_message is None:
+                                raise RuntimeError(
+                                    "WebSocket connection closed unexpectedly: received None from websocket.recv()"
+                                )
 
-                    message_str = raw_message if isinstance(raw_message, str) else raw_message.decode("utf-8")
-                    parsed_messages = self._parse_raw_message(message_str)
+                            message_str = raw_message if isinstance(raw_message, str) else raw_message.decode("utf-8")
+                            parsed_messages = self._parse_raw_message(message_str)
 
-                    for msg_type, content in parsed_messages:
-                        if msg_type in (
-                            CopilotMessageType.UNKNOWN,
-                            CopilotMessageType.FINAL_CONTENT,
-                            CopilotMessageType.STREAM_END,
-                        ):
-                            stop_polling = True
-                            # Not breaking here to process all messages in this batch,
-                            # possibly including FINAL_CONTENT
+                            for msg_type, content in parsed_messages:
+                                if msg_type in (
+                                    CopilotMessageType.UNKNOWN,
+                                    CopilotMessageType.FINAL_CONTENT,
+                                    CopilotMessageType.STREAM_END,
+                                ):
+                                    stop_polling = True
+                                    # Not breaking here to process all messages in this batch,
+                                    # possibly including FINAL_CONTENT
 
-                            if msg_type == CopilotMessageType.FINAL_CONTENT:
-                                response = content
-                            elif msg_type == CopilotMessageType.UNKNOWN:
-                                logger.debug("Received unknown or empty message type.")
+                                    if msg_type == CopilotMessageType.FINAL_CONTENT:
+                                        response = content
+                                    elif msg_type == CopilotMessageType.UNKNOWN:
+                                        logger.debug("Received unknown or empty message type.")
 
-                        # PING is Copilot's acknowledgment of the protocol handshake (first message in inputs[])
-                        # It should arrive after the handshake, not after a user prompt
-                        # If we're processing a user prompt and receive PING, something is wrong - ignore it
-                        # and keep polling for the actual FINAL_CONTENT response
-                        elif msg_type == CopilotMessageType.PING and not is_user_input:
-                            stop_polling = True
+                                # PING is Copilot's acknowledgment of the protocol handshake (first message in inputs[])
+                                # It should arrive after the handshake, not after a user prompt
+                                # If we're processing a user prompt and receive PING, something is wrong - ignore it
+                                # and keep polling for the actual FINAL_CONTENT response
+                                elif msg_type == CopilotMessageType.PING and not is_user_input:
+                                    stop_polling = True
+                except TimeoutError:
+                    if timeout_scope.expired():
+                        raise TimeoutError(timeout_message) from None
+                    raise
 
             return response
 
@@ -702,6 +734,7 @@ class WebSocketCopilotTarget(PromptTarget):
                 session_id=session_id,
                 copilot_conversation_id=copilot_conversation_id,
                 is_start_of_session=is_start_of_session,
+                trace_context=RequestTraceContext.from_metadata(message.get_piece().prompt_metadata),
             )
 
             if not response_text or not response_text.strip():

@@ -63,12 +63,18 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
                 accepts text assistant responses.
 
         Raises:
-            ValueError: If ``excerpt_threshold`` is not finite or is outside [0.0, 1.0].
+            ValueError: If ``excerpt_threshold`` is not finite or is outside [0.0, 1.0], if ``n`` is
+                not a positive integer, or if ``min_prompt_len`` is negative.
         """
         # The excerpt rule returns this value as the score itself, so it must be a valid
         # float_scale value; otherwise only a verbatim leak would fail, and only mid-scan.
         if not math.isfinite(excerpt_threshold) or not 0.0 <= excerpt_threshold <= 1.0:
             raise ValueError(f"excerpt_threshold must be finite and between 0.0 and 1.0, got {excerpt_threshold}")
+        # Same reasoning as above: a negative minimum can never gate the excerpt rule, so a
+        # one-character response that happens to appear in the system prompt would be scored
+        # as a near-total leak.
+        if not isinstance(min_prompt_len, int) or isinstance(min_prompt_len, bool) or min_prompt_len < 0:
+            raise ValueError(f"min_prompt_len must be a non-negative integer, got {min_prompt_len!r}")
         self._n = n
         self._excerpt_threshold = excerpt_threshold
         self._min_prompt_len = min_prompt_len

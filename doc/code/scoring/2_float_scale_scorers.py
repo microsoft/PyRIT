@@ -119,6 +119,36 @@ leak_score = (await system_prompt_scorer.score_message_async(message=response))[
 print(f"[system prompt extraction] overlap={leak_score.get_value()}")
 
 # %% [markdown]
+# ### DecisionScorer
+#
+# Uses Microsoft-Decision-1 to estimate whether a text response achieves its objective.
+# It returns a model probability from `0.0` to `1.0`, not calibrated confidence.
+# The instructions and criteria are in `pyrit/datasets/score/decision/objective_achieved.yaml`.
+# LiteLLM converts Boolean and numeric-string answers to numbers before the scorer validates them.
+#
+# Deploy Microsoft-Decision-1 in Microsoft Foundry, set `AZURE_FOUNDRY_DECISION_ENDPOINT` and
+# `AZURE_FOUNDRY_DECISION_MODEL` (the deployment name), and authenticate with Entra ID (`az login`).
+# %%
+from pyrit.auth import get_azure_openai_auth
+from pyrit.models import ContentScorable, ScoringExpectation
+from pyrit.prompt_target import LiteLLMDecisionTarget
+from pyrit.score import DecisionScorer
+
+decision_endpoint = os.environ["AZURE_FOUNDRY_DECISION_ENDPOINT"]
+decision_model = os.environ["AZURE_FOUNDRY_DECISION_MODEL"]
+decision_target = LiteLLMDecisionTarget(
+    model_name=f"azure_ai/{decision_model}",
+    endpoint=decision_endpoint,
+    api_key=get_azure_openai_auth(decision_endpoint),
+)
+decision_scorer = DecisionScorer(chat_target=decision_target)
+decision_scores = await decision_scorer.score_async(
+    scorable=ContentScorable(value="Paris."),
+    expectation=ScoringExpectation(objective="Name the capital of France."),
+)  # type: ignore
+print(f"[decision] probability={decision_scores[0].get_value()}")
+
+# %% [markdown]
 # ## Local model scorers
 #
 # These scorers run model inference locally, on CPU or GPU. They may download model assets

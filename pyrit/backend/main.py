@@ -21,12 +21,14 @@ from starlette.types import Scope
 
 import pyrit
 from pyrit import _compatibility
+from pyrit.backend.authentication_policy import resolve_authentication_policy
 from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
 from pyrit.backend.middleware.auth import EntraAuthMiddleware
 from pyrit.backend.middleware.compatibility import CompatibilityAPI, CompatibilityMiddleware
 from pyrit.backend.middleware.request_size import RequestSizeLimitMiddleware
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import (
+    analytics,
     attacks,
     auth,
     configuration,
@@ -37,10 +39,13 @@ from pyrit.backend.routes import (
     labels,
     media,
     message_sends,
+    operations,
+    scenario_presets,
     scenarios,
     scorers,
     scores,
     targets,
+    techniques,
     version,
 )
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
@@ -63,6 +68,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     3. ``PYRIT_CONFIG_FILE`` local path or Azure Blob URI when set
     """
     app.state.compatibility_id = await asyncio.to_thread(_compatibility.get_compatibility_id)
+    app.state.authentication_policy = resolve_authentication_policy()
+    if app.state.authentication_policy.enabled and not app.state.authentication_policy.admin_group_id:
+        logger.warning("ENTRA_ADMIN_GROUP_ID is not set; authenticated users cannot access administrator routes.")
+    logger.info("Incoming-request authentication mode: %s", app.state.authentication_policy.mode)
     configuration_file_service = ConfigurationFileService(config_file_value=os.getenv("PYRIT_CONFIG_FILE"))
     app.state.configuration_file_service = configuration_file_service
     runtime = RuntimeLifecycle(app=app, source=configuration_file_service)
@@ -98,8 +107,8 @@ register_error_handlers(app)
 app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(RuntimeAdmissionMiddleware)
 
-# Microsoft Graph-backed authentication (PKCE — no client secrets needed)
-# Disabled if tenant/client configuration is absent; enabled deployments require allowed groups.
+# Microsoft Graph-backed authentication (PKCE — no client secrets needed).
+# The immutable process-start policy is validated by the application lifespan.
 app.add_middleware(EntraAuthMiddleware)
 app.add_middleware(CompatibilityMiddleware)
 
@@ -120,14 +129,18 @@ app.add_middleware(SecurityHeadersMiddleware, dev_mode=DEV_MODE)
 
 
 # Include API routes
+app.include_router(analytics.router, prefix="/api", tags=["analytics"])
 app.include_router(attacks.router, prefix="/api", tags=["attacks"])
 app.include_router(message_sends.router, prefix="/api", tags=["attacks"])
 app.include_router(configuration.router, prefix="/api", tags=["config"])
 app.include_router(targets.router, prefix="/api", tags=["targets"])
 app.include_router(scorers.router, prefix="/api", tags=["scorers"])
 app.include_router(converters.router, prefix="/api", tags=["converters"])
+app.include_router(techniques.router, prefix="/api", tags=["techniques"])
 app.include_router(datasets.router, prefix="/api", tags=["datasets"])
+app.include_router(operations.router, prefix="/api", tags=["operations"])
 app.include_router(scenarios.router, prefix="/api", tags=["scenarios"])
+app.include_router(scenario_presets.router, prefix="/api", tags=["scenario-presets"])
 app.include_router(initializers.router, prefix="/api", tags=["initializers"])
 app.include_router(labels.router, prefix="/api", tags=["labels"])
 app.include_router(health.router, prefix="/api", tags=["health"])

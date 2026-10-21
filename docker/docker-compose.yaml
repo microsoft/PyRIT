@@ -48,7 +48,7 @@ services:
     image: pyrit:latest
     container_name: pyrit-gui
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ../assets:/app/assets
       - ~/.pyrit/.env:/home/vscode/.pyrit/.env:ro
@@ -57,6 +57,7 @@ services:
       - ~/.azure:/home/vscode/.azure
     environment:
       - PYRIT_MODE=gui
+      - PYRIT_AUTH_MODE=local
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/health || exit 1"]

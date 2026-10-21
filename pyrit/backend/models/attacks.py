@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, computed_field, field_serializer, model_v
 
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.common import (
+    MAX_IDENTIFIER_LENGTH,
     MAX_ITEMS,
     IdentifierStr,
     LabelDict,
@@ -32,6 +33,7 @@ from pyrit.models import (
     PromptResponseError,
     Score,
 )
+from pyrit.models.component_spec import TargetBinding
 from pyrit.models.results.attack_result import normalize_legacy_attack_attribution
 
 
@@ -43,6 +45,7 @@ class TargetInfo(BaseModel):
     endpoint: str | None = Field(None, description="Target endpoint URL")
     model_name: str | None = Field(None, description="Model or deployment name")
     identifier_hash: str = Field(..., description="Canonical target identifier hash")
+    binding: TargetBinding | None = None
 
 
 class ScoreView(Score):
@@ -185,7 +188,7 @@ class MessagePieceView(MessagePiece):
         return cls.model_construct(**data)
 
 
-class MessageView(Message):
+class MessageView(Message[MessagePieceView]):
     """
     API view of a ``pyrit.models.Message``.
 
@@ -214,7 +217,7 @@ class MessageView(Message):
         return self.message_pieces[0].timestamp if self.message_pieces else datetime.now(UTC)
 
 
-class AttackSummary(AttackResult):
+class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
     """
     API view of a ``pyrit.models.AttackResult``.
 
@@ -230,6 +233,9 @@ class AttackSummary(AttackResult):
     human_score: ScoreView | None = None
 
     # Mapper-populated presentation fields (need external stats / metadata).
+    operation_name: str | None = Field(
+        default=None, description="Current saved Operation name, or the historical name for legacy activity"
+    )
     message_count: int = Field(default=0, description="Total number of messages in the attack")
     last_message_preview: str | None = Field(default=None, description="Preview of the last message")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Attack creation timestamp")
@@ -290,6 +296,7 @@ class AttackSummary(AttackResult):
             endpoint=cast("str | None", target_id.params.get("endpoint") or None),
             model_name=cast("str | None", target_id.params.get("model_name") or None),
             identifier_hash=target_id.hash,
+            binding=TargetBinding.from_metadata(self.metadata),
         )
 
     @computed_field  # type: ignore[prop-decorator]
@@ -384,6 +391,7 @@ class MessagePieceRequest(BaseModel):
         description="Registry IDs of converters already applied, in execution order, including duplicates. "
         "Requires converted_value. Use an empty list for manual edits.",
     )
+    applied_converter_provenance: list[str | None] | None = Field(None, max_length=MAX_ITEMS)
     mime_type: IdentifierStr | None = Field(None, description="MIME type for media content")
     prompt_metadata: dict[IdentifierStr, Any] | None = Field(
         None,
@@ -414,6 +422,11 @@ class MessagePieceRequest(BaseModel):
             raise ValueError("converted_value_data_type requires converted_value")
         if self.applied_converter_ids is not None and self.converted_value is None:
             raise ValueError("applied_converter_ids requires converted_value")
+        if self.applied_converter_provenance is not None and (
+            self.applied_converter_ids is None
+            or len(self.applied_converter_provenance) != len(self.applied_converter_ids)
+        ):
+            raise ValueError("applied_converter_provenance must match applied_converter_ids")
         return self
 
 
@@ -433,7 +446,9 @@ class _AttackAttributionInput(BaseModel):
     """Shared first-class attribution input with temporary legacy label aliases."""
 
     operator: str | None = Field(None, max_length=128, description="Operator responsible for the attack")
-    operation: str | None = Field(None, max_length=128, description="Operation associated with the attack")
+    # TODO(PyRIT 1.4): Remove with Operation name attribution.
+    operation: str | None = Field(None, max_length=128, description="Deprecated saved Operation name; use operation_id")
+    operation_id: uuid.UUID | None = Field(None, description="Saved Operation reference, or unassigned")
     labels: LabelDict | None = Field(None, description="Arbitrary user-defined labels for filtering")
 
     @model_validator(mode="before")
@@ -481,6 +496,7 @@ class CreateAttackRequest(_AttackAttributionInput):
     """
 
     name: TextStr | None = Field(None, description="Attack name/label")
+    target_binding: TargetBinding | None = None
     target_registry_name: IdentifierStr | None = Field(
         None, description="Target registry name, or None for a saved unbound attack"
     )
@@ -591,7 +607,7 @@ ConversationMessageRequest = MessageRequest
 
 
 class SaveConversationRequest(_AttackAttributionInput):
-    """Save a complete draft as a new conversation, without sending it."""
+    """Save a complete draft without sending it, optionally reusing unsent history."""
 
     save_id: uuid.UUID
     destination: Literal["same_attack", "new_attack"]
@@ -600,8 +616,11 @@ class SaveConversationRequest(_AttackAttributionInput):
     source_conversation_id: uuid.UUID | None = None
     expected_objective: str | None = None
     objective: str | None = Field(None, description="Omit to keep the destination's objective unchanged")
-    target_registry_name: str | None = None
+    target_registry_name: IdentifierStr | None = None
+    target_binding: TargetBinding | None = None
     messages: list[MessageRequest] = Field(default_factory=list)
+    reuse_unsent_conversation: bool = False
+    expected_source_piece_ids: list[uuid.UUID] | None = None
 
     @model_validator(mode="after")
     def _validate_destination(self) -> "SaveConversationRequest":
@@ -615,6 +634,13 @@ class SaveConversationRequest(_AttackAttributionInput):
             raise ValueError("Same attack requires attack_result_id; New attack must not supply it")
         if (self.source_attack_result_id is None) != (self.source_conversation_id is None):
             raise ValueError("Both source attack and source conversation are required together")
+        if self.reuse_unsent_conversation and (
+            self.destination != "same_attack"
+            or self.source_attack_result_id != self.attack_result_id
+            or self.source_conversation_id is None
+            or self.expected_source_piece_ids is None
+        ):
+            raise ValueError("Reusing unsent history requires the same source attack and an expected piece snapshot")
         if self.objective is not None:
             self.objective = self.objective.strip()
         for message in self.messages:
@@ -683,6 +709,7 @@ class AddMessageRequest(MessageRequest):
         None,
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
+    target_binding: TargetBinding | None = None
     converter_ids: list[IdentifierStr] | None = Field(
         None,
         max_length=MAX_ITEMS,
@@ -699,6 +726,18 @@ class AddMessageRequest(MessageRequest):
         min_length=1,
         max_length=MAX_ITEMS,
         description="Ordered registry-backed converter pipelines to apply to the response.",
+    )
+    start_token: str = Field(
+        default="⟪",
+        min_length=1,
+        max_length=MAX_IDENTIFIER_LENGTH,
+        description="Opening marker for request and response converter pipelines",
+    )
+    end_token: str = Field(
+        default="⟫",
+        min_length=1,
+        max_length=MAX_IDENTIFIER_LENGTH,
+        description="Closing marker for request and response converter pipelines",
     )
     target_conversation_id: IdentifierStr = Field(
         ...,

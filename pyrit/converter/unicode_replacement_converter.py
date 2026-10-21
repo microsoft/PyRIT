@@ -36,13 +36,11 @@ class UnicodeReplacementConverter(WordLevelConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
-        return self._create_identifier(
-            params={
-                "word_selection_strategy": self._word_selection_strategy.__class__.__name__,
-                "word_split_separator": self._word_split_separator,
-                "encode_spaces": self.encode_spaces,
-            }
-        )
+        params = dict(super()._build_identifier().params)
+        if not params["word_selection_strategy_params"]:
+            del params["word_selection_strategy_params"]
+        params["encode_spaces"] = self.encode_spaces
+        return self._create_identifier(params=params)
 
     async def convert_word_async(self, word: str) -> str:
         """
@@ -54,7 +52,11 @@ class UnicodeReplacementConverter(WordLevelConverter):
         Returns:
             str: The converted word.
         """
-        return "".join(f"\\u{ord(ch):04x}" for ch in word)
+        # A \u escape holds exactly four hex digits, so characters outside the Basic Multilingual
+        # Plane are written as their UTF-16 surrogate pair. "surrogatepass" keeps lone surrogates
+        # (valid in a Python str) as their own code unit instead of raising.
+        code_units = word.encode("utf-16-be", errors="surrogatepass")
+        return "".join(f"\\u{int.from_bytes(code_units[i : i + 2], 'big'):04x}" for i in range(0, len(code_units), 2))
 
     def join_words(self, words: list[str]) -> str:
         """

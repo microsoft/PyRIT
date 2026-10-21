@@ -15,6 +15,43 @@ Testing is an art to get right! But here are some best practices in terms of uni
 
 Not all of our current tests follow these practices (we're working on it!) But for some good examples, see [test_tts_send_prompt_file_save_async](../../tests/unit/prompt_target/target/test_tts_target.py), which has many of these best practices incorporated in the test.
 
+## Async timing and cancellation
+
+Use events to coordinate concurrent operations and assert their ordering or concurrency bounds.
+Timeouts that only prevent a test from hanging should allow for busy CI runners, rather than
+acting as performance assertions.
+
+For isolation tests, hold one operation at an explicit gate and observe the other operation
+reaching its intended milestone before releasing that gate. Wait for unrelated persistence or
+finalization separately, rather than including it in a short deadline for the behavior under test.
+
+When observing an operation's cancellation or cleanup, use `wait_for_completion_async` from
+`unit.async_utils`. Unlike `asyncio.wait_for`, its watchdog does not send another cancellation
+request to the operation when the wait expires. Release blocked workers and drain owned tasks
+in `finally` so a failed assertion does not leave background work behind.
+
+For deadline tests, expire a real `asyncio.Timeout` with `reschedule` once the operation reaches
+the intended pending await. Check the configured timeout arguments, cancellation, cleanup, and
+original outcome. This avoids short wall-clock deadlines expiring during unrelated setup.
+
+## Windows event loops
+
+Windows unit tests keep a native Proactor event loop for each test. Each loop uses
+a private TCP socket pair for thread wakeups. Normal closure can leave these
+connections in `TIME_WAIT`, which can exhaust ephemeral ports during the full suite
+and fail a later test before its body runs.
+
+The unit-test loop factory uses abortive close only for those two internal sockets
+when the loop closes. Application sockets, subprocess support, cancellation, and
+function-scoped loop isolation stay unchanged. Do not share loops between tests or
+retry loop creation to hide socket allocation failures.
+
+Both coroutine tests and synchronous tests with async fixtures use the factory.
+The suite requires pytest-asyncio 1.4 or later and overrides its internal
+`_asyncio_loop_factory` fixture because the public loop-factories hook does not
+cover fixture-only runners in 1.4. Regression tests check both paths, so a plugin
+upgrade that changes this fixture contract fails explicitly.
+
 ## SQLite memory fixtures
 
 `sqlite_instance` stays function-scoped. Each test gets a fresh in-memory database and results directory, and its SQLite singleton and CentralMemory registrations are restored afterward. The fixture owns disposal of its memory instance instead of registering process-exit cleanup callbacks for every test.

@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 from collections.abc import Callable, Generator, Sequence
 from typing import Any
 
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 
@@ -59,6 +59,9 @@ async def batch_task_async(
     """
     Perform provided task in batches and validate parameters using helpers.
 
+    A failed or cancelled task stops later batches and cancels and drains unfinished
+    tasks in its batch before propagating. Completed results and side effects remain.
+
     Args:
         prompt_target(PromptTarget): Target to validate
         batch_size (int): Batch size
@@ -91,7 +94,7 @@ async def batch_task_async(
                 task_kwargs[task_argument] = task_args[arg_index][batch_index]
             tasks.append(task_func(**task_kwargs))
 
-        batch_results = await asyncio.gather(*tasks)
+        batch_results = await gather_with_cleanup_async(tasks)
         responses.extend(batch_results)
 
     return responses

@@ -27,6 +27,7 @@ from pyrit.backend.services.configuration_file_service import (
     ConfigurationFileService,
 )
 from pyrit.backend.services.environment_file_service import EnvironmentFileConflictError, EnvironmentFileService
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.exceptions import KeyVaultInitializationException
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
@@ -110,7 +111,7 @@ def _storage_unavailable() -> HTTPException:
 def _live_reinitialization_enabled(content: str) -> bool:
     """Return the explicit saved opt-in without executing configuration code."""
     try:
-        value = yaml.safe_load(content)
+        value = safe_load_yaml(content)
         return isinstance(value, dict) and ConfigurationLoader.from_dict(value).enable_live_reinitialization
     except (TypeError, ValueError, yaml.YAMLError):
         return False

@@ -1,6 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
+import json
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,8 +12,8 @@ import pytest
 
 from pyrit.auth import BrowserSessionCopilotAuthenticator, CopilotAuthenticator
 from pyrit.memory import MemoryInterface
-from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target import WebSocketCopilotTarget
+from pyrit.models import Message, MessagePiece, RequestTraceContext
+from pyrit.prompt_target import TargetTraceConfig, WebSocketCopilotTarget
 from pyrit.prompt_target.websocket_copilot_target import CopilotMessageType
 
 
@@ -71,9 +74,10 @@ def make_message_piece():
 @pytest.fixture
 def make_annotation():
     def _make(
+        *,
         doc_id: str,
         file_name: str,
-        file_type: str = None,
+        file_type: str | None = None,
     ) -> dict:
         if file_type is None:
             file_type = file_name.split(".")[-1].lower() if "." in file_name else "png"
@@ -619,6 +623,92 @@ class TestConnectAndSend:
                     is_start_of_session=True,
                 )
 
+    async def test_connect_and_send_overall_timeout_during_stream(
+        self, mock_authenticator, sample_text_pieces, mock_websocket
+    ):
+        target = WebSocketCopilotTarget(authenticator=mock_authenticator, response_timeout_seconds=1)
+        receive_count = 0
+
+        async def receive_message():
+            nonlocal receive_count
+            receive_count += 1
+            if receive_count == 1:
+                return '{"type":6}\x1e'  # Handshake PING
+
+            await asyncio.sleep(0.05)
+            return '{"type":1}\x1e'  # Non-terminating partial response
+
+        mock_websocket.recv = AsyncMock(side_effect=receive_message)
+
+        with patch("websockets.connect", return_value=mock_websocket):
+            with pytest.raises(TimeoutError, match="Timed out waiting for Copilot response after 1 seconds"):
+                await asyncio.wait_for(
+                    target._connect_and_send_async(
+                        message_pieces=sample_text_pieces,
+                        session_id="session_123",
+                        copilot_conversation_id="conv_456",
+                        is_start_of_session=True,
+                    ),
+                    timeout=3,
+                )
+
+        assert receive_count > 2
+        mock_websocket.__aexit__.assert_awaited_once()
+
+    async def test_connect_and_send_preserves_unrelated_timeout_error(
+        self, mock_authenticator, sample_text_pieces, mock_websocket
+    ):
+        target = WebSocketCopilotTarget(authenticator=mock_authenticator, response_timeout_seconds=5)
+        mock_websocket.recv = AsyncMock(return_value='{"type":6}\x1e')
+
+        with (
+            patch("websockets.connect", return_value=mock_websocket),
+            patch.object(target, "_parse_raw_message", side_effect=TimeoutError("Message parsing timed out")),
+            pytest.raises(TimeoutError, match="Message parsing timed out"),
+        ):
+            await target._connect_and_send_async(
+                message_pieces=sample_text_pieces,
+                session_id="session_123",
+                copilot_conversation_id="conv_456",
+                is_start_of_session=True,
+            )
+
+        mock_websocket.__aexit__.assert_awaited_once()
+
+    async def test_connect_and_send_cancellation_closes_websocket(
+        self, mock_authenticator, sample_text_pieces, mock_websocket
+    ):
+        target = WebSocketCopilotTarget(authenticator=mock_authenticator, response_timeout_seconds=5)
+        receive_started = asyncio.Event()
+        receive_count = 0
+
+        async def receive_message():
+            nonlocal receive_count
+            receive_count += 1
+            if receive_count == 1:
+                return '{"type":6}\x1e'  # Handshake PING
+
+            receive_started.set()
+            return await asyncio.Future()
+
+        mock_websocket.recv = AsyncMock(side_effect=receive_message)
+
+        with patch("websockets.connect", return_value=mock_websocket):
+            task = asyncio.create_task(
+                target._connect_and_send_async(
+                    message_pieces=sample_text_pieces,
+                    session_id="session_123",
+                    copilot_conversation_id="conv_456",
+                    is_start_of_session=True,
+                )
+            )
+            await receive_started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        mock_websocket.__aexit__.assert_awaited_once()
+
     async def test_connect_and_send_none_response(self, mock_authenticator, sample_text_pieces, mock_websocket):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
         mock_websocket.recv = AsyncMock(return_value=None)
@@ -913,3 +1003,79 @@ class TestSendPromptAsync:
             " custom_configuration parameter accordingly",
         ):
             await target.send_prompt_async(message=message)
+
+
+def _sent_prompt_payload(websocket: AsyncMock) -> dict:
+    prompt = websocket.send.call_args_list[1].args[0]
+    return json.loads(prompt.rstrip("\x1e"))
+
+
+def _final_content_websocket(mock_websocket: AsyncMock) -> AsyncMock:
+    mock_websocket.recv = AsyncMock(
+        side_effect=[
+            '{"type":6}\x1e',
+            '{"type":2,"item":{"result":{"message":"Hello from Copilot"}}}\x1e',
+        ]
+    )
+    return mock_websocket
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestRequestTracing:
+    async def test_trace_config_sends_and_records_fresh_context_per_request_async(
+        self, mock_authenticator, make_message_piece, mock_memory
+    ) -> None:
+        target = WebSocketCopilotTarget(authenticator=mock_authenticator, trace_config=TargetTraceConfig(enabled=True))
+        target._memory = mock_memory
+        sent: list[tuple[dict, dict]] = []
+
+        for conversation_id in ("conv_a", "conv_b"):
+            websocket = _final_content_websocket(AsyncMock())
+            websocket.__aenter__ = AsyncMock(return_value=websocket)
+            websocket.__aexit__ = AsyncMock(return_value=None)
+            request = Message(message_pieces=[make_message_piece("Hello", conversation_id=conversation_id)])
+            with patch("websockets.connect", return_value=websocket) as connect:
+                await target.send_prompt_async(message=request)
+
+            link = RequestTraceContext.from_metadata(request.get_piece().prompt_metadata)
+            assert link is not None
+            assert connect.call_args.kwargs["additional_headers"] == {"traceparent": link.traceparent}
+            payload = _sent_prompt_payload(websocket)["arguments"][0]
+            assert payload["traceId"] == link.trace_id
+            assert payload["message"]["requestId"] != link.trace_id
+            sent.append((connect.call_args.kwargs["additional_headers"], payload))
+
+        assert sent[0][0] != sent[1][0]
+        assert sent[0][1]["traceId"] != sent[1][1]["traceId"]
+
+    @pytest.mark.parametrize("trace_config", [None, TargetTraceConfig(enabled=False)])
+    async def test_tracing_is_disabled_by_default_and_clears_stale_links_async(
+        self, mock_authenticator, make_message_piece, mock_memory, mock_websocket, trace_config
+    ) -> None:
+        target = WebSocketCopilotTarget(authenticator=mock_authenticator, trace_config=trace_config)
+        target._memory = mock_memory
+        stale = RequestTraceContext(traceparent=f"00-{'1' * 32}-{'2' * 16}-01")
+        request = Message(message_pieces=[make_message_piece("Hello")])
+        request.get_piece().prompt_metadata.update(stale.to_metadata())
+
+        with patch("websockets.connect", return_value=_final_content_websocket(mock_websocket)) as connect:
+            await target.send_prompt_async(message=request)
+
+        assert "additional_headers" not in connect.call_args.kwargs
+        payload = _sent_prompt_payload(mock_websocket)["arguments"][0]
+        assert payload["traceId"] != stale.trace_id
+        assert re.fullmatch(r"[0-9a-f]{32}", payload["traceId"])
+        assert RequestTraceContext.from_metadata(request.get_piece().prompt_metadata) is None
+
+    async def test_trace_context_is_not_copied_to_the_response_async(
+        self, mock_authenticator, make_message_piece, mock_memory, mock_websocket
+    ) -> None:
+        target = WebSocketCopilotTarget(authenticator=mock_authenticator, trace_config=TargetTraceConfig(enabled=True))
+        target._memory = mock_memory
+        request = Message(message_pieces=[make_message_piece("Hello")])
+
+        with patch("websockets.connect", return_value=_final_content_websocket(mock_websocket)):
+            responses = await target.send_prompt_async(message=request)
+
+        assert RequestTraceContext.from_metadata(request.get_piece().prompt_metadata) is not None
+        assert RequestTraceContext.from_metadata(responses[0].get_piece().prompt_metadata) is None

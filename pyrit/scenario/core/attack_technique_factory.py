@@ -20,11 +20,15 @@ from __future__ import annotations
 import copy
 import inspect
 import logging
+from dataclasses import replace
+from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
+from pyrit.common import get_global_default_values
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -35,6 +39,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Identifiable,
     PromptDataType,
+    SeedGroupRequirements,
     SeedIdentifier,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -47,14 +52,68 @@ from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemProm
 from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
+from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pyrit.converter import Converter
     from pyrit.executor.attack import AttackStrategy
     from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _capture_creation(method: Callable[_P, _R]) -> Callable[_P, _R]:
+    """
+    Capture supplied factory arguments before a helper expands them into runtime settings.
+
+    Returns:
+        Callable[_P, _R]: The original callable with creation-input capture.
+    """
+    signature = inspect.signature(method)
+
+    @wraps(method)
+    def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        name = wrapped.__name__
+        arguments = signature.bind(*args, **kwargs).arguments
+        owner = arguments.pop(next(iter(signature.parameters)))
+        calls = []
+        if name == "__init__":
+            call = type(owner).__name__
+        elif isinstance(owner, AttackTechniqueFactory):
+            calls = owner.get_creation_calls()
+            call = name
+        else:
+            call = f"{owner.__name__}.{name}"
+        result = method(*args, **kwargs)
+        factory = result if isinstance(result, AttackTechniqueFactory) else owner
+        if not isinstance(factory, AttackTechniqueFactory):
+            raise TypeError("Creation capture requires an AttackTechniqueFactory constructor or copy method")
+        factory._creation_calls = [*calls, (call, _copy_creation_value(arguments))]
+        return result
+
+    return wrapped
+
+
+def _copy_creation_value(value: Any) -> Any:
+    """
+    Copy input containers without copying live components.
+
+    Returns:
+        Any: Independent containers with live values retained by reference.
+    """
+    if isinstance(value, dict):
+        return {key: _copy_creation_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_creation_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_copy_creation_value(item) for item in value)
+    return value
 
 
 class AttackTechniqueFactory(Identifiable):
@@ -70,6 +129,9 @@ class AttackTechniqueFactory(Identifiable):
     construction time, catching typos and incompatible parameter names early.
     """
 
+    _creation_calls: list[tuple[str, dict[str, Any]]]
+
+    @_capture_creation
     def __init__(
         self,
         *,
@@ -83,6 +145,7 @@ class AttackTechniqueFactory(Identifiable):
         adversarial_seed_prompt: SeedPrompt | str | None = None,
         adversarial_prompt_template: str | SeedPrompt | None = None,
         seed_technique: AttackTechniqueSeedGroup | None = None,
+        requirements: TechniqueRequirements | None = None,
         uses_adversarial: bool | None = None,
         supports_additional_request_converters: bool = False,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
@@ -126,6 +189,8 @@ class AttackTechniqueFactory(Identifiable):
                 resolved target like ``adversarial_system_prompt``.
             seed_technique: Optional technique seed group attached to created
                 techniques.
+            requirements: Target and incoming dataset requirements. Attack-class
+                target requirements always apply in addition to these declarations.
             uses_adversarial: Whether this technique drives an adversarial
                 chat during execution. ``None`` auto-derives from the attack
                 class constructor signature and seed-technique shape.
@@ -171,6 +236,7 @@ class AttackTechniqueFactory(Identifiable):
         )
         self._adversarial_system_prompt_prefix: str | None = None
         self._seed_technique = seed_technique
+        self._requirements = requirements or TechniqueRequirements()
         self._supports_additional_request_converters = supports_additional_request_converters
         self._scorer_override_policy = scorer_override_policy
         self._use_score_as_feedback = use_score_as_feedback
@@ -188,6 +254,7 @@ class AttackTechniqueFactory(Identifiable):
         self._validate_score_feedback_override()
 
     @classmethod
+    @_capture_creation
     def with_simulated_conversation(
         cls,
         *,
@@ -208,6 +275,7 @@ class AttackTechniqueFactory(Identifiable):
         uses_adversarial: bool | None = None,
         supports_additional_request_converters: bool = False,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
+        requirements: TechniqueRequirements | None = None,
     ) -> AttackTechniqueFactory:
         """
         Alternative constructor that builds a ``SeedSimulatedConversation`` inline.
@@ -269,6 +337,8 @@ class AttackTechniqueFactory(Identifiable):
                 incompatible with the attack's ``attack_scoring_config`` type
                 annotation. Defaults to ``WARN``. Forwarded to the factory
                 constructor.
+            requirements: Optional requirements override. Defaults to strict
+                objective-only dataset input; technique-owned seeds are not restricted.
 
         Returns:
             AttackTechniqueFactory: A new factory whose ``seed_technique`` is the
@@ -350,6 +420,7 @@ class AttackTechniqueFactory(Identifiable):
             uses_adversarial=uses_adversarial,
             supports_additional_request_converters=supports_additional_request_converters,
             scorer_override_policy=scorer_override_policy,
+            requirements=requirements or TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True)),
         )
 
     def _derive_uses_adversarial(self) -> bool:
@@ -465,6 +536,14 @@ class AttackTechniqueFactory(Identifiable):
         """The registry name for this technique."""
         return self._name
 
+    def get_creation_kwargs(self) -> dict[str, Any]:
+        """Return a copy of the supplied factory arguments, without adding defaults."""
+        return _copy_creation_value(self._creation_calls[-1][1])
+
+    def get_creation_calls(self) -> list[tuple[str, dict[str, Any]]]:
+        """Return the supplied constructor and copy-method inputs, without resolved defaults."""
+        return [(call, _copy_creation_value(arguments)) for call, arguments in self._creation_calls]
+
     @property
     def description(self) -> str | None:
         """Short human-readable summary of what the technique does, or None."""
@@ -500,6 +579,11 @@ class AttackTechniqueFactory(Identifiable):
     def seed_technique(self) -> AttackTechniqueSeedGroup | None:
         """The optional technique seed group."""
         return self._seed_technique
+
+    @property
+    def requirements(self) -> TechniqueRequirements:
+        """The declared requirements, in addition to the attack-class target contract."""
+        return self._requirements
 
     def can_append_request_converter(self, *, converter_type: type[Converter]) -> bool:
         """
@@ -592,6 +676,7 @@ class AttackTechniqueFactory(Identifiable):
         """Whether callers may safely append request converters to this technique."""
         return self._supports_additional_request_converters
 
+    @_capture_creation
     def with_attack_kwargs(self, *, attack_kwargs: dict[str, Any]) -> AttackTechniqueFactory:
         """
         Return a copy with the supplied attack constructor arguments merged in.
@@ -607,19 +692,69 @@ class AttackTechniqueFactory(Identifiable):
         """
         merged_attack_kwargs = dict(self._attack_kwargs)
         merged_attack_kwargs.update(attack_kwargs)
-        return AttackTechniqueFactory(
-            name=self._name,
-            attack_class=self._attack_class,
-            description=self._description,
-            technique_tags=self._technique_tags,
-            attack_kwargs=merged_attack_kwargs,
-            adversarial_chat=self._adversarial_chat,
-            adversarial_system_prompt=self._adversarial_system_prompt,
-            adversarial_seed_prompt=self._adversarial_seed_prompt,
-            seed_technique=self._seed_technique,
-            uses_adversarial=self._uses_adversarial,
-            supports_additional_request_converters=self._supports_additional_request_converters,
-            scorer_override_policy=self._scorer_override_policy,
+        factory = copy.copy(self)
+        factory._identifier = None
+        factory._technique_tags = list(self._technique_tags)
+        factory._attack_kwargs = merged_attack_kwargs
+        factory._validate_kwargs()
+        return factory
+
+    def with_extra_turns(self, *, turns: int) -> AttackTechniqueFactory:
+        """
+        Return a factory with the new-turn budget extended by stored assistant turns.
+
+        Args:
+            turns (int): Number of assistant turns already in the history.
+
+        Returns:
+            AttackTechniqueFactory: A modified copy, or this factory if no extension applies.
+
+        Raises:
+            ValueError: If turns is negative or the effective max_turns is not an integer.
+        """
+        if turns < 0:
+            raise ValueError("Extra turns must be nonnegative")
+        if not turns or "max_turns" not in self._compatibility_helper.accepted_params:
+            return self
+        if "max_turns" in self._attack_kwargs:
+            configured = self._attack_kwargs["max_turns"]
+        else:
+            found, configured = get_global_default_values().get_default_value(
+                class_type=self._attack_class, parameter_name="max_turns"
+            )
+            if not found:
+                configured = inspect.signature(self._attack_class.__init__).parameters["max_turns"].default
+        if not isinstance(configured, int) or isinstance(configured, bool):
+            raise ValueError(f"Factory '{self._name}' requires an integer max_turns to extend history")
+        return self.with_attack_kwargs(attack_kwargs={"max_turns": configured + turns})
+
+    def with_prepended_history_converters(self, *, enabled: bool) -> AttackTechniqueFactory:
+        """
+        Return a copy with request conversion of prepended history enabled or disabled.
+
+        Existing role scope and history formatting are preserved when enabled.
+
+        Args:
+            enabled (bool): Whether to apply request converters to prepended messages.
+
+        Returns:
+            AttackTechniqueFactory: A configured copy, or this factory when enabled.
+
+        Raises:
+            ValueError: If the attack cannot accept a prepended-conversation policy.
+        """
+        if enabled:
+            return self
+        if "prepended_conversation_config" not in self._compatibility_helper.accepted_params:
+            raise ValueError(f"Factory '{self._name}' cannot configure prepended history conversion")
+        config = self._attack_kwargs.get("prepended_conversation_config")
+        if config is None:
+            _, config = get_global_default_values().get_default_value(
+                class_type=self._attack_class, parameter_name="prepended_conversation_config"
+            )
+        config = config or PrependedConversationConfig()
+        return self.with_attack_kwargs(
+            attack_kwargs={"prepended_conversation_config": replace(config, apply_converters_to_roles=[])}
         )
 
     @property
@@ -627,6 +762,7 @@ class AttackTechniqueFactory(Identifiable):
         """The required ``attack_scoring_config`` subtype, or ``None`` if any config is accepted."""
         return self._compatibility_helper.scoring_config_type
 
+    @_capture_creation
     def with_adversarial_system_prompt_prefix(self, prefix: str) -> AttackTechniqueFactory:
         """
         Return a copy of this factory with static guidance layered onto its adversarial prompt.
@@ -733,8 +869,8 @@ class AttackTechniqueFactory(Identifiable):
                 into the factory or supplied via
                 ``attack_converter_config_override``).  Unlike
                 ``attack_converter_config_override`` these are additive and never
-                replace the existing converters.  Only forwarded if the attack
-                class constructor accepts ``attack_converter_config``.
+                replace the existing converters.  Requires the attack class
+                constructor to accept ``attack_converter_config``.
 
         Returns:
             A fresh AttackTechnique with a newly-constructed attack technique.
@@ -743,9 +879,18 @@ class AttackTechniqueFactory(Identifiable):
             ValueError: If a create-time adversarial chat is supplied while the
                 factory already baked one, if ``scorer_override_policy`` is RAISE
                 and the scenario scorer is incompatible with the attack's type annotation,
-                or if ``use_score_as_feedback`` is set but no scoring config reaches the attack.
+                or if ``use_score_as_feedback`` is set but no scoring config reaches the attack,
+                or if ``extra_request_converters`` is non-empty but the attack class doesn't
+                accept ``attack_converter_config``.
         """
         create_time_target: PromptTarget | None = adversarial_chat
+
+        if extra_request_converters and "attack_converter_config" not in self._compatibility_helper.accepted_params:
+            # These come from the caller's technique_converters, so dropping them would run a different setup.
+            raise ValueError(
+                f"Factory '{self._name}': {self._attack_class.__name__} does not accept 'attack_converter_config', "
+                f"so the extra request converters can't be applied."
+            )
 
         if create_time_target is not None and self._adversarial_chat is not None:
             raise ValueError(
@@ -765,6 +910,7 @@ class AttackTechniqueFactory(Identifiable):
             )
 
         kwargs = dict(self._attack_kwargs)
+        self._requirements.validate_target(target=objective_target, attack_class=self._attack_class)
         kwargs["objective_target"] = objective_target
 
         accepted_params = self._compatibility_helper.accepted_params
@@ -809,7 +955,7 @@ class AttackTechniqueFactory(Identifiable):
                 kwargs["attack_converter_config"] = converter_config
 
         attack = self._attack_class(**kwargs)
-        return AttackTechnique(attack=attack, seed_technique=self._seed_technique)
+        return AttackTechnique(attack=attack, seed_technique=self._seed_technique, requirements=self._requirements)
 
     def _apply_score_feedback_override(self, *, attack_scoring_config: AttackScoringConfig) -> AttackScoringConfig:
         """
@@ -1017,6 +1163,8 @@ class AttackTechniqueFactory(Identifiable):
             params["adversarial_system_prompt_prefix"] = self._adversarial_system_prompt_prefix
         if self._use_score_as_feedback is not None:
             params["use_score_as_feedback"] = self._use_score_as_feedback
+        if self._requirements.adaptation is not None:
+            params["seed_group_adaptation"] = self._requirements.adaptation
 
         children: dict[str, Any] = {}
         if self._seed_technique is not None:

@@ -30,7 +30,7 @@ import inspect
 import logging
 import threading
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -49,6 +49,25 @@ if TYPE_CHECKING:
     from pyrit.models.parameter import ComponentType, Parameter
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class Reconstructable(Protocol):
+    """A component that can supply private constructor inputs."""
+
+    def get_reconstruction_parameters(self) -> dict[str, object]:
+        """Return server-only inputs; these must not be serialized as credentials."""
+        ...
+
+
+@runtime_checkable
+class ReconstructionContext(Protocol):
+    """A component that shares source-owned operational context."""
+
+    def attach_reconstruction_source(self, source: object) -> None:
+        """Attach context without changing the source's behavioral settings."""
+        ...
+
 
 T = TypeVar("T")
 InstanceT = TypeVar("InstanceT", bound="Identifiable")
@@ -720,6 +739,37 @@ class Registry(ABC, Generic[T, MetadataT]):
         )
         return cls(**resolved)
 
+    def create_instance_from_external_input(self, name: str, *, params: Mapping[str, object]) -> T:
+        """
+        Build a configured instance from external input such as a REST or CLI request.
+
+        Unlike ``create_instance``, which serves in-process callers that may pass any
+        Python object, this accepts only parameters with ``Parameter.is_external_input``
+        and registry references given by name. Anything else is rejected before
+        construction; the constructor still validates the values it receives.
+
+        Args:
+            name (str): The catalog name to build.
+            params (Mapping[str, object]): Constructor arguments from the external caller.
+
+        Returns:
+            T: The constructed instance.
+
+        Raises:
+            KeyError: If the name is not registered.
+            ValueError: If an argument is not a valid constructor parameter or not an
+                external input, a registry reference cannot be resolved, or a value
+                cannot be coerced.
+        """
+        cls = self.get_class(name)
+        resolved = resolve_constructor_args(
+            cls=cls,
+            raw_args=dict(params),
+            identifier_type=self._identifier_type(),
+            external_input=True,
+        )
+        return cls(**resolved)
+
     def __contains__(self, name: str) -> bool:
         """
         Check if a name is registered.
@@ -794,6 +844,7 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
         type_name: str,
         params: Mapping[str, object] | None = None,
         registry_metadata: dict[str, Any] | None = None,
+        external_input: bool = False,
     ) -> InstanceT:
         """
         Build and store a configured instance under an explicit name.
@@ -804,13 +855,106 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
             params (Mapping[str, object] | None): Constructor arguments.
             registry_metadata (dict[str, Any] | None): Per-entry metadata to store
                 with the instance.
+            external_input (bool): Whether ``params`` come from an external caller, in which
+                case the instance is built with ``create_instance_from_external_input``.
+                Defaults to False.
 
         Returns:
             InstanceT: The constructed and registered instance.
         """
         self.instances.validate_name_available(name)
-        instance = self.create_instance(type_name, **dict(params) if params is not None else {})
+        args = dict(params) if params is not None else {}
+        instance = (
+            self.create_instance_from_external_input(type_name, params=args)
+            if external_input
+            else self.create_instance(type_name, **args)
+        )
         self.instances.register(instance, name=name, metadata=registry_metadata)
+        return instance
+
+    def resolve_source(self, *, name: str, identifier_hash: str) -> InstanceT:
+        """
+        Resolve an unchanged source, allowing only an unambiguous rename.
+
+        Returns:
+            InstanceT: The matching registered source.
+
+        Raises:
+            ValueError: If the source is missing, changed, or ambiguous.
+        """
+        source = self.instances.get(name)
+        if source is not None:
+            if source.get_identifier().hash != identifier_hash:
+                raise ValueError(f"Source instance '{name}' has changed")
+            return source
+        matches = [
+            entry.instance
+            for entry in self.instances.get_all_instances()
+            if entry.instance.get_identifier().hash == identifier_hash
+        ]
+        if len(matches) != 1:
+            raise ValueError(f"Source instance '{name}' is missing or ambiguous")
+        return matches[0]
+
+    def get_reconstruction_parameters(self, source: InstanceT) -> dict[str, object]:
+        """
+        Select declared constructor inputs from an opt-in source.
+
+        Returns:
+            dict[str, object]: Independent input containers with shared live dependencies.
+
+        Raises:
+            ValueError: If the source does not support reconstruction.
+        """
+        if not isinstance(source, Reconstructable):
+            raise ValueError(f"{type(source).__name__} does not support reconstruction")
+        inputs = source.get_reconstruction_parameters()
+        parameters = derive_parameters(cls=type(source), identifier_type=self._identifier_type())
+        retained = getattr(source, "_reconstruction_parameters", {})
+        unsupported = set(retained) - {parameter.name for parameter in parameters}
+        if unsupported:
+            raise ValueError(f"The source uses undeclared constructor inputs: {', '.join(sorted(unsupported))}")
+        from pyrit.common.constructor_capture import copy_constructor_inputs
+
+        return {
+            parameter.name: copy_constructor_inputs(inputs[parameter.name])
+            for parameter in parameters
+            if parameter.name in inputs
+        }
+
+    def recreate_instance(
+        self, *, source: InstanceT, params: Mapping[str, object], external_input: bool = False
+    ) -> InstanceT:
+        """
+        Build an independent component; never change or register the source.
+
+        Returns:
+            InstanceT: The new component, owned by the caller.
+
+        Raises:
+            ValueError: If overrides are unknown or the source class is unavailable.
+        """
+        inputs = self.get_reconstruction_parameters(source)
+        unknown = set(params) - {
+            parameter.name for parameter in derive_parameters(cls=type(source), identifier_type=self._identifier_type())
+        }
+        if unknown:
+            raise ValueError(f"Unknown constructor parameters: {', '.join(sorted(unknown))}")
+        if external_input:
+            params = resolve_constructor_args(
+                cls=type(source),
+                raw_args=dict(params),
+                identifier_type=self._identifier_type(),
+                external_input=True,
+            )
+        with self._catalog_lock:
+            self._ensure_discovered()
+            names = sorted(name for name, cls in self._classes.items() if cls is type(source))
+        if not names:
+            raise ValueError("The source component's class is no longer registered")
+        instance = self.create_instance(names[0], **{**inputs, **params})
+        if isinstance(instance, ReconstructionContext):
+            instance.attach_reconstruction_source(source)
         return instance
 
 

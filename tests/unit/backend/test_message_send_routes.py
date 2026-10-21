@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Single-conversation asynchronous submission and read-only status contracts."""
+"""Asynchronous submission and read-only status contracts."""
 
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
+from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH
 from pyrit.backend.models.message_sends import MessageSendStatus
 from pyrit.backend.services.attack_service import AttackService
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
@@ -60,16 +61,36 @@ def test_submission_returns_accepted_handle(
         "state": "queued",
         "error": None,
         "failure_stage": None,
+        "count": 1,
+        "conversations": [],
     }
     sender.submit_async.assert_awaited_once()
+    admitted = sender.submit_async.call_args.kwargs["request"]
+    assert admitted.count == 1
+    assert admitted.request_converter_mode == "shared"
+
+
+@pytest.mark.parametrize("count", [1, 2, 10])
+@pytest.mark.parametrize("mode", ["shared", "per_branch"])
+def test_repeat_options_are_admitted(
+    *, client: TestClient, sender: MagicMock, payload: dict[str, object], count: int, mode: str
+) -> None:
+    response = client.post(
+        "/api/attacks/attack/message-sends", json={**payload, "count": count, "request_converter_mode": mode}
+    )
+    assert response.status_code == 202
+    admitted = sender.submit_async.call_args.kwargs["request"]
+    assert admitted.count == count
+    assert admitted.request_converter_mode == mode
 
 
 @pytest.mark.parametrize(
     ("override", "value"),
     [
-        ("count", 2),
-        ("count", 1),
-        ("request_converter_mode", "shared"),
+        *[("count", value) for value in [0, -1, 11, True, 1.5, "2", None]],
+        ("request_converter_mode", "unknown"),
+        ("request_converter_configurations", []),
+        ("unrecognized_option", True),
         ("submission_id", ""),
         ("submission_id", " "),
         ("submission_id", "s" * 129),
@@ -79,7 +100,7 @@ def test_submission_returns_accepted_handle(
         ("send", False),
     ],
 )
-def test_invalid_or_later_phase_fields_are_not_admitted(
+def test_invalid_fields_are_not_admitted(
     *, client: TestClient, sender: MagicMock, payload: dict[str, object], override: str, value: object
 ) -> None:
     payload[override] = value
@@ -126,3 +147,14 @@ def test_missing_handle_is_not_recreated(*, client: TestClient, sender: MagicMoc
     assert response.status_code == 404
     assert "do not resend" in response.json()["detail"]
     sender.submit_async.assert_not_awaited()
+
+
+def test_oversized_identifiers_are_rejected_before_the_services(
+    *, client: TestClient, sender: MagicMock, payload: dict[str, object]
+) -> None:
+    oversized = "a" * (MAX_IDENTIFIER_LENGTH + 1)
+
+    assert client.post(f"/api/attacks/{oversized}/message-sends", json=payload).status_code == 422
+    assert client.get(f"/api/attacks/attack/message-sends/{oversized}").status_code == 422
+    sender.submit_async.assert_not_awaited()
+    sender.get_status_async.assert_not_awaited()

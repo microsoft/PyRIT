@@ -5,21 +5,33 @@
 
 import asyncio
 import functools
-from typing import ClassVar
+import random
+import uuid
+from typing import Any, ClassVar
 from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
+import sqlalchemy as sa
+from unit.mocks import MockPromptTarget, make_scenario_identifier, make_scenario_result
 
-from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
+from pyrit.analytics import compute_scenario_statistics
+from pyrit.datasets import SeedDatasetProvider
+from pyrit.executor.attack import AttackStrategy, PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
     AttackResult,
+    AttackResultSelection,
     AttackSeedGroup,
     ComponentIdentifier,
+    Message,
+    Operation,
+    ScenarioRunPlanGroupKind,
     ScenarioRunState,
+    SeedDataset,
+    SeedGroupRequirements,
     SeedObjective,
     SeedPrompt,
 )
@@ -28,16 +40,21 @@ from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
+    DatasetFetchPolicy,
+    DatasetSource,
+    IncompatibleTechniqueError,
+    IncompatibleTechniquePolicy,
     ScenarioIdentifier,
     ScenarioResult,
+    TechniqueRequirements,
 )
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack, build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import Scorer, SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
-from tests.unit.mocks import make_scenario_identifier, make_scenario_result
 
 # Reusable test scorer identifier
 _TEST_SCORER_ID = ComponentIdentifier(
@@ -54,7 +71,7 @@ async def save_attack_results_to_memory_async(attack_results):
 
 def _make_identifiable_mock_attack() -> MagicMock:
     """Create a mock attack with a valid canonical identifier for run-plan construction."""
-    attack = MagicMock()
+    attack = MagicMock(spec=AttackStrategy)
     attack.get_identifier.return_value = ComponentIdentifier(
         class_name="MockAttack",
         class_module="tests.unit.scenario.core.test_scenario",
@@ -107,6 +124,8 @@ def mock_atomic_attacks():
     mock_attack.get_attack_scoring_config.return_value = MagicMock()
 
     run1 = MagicMock(spec=AtomicAttack)
+    run1.group_kind = ScenarioRunPlanGroupKind.ATTACK
+    run1.seed_group_adaptations = {}
     run1.atomic_attack_name = "attack_run_1"
     run1.display_group = "attack_run_1"
     run1._attack = mock_attack
@@ -115,6 +134,8 @@ def mock_atomic_attacks():
     type(run1).objectives = PropertyMock(return_value=["objective1"])
 
     run2 = MagicMock(spec=AtomicAttack)
+    run2.group_kind = ScenarioRunPlanGroupKind.ATTACK
+    run2.seed_group_adaptations = {}
     run2.atomic_attack_name = "attack_run_2"
     run2.display_group = "attack_run_2"
     run2._attack = mock_attack
@@ -123,6 +144,8 @@ def mock_atomic_attacks():
     type(run2).objectives = PropertyMock(return_value=["objective2"])
 
     run3 = MagicMock(spec=AtomicAttack)
+    run3.group_kind = ScenarioRunPlanGroupKind.ATTACK
+    run3.seed_group_adaptations = {}
     run3.atomic_attack_name = "attack_run_3"
     run3.display_group = "attack_run_3"
     run3._attack = mock_attack
@@ -196,6 +219,170 @@ class ConcreteScenario(Scenario):
     async def _build_atomic_attacks_async(self, *, context):
         return self._atomic_attacks_to_return
 
+    def _resolve_scenario_techniques(self, *, scenario_techniques: Any) -> list[ScenarioTechnique]:
+        if not self._atomic_attacks_to_return and scenario_techniques is None:
+            return []
+        return super()._resolve_scenario_techniques(scenario_techniques=scenario_techniques)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_unknown_operation_rejected_before_scenario_build_async(
+    sqlite_instance: MemoryInterface, mock_objective_target
+) -> None:
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(args={"objective_target": mock_objective_target, "operation_id": uuid.uuid4()})
+    with patch.object(scenario, "_build_atomic_attacks_async", new_callable=AsyncMock) as build:
+        with pytest.raises(LookupError, match="Operation"):
+            await scenario.initialize_async()
+        assert build.await_count == 0
+    assert await sqlite_instance.get_scenario_results_async() == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("assigned", [False, True])
+async def test_resume_retains_stored_id_or_legacy_null_async(
+    sqlite_instance: MemoryInterface, mock_objective_target, assigned: bool
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Scenario"))
+    operation_id = operation.id if assigned else None
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(args={"objective_target": mock_objective_target, "operation_id": operation_id})
+    await scenario.initialize_async()
+    stored = (await sqlite_instance.get_scenario_results_async())[0]
+    assert stored.operation_id == operation_id
+    resumed = ConcreteScenario(version=1, scenario_result_id=str(stored.id))
+    resumed.set_params_from_args(args={"objective_target": mock_objective_target})
+    await resumed.initialize_async()
+    assert resumed._operation_id == operation_id
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_fresh_run_resolves_deprecated_operation_name_async(
+    sqlite_instance: MemoryInterface, mock_objective_target
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(
+        args={"objective_target": mock_objective_target, "memory_labels": {"operation": " ENGAGEMENT", "other": "x"}}
+    )
+    with pytest.warns(DeprecationWarning, match="operation_id"):
+        await scenario.initialize_async()
+    stored = (await sqlite_instance.get_scenario_results_async())[0]
+    assert (stored.operation_id, stored.labels) == (operation.id, {"other": "x", "operation": " ENGAGEMENT"})
+    resumed = ConcreteScenario(version=1, scenario_result_id=str(stored.id))
+    resumed.set_params_from_args(
+        args={"objective_target": mock_objective_target, "memory_labels": {"operation": "Engagement"}}
+    )
+    await resumed.initialize_async()
+    assert resumed._operation_id == operation.id
+    assert resumed._build_scenario_context(seed_groups_by_dataset={}).memory_labels == {"operation": " ENGAGEMENT"}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("explicit", [False, True])
+async def test_global_operation_name_applies_only_without_supplied_attribution_async(
+    sqlite_instance: MemoryInterface, mock_objective_target, explicit: bool
+) -> None:
+    global_operation = await sqlite_instance.add_operation_async(Operation(name="Global"))
+    chosen = await sqlite_instance.add_operation_async(Operation(name="Chosen"))
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(
+        args={"objective_target": mock_objective_target, "operation_id": chosen.id if explicit else None}
+    )
+    with patch.dict("os.environ", {"GLOBAL_MEMORY_LABELS": '{"operation": "global"}'}):
+        await scenario.initialize_async()
+    assert scenario._operation_id == (chosen.id if explicit else global_operation.id)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_unknown_operation_name_is_kept_without_an_id_async(
+    sqlite_instance: MemoryInterface, mock_objective_target
+) -> None:
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(args={"objective_target": mock_objective_target, "memory_labels": {"operation": "x"}})
+    with pytest.warns(DeprecationWarning, match="operation_id"):
+        await scenario.initialize_async()
+    stored = (await sqlite_instance.get_scenario_results_async())[0]
+    assert (stored.operation_id, stored.labels) == (None, {"operation": "x"})
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_resume_rejects_a_different_operation_name_async(
+    sqlite_instance: MemoryInterface, mock_objective_target
+) -> None:
+    await sqlite_instance.add_operation_async(Operation(name="Other"))
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+    await scenario.initialize_async()
+    stored = (await sqlite_instance.get_scenario_results_async())[0]
+    resumed = ConcreteScenario(version=1, scenario_result_id=str(stored.id))
+    resumed.set_params_from_args(
+        args={"objective_target": mock_objective_target, "memory_labels": {"operation": "Other"}}
+    )
+    with pytest.raises(ValueError, match="immutable"):
+        await resumed.initialize_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_legacy_resume_dispatches_null_without_rewriting_name_async(
+    sqlite_instance: MemoryInterface, mock_objective_target
+) -> None:
+    scenario = ConcreteScenario(version=1)
+    scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+    await scenario.initialize_async()
+    stored = (await sqlite_instance.get_scenario_results_async())[0]
+    with sqlite_instance.engine.begin() as connection:
+        connection.execute(
+            sa.text("UPDATE ScenarioResultEntries SET labels = :labels WHERE id = :id"),
+            {"labels": '{"operation": "Legacy", "other": "retained"}', "id": str(stored.id)},
+        )
+    resumed = ConcreteScenario(version=1, scenario_result_id=str(stored.id))
+    resumed.set_params_from_args(
+        args={"objective_target": mock_objective_target, "memory_labels": {"operation": "Legacy", "other": "retained"}}
+    )
+    await resumed.initialize_async()
+    assert resumed._build_scenario_context(seed_groups_by_dataset={}).memory_labels == {
+        "operation": "Legacy",
+        "other": "retained",
+    }
+    assert resumed._operation_id is None
+    retained = (await sqlite_instance.get_scenario_results_async())[0]
+    assert retained.labels == {"operation": "Legacy", "other": "retained"}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("retry", [False, True])
+async def test_scenario_persists_id_on_real_atomic_results_async(sqlite_instance: MemoryInterface, retry: bool) -> None:
+    target = MockPromptTarget()
+    original_send = target._send_prompt_to_target_async
+    send_count = 0
+
+    async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        nonlocal send_count
+        send_count += 1
+        if retry and send_count == 1:
+            raise RuntimeError("Transient trial failure")
+        return await original_send(normalized_conversation=normalized_conversation)
+
+    target._send_prompt_to_target_async = AsyncMock(side_effect=send_async)
+    operation = await sqlite_instance.add_operation_async(Operation(name="Scenario"))
+    atomic = AtomicAttack(
+        atomic_attack_name="direct",
+        attack_technique=AttackTechnique(attack=PromptSendingAttack(objective_target=target)),
+        seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="objective")])],
+        operation_id=str(operation.id).upper(),
+    )
+    scenario = ConcreteScenario(version=1, atomic_attacks_to_return=[atomic])
+    scenario.set_params_from_args(args={"objective_target": target, "operation_id": operation.id, "max_retries": 1})
+    await scenario.initialize_async()
+    result = await scenario.run_async()
+    assert result.operation_id == operation.id
+    assert len(result.attack_results["direct"]) == (2 if retry else 1)
+    assert all(row.operation_id == operation.id for row in result.attack_results["direct"])
+    rows = await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS)
+    assert len(rows) == (2 if retry else 1)
+    assert all(row.operation_id == operation.id for row in rows)
+
 
 def test_scenario_base_class_is_abstract():
     """The base ``Scenario`` declares ``_build_atomic_attacks_async`` abstract and can't be instantiated directly."""
@@ -218,6 +405,170 @@ def test_subclass_without_build_atomic_attacks_async_is_abstract():
 def test_subclass_implementing_build_atomic_attacks_async_is_concrete():
     """Implementing ``_build_atomic_attacks_async`` clears the abstract marker so the subclass is instantiable."""
     assert not ConcreteScenario.__abstractmethods__
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScenarioCompatibilityPolicy:
+    @pytest.mark.parametrize("change", ["none", "planned", "unsampled"])
+    @pytest.mark.parametrize("include_baseline", [False, True])
+    async def test_strict_resume_checks_only_sampled_groups_async(self, *, change: str, include_baseline: bool) -> None:
+        class MatrixScenario(ConcreteScenario):
+            BASELINE_ATTACK_POLICY = BaselineAttackPolicy.Enabled
+
+            async def _resolve_seed_groups_by_dataset_async(
+                self, *, apply_sampling: bool = True
+            ) -> dict[str, list[AttackSeedGroup]]:
+                return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
+
+            async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+                return build_matrix_atomic_attacks(context=context, objective_scorer=self._objective_scorer)
+
+        target = MockPromptTarget()
+        selected = AttackSeedGroup(seeds=[SeedObjective(value="selected")])
+        unsampled = AttackSeedGroup(seeds=[SeedObjective(value="unsampled"), SeedPrompt(value="extra prompt")])
+        config = DatasetAttackConfiguration(seed_groups=[selected, unsampled], max_total=1)
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=PromptSendingAttack,
+            requirements=TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True)),
+        )
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+
+        def make_scenario(*, scenario_result_id: str | None = None) -> MatrixScenario:
+            scenario = MatrixScenario(
+                version=1, objective_scorer=SubStringScorer(substring="default"), scenario_result_id=scenario_result_id
+            )
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": target,
+                    "dataset_config": config,
+                    "scenario_techniques": [scenario._technique_class("test")],
+                    "include_baseline": include_baseline,
+                    "incompatible_technique_policy": "raise",
+                }
+            )
+            return scenario
+
+        with patch.object(registry, "get_factories_or_raise", return_value={"test": factory}):
+            original = make_scenario()
+            with patch("pyrit.scenario.core.dataset_configuration.random.sample", side_effect=random.Random(1).sample):
+                await original.initialize_async()
+            original_plan = original._build_run_plan()
+            assert original_plan.atomic_groups[0].seed_group_ids == [selected.logical_id]
+            if change == "planned":
+                selected.seeds.append(SeedPrompt(value="changed planned input"))
+            elif change == "unsampled":
+                unsampled.seeds.append(SeedPrompt(value="changed unsampled input", sequence=1))
+            resumed = make_scenario(scenario_result_id=original._scenario_result_id)
+            if change == "planned":
+                with pytest.raises(ValueError, match="cannot resume: missing 1 planned seed group"):
+                    await resumed.initialize_async()
+            else:
+                await resumed.initialize_async()
+                assert resumed._build_run_plan() == original_plan
+                assert resumed._atomic_attacks[0].seed_groups == [selected]
+
+    @pytest.mark.parametrize(
+        ("class_default", "override", "expected"),
+        [
+            (IncompatibleTechniquePolicy.SKIP, None, IncompatibleTechniquePolicy.SKIP),
+            (IncompatibleTechniquePolicy.RAISE, None, IncompatibleTechniquePolicy.RAISE),
+            (IncompatibleTechniquePolicy.RAISE, "skip", IncompatibleTechniquePolicy.SKIP),
+            (IncompatibleTechniquePolicy.SKIP, "raise", IncompatibleTechniquePolicy.RAISE),
+        ],
+    )
+    async def test_class_default_and_run_override_are_saved_async(
+        self,
+        *,
+        class_default: IncompatibleTechniquePolicy,
+        override: str | None,
+        expected: IncompatibleTechniquePolicy,
+    ) -> None:
+        target = MockPromptTarget()
+        with patch.object(ConcreteScenario, "INCOMPATIBLE_TECHNIQUE_POLICY", class_default):
+            scenario = ConcreteScenario(version=1)
+            scenario.set_params_from_args(args={"objective_target": target, "incompatible_technique_policy": override})
+            await scenario.initialize_async()
+
+        assert scenario._incompatible_technique_policy is expected
+        context = scenario._build_scenario_context(seed_groups_by_dataset={})
+        assert context.incompatible_technique_policy is expected
+        stored = (
+            await scenario._memory.get_scenario_results_async(scenario_result_ids=[scenario._scenario_result_id])
+        )[0]
+        assert stored.metadata["incompatible_technique_policy"] == expected.value
+        assert "incompatible_technique_policy" not in stored.scenario_identifier.params
+
+    async def test_baseline_cannot_satisfy_selected_technique_guard_async(self) -> None:
+        target = MockPromptTarget()
+        source = AttackSeedGroup(seeds=[SeedObjective(value="objective")])
+        baseline = build_baseline_atomic_attack(
+            objective_target=target,
+            objective_scorer=SubStringScorer(substring="default"),
+            seed_groups=[source],
+        )
+        scenario = ConcreteScenario(atomic_attacks_to_return=[baseline], version=1)
+        scenario.set_params_from_args(args={"objective_target": target})
+
+        with pytest.raises(IncompatibleTechniqueError, match="no usable selected techniques"):
+            await scenario.initialize_async()
+
+    def test_adaptation_plan_uses_original_source_ids(self) -> None:
+        target = MockPromptTarget()
+        source = AttackSeedGroup(seeds=[SeedObjective(value="objective"), SeedPrompt(value="context")])
+        atomic = AtomicAttack(
+            atomic_attack_name="test",
+            attack_technique=AttackTechnique(
+                attack=PromptSendingAttack(objective_target=target),
+                requirements=TechniqueRequirements(
+                    seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True)
+                ),
+            ),
+            seed_groups=[source],
+        )
+        scenario = ConcreteScenario(atomic_attacks_to_return=[atomic], version=1)
+        scenario.set_params_from_args(args={"objective_target": target})
+        scenario._resolve_runtime_configuration(require_objective_target=True)
+        scenario._atomic_attacks = [atomic]
+
+        metadata = scenario._build_initial_scenario_metadata()
+
+        assert metadata["seed_group_adaptations"] == {atomic.logical_group_id: {source.logical_id: "objective_only"}}
+        plan = metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
+        assert plan["atomic_groups"][0]["seed_group_ids"] == [source.logical_id]
+        assert plan["seed_groups"][0]["id"] == source.logical_id
+        assert [prompt["value"] for prompt in plan["seed_groups"][0]["prompts"]] == ["context"]
+
+    @pytest.mark.parametrize("change", ["adaptation_identity", "accepted_population"])
+    def test_unreconstructable_compatibility_plan_is_rejected(self, *, change: str) -> None:
+        target = MockPromptTarget()
+        attack = PromptSendingAttack(objective_target=target)
+        sources = [
+            AttackSeedGroup(seeds=[SeedObjective(value=value), SeedPrompt(value="context")])
+            for value in ["first", "second"]
+        ]
+        previous = AtomicAttack(
+            atomic_attack_name="test", attack_technique=AttackTechnique(attack=attack), seed_groups=sources
+        )
+        scenario = ConcreteScenario(atomic_attacks_to_return=[previous], version=1)
+        scenario._atomic_attacks = [previous]
+        stored_plan = scenario._build_run_plan()
+        current = AtomicAttack(
+            atomic_attack_name="test",
+            attack_technique=AttackTechnique(
+                attack=attack,
+                requirements=TechniqueRequirements(
+                    seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True)
+                )
+                if change == "adaptation_identity"
+                else None,
+            ),
+            seed_groups=sources if change == "adaptation_identity" else sources[:1],
+        )
+        scenario._atomic_attacks = [current]
+
+        with pytest.raises(ValueError, match="cannot resume"):
+            scenario._apply_persisted_run_plan(stored_plan=stored_plan)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -319,6 +670,8 @@ class TestScenarioInitialization2:
             AttackSeedGroup(seeds=[SeedObjective(value="duplicate objective")]),
         ]
         atomic_attack = MagicMock(spec=AtomicAttack)
+        atomic_attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
+        atomic_attack.seed_group_adaptations = {}
         atomic_attack.atomic_attack_name = "duplicate_attack"
         atomic_attack.display_group = "duplicate_attack"
         atomic_attack.technique_eval_hash = "duplicate-technique"
@@ -352,6 +705,8 @@ class TestScenarioInitialization2:
             AttackSeedGroup(seeds=[SeedObjective(value="second objective")]),
         ]
         atomic_attack = MagicMock(spec=AtomicAttack)
+        atomic_attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
+        atomic_attack.seed_group_adaptations = {}
         atomic_attack.atomic_attack_name = "unique_attack"
         atomic_attack.display_group = "custom display group"
         atomic_attack.technique_name = "test"
@@ -545,7 +900,7 @@ class TestScenarioExecution:
         # internal semaphore caps total in-flight objectives at 4.
         assert len(result.attack_results) == 3
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True)
+            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True, operation_id=None)
 
         # Verify results are aggregated correctly by atomic attack name
         assert "attack_run_1" in result.attack_results
@@ -613,7 +968,7 @@ class TestScenarioExecution:
         # 3 atomic attacks, max_concurrency=5 -> parallel path with a shared AttackExecutor.
         # Each atomic attack receives the same executor instance.
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True)
+            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True, operation_id=None)
 
         # Verify result structure
         assert isinstance(result, ScenarioResult)
@@ -756,6 +1111,8 @@ class TestScenarioProperties:
         mock_attack.get_attack_scoring_config.return_value = MagicMock()
 
         single_run_mock = MagicMock(spec=AtomicAttack)
+        single_run_mock.group_kind = ScenarioRunPlanGroupKind.ATTACK
+        single_run_mock.seed_group_adaptations = {}
         single_run_mock.atomic_attack_name = "attack_1"
         single_run_mock.display_group = "attack_1"
         single_run_mock._attack = mock_attack
@@ -778,6 +1135,8 @@ class TestScenarioProperties:
         many_runs = []
         for i in range(10):
             run = MagicMock(spec=AtomicAttack)
+            run.group_kind = ScenarioRunPlanGroupKind.ATTACK
+            run.seed_group_adaptations = {}
             run.atomic_attack_name = f"attack_{i}"
             run.display_group = f"attack_{i}"
             run._attack = mock_attack
@@ -837,10 +1196,10 @@ class TestScenarioResult:
         )
 
         assert len(result.attack_results["base64"]) == 0
-        assert result.objective_achieved_rate() == 0
+        assert compute_scenario_statistics(result).overall.success_percentage is None
 
-    def test_scenario_result_objective_achieved_rate(self, sample_attack_results):
-        """Test objective_achieved_rate calculation."""
+    def test_scenario_result_success_percentage(self, sample_attack_results):
+        """Test the effective success percentage of a scenario result."""
         # All successful
         result = make_scenario_result(
             scenario_name="Test",
@@ -852,19 +1211,19 @@ class TestScenarioResult:
             attack_results={"base64": sample_attack_results},
             objective_scorer_identifier=_TEST_SCORER_ID,
         )
-        assert result.objective_achieved_rate() == 100
+        assert compute_scenario_statistics(result).overall.success_percentage == 100
 
         # Mixed outcomes
         mixed_results = sample_attack_results[:3] + [
             AttackResult(
                 conversation_id="conv-fail",
-                objective="objective",
+                objective="objective-fail",
                 outcome=AttackOutcome.FAILURE,
                 executed_turns=1,
             ),
             AttackResult(
                 conversation_id="conv-fail2",
-                objective="objective",
+                objective="objective-fail2",
                 outcome=AttackOutcome.FAILURE,
                 executed_turns=1,
             ),
@@ -879,7 +1238,7 @@ class TestScenarioResult:
             attack_results={"base64": mixed_results},
             objective_scorer_identifier=_TEST_SCORER_ID,
         )
-        assert result2.objective_achieved_rate() == 60  # 3 out of 5
+        assert compute_scenario_statistics(result2).overall.success_percentage == 60  # 3 out of 5
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -966,6 +1325,11 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
             )
         return atomic_attacks
 
+    def _resolve_scenario_techniques(self, *, scenario_techniques: Any) -> list[ScenarioTechnique]:
+        if not self._atomic_attacks_to_return and scenario_techniques is None:
+            return []
+        return super()._resolve_scenario_techniques(scenario_techniques=scenario_techniques)
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioBaselineOnlyExecution:
@@ -983,6 +1347,9 @@ class TestScenarioBaselineOnlyExecution:
 
         # Create a mock dataset config with seed groups
         mock_dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        mock_dataset_config.with_overrides.return_value = mock_dataset_config
+        mock_dataset_config.sources = ()
+        mock_dataset_config.max_total = "all"
         mock_dataset_config.get_attack_groups_by_dataset_async.return_value = {
             "default": [
                 AttackSeedGroup(seeds=[SeedObjective(value="test objective 1")]),
@@ -1016,6 +1383,9 @@ class TestScenarioBaselineOnlyExecution:
 
         # Create a mock dataset config with seed groups
         mock_dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        mock_dataset_config.with_overrides.return_value = mock_dataset_config
+        mock_dataset_config.sources = ()
+        mock_dataset_config.max_total = "all"
         mock_dataset_config.get_attack_groups_by_dataset_async.return_value = {
             "default": [AttackSeedGroup(seeds=[SeedObjective(value="test objective 1")])]
         }
@@ -1051,6 +1421,9 @@ class TestScenarioBaselineOnlyExecution:
         )
 
         mock_dataset_config = MagicMock(spec=DatasetConfiguration)
+        mock_dataset_config.with_overrides.return_value = mock_dataset_config
+        mock_dataset_config.sources = ()
+        mock_dataset_config.max_total = "all"
 
         # None techniques with no baseline: _get_atomic_attacks_async returns []
         scenario.set_params_from_args(
@@ -1090,6 +1463,9 @@ class TestScenarioBaselineOnlyExecution:
         ]
 
         mock_dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        mock_dataset_config.with_overrides.return_value = mock_dataset_config
+        mock_dataset_config.sources = ()
+        mock_dataset_config.max_total = "all"
         mock_dataset_config.get_attack_groups_by_dataset_async.return_value = {"default": expected_seeds}
 
         scenario.set_params_from_args(
@@ -1398,6 +1774,88 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
         return DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
+    @pytest.mark.parametrize("resume_state", ["valid", "missing-id", "missing-dataset", "incompatible", "refreshed"])
+    @pytest.mark.parametrize("configured_provider", [False, True], ids=["registered", "configured"])
+    @pytest.mark.parametrize("refresh", [False, True])
+    async def test_named_source_preparation_and_resume(
+        self, *, mock_objective_target: PromptTarget, resume_state: str, configured_provider: bool, refresh: bool
+    ) -> None:
+        provider = MagicMock(spec=SeedDatasetProvider)
+        provider.dataset_name = "fixture"
+        provider.fetch_dataset_async.return_value = SeedDataset(
+            dataset_name="fixture",
+            seeds=[SeedObjective(value=f"fixture-{index}", dataset_name="fixture") for index in range(10)],
+        )
+        config = DatasetAttackConfiguration(
+            sources=[DatasetSource(name="fixture", max_size=3, provider=provider if configured_provider else None)],
+            fetch=DatasetFetchPolicy.ALWAYS if refresh else DatasetFetchPolicy.IF_MISSING,
+        )
+        scenario = self._StrategyScenario(name="Named sources", version=1)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target, "dataset_config": config})
+        with patch.object(
+            scenario._memory,
+            "get_seed_dataset_names_async",
+            side_effect=AssertionError("Estimates must not read dataset presence"),
+        ):
+            await scenario.get_run_size_estimate_async()
+        provider.fetch_dataset_async.assert_not_awaited()
+        with (
+            patch.object(config, "prepare_async", wraps=config.prepare_async) as prepare,
+            patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={"fixture": provider}),
+        ):
+            await scenario.initialize_async()
+        prepare.assert_awaited_once()
+        provider.fetch_dataset_async.assert_awaited_once()
+        baseline, strategy = scenario._atomic_attacks
+        assert baseline.seed_groups == strategy.seed_groups
+        assert len(strategy.seed_groups) == 3
+        original_plan = scenario._build_run_plan()
+        if refresh:
+            fresh_run = self._StrategyScenario(name="Named sources", version=1)
+            fresh_run.set_params_from_args(args={"objective_target": mock_objective_target, "dataset_config": config})
+            with patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={"fixture": provider}):
+                await fresh_run.initialize_async()
+            assert provider.fetch_dataset_async.await_count == 2
+            assert provider.fetch_dataset_async.await_args.kwargs == {"cache": False}
+        provider.fetch_dataset_async.reset_mock()
+
+        if resume_state == "missing-dataset":
+            await scenario._memory.remove_seeds_from_memory_async(dataset_name="fixture")
+        elif resume_state == "refreshed":
+            await scenario._memory.replace_seeds_for_dataset_async(
+                dataset_name="fixture",
+                seeds=[SeedObjective(value="Replacement objective", dataset_name="fixture")],
+                added_by="test",
+            )
+        result_id = (
+            "00000000-0000-0000-0000-000000000000" if resume_state == "missing-id" else scenario._scenario_result_id
+        )
+        resumed = self._StrategyScenario(
+            name="Named sources",
+            version=2 if resume_state == "incompatible" else 1,
+            scenario_result_id=result_id,
+        )
+        resumed.set_params_from_args(args={"objective_target": mock_objective_target, "dataset_config": config})
+        with (
+            patch.object(config, "prepare_async", side_effect=AssertionError("Resume must not prepare")) as prepare,
+            patch.object(
+                SeedDatasetProvider, "get_providers_by_name_async", side_effect=AssertionError("No lookup")
+            ) as lookup,
+            patch(
+                "pyrit.scenario.core.dataset_configuration.random.sample", side_effect=AssertionError("No resampling")
+            ) as sample,
+        ):
+            if resume_state == "valid":
+                await resumed.initialize_async()
+                assert resumed._build_run_plan() == original_plan
+            else:
+                with pytest.raises(ValueError):
+                    await resumed.initialize_async()
+        prepare.assert_not_awaited()
+        provider.fetch_dataset_async.assert_not_awaited()
+        lookup.assert_not_awaited()
+        sample.assert_not_called()
+
     async def test_resume_reconstructs_persisted_subset_without_resampling(self, mock_objective_target):
         config = self._make_config()
 
@@ -1507,7 +1965,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
 
         with pytest.raises(
             ValueError,
-            match=r"cannot resume: atomic group 'strategy' is missing 1 planned seed group",
+            match=r"cannot resume: missing 1 planned seed group",
         ):
             await resumed.initialize_async()
 
@@ -1682,6 +2140,9 @@ class TestScenarioResumption:
             aggregator=aggregator, scorers=[SubStringScorer(substring=value) for value in ("a", "b")]
         )
         dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        dataset_config.with_overrides.return_value = dataset_config
+        dataset_config.sources = ()
+        dataset_config.max_total = "all"
         dataset_config.get_attack_groups_by_dataset_async.return_value = {
             "default": [AttackSeedGroup(seeds=[SeedObjective(value="test objective")])]
         }
@@ -2055,6 +2516,11 @@ class TestScenarioParallelExecution:
         messages = sorted(str(e) for e in exc_info.value.exceptions)
         assert messages == ["a boom", "b boom", "c boom"]
         assert all(isinstance(e, RuntimeError) for e in exc_info.value.exceptions)
+        assert sorted(error.__notes__ for error in exc_info.value.exceptions) == [
+            ["Failed atomic attack 'attack_run_1' in scenario 'Test Scenario'."],
+            ["Failed atomic attack 'attack_run_2' in scenario 'Test Scenario'."],
+            ["Failed atomic attack 'attack_run_3' in scenario 'Test Scenario'."],
+        ]
 
     async def test_single_failure_is_raised_directly_not_wrapped(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
@@ -2065,8 +2531,10 @@ class TestScenarioParallelExecution:
                 [sample_attack_results[i]], atomic_attack=mock_atomic_attacks[i]
             )
 
+        failure = RuntimeError("solo boom")
+
         async def bad_run(*a, **k):
-            raise RuntimeError("solo boom")
+            raise failure
 
         mock_atomic_attacks[1].run_async = AsyncMock(side_effect=bad_run)
 
@@ -2083,9 +2551,12 @@ class TestScenarioParallelExecution:
         )
         await scenario.initialize_async()
 
-        # Bare RuntimeError, not ExceptionGroup.
-        with pytest.raises(RuntimeError, match="solo boom"):
+        # Bare RuntimeError, not ExceptionGroup, with the original exception identity.
+        with pytest.raises(RuntimeError, match="solo boom") as exc_info:
             await scenario.run_async()
+
+        assert exc_info.value is failure
+        assert exc_info.value.__notes__ == ["Failed atomic attack 'attack_run_2' in scenario 'Test Scenario'."]
 
     async def test_max_concurrency_one_serializes_via_single_worker(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
@@ -2110,4 +2581,4 @@ class TestScenarioParallelExecution:
         await scenario.run_async()
 
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True)
+            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True, operation_id=None)

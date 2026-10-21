@@ -10,6 +10,7 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.registry.components import (
+        AttackRegistry,
         AttackTechniqueMetadata,
         AttackTechniqueRegistry,
         ConverterMetadata,
@@ -17,6 +18,9 @@ if TYPE_CHECKING:
         InitializerMetadata,
         InitializerRegistry,
         ScenarioMetadata,
+        ScenarioPresetMetadata,
+        ScenarioPresetNameRegisteredError,
+        ScenarioPresetRegistry,
         ScenarioRegistry,
         ScorerMetadata,
         ScorerRegistry,
@@ -32,9 +36,11 @@ if TYPE_CHECKING:
     )
     from pyrit.registry.registry import InstanceHoldingRegistry, ParamBagRegistry, Registry
     from pyrit.registry.registry_metadata import RegistryMetadata
+    from pyrit.registry.scenario_preset_storage import ScenarioPresetConflictError, ScenarioPresetStorage
     from pyrit.registry.tag_query import TagQuery
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AttackRegistry": "pyrit.registry.components",
     "AttackTechniqueRegistry": "pyrit.registry.components",
     "AttackTechniqueMetadata": "pyrit.registry.components",
     "ConverterRegistry": "pyrit.registry.components",
@@ -51,6 +57,11 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "InitializerRegistry": "pyrit.registry.components",
     "RegistryEntry": "pyrit.registry.instance_registry",
     "ScenarioMetadata": "pyrit.registry.components",
+    "ScenarioPresetConflictError": "pyrit.registry.scenario_preset_storage",
+    "ScenarioPresetMetadata": "pyrit.registry.components",
+    "ScenarioPresetNameRegisteredError": "pyrit.registry.components",
+    "ScenarioPresetRegistry": "pyrit.registry.components",
+    "ScenarioPresetStorage": "pyrit.registry.scenario_preset_storage",
     "ScenarioRegistry": "pyrit.registry.components",
     "ScorerRegistry": "pyrit.registry.components",
     "ScorerMetadata": "pyrit.registry.components",

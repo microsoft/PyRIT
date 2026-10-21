@@ -17,6 +17,7 @@ import yaml
 from azure.core.exceptions import ResourceNotFoundError
 
 from pyrit.common.azure_storage import has_sas_signature, is_azure_blob_uri, redact_url_credentials
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
 
@@ -90,7 +91,7 @@ def _write_temporary_config_file(*, content: bytes, suffix: str) -> Path:
 def _validate_configuration_content(content: str) -> None:
     """Validate YAML configuration content without executing initializers."""
     try:
-        yaml_data = yaml.safe_load(content)
+        yaml_data = safe_load_yaml(content)
     except yaml.YAMLError as exc:
         raise ValueError(f"Invalid YAML configuration: {exc}") from exc
     if not isinstance(yaml_data, dict):

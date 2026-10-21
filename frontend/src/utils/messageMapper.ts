@@ -251,7 +251,9 @@ function pieceToError(piece: BackendMessagePiece): MessageError | undefined {
     }
     return {
       type: piece.response_error,
-      description: piece.response_error_description || fallbackDescriptions[piece.response_error],
+      description: piece.response_error === 'processing'
+        ? piece.converted_value || piece.original_value || piece.response_error_description || fallbackDescriptions.processing
+        : piece.response_error_description || fallbackDescriptions[piece.response_error],
     }
   }
   return undefined
@@ -275,7 +277,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     if (pieceError && !error) {
       error = pieceError
     }
-    // Keep scoring evidence without exposing raw reasoning or processing diagnostics.
+    // Error details belong in the error panel, not in editable message content.
     const isProcessingError = pieceError?.type === 'processing'
     if (isProcessingError || isReasoningDataType(piece.converted_value_data_type)) {
       if (!isProcessingError) {
@@ -413,7 +415,8 @@ export async function attachmentToMessagePieceRequest(att: MessageAttachment): P
  */
 export async function buildMessagePieces(
   text: string,
-  attachments: MessageAttachment[]
+  attachments: MessageAttachment[],
+  textMetadata?: Record<string, unknown>,
 ): Promise<MessagePieceRequest[]> {
   const pieces: MessagePieceRequest[] = []
 
@@ -428,7 +431,7 @@ export async function buildMessagePieces(
     pieces.push({
       data_type: 'text',
       original_value: text,
-      prompt_metadata: videoId ? { video_id: videoId } : undefined,
+      prompt_metadata: videoId ? { ...textMetadata, video_id: videoId } : textMetadata,
     })
   }
 

@@ -96,6 +96,14 @@ def test_anagram_uses_fallback_when_shuffles_never_change_source():
     assert result == "BCA"
 
 
+def test_anagram_fallback_keeps_marks_with_their_letters() -> None:
+    assert build_anagram(["q\u0301b"], _NeverShuffles()) == "BQ\u0301"
+
+
+def test_anagram_single_marked_letter_is_not_split() -> None:
+    assert build_anagram(["q\u0301"], random.Random(0)) == "Q\u0301"
+
+
 def test_anagram_empty_list_raises():
     with pytest.raises(ValueError):
         build_anagram([], random.Random(0))
@@ -132,6 +140,25 @@ def test_crossword_build_applies_mapping_per_word():
 
 def test_crossword_single_word_has_no_symbols():
     assert build_crossword(["abduct"]) == "1. ABDUCT"
+
+
+def test_crossword_does_not_treat_a_shared_mark_as_a_letter() -> None:
+    assert crossword_symbol_map(["q\u0301a", "x\u0301b"]) == {}
+    assert build_crossword(["q\u0301a", "x\u0301b"]) == "1. Q\u0301A\n2. X\u0301B"
+
+
+def test_crossword_substitutes_the_whole_marked_letter() -> None:
+    assert crossword_symbol_map(["q\u0301a", "q\u0301b"]) == {"Q\u0301": "#"}
+    assert build_crossword(["q\u0301a", "q\u0301b"]) == "1. #A\n2. #B"
+
+
+@pytest.mark.parametrize(
+    "first, second, shared",
+    [("éa", "e\u0301b", "É"), ("ΐa", "ι\u0308\u0301b", "ΐ")],
+)
+def test_crossword_shares_canonically_equivalent_marked_letters(*, first: str, second: str, shared: str) -> None:
+    assert crossword_symbol_map([first, second]) == {shared: "#"}
+    assert build_crossword([first, second]) == "1. #A\n2. #B"
 
 
 def test_crossword_empty_raises():
@@ -178,3 +205,41 @@ def test_word_search_raises_when_words_never_fit():
     # with a clear error instead of looping forever.
     with pytest.raises(ValueError, match="Could not hide"):
         build_word_search(["abduct", "vault"], _NeverFits())
+
+
+# --- letters whose uppercase form is longer ------------------------------------
+#
+# str.upper() turns "ß" into "SS" and "ﬁ" into "FI". The masker's clue gives each word's
+# length, so every builder must encode exactly as many characters as the word has.
+
+
+def test_anagram_keeps_letters_whose_uppercase_expands():
+    sequence = build_anagram(["straße", "ﬁle"], random.Random(0))
+    assert sorted(sequence) == sorted("STRAßEﬁLE")
+    assert len(sequence) == len("straße") + len("ﬁle")
+
+
+def test_crossword_lines_keep_the_length_of_their_words():
+    lines = build_crossword(["straße", "tasse"]).splitlines()
+    assert [len(line.split(". ", 1)[1]) for line in lines] == [6, 5]
+
+
+def test_word_search_hides_the_word_without_expanding_it():
+    grid = _parse_grid(build_word_search(["straße", "tasse"], random.Random(42)))
+    assert _find_word(grid, "STRAßE")
+    assert _find_word(grid, "TASSE")
+
+
+def test_anagram_preserves_distinct_case_folded_words() -> None:
+    sequence = build_anagram(["ılık", "ilik"], random.Random(42))
+    assert sorted(sequence) == sorted("ıLıKILIK")
+
+
+def test_crossword_preserves_distinct_case_folded_words() -> None:
+    assert build_crossword(["ılık", "ilik"]) == "1. ı*ı#\n2. I*I#"
+
+
+def test_word_search_preserves_distinct_case_folded_words() -> None:
+    grid = _parse_grid(build_word_search(["ılık", "ilik"], random.Random(42)))
+    assert _find_word(grid, "ıLıK")
+    assert _find_word(grid, "ILIK")

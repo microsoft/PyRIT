@@ -8,10 +8,10 @@ import logging
 import math
 import time
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable  # noqa: TC003 - registry annotation resolution
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 from weakref import WeakValueDictionary
 
 import httpx
@@ -31,8 +31,6 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from a2a.client import Client
     from a2a.types import a2a_pb2
 
@@ -57,7 +55,7 @@ class _BearerTokenAuth(httpx.Auth):
 
 @dataclass
 class _A2AConversationState:
-    """Server-issued identifiers that continue one PyRIT conversation on the agent."""
+    """Identifiers that continue one PyRIT conversation on the agent (our context ID until the agent sends its own)."""
 
     context_id: str | None = None
     open_task_id: str | None = None
@@ -341,7 +339,7 @@ class A2ATarget(PromptTarget):
                 while task.status.state in (a2a_pb2.TASK_STATE_SUBMITTED, a2a_pb2.TASK_STATE_WORKING):
                     await asyncio.sleep(delay)
                     try:
-                        task = cast("a2a_pb2.Task", await self._get_task_async(client=client, task_id=task.id))
+                        task = await self._get_task_async(client=client, task_id=task.id)
                         delay = self._poll_interval_seconds
                     except (A2AError, httpx.HTTPError) as exc:
                         response = self._rate_limit_response(exc)
@@ -428,7 +426,9 @@ class A2ATarget(PromptTarget):
                 "The target requires server-side context continuity for multi-turn conversations, "
                 "and earlier turns cannot be restored."
             )
-        state = self._conversations.setdefault(conversation_id, _A2AConversationState())
+        # Name the context ourselves so turn 2 can continue it even when the agent's reply carries no
+        # contextId (a plain Message may omit it) or the first turn came back as an error.
+        state = self._conversations.setdefault(conversation_id, _A2AConversationState(context_id=str(uuid.uuid4())))
         prompt_text = message_piece.converted_value
 
         req = a2a_pb2.SendMessageRequest(

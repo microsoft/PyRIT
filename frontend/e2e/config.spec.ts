@@ -456,8 +456,30 @@ test.describe("Create Target Dialog", () => {
     await expect(page.getByText("OpenAIChatTarget")).toBeVisible();
   });
 
-  test("should show validation errors for empty required fields", async ({ page }) => {
-    await page.route(/\/api\/targets/, async (route) => {
+  test("should require an endpoint and validate the identity host", async ({ page }) => {
+    await page.route(/\/api\/targets\/types(?:\?.*)?$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              target_type: "OpenAIChatTarget",
+              parameters: [
+                {
+                  name: "endpoint",
+                  type_name: "str",
+                  required: true,
+                  default: null,
+                },
+              ],
+              supported_auth_modes: ["api_key", "identity"],
+            },
+          ],
+        }),
+      });
+    });
+    await page.route(/\/api\/targets(?:\?.*)?$/, async (route) => {
       await route.fulfill(mockTargetsList([]));
     });
 
@@ -467,25 +489,30 @@ test.describe("Create Target Dialog", () => {
     await page.getByRole("button", { name: /new target/i }).click();
     await expect(page.getByText("Create New Target")).toBeVisible();
 
-    // The Create Target button should be disabled when fields are empty
-    const createBtn = page.locator('[role="dialog"]').getByRole("button", { name: "Create Target" });
+    const dialog = page.locator('[role="dialog"]');
+    const createBtn = dialog.getByRole("button", { name: "Create Target" });
     await expect(createBtn).toBeDisabled();
 
-    // Fill only endpoint (no target type) — button should still be disabled
-    await page.locator('[role="dialog"]').getByPlaceholder("https://your-resource.openai.azure.com/").fill("https://test.com");
-    await expect(createBtn).toBeDisabled();
-
-    // Clear endpoint, select type — button should still be disabled
-    await page.locator('[role="dialog"]').getByPlaceholder("https://your-resource.openai.azure.com/").fill("");
     await selectTargetType(
       page,
-      page.locator('[role="dialog"]'),
+      dialog,
       "OpenAIChatTarget"
     );
+
+    // Every rendered endpoint field is required.
+    await expect(createBtn).toBeDisabled();
+    await dialog.getByPlaceholder("https://your-resource.openai.azure.com/").fill(
+      "https://api.openai.com"
+    );
+    await expect(createBtn).toBeEnabled();
+
+    // Identity authentication additionally requires a recognized Azure host.
+    await dialog.getByRole("radio", { name: /Identity-based/ }).click();
     await expect(createBtn).toBeDisabled();
 
-    // Fill both — button should be enabled
-    await page.locator('[role="dialog"]').getByPlaceholder("https://your-resource.openai.azure.com/").fill("https://test.com");
+    await dialog.getByPlaceholder("https://your-resource.openai.azure.com/").fill(
+      "https://test.openai.azure.com"
+    );
     await expect(createBtn).toBeEnabled();
   });
 });
@@ -672,7 +699,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
 
     // Navigate back to chat
-    await page.getByTitle("Chat").click();
+    await page.getByTitle("Technique.execute").click();
     await expect(page.getByTestId("new-attack-btn")).toBeVisible();
 
     // Chat should show the selected target type. Scope to the badge to
@@ -683,15 +710,17 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await expect(badge).toContainText(/gpt-4o/);
   });
 
-  test("should enable chat input after a target is set", async ({ page }) => {
+  test("should enable sending after a target is set", async ({ page }) => {
     await page.route(/\/api\/targets/, async (route) => {
       await route.fulfill(mockTargetsList(SAMPLE_TARGETS));
     });
 
-    // Start in chat with the composer disabled until a target is selected.
     await page.goto("/");
-    await page.getByTitle("Chat").click();
-    await expect(page.getByRole("textbox")).toBeDisabled();
+    await page.getByTitle("Technique.execute").click();
+    const draft = page.getByRole("textbox", { name: "Type prompt here", exact: true });
+    await expect(draft).toBeEnabled();
+    await draft.fill("Draft without a target");
+    await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
 
     // Go to targets, set a target
     await page.getByTitle("Registry").click();
@@ -699,9 +728,9 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
 
     // Return to chat — send should be enabled when there's text
-    await page.getByTitle("Chat").click();
-    const input = page.getByRole("textbox");
+    await page.getByTitle("Technique.execute").click();
+    const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await input.fill("Hello");
-    await expect(page.getByRole("button", { name: /send/i })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
   });
 });

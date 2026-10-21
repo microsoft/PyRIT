@@ -10,9 +10,9 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable, Coroutine
-from contextlib import ExitStack, asynccontextmanager
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Callable, Coroutine
+from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import lru_cache, partial
 from typing import Any
@@ -20,12 +20,16 @@ from typing import Any
 from pyrit.backend.mappers import request_piece_to_pyrit_message_piece, request_to_pyrit_message
 from pyrit.backend.models.attacks import AddMessageRequest, ConverterConfigurationRequest, MessagePieceRequest
 from pyrit.backend.models.message_sends import (
+    MessageSendConversation,
     MessageSendFailureStage,
     MessageSendRequest,
     MessageSendState,
     MessageSendStatus,
+    RequestConverterMode,
 )
+from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.backend.services.converter_service import get_converter_service
+from pyrit.backend.services.history_replay import validate_history_replay
 from pyrit.backend.services.manual_send_scheduler import (
     ManualSendConflictError,
     ManualSendQueueFullError,
@@ -45,7 +49,9 @@ from pyrit.models import (
     Conversation,
     ConverterIdentifier,
     Message,
+    MessagePiece,
 )
+from pyrit.models.component_spec import TargetBinding
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
@@ -63,6 +69,9 @@ class _ValidatedMessage:
     request_configurations: list[ConverterConfiguration]
     response_configurations: list[ConverterConfiguration]
     applied_identifiers: dict[int, list[ConverterIdentifier]]
+    owns_target: bool = False
+    target_binding: TargetBinding | None = None
+    replay_target: PromptTarget | None = None
 
 
 @dataclass(kw_only=True)
@@ -71,11 +80,12 @@ class _Send:
     submission_id: str
     fingerprint: str
     reservation: ExitStack
+    conversations: dict[str, ExitStack]
     task: asyncio.Task[None] | None = None
 
 
 class _MessageSendContext(TargetSendContext):
-    def __init__(self, progress: MessageSendStatus) -> None:
+    def __init__(self, progress: MessageSendConversation) -> None:
         self.conversation_id = progress.conversation_id
         self._progress = progress
         self._target_invocation_count = 0
@@ -107,16 +117,32 @@ def resolve_applied_converter_identifiers(
     Returns:
         Registry-validated converter identifiers by message piece index, preserving order and duplicates.
     """
-    return {
-        index: [
-            ConverterIdentifier.from_component_identifier(converter.get_identifier())
-            for converter in get_converter_service().get_converter_objects_for_ids(
-                converter_ids=piece.applied_converter_ids
+    result: dict[int, list[ConverterIdentifier]] = {}
+    service = get_converter_service()
+    for index, piece in enumerate(pieces):
+        if not piece.applied_converter_ids:
+            continue
+        tokens = piece.applied_converter_provenance or [None] * len(piece.applied_converter_ids)
+        if all(token is None for token in tokens):
+            result[index] = [
+                ConverterIdentifier.from_component_identifier(converter.get_identifier())
+                for converter in service.get_converter_objects_for_ids(converter_ids=piece.applied_converter_ids)
+            ]
+            continue
+        registered = iter(
+            service.get_converter_objects_for_ids(
+                converter_ids=[
+                    name for name, token in zip(piece.applied_converter_ids, tokens, strict=True) if token is None
+                ]
             )
+        )
+        result[index] = [
+            service.read_provenance(token)
+            if token is not None
+            else ConverterIdentifier.from_component_identifier(next(registered).get_identifier())
+            for token in tokens
         ]
-        for index, piece in enumerate(pieces)
-        if piece.applied_converter_ids
-    }
+    return result
 
 
 class MessageSendService:
@@ -150,6 +176,15 @@ class MessageSendService:
         self._closing = False
         self._shutdown_task: asyncio.Task[None] | None = None
 
+    def reserve_conversation(self, conversation_id: str) -> AbstractContextManager[None]:
+        """
+        Reserve a conversation so a caller can replace unsent history without overlapping a send.
+
+        Returns:
+            The conversation's exclusive manual-operation reservation.
+        """
+        return self._scheduler.reserve(conversation_id=conversation_id)
+
     async def submit_async(self, *, attack_result_id: str, request: MessageSendRequest) -> MessageSendStatus:
         """
         Validate and admit one background send, deduplicating only retained worker-local submissions.
@@ -172,7 +207,14 @@ class MessageSendService:
                 return existing.status.model_copy(deep=True)
 
             with ExitStack() as reservation:
-                reservation.enter_context(self._scheduler.reserve(conversation_id=request.target_conversation_id))
+                conversations: dict[str, ExitStack] = {}
+                for conversation_id in [
+                    request.target_conversation_id,
+                    *(str(uuid.uuid4()) for _ in range(request.count - 1)),
+                ]:
+                    owner = reservation.enter_context(ExitStack())
+                    owner.enter_context(self._scheduler.reserve(conversation_id=conversation_id))
+                    conversations[conversation_id] = owner
                 owned_request = request.model_copy(deep=True)
                 validated = await self._validate_message_async(attack_result_id=attack_result_id, request=owned_request)
                 if self._closing:
@@ -182,10 +224,12 @@ class MessageSendService:
                         send_id=str(uuid.uuid4()),
                         attack_result_id=attack_result_id,
                         conversation_id=request.target_conversation_id,
+                        count=request.count,
                     ),
                     submission_id=request.submission_id,
                     fingerprint=fingerprint,
                     reservation=reservation.pop_all(),
+                    conversations=conversations,
                 )
                 self._sends[operation.status.send_id] = operation
                 self._submissions[submission_key] = operation.status.send_id
@@ -244,7 +288,7 @@ class MessageSendService:
     @asynccontextmanager
     async def add_message_context_async(
         self, *, attack_result_id: str, request: AddMessageRequest
-    ) -> AsyncIterator[None]:
+    ) -> AsyncGenerator[None, None]:
         """
         Add a message and keep its conversation reserved through the caller's response reads.
 
@@ -267,13 +311,17 @@ class MessageSendService:
             raise ValueError(f"Attack '{attack_result_id}' not found")
 
         ar = results[0]
+        binding = TargetBinding.from_metadata(ar.metadata)
+        if request.target_binding is not None and request.target_binding != binding:
+            raise ValueError("This attack's temperature is read-only. Create a new attack to change it.")
         target_registry_name = request.target_registry_name
         target = (
             get_target_service().get_target_object(target_registry_name=target_registry_name)
-            if request.send and target_registry_name
+            if binding is None and request.send and target_registry_name
             else None
         )
-        self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
+        if binding is None:
+            self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
 
         msg_conversation_id = request.target_conversation_id
 
@@ -288,14 +336,44 @@ class MessageSendService:
         response_converter_configs = self._resolve_converter_configs(
             configurations=request.response_converter_configurations
         )
-        if request.send and target is None:
+        applied_identifiers = resolve_applied_converter_identifiers(request.pieces)
+        if binding is not None and request.send:
+            target = await get_target_service().resolve_binding_async(binding)
+            try:
+                self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
+                if isinstance(request, MessageSendRequest) and request.count > 1:
+                    history = await self._memory.get_conversation_messages_async(conversation_id=msg_conversation_id)
+                    validate_history_replay(target=target, messages=history)
+            finally:
+                await release_component_async(target)
+            target = None
+        if request.send and target is None and binding is None:
             raise ValueError(f"Target object for '{target_registry_name}' not found")
+        replay_target = None
+        original_registry_name = ar.metadata.get("target_registry_name")
+        if (
+            binding is None
+            and isinstance(request, MessageSendRequest)
+            and request.count > 1
+            and isinstance(original_registry_name, str)
+        ):
+            replay_target = get_target_service().get_target_object(target_registry_name=original_registry_name)
+            if replay_target is None:
+                raise ValueError("The original attack target is unavailable. Choose a new attack.")
+            self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=replay_target)
+        if isinstance(request, MessageSendRequest) and request.count > 1 and target is not None:
+            history = await self._memory.get_conversation_messages_async(conversation_id=msg_conversation_id)
+            if replay_target is not None and replay_target is not target:
+                validate_history_replay(target=replay_target, messages=history)
+            validate_history_replay(target=target, messages=history)
 
         return _ValidatedMessage(
             target=target,
             request_configurations=request_converter_configs,
             response_configurations=response_converter_configs,
-            applied_identifiers=resolve_applied_converter_identifiers(request.pieces),
+            applied_identifiers=applied_identifiers,
+            target_binding=binding if request.send else None,
+            replay_target=replay_target,
         )
 
     async def _execute_validated_message_async(
@@ -304,61 +382,261 @@ class MessageSendService:
         attack_result_id: str,
         request: AddMessageRequest,
         validated: _ValidatedMessage,
-        progress: MessageSendStatus | None = None,
+        progress: MessageSendConversation | None = None,
+        prepared_message: Message | None = None,
     ) -> None:
-        async with self._scheduler.operation_async():
-            if progress is not None:
-                progress.state = MessageSendState.PREPARING
-            with attack_result_id_scope(attack_result_id=attack_result_id):
-                await self._complete_memory_write_async(
-                    partial(
-                        self._memory.add_conversation_to_memory_async,
-                        conversation=Conversation(
-                            conversation_id=request.target_conversation_id,
-                            target_identifier=validated.target.get_identifier() if validated.target else None,
-                            attack_result_id=attack_result_id,
-                        ),
+        try:
+            async with self._scheduler.operation_async():
+                if validated.target_binding is not None:
+                    validated.target = await get_target_service().resolve_binding_async(validated.target_binding)
+                    validated.owns_target = True
+                if progress is not None:
+                    progress.state = MessageSendState.PREPARING
+                with attack_result_id_scope(attack_result_id=attack_result_id):
+                    await self._complete_memory_write_async(
+                        partial(
+                            self._memory.add_conversation_to_memory_async,
+                            conversation=Conversation(
+                                conversation_id=request.target_conversation_id,
+                                target_identifier=validated.target.get_identifier() if validated.target else None,
+                                attack_result_id=attack_result_id,
+                            ),
+                        )
                     )
-                )
-                await self._execute_message_async(
-                    attack_result_id=attack_result_id,
-                    request=request,
-                    target=validated.target,
-                    request_converter_configurations=validated.request_configurations,
-                    response_converter_configurations=validated.response_configurations,
-                    applied_converter_identifiers=validated.applied_identifiers,
-                    progress=progress,
-                )
+                    await self._execute_message_async(
+                        attack_result_id=attack_result_id,
+                        request=request,
+                        target=validated.target,
+                        request_converter_configurations=validated.request_configurations,
+                        response_converter_configurations=validated.response_configurations,
+                        applied_converter_identifiers=validated.applied_identifiers,
+                        progress=progress,
+                        prepared_message=prepared_message,
+                    )
+        finally:
+            if validated.owns_target and validated.target:
+                await release_component_async(validated.target)
+                validated.owns_target = False
 
     async def _run_send_async(
         self, *, operation: _Send, request: MessageSendRequest, validated: _ValidatedMessage
     ) -> None:
         progress = operation.status
         try:
-            await self._execute_validated_message_async(
-                attack_result_id=progress.attack_result_id, request=request, validated=validated, progress=progress
-            )
+            if request.count > 1:
+                await self._run_repeated_send_async(operation=operation, request=request, validated=validated)
+            else:
+                await self._execute_validated_message_async(
+                    attack_result_id=progress.attack_result_id, request=request, validated=validated, progress=progress
+                )
         except asyncio.CancelledError:
             self._record_failure(progress=progress, interrupted=True)
         except Exception:
             logger.exception("Message send '%s' failed during %s", progress.send_id, progress.state)
             self._record_failure(progress=progress)
 
+    async def _run_repeated_send_async(
+        self, *, operation: _Send, request: MessageSendRequest, validated: _ValidatedMessage
+    ) -> None:
+        async with self._scheduler.operation_async():
+            operation.status.state = MessageSendState.PREPARING
+            with attack_result_id_scope(attack_result_id=operation.status.attack_result_id):
+                preparation = replace(validated)
+                try:
+                    if preparation.target_binding is not None:
+                        preparation.target = await get_target_service().resolve_binding_async(
+                            preparation.target_binding
+                        )
+                        preparation.owns_target = True
+                    messages = await self._prepare_repeated_send_async(
+                        operation=operation, request=request, validated=preparation
+                    )
+                finally:
+                    if preparation.owns_target and preparation.target:
+                        await release_component_async(preparation.target)
+        if request.request_converter_mode == RequestConverterMode.SHARED:
+            validated = replace(
+                validated,
+                request_configurations=[],
+                applied_identifiers={
+                    index: [
+                        ConverterIdentifier.from_component_identifier(identifier)
+                        for identifier in piece.converter_identifiers
+                    ]
+                    for index, piece in enumerate(messages[request.target_conversation_id].message_pieces)
+                },
+            )
+        operation.status.state = MessageSendState.SENDING
+        async with asyncio.TaskGroup() as tasks:
+            for progress in operation.status.conversations:
+                tasks.create_task(
+                    self._run_conversation_async(
+                        operation=operation,
+                        request=request.model_copy(
+                            deep=True, update={"target_conversation_id": progress.conversation_id}
+                        ),
+                        validated=validated,
+                        progress=progress,
+                        message=messages[progress.conversation_id],
+                    )
+                )
+        failed = next((progress for progress in operation.status.conversations if progress.failure_stage), None)
+        if failed:
+            operation.status.error = failed.error
+            operation.status.failure_stage = failed.failure_stage
+            if failed.failure_stage == MessageSendFailureStage.PREPARATION and any(
+                progress.failure_stage != MessageSendFailureStage.PREPARATION
+                for progress in operation.status.conversations
+            ):
+                self._record_failure(progress=operation.status)
+
+    async def _prepare_repeated_send_async(
+        self, *, operation: _Send, request: MessageSendRequest, validated: _ValidatedMessage
+    ) -> dict[str, Message]:
+        if validated.target is None:
+            raise ValueError(f"Target object for '{request.target_registry_name}' not found")
+        source = await self._memory.get_conversation_metadata_async(conversation_id=request.target_conversation_id)
+        if source is None:
+            source = Conversation(conversation_id=request.target_conversation_id)
+        if source.target_identifier is None:
+            source.target_identifier = validated.target.get_identifier()
+        history = list(await self._memory.get_conversation_messages_async(conversation_id=source.conversation_id))
+        # Recheck after queueing: the source history may have changed since admission.
+        if validated.replay_target is not None and validated.replay_target is not validated.target:
+            validate_history_replay(target=validated.replay_target, messages=history)
+        validate_history_replay(target=validated.target, messages=history)
+        sequence = max((message.sequence for message in history), default=-1) + 1
+        operation.status.request_turn_number = sequence
+        message = await self._prepare_message_async(
+            conversation_id=source.conversation_id,
+            request=request.model_copy(deep=True),
+            sequence=sequence,
+            applied_converter_identifiers=validated.applied_identifiers,
+        )
+        if request.request_converter_mode == RequestConverterMode.SHARED:
+            configurations = self._exclude_preconverted_piece_indexes(
+                configurations=validated.request_configurations,
+                preconverted_indexes={
+                    index for index, piece in enumerate(request.pieces) if piece.converted_value is not None
+                },
+                piece_count=len(request.pieces),
+            )
+            normalizer = PromptNormalizer(
+                start_token=request.start_token,
+                end_token=request.end_token,
+                converter_guard=self._scheduler.conversion_async,
+            )
+            await normalizer.convert_values_async(converter_configurations=configurations, message=message)
+        conversations, pieces, messages = await asyncio.to_thread(
+            self._prepare_copies, operation=operation, source=source, history=history, message=message
+        )
+        await self._complete_memory_write_async(
+            partial(
+                self._register_copies_async,
+                operation=operation,
+                source=source,
+                conversations=conversations,
+                pieces=pieces,
+            )
+        )
+        return messages
+
+    @staticmethod
+    def _prepare_copies(
+        *, operation: _Send, source: Conversation, history: list[Message], message: Message
+    ) -> tuple[list[Conversation], list[MessagePiece], dict[str, Message]]:
+        conversations: list[Conversation] = []
+        pieces: list[MessagePiece] = []
+        messages = {source.conversation_id: message}
+        for conversation_id in operation.conversations:
+            if conversation_id == source.conversation_id:
+                continue
+            conversations.append(source.model_copy(deep=True, update={"conversation_id": conversation_id}))
+            for historical_message in history:
+                for piece in historical_message.duplicate().message_pieces:
+                    piece.conversation_id = conversation_id
+                    pieces.append(piece)
+            messages[conversation_id] = message.duplicate()
+            for piece in messages[conversation_id].message_pieces:
+                piece.conversation_id = conversation_id
+        return conversations, pieces, messages
+
+    async def _register_copies_async(
+        self, *, operation: _Send, source: Conversation, conversations: list[Conversation], pieces: list[MessagePiece]
+    ) -> None:
+        stored = await self._memory.add_conversation_branches_to_attack_async(
+            attack_result_id=operation.status.attack_result_id,
+            source_conversation=source,
+            conversations=conversations,
+            message_pieces=pieces,
+        )
+        if not stored:
+            raise ValueError("Attack disappeared before repeated-send preparation committed")
+        # Publish committed IDs inside the cancellation-joined write, even if shutdown arrived during registration.
+        operation.status.conversations = [
+            MessageSendConversation(
+                conversation_id=conversation_id, request_turn_number=operation.status.request_turn_number
+            )
+            for conversation_id in operation.conversations
+        ]
+
+    async def _run_conversation_async(
+        self,
+        *,
+        operation: _Send,
+        request: MessageSendRequest,
+        validated: _ValidatedMessage,
+        progress: MessageSendConversation,
+        message: Message,
+    ) -> None:
+        try:
+            await self._execute_validated_message_async(
+                attack_result_id=operation.status.attack_result_id,
+                request=request,
+                validated=replace(validated),
+                progress=progress,
+                prepared_message=message,
+            )
+        except asyncio.CancelledError:
+            self._record_failure(progress=progress, interrupted=True)
+        except Exception:
+            logger.exception(
+                "Repeated send '%s' failed for conversation '%s'", operation.status.send_id, progress.conversation_id
+            )
+            self._record_failure(progress=progress)
+        finally:
+            operation.conversations[progress.conversation_id].close()
+            self._finish_progress(progress)
+
     def _on_send_done(self, task: asyncio.Task[None], *, operation: _Send) -> None:
         # A task cancelled before its first step never enters _run_send_async.
         if task.cancelled():
             self._record_failure(progress=operation.status, interrupted=True)
         operation.reservation.close()
-        operation.status.state = (
-            MessageSendState.INTERRUPTED
-            if operation.status.failure_stage == MessageSendFailureStage.INTERRUPTED
-            else MessageSendState.FAILED
-            if operation.status.failure_stage
-            else MessageSendState.COMPLETED
-        )
+        for progress in operation.status.conversations:
+            if progress.state not in (
+                MessageSendState.COMPLETED,
+                MessageSendState.FAILED,
+                MessageSendState.INTERRUPTED,
+            ):
+                self._record_failure(
+                    progress=progress, interrupted=operation.status.failure_stage == MessageSendFailureStage.INTERRUPTED
+                )
+                self._finish_progress(progress)
+        self._finish_progress(operation.status)
         operation.task = None
         self._terminal[operation.status.send_id] = time.monotonic()
         self._expire_terminal_sends()
+
+    @staticmethod
+    def _finish_progress(progress: MessageSendConversation) -> None:
+        progress.state = (
+            MessageSendState.INTERRUPTED
+            if progress.failure_stage == MessageSendFailureStage.INTERRUPTED
+            else MessageSendState.FAILED
+            if progress.failure_stage
+            else MessageSendState.COMPLETED
+        )
 
     async def _settle_sends_async(self) -> None:
         async with self._accept_lock:
@@ -378,7 +656,7 @@ class MessageSendService:
             self._submissions.pop((operation.status.attack_result_id, operation.submission_id))
 
     @classmethod
-    def _record_failure(cls, *, progress: MessageSendStatus, interrupted: bool = False) -> None:
+    def _record_failure(cls, *, progress: MessageSendConversation, interrupted: bool = False) -> None:
         if interrupted:
             stage = MessageSendFailureStage.INTERRUPTED
         elif progress.state in (MessageSendState.QUEUED, MessageSendState.PREPARING):
@@ -399,7 +677,8 @@ class MessageSendService:
         request_converter_configurations: list[ConverterConfiguration],
         response_converter_configurations: list[ConverterConfiguration],
         applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
-        progress: MessageSendStatus | None = None,
+        progress: MessageSendConversation | None = None,
+        prepared_message: Message | None = None,
     ) -> None:
         msg_conversation_id = request.target_conversation_id
         preconverted_indexes = {
@@ -426,6 +705,7 @@ class MessageSendService:
                     preconverted_indexes=preconverted_indexes,
                     applied_converter_identifiers=applied_converter_identifiers,
                     send_context=_MessageSendContext(progress=progress) if progress is not None else None,
+                    prepared_message=prepared_message,
                 )
             except Exception:
                 if progress is not None:
@@ -690,27 +970,30 @@ class MessageSendService:
         preconverted_indexes: set[int],
         applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
         send_context: TargetSendContext | None = None,
+        prepared_message: Message | None = None,
     ) -> None:
         """Send message to target via normalizer and store response."""
-        await self._persist_base64_pieces_async(request)
-
-        await self._resolve_video_remix_metadata_async(request)
-
-        pyrit_message = request_to_pyrit_message(
-            request=request,
-            conversation_id=conversation_id,
-            sequence=sequence,
+        pyrit_message = (
+            prepared_message
+            if prepared_message is not None
+            else await self._prepare_message_async(
+                conversation_id=conversation_id,
+                request=request,
+                sequence=sequence,
+                applied_converter_identifiers=applied_converter_identifiers,
+            )
         )
-        for index, identifiers in applied_converter_identifiers.items():
-            pyrit_message.message_pieces[index].converter_identifiers.extend(identifiers)
-
         request_converter_configurations = self._exclude_preconverted_piece_indexes(
             configurations=request_converter_configurations,
             preconverted_indexes=preconverted_indexes,
             piece_count=len(request.pieces),
         )
 
-        normalizer = PromptNormalizer(converter_guard=self._scheduler.conversion_async)
+        normalizer = PromptNormalizer(
+            start_token=request.start_token,
+            end_token=request.end_token,
+            converter_guard=self._scheduler.conversion_async,
+        )
         await normalizer.send_prompt_async(
             message=pyrit_message,
             target=target,
@@ -720,6 +1003,21 @@ class MessageSendService:
             send_context=send_context,
         )
         # PromptNormalizer stores both request and response in memory automatically
+
+    async def _prepare_message_async(
+        self,
+        *,
+        conversation_id: str,
+        request: AddMessageRequest,
+        sequence: int,
+        applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
+    ) -> Message:
+        await self._persist_base64_pieces_async(request)
+        await self._resolve_video_remix_metadata_async(request)
+        message = request_to_pyrit_message(request=request, conversation_id=conversation_id, sequence=sequence)
+        for index, identifiers in applied_converter_identifiers.items():
+            message.message_pieces[index].converter_identifiers.extend(identifiers)
+        return message
 
     async def _store_message_only_async(
         self,

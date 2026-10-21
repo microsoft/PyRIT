@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Transient progress for one manual message sent to one conversation."""
+"""Transient progress for a manual message sent to one or more conversations."""
 
 from enum import StrEnum
 from typing import Self
@@ -32,12 +32,21 @@ class MessageSendFailureStage(StrEnum):
     INTERRUPTED = "interrupted"
 
 
+class RequestConverterMode(StrEnum):
+    """Whether repetitions share the next request's conversion."""
+
+    SHARED = "shared"
+    PER_BRANCH = "per_branch"
+
+
 class MessageSendRequest(AddMessageRequest):
     """Submit one send; the submission identity is only a worker-local deduplication hint."""
 
     model_config = ConfigDict(extra="forbid")
 
     submission_id: str = Field(..., min_length=1, max_length=128)
+    count: int = Field(1, ge=1, le=10, strict=True)
+    request_converter_mode: RequestConverterMode = RequestConverterMode.SHARED
 
     @model_validator(mode="after")
     def _validate_send(self) -> Self:
@@ -54,13 +63,22 @@ class MessageSendRequest(AddMessageRequest):
         return self
 
 
-class MessageSendStatus(BaseModel):
-    """Worker-local progress, without a transcript or durable delivery guarantee."""
+class MessageSendConversation(BaseModel):
+    """Progress for one conversation, terminal only after its ownership is released."""
 
-    send_id: str
-    attack_result_id: str
     conversation_id: str
     request_turn_number: int | None = Field(None, description="This send's request turn, assigned during preparation")
     state: MessageSendState = MessageSendState.QUEUED
     error: str | None = None
     failure_stage: MessageSendFailureStage | None = None
+
+
+class MessageSendStatus(MessageSendConversation):
+    """Worker-local progress; the top-level conversation and turn identify the selected source."""
+
+    send_id: str
+    attack_result_id: str
+    count: int = 1
+    conversations: list[MessageSendConversation] = Field(
+        default_factory=list, description="Repeated sends only; published after atomic history registration"
+    )

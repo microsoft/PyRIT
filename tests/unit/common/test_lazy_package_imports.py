@@ -23,6 +23,48 @@ _EAGER_PACKAGE_EXCEPTIONS = frozenset(
 
 _LAZY_IMPORT_SPOT_CHECKS = [
     (
+        "pyrit.analytics",
+        "compute_technique_stats_async",
+        "pyrit.analytics.technique_analysis",
+        "pyrit.analytics.attack_result_analytics",
+    ),
+    (
+        "pyrit.analytics",
+        "compute_outcome_statistics",
+        "pyrit.analytics.outcome_statistics",
+        "pyrit.memory.attack_analytics",
+    ),
+    (
+        "pyrit.models",
+        "OutcomeStatistics",
+        "pyrit.models.analytics",
+        "pyrit.analytics.outcome_statistics",
+    ),
+    (
+        "pyrit.analytics",
+        "AttackResultAnalytics",
+        "pyrit.analytics.attack_result_analytics",
+        "pyrit.analytics.conversation_analytics",
+    ),
+    (
+        "pyrit.analytics",
+        "AttackStats",
+        "pyrit.analytics.result_analysis",
+        "pyrit.analytics.attack_result_analytics",
+    ),
+    (
+        "pyrit.registry",
+        "AttackRegistry",
+        "pyrit.registry.components.attack_registry",
+        "pyrit.executor.attack",
+    ),
+    (
+        "pyrit.registry.components",
+        "AttackRegistry",
+        "pyrit.registry.components.attack_registry",
+        "pyrit.executor.attack",
+    ),
+    (
         "pyrit.models",
         "Message",
         "pyrit.models.messages.message",
@@ -32,6 +74,12 @@ _LAZY_IMPORT_SPOT_CHECKS = [
         "pyrit.models",
         "SeedDatasetSummary",
         "pyrit.models.seeds.seed_dataset_summary",
+        "pyrit.memory",
+    ),
+    (
+        "pyrit.models",
+        "SeedRecord",
+        "pyrit.models.seeds.seed_record",
         "pyrit.memory",
     ),
     (
@@ -387,11 +435,13 @@ def test_analytics_foundations_do_not_load_higher_layers() -> None:
             name for name, module in pyrit.models._LAZY_EXPORTS.items()
             if module == "pyrit.models.analytics"
         ]
-        assert len(names) == 21
+        assert len(names) == 22
+        assert "OutcomeStatistics" in names
         for name in names:
             exported = getattr(pyrit.models, name)
             assert exported is getattr(importlib.import_module("pyrit.models.analytics"), name)
             assert pyrit.models.__dict__[name] is exported
+        assert pyrit.models.OutcomeStatistics is pyrit.models.AttackAnalyticsStatistics
 
         forbidden = (
             "pyrit.analytics", "pyrit.backend", "pyrit.memory", "pyrit.executor",
@@ -602,9 +652,10 @@ def test_dynamic_scenario_techniques_reject_unknown_export() -> None:
         dynamic_techniques.__getattr__("UnknownTechnique")
 
 
-def test_dynamic_scenario_technique_resolves_and_caches() -> None:
+def test_dynamic_scenario_technique_delegates_to_builder() -> None:
     dynamic_techniques = importlib.import_module("pyrit.scenario.scenarios._dynamic_techniques")
-    builder = MagicMock(return_value=object())
+    technique, replacement = object(), object()
+    builder = MagicMock(side_effect=[technique, replacement])
     builder_module = MagicMock()
     builder_module.build = builder
 
@@ -615,11 +666,43 @@ def test_dynamic_scenario_technique_resolves_and_caches() -> None:
         ),
         patch.object(dynamic_techniques, "import_module", return_value=builder_module),
     ):
-        technique = dynamic_techniques.__getattr__("TestTechnique")
+        assert dynamic_techniques.TestTechnique is technique
+        assert dynamic_techniques.TestTechnique is replacement
 
-    assert dynamic_techniques.TestTechnique is technique
-    builder.assert_called_once_with()
-    dynamic_techniques.__dict__.pop("TestTechnique")
+    assert builder.call_count == 2
+    assert "TestTechnique" not in dynamic_techniques.__dict__
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "pyrit.scenario.scenarios._dynamic_techniques",
+        "pyrit.scenario.scenarios.airt",
+        "pyrit.scenario.airt",
+    ],
+)
+def test_dynamic_scenario_technique_exports_refresh_after_registration(
+    *, patch_central_database: object, module_name: str
+) -> None:
+    from pyrit.executor.attack import PromptSendingAttack
+    from pyrit.registry import AttackTechniqueRegistry, Registry
+    from pyrit.scenario import AttackTechniqueFactory
+
+    exports = importlib.import_module(module_name)
+    with patch.dict(Registry._singletons, {}, clear=True):
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        registry.register_from_factories([AttackTechniqueFactory(name="base", attack_class=PromptSendingAttack)])
+        before = exports.RapidResponseTechnique
+        assert exports.RapidResponseTechnique is before
+
+        registry.instances.register_runtime(AttackTechniqueFactory(name="new", attack_class=PromptSendingAttack))
+        current = exports.RapidResponseTechnique
+
+        assert current is not before
+        assert exports.RapidResponseTechnique is current
+        assert {technique.value for technique in before.get_all_techniques()} == {"base"}
+        assert {technique.value for technique in current.get_all_techniques()} == {"base", "new"}
+        assert "RapidResponseTechnique" not in exports.__dict__
 
 
 def test_scenario_registry_materializes_builtin_catalog() -> None:

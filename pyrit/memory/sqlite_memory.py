@@ -6,29 +6,36 @@ import logging
 import threading
 import uuid
 import weakref
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import closing
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
+from sqlite3 import Connection as SQLiteConnection
+from sqlite3 import Cursor as SQLiteCursor
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal
 
-from sqlalchemy import and_, case, create_engine, exists, func, or_, select, text
+from sqlalchemy import and_, case, create_engine, event, exists, func, or_, select, text
+from sqlalchemy.engine import AdaptedConnection, ExceptionContext
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.pool import StaticPool
-from sqlalchemy.sql.expression import TextClause
+from sqlalchemy.util.concurrency import greenlet_spawn
 
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.singleton import Singleton
+from pyrit.memory.analytics_sql import UnicodeLower
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
     Base,
     PromptMemoryEntry,
     ScenarioResultEntry,
+    SeedEntry,
 )
 from pyrit.memory.memory_session import MemorySession
 from pyrit.memory.storage import DiskStorageIO
@@ -38,20 +45,137 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
 
 logger = logging.getLogger(__name__)
+_sqlite_session_cleanup: ContextVar[bool] = ContextVar("sqlite_session_cleanup", default=False)
 
 
-class _SerializedAsyncSession(AsyncSession):
-    def __init__(self, *, engine: AsyncEngine, release: Callable[[], None]) -> None:
+class _CursorClosingSQLiteConnection(SQLiteConnection):
+    """A native SQLite connection that finalizes live cursors before disconnecting."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._cursors: weakref.WeakSet[SQLiteCursor] = weakref.WeakSet()
+
+    def cursor(self, *args: Any, **kwargs: Any) -> SQLiteCursor:
+        return self._track_cursor(super().cursor(*args, **kwargs))
+
+    def execute(self, *args: Any, **kwargs: Any) -> SQLiteCursor:
+        return self._track_cursor(super().execute(*args, **kwargs))
+
+    def executemany(self, *args: Any, **kwargs: Any) -> SQLiteCursor:
+        return self._track_cursor(super().executemany(*args, **kwargs))
+
+    def executescript(self, *args: Any, **kwargs: Any) -> SQLiteCursor:
+        return self._track_cursor(super().executescript(*args, **kwargs))
+
+    def close(self) -> None:
+        for cursor in tuple(self._cursors):
+            cursor.close()
+        self._cursors.clear()
+        super().close()
+
+    def _track_cursor(self, cursor: SQLiteCursor) -> SQLiteCursor:
+        self._cursors.add(cursor)
+        return cursor
+
+
+async def _finish_sqlite_cleanup_async(cleanup: Awaitable[None]) -> asyncio.CancelledError | None:
+    """
+    Drain SQLite cleanup and retain cancellation received while waiting.
+
+    Returns:
+        asyncio.CancelledError | None: The first cancellation received during cleanup.
+    """
+    task = asyncio.ensure_future(cleanup)
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as error:
+            if cancellation is None:
+                cancellation = error
+        except Exception:
+            break
+    try:
+        task.result()
+    except Exception as error:
+        if cancellation is not None:
+            raise cancellation from error
+        raise
+    return cancellation
+
+
+def _cleanup_interrupted_sqlite_connection(context: ExceptionContext) -> None:
+    execution_context, connection = context.execution_context, context.connection
+    cancelled = isinstance(context.original_exception, asyncio.CancelledError)
+    if connection is None or not (cancelled or _sqlite_session_cleanup.get()):
+        return
+    # The public interface has empty slots, but implementations expose these writable flags.
+    context.is_disconnect = True  # type: ignore[ty:missing-slot]
+    context.invalidate_pool_on_disconnect = False  # type: ignore[ty:missing-slot]
+    dbapi_connection = connection.connection.dbapi_connection
+    if not isinstance(dbapi_connection, AdaptedConnection):
+        raise TypeError("Async SQLite memory requires an adapted driver connection.")
+    cursor = execution_context.cursor if execution_context is not None else None
+
+    def close_and_invalidate() -> None:
+        # SQLAlchemy skips cursor cleanup on cancellation. SQLite keeps an active
+        # statement's transaction lock even after its connection is closed.
+        if cursor is not None:
+            cursor.close()
+        connection.invalidate(context.original_exception)
+
+    try:
+        dbapi_connection.run_async(lambda _: _finish_sqlite_cleanup_async(greenlet_spawn(close_and_invalidate)))
+    except (asyncio.CancelledError, Exception) as error:
+        if cancelled:
+            cause = (
+                error.__cause__ if isinstance(error, asyncio.CancelledError) and error.__cause__ is not None else error
+            )
+            raise context.original_exception from cause
+        raise
+
+
+class _SQLiteAsyncSession(AsyncSession):
+    def __init__(self, *, engine: AsyncEngine, release: Callable[[], None] | None = None) -> None:
         super().__init__(bind=engine, sync_session_class=MemorySession)
         self._release: Callable[[], None] | None = release
 
     async def close(self) -> None:  # pyrit-async-suffix-exempt
         try:
-            await super().close()
+            cancellation = await _finish_sqlite_cleanup_async(self._close_session_async())
         finally:
             if self._release is not None:
                 release, self._release = self._release, None
                 release()
+        if cancellation is not None:
+            raise cancellation
+
+    async def __aexit__(
+        self,
+        type_: type[BaseException] | None,
+        value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        try:
+            await self.close()
+        except asyncio.CancelledError as error:
+            if isinstance(value, asyncio.CancelledError):
+                cause = error.__cause__ if error.__cause__ is not None else value.__cause__
+                raise value from cause
+            raise
+        except Exception as error:
+            if isinstance(value, asyncio.CancelledError):
+                raise value from error
+            raise
+
+    async def _close_session_async(self) -> None:
+        # A failed rollback must discard its connection before the ORM drops
+        # the transaction reference and before exclusive access is released.
+        token = _sqlite_session_cleanup.set(True)
+        try:
+            await super().close()
+        finally:
+            _sqlite_session_cleanup.reset(token)
 
 
 class SQLiteMemory(MemoryInterface, metaclass=Singleton):
@@ -60,6 +184,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
     This class provides functionality to insert, query, and manage conversation data
     using SQLite. It supports both file-based and in-memory databases.
+
+    Cancellation finalizes active cursors and closes interrupted connections before
+    returning to the caller. Session cleanup also finishes under repeated cancellation.
+    Failed disconnects and session rollbacks preserve the original cancellation
+    and expose cleanup failures as its cause.
 
     Note: this is replacing the old DuckDB implementation.
     """
@@ -124,17 +253,42 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
     def _create_async_engine(self) -> AsyncEngine:
         database = self._memory_uri if self.db_path == ":memory:" else str(self.db_path)
-        kwargs: dict[str, Any] = {}
+        kwargs: dict[str, Any] = {"connect_args": {"factory": _CursorClosingSQLiteConnection}}
         if self.db_path == ":memory:":
             kwargs["poolclass"] = StaticPool
-        return create_async_engine(f"sqlite+aiosqlite:///{database}", echo=self._verbose, **kwargs)
+        engine = create_async_engine(f"sqlite+aiosqlite:///{database}", echo=self._verbose, **kwargs)
+        self._register_analytics_lower(engine=engine.sync_engine)
+        event.listen(engine.sync_engine, "handle_error", _cleanup_interrupted_sqlite_connection)
+        return engine
+
+    @staticmethod
+    def _unicode_lower(value: str | int | float | bytes | None) -> str | None:
+        """
+        Lowercase SQLite text with Unicode rules, retaining NULL semantics.
+
+        Returns:
+            str | None: The folded value, or SQL NULL.
+        """
+        return str(value).lower() if value is not None else None
+
+    @staticmethod
+    def _register_analytics_lower(*, engine: Engine) -> None:
+        """Install the Unicode lowercase function for analytics and JSON filters on every pooled SQLite connection."""
+
+        @event.listens_for(engine, "connect")
+        def register(dbapi_connection: Any, connection_record: Any) -> None:
+            dbapi_connection.create_function(
+                UnicodeLower.SQLITE_FUNCTION_NAME, 1, SQLiteMemory._unicode_lower, deterministic=True
+            )
 
     async def get_session_async(self) -> AsyncSession:
         """
-        Create a session with exclusive access to the shared in-memory database.
+        Create a session with cancellation-safe SQLite cleanup.
+
+        In-memory sessions also have exclusive access to the shared database.
 
         Returns:
-            AsyncSession: A session that releases exclusive access when closed.
+            AsyncSession: A session that finishes cleanup before releasing exclusive access.
 
         Raises:
             NotImplementedError: If a custom sync session hook has not been migrated.
@@ -146,11 +300,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             raise RuntimeError("Close the synchronous memory session before opening an async session on this thread.")
         connection_lock = self._transaction_lock
         if connection_lock is None:
-            return await super().get_session_async()
+            return _SQLiteAsyncSession(engine=self._get_async_engine())
         while not connection_lock.acquire(blocking=False):
             await asyncio.sleep(0.01)
         try:
-            return _SerializedAsyncSession(engine=self._get_async_engine(), release=connection_lock.release)
+            return _SQLiteAsyncSession(engine=self._get_async_engine(), release=connection_lock.release)
         except BaseException:
             connection_lock.release()
             raise
@@ -204,6 +358,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
             database = self._memory_uri if self.db_path == ":memory:" else str(self.db_path)
             engine = create_engine(f"sqlite:///{database}", echo=has_echo, **extra_kwargs)
+            self._register_analytics_lower(engine=engine)
             logger.info(f"Engine created successfully for database: {self.db_path}")
             return engine
         except SQLAlchemyError as e:
@@ -213,18 +368,23 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def _get_message_pieces_memory_label_conditions(self, *, memory_labels: dict[str, str]) -> list[Any]:
         """
         Generate SQLAlchemy filter conditions for filtering conversation pieces by memory labels.
-        For SQLite, we use JSON_EXTRACT function to handle JSON fields.
+        Match literal object keys through json_each(), without interpreting keys as JSON paths.
 
-        Matches if labels are on the PromptMemoryEntry itself OR on any
-        AttackResultEntry that shares the same conversation_id.
+        All labels must match one AttackResultEntry that shares the same conversation_id.
 
         Returns:
             list: A list of SQLAlchemy conditions.
         """
         per_key_are_conditions = []
+        label_entries = func.json_each(AttackResultEntry.labels).table_valued("key", "value")
         for key, value in memory_labels.items():
-            are_col = func.json_extract(AttackResultEntry.labels, f"$.{key}")
-            per_key_are_conditions.append(are_col == str(value))
+            per_key_are_conditions.append(
+                select(1)
+                .select_from(label_entries)
+                .where(label_entries.c.key == key, label_entries.c.value == str(value))
+                .correlate(AttackResultEntry)
+                .exists()
+            )
         return [
             exists().where(
                 and_(
@@ -235,36 +395,46 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             )
         ]
 
-    def _get_message_pieces_prompt_metadata_conditions(
-        self, *, prompt_metadata: dict[str, str | int]
-    ) -> list[TextClause]:
+    def _get_message_pieces_prompt_metadata_conditions(self, *, prompt_metadata: dict[str, str | int]) -> list[Any]:
         """
         Generate SQLAlchemy filter conditions for filtering conversation pieces by prompt metadata.
+
+        Match literal object keys through json_each(), without interpreting keys as JSON paths.
 
         Returns:
             list: A list of SQLAlchemy conditions.
         """
-        json_conditions = " AND ".join(
-            [f"JSON_EXTRACT(prompt_metadata, '$.{key}') = :{key}" for key in prompt_metadata]
-        )
-
-        # Create SQL condition using SQLAlchemy's text() with bindparams
-        # Note: We do NOT convert values to string here, to allow integer comparison in JSON
-        condition = text(json_conditions).bindparams(**dict(prompt_metadata.items()))
-        return [condition]
+        conditions = []
+        metadata_entries = func.json_each(PromptMemoryEntry.prompt_metadata).table_valued("key", "value")
+        for key, value in prompt_metadata.items():
+            conditions.append(
+                select(1)
+                .select_from(metadata_entries)
+                .where(metadata_entries.c.key == key, metadata_entries.c.value == value)
+                .correlate(PromptMemoryEntry)
+                .exists()
+            )
+        return conditions
 
     def _get_seed_metadata_conditions(self, *, metadata: dict[str, str | int]) -> Any:
         """
         Generate SQLAlchemy filter conditions for filtering seed prompts by metadata.
 
-        Returns:
-            Any: A SQLAlchemy text condition with bound parameters.
-        """
-        json_conditions = " AND ".join([f"JSON_EXTRACT(prompt_metadata, '$.{key}') = :{key}" for key in metadata])
+        Match literal object keys through json_each(), without interpreting keys as JSON paths.
 
-        # Create SQL condition using SQLAlchemy's text() with bindparams
-        # Note: We do NOT convert values to string here, to allow integer comparison in JSON
-        return text(json_conditions).bindparams(**dict(metadata.items()))
+        Returns:
+            Any: A SQLAlchemy condition matching every requested metadata key and value.
+        """
+        metadata_entries = func.json_each(SeedEntry.prompt_metadata).table_valued("key", "value")
+        conditions = [
+            select(1)
+            .select_from(metadata_entries)
+            .where(metadata_entries.c.key == key, metadata_entries.c.value == value)
+            .correlate(SeedEntry)
+            .exists()
+            for key, value in metadata.items()
+        ]
+        return and_(*conditions)
 
     def _get_condition_json_property_match(
         self,
@@ -292,7 +462,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         if case_sensitive:
             extracted_value, target = raw, value
         else:
-            extracted_value, target = func.lower(raw), value.lower()
+            extracted_value, target = UnicodeLower(raw), value.lower()
 
         if partial_match:
             escaped = target.replace("%", "\\%").replace("_", "\\_")
@@ -339,7 +509,9 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         column_name = json_column.key
         pp_param = f"property_path_{uid}"
         sp_param = f"array_element_path_{uid}"
-        value_expression = f"LOWER(json_extract(value, :{sp_param}))" if array_element_path else "LOWER(value)"
+        element = f"json_extract(value, :{sp_param})" if array_element_path else "value"
+        # SQLite's LOWER folds ASCII only; match the Unicode folding applied to the values below.
+        value_expression = f"{UnicodeLower.SQLITE_FUNCTION_NAME}({element})"
 
         conditions = []
         bindparams_dict: dict[str, str] = {pp_param: property_path}
@@ -471,13 +643,35 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
             if not values:
                 continue
-            are_col = func.json_extract(AttackResultEntry.labels, f"$.{key}")
+            are_col = func.json_extract(AttackResultEntry.labels, f'$."{key}"')
             per_key_are_conditions.append(are_col.in_(values))
 
         return and_(
             AttackResultEntry.labels.isnot(None),
             *per_key_are_conditions,
         )
+
+    def _get_attack_result_literal_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
+        """
+        SQLite implementation that matches label names literally through json_each().
+
+        Returns:
+            Any: A SQLAlchemy condition for filtering by labels.
+        """
+        label_entries = func.json_each(AttackResultEntry.labels).table_valued("key", "value")
+        per_key_conditions = []
+        for key, raw_value in labels.items():
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if not values:
+                continue
+            per_key_conditions.append(
+                select(1)
+                .select_from(label_entries)
+                .where(label_entries.c.key == key, label_entries.c.value.in_(values))
+                .correlate(AttackResultEntry)
+                .exists()
+            )
+        return and_(AttackResultEntry.labels.isnot(None), *per_key_conditions)
 
     def _execute_get_unique_attack_class_names(self) -> list[str]:
         """
@@ -679,7 +873,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         """Return the persisted execution start without loading full scenario metadata."""
         return func.json_extract(ScenarioResultEntry.scenario_metadata, "$.started_at")
 
-    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
+    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any, Any]:
         """Return SQLite JSON expressions for persisted scenario attempt attribution."""
         atomic_name = func.coalesce(
             func.json_extract(AttackResultEntry.attribution_data, '$."parent_collection"'),
@@ -689,12 +883,20 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             func.json_extract(AttackResultEntry.attribution_data, '$."parent_eval_hash"'),
             "",
         )
-        seed_group_id = func.coalesce(
+        attributed_seed_group_id = func.nullif(
             func.json_extract(AttackResultEntry.attribution_data, '$."seed_group_id"'),
-            AttackResultEntry.objective_sha256,
             "",
         )
-        return atomic_name, technique_hash, seed_group_id
+        seeds = func.json_each(
+            AttackResultEntry.atomic_attack_identifier,
+            "$.children.seed_identifiers",
+        ).table_valued("value", joins_implicitly=True)
+        identifier_seed_key = (
+            select(func.group_concat(func.json_extract(seeds.c.value, "$.hash"), ","))
+            .select_from(seeds)
+            .scalar_subquery()
+        )
+        return atomic_name, technique_hash, attributed_seed_group_id, identifier_seed_key
 
     def _get_scenario_plan_unit_subqueries(self, *, scenario_result_ids: Sequence[uuid.UUID]) -> tuple[Any, Any]:
         """Return SQLite run-plan expansions for planned units and planned seed groups."""

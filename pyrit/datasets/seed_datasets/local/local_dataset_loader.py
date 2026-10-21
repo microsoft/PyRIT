@@ -8,8 +8,7 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
-import yaml
-
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.seed_metadata import (
     SeedDatasetMetadata,
@@ -118,7 +117,7 @@ class _LocalDatasetLoader(SeedDatasetProvider):
         Returns:
             Any: Parsed YAML content.
         """
-        return yaml.safe_load(self.file_path.read_text(encoding="utf-8"))
+        return safe_load_yaml(self.file_path.read_text(encoding="utf-8"))
 
 
 def _register_local_datasets() -> None:

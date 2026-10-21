@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import AnswerMatches, ScoringExpectation
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
-from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.observation.target_judge import JudgmentRequest
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.self_ask_true_false_scorer import (
     SelfAskTrueFalseScorer,
@@ -148,16 +148,20 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
         )
         prompt = self._JUDGMENT_PROMPT.format(objective=objective, response=message_piece.converted_value)
 
-        unvalidated_score = await _run_llm_scoring_async(
-            chat_target=self._prompt_target,
-            system_prompt=self._system_prompt,
+        unvalidated_score = await self._judge.judge_async(
             response_handler=self._response_handler,
-            value=prompt,
-            data_type="text",
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            judgment_replay_identifier=self._get_judgment_replay_identifier(),
-            category=self._score_category,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=self._system_prompt,
+                    value=prompt,
+                    data_type="text",
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                    category=self._score_category,
+                )
+            ),
         )
 
         return [self._convert_score(unvalidated_score)]

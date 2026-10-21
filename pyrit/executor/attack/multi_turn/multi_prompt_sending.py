@@ -340,6 +340,10 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             if outcome is AttackOutcome.UNDETERMINED:
                 return AttackOutcome.UNDETERMINED, score.score_rationale or "Scorer could not reach a verdict"
 
+        if response and score is None:
+            # The scorer ran but produced nothing (e.g. a text-only scorer on an image), so nothing was measured
+            return AttackOutcome.UNDETERMINED, "Objective scorer returned no score"
+
         if response:
             # We got response(s) but the final response did not achieve the objective
             return (

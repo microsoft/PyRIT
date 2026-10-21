@@ -55,7 +55,35 @@ describe('ConversionTextEditor', () => {
     expect(screen.getAllByTestId('conversion-marked-region')[0].textContent).toBe('\u27eaone\ntwo\u27eb')
   })
 
-  it.each([[1, 4], [0, 5], [3, 8]])('rejects a selection overlapping markers (%s, %s)', async (start: number, end: number) => {
+  it.each([
+    ['\u27eaone\u27eb rest', 1, 4, '\u27ea\u27eaone\u27eb\u27eb rest'],
+    ['\u27eaone\u27eb rest', 0, 5, '\u27ea\u27eaone\u27eb\u27eb rest'],
+    ['\u27eaone\u27eb rest', 2, 3, '\u27eao\u27ean\u27ebe\u27eb rest'],
+    ['\u27ea\u27eaone\u27eb\u27eb rest', 1, 6, '\u27ea\u27ea\u27eaone\u27eb\u27eb\u27eb rest'],
+    ['\u27ea\u27eaone\u27eb\u27eb rest', 2, 5, '\u27ea\u27ea\u27eaone\u27eb\u27eb\u27eb rest'],
+    ['\u27eaone\u27eb and \u27eatwo\u27eb', 0, 15, '\u27ea\u27eaone\u27eb and \u27eatwo\u27eb\u27eb'],
+    ['\u27eaone\u27eb\u27eatwo\u27eb', 0, 10, '\u27ea\u27eaone\u27eb\u27eatwo\u27eb\u27eb'],
+    ['\u27eaone\r\ntwo\u27eb rest', 1, 8, '\u27ea\u27eaone\r\ntwo\u27eb\u27eb rest'],
+  ])('allows a nested selection in %j (%s, %s)', async (
+    value: string, start: number, end: number, expected: string,
+  ) => {
+    const user = userEvent.setup()
+    render(<TestWrapper initial={value} />)
+    const editor = screen.getByRole('textbox', { name: 'Working input' })
+    if (!(editor instanceof HTMLTextAreaElement)) throw new Error('Expected textarea')
+    await user.click(editor)
+    editor.setSelectionRange(start, end)
+    fireEvent.select(editor)
+    await user.click(screen.getByRole('button', { name: 'Convert selection only in Working input' }))
+
+    expect(editor).toHaveValue(expected.replace(/\r\n?/g, '\n'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(editor).toHaveFocus()
+  })
+
+  it.each([[0, 4], [1, 5], [3, 8]])('rejects a selection crossing one marker boundary (%s, %s)', async (
+    start: number, end: number,
+  ) => {
     const user = userEvent.setup()
     render(<TestWrapper initial={'\u27eaone\u27eb rest'} />)
     const editor = screen.getByRole('textbox', { name: 'Working input' })
@@ -65,15 +93,58 @@ describe('ConversionTextEditor', () => {
       { keys: '[/MouseLeft]' },
     ])
     await user.click(screen.getByRole('button', { name: 'Convert selection only in Working input' }))
-    expect(screen.getByText('Select text outside an existing marked region.')).toBeInTheDocument()
+    expect(screen.getByText('Select text inside a marked region or include the complete region.')).toBeInTheDocument()
     expect(editor).toHaveValue('\u27eaone\u27eb rest')
   })
 
-  it('does not highlight an unmatched marker', () => {
+  it('rejects a selection crossing a nested boundary', async () => {
+    const user = userEvent.setup()
+    const value = '\u27eaouter \u27eainner\u27eb tail\u27eb'
+    render(<TestWrapper initial={value} />)
+    const editor = screen.getByRole('textbox', { name: 'Working input' })
+    if (!(editor instanceof HTMLTextAreaElement)) throw new Error('Expected textarea')
+    await user.click(editor)
+    editor.setSelectionRange(1, 13)
+    fireEvent.select(editor)
+    await user.click(screen.getByRole('button', { name: 'Convert selection only in Working input' }))
+
+    expect(screen.getByText('Select text inside a marked region or include the complete region.')).toBeInTheDocument()
+    expect(editor).toHaveValue(value)
+  })
+
+  it('does not add a region to unmatched markers', async () => {
+    const user = userEvent.setup()
     render(<TestWrapper initial={'plain \u27eaunfinished'} />)
+    const editor = screen.getByRole('textbox', { name: 'Working input' })
+    await user.pointer([
+      { target: editor, offset: 0, keys: '[MouseLeft>]' },
+      { target: editor, offset: 5 },
+      { keys: '[/MouseLeft]' },
+    ])
+    await user.click(screen.getByRole('button', { name: 'Convert selection only in Working input' }))
+
+    expect(screen.getByText('Match all start and end markers before adding a marked region.')).toBeInTheDocument()
+    expect(editor).toHaveValue('plain \u27eaunfinished')
+  })
+
+  it.each([
+    'plain \u27eaunfinished',
+    '\u27ebreversed\u27ea',
+    '\u27eaouter \u27eainner\u27eb',
+    '\u27eavalid\u27eb then \u27eb',
+  ])('does not highlight malformed regions in %j', (value: string) => {
+    render(<TestWrapper initial={value} />)
 
     expect(screen.queryByTestId('conversion-marked-region')).not.toBeInTheDocument()
-    expect(screen.getByTestId('conversion-highlight-layer')).toHaveTextContent('plain \u27eaunfinished')
+    expect(screen.getByTestId('conversion-highlight-layer').textContent).toBe(value)
+  })
+
+  it('highlights complete outer regions and keeps every nested marker visible', () => {
+    const regions = ['\u27eaouter \u27eainner\u27eb tail\u27eb', '\u27ea\u27ea\u27eatwo\u27eb\u27eb\u27eb']
+    render(<TestWrapper initial={`keep ${regions[0]} and ${regions[1]} after`} />)
+
+    expect(screen.getAllByTestId('conversion-marked-region').map((element) => element.textContent)).toEqual(regions)
+    expect(screen.getByTestId('conversion-highlight-layer').textContent).toBe(`keep ${regions[0]} and ${regions[1]} after`)
   })
 
   it.each([

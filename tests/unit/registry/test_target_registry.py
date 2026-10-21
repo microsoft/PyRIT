@@ -6,6 +6,8 @@ Tests for the merged ``TargetRegistry`` (buildable catalog + instance container)
 and its introspection helpers.
 """
 
+import re
+
 import pytest
 
 from pyrit.models import ComponentIdentifier, Message, MessagePiece
@@ -386,9 +388,31 @@ class TestClassMetadata:
         assert params["model_name"].type_name == "str"
         assert "api_key" in params
 
+    def test_http_request_metadata_is_multiline(self, registry: TargetRegistry) -> None:
+        params = {param.name: param for param in self._metadata_for(registry, "HTTPTarget").parameters}
+
+        assert params["http_request"].multiline is True
+
+    def test_sas_token_metadata_conflicts_with_identity(self, registry: TargetRegistry) -> None:
+        params = {param.name: param for param in self._metadata_for(registry, "AzureBlobStorageTarget").parameters}
+
+        assert params["sas_token"].identity_conflicting is True
+
 
 class TestRegistrationGate:
     """The identifier blueprint must line up with a resolvable contract for every target."""
+
+    CREDENTIAL_NAME_PATTERN = re.compile(r"token|secret|password|credential|api_key", re.IGNORECASE)
+    NON_CREDENTIAL_PARAMETER_NAMES = frozenset(
+        {
+            "api_key_header",
+            "max_tokens",
+            "max_new_tokens",
+            "max_completion_tokens",
+            "max_output_tokens",
+            "skip_special_tokens",
+        }
+    )
 
     def test_discovery_validates_all_targets(self, registry: TargetRegistry) -> None:
         # Discovery registers every target through ``register_class``, which validates
@@ -409,3 +433,28 @@ class TestRegistrationGate:
                         ComponentType.CONVERTER,
                         ComponentType.SCORER,
                     )
+
+    def test_credential_parameters_are_sensitive(self, registry: TargetRegistry) -> None:
+        from pyrit.models.identifiers import TargetIdentifier
+
+        for name in registry.get_class_names():
+            parameters = derive_parameters(cls=registry.get_class(name), identifier_type=TargetIdentifier)
+            for parameter in parameters:
+                looks_like_credential = (
+                    self.CREDENTIAL_NAME_PATTERN.search(parameter.name)
+                    and parameter.name not in self.NON_CREDENTIAL_PARAMETER_NAMES
+                )
+                if looks_like_credential:
+                    assert parameter.sensitive, f"{name}.{parameter.name} looks like a credential"
+
+    def test_identity_targets_accept_an_explicit_auth_mode(self, registry: TargetRegistry) -> None:
+        # Advertising identity support without accepting the explicit mode would silently
+        # fall back to inferring auth from a missing key, which is the ambiguity the
+        # explicit auth_mode contract exists to remove.
+        for name in registry.get_class_names():
+            target_cls = registry.get_class(name)
+            if "identity" not in target_cls.supported_auth_modes:
+                continue
+            assert target_cls.get_auth_mode_parameters(auth_mode="identity") == {"auth_mode": "identity"}, (
+                f"{name} advertises identity support but does not forward an explicit auth_mode"
+            )

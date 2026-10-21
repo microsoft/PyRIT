@@ -93,6 +93,7 @@ class PyRITShell(cmd.Cmd):
         list-initializers          - List all available initializers
         list-targets               - List all available targets
         list-converters            - List all registered converter instances
+        list-operations            - List saved Operations and their IDs
         add-initializer <file>...  - Register initializer(s) from Python script file(s)
         run <scenario> [opts]      - Run a scenario with optional parameters
         scenario-history [N]       - List the last N (default 10) scenario runs
@@ -373,6 +374,21 @@ class PyRITShell(cmd.Cmd):
         except Exception as e:
             print(f"Error listing converters: {e}")
 
+    def do_list_operations(self, arg: str) -> None:
+        """List saved Operations and their IDs."""
+        if arg.strip():
+            print(f"Error: list-operations does not accept arguments, got: {arg.strip()}")
+            return
+        if not self._ensure_client():
+            return
+        from pyrit.cli import _output
+
+        try:
+            operations = self._run_async(self._api_client.list_operations_async())
+            _output.print_operation_list(items=operations)
+        except Exception as e:
+            print(f"Error listing operations: {e}")
+
     def do_add_initializer(self, arg: str) -> None:
         """
         Register an initializer from a Python script file.
@@ -434,8 +450,13 @@ class PyRITShell(cmd.Cmd):
             --max-concurrency <N>           Maximum concurrent operations
             --max-retries <N>               Maximum retry attempts
             --memory-labels <JSON>          JSON string of labels
-            --dataset-names <name> ...      Override default dataset names
-            --max-dataset-size <N>          Maximum items per dataset
+            --operation-id <UUID>           Saved Operation ID (see list-operations)
+            --datasets <name[:N|:all]> ...  Select sources and optional caps
+            --max-per-dataset <N|all>       Default per-source cap
+            --max-total <N|all>             Combined attack-group cap
+            --dataset-fetch <policy>       never, if_missing, or always (replace stored data)
+            --dataset-names <name> ...      Deprecated source selection
+            --max-dataset-size <N>          Deprecated total cap
             --<scenario-flag> <value>       Scenario-declared parameters (see list-scenarios)
 
         Notes:
@@ -452,8 +473,8 @@ class PyRITShell(cmd.Cmd):
             return
 
         from pyrit.cli._cli_args import (
+            build_dataset_request_fields,
             build_parameters_from_api,
-            collapse_dataset_filters,
             extract_scenario_args,
             parse_run_arguments,
         )
@@ -517,20 +538,25 @@ class PyRITShell(cmd.Cmd):
             request_kwargs["max_concurrency"] = args["max_concurrency"]
         if args.get("max_retries") is not None:
             request_kwargs["max_retries"] = args["max_retries"]
-        if args.get("dataset_names"):
-            request_kwargs["dataset_names"] = args["dataset_names"]
-        if args.get("max_dataset_size") is not None:
-            request_kwargs["max_dataset_size"] = args["max_dataset_size"]
-        if args.get("dataset_filters"):
-            request_kwargs["dataset_filters"] = collapse_dataset_filters(args["dataset_filters"])
+        try:
+            request_kwargs.update(build_dataset_request_fields(args))
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return
         if args.get("memory_labels"):
             request_kwargs["labels"] = args["memory_labels"]
+        if args.get("operation_id") is not None:
+            request_kwargs["operation_id"] = args["operation_id"]
 
         scenario_params = extract_scenario_args(parsed=args)
         if scenario_params:
             request_kwargs["scenario_params"] = scenario_params
 
-        request = RunScenarioRequest(**request_kwargs)
+        try:
+            request = RunScenarioRequest(**request_kwargs)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return
 
         # Start run
         print(f"\nRunning scenario: {scenario_name}")

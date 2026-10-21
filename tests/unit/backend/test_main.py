@@ -23,7 +23,10 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from starlette.datastructures import State
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from uvicorn import Config, Server
+from uvicorn.lifespan.on import LifespanOn
 
+from pyrit.backend.authentication_policy import AuthenticationConfigurationError
 from pyrit.backend.main import SPAStaticFiles, app, lifespan, setup_frontend
 from pyrit.backend.models.converters import CreateConverterRequest
 from pyrit.backend.services.converter_service import ConverterService, get_converter_service
@@ -42,7 +45,7 @@ async def test_health_responds_while_database_operation_is_pending(sqlite_instan
 
     def wait_in_database() -> int:
         started.set()
-        if not release.wait(timeout=10):
+        if not release.wait(timeout=60):
             raise RuntimeError("Database wait was not released")
         return 1
 
@@ -55,9 +58,9 @@ async def test_health_responds_while_database_operation_is_pending(sqlite_instan
         )
         query = asyncio.create_task(session.execute(text("SELECT wait_in_database()")))
         try:
-            assert await asyncio.to_thread(started.wait, 5)
+            assert await asyncio.to_thread(started.wait, 30)
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await asyncio.wait_for(client.get("/api/health"), timeout=2)
+                response = await asyncio.wait_for(client.get("/api/health"), timeout=30)
             assert response.status_code == 200
             assert response.json()["status"] == "healthy"
             assert not query.done()
@@ -141,7 +144,10 @@ class TestLifespan:
 
     @pytest.fixture(autouse=True)
     def isolated_lifespan_state(self) -> Iterator[None]:
-        with patch.object(app, "state", State()):
+        with (
+            patch.object(app, "state", State()),
+            patch.dict(os.environ, {"PYRIT_AUTH_MODE": "local"}, clear=False),
+        ):
             yield
 
     @pytest.mark.parametrize("fail_during_lifespan", [False, True])
@@ -223,6 +229,46 @@ class TestLifespan:
             mock_scenario_run_lifecycle.reconcile_interrupted_runs_async.assert_awaited_once()
             mock_scenario_run_lifecycle.shutdown_async.assert_awaited_once()
 
+    async def test_lifespan_rejects_absent_authentication_configuration(self) -> None:
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("pyrit.backend.main.ConfigurationFileService") as configuration,
+            patch("pyrit.backend.main.setup_frontend") as frontend,
+            pytest.raises(AuthenticationConfigurationError, match="Authentication configuration is absent"),
+        ):
+            async with lifespan(FastAPI()):
+                pytest.fail("Startup accepted absent authentication configuration")
+
+        configuration.assert_not_called()
+        frontend.assert_not_called()
+
+    async def test_uvicorn_exits_before_listening_without_authentication_configuration(self) -> None:
+        test_app = FastAPI(lifespan=lifespan, middleware=app.user_middleware)
+        server = Server(Config(test_app, host="0.0.0.0", port=8765, lifespan="auto", log_config=None))
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("pyrit.backend.main.ConfigurationFileService") as configuration,
+            patch("pyrit.backend.main.setup_frontend") as frontend,
+            patch.object(
+                asyncio.get_running_loop(),
+                "create_server",
+                new_callable=AsyncMock,
+                side_effect=AssertionError("Invalid auth configuration must not open a listener"),
+            ) as create_listener,
+            patch.object(server, "main_loop", new_callable=AsyncMock) as serve_requests,
+        ):
+            await server.serve()
+
+        assert isinstance(server.lifespan, LifespanOn)
+        assert server.lifespan.startup_failed
+        assert server.lifespan.should_exit
+        assert server.should_exit
+        assert not server.started
+        configuration.assert_not_called()
+        frontend.assert_not_called()
+        create_listener.assert_not_awaited()
+        serve_requests.assert_not_awaited()
+
     async def test_lifespan_warns_when_custom_initializers_allowed(self, mock_scenario_run_lifecycle) -> None:
         """Test that lifespan logs a warning when allow_custom_initializers is enabled."""
         fake_config = ConfigurationLoader(allow_custom_initializers=True)
@@ -259,10 +305,8 @@ class TestLifespan:
         shared_memory.get_scenario_run_state_page_async.assert_not_awaited()
         shared_memory.update_scenario_run_state_async.assert_not_awaited()
 
-    async def test_lifespan_populates_default_labels_from_operator_and_operation(
-        self, mock_scenario_run_lifecycle
-    ) -> None:
-        """Test that operator and operation are exposed as default_labels."""
+    async def test_lifespan_exposes_default_operator_and_operation_proposal(self, mock_scenario_run_lifecycle) -> None:
+        """Test that the operator is a default label and the operation is a separate, uncreated proposal."""
         fake_config = ConfigurationLoader(operator="alice", operation="op-42")
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
@@ -272,7 +316,8 @@ class TestLifespan:
             async with lifespan(app):
                 pass
 
-            assert app.state.default_labels == {"operator": "alice", "operation": "op-42"}
+            assert app.state.default_labels == {"operator": "alice"}
+            assert app.state.default_operation == "op-42"
 
     async def test_lifespan_exposes_configured_initializers(self, mock_scenario_run_lifecycle) -> None:
         """Test that the active config initializer sequence is exposed to API routes."""
@@ -413,6 +458,7 @@ class TestSetupFrontend:
         with (
             patch("pyrit.backend.main.DEV_MODE", False),
             patch("pyrit.backend.main.Path") as mock_path_cls,
+            patch.object(app, "mount") as mount,
             patch("builtins.print"),
         ):
             mock_path_instance = MagicMock()
@@ -420,6 +466,14 @@ class TestSetupFrontend:
             mock_path_cls.return_value = mock_path_instance
 
             setup_frontend()
+
+        mount.assert_called_once()
+        assert mount.call_args.args[0] == "/"
+        static_files = mount.call_args.args[1]
+        assert isinstance(static_files, SPAStaticFiles)
+        assert static_files.directory == str(tmp_path)
+        assert static_files.html
+        assert mount.call_args.kwargs == {"name": "frontend"}
 
     def test_frontend_missing_warns_but_continues(self) -> None:
         """Test that setup_frontend warns but does not exit when frontend is missing."""

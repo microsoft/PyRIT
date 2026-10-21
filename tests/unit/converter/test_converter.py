@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import re
 from unittest.mock import AsyncMock, call, patch
 
@@ -158,15 +159,154 @@ async def test_convert_tokens_custom_delimiters_leave_default_markers_literal_as
 
 
 @pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("keep ⟪test⟫ / ⟪test2⟫", "keep ⟪dGVzdA==⟫ / ⟪dGVzdDI=⟫"),
+        ("keep ⟪⟪test⟫⟫", "keep ⟪⟪dGVzdA==⟫⟫"),
+        ("⟪test⟫⟪test2⟫", "⟪dGVzdA==⟫⟪dGVzdDI=⟫"),
+        ("keep ⟪⟫", "keep ⟪⟫"),
+        ("test", "⟪dGVzdA==⟫"),
+        ("", "⟪⟫"),
+    ],
+)
+async def test_convert_tokens_keep_tokens_async(*, prompt: str, expected: str) -> None:
+    result = await Base64Converter().convert_tokens_async(prompt=prompt, keep_tokens=True)
+    assert result.output_text == expected
+    assert result.output_type == "text"
+
+
+@pytest.mark.parametrize(("start_token", "end_token"), [("<<", ">>"), ("[.*", ".*]"), ("|", "|")])
+async def test_convert_tokens_keep_tokens_uses_call_delimiters_async(*, start_token: str, end_token: str) -> None:
+    result = await Base64Converter().convert_tokens_async(
+        prompt=f"keep {start_token}test{end_token}",
+        start_token=start_token,
+        end_token=end_token,
+        keep_tokens=True,
+    )
+    assert result.output_text == f"keep {start_token}dGVzdA=={end_token}"
+
+
+async def test_convert_tokens_keep_tokens_preserves_multiline_unmarked_text_async() -> None:
+    result = await RandomCapitalLettersConverter(percentage=100).convert_tokens_async(
+        prompt="keep\r\n⟪one\ntwo⟫\tend", keep_tokens=True
+    )
+    assert result.output_text == "keep\r\n⟪ONE\nTWO⟫\tend"
+
+
+async def test_convert_tokens_keep_tokens_does_not_guess_generated_boundaries_async() -> None:
+    converter = Base64Converter()
+    with patch.object(converter, "convert_async", new_callable=AsyncMock) as convert:
+        convert.return_value = ConverterResult(output_text="before ⟪new⟫ after", output_type="text")
+        result = await converter.convert_tokens_async(prompt="keep ⟪test⟫", keep_tokens=True)
+    assert result.output_text == "keep ⟪before ⟪new⟫ after⟫"
+    convert.assert_awaited_once_with(prompt="test", input_type="text")
+
+
+@pytest.mark.parametrize("input_type", ["text", "image_path"])
+async def test_convert_tokens_keep_tokens_does_not_wrap_nontext_output_async(*, input_type: PromptDataType) -> None:
+    converter = Base64Converter()
+    expected = ConverterResult(output_text="output.png", output_type="image_path")
+    with patch.object(converter, "convert_async", new_callable=AsyncMock, return_value=expected) as convert:
+        result = await converter.convert_tokens_async(prompt="unmarked", input_type=input_type, keep_tokens=True)
+    assert result is expected
+    convert.assert_awaited_once_with(prompt="unmarked", input_type=input_type)
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("before ⟪⟪one⟫⟫ after", "before ⟪ONE⟫ after"),
+        ("⟪⟪⟪one⟫⟫⟫ and ⟪⟪⟪two⟫⟫⟫", "⟪⟪ONE⟫⟫ and ⟪⟪TWO⟫⟫"),
+        ("⟪one⟫ and ⟪⟪two⟫⟫", "ONE and ⟪TWO⟫"),
+        ("⟪outer ⟪one⟫ between ⟪two⟫ tail⟫", "⟪outer ONE between TWO tail⟫"),
+        ("⟪⟪one⟫⟪⟪two⟫⟫⟫", "⟪ONE⟪TWO⟫⟫"),
+        ("⟪⟪one⟫⟫⟪⟪two⟫⟫", "⟪ONE⟫⟪TWO⟫"),
+        (" \t⟪outer\r\n⟪one\r\ntwo⟫\r\n⟫ after\r\n", " \t⟪outer\r\nONE\r\nTWO\r\n⟫ after\r\n"),
+        ("⟪⟪⟫⟫", "⟪⟫"),
+    ],
+)
+async def test_convert_tokens_nested_regions_async(*, prompt: str, expected: str) -> None:
+    result = await RandomCapitalLettersConverter(percentage=100).convert_tokens_async(prompt=prompt)
+    assert result.output_text == expected
+    assert result.output_type == "text"
+
+
+async def test_convert_tokens_nested_regions_run_concurrently_async() -> None:
+    converter = Base64Converter()
+    started: set[str] = set()
+    all_started = asyncio.Event()
+
+    async def convert_region_async(*, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+        started.add(prompt)
+        if len(started) == 2:
+            all_started.set()
+        await all_started.wait()
+        return ConverterResult(output_text=prompt.upper(), output_type=input_type)
+
+    with patch.object(converter, "convert_async", new_callable=AsyncMock, side_effect=convert_region_async):
+        result = await asyncio.wait_for(
+            converter.convert_tokens_async(prompt="⟪⟪one⟫⟫ and ⟪⟪two⟫⟫"),
+            timeout=5,
+        )
+    assert started == {"one", "two"}
+    assert result.output_text == "⟪ONE⟫ and ⟪TWO⟫"
+
+
+async def test_convert_tokens_nested_parents_wait_for_next_call_async() -> None:
+    converter = SuffixAppendConverter(suffix="tail")
+    first = await converter.convert_tokens_async(prompt="keep ⟪outer ⟪one⟫ and ⟪two⟫ end⟫")
+    assert first.output_text == "keep ⟪outer one tail and two tail end⟫"
+    second = await converter.convert_tokens_async(prompt=first.output_text)
+    assert second.output_text == "keep outer one tail and two tail end tail"
+
+
+async def test_convert_tokens_nested_regions_finish_at_different_steps_async() -> None:
+    converter = SuffixAppendConverter(suffix="tail")
+    first = await converter.convert_tokens_async(prompt="keep ⟪one⟫ / ⟪⟪two⟫⟫")
+    assert first.output_text == "keep one tail / ⟪two tail⟫"
+    second = await converter.convert_tokens_async(prompt=first.output_text)
+    assert second.output_text == "keep one tail / two tail tail"
+    third = await converter.convert_tokens_async(prompt=second.output_text)
+    assert third.output_text == "keep one tail / two tail tail tail"
+
+
+@pytest.mark.parametrize(("start_token", "end_token"), [("<<", ">>"), ("[.*", ".*]"), ("<", "</>")])
+async def test_convert_tokens_nested_custom_delimiters_async(*, start_token: str, end_token: str) -> None:
+    result = await Base64Converter().convert_tokens_async(
+        prompt=f"keep {start_token}{start_token}test{end_token}{end_token}",
+        start_token=start_token,
+        end_token=end_token,
+    )
+    assert result.output_text == f"keep {start_token}dGVzdA=={end_token}"
+
+
+async def test_convert_tokens_deep_nesting_uses_one_layer_async() -> None:
+    depth = 2000
+    result = await Base64Converter().convert_tokens_async(prompt="⟪" * depth + "test" + "⟫" * depth)
+    assert result.output_text == "⟪" * (depth - 1) + "dGVzdA==" + "⟫" * (depth - 1)
+
+
+async def test_convert_tokens_nested_output_is_not_rematched_async() -> None:
+    converter = Base64Converter()
+    with patch.object(converter, "convert_async", new_callable=AsyncMock) as convert:
+        convert.return_value = ConverterResult(output_text="generated ⟪new⟫", output_type="text")
+        result = await converter.convert_tokens_async(prompt="keep ⟪⟪selected⟫⟫")
+    convert.assert_awaited_once_with(prompt="selected", input_type="text")
+    assert result.output_text == "keep ⟪generated ⟪new⟫⟫"
+
+
+@pytest.mark.parametrize(
     ("prompt", "error"),
     [
         ("unmatched ⟪start", "Unmatched start token"),
         ("unmatched end⟫", "Unmatched end token"),
         ("⟫reversed⟪", "Unmatched end token"),
-        ("⟪outer ⟪inner⟫ outer⟫", "Nested start token"),
+        ("⟪outer ⟪inner⟫", "Unmatched start token"),
+        ("⟪outer ⟪inner⟫⟫⟫", "Unmatched end token"),
         ("⟪valid⟫ then ⟪unclosed", "Unmatched start token"),
         ("⟪valid⟫ then unmatched⟫", "Unmatched end token"),
-        ("⟪valid⟫ then ⟪outer ⟪inner⟫⟫", "Nested start token"),
+        ("⟪valid⟫ then ⟪outer ⟪inner⟫", "Unmatched start token"),
+        ("⟪⟪valid⟫⟫ then ⟪unclosed", "Unmatched start token"),
     ],
 )
 async def test_convert_tokens_validates_all_regions_before_conversion_async(*, prompt: str, error: str) -> None:

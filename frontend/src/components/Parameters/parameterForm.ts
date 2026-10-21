@@ -8,7 +8,16 @@ import type { Parameter } from '@/types'
  */
 
 /** The control rendered for a parameter, derived from its declared metadata. */
-export type ParameterControlKind = 'structured' | 'boolean' | 'select' | 'multiselect' | 'list' | 'number' | 'text'
+export type ParameterControlKind =
+  | 'structured'
+  | 'json'
+  | 'boolean'
+  | 'select'
+  | 'multiselect'
+  | 'list'
+  | 'number'
+  | 'multiline'
+  | 'text'
 
 /**
  * Form state value for a single parameter.
@@ -45,9 +54,16 @@ export interface InitialFormValueOptions {
   prefillDefaults?: boolean
 }
 
+export function isJsonObjectParameter(param: Parameter): boolean {
+  return /^dict(?:\[|$)/.test(param.type_name)
+}
+
 export function getParameterControlKind(param: Parameter): ParameterControlKind {
   if (param.variants) {
     return 'structured'
+  }
+  if (isJsonObjectParameter(param)) {
+    return 'json'
   }
   if (param.type_name === 'bool') {
     return 'boolean'
@@ -64,6 +80,9 @@ export function getParameterControlKind(param: Parameter): ParameterControlKind 
   }
   if (param.type_name === 'int' || param.type_name === 'float') {
     return 'number'
+  }
+  if (param.multiline && param.type_name === 'str') {
+    return 'multiline'
   }
   return 'text'
 }
@@ -130,6 +149,16 @@ export function getInitialFormValues(
         }
         break
       }
+      case 'json': {
+        if (source == null) {
+          values[param.name] = ''
+        } else if (typeof source === 'string') {
+          values[param.name] = source
+        } else {
+          values[param.name] = JSON.stringify(source, null, 2)
+        }
+        break
+      }
       case 'boolean':
         values[param.name] = initialBooleanValue(source)
         break
@@ -159,6 +188,23 @@ export type BuildParametersResult =
   | { ok: false; error: string }
 
 type CoerceResult = { ok: true; value: unknown } | { ok: false; error: string }
+
+export type JsonObjectParseResult =
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; error: string }
+
+export function parseJsonObjectFormValue(raw: string, parameterName: string): JsonObjectParseResult {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return { ok: false, error: `${parameterName} must contain valid JSON.` }
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, error: `${parameterName} must be a JSON object.` }
+  }
+  return { ok: true, value: parsed as Record<string, unknown> }
+}
 
 /** Coerces a single string token to the declared scalar type (`int` / `float` / `bool` / anything else passes through as a string). */
 function coerceToken(raw: string, typeName: string, paramName: string): CoerceResult {
@@ -221,6 +267,22 @@ export function buildParametersFromForm(
       continue
     }
 
+    if (kind === 'json') {
+      const raw = typeof value === 'string' ? value.trim() : ''
+      if (!raw) {
+        if (param.required) {
+          return { ok: false, error: `${param.name} is required.` }
+        }
+        continue
+      }
+      const parsed = parseJsonObjectFormValue(raw, param.name)
+      if (!parsed.ok) {
+        return parsed
+      }
+      parameters[param.name] = parsed.value
+      continue
+    }
+
     if (kind === 'boolean') {
       if (value !== 'true' && value !== 'false') {
         if (param.required) {
@@ -257,6 +319,21 @@ export function buildParametersFromForm(
     }
 
     const raw = typeof value === 'string' ? value.trim() : ''
+
+    if (kind === 'multiline') {
+      // Preserve the original string verbatim (including leading/trailing
+      // newlines) once we know it isn't blank — for an HTTP request template,
+      // a trailing blank line is the significant CRLF-CRLF boundary that ends
+      // the headers section, and trimming it would corrupt the request.
+      if (raw.length === 0) {
+        if (param.required) {
+          return { ok: false, error: `${param.name} is required.` }
+        }
+        continue
+      }
+      parameters[param.name] = typeof value === 'string' ? value : raw
+      continue
+    }
 
     if (kind === 'list') {
       const entries = Array.isArray(value) ? value : parseListValue(raw)
