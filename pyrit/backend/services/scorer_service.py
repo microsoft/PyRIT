@@ -49,6 +49,25 @@ class ScorerService:
             description=metadata.class_description or None if metadata else None,
         )
 
+    def _reject_server_file_params(self, *, type_name: str, params: dict[str, Any]) -> None:
+        """
+        Reject parameters that name a file on the server, before any scorer is built.
+
+        Args:
+            type_name (str): The registered scorer type.
+            params (dict[str, Any]): The constructor parameters from the API caller.
+
+        Raises:
+            ValueError: If a parameter names a file on the server.
+        """
+        metadata = self._registry.get_registered_class_metadata(type_name)
+        for parameter in metadata.parameters if metadata else []:
+            if parameter.name in params and _names_server_file(parameter):
+                raise ValueError(
+                    f"Parameter '{parameter.name}' of '{type_name}' names a server file and cannot be set "
+                    "through the API; pass it from Python or an initializer instead."
+                )
+
     async def list_scorer_types_async(self) -> ScorerTypeResponse:
         """
         List the scorer types external callers can build, without constructing scorers.
@@ -127,13 +146,14 @@ class ScorerService:
 
     async def create_scorer_async(self, *, request: CreateScorerRequest) -> ScorerInstance | UnregisteredScorer:
         """
-        Build and register a scorer through the shared registry resolver.
+        Build a scorer through the shared registry resolver, with optional registration.
 
         A parameter that names a file on the server is rejected before the scorer is
         built, so the server never reads a file a caller chose.
 
         Returns:
-            ScorerInstance: The registered scorer and its identifier.
+            ScorerInstance | UnregisteredScorer: A named instance, or an unregistered
+                descriptor when ``register`` is false.
 
         Raises:
             ValueError: If the scorer type is unknown, a parameter names a file on the
@@ -143,13 +163,7 @@ class ScorerService:
         def create() -> ScorerInstance | UnregisteredScorer:
             if request.type not in self._registry:
                 raise ValueError(f"Scorer type '{request.type}' not found")
-            metadata = self._registry.get_registered_class_metadata(request.type)
-            for parameter in metadata.parameters if metadata else []:
-                if parameter.name in request.params and _names_server_file(parameter):
-                    raise ValueError(
-                        f"Parameter '{parameter.name}' of '{request.type}' names a server file and cannot be set "
-                        "through the API; pass it from Python or an initializer instead."
-                    )
+            self._reject_server_file_params(type_name=request.type, params=request.params)
             if not request.register:
                 scorer = self._registry.create_instance_from_external_input(request.type, params=request.params)
                 return UnregisteredScorer(

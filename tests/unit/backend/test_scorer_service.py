@@ -266,8 +266,11 @@ async def test_types_leave_out_scorers_that_require_a_server_file() -> None:
     assert "_FileRequiredScorer" not in scorer_types
 
 
+@pytest.mark.parametrize("register", [True, False])
 @pytest.mark.parametrize("parameter_name", ["data_file", "question_path"])
-async def test_create_scorer_rejects_server_file_parameters_before_construction(parameter_name: str) -> None:
+async def test_create_scorer_rejects_server_file_parameters_before_construction(
+    parameter_name: str, register: bool
+) -> None:
     ScorerRegistry.get_registry_singleton().register_class(_FileConfiguredScorer)
     _FileConfiguredScorer.constructions = 0
     service = ScorerService()
@@ -275,7 +278,10 @@ async def test_create_scorer_rejects_server_file_parameters_before_construction(
     with pytest.raises(ValueError, match=f"'{parameter_name}' of '_FileConfiguredScorer' names a server file"):
         await service.create_scorer_async(
             request=CreateScorerRequest(
-                name="file", type="_FileConfiguredScorer", params={parameter_name: "/etc/hosts"}
+                name="file" if register else None,
+                register=register,
+                type="_FileConfiguredScorer",
+                params={parameter_name: "/etc/hosts"},
             )
         )
     created = await service.create_scorer_async(
@@ -287,7 +293,10 @@ async def test_create_scorer_rejects_server_file_parameters_before_construction(
     assert ScorerRegistry.get_registry_singleton().instances.get("file") is None
 
 
-async def test_decision_scorer_question_path_is_not_read_through_the_api(chat_target: str, tmp_path: Path) -> None:
+@pytest.mark.parametrize("register", [True, False])
+async def test_decision_scorer_question_path_is_not_read_through_the_api(
+    chat_target: str, tmp_path: Path, register: bool
+) -> None:
     settings_file = tmp_path / "settings.yaml"
     settings_file.write_text("api_secret: not-for-callers\n", encoding="utf-8")
     service = ScorerService()
@@ -299,7 +308,8 @@ async def test_decision_scorer_question_path_is_not_read_through_the_api(chat_ta
     ):
         await service.create_scorer_async(
             request=CreateScorerRequest(
-                name="decision",
+                name="decision" if register else None,
+                register=register,
                 type="DecisionScorer",
                 params={"chat_target": chat_target, "decision_question_path": str(settings_file)},
             )
