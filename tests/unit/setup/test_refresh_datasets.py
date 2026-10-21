@@ -7,12 +7,13 @@ Unit tests for the RefreshDatasets initializer.
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
 from pyrit.setup.initializers.refresh_datasets import RefreshDatasets
 
 
@@ -247,6 +248,21 @@ class TestRefreshDatasetsRefreshCorrectness:
         result = await sqlite_instance.get_seeds_async(dataset_name="d")
         assert len(result) == 1
         assert result[0].value == "v2"
+
+    async def test_invalid_group_keeps_old_data_async(
+        self, *, sqlite_instance: MemoryInterface, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        old = SeedObjective(value="Keep the usable objective", dataset_name="d")
+        await sqlite_instance.add_seeds_to_memory_async(seeds=[old], added_by="user")
+        group_id = uuid4()
+        candidate = SeedDataset(
+            dataset_name="d",
+            seeds=[SeedObjective(value=str(index), dataset_name="d", prompt_group_id=group_id) for index in range(2)],
+        )
+        await self._run_refresh(new_dataset=candidate, dataset_name="d")
+        after = await sqlite_instance.get_seeds_async(dataset_name="d")
+        assert [(seed.id, seed.value) for seed in after] == [(old.id, old.value)]
+        assert "Skipping refresh" in caplog.text
 
     async def test_upstream_removed_seed_disappears(self, sqlite_instance: MemoryInterface) -> None:
         await sqlite_instance.add_seeds_to_memory_async(

@@ -128,7 +128,7 @@ if TYPE_CHECKING:
     )
     from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
     from pyrit.models.messages.conversation_retry import ConversationRetry, ConversationRetryReason
-    from pyrit.models.operation import Operation, OperationCreate
+    from pyrit.models.operation import Operation, OperationCreate, OperationUsage
     from pyrit.models.parameter import (
         ComponentType,
         Parameter,
@@ -406,6 +406,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ObjectiveTargetEvaluationIdentifier": "pyrit.models.identifiers",
     "Operation": "pyrit.models.operation",
     "OperationCreate": "pyrit.models.operation",
+    "OperationUsage": "pyrit.models.operation",
     "Parameter": "pyrit.models.parameter",
     "ParameterDestination": "pyrit.models.parameter",
     "PresetEntry": "pyrit.models.catalog",

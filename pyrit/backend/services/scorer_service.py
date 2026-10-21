@@ -13,6 +13,7 @@ from pyrit.backend.models.scorers import (
     ScorerListResponse,
     ScorerTypeEntry,
     ScorerTypeResponse,
+    UnregisteredScorer,
 )
 from pyrit.models.catalog.scorer import ScorerInstance
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
@@ -124,7 +125,7 @@ class ScorerService:
 
         return await asyncio.to_thread(get_instance)
 
-    async def create_scorer_async(self, *, request: CreateScorerRequest) -> ScorerInstance:
+    async def create_scorer_async(self, *, request: CreateScorerRequest) -> ScorerInstance | UnregisteredScorer:
         """
         Build and register a scorer through the shared registry resolver.
 
@@ -139,7 +140,7 @@ class ScorerService:
                 server, or the registry or scorer rejects the parameters.
         """
 
-        def create() -> ScorerInstance:
+        def create() -> ScorerInstance | UnregisteredScorer:
             if request.type not in self._registry:
                 raise ValueError(f"Scorer type '{request.type}' not found")
             metadata = self._registry.get_registered_class_metadata(request.type)
@@ -149,6 +150,13 @@ class ScorerService:
                         f"Parameter '{parameter.name}' of '{request.type}' names a server file and cannot be set "
                         "through the API; pass it from Python or an initializer instead."
                     )
+            if not request.register:
+                scorer = self._registry.create_instance_from_external_input(request.type, params=request.params)
+                return UnregisteredScorer(
+                    identifier=ScorerIdentifier.from_component_identifier(scorer.get_identifier())
+                )
+            if request.name is None:
+                raise ValueError("name is required when register=true")
             scorer = self._registry.create_named_instance(
                 name=request.name,
                 type_name=request.type,

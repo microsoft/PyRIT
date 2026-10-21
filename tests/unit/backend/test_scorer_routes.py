@@ -77,6 +77,12 @@ class _RouteFailingScorer(_RouteLeafScorer):
         raise RuntimeError("intentional construction failure")
 
 
+class _RoutePythonOnlyScorer(_RouteLeafScorer):
+    def __init__(self, *, dependency: object | None = None) -> None:
+        super().__init__()
+        self.dependency = dependency
+
+
 @pytest.fixture(autouse=True)
 def reset_scorer_registries():
     """Reset registry state and the service cache between API tests."""
@@ -94,6 +100,7 @@ def _register_test_scorers() -> ScorerRegistry:
     registry.register_class(_RouteLeafScorer)
     registry.register_class(_RouteCompositeScorer)
     registry.register_class(_RouteFailingScorer)
+    registry.register_class(_RoutePythonOnlyScorer)
     return registry
 
 
@@ -179,6 +186,29 @@ def test_failed_scorer_creation_never_registers_instance(
     assert response.status_code == expected_status
     assert registry.instances.get(name) is None
     assert client.get(f"/api/scorers/{name}").status_code == 404
+
+
+@pytest.mark.parametrize("register", [True, False])
+@pytest.mark.parametrize("dependency", [None, {}])
+def test_scorer_creation_rejects_python_only_inputs(
+    compatibility_headers: dict[str, str], patch_central_database: None, *, register: bool, dependency: Any
+) -> None:
+    registry = _register_test_scorers()
+    client = TestClient(app, headers=compatibility_headers)
+
+    response = client.post(
+        "/api/scorers",
+        json={
+            "name": "python-only" if register else None,
+            "type": "_RoutePythonOnlyScorer",
+            "params": {"dependency": dependency},
+            "register": register,
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert "cannot be set through the API" in response.text
+    assert registry.instances.get_names() == []
 
 
 def test_duplicate_name_returns_400_and_does_not_replace_instance(compatibility_headers: dict[str, str]) -> None:

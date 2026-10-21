@@ -11,15 +11,16 @@ from pyrit.models.catalog.scenario import DATASET_FILTERS, RunScenarioRequest, S
 
 
 @pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
-def test_new_dataset_request_transport_round_trip(model: type) -> None:
+@pytest.mark.parametrize("policy", ["never", "if_missing", "always"])
+def test_new_dataset_request_transport_round_trip(*, model: type, policy: str) -> None:
     data = {
         "scenario_name": "s",
         "target_name": "t",
         "datasets": {
-            "sources": [{"name": "harmbench"}, {"name": "custom", "max_size": "all", "fetch": "never"}],
+            "sources": [{"name": "harmbench"}, {"name": "custom", "max_size": "all", "fetch": policy}],
             "max_per_dataset": 4,
             "max_total": 12,
-            "fetch": "if_missing",
+            "fetch": policy,
             "filters": {"data_types": ["text"]},
         },
     }
@@ -90,7 +91,7 @@ def test_invalid_deprecated_dataset_names_fail_validation(model: type) -> None:
         {"max_total": True},
         {"max_per_dataset": 0},
         {"max_total": 1.5},
-        {"fetch": "always"},
+        {"fetch": "sometimes"},
         {"filters": {"authors": ["me"]}},
         {"filters": {"data_types": "text"}},
         {"unexpected": True},

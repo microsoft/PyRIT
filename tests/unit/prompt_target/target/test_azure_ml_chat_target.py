@@ -43,6 +43,19 @@ def test_initialization_with_extra_model_parameters(aml_online_chat: AzureMLChat
     assert aml_online_chat._extra_parameters == {"extra_param1": "sample", "extra_param2": 1.0}
 
 
+def test_get_identifier_distinguishes_extra_model_parameters(patch_central_database):
+    def build(**kwargs) -> AzureMLChatTarget:
+        return AzureMLChatTarget(endpoint="http://aml-test-endpoint.com", api_key="valid_api_key", **kwargs)
+
+    llama = build(stop=["<|eot_id|>"])
+    mistral = build(stop=["</s>"])
+
+    assert llama.get_identifier().params["extra_parameters"] == {"stop": ["<|eot_id|>"]}
+    assert llama.get_identifier().hash != mistral.get_identifier().hash
+    assert build(stop=["</s>"]).get_identifier().hash == mistral.get_identifier().hash
+    assert build().get_identifier().params.get("extra_parameters") is None
+
+
 def test_initialization_with_no_key_raises():
     os.environ[AzureMLChatTarget.api_key_environment_variable] = ""
     with pytest.raises(ValueError):

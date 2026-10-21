@@ -94,6 +94,7 @@ if TYPE_CHECKING:
     from pyrit.datasets.seed_datasets.remote.llm_latent_adversarial_training_dataset import (
         _LLMLatentAdversarialTrainingDataset,
     )
+    from pyrit.datasets.seed_datasets.remote.mask_dataset import MaskQuestionArchetype, _MaskDataset
     from pyrit.datasets.seed_datasets.remote.medsafetybench_dataset import _MedSafetyBenchDataset
     from pyrit.datasets.seed_datasets.remote.mlcommons_ailuminate_dataset import _MLCommonsAILuminateDataset
     from pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset import (
@@ -178,6 +179,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FortressSplit": "pyrit.datasets.seed_datasets.remote.fortress_dataset",
     "HarmEvalTopic": "pyrit.datasets.seed_datasets.remote.harmeval_dataset",
     "HiXSTestLanguage": "pyrit.datasets.seed_datasets.remote.hixstest_dataset",
+    "MaskQuestionArchetype": "pyrit.datasets.seed_datasets.remote.mask_dataset",
     "MMSafetyBenchCategory": "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset",
     "MMSafetyBenchVariant": "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset",
     "MossBenchOversensitivityType": "pyrit.datasets.seed_datasets.remote.mossbench_dataset",
@@ -243,6 +245,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "_LLMLatentAdversarialTrainingDataset": (
         "pyrit.datasets.seed_datasets.remote.llm_latent_adversarial_training_dataset"
     ),
+    "_MaskDataset": "pyrit.datasets.seed_datasets.remote.mask_dataset",
     "_MedSafetyBenchDataset": "pyrit.datasets.seed_datasets.remote.medsafetybench_dataset",
     "_MICDataset": "pyrit.datasets.seed_datasets.remote.moral_integrity_corpus_dataset",
     "_MLCommonsAILuminateDataset": "pyrit.datasets.seed_datasets.remote.mlcommons_ailuminate_dataset",

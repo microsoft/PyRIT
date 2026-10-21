@@ -570,6 +570,31 @@ async def test_video_audio_scorer_cleans_up_extracted_audio(tmp_path, video_conv
 
 
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
+async def test_video_audio_scorer_keeps_source_when_extraction_returns_it(video_converter_sample_video):
+    """_score_video_audio_async must not delete the video when extraction hands back the input path.
+
+    A video whose own audio track is already compliant WAV makes extract_audio_from_video
+    return the input unchanged, so the cleanup must skip it.
+    """
+    image_scorer = MockTrueFalseScorer(return_value=True)
+    audio_scorer = MockAudioTrueFalseScorer(return_value=True)
+
+    source_video = Path(video_converter_sample_video.converted_value)
+    assert source_video.exists()
+
+    with patch.object(AudioTranscriptHelper, "extract_audio_from_video", return_value=str(source_video)):
+        scorer = VideoTrueFalseScorer(
+            image_capable_scorer=image_scorer,
+            audio_scorer=audio_scorer,
+            num_sampled_frames=3,
+        )
+
+        await scorer._score_piece_with_expectation_async(video_converter_sample_video, expectation=None)
+
+    assert source_video.exists()
+
+
+@pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
 async def test_video_scorer_and_aggregation_both_true(video_converter_sample_video):
     """Test AND aggregation when both visual and audio scores are true"""
     image_scorer = MockTrueFalseScorer(return_value=True)

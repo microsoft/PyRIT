@@ -1169,18 +1169,22 @@ class FuzzerGenerator(
         """
         jailbreak_count = 0
         response_pieces = [response.message_pieces[0] for response in responses]
+        # score_batch_async returns one flattened list where a scorable may yield
+        # zero or several scores, so a jailbreak verdict is attributed to its
+        # response by the scored piece id rather than by position in that list.
+        conversation_by_piece_id = {str(piece.id): piece.conversation_id for piece in response_pieces}
 
-        for index, score in enumerate(scores):
+        for score in scores:
             if self._is_jailbreak(score):
                 jailbreak_count += 1
-                conversation_id = response_pieces[index].conversation_id
+                conversation_id = conversation_by_piece_id.get(str(score.message_piece_id))
                 if conversation_id is None:
                     raise ValueError("Response piece has no conversation_id; cannot record jailbreak conversation.")
                 context.jailbreak_conversation_ids.append(conversation_id)
 
         # Update tracking
         context.total_jailbreak_count += jailbreak_count
-        context.total_target_query_count += len(scores)
+        context.total_target_query_count += len(responses)
 
         # Add successful template to results
         if jailbreak_count > 0:
