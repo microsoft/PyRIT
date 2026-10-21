@@ -28,6 +28,7 @@ class ImageCompressionConverter(Converter):
     When converting images with transparency (alpha channel) to JPEG format, the converter
     automatically composites the transparent areas onto a solid background color.
     CMYK images converted to PNG use RGB pixels without the incompatible source ICC profile.
+    Integer-mode images saved as PNG are clipped to the format's 16-bit range.
 
     Supported input types:
     File paths to any image that PIL can open (or URLs pointing to such images):
@@ -196,6 +197,8 @@ class ImageCompressionConverter(Converter):
         elif output_format == "PNG" and image.mode == "CMYK":
             image = image.convert("RGB")
             image.info.pop("icc_profile", None)
+        elif output_format == "PNG" and image.mode == "I":
+            image = image.convert("I;16")
 
         save_kwargs: dict[str, Any] = {}
 
