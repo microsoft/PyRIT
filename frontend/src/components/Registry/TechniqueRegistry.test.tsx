@@ -195,7 +195,7 @@ describe('TechniqueRegistry', () => {
     await user.click(screen.getByRole('button', { name: 'Add technique' }))
     await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(1))
     const request = techniques.createTechnique.mock.calls[0][0]
-    expect(request).toMatchObject({ name: 'created', tags: ['mine', 'basic'], type: 'PromptSendingAttack', params: {
+    expect(request).toMatchObject({ name: 'created', description: 'Custom settings', tags: ['mine', 'basic'], type: 'PromptSendingAttack', params: {
       max_attempts_on_failure: 0, settings: { type: 'basic', parameters: { enabled: false, limit: 0 } },
     }, request_converters: ['b64', 'rot13', 'b64'], response_converters: ['rot13'] })
     expect(request.params).not.toHaveProperty('objective_target')

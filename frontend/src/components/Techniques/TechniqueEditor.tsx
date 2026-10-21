@@ -181,7 +181,6 @@ export default function TechniqueEditor({
         }
       }
     }
-    if (description !== (original.settings.description ?? '')) changes.description = description
     for (const [key, next] of [
       ['request_converters', requestConverters], ['response_converters', responseConverters],
     ] as const) {
@@ -291,15 +290,14 @@ export default function TechniqueEditor({
               {!loading && types.length === 0 && <Button onClick={() => setRetry(retry + 1)}>Retry metadata</Button>}
               {!loading && types.length > 0 && (
                 <>
-                  {editing ? <><Text>Technique: {name}</Text><Text>Attack type: {selectedType}</Text>
-                    <Text>Changes apply to this run only. The registered technique stays unchanged.</Text></> : <Field label="Registry name" required hint="Start with a letter. Use letters, digits, and underscores.">
+                  {!editing && <Field label="Registry name" required hint="Start with a letter. Use letters, digits, and underscores.">
                     <Input value={name} disabled={submitting} onChange={(_, data) => setName(data.value)} />
                   </Field>}
-                  <Field label="Description"><Textarea value={description} disabled={inputsDisabled} onChange={(_, data) => update(setDescription, data.value)} /></Field>
+                  {editing
+                    ? description && <Text>{description}</Text>
+                    : <Field label="Description"><Textarea value={description} disabled={inputsDisabled} onChange={(_, data) => setDescription(data.value)} /></Field>}
                   {original?.settings.simulation && (
-                    <section className={styles.section} aria-label="Simulated conversation">
-                      <Text as="h3">Simulated conversation</Text>
-                      <Text block>Edit generation settings, not a generated transcript. Template placeholders stay literal.</Text>
+                    <div className={styles.section}>
                       <Field label="Turn count" required><Input type="number" min={1} step={1} value={numTurns}
                         disabled={inputsDisabled} onChange={(_, data) => update(setNumTurns, data.value)} /></Field>
                       {([
@@ -311,9 +309,7 @@ export default function TechniqueEditor({
                         <Field key={key} label={label}><Textarea className={styles.prompt} resize="vertical" value={simulation[key] ?? ''}
                           disabled={inputsDisabled} onChange={(_, data) => update(setSimulation, { ...simulation, [key]: data.value })} /></Field>
                       ))}
-                      {original.settings.simulation.next_message_system_prompt == null
-                        && original.settings.simulation.final_user_message == null && <Text>No additional user message.</Text>}
-                    </section>
+                    </div>
                   )}
                   {!editing && <><Field label="Tags" hint="Comma-separated tags.">
                     <Input value={tags} disabled={submitting} onChange={(_, data) => setTags(data.value)} />
@@ -337,7 +333,6 @@ export default function TechniqueEditor({
                       onChange={(next) => update(setValues, { ...values, [parameter.name]: next })} />
                   ) : <ParameterField key={parameter.name} parameter={parameter} value={values[parameter.name] ?? ''}
                       disabled={inputsDisabled} allowEmptyList
-                      extraHint={editing ? 'Clearing text sets an empty string. Other cleared values must allow null.' : undefined}
                       onChange={(key, value) => update(setValues, { ...values, [key]: value })} />
                   )}
                   {selected?.supports_converters && (
@@ -349,7 +344,7 @@ export default function TechniqueEditor({
                     </>
                   )}
                   {(selected?.supports_adversarial || original?.editable_fields.includes('adversarial_chat')) && (
-                    <>{editable('adversarial_chat') && <ReferenceField label="Adversarial target" options={targetOptions} value={adversarialTarget} disabled={inputsDisabled}
+                    <>{!editing && <ReferenceField label="Adversarial target" options={targetOptions} value={adversarialTarget} disabled={inputsDisabled}
                         onChange={(next) => { if (typeof next === 'string') update(setAdversarialTarget, next) }} />}
                       {selected?.supports_adversarial && <>
                       {editable('adversarial_system_prompt') && <Field label="Adversarial system prompt"><Textarea value={systemPrompt} disabled={inputsDisabled} onChange={(_, data) => update(setSystemPrompt, data.value)} /></Field>}
@@ -358,9 +353,6 @@ export default function TechniqueEditor({
                       </>}
                     </>
                   )}
-                  {original && <section aria-label="Read-only settings"><Text as="h3">Read-only settings</Text>
-                    <dl>{Object.entries(original.read_only).map(([key, value]) => <div key={key}>
-                      <dt>{key}</dt><dd>{value}</dd></div>)}</dl></section>}
                 </>
               )}
               {autoApply && validating && !editError && <Spinner size="tiny" label="Validating technique settings..." />}

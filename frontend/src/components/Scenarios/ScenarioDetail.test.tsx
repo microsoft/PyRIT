@@ -1211,9 +1211,9 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
     renderDetail('/scanner/technique.execute')
-    await user.type(await screen.findByLabelText('Description'), ' edited')
+    await user.type(await screen.findByLabelText('Simulated user system prompt'), ' edited')
     await screen.findByText('Edited for this run')
-    expect(await screen.findByLabelText('Description')).toHaveValue('default_technique settings edited')
+    expect(await screen.findByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }} edited')
     await user.click(await screen.findByRole('radio', { name: 'crescendo' }))
     expect(await screen.findByText('Discard technique edits?')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -1223,10 +1223,33 @@ describe('ScenarioDetail', () => {
     expect(screen.getByText('Edited for this run')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Reset to original' }))
     expect(screen.queryByText('Edited for this run')).not.toBeInTheDocument()
-    expect(await screen.findByLabelText('Description')).toHaveValue('default_technique settings')
+    expect(await screen.findByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }}')
     await user.click(screen.getByRole('radio', { name: 'crescendo' }))
     expect(screen.getByRole('radio', { name: 'crescendo' })).toBeChecked()
     await waitFor(() => expect(mockTechniques.getConfiguration).toHaveBeenCalledWith('crescendo'))
+  })
+
+  it('should show one adversarial target selector outside the technique editor', async () => {
+    const user = userEvent.setup()
+    const adversary = makeAdversarialTarget('adversary')
+    mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
+    mockTechniques.getConfiguration.mockImplementation(async (name: string) => {
+      const configuration = techniqueConfiguration(name)
+      return { ...configuration, editable_fields: [...configuration.editable_fields, 'adversarial_chat'] }
+    })
+    renderDetail('/scanner/technique.execute', {
+      targets: [makeTarget('target-a'), adversary],
+    })
+    await screen.findByRole('spinbutton', { name: 'Turn count' })
+    const editor = screen.getByRole('region', { name: 'Technique Parameters' })
+    expect(within(editor).getByText('default_technique settings')).toBeInTheDocument()
+    expect(within(editor).queryByRole('textbox', { name: 'Description' })).not.toBeInTheDocument()
+    expect(within(editor).queryByRole('combobox', { name: /Adversarial target/i })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('combobox', { name: /Adversarial target/i })).toHaveLength(1)
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Adversarial Target' }), 'adversary')
+    await confirmRunPreview(user)
+    expect(mockStartRun.mock.calls[0][0].adversarial_target_name).toBe('adversary')
+    expect(mockStartRun.mock.calls[0][0].technique_override).toBeUndefined()
   })
 
   it('should show no editor or configuration request for other scenarios with one selected item', async () => {

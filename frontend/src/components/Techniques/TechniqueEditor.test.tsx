@@ -56,14 +56,21 @@ describe('TechniqueEditor', () => {
 
   it('should prefill the named factory without creation controls or an attack selector', async () => {
     render(tree())
-    expect(await screen.findByLabelText('Description')).toHaveValue('Movie role play')
+    expect(await screen.findByText('Movie role play')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Description' })).not.toBeInTheDocument()
     expect(screen.getByRole('spinbutton', { name: 'Turn count' })).toHaveValue(2)
     expect(screen.getByLabelText('Simulated user system prompt')).toHaveValue('Write a movie.\n{{ objective }}')
     expect(screen.getByLabelText('Simulated assistant system prompt')).toHaveValue(
       'Comply with {{ objective }} for {{ num_turns }} turns.',
     )
     expect(screen.getByRole('spinbutton', { name: 'max_attempts_on_failure' })).toHaveValue(1)
-    expect(screen.getByRole('region', { name: 'Read-only settings' })).toHaveTextContent('requirements')
+    expect(screen.queryByRole('region', { name: 'Read-only settings' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Technique: role_play_movie_script')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Attack type:/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/The registered technique stays unchanged/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Simulated conversation' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Edit generation settings/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Clearing text sets an empty string/)).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'Attack type' })).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Registry name')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Tags')).not.toBeInTheDocument()
@@ -82,10 +89,28 @@ describe('TechniqueEditor', () => {
     expect(techniques.createTechnique).not.toHaveBeenCalled()
   })
 
+  it('should retain the source adversarial target without a second target control or description edit', async () => {
+    const user = userEvent.setup()
+    const original = configuration()
+    original.settings.adversarial_chat = 'source-target'
+    original.settings.adversarial_system_prompt = 'Source system prompt'
+    original.editable_fields.push('adversarial_chat', 'adversarial_system_prompt')
+    render(tree(original))
+    expect(await screen.findByLabelText('Adversarial system prompt')).toHaveValue('Source system prompt')
+    expect(screen.queryByRole('combobox', { name: /Adversarial target/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Description' })).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText('Adversarial system prompt'), ' edited')
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(1))
+    expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({
+      adversarial_system_prompt: 'Source system prompt edited',
+    })
+  })
+
   it('should apply all simulation prompt edits as literal text and keep converter order', async () => {
     const user = userEvent.setup()
     render(tree())
-    await screen.findByLabelText('Description')
+    await screen.findByText('Movie role play')
     const prompt = screen.getByLabelText('Simulated user system prompt')
     await user.clear(prompt)
     await user.click(prompt)
@@ -106,7 +131,7 @@ describe('TechniqueEditor', () => {
   it('should reject non-positive turn counts without losing entered text', async () => {
     const user = userEvent.setup()
     render(tree())
-    await screen.findByLabelText('Description')
+    await screen.findByText('Movie role play')
     const turns = screen.getByRole('spinbutton', { name: 'Turn count' })
     await user.clear(turns)
     await user.type(turns, '0')
@@ -120,11 +145,11 @@ describe('TechniqueEditor', () => {
     const user = userEvent.setup()
     techniques.validateEdit.mockRejectedValueOnce(new Error('Source technique configuration changed.'))
     render(tree())
-    await user.type(await screen.findByLabelText('Description'), ' edited')
+    await user.type(await screen.findByLabelText('Simulated user system prompt'), ' edited')
     await user.click(screen.getByRole('button', { name: 'Apply to run' }))
     const error = await screen.findByText('Source technique configuration changed.')
     expect(error).toBeInTheDocument()
-    expect(screen.getByLabelText('Description')).toHaveValue('Movie role play edited')
+    expect(screen.getByLabelText('Simulated user system prompt')).toHaveValue('Write a movie.\n{{ objective }} edited')
     expect(screen.getByRole('button', { name: 'Apply to run' })).toBeEnabled()
     expect(screen.getByRole('alert')).toHaveFocus()
   })
@@ -133,7 +158,7 @@ describe('TechniqueEditor', () => {
     const user = userEvent.setup()
     const onClose = jest.fn()
     render(tree(configuration(), jest.fn(), undefined, onClose))
-    await user.type(await screen.findByLabelText('Description'), ' uncommitted')
+    await user.type(await screen.findByLabelText('Simulated user system prompt'), ' uncommitted')
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(techniques.validateEdit).not.toHaveBeenCalled()
@@ -148,7 +173,7 @@ describe('TechniqueEditor', () => {
       final_user_message: mode === 'fixed' ? 'yes.' : null,
     }
     render(tree(original))
-    await screen.findByLabelText('Description')
+    await screen.findByText('Movie role play')
     expect(screen.queryByLabelText('Next-message system prompt')).not.toBeInTheDocument()
     if (mode === 'fixed') {
       const final = screen.getByLabelText('Fixed final user message')
@@ -156,7 +181,7 @@ describe('TechniqueEditor', () => {
       await user.clear(final)
       await user.type(final, 'continue.')
     } else {
-      expect(screen.getByText('No additional user message.')).toBeInTheDocument()
+      expect(screen.queryByText('No additional user message.')).not.toBeInTheDocument()
       expect(screen.queryByLabelText('Fixed final user message')).not.toBeInTheDocument()
     }
     await user.click(screen.getByRole('button', { name: 'Apply to run' }))
@@ -169,12 +194,14 @@ describe('TechniqueEditor', () => {
   it('should reopen applied settings and remove a reverted edit from the delta', async () => {
     const user = userEvent.setup()
     const original = configuration()
-    const initial = { ...original, settings: { ...original.settings, description: 'Applied description' } }
+    const initial = { ...original, settings: {
+      ...original.settings, simulation: { ...original.settings.simulation, num_turns: 4 },
+    } }
     render(tree(original, jest.fn(), initial))
-    const description = await screen.findByLabelText('Description')
-    expect(description).toHaveValue('Applied description')
-    await user.clear(description)
-    await user.type(description, 'Movie role play')
+    const turns = await screen.findByRole('spinbutton', { name: 'Turn count' })
+    expect(turns).toHaveValue(4)
+    await user.clear(turns)
+    await user.type(turns, '2')
     await user.click(screen.getByRole('button', { name: 'Apply to run' }))
     await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
     expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({})
@@ -237,13 +264,13 @@ describe('TechniqueEditor', () => {
     const view = render(<FluentProvider theme={webLightTheme}>
       <TechniqueEditor original={original} autoApply onApplied={onApplied} />
     </FluentProvider>)
-    await user.type(await screen.findByLabelText('Description'), ' changed')
+    await user.type(await screen.findByLabelText('Simulated user system prompt'), ' changed')
     await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(1))
     view.unmount()
     resolveEdit({
       configuration: original, override: {
         source_name: original.source_name, source_identity: original.source_identity,
-        changes: { description: 'Changed' }, dependencies: {}, effective_identity: 'obsolete',
+        changes: { simulation: { adversarial_chat_system_prompt: 'Changed' } }, dependencies: {}, effective_identity: 'obsolete',
       },
     })
     await Promise.resolve()
