@@ -3,6 +3,8 @@
 
 """Tests for is_general_technique property and AttackTechniqueSeedGroup class."""
 
+from typing import assert_type
+
 import pytest
 
 from pyrit.models import Message
@@ -216,8 +218,20 @@ class TestAttackTechniqueSeedGroupInsertionIndex:
         assert group.insertion_index == 0
 
 
+class _CustomAttackTechniqueSeedGroup(AttackTechniqueSeedGroup):
+    """A subclass used to check classmethod factory return types."""
+
+
 class TestAttackTechniqueSeedGroupFromSystemPrompt:
     """Tests for the from_system_prompt classmethod."""
+
+    def test_returns_calling_subclass(self):
+        """Test that from_system_prompt preserves the calling subclass."""
+        group = _CustomAttackTechniqueSeedGroup.from_system_prompt("Follow these rules.")
+
+        assert_type(group, _CustomAttackTechniqueSeedGroup)
+        assert type(group) is _CustomAttackTechniqueSeedGroup
+        assert group.seeds[0].value == "Follow these rules."
 
     def test_builds_single_system_general_technique_seed(self):
         """Test that from_system_prompt yields one system-role general-technique seed."""
@@ -255,6 +269,16 @@ class TestAttackTechniqueSeedGroupFromSystemPrompt:
 
 class TestAttackTechniqueSeedGroupFromMessages:
     """Tests for the from_messages classmethod."""
+
+    def test_returns_calling_subclass(self):
+        """Test that from_messages preserves the calling subclass."""
+        group = _CustomAttackTechniqueSeedGroup.from_messages(
+            messages=[Message.from_prompt(prompt="encoded practice", role="user")],
+        )
+
+        assert_type(group, _CustomAttackTechniqueSeedGroup)
+        assert type(group) is _CustomAttackTechniqueSeedGroup
+        assert group.seeds[0].value == "encoded practice"
 
     def test_builds_general_technique_seeds_from_messages(self):
         """Test that from_messages preserves roles and marks prompts as a technique."""
