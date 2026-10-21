@@ -351,7 +351,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                 onMouseLeave={cancelWarningHover}
                 aria-label="Why the prompt box is disabled" />
             </PopoverTrigger>
-            <PopoverSurface className={styles.disabledReasonsPopover}>
+            <PopoverSurface className={styles.disabledReasonsPopover} aria-label="Prompt input is disabled">
               <div className={styles.disabledReasonsHeader}>
                 <InfoRegular fontSize={16} />
                 <Text size={200} weight="semibold">Prompt input is disabled</Text>

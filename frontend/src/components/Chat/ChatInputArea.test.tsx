@@ -145,18 +145,28 @@ describe("ChatInputArea", () => {
   });
 
   it("should show all disabled reasons on hover and keyboard activation", async () => {
-    const user = userEvent.setup();
-    render(<TestWrapper><ChatInputArea {...defaultProps} disabled
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const rendered = render(<TestWrapper><ChatInputArea {...defaultProps} disabled
       disabledReasons={["This conversation contains a target error.", "The attack is loading."]} /></TestWrapper>);
-    const composer = screen.getByLabelText("Why the prompt box is disabled");
-    await user.hover(composer);
-    expect(await screen.findByText("Prompt input is disabled")).toBeInTheDocument();
-    expect(screen.getAllByRole("listitem")).toHaveLength(2);
-    expect(screen.getByText("This conversation contains a target error.")).toBeInTheDocument();
-    await user.keyboard("{Escape}");
-    composer.focus();
-    await user.keyboard("{Enter}");
-    expect(await screen.findByText("Prompt input is disabled")).toBeInTheDocument();
+    try {
+      const composer = screen.getByLabelText("Why the prompt box is disabled");
+      await user.hover(composer);
+      act(() => { jest.advanceTimersByTime(700); });
+      const explanation = within(screen.getByRole("group", { name: "Prompt input is disabled" }));
+      expect(explanation.getAllByRole("listitem")).toHaveLength(2);
+      expect(explanation.getByText("This conversation contains a target error.")).toBeVisible();
+      expect(explanation.getByText("The attack is loading.")).toBeVisible();
+      composer.focus();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("group", { name: "Prompt input is disabled" })).not.toBeInTheDocument();
+      composer.focus();
+      await user.keyboard("{Enter}");
+      expect(screen.getByRole("group", { name: "Prompt input is disabled" })).toBeVisible();
+    } finally {
+      rendered.unmount();
+      jest.useRealTimers();
+    }
   });
 
   it("should wait 700 ms before opening the disabled-input explanation on hover", async () => {
@@ -1575,7 +1585,7 @@ describe("ChatInputArea", () => {
       draftId: "image", type: "image", name: "original.png", url: "/original.png", mimeType: "image/png",
     }]); });
     expect(screen.queryByTestId("unsupported-modality-warning")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send message" })).not.toHaveAttribute("aria-disabled");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(defaultProps.onSend).toHaveBeenCalled();
     rendered.rerender(<TestWrapper><ChatInputArea ref={ref} {...props} mediaConversions={[]} /></TestWrapper>);
@@ -1583,7 +1593,7 @@ describe("ChatInputArea", () => {
       draftId: "image", type: "image", name: "original.png", url: "/original.png", mimeType: "image/png",
     }]); });
     expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("should show warning when attaching image to text-only target", async () => {

@@ -513,7 +513,8 @@ describe("ChatWindow Integration", () => {
 
     async function sendDraft(user: ReturnType<typeof userEvent.setup>): Promise<void> {
       await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
-      await user.type(screen.getByRole("textbox"), "Draft to send");
+      await user.click(screen.getByRole("textbox"));
+      await user.paste("Draft to send");
       await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).not.toHaveAttribute("aria-disabled"));
       await user.click(screen.getByRole("button", { name: /send message/i }));
     }
@@ -589,8 +590,13 @@ describe("ChatWindow Integration", () => {
       mockedAttacksApi.getMessageSend.mockRejectedValueOnce(readError).mockResolvedValue(complete);
       render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
       await sendDraft(user);
-      expect(await screen.findByText(/Send status is unavailable/)).toBeInTheDocument();
+      const status = await screen.findByRole("group", { name: "Message send status" });
+      expect(status).toHaveTextContent(/Send status is unavailable/);
+      expect(status).toBeVisible();
       expect(screen.getByRole("button", { name: /send message/i })).toHaveAttribute("aria-disabled", "true");
+      expect(screen.getByRole("button", { name: "Send message" })).toHaveAccessibleDescription(
+        /Send message:.*Send status is unavailable/
+      );
       expect(screen.getByRole("textbox")).toHaveValue("Draft to send");
       if (edit) {
         await user.clear(screen.getByRole("textbox"));
@@ -612,7 +618,9 @@ describe("ChatWindow Integration", () => {
         await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
         mockedAttacksApi[read].mockRejectedValueOnce(readError);
         await sendDraft(user);
-        expect(await screen.findByText(/Saved messages or attack details could not be loaded/)).toBeInTheDocument();
+        expect(await screen.findByRole("group", { name: "Message send status" })).toHaveTextContent(
+          /Saved messages or attack details could not be loaded/
+        );
         mockedAttacksApi.getMessages.mockResolvedValue(reply);
         await user.click(screen.getByRole("button", { name: /refresh saved messages/i }));
         expect(await screen.findByText("Async reply")).toBeInTheDocument();
@@ -633,7 +641,7 @@ describe("ChatWindow Integration", () => {
       }
       render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
       await sendDraft(user);
-      expect(await screen.findByText(/Send acceptance is unknown/)).toBeInTheDocument();
+      expect(await screen.findByRole("group", { name: "Message send status" })).toHaveTextContent(/Send acceptance is unknown/);
       mockedAttacksApi.getMessages.mockResolvedValue(reply);
       await user.click(screen.getByRole("button", { name: /refresh saved messages/i }));
       expect(await screen.findByText("Async reply")).toBeInTheDocument();
@@ -654,7 +662,7 @@ describe("ChatWindow Integration", () => {
         mockedAttacksApi.getMessages.mockResolvedValueOnce(empty).mockResolvedValue(stored);
         render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
         await sendDraft(user);
-        expect(await screen.findByText(`Controlled ${stage} failure`, { exact: false })).toBeInTheDocument();
+        expect(await screen.findByRole("group", { name: "Message send status" })).toHaveTextContent(`Controlled ${stage} failure`);
         expect(screen.getByRole("textbox")).toHaveValue("Draft to send");
         if (stage === "preparation") {
           expect(await findRecoveryAction(user)).toBeInTheDocument();
@@ -1012,12 +1020,15 @@ describe("ChatWindow Integration", () => {
       await screen.findByText("Saved assistant context");
       await user.type(screen.getByPlaceholderText("Type prompt here"), "Next request");
       expect(screen.getByRole("option", { name: /immutable/ })).toBeDisabled();
-      expect(screen.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Send message", exact: true })).toHaveAttribute("aria-disabled", "true");
+      expect(screen.getByRole("button", { name: "Send message", exact: true })).toHaveAccessibleDescription(
+        /This target does not support editable history/
+      );
       await user.click(screen.getByRole("button", { name: "Copy or Branch" }));
       expect(screen.getByRole("menuitem", { name: "Branch conversation", exact: true })).not.toHaveAttribute("aria-disabled", "true");
       await user.keyboard("{Escape}");
       await user.selectOptions(screen.getByRole("combobox", { name: "Chat target" }), "editable");
-      expect(screen.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Send message", exact: true })).not.toHaveAttribute("aria-disabled");
       expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
     });
 
@@ -1611,7 +1622,7 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => expect(screen.queryByTestId("conversation-editor")).not.toBeInTheDocument());
     expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("");
     expect(screen.getByRole("textbox", { name: "Converted prompt" })).toHaveValue("Manual converted value");
-    expect(screen.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send message", exact: true })).not.toHaveAttribute("aria-disabled");
   });
 
   it("should keep edits visible when automatically saving on exit fails", async () => {
@@ -1658,7 +1669,7 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: "Save to new attack", exact: true }));
     await waitFor(() => expect(screen.queryByTestId("conversation-editor")).not.toBeInTheDocument());
     expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("");
-    expect(screen.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send message", exact: true })).toHaveAttribute("aria-disabled", "true");
   });
 
   it.each([true, false])("should move the final fake user turn to the composer with a target: %s", async (hasTarget: boolean) => {

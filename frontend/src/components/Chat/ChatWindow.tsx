@@ -2121,7 +2121,7 @@ export default function ChatWindow({
           ),
         )}
         {sendIssue && (
-          <MessageBar intent="error">
+          <MessageBar intent="error" aria-label="Message send status">
             <MessageBarBody>{sendIssue.description}</MessageBarBody>
             <MessageBarActions>
               {sendIssue.draft && (
