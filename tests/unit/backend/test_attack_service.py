@@ -1495,7 +1495,7 @@ class TestUpdateAttack:
 
         await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
 
-        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        update_fields = mock_memory.update_attack_result_conditionally_async.call_args.kwargs["update_fields"]
         assert update_fields["human_score_id"] is None
         assert update_fields["outcome"] == expected_outcome
         assert update_fields["outcome_reason"] == "Automated rationale"
@@ -1511,7 +1511,7 @@ class TestUpdateAttack:
 
         await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
 
-        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        update_fields = mock_memory.update_attack_result_conditionally_async.call_args.kwargs["update_fields"]
         assert update_fields["human_score_id"] is None
         assert update_fields["outcome"] == "undetermined"
         assert update_fields["outcome_reason"] is None
@@ -2873,7 +2873,17 @@ class TestCreateRelatedConversation:
         service = AttackService()
         target = TargetIdentifier(class_name="ExampleTarget", class_module="tests.unit", pyrit_version="1.1.0")
         source = Conversation(conversation_id=str(uuid.uuid4()), target_identifier=target)
-        attack = AttackResult(conversation_id=source.conversation_id, objective="Branch older history")
+        attack = AttackResult(
+            conversation_id=source.conversation_id,
+            objective="Branch older history",
+            atomic_attack_identifier=AtomicAttackIdentifier.build(
+                attack_identifier=AttackIdentifier(
+                    class_name="ManualAttack",
+                    class_module="pyrit.backend",
+                    objective_target=target,
+                )
+            ),
+        )
         await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
         with patch.object(pyrit, "__version__", "1.1.0"):
             await sqlite_instance.add_conversation_to_memory_async(conversation=source)
@@ -3535,7 +3545,7 @@ class TestRemoveHumanScoreOutcomeByScoreType:
 
         await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
 
-        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        update_fields = mock_memory.update_attack_result_conditionally_async.call_args.kwargs["update_fields"]
         assert update_fields["outcome"] == expected_outcome
 
     async def test_remove_human_score_with_undetermined_automated_score_is_undetermined(
@@ -3554,6 +3564,6 @@ class TestRemoveHumanScoreOutcomeByScoreType:
 
         await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
 
-        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        update_fields = mock_memory.update_attack_result_conditionally_async.call_args.kwargs["update_fields"]
         assert update_fields["outcome"] == "undetermined"
         assert update_fields["outcome_reason"] is None

@@ -177,6 +177,7 @@ class Scorer(Identifiable, abc.ABC):
     #: The single required criterion for a leaf, or None for constructor-configured scoring.
     #: Wrappers expose their children instead of declaring their own criterion.
     CONDITION_TYPE: ClassVar[type[Condition] | None] = None
+    SUPPORTED_SCORABLE_TYPES: ClassVar[tuple[type[Scorable], ...]] = ()
 
     _identifier: ComponentIdentifier | None = None
 
@@ -284,6 +285,27 @@ class Scorer(Identifiable, abc.ABC):
         if children:
             return frozenset(condition_type for child in children for condition_type in child.get_condition_types())
         return frozenset({condition_type}) if condition_type is not None else frozenset[type[Condition]]()
+
+    def get_supported_scorable_types(self) -> frozenset[type[Scorable]]:
+        """
+        Describe accepted evidence references without scoring or acquiring evidence.
+
+        A leaf declares its supported types. A wrapper without its own evidence adapter
+        accepts the types shared by all children. An undeclared custom leaf reports none.
+
+        Returns:
+            The declared evidence types, or the common types of wrapped scorers.
+        """
+        if self.SUPPORTED_SCORABLE_TYPES:
+            return frozenset(self.SUPPORTED_SCORABLE_TYPES)
+        children = self._get_child_scorers()
+        if not children:
+            return frozenset[type[Scorable]]()
+        return (
+            children[0]
+            .get_supported_scorable_types()
+            .intersection(*(child.get_supported_scorable_types() for child in children[1:]))
+        )
 
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return the wrapped scorers, or an empty tuple for a leaf."""

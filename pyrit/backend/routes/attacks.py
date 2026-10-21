@@ -365,7 +365,10 @@ async def remove_human_score(attack_result_id: IdentifierStr) -> AttackSummary: 
         AttackSummary: Updated attack details.
     """
     service = get_attack_service()
-    attack = await service.remove_human_score_async(attack_result_id=attack_result_id)
+    try:
+        attack = await service.remove_human_score_async(attack_result_id=attack_result_id)
+    except AttackObjectiveConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if not attack:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

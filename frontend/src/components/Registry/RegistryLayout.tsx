@@ -3,7 +3,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router'
 
 import { useRegistryLayoutStyles } from './Registry.styles'
 
-const REGISTRY_TABS = ['targets', 'converters', 'techniques', 'scenario-presets'] as const
+const REGISTRY_TABS = ['targets', 'converters', 'scorers', 'techniques', 'scenario-presets'] as const
 
 /**
  * Keeps the tab selected while a section owns nested routes, which the preset
@@ -34,6 +34,7 @@ export default function RegistryLayout() {
       >
         <Tab value="targets">Targets</Tab>
         <Tab value="converters">Converters</Tab>
+        <Tab value="scorers">Scorers</Tab>
         <Tab value="techniques">Techniques</Tab>
         <Tab value="scenario-presets">Scenario presets</Tab>
       </TabList>

@@ -272,6 +272,40 @@ export interface UserPreferences {
   readonly operation?: OperationSelection | null
   readonly theme: ThemeMode
   readonly chatMarkdown: boolean
+  readonly chatScorer?: RegisteredComponentReference | null
+}
+
+export interface RegisteredComponentReference {
+  readonly registry_name: string
+  readonly identifier_hash: string
+}
+
+export interface ScorerInstance {
+  scorer_registry_name: string
+  identifier: ComponentIdentifier & { scorer_type?: string | null }
+  description?: string | null
+  display_type?: string | null
+  scorable_types?: string[]
+  condition_types?: string[]
+  evaluation_identifier?: ComponentIdentifier | null
+  metrics?: ScorerEvaluationMetrics | null
+  chat_scoring_disabled_reason?: string | null
+}
+
+export type ScorerEvaluationMetrics = Record<string, number | string | null | undefined>
+
+export interface ScoringFailure {
+  scorer: RegisteredComponentReference
+  objective: string
+  response_id: string
+  conversation_id: string
+  error: string
+}
+
+export interface ManualContinuation {
+  source_attack_result_id: string
+  source_conversation_id: string
+  source_response_id?: string | null
 }
 
 export interface TargetCapabilities {
@@ -765,6 +799,10 @@ export interface AttackSummary {
   outcome?: AttackOutcome | null
   automated_score?: BackendScore | null
   human_score?: BackendScore | null
+  chat_scorer?: RegisteredComponentReference | null
+  chat_scorer_inherited?: boolean
+  execution_read_only?: boolean
+  manual_continuation?: ManualContinuation | null
   last_score?: BackendScore | null
   last_response?: BackendMessagePiece | null
   last_message_preview?: string | null
@@ -789,6 +827,7 @@ export interface CreateAttackRequest {
   target_registry_name?: string
   target_binding?: TargetBinding
   name?: string
+  chat_scorer?: RegisteredComponentReference | null
   operator?: string
   operation_id?: string
   labels?: Record<string, string>
@@ -802,6 +841,8 @@ export interface UpdateAttackRequest {
   outcome?: 'undetermined' | 'success' | 'failure' | 'error'
   objective?: string
   expected_objective?: string
+  chat_scorer?: RegisteredComponentReference | null
+  default_chat_scorer?: RegisteredComponentReference | null
 }
 
 export type ConversationDraftRole = 'system' | 'user' | 'simulated_assistant' | 'simulated_tool' | 'developer'
@@ -829,6 +870,8 @@ export interface NewAttackContext {
   ready: boolean
   labels?: Record<string, string>
   operationId?: string | null
+  chatScorer?: RegisteredComponentReference | null
+  chatScorerExplicit?: boolean
 }
 
 export interface ConvertedFileChip {
@@ -845,6 +888,8 @@ export interface ConversationDraftMessage extends MessageRequest {
 
 export interface SaveConversationRequest {
   save_id: string
+  chat_scorer?: RegisteredComponentReference | null
+  default_chat_scorer?: RegisteredComponentReference | null
   destination: 'same_attack' | 'new_attack'
   attack_result_id?: string
   source_attack_result_id?: string
@@ -948,6 +993,7 @@ export interface TargetResponseStatus {
 }
 
 export interface ConversationMessagesResponse {
+  scoring_failure?: ScoringFailure | null
   conversation_id: string
   messages: BackendMessage[]
   target_response_status: TargetResponseStatus | null
@@ -1029,6 +1075,8 @@ export interface MessageSendConversation {
   state: 'queued' | 'preparing' | 'sending' | 'finalizing' | 'completed' | 'failed' | 'interrupted'
   error: string | null
   failure_stage: 'preparation' | 'sending' | 'finalization' | 'interrupted' | null
+  scoring_error?: string | null
+  is_scoring?: boolean
 }
 
 export interface MessageSendStatus extends MessageSendConversation {

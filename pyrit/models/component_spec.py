@@ -10,6 +10,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from pyrit.models.identifiers.component_identifier import JSONValue
 
 
+class RegisteredComponentReference(BaseModel):
+    """An existing registry entry pinned to its complete configuration identity."""
+
+    registry_name: str = Field(min_length=1, max_length=128)
+    identifier_hash: str = Field(min_length=1, max_length=128)
+
+
 class SourceInstanceSpec(BaseModel):
     """A source identity and constructor overrides, never a live object handle."""
 

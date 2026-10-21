@@ -14,6 +14,9 @@ import TargetConfig from './components/Config/TargetConfig'
 import ConverterRegistry from './components/Registry/ConverterRegistry'
 import TechniqueRegistry from './components/Registry/TechniqueRegistry'
 import RegistryLayout from './components/Registry/RegistryLayout'
+import ScorerRegistry from './components/Registry/ScorerRegistry'
+import { useScorerRegistry } from './hooks/useScorerRegistry'
+import type { RegisteredComponentReference, ManualContinuation } from './types'
 import Configuration from './components/Configuration/Configuration'
 import AttackHistory from './components/History/AttackHistory'
 import AnalyticsPage from './components/Analytics/AnalyticsPage'
@@ -165,6 +168,10 @@ interface LoadedAttack {
   outcome: NonNullable<AttackSummary['outcome']>
   automatedScore: BackendScore | null
   humanScore: BackendScore | null
+  chatScorer?: RegisteredComponentReference | null
+  chatScorerInherited?: boolean
+  executionReadOnly?: boolean
+  manualContinuation?: ManualContinuation | null
   lastResponseMessagePieceId: string | null
   status: AttackLoadStatus
 }
@@ -206,6 +213,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const [isNavigatingToCreatedAttack, startCreatedAttackTransition] = useTransition()
   const location = useLocation()
   const registry = useTargetRegistry()
+  const scorerRegistry = useScorerRegistry()
   const { preferences, updatePreferences, error: preferenceError } = useUserPreferences()
   const targetDefaults = useTargetPreferences(registry.targets)
   const [draftSession, setDraftSession] = useState<{
@@ -456,6 +464,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           outcome: attack.outcome ?? 'undetermined',
           automatedScore: attack.automated_score ?? null,
           humanScore: attack.human_score ?? null,
+          chatScorer: attack.chat_scorer ?? null,
+          chatScorerInherited: attack.chat_scorer_inherited ?? false,
+          executionReadOnly: attack.execution_read_only ?? false,
+          manualContinuation: attack.manual_continuation ?? null,
           lastResponseMessagePieceId: attack.last_response?.id ?? null,
           status: 'success',
         })
@@ -635,6 +647,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
             outcome: attack.outcome ?? 'undetermined',
             automatedScore: attack.automated_score ?? null,
             humanScore: attack.human_score ?? null,
+            chatScorer: attack.chat_scorer ?? null,
+            chatScorerInherited: attack.chat_scorer_inherited ?? false,
+            executionReadOnly: attack.execution_read_only ?? false,
+            manualContinuation: attack.manual_continuation ?? null,
             lastResponseMessagePieceId: attack.last_response?.id ?? null,
           }
         : current
@@ -707,6 +723,14 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       outcome={readyAttack?.outcome}
       automatedScore={readyAttack?.automatedScore}
       humanScore={readyAttack?.humanScore}
+      chatScorer={readyAttack?.chatScorer}
+      chatScorerInherited={readyAttack?.chatScorerInherited}
+      executionReadOnly={readyAttack?.executionReadOnly}
+      manualContinuation={readyAttack?.manualContinuation}
+      defaultChatScorer={preferences.chatScorer ?? null}
+      availableScorers={scorerRegistry.scorers}
+      scorersLoading={scorerRegistry.loading}
+      scorersError={scorerRegistry.error}
       lastResponseMessagePieceId={readyAttack?.lastResponseMessagePieceId}
       scenarioResultId={readyAttack ? scenarioResultId : null}
       findingEvidenceId={findingEvidenceId}
@@ -822,6 +846,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                   }
                 />
                 <Route path="converters" element={<ConverterRegistry />} />
+                <Route path="scorers" element={<ScorerRegistry scorers={scorerRegistry.scorers}
+                  loading={scorerRegistry.loading} error={scorerRegistry.error} onRefresh={scorerRegistry.refresh} />} />
                 <Route path="techniques" element={<TechniqueRegistry />} />
                 <Route
                   path="scenario-presets"

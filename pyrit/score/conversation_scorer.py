@@ -13,6 +13,7 @@ from pyrit.models import (
     ConversationScorable,
     Message,
     MessagePiece,
+    MessageScorable,
     Scorable,
     Score,
     ScoringExpectation,
@@ -43,6 +44,7 @@ class ConversationScorer(MessageScorer, ABC):
     Note: This class cannot be instantiated directly. Use create_conversation_scorer() factory instead.
     """
 
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable, ConversationScorable)
     _REQUIRES_CONVERSATION_HISTORY = True
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"],
