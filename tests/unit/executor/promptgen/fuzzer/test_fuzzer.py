@@ -111,6 +111,7 @@ async def test_execute_async_preserves_score_attribution_and_query_limit_async(
     responses_by_prompt: dict[str, list[MessagePiece]] = {"first": [], "second": []}
     acquired_prompts: list[str] = []
     max_queries = 4
+    acquisition_clock_jump = 5.25 if delay_acquisition else 0.0
     loop = asyncio.get_running_loop()
     original_time = loop.time
     clock_offset = 0.0
@@ -137,7 +138,7 @@ async def test_execute_async_preserves_score_attribution_and_query_limit_async(
             await scorer.scoring_started[first_acquired_prompt].wait()
             if delay_acquisition and not clock_offset:
                 # Dispatch the old five-second deadline without slowing the test down.
-                clock_offset = 5.25
+                clock_offset = acquisition_clock_jump
                 await asyncio.sleep(0)
                 await asyncio.sleep(0)
         acquired_prompts.append(prompt)
@@ -164,14 +165,15 @@ async def test_execute_async_preserves_score_attribution_and_query_limit_async(
             generator.execute_async(
                 prompts=list(values_by_prompt), prompt_templates=["{{ prompt }}"], max_query_limit=max_queries
             ),
-            timeout=10,
+            # Keep the real-time watchdog budget unchanged by the simulated acquisition delay.
+            timeout=10 + acquisition_clock_jump,
         )
 
     assert send.await_count == result.total_queries == max_queries
     assert convert.await_count == 2
     second_acquired_prompt = "second" if first_acquired_prompt == "first" else "first"
     assert acquired_prompts == [first_acquired_prompt, second_acquired_prompt] * 2
-    assert clock_offset == (5.25 if delay_acquisition else 0.0)
+    assert clock_offset == acquisition_clock_jump
     assert scorer.completed_prompts == ["second", "first"] * 2
     expected_conversations = [
         responses_by_prompt[prompt][turn].conversation_id
