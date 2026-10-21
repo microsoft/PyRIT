@@ -189,6 +189,7 @@ describe('ScenarioSuiteEditor', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    mockGenerateClientId.mockReset()
     mockListPresets.mockResolvedValue({ source: 'presets', items: AVAILABLE_PRESETS })
     mockGetSuite.mockResolvedValue(makeSuite())
     mockCreateSuite.mockResolvedValue(makeSuite())
@@ -245,6 +246,28 @@ describe('ScenarioSuiteEditor', () => {
           { entry_id: FIRST_ENTRY_ID, preset_name: 'nightly_probe' },
         ],
       },
+      'suite-v1',
+    ))
+  })
+
+  it('loads and saves an existing suite when the preset library is unavailable', async () => {
+    const user = userEvent.setup()
+    mockListPresets.mockRejectedValue(apiError(503, 'Preset storage is temporarily unavailable.'))
+    renderEditor('edit')
+
+    expect(await screen.findByTestId('scenario-suite-editor')).toBeInTheDocument()
+    expect(screen.getByText(/Preset library unavailable/)).toHaveTextContent(
+      'Existing entries can still be edited and saved, but new presets cannot be added.',
+    )
+    expect(screen.getByText("Preset 'retired_probe' is not available.")).toBeInTheDocument()
+    expect(screen.getByText(/No presets are available to add/)).toBeInTheDocument()
+
+    await user.type(screen.getByTestId('suite-description-input'), ' Updated.')
+    await user.click(screen.getByTestId('save-suite-btn'))
+
+    await waitFor(() => expect(mockUpdateSuite).toHaveBeenCalledWith(
+      'nightly_suite',
+      expect.objectContaining({ description: 'Nightly checks. Updated.' }),
       'suite-v1',
     ))
   })

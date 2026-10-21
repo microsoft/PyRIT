@@ -156,7 +156,7 @@ async def update_scenario_suite(  # pyrit-async-suffix-exempt
         service = get_scenario_suite_service()
         suite = body.suite
         if suite.author is None:
-            stored = await service.get_suite_async(name=name)
+            stored = await service.load_suite_async(name=name)
             if stored is not None:
                 suite = suite.model_copy(update={"author": stored.suite.author})
         return await service.save_suite_async(suite=suite, expected_version=body.expected_version)

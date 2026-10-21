@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
+from azure.core.exceptions import AzureError
 
 from pyrit.backend.services.scenario_suite_service import ScenarioSuiteService, get_scenario_suite_service
 from pyrit.models.catalog import PresetEntry, PresetIssue, ScenarioPreset, ScenarioSuite, ScenarioSuiteEntry
@@ -77,6 +78,47 @@ async def test_duplicate_references_resolve_the_preset_once(
     assert response is not None
     preset_registry.get_preset.assert_called_once_with(name="nightly")
     preset_registry.check_preset.assert_called_once()
+
+
+async def test_list_reuses_preset_projection_across_suites(
+    service: ScenarioSuiteService,
+    preset_registry: MagicMock,
+) -> None:
+    """Test that one list request reads each distinct preset only once."""
+    await service.save_suite_async(suite=_suite(name="alpha"), expected_version=None)
+    await service.save_suite_async(suite=_suite(name="beta"), expected_version=None)
+    preset_registry.reset_mock()
+
+    response = await service.list_suites_async()
+
+    assert [item.suite.name for item in response.items] == ["alpha", "beta"]
+    preset_registry.get_preset.assert_called_once_with(name="nightly")
+    preset_registry.check_preset.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [AzureError("expired preset credentials"), OSError("preset directory unavailable")],
+    ids=["azure", "local"],
+)
+async def test_preset_storage_failure_is_advisory_after_committed_save(
+    service: ScenarioSuiteService,
+    preset_registry: MagicMock,
+    error: Exception,
+) -> None:
+    """Test that response projection cannot turn a committed write into a failure."""
+    preset_registry.get_preset.side_effect = error
+
+    response = await service.save_suite_async(
+        suite=_suite(preset_names=("nightly",)),
+        expected_version=None,
+    )
+
+    stored = await service.load_suite_async(name="weekly")
+    assert stored is not None
+    assert response.entry_statuses[0].origin is None
+    assert response.entry_statuses[0].preset_version is None
+    assert "preset storage is temporarily unavailable" in response.entry_statuses[0].issues[0].message
 
 
 async def test_current_preset_origin_version_and_issues_are_projected(

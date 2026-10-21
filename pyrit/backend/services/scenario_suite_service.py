@@ -4,9 +4,12 @@
 """Scenario suite definition service."""
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal
+
+from azure.core.exceptions import AzureError
 
 from pyrit.backend.models.scenario_suites import (
     ScenarioSuiteEntryStatus,
@@ -15,6 +18,8 @@ from pyrit.backend.models.scenario_suites import (
 )
 from pyrit.models.catalog import PresetIssue, ScenarioSuite, ScenarioSuiteEntry, StoredScenarioSuite
 from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteStorage
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -69,8 +74,17 @@ class ScenarioSuiteService:
         Returns:
             ScenarioSuiteResponse | None: The suite and current entry statuses, or None if absent.
         """
-        stored = await asyncio.to_thread(self._get_storage().load_suite, name)
-        return None if stored is None else await asyncio.to_thread(self._to_response, stored)
+        stored = await self.load_suite_async(name=name)
+        return None if stored is None else await asyncio.to_thread(self._to_response, stored=stored)
+
+    async def load_suite_async(self, *, name: str) -> StoredScenarioSuite | None:
+        """
+        Read one stored suite without projecting referenced presets.
+
+        Returns:
+            StoredScenarioSuite | None: The stored suite, or None if absent.
+        """
+        return await asyncio.to_thread(self._get_storage().load_suite, name)
 
     async def save_suite_async(
         self,
@@ -89,7 +103,7 @@ class ScenarioSuiteService:
             suite=suite,
             expected_version=expected_version,
         )
-        return await asyncio.to_thread(self._to_response, stored)
+        return await asyncio.to_thread(self._to_response, stored=stored)
 
     async def delete_suite_async(self, *, name: str) -> bool:
         """
@@ -119,10 +133,15 @@ class ScenarioSuiteService:
             list[ScenarioSuiteResponse]: Every readable suite, sorted by name.
         """
         stored = self._get_storage().list_suites()
-        return [self._to_response(stored[name]) for name in sorted(stored)]
+        projections: dict[str, _PresetProjection] = {}
+        return [self._to_response(stored=stored[name], projections=projections) for name in sorted(stored)]
 
     @staticmethod
-    def _to_response(stored: StoredScenarioSuite) -> ScenarioSuiteResponse:
+    def _to_response(
+        *,
+        stored: StoredScenarioSuite,
+        projections: dict[str, _PresetProjection] | None = None,
+    ) -> ScenarioSuiteResponse:
         """
         Attach current preset metadata to one stored suite.
 
@@ -132,11 +151,18 @@ class ScenarioSuiteService:
         return ScenarioSuiteResponse(
             suite=stored.suite,
             version=stored.version,
-            entry_statuses=ScenarioSuiteService._resolve_entry_statuses(entries=stored.suite.entries),
+            entry_statuses=ScenarioSuiteService._resolve_entry_statuses(
+                entries=stored.suite.entries,
+                projections=projections,
+            ),
         )
 
     @staticmethod
-    def _resolve_entry_statuses(*, entries: list[ScenarioSuiteEntry]) -> list[ScenarioSuiteEntryStatus]:
+    def _resolve_entry_statuses(
+        *,
+        entries: list[ScenarioSuiteEntry],
+        projections: dict[str, _PresetProjection] | None = None,
+    ) -> list[ScenarioSuiteEntryStatus]:
         """
         Resolve every distinct preset once while preserving entry order and identity.
 
@@ -144,13 +170,14 @@ class ScenarioSuiteService:
             list[ScenarioSuiteEntryStatus]: Statuses in the same order as ``entries``.
         """
         registry = ScenarioPresetRegistry.get_registry_singleton()
-        projections = {
-            preset_name: ScenarioSuiteService._resolve_preset_projection(
-                preset_name=preset_name,
-                registry=registry,
-            )
-            for preset_name in dict.fromkeys(entry.preset_name for entry in entries)
-        }
+        if projections is None:
+            projections = {}
+        for preset_name in dict.fromkeys(entry.preset_name for entry in entries):
+            if preset_name not in projections:
+                projections[preset_name] = ScenarioSuiteService._resolve_preset_projection(
+                    preset_name=preset_name,
+                    registry=registry,
+                )
         return [
             ScenarioSuiteEntryStatus(
                 entry_id=entry.entry_id,
@@ -174,15 +201,36 @@ class ScenarioSuiteService:
         Returns:
             _PresetProjection: Current preset origin, version, and advisory issues.
         """
-        entry = registry.get_preset(name=preset_name)
-        if entry is not None:
+        try:
+            entry = registry.get_preset(name=preset_name)
+            if entry is not None:
+                return _PresetProjection(
+                    origin=entry.origin,
+                    version=entry.version,
+                    issues=tuple(registry.check_preset(preset=entry.preset)),
+                )
+
+            stored_version = registry.get_preset_version(name=preset_name)
+        except (AzureError, OSError):
+            logger.warning(
+                "Could not project scenario preset '%s' because preset storage is unavailable.",
+                preset_name,
+                exc_info=True,
+            )
             return _PresetProjection(
-                origin=entry.origin,
-                version=entry.version,
-                issues=tuple(registry.check_preset(preset=entry.preset)),
+                origin=None,
+                version=None,
+                issues=(
+                    PresetIssue(
+                        field="preset_name",
+                        message=(
+                            f"Scenario preset '{preset_name}' could not be checked because preset storage is "
+                            "temporarily unavailable; retry when storage is available."
+                        ),
+                    ),
+                ),
             )
 
-        stored_version = registry.get_preset_version(name=preset_name)
         if stored_version is None:
             message = f"Scenario preset '{preset_name}' is not available in this deployment."
         else:

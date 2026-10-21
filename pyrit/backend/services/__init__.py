@@ -19,8 +19,8 @@ if TYPE_CHECKING:
     from pyrit.backend.services.initializer_service import InitializerService, get_initializer_service
     from pyrit.backend.services.scenario_preset_service import ScenarioPresetService, get_scenario_preset_service
     from pyrit.backend.services.scenario_run_service import ScenarioRunService, get_scenario_run_service
-    from pyrit.backend.services.scenario_suite_service import ScenarioSuiteService, get_scenario_suite_service
     from pyrit.backend.services.scenario_service import ScenarioService, get_scenario_service
+    from pyrit.backend.services.scenario_suite_service import ScenarioSuiteService, get_scenario_suite_service
     from pyrit.backend.services.target_service import TargetService, get_target_service
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {

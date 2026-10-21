@@ -92,6 +92,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
 
   const [status, setStatus] = useState<LoadStatus>('loading')
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [presetLoadError, setPresetLoadError] = useState<string | null>(null)
   const [availablePresets, setAvailablePresets] = useState<ScenarioPresetResponse[]>([])
   const [loaded, setLoaded] = useState<ScenarioSuiteResponse | null>(null)
   const [savedDraft, setSavedDraft] = useState<SuiteDraft>({
@@ -128,6 +129,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
     let cancelled = false
 
     const load = async (): Promise<void> => {
+      setPresetLoadError(null)
       try {
         const presetsPromise = scenarioPresetsApi.list(undefined, false)
         if (mode === 'create') {
@@ -138,17 +140,26 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
           return
         }
 
-        const [suite, presets] = await Promise.all([
+        const [suiteResult, presetsResult] = await Promise.allSettled([
           scenarioSuitesApi.get(decodedName),
           presetsPromise,
         ])
         if (cancelled) return
+        if (suiteResult.status === 'rejected') {
+          throw suiteResult.reason
+        }
+        const suite = suiteResult.value
         const nextDraft: SuiteDraft = {
           name: suite.suite.name,
           description: suite.suite.description ?? '',
           entries: suite.suite.entries,
         }
-        setAvailablePresets(presets.items)
+        if (presetsResult.status === 'fulfilled') {
+          setAvailablePresets(presetsResult.value.items)
+        } else {
+          setAvailablePresets([])
+          setPresetLoadError(toApiError(presetsResult.reason).detail)
+        }
         setLoaded(suite)
         setName(nextDraft.name)
         setDescription(nextDraft.description)
@@ -333,6 +344,14 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
       </div>
 
       <form className={styles.form} onSubmit={(event) => void handleSubmit(event)} noValidate>
+        {presetLoadError && (
+          <MessageBar intent="warning">
+            <MessageBarBody role="alert">
+              Preset library unavailable. Existing entries can still be edited and saved, but new presets cannot
+              be added. {presetLoadError}
+            </MessageBarBody>
+          </MessageBar>
+        )}
         {saveError && (
           <MessageBar intent="error">
             <MessageBarBody role="alert">{saveError}</MessageBarBody>

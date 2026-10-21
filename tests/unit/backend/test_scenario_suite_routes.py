@@ -4,6 +4,7 @@
 """Tests for scenario suite definition routes."""
 
 from collections.abc import Iterator
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -19,8 +20,8 @@ from pyrit.backend.models.scenario_suites import (
     ScenarioSuiteResponse,
 )
 from pyrit.backend.services.scenario_suite_service import ScenarioSuiteService
-from pyrit.models.catalog import PresetIssue, ScenarioSuite, ScenarioSuiteEntry
-from pyrit.registry import ScenarioSuiteConflictError
+from pyrit.models.catalog import PresetIssue, ScenarioSuite, ScenarioSuiteEntry, StoredScenarioSuite
+from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteConflictError, ScenarioSuiteStorage
 
 SUITE_NAME = "weekly"
 ENTRY_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -79,8 +80,28 @@ def service() -> Iterator[MagicMock]:
     """Patch the scenario suite service resolved by the routes."""
     mock_service = MagicMock(spec=ScenarioSuiteService)
     mock_service.get_suite_async.return_value = _response()
+    mock_service.load_suite_async.return_value = StoredScenarioSuite(suite=_suite(), version="suite-v1")
     with patch("pyrit.backend.routes.scenario_suites.get_scenario_suite_service", return_value=mock_service):
         yield mock_service
+
+
+@pytest.fixture
+def unavailable_preset_backend(
+    tmp_path: Path,
+) -> Iterator[tuple[ScenarioSuiteService, ScenarioSuiteStorage]]:
+    """Run routes against real suite storage and an unavailable preset registry."""
+    registry = MagicMock(spec=ScenarioPresetRegistry)
+    registry.get_preset.side_effect = AzureError("expired preset container signature")
+    storage = ScenarioSuiteStorage(source=str(tmp_path))
+    scenario_service = ScenarioSuiteService(storage=storage)
+    with (
+        patch.object(ScenarioPresetRegistry, "get_registry_singleton", return_value=registry),
+        patch(
+            "pyrit.backend.routes.scenario_suites.get_scenario_suite_service",
+            return_value=scenario_service,
+        ),
+    ):
+        yield scenario_service, storage
 
 
 @pytest.fixture
@@ -133,6 +154,53 @@ def test_storage_failure_is_sanitized(client: TestClient, service: MagicMock) ->
 
     assert response.status_code == 503
     assert "secret" not in response.text
+
+
+def test_create_succeeds_when_preset_storage_is_unavailable(
+    client: TestClient,
+    unavailable_preset_backend: tuple[ScenarioSuiteService, ScenarioSuiteStorage],
+) -> None:
+    """Test that a committed create returns its advisory projection instead of 503."""
+    _, storage = unavailable_preset_backend
+
+    response = client.post("/api/scenario-suites", json=_suite().model_dump(mode="json"))
+
+    assert response.status_code == 201
+    assert storage.load_suite(SUITE_NAME) is not None
+    assert "preset storage is temporarily unavailable" in response.json()["entry_statuses"][0]["issues"][0]["message"]
+
+
+def test_list_succeeds_when_preset_storage_is_unavailable(
+    client: TestClient,
+    unavailable_preset_backend: tuple[ScenarioSuiteService, ScenarioSuiteStorage],
+) -> None:
+    """Test that one unreadable preset projection does not fail the suite library."""
+    _, storage = unavailable_preset_backend
+    storage.save_suite(suite=_suite(), expected_version=None)
+
+    response = client.get("/api/scenario-suites")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["suite"]["name"] == SUITE_NAME
+    assert (
+        "preset storage is temporarily unavailable"
+        in (response.json()["items"][0]["entry_statuses"][0]["issues"][0]["message"])
+    )
+
+
+def test_get_succeeds_when_preset_storage_is_unavailable(
+    client: TestClient,
+    unavailable_preset_backend: tuple[ScenarioSuiteService, ScenarioSuiteStorage],
+) -> None:
+    """Test that a stored suite remains readable when preset metadata is unavailable."""
+    _, storage = unavailable_preset_backend
+    storage.save_suite(suite=_suite(), expected_version=None)
+
+    response = client.get(f"/api/scenario-suites/{SUITE_NAME}")
+
+    assert response.status_code == 200
+    assert response.json()["suite"]["name"] == SUITE_NAME
+    assert "preset storage is temporarily unavailable" in response.json()["entry_statuses"][0]["issues"][0]["message"]
 
 
 def test_create_requires_admin(anonymous_client: TestClient, service: MagicMock) -> None:
@@ -194,7 +262,7 @@ def test_update_passes_expected_version(client: TestClient, service: MagicMock) 
 def test_update_preserves_stored_author(client: TestClient, service: MagicMock) -> None:
     """Test author preservation when the editor omits it."""
     stored = _suite(author="Grace Hopper")
-    service.get_suite_async.return_value = _response(suite=stored)
+    service.load_suite_async.return_value = StoredScenarioSuite(suite=stored, version="suite-v1")
     service.save_suite_async.return_value = _response(suite=stored, version="suite-v2")
 
     response = client.put(
@@ -204,6 +272,28 @@ def test_update_preserves_stored_author(client: TestClient, service: MagicMock) 
 
     assert response.status_code == 200
     assert service.save_suite_async.call_args.kwargs["suite"].author == "Grace Hopper"
+    service.get_suite_async.assert_not_called()
+
+
+def test_update_succeeds_when_preset_storage_is_unavailable(
+    client: TestClient,
+    unavailable_preset_backend: tuple[ScenarioSuiteService, ScenarioSuiteStorage],
+) -> None:
+    """Test that author carry-over and a committed update do not require preset storage."""
+    _, storage = unavailable_preset_backend
+    stored = storage.save_suite(suite=_suite(author="Grace Hopper"), expected_version=None)
+
+    response = client.put(
+        f"/api/scenario-suites/{SUITE_NAME}",
+        json={
+            "suite": _suite().model_dump(mode="json"),
+            "expected_version": stored.version,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["suite"]["author"] == "Grace Hopper"
+    assert "preset storage is temporarily unavailable" in response.json()["entry_statuses"][0]["issues"][0]["message"]
 
 
 def test_update_rejects_body_name_mismatch(client: TestClient, service: MagicMock) -> None:
