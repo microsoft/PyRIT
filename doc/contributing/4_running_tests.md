@@ -90,8 +90,8 @@ held behind an event until those assertions pass, then awaited separately with t
 finite completion watchdog. The blocked validation read is not released to make
 either step finish.
 
-For concurrent expectation-transport tests, use events to control overlap.
-Use the shared completion watchdog to bound startup and persistence.
+For executor and scorer concurrency tests, use events to control overlap and
+the shared helpers in `tests/unit/async_utils.py` to observe phases and completion.
 
 For scenario correctness tests, wait for the owned task to finish, including
 persistence and scheduler handoff. Use events to control concurrent steps and a

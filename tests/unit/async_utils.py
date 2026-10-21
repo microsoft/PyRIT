@@ -26,3 +26,20 @@ async def wait_for_completion_async(*, future: asyncio.Future[T], timeout: float
     if not done:
         raise TimeoutError("The operation under test did not complete before the test watchdog expired.")
     return future.result()
+
+
+async def wait_for_phase_async(
+    *, event: asyncio.Event, task: asyncio.Future[T], timeout: float = TEST_WATCHDOG_SECONDS
+) -> None:
+    """Observe a test checkpoint or an early operation exit without cancelling the operation."""
+    observer = asyncio.create_task(event.wait())
+    try:
+        done, _ = await asyncio.wait({observer, task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+        if not done:
+            raise TimeoutError("The operation did not reach the expected test phase before the watchdog expired.")
+        if task in done:
+            task.result()
+        assert event.is_set(), "The operation completed before the expected test phase."
+    finally:
+        observer.cancel()
+        await asyncio.gather(observer, return_exceptions=True)

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from aiosqlite import Connection, Cursor
 from sqlalchemy import event
-from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async
+from unit.async_utils import wait_for_completion_async, wait_for_phase_async
 from unit.mocks import MockPromptTarget, store_message_async
 
 from pyrit.exceptions import (
@@ -155,20 +155,6 @@ class _SeedExpectationParameters(AttackParameters):
         return await super().from_seed_group_async(seed_group=seed_group, **overrides)
 
 
-async def _wait_for_phase_async(
-    *,
-    observer: asyncio.Task[bool],
-    operation: asyncio.Task[Any],
-    timeout: float = TEST_WATCHDOG_SECONDS,
-) -> None:
-    done, _ = await asyncio.wait({observer, operation}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
-    if not done:
-        raise TimeoutError("The attack did not reach the expected test phase before the watchdog expired.")
-    if operation in done:
-        operation.result()
-    assert observer in done, "The attack completed before the expected test phase."
-
-
 class TestEffectiveExpectation:
     @pytest.mark.parametrize("scoring_objective", [None, "", "different objective"])
     def test_context_resolves_only_missing_scoring_objective(self, *, scoring_objective: str | None) -> None:
@@ -293,15 +279,14 @@ class TestExecutionExpectationTransport:
             objective_target=target, attack_scoring_config=AttackScoringConfig(objective_scorer=scorer)
         )
         scoring_started, release_scoring = asyncio.Event(), asyncio.Event()
-        arrivals: list[tuple[Scorable, ScoringExpectation | None]] = []
         record_score = scorer._score_scorable_async
 
         async def gated_score_async(*, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
-            arrivals.append((scorable, expectation))
-            if len(arrivals) == 3:
+            scores = await record_score(scorable=scorable, expectation=expectation)
+            if len(scorer.calls) == 3:
                 scoring_started.set()
             await release_scoring.wait()
-            return await record_score(scorable=scorable, expectation=expectation)
+            return scores
 
         executor = AttackExecutor(max_concurrency=4)
         kwargs = {
@@ -318,21 +303,18 @@ class TestExecutionExpectationTransport:
             execution = executor.execute_attack_async(objectives=objectives, **kwargs)
 
         with patch.object(scorer, "_score_scorable_async", side_effect=gated_score_async):
-            ready = asyncio.create_task(scoring_started.wait())
             task = asyncio.create_task(execution)
             try:
-                await _wait_for_phase_async(observer=ready, operation=task)
-                assert len(arrivals) == 3
-                assert scorer.calls == []
+                await wait_for_phase_async(event=scoring_started, task=task)
+                assert len(scorer.calls) == 3
                 assert not task.done()
                 release_scoring.set()
                 batch = await wait_for_completion_async(future=task)
             finally:
                 release_scoring.set()
-                for pending in (task, ready):
-                    if not pending.done():
-                        pending.cancel()
-                await asyncio.gather(task, ready, return_exceptions=True)
+                if not task.done():
+                    task.cancel()
+                await wait_for_completion_async(future=asyncio.gather(task, return_exceptions=True))
 
         valid_objectives = [objectives[0], objectives[1], objectives[3]]
         expected = [
@@ -344,8 +326,6 @@ class TestExecutionExpectationTransport:
         assert len(results) == 3
         assert batch.input_indices == [0, 1, 3]
         assert sorted(target.prompt_sent) == sorted(valid_objectives)
-        assert len(scorer.calls) == 3
-        assert all(call in scorer.calls for call in arrivals)
         [(failed_objective, error)] = batch.incomplete_objectives
         assert failed_objective == objectives[2]
         assert "requires one _OutcomeCondition" in str(error)
@@ -718,15 +698,13 @@ class TestExecutionExpectationTransport:
                     sqlite_instance, "add_attack_results_to_memory_async", side_effect=delayed_persistence_async
                 ),
             ):
-                validation_ready = asyncio.create_task(validation_started.wait())
-                cleanup_finished = asyncio.create_task(persistence_started.wait())
                 task = asyncio.create_task(
                     attack.execute_async(objective="attack objective", expectation=_expectation())
                 )
                 try:
                     # ERROR persistence follows scorer draining, but is not part of the cleanup budget.
-                    await _wait_for_phase_async(observer=validation_ready, operation=task)
-                    await _wait_for_phase_async(observer=cleanup_finished, operation=task, timeout=5)
+                    await wait_for_phase_async(event=validation_started, task=task)
+                    await wait_for_phase_async(event=persistence_started, task=task, timeout=5)
                     assert validation_cancelled.is_set()
                     assert connection_closed.is_set()
                     assert not release_read.is_set()
@@ -737,10 +715,9 @@ class TestExecutionExpectationTransport:
                 finally:
                     release_read.set()
                     release_persistence.set()
-                    for pending in (task, validation_ready, cleanup_finished):
-                        if not pending.done():
-                            pending.cancel()
-                    await asyncio.gather(task, validation_ready, cleanup_finished, return_exceptions=True)
+                    if not task.done():
+                        task.cancel()
+                    await wait_for_completion_async(future=asyncio.gather(task, return_exceptions=True))
         finally:
             event.remove(engine.sync_engine, "after_cursor_execute", record_write)
 
