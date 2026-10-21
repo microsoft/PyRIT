@@ -268,6 +268,15 @@ def test_compute_dataset_hashes_matches_pins() -> None:
     assert LocalViolenceClassifierScorer.compute_dataset_hashes() == module._TRAINING_DATASETS
 
 
+def test_compute_dataset_hashes_reads_current_files(tmp_path: Path) -> None:
+    contents = {file_name: f"{file_name}\n".encode() * 50_000 for file_name in module._TRAINING_DATASETS}
+    for file_name, data in contents.items():
+        (tmp_path / file_name).write_bytes(data)
+    with patch.object(module, "_HARM_EVALS_PATH", tmp_path):
+        hashes = LocalViolenceClassifierScorer.compute_dataset_hashes()
+    assert hashes == {file_name: hashlib.sha256(data).hexdigest() for file_name, data in contents.items()}
+
+
 class _Tokenizer:
     """Tiny tokenizer with visible token IDs and the pinned encoder's framing budget."""
 

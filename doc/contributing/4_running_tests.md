@@ -84,9 +84,22 @@ timeout coverage expires the real cancellation path only after the request start
 Event-controlled analytics expiry tests freeze both deadline clocks so floating-point
 rounding cannot turn a valid query budget into a failed assertion.
 
+The scorer-validation cancellation test keeps its five-second observer around
+scorer draining and native SQLite connection cleanup. ERROR-result persistence is
+held behind an event until those assertions pass, then awaited separately with the
+finite completion watchdog. The blocked validation read is not released to make
+either step finish.
+
 For scenario correctness tests, wait for the owned task to finish, including
 persistence and scheduler handoff. Use events to control concurrent steps and a
 finite test watchdog to detect deadlocks, not short per-step latency limits.
+Catalog queue-admission and configured-estimate independence tests use the existing
+estimate watchdog fixture. Observe the queued semaphore acquisition before checking
+that its execution deadline has not started, and verify configured completion while
+catalog capacity is still occupied. Check each deadline against completed admissions
+and spy on catalog acquisition during configured work to assert independence directly.
+Release gates and drain owned requests and service workers in `finally`, including
+when a readiness assertion fails.
 For frontend modal tests, use fake timers and wait for an accessible control on
 the destination page. A route change does not mean that modal cleanup has restored
 background accessibility.
