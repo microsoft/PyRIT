@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
-from unit.async_utils import wait_for_completion_async, wait_for_phase_async
+from unit.async_utils import wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget
 
 from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
@@ -177,7 +177,7 @@ class TestOperationDeletedDuringRun:
             )
         )
         try:
-            await wait_for_phase_async(event=target.sending, task=running)
+            await wait_for_event_async(event=target.sending, task=running)
             # Nothing refers to the Operation until the result is saved, so it can be deleted mid-run.
             assert await sqlite_instance.get_operation_usage_async(operation_id=operation.id) == OperationUsage(
                 findings=0, attacks=0, scenario_runs=0
@@ -237,7 +237,7 @@ class TestOperationDeletedDuringRun:
         )
         running = asyncio.create_task(sequence.execute_async(objective="Say hello.", operation_id=operation.id))
         try:
-            await wait_for_phase_async(event=target.sending, task=running)
+            await wait_for_event_async(event=target.sending, task=running)
             await sqlite_instance.delete_operation_async(operation_id=operation.id)
             target.release.set()
             result = await wait_for_completion_async(future=running)
@@ -265,7 +265,7 @@ class TestOperationDeletedDuringRun:
             )
         )
         try:
-            await wait_for_phase_async(event=target.sending, task=running)
+            await wait_for_event_async(event=target.sending, task=running)
             await sqlite_instance.delete_operation_async(operation_id=operation.id)
             target.release.set()
             executor_result = await wait_for_completion_async(future=running)

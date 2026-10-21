@@ -84,14 +84,16 @@ timeout coverage expires the real cancellation path only after the request start
 Event-controlled analytics expiry tests freeze both deadline clocks so floating-point
 rounding cannot turn a valid query budget into a failed assertion.
 
+For async correctness tests, use events to control phases and the shared helpers in
+`tests/unit/async_utils.py` to observe checkpoints and completion. Observe the owned
+task with each checkpoint so early failures are reported directly. Observation
+timeouts must not cancel owned work. Release gates and drain owned tasks in `finally`.
+
 The scorer-validation cancellation test keeps its five-second observer around
 scorer draining and native SQLite connection cleanup. ERROR-result persistence is
 held behind an event until those assertions pass, then awaited separately with the
 finite completion watchdog. The blocked validation read is not released to make
 either step finish.
-
-For executor and scorer concurrency tests, use events to control overlap and
-the shared helpers in `tests/unit/async_utils.py` to observe phases and completion.
 
 For scenario correctness tests, wait for the owned task to finish, including
 persistence and scheduler handoff. Use events to control concurrent steps and a

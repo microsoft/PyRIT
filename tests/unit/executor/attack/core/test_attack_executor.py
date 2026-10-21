@@ -14,7 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.async_utils import wait_for_completion_async, wait_for_phase_async
+from unit.async_utils import wait_for_completion_async, wait_for_event_async
 
 from pyrit.executor.attack import (
     AttackExecutor,
@@ -398,7 +398,7 @@ class TestExecuteAttackAsync:
         )
         execution_tasks: set[asyncio.Task[Any]] = set()
         try:
-            await wait_for_phase_async(event=all_slots_started, task=execution_task)
+            await wait_for_event_async(event=all_slots_started, task=execution_task)
             execution_tasks = asyncio.all_tasks() - tasks_before_execution - {execution_task}
 
             assert len(execution_tasks) == 3

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from aiosqlite import Connection, Cursor
 from sqlalchemy import event
-from unit.async_utils import wait_for_completion_async, wait_for_phase_async
+from unit.async_utils import wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget, store_message_async
 
 from pyrit.exceptions import (
@@ -305,7 +305,7 @@ class TestExecutionExpectationTransport:
         with patch.object(scorer, "_score_scorable_async", side_effect=gated_score_async):
             task = asyncio.create_task(execution)
             try:
-                await wait_for_phase_async(event=scoring_started, task=task)
+                await wait_for_event_async(event=scoring_started, task=task)
                 assert len(scorer.calls) == 3
                 assert not task.done()
                 release_scoring.set()
@@ -703,8 +703,8 @@ class TestExecutionExpectationTransport:
                 )
                 try:
                     # ERROR persistence follows scorer draining, but is not part of the cleanup budget.
-                    await wait_for_phase_async(event=validation_started, task=task)
-                    await wait_for_phase_async(event=persistence_started, task=task, timeout=5)
+                    await wait_for_event_async(event=validation_started, task=task)
+                    await wait_for_event_async(event=persistence_started, task=task, timeout=5)
                     assert validation_cancelled.is_set()
                     assert connection_closed.is_set()
                     assert not release_read.is_set()

@@ -28,18 +28,21 @@ async def wait_for_completion_async(*, future: asyncio.Future[T], timeout: float
     return future.result()
 
 
-async def wait_for_phase_async(
+async def wait_for_event_async(
     *, event: asyncio.Event, task: asyncio.Future[T], timeout: float = TEST_WATCHDOG_SECONDS
 ) -> None:
-    """Observe a test checkpoint or an early operation exit without cancelling the operation."""
-    observer = asyncio.create_task(event.wait())
+    """Wait for a lifecycle checkpoint without hiding an early failure or cancelling the operation."""
+    waiter = asyncio.create_task(event.wait())
     try:
-        done, _ = await asyncio.wait({observer, task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
-        if not done:
-            raise TimeoutError("The operation did not reach the expected test phase before the watchdog expired.")
+        done, _ = await asyncio.wait({waiter, task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
         if task in done:
-            task.result()
-        assert event.is_set(), "The operation completed before the expected test phase."
+            result = task.result()
+            if not event.is_set():
+                raise AssertionError(
+                    f"The operation under test finished before reaching the expected event: {result!r}"
+                )
+        elif not event.is_set():
+            raise TimeoutError("The expected event was not reached before the test watchdog expired.")
     finally:
-        observer.cancel()
-        await asyncio.gather(observer, return_exceptions=True)
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
