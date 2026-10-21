@@ -13,7 +13,8 @@ import functools
 import logging
 import uuid
 from datetime import UTC, datetime
-from pathlib import PurePath, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
+from types import ModuleType
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Self, cast
 
 from jinja2 import StrictUndefined, Undefined, meta
@@ -27,7 +28,6 @@ from pyrit.models.seeds.seed_origin import SeedOrigin
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +215,44 @@ def _serialize_template_binding(value: Any) -> str:
     return repr(value)
 
 
+def _filesystem_free_view(value: Any) -> Any:
+    """
+    Expose a concrete path to a template as a lexical path that cannot reach the filesystem.
+
+    Args:
+        value: A value supplied to a trusted template.
+
+    Returns:
+        A ``PurePath`` with the platform flavor of the original when the value is a concrete ``Path``,
+        so a template can format and manipulate it but cannot read, write, or list files. Any other
+        value is returned unchanged.
+    """
+    return PurePath(value) if isinstance(value, Path) else value
+
+
+class _TemplateSandbox(SandboxedEnvironment):
+    """
+    Sandbox that never hands a module to a template.
+
+    On Python 3.13 and later ``PurePath.parser`` is ``posixpath`` or ``ntpath``, whose ``os`` attribute
+    is the ``os`` module, so even a lexical path would otherwise reach the filesystem and the process.
+    """
+
+    def is_safe_attribute(self, obj: Any, attr: str, value: Any) -> bool:
+        """
+        Refuse attributes holding a module in addition to the sandbox's own checks.
+
+        Args:
+            obj: The object being accessed.
+            attr: The attribute name.
+            value: The attribute value.
+
+        Returns:
+            Whether the template may read the attribute.
+        """
+        return not isinstance(value, ModuleType) and super().is_safe_attribute(obj, attr, value)
+
+
 def _template_environment(undefined: type[Undefined]) -> SandboxedEnvironment:
     """
     Create the sandbox shared by load-time, partial, and final rendering.
@@ -225,7 +263,7 @@ def _template_environment(undefined: type[Undefined]) -> SandboxedEnvironment:
     Returns:
         The sandbox with support for restoring serialized path bindings.
     """
-    env = SandboxedEnvironment(undefined=undefined)
+    env = _TemplateSandbox(undefined=undefined)
     env.filters["pyrit_path"] = _restore_path_binding
     return env
 
@@ -359,8 +397,9 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
         Behaves like render_template_value_silent, except when a missing parameter would decide a branch,
         a loop, a comparison, a Jinja test or the `default` filter. Then the template is kept as-is, with a
         `{% set %}` in front for each supplied parameter it uses, so later renders and stored copies keep them.
-        Fully bound path operations are evaluated at load time. Remaining path bindings preserve lexical
-        operations and platform flavor, without providing filesystem access to a reconstructed template.
+        Supplied concrete paths reach the template as filesystem-free ``PurePath`` views, so it can format and
+        manipulate them but cannot read, write, or list files. Fully bound path operations are evaluated at load
+        time. Remaining path bindings preserve lexical operations and platform flavor.
 
         Args:
             kwargs: Key-value pairs to replace in the SeedPrompt value.
@@ -369,6 +408,7 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
             The rendered value, or the unchanged value when rendering is deferred.
 
         """
+        kwargs = {name: _filesystem_free_view(value) for name, value in kwargs.items()}
         env = _template_environment(_DeferringUndefined)
         env.tests = {name: _deferring(test) for name, test in env.tests.items()}
         env.filters["default"] = env.filters["d"] = _deferring(env.filters["default"])
