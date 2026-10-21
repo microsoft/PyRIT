@@ -32,6 +32,7 @@ import {
   labelsApi,
   scenariosApi,
   operationsApi,
+  scenarioPresetsApi,
   datasetsApi,
   analyticsApi,
 } from "./api";
@@ -104,6 +105,31 @@ describe("api service", () => {
 
       await expect(authApi.getAccess()).resolves.toEqual(response.data);
       expect(apiClient.get).toHaveBeenCalledWith("/auth/access");
+    });
+  });
+
+  describe("scenarioPresetsApi", () => {
+    it("lists definitions without opting in to run-size estimates", async () => {
+      const response = { source: "presets", items: [] };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: response });
+
+      await expect(scenarioPresetsApi.list()).resolves.toEqual(response);
+      expect(apiClient.get).toHaveBeenCalledWith("/scenario-presets", {
+        params: { include_estimates: false },
+        signal: undefined,
+      });
+    });
+
+    it("explicitly opts in to estimates and forwards cancellation", async () => {
+      const controller = new AbortController();
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { source: "presets", items: [] } });
+
+      await scenarioPresetsApi.list(controller.signal, true);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenario-presets", {
+        params: { include_estimates: true },
+        signal: controller.signal,
+      });
     });
   });
 

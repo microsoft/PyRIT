@@ -11,6 +11,7 @@ import re
 import threading
 import uuid
 import weakref
+from collections import Counter
 from collections.abc import Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from contextvars import ContextVar
@@ -47,6 +48,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql import visitors
 from sqlalchemy.sql.elements import ClauseElement
@@ -122,6 +124,7 @@ from pyrit.models import (
     MessageScorable,
     Observation,
     Operation,
+    OperationUsage,
     PromptDataType,
     RetryEvent,
     ScenarioAttackResultDelta,
@@ -191,6 +194,15 @@ class AttackStateConflictError(ValueError):
     """An atomic attack write no longer matches the state read by its caller."""
 
 
+class OperationInUseError(ValueError):
+    """An Operation still has findings or activity attributed to it by ID, so it cannot be deleted."""
+
+    def __init__(self, *, operation_id: uuid.UUID, usage: OperationUsage) -> None:
+        """Keep the usage so callers can say what still refers to the Operation."""
+        super().__init__(f"Operation '{operation_id}' is in use and cannot be deleted.")
+        self.usage = usage
+
+
 #: Canonical criteria key of a seed that carries no conditions.
 _NO_CONDITIONS_KEY = json.dumps([], separators=(",", ":"))
 
@@ -253,6 +265,20 @@ def _check_operation_name_change(*, existing: AttackResultEntry | ScenarioResult
     print_deprecation_message(
         old_item="Changing the Operation name of saved activity", new_item="operation_id", removed_in="1.4.0"
     )
+
+
+def _operation_ids(items: Sequence[object]) -> set[uuid.UUID]:
+    """
+    Collect the Operation IDs that attacks or scenario runs refer to, ignoring anything else.
+
+    Returns:
+        set[uuid.UUID]: The referenced Operation IDs.
+    """
+    return {
+        item.operation_id
+        for item in items
+        if isinstance(item, (AttackResult, AttackResultEntry, ScenarioResultEntry)) and item.operation_id is not None
+    }
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -715,23 +741,98 @@ class MemoryInterface(abc.ABC):
             raise LookupError(f"Operation {operation_id} not found")
         return operations[0]
 
-    async def update_operation_async(self, *, operation_id: uuid.UUID, description: str) -> Operation:
+    async def update_operation_async(
+        self, *, operation_id: uuid.UUID, name: str | None = None, description: str | None = None
+    ) -> Operation:
         """
-        Replace an operation's description. The last save wins; the name and identity are unchanged.
+        Rename an operation or replace its description. Omitted fields are unchanged and the last save wins.
+
+        Names stay unique, ignoring case and surrounding whitespace, so a rename that only changes case is allowed.
 
         Returns:
-            Operation: The updated operation.
+            Operation: The updated operation, or the other operation that already has the name, unchanged.
 
         Raises:
             LookupError: If the Operation does not exist.
+            IntegrityError: If the update fails for a reason other than a taken name.
         """
-        async with await self.get_session_async() as session, session.begin():
-            entry = await session.get(OperationEntry, operation_id)
-            if entry is None:
-                raise LookupError(f"Operation {operation_id} not found")
-            entry.description = description
-            await session.flush()
-            return entry.get_operation()
+        changes = {key: value for key, value in {"name": name, "description": description}.items() if value is not None}
+        try:
+            async with await self.get_session_async() as session, session.begin():
+                entry = await session.get(OperationEntry, operation_id)
+                if entry is None:
+                    raise LookupError(f"Operation {operation_id} not found")
+                updated = Operation.model_validate(entry.get_operation().model_dump() | changes)
+                entry.name, entry.name_key = updated.name, operation_name_key(updated.name)
+                entry.description = updated.description
+                await session.flush()
+                return entry.get_operation()
+        except StaleDataError as exc:
+            # A concurrent delete landed between the read and the update.
+            raise LookupError(f"Operation {operation_id} not found") from exc
+        except IntegrityError:
+            existing = await self.get_operations_async(name=name) if name is not None else []
+            if not existing:
+                raise
+            return existing[0]
+
+    async def get_operation_usage_async(self, *, operation_id: uuid.UUID) -> OperationUsage:
+        """
+        Count the findings, attacks, and scenario runs that refer to an Operation by ID, in one indexed query.
+
+        Returns:
+            OperationUsage: The counts, which are all zero for an unknown ID.
+        """
+        counts = [
+            select(func.count())
+            .select_from(table)
+            .where(table.operation_id == operation_id)
+            .scalar_subquery()
+            .label(field)
+            for field, table in (
+                ("findings", FindingEntry),
+                ("attacks", AttackResultEntry),
+                ("scenario_runs", ScenarioResultEntry),
+            )
+        ]
+        async with await self.get_session_async() as session:
+            return OperationUsage.model_validate(dict((await session.execute(select(*counts))).one()._mapping))
+
+    async def delete_operation_async(self, *, operation_id: uuid.UUID) -> None:
+        """
+        Permanently remove an Operation that no findings, attacks, or scenario runs refer to by ID.
+
+        Activity attributed only by a deprecated Operation name does not prevent deletion and is unchanged.
+
+        Raises:
+            LookupError: If the Operation does not exist.
+            OperationInUseError: If findings, attacks, or scenario runs refer to the Operation by ID.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        # SQLite does not enforce foreign keys, so the delete statement itself checks for references.
+        unreferenced = [
+            ~select(table.operation_id).where(table.operation_id == operation_id).exists()
+            for table in (FindingEntry, AttackResultEntry, ScenarioResultEntry)
+        ]
+        try:
+            async with await self.get_session_async() as session, session.begin():
+                result = await session.execute(
+                    delete(OperationEntry)
+                    .where(OperationEntry.id == operation_id, *unreferenced)
+                    .execution_options(synchronize_session=False)
+                )
+                if not isinstance(result, CursorResult):
+                    raise RuntimeError("Operation deletion did not return a database cursor result.")
+                if result.rowcount > 0:
+                    return
+                if await session.get(OperationEntry, operation_id) is None:
+                    raise LookupError(f"Operation {operation_id} not found")
+        except IntegrityError as exc:
+            # SQL Server's foreign keys reject the delete when a reference commits while it runs.
+            usage = await self.get_operation_usage_async(operation_id=operation_id)
+            raise OperationInUseError(operation_id=operation_id, usage=usage) from exc
+        usage = await self.get_operation_usage_async(operation_id=operation_id)
+        raise OperationInUseError(operation_id=operation_id, usage=usage)
 
     async def resolve_operation_id_async(
         self, *, operation_id: uuid.UUID | str | None, operation_name: str | None = None
@@ -772,6 +873,7 @@ class MemoryInterface(abc.ABC):
             Finding: The saved finding, or the finding already saved with this ID.
 
         Raises:
+            LookupError: If the finding's Operation does not exist.
             IntegrityError: If the insert fails for a reason other than a taken ID.
         """
         entry = FindingEntry(finding)
@@ -779,16 +881,22 @@ class MemoryInterface(abc.ABC):
             async with await self.get_session_async() as session, session.begin():
                 session.add(entry)
                 await session.flush()
+                # Checked after the insert so the write lock is held; SQLite does not enforce the foreign key.
+                if await session.get(OperationEntry, finding.operation_id) is None:
+                    raise LookupError(f"Operation {finding.operation_id} not found")
                 if evidence is not None:
                     session.add(FindingEvidenceEntry(evidence))
                     await session.flush()
                 return entry.get_finding()
-        except IntegrityError:
+        except IntegrityError as exc:
             async with await self.get_session_async() as session:
                 existing = await session.get(FindingEntry, finding.id)
-                if existing is None:
-                    raise
-                return existing.get_finding()
+                if existing is not None:
+                    return existing.get_finding()
+                # SQL Server's foreign key rejects the insert when the Operation was deleted meanwhile.
+                if await session.get(OperationEntry, finding.operation_id) is None:
+                    raise LookupError(f"Operation {finding.operation_id} not found") from exc
+            raise
 
     async def update_finding_async(
         self, *, operation_id: uuid.UUID, finding_id: uuid.UUID, request: FindingCreate
@@ -2366,13 +2474,18 @@ class MemoryInterface(abc.ABC):
         """
         with closing(self._get_session()) as session:
             try:
+                existing = None
                 if isinstance(entry, (AttackResultEntry, ScenarioResultEntry)):
                     existing = session.get(type(entry), entry.id)
                     self._validate_activity_operation(session=session, entry=entry, existing=existing)
                 session.merge(entry)
+                if existing is None:
+                    self._recheck_activity_operations(session=session, entries=[entry])
                 session.commit()
             except SQLAlchemyError as e:
                 session.rollback()
+                if isinstance(e, IntegrityError):
+                    self._raise_if_operations_missing(session=session, operation_ids=_operation_ids([entry]), error=e)
                 logger.exception(f"Error updating entry in the table: {e}")
                 raise
 
@@ -4740,12 +4853,13 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
-        Seeds with the same value hash, dataset, and canonical conditions already present
-        in storage are skipped. Duplicates *within* ``seeds`` are all inserted, because the
-        check looks at what storage held when the call started.
-        Groups introducing new objective criteria retain the other seeds in the same group
-        even when their content is already stored in another group. When a stored seed is
-        copied to a new group, its caller-visible ID is updated after successful insertion.
+        Standalone seeds with the same value hash, dataset, and canonical conditions already
+        present in storage are skipped. Multi-seed groups are compared as complete groups,
+        including roles, sequence, metadata, and criteria, so shared content cannot strip
+        members from a different conversation. Duplicates *within* ``seeds`` are all inserted,
+        because the check looks at what storage held when the call started.
+        When a stored seed is copied to a new group, its caller-visible ID is updated after
+        successful insertion.
 
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
@@ -4759,11 +4873,17 @@ class MemoryInterface(abc.ABC):
 
     def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
         """Deduplicate and store seeds after their media is prepared."""
-        existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
-        new_condition_group_ids = self._get_new_condition_group_ids(
+        existing_pairs, existing_hashes, existing_seeds = self._get_existing_seed_keys(seeds=seeds)
+        retained_group_ids = self._get_new_condition_group_ids(
             seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
         )
-        retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in new_condition_group_ids]
+        retained_group_ids.update(self._get_new_seed_group_ids(seeds=seeds, existing_seeds=existing_seeds))
+        stored_group_members = {
+            (seed.prompt_group_id, dataset, self._seed_group_member_key(seed))
+            for dataset, seed in existing_seeds
+            if seed.prompt_group_id is not None
+        }
+        retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in retained_group_ids]
         stored_groups = (
             {
                 entry.id: entry.prompt_group_id
@@ -4783,8 +4903,14 @@ class MemoryInterface(abc.ABC):
             conditions_key = self._seed_conditions_key(prompt)
             # A seed without a dataset name matches the hash in any dataset, mirroring the
             # filter that is applied when dataset_name is not supplied.
-            if prompt.prompt_group_id in new_condition_group_ids:
+            if prompt.prompt_group_id in retained_group_ids:
                 if prompt.id in stored_groups and stored_groups[prompt.id] == prompt.prompt_group_id:
+                    continue
+                if (
+                    prompt.prompt_group_id,
+                    prompt.dataset_name or None,
+                    self._seed_group_member_key(prompt),
+                ) in stored_group_members:
                     continue
                 entry = SeedEntry(entry=prompt)
                 if prompt.id in stored_groups:
@@ -4802,6 +4928,106 @@ class MemoryInterface(abc.ABC):
         self._insert_entries(entries=entries)
         for prompt, new_id in copied_seed_ids:
             prompt.id = new_id
+
+    @staticmethod
+    def _seed_group_member_key(seed: Seed[Any]) -> str:
+        """
+        Identify a member by persisted content and context, excluding IDs and import attribution.
+
+        Returns:
+            str: Canonical persisted member identity.
+        """
+        entry = SeedEntry(entry=seed)
+        return json.dumps(
+            {
+                "value_sha256": entry.value_sha256,
+                "data_type": entry.data_type,
+                "seed_type": entry.seed_type,
+                "role": entry.role,
+                "sequence": entry.sequence,
+                "metadata": entry.prompt_metadata or {},
+                "conditions": entry.conditions or [],
+                "parameters": entry.parameters or [],
+                "harm_categories": entry.harm_categories or [],
+                "name": entry.name,
+                "description": entry.description,
+                "authors": entry.authors or [],
+                "groups": entry.groups or [],
+                "source": entry.source,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _get_new_seed_group_ids(
+        self,
+        *,
+        seeds: Sequence[Seed[Any]],
+        existing_seeds: Sequence[tuple[str | None, Seed[Any]]],
+    ) -> set[uuid.UUID]:
+        """
+        Retain multi-seed groups unless an equivalent complete group is already stored.
+
+        Returns:
+            set[uuid.UUID]: Group IDs whose complete input membership must be retained.
+        """
+        members_by_group: dict[uuid.UUID, Counter[tuple[str | None, str]]] = {}
+        for seed in seeds:
+            if seed.prompt_group_id is not None:
+                key = (seed.dataset_name or None, self._seed_group_member_key(seed))
+                members_by_group.setdefault(seed.prompt_group_id, Counter())[key] += 1
+        members_by_group = {group_id: members for group_id, members in members_by_group.items() if members.total() > 1}
+        if not members_by_group:
+            return set()
+
+        matches: dict[tuple[str | None, str], dict[uuid.UUID, set[uuid.UUID | None]]] = {}
+        for dataset, seed in existing_seeds:
+            if seed.prompt_group_id is not None:
+                key = (dataset, self._seed_group_member_key(seed))
+                matches.setdefault(key, {}).setdefault(seed.prompt_group_id, set()).add(seed.id)
+
+        candidate_groups: dict[uuid.UUID, set[uuid.UUID]] = {}
+        for group_id, members in members_by_group.items():
+            candidates: set[uuid.UUID] | None = None
+            for key, count in members.items():
+                matching_groups = {
+                    stored_group_id
+                    for stored_group_id, member_ids in matches.get(key, {}).items()
+                    if len(member_ids) >= count
+                }
+                candidates = matching_groups if candidates is None else candidates & matching_groups
+                if not candidates:
+                    break
+            candidate_groups[group_id] = candidates or set()
+
+        candidate_ids = {candidate_id for candidates in candidate_groups.values() for candidate_id in candidates}
+        stored_sizes = (
+            Counter(
+                entry.prompt_group_id
+                for entry in self._execute_batched_query(
+                    SeedEntry, batch_column=SeedEntry.prompt_group_id, batch_values=list(candidate_ids)
+                )
+            )
+            if candidate_ids
+            else Counter()
+        )
+        new_group_ids: set[uuid.UUID] = set()
+        for group_id, members in members_by_group.items():
+            for candidate_id in candidate_groups[group_id]:
+                if stored_sizes[candidate_id] != members.total():
+                    continue
+                matched_ids: set[uuid.UUID | None] = set()
+                # Match named filters before wildcards; collated dataset names can overlap.
+                for key, count in sorted(members.items(), key=lambda item: item[0][0] is None):
+                    available_ids = matches[key][candidate_id] - matched_ids
+                    if len(available_ids) < count:
+                        break
+                    matched_ids.update(list(available_ids)[:count])
+                else:
+                    break
+            else:
+                new_group_ids.add(group_id)
+        return new_group_ids
 
     @staticmethod
     def _seed_conditions_key(seed: Seed[Any]) -> str:
@@ -4828,7 +5054,8 @@ class MemoryInterface(abc.ABC):
 
         Other seeds in the same group do not own conditions. Their ordinary content
         deduplication must not strip them from a new condition-bearing group, or from a group that
-        removes previously stored criteria. Purely condition-free loading is unchanged.
+        removes previously stored criteria. Other multi-seed groups are compared by full
+        membership separately.
 
         Returns:
             set[uuid.UUID]: Group IDs whose complete input membership must be retained.
@@ -4852,7 +5079,7 @@ class MemoryInterface(abc.ABC):
 
     def _get_existing_seed_keys(
         self, *, seeds: Sequence[Seed[Any]]
-    ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]]]:
+    ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]], list[tuple[str | None, Seed[Any]]]]:
         """
         Look up which value hashes and canonical conditions are already stored.
 
@@ -4871,9 +5098,10 @@ class MemoryInterface(abc.ABC):
             seeds (Sequence[Seed]): The seeds whose hashes should be looked up.
 
         Returns:
-            tuple[set[tuple[str, str, str]], set[tuple[str, str]]]: The stored
+            tuple: The stored
                 (value_sha256, dataset_name, conditions) keys, using the requested
-                dataset name, and (value_sha256, conditions) keys irrespective of dataset.
+                dataset name, (value_sha256, conditions) keys irrespective of dataset,
+                and matched seeds paired with their requested dataset filter.
         """
         hashes_by_dataset: dict[str | None, set[str]] = {}
         for prompt in seeds:
@@ -4885,6 +5113,7 @@ class MemoryInterface(abc.ABC):
 
         existing_pairs: set[tuple[str, str, str]] = set()
         existing_hashes: set[tuple[str, str]] = set()
+        existing_seeds: list[tuple[str | None, Seed[Any]]] = []
         for dataset_name, dataset_hashes in hashes_by_dataset.items():
             hashes = sorted(dataset_hashes)
             # _MAX_BIND_VARS is the whole statement's budget, and the name takes one of those
@@ -4897,6 +5126,7 @@ class MemoryInterface(abc.ABC):
                 ):
                     if not existing.value_sha256:
                         continue
+                    existing_seeds.append((dataset_name, existing))
                     conditions_key = self._seed_conditions_key(existing)
                     if dataset_name:
                         # The database decided the name matched, so record the name that was
@@ -4906,7 +5136,7 @@ class MemoryInterface(abc.ABC):
                     else:
                         existing_hashes.add((existing.value_sha256, conditions_key))
 
-        return existing_pairs, existing_hashes
+        return existing_pairs, existing_hashes, existing_seeds
 
     async def add_seed_datasets_to_memory_async(self, *, datasets: Sequence[SeedDataset], added_by: str) -> None:
         """
@@ -5476,11 +5706,18 @@ class MemoryInterface(abc.ABC):
         """
         with closing(self._get_session()) as session:
             try:
-                for attack_result in attack_results:
+                entries = [
                     self._add_attack_result_to_session(session=session, attack_result=attack_result)
+                    for attack_result in attack_results
+                ]
+                self._recheck_activity_operations(session=session, entries=entries)
                 session.commit()
-            except SQLAlchemyError:
+            except SQLAlchemyError as error:
                 session.rollback()
+                if isinstance(error, IntegrityError):
+                    self._raise_if_operations_missing(
+                        session=session, operation_ids=_operation_ids(attack_results), error=error
+                    )
                 raise
 
     def _add_attack_result_to_session(self, *, session: Session, attack_result: AttackResult) -> AttackResultEntry:
@@ -5528,6 +5765,37 @@ class MemoryInterface(abc.ABC):
             )
         if entry.operation_id is not None and session.get(OperationEntry, entry.operation_id) is None:
             raise LookupError(f"Operation {entry.operation_id} not found")
+
+    @staticmethod
+    def _recheck_activity_operations(*, session: Session, entries: Sequence[Base]) -> None:
+        """
+        Check new activity's Operations again after inserting it, while this transaction holds the write lock.
+
+        Raises:
+            LookupError: If an Operation was deleted after the first check.
+        """
+        # SQLite does not enforce foreign keys, so a concurrent delete would otherwise orphan the activity.
+        session.flush()
+        MemoryInterface._raise_if_operations_missing(session=session, operation_ids=_operation_ids(entries))
+
+    @staticmethod
+    def _raise_if_operations_missing(
+        *, session: Session, operation_ids: set[uuid.UUID], error: Exception | None = None
+    ) -> None:
+        """
+        Report activity whose Operation no longer exists as a missing Operation.
+
+        After a rolled-back insert, this separates a foreign-key failure from a deleted Operation, which
+        SQL Server raises before the post-insert check runs, from unrelated integrity errors.
+
+        Raises:
+            LookupError: If one of the Operations does not exist.
+        """
+        if not operation_ids:
+            return
+        saved = set(session.scalars(select(OperationEntry.id).where(OperationEntry.id.in_(operation_ids))))
+        if missing := operation_ids - saved:
+            raise LookupError(f"Operation {next(iter(missing))} not found") from error
 
     def _execute_add_conversation_branches_to_attack(
         self,
@@ -5651,8 +5919,10 @@ class MemoryInterface(abc.ABC):
                         f"{receipt_key}:{request_fingerprint}": True,
                     }
                 entry.timestamp = datetime.now(UTC)
+                if new_attack is not None:
+                    self._recheck_activity_operations(session=session, entries=[entry])
             return True
-        except IntegrityError:
+        except IntegrityError as error:
             # A concurrent retry may have committed the same new attack before our insert.
             with closing(self._get_session()) as session:
                 existing = session.get(AttackResultEntry, uuid.UUID(attack_result_id))
@@ -5665,6 +5935,9 @@ class MemoryInterface(abc.ABC):
                     )
                 ):
                     return False
+                self._raise_if_operations_missing(
+                    session=session, operation_ids=_operation_ids([new_attack]), error=error
+                )
             raise
 
     def _execute_update_attack_result_conditionally(
@@ -6534,9 +6807,14 @@ class MemoryInterface(abc.ABC):
                 for entry in entries:
                     self._validate_activity_operation(session=session, entry=entry)
                 session.add_all(entries)
+                self._recheck_activity_operations(session=session, entries=entries)
                 session.commit()
-            except SQLAlchemyError:
+            except SQLAlchemyError as error:
                 session.rollback()
+                if isinstance(error, IntegrityError):
+                    self._raise_if_operations_missing(
+                        session=session, operation_ids=_operation_ids(entries), error=error
+                    )
                 raise
 
     @classmethod

@@ -10,7 +10,8 @@ import { useBeforeUnload, useBlocker } from 'react-router'
 import { usePieceConverters } from '@/hooks/useChatConverters'
 import type { useConversationDraft } from '@/hooks/useConversationDraft'
 import type {
-  AddMessageResponse, ChatConverterSnapshot, ConversationDraftMessage, ConversationDraftPiece, MessageAttachment, PieceConversionUpdates, SaveConversationRequest,
+  AddMessageResponse, ChatConverterSnapshot, ConversationDraftMessage, ConversationDraftPiece, MessageAttachment,
+  PieceConversionUpdates, SaveConversationRequest, TargetInstance,
 } from '@/types'
 import {
   NEW_MESSAGE_ROLES, draftAttachment, draftConverterInputs, editorTargetDisabledReason, unansweredToolCallId,
@@ -161,7 +162,7 @@ interface ConversationEditorProps {
   ref?: Ref<ConversationEditorHandle>
   sameAttackDisabledReason?: string
   newAttackDisabledReason?: string
-  onSaved: (response: AddMessageResponse) => void
+  onSaved: (response: AddMessageResponse, target?: TargetInstance | null) => void
   onSave?: (destination: SaveConversationRequest['destination']) => void
   onExit?: () => Promise<boolean>
   saveDestination?: SaveConversationRequest['destination']
@@ -256,6 +257,7 @@ export default function ConversationEditor({
           converted_value: conversion?.convertedValue,
           converted_value_data_type: conversion?.convertedDataType,
           applied_converter_ids: conversion?.converterInstanceIds ?? [],
+          applied_converter_provenance: conversion?.converterProvenance,
         }
       }),
     })))

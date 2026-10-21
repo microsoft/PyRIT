@@ -43,7 +43,7 @@ from pyrit.models import (
     SeedDataset,
     SeedObjective,
 )
-from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioRunSummary
 from pyrit.models.seeds import yaml_seed_loader
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, IncompatibleTechniquePolicy
@@ -60,7 +60,11 @@ from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse, _build_rapid_response_technique
 from pyrit.scenario.scenarios.foundry.red_team_agent import RedTeamAgent
 from pyrit.score import SubStringScorer
+from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async
 from unit.mocks import MockPromptTarget
+
+# Bound the whole test, including teardown, even if cancellation or the event loop stalls.
+pytestmark = pytest.mark.timeout(TEST_WATCHDOG_SECONDS, method="thread")
 
 _SCENARIO_NAME = "offline.resume"
 _TARGET_NAME = "offline-target"
@@ -146,16 +150,30 @@ async def resume_environment(
                 await service.shutdown_async()
 
 
-async def _wait_for_idle_async(service: ScenarioRunService, *, timeout: float = 10) -> None:
-    async def wait_async() -> None:
-        while service.get_queue_snapshot().active is not None:
-            await asyncio.sleep(0.01)
+async def _wait_for_run_completion_async(
+    *, service: ScenarioRunService, scenario_result_id: str, timeout: float = TEST_WATCHDOG_SECONDS
+) -> None:
+    active = service._active_tasks.get(scenario_result_id)
+    if active is not None:
+        assert active.task is not None
+        # Task completion includes persistence and terminal scheduler handoff.
+        await wait_for_completion_async(future=active.task, timeout=timeout)
+    snapshot = service.get_queue_snapshot()
+    assert snapshot.active is None
+    assert snapshot.queued == []
 
-    await asyncio.wait_for(wait_async(), timeout=timeout)
+
+async def _shutdown_after_launch_async(
+    *, service: ScenarioRunService, launch: asyncio.Task[ScenarioRunSummary]
+) -> None:
+    if not launch.done():
+        launch.cancel()
+    await asyncio.gather(launch, return_exceptions=True)
+    await service.shutdown_async()
 
 
 async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
-    patch_central_database: object, sqlite_instance: SQLiteMemory
+    *, patch_central_database: object, sqlite_instance: SQLiteMemory
 ) -> None:
     loop = asyncio.get_running_loop()
     backend_thread = threading.get_ident()
@@ -237,8 +255,8 @@ async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
                 await asyncio.wait_for(heartbeat.wait(), 1)
                 assert not launch.done()
                 release.set()
-                response = await asyncio.wait_for(launch, 10)
-                await _wait_for_idle_async(service)
+                response = await wait_for_completion_async(future=launch)
+                await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
                 stored = await sqlite_instance.get_scenario_result_header_async(
                     scenario_result_id=response.scenario_result_id
                 )
@@ -249,14 +267,16 @@ async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
                 release.set()
                 stop.set()
                 try:
-                    await asyncio.gather(launch, pulse)
+                    await pulse
                 finally:
-                    await service.shutdown_async()
-                    _build_rapid_response_technique.cache_clear()
+                    try:
+                        await _shutdown_after_launch_async(service=service, launch=launch)
+                    finally:
+                        _build_rapid_response_technique.cache_clear()
 
 
 async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async(
-    patch_central_database: object, sqlite_instance: SQLiteMemory
+    *, patch_central_database: object, sqlite_instance: SQLiteMemory
 ) -> None:
     loop = asyncio.get_running_loop()
     backend_thread = threading.get_ident()
@@ -353,8 +373,8 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
                 await asyncio.wait_for(heartbeat.wait(), 1)
                 assert not launch.done()
                 release.set()
-                response = await asyncio.wait_for(launch, 10)
-                await _wait_for_idle_async(service)
+                response = await wait_for_completion_async(future=launch)
+                await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
                 stored = await sqlite_instance.get_scenario_result_header_async(
                     scenario_result_id=response.scenario_result_id
                 )
@@ -367,9 +387,58 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
                 release.set()
                 stop.set()
                 try:
-                    await asyncio.gather(launch, pulse)
+                    await pulse
                 finally:
-                    await service.shutdown_async()
+                    await _shutdown_after_launch_async(service=service, launch=launch)
+
+
+@pytest.mark.parametrize("enqueued", [False, True])
+async def test_shutdown_cancels_stuck_launch_and_preserves_timeout_async(
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], enqueued: bool
+) -> None:
+    service, _ = resume_environment
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_schedule = service._schedule_prepared_run_async
+
+    async def hold_schedule_async(
+        *, request: RunScenarioRequest, prepared: _PreparedRun, resumed_from_cancelled: bool
+    ) -> ScenarioRunSummary:
+        response = None
+        if enqueued:
+            response = await original_schedule(
+                request=request, prepared=prepared, resumed_from_cancelled=resumed_from_cancelled
+            )
+        entered.set()
+        await release.wait()
+        assert response is not None
+        return response
+
+    with patch.object(service, "_schedule_prepared_run_async", side_effect=hold_schedule_async):
+        launch = asyncio.create_task(
+            service.start_run_async(
+                request=RunScenarioRequest(
+                    scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, max_concurrency=1, include_baseline=False
+                )
+            )
+        )
+        entered_waiter = asyncio.create_task(entered.wait())
+        try:
+            await wait_for_completion_async(future=entered_waiter)
+            assert service._launch_lock.locked()
+            with pytest.raises(TimeoutError, match="test watchdog expired"):
+                try:
+                    await wait_for_completion_async(future=launch, timeout=0)
+                finally:
+                    await _shutdown_after_launch_async(service=service, launch=launch)
+            assert launch.cancelled()
+            assert not service._launch_lock.locked()
+            assert not service.has_active_work()
+            await service.close_async()
+        finally:
+            release.set()
+            entered_waiter.cancel()
+            await asyncio.gather(entered_waiter, return_exceptions=True)
+            await _shutdown_after_launch_async(service=service, launch=launch)
 
 
 async def _create_failed_run_async(*, target: MockPromptTarget, legacy: bool) -> ScenarioResult:
@@ -481,7 +550,7 @@ async def test_numeric_launch_values_survive_failure_and_default_changes_async(
         patch.object(_OfflineResumeScenario, "run_async", run_with_saved_value_async),
     ):
         response = await service.resume_run_async(scenario_result_id=run_id)
-        await _wait_for_idle_async(service)
+        await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
     assert response.scenario_result_id == run_id
     resumed = await sqlite_instance.get_scenario_result_header_async(scenario_result_id=run_id)
     assert resumed is not None and resumed.scenario_run_state == ScenarioRunState.COMPLETED
@@ -546,8 +615,7 @@ async def test_preparation_and_execution_share_sqlite_loop_resources_async(
                 include_baseline=False,
             )
         )
-        # This checks real SQLite completion, not latency under parallel CI disk load.
-        await _wait_for_idle_async(service, timeout=60)
+        await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
         dispose.assert_not_awaited()
         assert len(engines) == 2 and engines[0] is engines[1]
         assert sqlite_instance._get_async_engine() is engines[0]
@@ -579,7 +647,7 @@ async def test_resume_preserves_completed_objectives_and_original_id_async(
         patch.object(service, "_start_run_locked_async", wraps=service._start_run_locked_async) as start,
     ):
         response = await service.resume_run_async(scenario_result_id=run_id)
-        await _wait_for_idle_async(service)
+        await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
     request = start.await_args.kwargs["request"]
     assert request.max_concurrency == 1
     assert request.max_retries == 0
@@ -636,18 +704,7 @@ async def test_resume_without_launch_metadata_is_rejected_without_initialization
     assert target.prompt_sent == []
 
 
-async def _wait_for_run_completion_async(*, service: ScenarioRunService, scenario_result_id: str) -> None:
-    active = service._active_tasks.get(scenario_result_id)
-    if active is not None:
-        assert active.task is not None
-        # Task completion includes persistence and terminal scheduler handoff.
-        await active.task
-    snapshot = service.get_queue_snapshot()
-    assert snapshot.active is None
-    assert snapshot.queued == []
-
-
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(60, method="thread")
 @pytest.mark.parametrize("failure", ["initialization", "execution"])
 async def test_resume_failure_preserves_saved_results_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget], failure: str
@@ -679,11 +736,13 @@ async def test_resume_failure_preserves_saved_results_async(
     assert target.prompt_sent == [_SECOND_OBJECTIVE]
 
 
-@pytest.mark.timeout(300)
 @pytest.mark.parametrize("launch", ["fresh", "resume"])
+@pytest.mark.parametrize("watchdog_expires", [False, True])
 async def test_run_completion_waits_for_terminal_handoff_async(
+    *,
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
     launch: str,
+    watchdog_expires: bool,
 ) -> None:
     service, target = resume_environment
     stored = await _create_failed_run_async(target=target, legacy=False) if launch == "resume" else None
@@ -714,9 +773,17 @@ async def test_run_completion_waits_for_terminal_handoff_async(
         await entered.wait()
         active = service._active_tasks[run_id]
         assert active.task is not None
-        with patch.object(asyncio, "wait_for", side_effect=expire_poll_async) as polling_wait:
-            observer = asyncio.create_task(_wait_for_run_completion_async(service=service, scenario_result_id=run_id))
-            try:
+        observer: asyncio.Task[None] | None = None
+        try:
+            if watchdog_expires:
+                with pytest.raises(TimeoutError, match="test watchdog expired"):
+                    await _wait_for_run_completion_async(service=service, scenario_result_id=run_id, timeout=0)
+                assert not active.task.done()
+                assert active.task.cancelling() == 0
+            with patch.object(asyncio, "wait_for", side_effect=expire_poll_async) as polling_wait:
+                observer = asyncio.create_task(
+                    _wait_for_run_completion_async(service=service, scenario_result_id=run_id)
+                )
                 await asyncio.sleep(0)
                 assert not observer.done()
                 assert not active.task.done()
@@ -725,10 +792,11 @@ async def test_run_completion_waits_for_terminal_handoff_async(
                 assert target.prompt_sent == (
                     [_SECOND_OBJECTIVE] if launch == "resume" else [_FIRST_OBJECTIVE, _SECOND_OBJECTIVE]
                 )
-            finally:
-                release.set()
-                await observer
-            polling_wait.assert_not_awaited()
+        finally:
+            release.set()
+            for task in get_defined_tasks(observer, active.task):
+                await wait_for_completion_async(future=task)
+        polling_wait.assert_not_awaited()
         assert active.task.done()
         after = await CentralMemory.get_memory_instance().get_scenario_result_header_async(scenario_result_id=run_id)
         assert after is not None and after.scenario_run_state == ScenarioRunState.COMPLETED
@@ -822,7 +890,6 @@ async def test_overlapping_resume_requests_only_initialize_once_async(
         assert start.await_count == 1
 
 
-@pytest.mark.timeout(300)
 async def test_fresh_launch_saves_only_nonsecret_resume_inputs_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
 ) -> None:
@@ -1021,8 +1088,8 @@ async def test_resume_restores_selected_adversarial_target_async(
         )
     )
     with patch.object(service, "_enqueue_run_async", wraps=service._enqueue_run_async) as enqueue:
-        await service.resume_run_async(scenario_result_id=str(stored.id))
-        await _wait_for_idle_async(service)
+        response = await service.resume_run_async(scenario_result_id=str(stored.id))
+        await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
     assert enqueue.await_args.kwargs["scheduled"].adversarial_target is adversarial
 
 
@@ -1128,7 +1195,7 @@ async def test_explicit_start_still_resumes_older_runs_async(
             labels=_LABELS,
         )
     )
-    await _wait_for_idle_async(service)
+    await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
     assert response.scenario_result_id == str(stored.id)
     assert target.prompt_sent == [_SECOND_OBJECTIVE]
     detail = await service.get_run_async(scenario_result_id=str(stored.id))
