@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 
@@ -28,6 +29,7 @@ from pyrit.registry import (
 )
 
 SCENARIO_NAME = "foundry.red_team_agent"
+OPERATION_ID = UUID("11111111-1111-4111-8111-111111111111")
 
 
 def _registered_scenario(
@@ -306,6 +308,7 @@ class TestRunRequestResolution:
 
         assert resolved.max_concurrency == 10
         assert resolved.max_retries == 0
+        assert resolved.operation_id is None
 
     def test_explicit_run_fields_are_applied(self) -> None:
         resolved = ScenarioPresetService.resolve_run_request(
@@ -362,6 +365,7 @@ class TestRunRequestResolution:
             adversarial_target_name="adversary",
             initializers=["scorer"],
             initializer_args={"scorer": {"threshold": 0.5}},
+            operation_id=OPERATION_ID,
             labels={"operator": "red"},
         )
 
@@ -371,6 +375,7 @@ class TestRunRequestResolution:
         assert resolved.adversarial_target_name == "adversary"
         assert resolved.initializers == ["scorer"]
         assert resolved.initializer_args == {"scorer": {"threshold": 0.5}}
+        assert resolved.operation_id == OPERATION_ID
         assert resolved.labels == {"operator": "red"}
 
 

@@ -221,7 +221,28 @@ class ConversationScorer(MessageScorer, ABC):
         return results
 
     def _render_conversation(self, pieces: tuple[MessagePiece, ...]) -> str:
+        """
+        Render each turn inside a numbered, role-labeled fence with indented content.
+
+        The previous renderer emitted ``{role}: {text}`` with no fencing, so a
+        target reply containing literal ``User:``/``Assistant:`` lines forged
+        additional turns inside its own turn, rewriting the conversation the
+        wrapped judge sees. Each turn is now bounded by ``[BEGIN {ROLE} TURN i]``
+        / ``[END {ROLE} TURN i]`` delimiters and every content line is indented
+        two spaces, so a forged role-prefix or fence closer inside stored
+        content can never start at column 0. Content is preserved verbatim
+        modulo the indent: ``splitlines(keepends=True)`` retains original line
+        separators and trailing newlines while indenting every Unicode line-break
+        variant. The extra newline before the closing fence belongs to the framing.
+
+        Args:
+            pieces (tuple[MessagePiece, ...]): The conversation pieces to render.
+
+        Returns:
+            str: The fenced transcript.
+        """
         lines = []
+        turn_index = 0
         for piece in pieces:
             if piece.api_role not in ("user", "assistant", "tool") or not self._validator.is_role_supported(piece):
                 continue
@@ -234,7 +255,10 @@ class ConversationScorer(MessageScorer, ABC):
                 if self.should_score_blocked_content and piece.is_blocked() and partial
                 else piece.converted_value
             )
-            lines.append(f"{role}: {text}\n")
+            fence = f"{role.upper()} TURN {turn_index}"
+            body = "".join("  " + line for line in text.splitlines(keepends=True))
+            lines.append(f"[BEGIN {fence}]\n{body}\n[END {fence}]\n")
+            turn_index += 1
         return "".join(lines)
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
@@ -345,7 +369,7 @@ def create_conversation_scorer(
             """
             identifier = self._create_identifier(
                 params={
-                    "rendering_version": 1,
+                    "rendering_version": 2,
                     "supported_roles": self._validator._supported_roles,
                     "should_score_blocked_content": self.should_score_blocked_content,
                 },
