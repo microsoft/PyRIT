@@ -620,35 +620,6 @@ Click any row to open the attack in the Chat view.
 
 Results are paginated (25 per page) with "First" and "Next" navigation buttons.
 
-### Editing a Technique for One Run
-
-In **Technique.execute**, the launch form loads the settings for the selected
-technique. Select **Edit technique** to change those settings with the same form
-used by **New technique**. The technique name and underlying attack type stay
-fixed. Other scenarios do not show this action. The form uses the scenario's
-single-technique limit to enable it, not the number of checked items.
-
-**Apply to run** makes a temporary copy for this launch only. It does not register
-a technique or change the original. Reopen the editor to see applied edits.
-**Cancel** keeps the last applied settings. **Reset to original** removes the
-temporary copy. Before you switch to a different technique, the form asks you to
-discard the applied edits. Cancel that prompt to keep the selection and edits.
-Baseline selection is separate and does not remove edits.
-
-For a simulated-conversation technique, edit the generation settings: turn
-count, simulated user system prompt, simulated assistant system prompt, and
-the existing next-message prompt or fixed final user message. This does not
-edit a generated transcript. A technique with no additional message keeps that
-mode. The existing final-message mode stays fixed; the editor does not switch
-between modes. Prompt fields show multiline text and keep template placeholders literal.
-Prompt metadata and unsupported settings stay unchanged; unsupported settings
-are read-only.
-
-Loading, editing, applying, and estimating these settings do not call a model.
-The preview shows the local edits. Launch records those edits and the source and
-dependency identities, including for retries and resume. Navigation away discards
-an unlaunched draft. A launched run keeps its saved configuration.
-
 ### Resuming a Failed Scanner Run
 
 Select **Resume run** on a failed run's detail page or **Resume** in **Scanner
@@ -668,12 +639,6 @@ the limitation without changing their saved progress.
 If the saved configuration cannot be restored, Resume shows an error without
 discarding progress or starting a replacement run. Restore any missing target,
 technique, or dataset before trying again.
-
-A run with technique edits also requires the same source configuration and
-referenced targets and converters. A changed or missing dependency causes an
-explicit error, not a fallback to the original technique. Opaque executable
-settings that cannot be compared across a backend restart cannot be restored
-as an edited technique after that restart.
 
 ### Scenario Run Results
 

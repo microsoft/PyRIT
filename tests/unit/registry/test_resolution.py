@@ -13,7 +13,7 @@ import pytest
 
 from pyrit.common import REQUIRED_VALUE, forward_init_parameters
 from pyrit.common.apply_defaults import _RequiredValueSentinel
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, Parameter
 from pyrit.models.identifiers import ConverterIdentifier, TargetIdentifier
 from pyrit.models.parameter import ComponentType
 from pyrit.prompt_target import PromptTarget
@@ -24,7 +24,22 @@ from pyrit.registry.resolution import (
     display_choices,
     reject_non_external_params,
     resolve_constructor_args,
+    resolve_declared_params,
 )
+
+
+@pytest.mark.parametrize("parameter_type", [str, int, bool, list[str]])
+def test_declared_required_input_preserves_missing_value_for_runtime_validation(parameter_type: type) -> None:
+    parameter = Parameter(
+        name="input", description="Required at execution.", param_type=parameter_type, default=REQUIRED_VALUE
+    )
+    assert parameter.required
+    assert resolve_declared_params(declared=[parameter], raw_args={}, owner="Scenario") == {"input": None}
+
+
+def test_declared_required_input_coerces_supplied_value() -> None:
+    parameter = Parameter(name="count", description="Count.", param_type=int, default=REQUIRED_VALUE)
+    assert resolve_declared_params(declared=[parameter], raw_args={"count": "3"}, owner="Scenario") == {"count": 3}
 
 
 class MockPromptTarget(PromptTarget):

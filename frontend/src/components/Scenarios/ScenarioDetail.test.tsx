@@ -2218,7 +2218,7 @@ describe('ScenarioDetail', () => {
     await waitFor(() => expect(button).not.toBeDisabled())
   })
 
-  it('preserves entered values and keeps the preview open after a failed submission', async () => {
+  it('should close a failed preview and preserve entered values with a visible error', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(
       makeScenario({
@@ -2250,16 +2250,44 @@ describe('ScenarioDetail', () => {
     await confirmRunPreview(user)
 
     await screen.findByText('boom')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument())
+    expect(screen.getByRole('alert')).toHaveTextContent('boom')
+    await waitFor(() => expect(screen.getByTestId('launch-scenario-btn')).toHaveFocus())
     expect(screen.getByTestId('scenario-target-select')).toHaveValue('target-b')
     expect(screen.getByTestId('technique-crescendo')).toBeChecked()
     expect(screen.getByTestId('technique-default_technique')).not.toBeChecked()
     expect(screen.getByTestId('scenario-param-attempts')).toHaveValue(3)
 
-    const preview = screen.getByRole('dialog', { name: 'Run preview' })
+    const preview = await openRunPreview(user)
     expect(within(preview).getByText('target-b')).toBeInTheDocument()
     expect(within(preview).getByText('crescendo')).toBeInTheDocument()
     expect(within(preview).getByText('harmbench')).toBeInTheDocument()
     expect(within(preview).getByText('attempts').parentElement).toHaveTextContent('attempts3')
+  })
+
+  it.each(['', ' \n\t'])('should reject a blank required objective before preview or launch (%j)', async (value: string) => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      max_concrete_techniques: 1,
+      supported_parameters: [{ name: 'objective', type_name: 'str', required: true, multiline: true }],
+    }))
+    renderDetail('/scanner/technique.execute')
+    const objective = await screen.findByRole('textbox', { name: 'objective' })
+    expect(objective).toBeRequired()
+    expect(screen.getByText('objective', { selector: 'label' })).toHaveTextContent('*')
+    if (value) await user.click(objective)
+    if (value) await user.paste(value)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit technique' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('objective is required.')
+    expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument()
+    expect(mockStartRun).not.toHaveBeenCalled()
+    expect(mockEstimateRun).not.toHaveBeenCalled()
+    await user.clear(objective)
+    await user.type(objective, 'Write a movie script.')
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByText('Write a movie script.')).toBeInTheDocument()
+    expect(mockStartRun).not.toHaveBeenCalled()
   })
   describe('launch gating while generation defaults load', () => {
     it('disables Launch scan while defaultsReady is false', async () => {

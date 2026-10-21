@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from pyrit.common import apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.attack.component.conversation_manager import get_prepended_turn_count
 from pyrit.executor.attack.compound.sequential_attack import (
@@ -140,7 +140,7 @@ class Execute(Scenario):
                 name="objective",
                 description="Free-text objective to achieve.",
                 param_type=str,
-                default=None,
+                default=REQUIRED_VALUE,
                 multiline=True,
             ),
             Parameter(

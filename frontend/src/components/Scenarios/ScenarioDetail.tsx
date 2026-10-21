@@ -1034,6 +1034,8 @@ function ScenarioLaunchForm({
       })
     } catch (err) {
       setApiError(toApiError(err).detail)
+      setPreviewOpen(false)
+      restoreLaunchFocus()
     } finally {
       isSubmittingRef.current = false
       setSubmitting(false)
@@ -1147,7 +1149,9 @@ function ScenarioLaunchForm({
 
             {supportsObjectiveTarget && (
             <section className={styles.section} aria-labelledby="target-section-title">
-              <Text id="target-section-title" as="h2" size={400} weight="semibold">Objective Target</Text>
+              <Text id="target-section-title" as="h2" size={400} weight="semibold">
+                Objective Target <span className={styles.requiredMarker} aria-hidden="true">*</span>
+              </Text>
               <Field hint="The registered target this scenario will run against.">
                 <Select
                   className={styles.control}
@@ -1156,6 +1160,7 @@ function ScenarioLaunchForm({
                   onChange={(_, data) => { setTargetName(data.value); setSelectionGeneration(runtime.generation) }}
                   data-testid="scenario-target-select"
                   aria-label="Objective Target"
+                  required
                 >
                   {!targets.some((target) => target.target_registry_name === targetName) && (
                     <option value={targetName} disabled>

@@ -803,7 +803,11 @@ def resolve_declared_params(
         # ``params[name]`` never raising ``KeyError``. Params declared without an
         # explicit default land as None, and the owner raises a domain-specific
         # error at run time if it cannot proceed.
-        coerced[param.name] = copy.deepcopy(param.coerce_value(param.default)) if param.default is not None else None
+        coerced[param.name] = (
+            copy.deepcopy(param.coerce_value(param.default))
+            if param.default is not None and not param.required
+            else None
+        )
 
     return coerced
 
@@ -832,7 +836,7 @@ def _validate_declarations(*, declared: list[Parameter], owner: str) -> None:
         except ValueError as exc:
             raise ValueError(f"{owner} {exc}") from exc
 
-        if param.default is not None:
+        if param.default is not None and not param.required:
             try:
                 param.coerce_value(param.default)
             except ValueError as exc:

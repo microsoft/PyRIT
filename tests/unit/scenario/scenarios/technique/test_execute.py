@@ -437,6 +437,8 @@ class TestExecute:
         parameters = {parameter.name: parameter for parameter in scenario.supported_parameters()}
         assert "dataset_config" not in parameters
         assert parameters["objective"].multiline
+        assert parameters["objective"].required
+        assert next(parameter for parameter in metadata.supported_parameters if parameter.name == "objective").required
         assert {"harm_categories", "retries_on_objective_failure", "prepended_conversation_id"} <= parameters.keys()
         with pytest.raises(ValueError, match="unknown parameter.*dataset_config"):
             scenario.set_params_from_args(args={"dataset_config": DatasetAttackConfiguration()})
