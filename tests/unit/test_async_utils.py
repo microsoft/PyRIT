@@ -7,7 +7,7 @@ from typing import assert_type
 
 import pytest
 
-from unit.async_utils import get_defined_tasks, wait_for_completion_async
+from unit.async_utils import get_defined_tasks, wait_for_completion_async, wait_for_event_async
 
 
 def test_get_defined_tasks_before_task_creation() -> None:
@@ -72,3 +72,68 @@ async def test_wait_for_completion_timeout_does_not_cancel_task_async() -> None:
     finally:
         release.set()
         await task
+
+
+async def test_wait_for_event_observes_checkpoint_before_completion_async() -> None:
+    reached = asyncio.Event()
+    release = asyncio.Event()
+
+    async def operation_async() -> None:
+        reached.set()
+        await release.wait()
+
+    task = asyncio.create_task(operation_async())
+    try:
+        await wait_for_event_async(event=reached, task=task)
+        assert not task.done()
+        assert task.cancelling() == 0
+    finally:
+        release.set()
+        await wait_for_completion_async(future=task)
+
+
+@pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
+async def test_wait_for_event_reports_early_completion_async(outcome: str) -> None:
+    event = asyncio.Event()
+    future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    if outcome == "success":
+        future.set_result(None)
+        expected_error = AssertionError
+        message = "finished before reaching the expected event"
+    elif outcome == "error":
+        future.set_exception(RuntimeError("startup failed"))
+        expected_error = RuntimeError
+        message = "startup failed"
+    else:
+        future.cancel("operation cancelled")
+        expected_error = asyncio.CancelledError
+        message = "operation cancelled"
+
+    before = asyncio.all_tasks()
+    with pytest.raises(expected_error, match=message):
+        await wait_for_event_async(event=event, task=future)
+    assert asyncio.all_tasks() == before
+    assert not event.is_set()
+
+
+@pytest.mark.parametrize("cancel_observer", [False, True], ids=["expired-watchdog", "cancelled-observer"])
+async def test_wait_for_event_does_not_cancel_operation_async(cancel_observer: bool) -> None:
+    event = asyncio.Event()
+    release = asyncio.Event()
+    operation = asyncio.create_task(release.wait())
+    before = asyncio.all_tasks()
+    try:
+        if cancel_observer:
+            observer = asyncio.create_task(wait_for_event_async(event=event, task=operation))
+            asyncio.get_running_loop().call_soon(observer.cancel, "observer cancelled")
+            with pytest.raises(asyncio.CancelledError, match="observer cancelled"):
+                await observer
+        else:
+            with pytest.raises(TimeoutError, match="test watchdog expired"):
+                await wait_for_event_async(event=event, task=operation, timeout=0)
+        assert not operation.done()
+        assert operation.cancelling() == 0
+        assert asyncio.all_tasks() == before
+    finally:
+        release.set()
+        await wait_for_completion_async(future=operation)
