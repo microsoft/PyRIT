@@ -198,6 +198,8 @@ class TransparencyAttackConverter(Converter):
                 "size": self.size,
                 "steps": self.steps,
                 "learning_rate": self.learning_rate,
+                "convergence_threshold": self.convergence_threshold,
+                "convergence_patience": self.convergence_patience,
             }
         )
 

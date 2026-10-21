@@ -326,6 +326,8 @@ class VideoHelper:
             raise
 
         finally:
-            # Clean up temporary audio file on success
-            if should_cleanup and audio_path:
+            # Clean up temporary audio file on success. The extractor returns the input
+            # unchanged when the video's own audio track is already compliant WAV, so guard
+            # against deleting the caller's source file (matching _transcribe_audio_async).
+            if should_cleanup and audio_path and audio_path != video_path:
                 Path(audio_path).unlink(missing_ok=True)

@@ -120,6 +120,11 @@ export const usePromptEditorStyles = makeStyles({
     marginRight: tokens.spacingHorizontalS,
     alignSelf: 'center',
   },
+  undoAction: {
+    // Keep Undo reachable above the overlay when only the prompt is disabled.
+    position: 'relative',
+    zIndex: 1,
+  },
   columnCenter: {
     display: 'flex',
     flexDirection: 'column',
