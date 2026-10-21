@@ -83,6 +83,12 @@ shared `TEST_WATCHDOG_SECONDS` backstop in `tests/unit/async_utils.py`. Discover
 timeout coverage expires the real cancellation path only after the request starts.
 Event-controlled analytics expiry tests freeze both deadline clocks so floating-point
 rounding cannot turn a valid query budget into a failed assertion.
+Backend analytics lifecycle tests also warm the native connection before holding
+session cleanup. Their checkpoint observers watch the owned request or close task
+as well as the event, so early operation failures do not become readiness timeouts.
+The response-deadline gate still observes native completion and does not replace
+`asyncio.wait` outside the execution module. Release gates and drain owned tasks
+in `finally`; observation timeouts must not cancel the operation under test.
 
 The scorer-validation cancellation test keeps its five-second observer around
 scorer draining and native SQLite connection cleanup. ERROR-result persistence is

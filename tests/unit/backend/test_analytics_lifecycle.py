@@ -30,16 +30,16 @@ from pyrit.backend.services.analytics_service import close_analytics_service_asy
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.service_lifecycle import close_services_async, has_active_analytics_work
-from pyrit.exceptions.analytics_exception import AnalyticsBusyException
+from pyrit.exceptions.analytics_exception import AnalyticsBusyException, AnalyticsTimeoutException
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.memory.memory_models import Base
 from pyrit.setup.configuration_loader import ConfigurationLoader
+from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async
 
 
 @pytest.fixture
 def analytics_runtime(*, tmp_path: Path, analytics_service: AttackResultAnalytics) -> Iterator[RuntimeLifecycle]:
     path = tmp_path / "config.yaml"
-    path.write_text("memory_db_type: in_memory\nenable_live_reinitialization: true\n", encoding="utf-8")
     app = FastAPI()
     runtime = RuntimeLifecycle(app=app, source=ConfigurationFileService(config_file_value=str(path)))
     runtime.state, runtime.generation = "ready", "original"
@@ -49,6 +49,7 @@ def analytics_runtime(*, tmp_path: Path, analytics_service: AttackResultAnalytic
     app.include_router(router, prefix="/api")
     config = ConfigurationLoader(memory_db_type="in_memory", env_files=[], enable_live_reinitialization=True)
     with (
+        patch.object(runtime.source, "read_with_version_async", return_value=("", "test-version")),
         patch.object(runtime, "_load_async", return_value=config),
         patch.object(runtime, "_management_async", new_callable=AsyncMock),
         patch.object(config, "preflight_reinitialization_async", return_value=MagicMock()),
@@ -65,7 +66,66 @@ async def _apply_async(runtime: RuntimeLifecycle) -> None:
     _, version = await runtime.source.read_with_version_async()
     assert runtime.begin_apply(version=version)["outcome"] == "accepted"
     assert runtime.apply_task is not None
-    await runtime.apply_task
+    await wait_for_completion_async(future=runtime.apply_task)
+
+
+async def _wait_for_checkpoint_async(
+    *, event: asyncio.Event, operation: asyncio.Task[Any], timeout: float = TEST_WATCHDOG_SECONDS
+) -> None:
+    """Observe readiness or early completion without cancelling the operation."""
+    checkpoint = asyncio.create_task(event.wait())
+    try:
+        done, _ = await asyncio.wait({checkpoint, operation}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+        if operation in done:
+            result = operation.result()
+            pytest.fail(f"Operation finished before its lifecycle checkpoint: {result!r}")
+        if checkpoint not in done:
+            raise TimeoutError("The lifecycle checkpoint was not reached before the test watchdog expired.")
+    finally:
+        checkpoint.cancel()
+        await asyncio.gather(checkpoint, return_exceptions=True)
+
+
+@pytest.mark.parametrize("reached", [False, True])
+async def test_checkpoint_observation_never_cancels_owned_work_async(reached: bool) -> None:
+    event, release = asyncio.Event(), asyncio.Event()
+    operation = asyncio.create_task(release.wait())
+    owned_tasks = asyncio.all_tasks()
+    try:
+        if reached:
+            event.set()
+            await _wait_for_checkpoint_async(event=event, operation=operation, timeout=0)
+        else:
+            with pytest.raises(TimeoutError, match="lifecycle checkpoint"):
+                await _wait_for_checkpoint_async(event=event, operation=operation, timeout=0)
+        assert not operation.done()
+        assert operation.cancelling() == 0
+        assert asyncio.all_tasks() <= owned_tasks
+    finally:
+        release.set()
+        await wait_for_completion_async(future=operation)
+
+
+@pytest.mark.parametrize(
+    "error", [None, RuntimeError("query failed"), AnalyticsTimeoutException(), asyncio.CancelledError()]
+)
+async def test_checkpoint_observation_reports_early_completion_async(error: BaseException | None) -> None:
+    async def finish_async() -> str:
+        if error is not None:
+            raise error
+        return "early result"
+
+    operation = asyncio.create_task(finish_async())
+    owned_tasks = asyncio.all_tasks()
+    expected = type(error) if error is not None else pytest.fail.Exception
+    with pytest.raises(expected) as caught:
+        await _wait_for_checkpoint_async(event=asyncio.Event(), operation=operation)
+    if error is not None:
+        assert caught.value is error
+    else:
+        assert "early result" in str(caught.value)
+    assert operation.done()
+    assert asyncio.all_tasks() <= owned_tasks
 
 
 @dataclass
@@ -73,6 +133,7 @@ class _Cleanup:
     entered: asyncio.Event = field(default_factory=asyncio.Event)
     release: asyncio.Event = field(default_factory=asyncio.Event)
     closed: asyncio.Event = field(default_factory=asyncio.Event)
+    cancellations: int = 0
 
 
 @pytest.fixture
@@ -80,7 +141,14 @@ async def held_native_cleanup(sqlite_instance: SQLiteMemory) -> AsyncGenerator[_
     """Hold an actual native session open until the test explicitly releases cleanup."""
     state = _Cleanup()
     get_session = sqlite_instance.get_session_async
-    with ExitStack() as patches:
+    async with await get_session() as session:
+        await session.connection()
+    with (
+        ExitStack() as patches,
+        patch("pyrit.analytics._execution.monotonic", return_value=100.0),
+        patch("pyrit.memory.query_control.time") as clock,
+    ):
+        clock.monotonic.return_value = 100.0
 
         async def get_session_async() -> AsyncSession:
             session = await get_session()
@@ -88,9 +156,14 @@ async def held_native_cleanup(sqlite_instance: SQLiteMemory) -> AsyncGenerator[_
 
             async def close_async() -> None:
                 state.entered.set()
-                await state.release.wait()
-                await close()
-                state.closed.set()
+                try:
+                    await state.release.wait()
+                except asyncio.CancelledError:
+                    state.cancellations += 1
+                    raise
+                finally:
+                    await close()
+                    state.closed.set()
 
             patches.enter_context(patch.object(session, "close", side_effect=close_async))
             return session
@@ -100,7 +173,7 @@ async def held_native_cleanup(sqlite_instance: SQLiteMemory) -> AsyncGenerator[_
             yield state
         finally:
             state.release.set()
-            await close_analytics_service_async()
+            await wait_for_completion_async(future=asyncio.create_task(close_analytics_service_async()))
 
 
 @pytest.fixture
@@ -164,8 +237,13 @@ async def test_http_timeout_keeps_native_cleanup_busy_until_runtime_drain_async(
 
     async def expire_async(tasks: set[asyncio.Task[Any]], *, timeout: float) -> tuple[set[Any], set[Any]]:
         assert timeout == 300.0
-        await expire.wait()
-        return set(), tasks
+        expiry = asyncio.create_task(expire.wait())
+        try:
+            done, pending = await asyncio.wait(tasks | {expiry}, return_when=asyncio.FIRST_COMPLETED)
+            return done & tasks, pending & tasks
+        finally:
+            expiry.cancel()
+            await asyncio.gather(expiry, return_exceptions=True)
 
     original_close = analytics_service.close_async
 
@@ -177,22 +255,24 @@ async def test_http_timeout_keeps_native_cleanup_busy_until_runtime_drain_async(
         transport=httpx.ASGITransport(app=analytics_runtime.app), base_url="http://test"
     ) as client:
         with (
-            patch("pyrit.analytics._execution.monotonic", return_value=100.0),
-            patch("pyrit.memory.query_control.time") as clock,
-            patch("pyrit.analytics._execution.asyncio.wait", side_effect=expire_async),
+            patch(
+                "pyrit.analytics._execution.asyncio",
+                wraps=asyncio,
+                wait=AsyncMock(side_effect=expire_async),
+                CancelledError=asyncio.CancelledError,
+            ),
             patch.object(analytics_service, "close_async", side_effect=close_async),
             patch.object(
                 sqlite_instance, "dispose_engine_async", wraps=sqlite_instance.dispose_engine_async
             ) as dispose,
         ):
-            clock.monotonic.return_value = 100.0
             request = asyncio.create_task(client.post("/api/analytics/attacks/results", json={}))
             shutdown: asyncio.Task[None] | None = None
             try:
-                await asyncio.wait_for(cleanup.entered.wait(), 30)
+                await _wait_for_checkpoint_async(event=cleanup.entered, operation=request)
                 assert has_active_analytics_work()
                 expire.set()
-                response = await asyncio.wait_for(request, 10)
+                response = await wait_for_completion_async(future=request)
                 assert response.status_code == 504
                 assert not analytics_runtime.operations
                 assert analytics_service.has_active_work
@@ -200,7 +280,7 @@ async def test_http_timeout_keeps_native_cleanup_busy_until_runtime_drain_async(
                 assert analytics_runtime.outcome == "busy"
                 assert analytics_runtime.generation == "original"
                 shutdown = asyncio.create_task(analytics_runtime.shutdown_async())
-                await asyncio.wait_for(closing.wait(), 10)
+                await _wait_for_checkpoint_async(event=closing, operation=shutdown)
                 assert not shutdown.done()
                 assert not analytics_service.is_closed
                 assert get_analytics_service() is analytics_service
@@ -215,10 +295,11 @@ async def test_http_timeout_keeps_native_cleanup_busy_until_runtime_drain_async(
                 cleanup.release.set()
                 if cancel_shutdown:
                     with pytest.raises(asyncio.CancelledError):
-                        await asyncio.wait_for(shutdown, 30)
+                        await wait_for_completion_async(future=shutdown)
                 else:
-                    await asyncio.wait_for(shutdown, 30)
+                    await wait_for_completion_async(future=shutdown)
                 assert cleanup.closed.is_set()
+                assert cleanup.cancellations == 0
                 assert analytics_service.is_closed
                 assert not has_active_analytics_work()
                 assert get_analytics_service.cache_info().currsize == 0
@@ -226,37 +307,50 @@ async def test_http_timeout_keeps_native_cleanup_busy_until_runtime_drain_async(
             finally:
                 expire.set()
                 cleanup.release.set()
-                await asyncio.gather(request, *([shutdown] if shutdown else []), return_exceptions=True)
+                await wait_for_completion_async(
+                    future=asyncio.gather(*get_defined_tasks(request, shutdown), return_exceptions=True)
+                )
 
 
 async def test_caller_and_repeated_close_cancellation_retain_native_owner_async(
     *, analytics_service: AttackResultAnalytics, held_native_cleanup: _Cleanup
 ) -> None:
     cleanup = held_native_cleanup
+    closing = asyncio.Event()
+    original_close = analytics_service.close_async
+
+    async def close_async() -> None:
+        closing.set()
+        await original_close()
+
     request = asyncio.create_task(analytics_service.results_async())
     close: asyncio.Task[None] | None = None
     try:
-        await asyncio.wait_for(cleanup.entered.wait(), 30)
+        await _wait_for_checkpoint_async(event=cleanup.entered, operation=request)
         request.cancel()
         with pytest.raises(asyncio.CancelledError):
-            await request
+            await wait_for_completion_async(future=request)
         assert has_active_analytics_work()
-        close = asyncio.create_task(close_services_async())
-        await asyncio.sleep(0)
-        for _ in range(2):
-            close.cancel()
-            await asyncio.sleep(0)
-            assert not close.done()
-            assert get_analytics_service() is analytics_service
-        cleanup.release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(close, 30)
+        with patch.object(analytics_service, "close_async", side_effect=close_async):
+            close = asyncio.create_task(close_services_async())
+            await _wait_for_checkpoint_async(event=closing, operation=close)
+            for _ in range(2):
+                close.cancel()
+                await asyncio.sleep(0)
+                assert not close.done()
+                assert get_analytics_service() is analytics_service
+            cleanup.release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await wait_for_completion_async(future=close)
         assert cleanup.closed.is_set()
+        assert cleanup.cancellations == 0
         assert analytics_service.is_closed
         assert get_analytics_service.cache_info().currsize == 0
     finally:
         cleanup.release.set()
-        await asyncio.gather(request, *([close] if close else []), return_exceptions=True)
+        await wait_for_completion_async(
+            future=asyncio.gather(*get_defined_tasks(request, close), return_exceptions=True)
+        )
 
 
 @pytest.mark.parametrize("operation", ["apply", "shutdown"])
