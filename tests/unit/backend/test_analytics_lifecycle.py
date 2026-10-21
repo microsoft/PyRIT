@@ -30,11 +30,11 @@ from pyrit.backend.services.analytics_service import close_analytics_service_asy
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.service_lifecycle import close_services_async, has_active_analytics_work
-from pyrit.exceptions.analytics_exception import AnalyticsBusyException, AnalyticsTimeoutException
+from pyrit.exceptions.analytics_exception import AnalyticsBusyException
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.memory.memory_models import Base
 from pyrit.setup.configuration_loader import ConfigurationLoader
-from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async
+from unit.async_utils import get_defined_tasks, wait_for_completion_async, wait_for_event_async
 
 
 @pytest.fixture
@@ -67,65 +67,6 @@ async def _apply_async(runtime: RuntimeLifecycle) -> None:
     assert runtime.begin_apply(version=version)["outcome"] == "accepted"
     assert runtime.apply_task is not None
     await wait_for_completion_async(future=runtime.apply_task)
-
-
-async def _wait_for_checkpoint_async(
-    *, event: asyncio.Event, operation: asyncio.Task[Any], timeout: float = TEST_WATCHDOG_SECONDS
-) -> None:
-    """Observe readiness or early completion without cancelling the operation."""
-    checkpoint = asyncio.create_task(event.wait())
-    try:
-        done, _ = await asyncio.wait({checkpoint, operation}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
-        if operation in done:
-            result = operation.result()
-            pytest.fail(f"Operation finished before its lifecycle checkpoint: {result!r}")
-        if checkpoint not in done:
-            raise TimeoutError("The lifecycle checkpoint was not reached before the test watchdog expired.")
-    finally:
-        checkpoint.cancel()
-        await asyncio.gather(checkpoint, return_exceptions=True)
-
-
-@pytest.mark.parametrize("reached", [False, True])
-async def test_checkpoint_observation_never_cancels_owned_work_async(reached: bool) -> None:
-    event, release = asyncio.Event(), asyncio.Event()
-    operation = asyncio.create_task(release.wait())
-    owned_tasks = asyncio.all_tasks()
-    try:
-        if reached:
-            event.set()
-            await _wait_for_checkpoint_async(event=event, operation=operation, timeout=0)
-        else:
-            with pytest.raises(TimeoutError, match="lifecycle checkpoint"):
-                await _wait_for_checkpoint_async(event=event, operation=operation, timeout=0)
-        assert not operation.done()
-        assert operation.cancelling() == 0
-        assert asyncio.all_tasks() <= owned_tasks
-    finally:
-        release.set()
-        await wait_for_completion_async(future=operation)
-
-
-@pytest.mark.parametrize(
-    "error", [None, RuntimeError("query failed"), AnalyticsTimeoutException(), asyncio.CancelledError()]
-)
-async def test_checkpoint_observation_reports_early_completion_async(error: BaseException | None) -> None:
-    async def finish_async() -> str:
-        if error is not None:
-            raise error
-        return "early result"
-
-    operation = asyncio.create_task(finish_async())
-    owned_tasks = asyncio.all_tasks()
-    expected = type(error) if error is not None else pytest.fail.Exception
-    with pytest.raises(expected) as caught:
-        await _wait_for_checkpoint_async(event=asyncio.Event(), operation=operation)
-    if error is not None:
-        assert caught.value is error
-    else:
-        assert "early result" in str(caught.value)
-    assert operation.done()
-    assert asyncio.all_tasks() <= owned_tasks
 
 
 @dataclass
@@ -269,7 +210,8 @@ async def test_http_timeout_keeps_native_cleanup_busy_until_runtime_drain_async(
             request = asyncio.create_task(client.post("/api/analytics/attacks/results", json={}))
             shutdown: asyncio.Task[None] | None = None
             try:
-                await _wait_for_checkpoint_async(event=cleanup.entered, operation=request)
+                await wait_for_event_async(event=cleanup.entered, task=request)
+                assert not request.done()
                 assert has_active_analytics_work()
                 expire.set()
                 response = await wait_for_completion_async(future=request)
@@ -280,7 +222,7 @@ async def test_http_timeout_keeps_native_cleanup_busy_until_runtime_drain_async(
                 assert analytics_runtime.outcome == "busy"
                 assert analytics_runtime.generation == "original"
                 shutdown = asyncio.create_task(analytics_runtime.shutdown_async())
-                await _wait_for_checkpoint_async(event=closing, operation=shutdown)
+                await wait_for_event_async(event=closing, task=shutdown)
                 assert not shutdown.done()
                 assert not analytics_service.is_closed
                 assert get_analytics_service() is analytics_service
@@ -326,14 +268,16 @@ async def test_caller_and_repeated_close_cancellation_retain_native_owner_async(
     request = asyncio.create_task(analytics_service.results_async())
     close: asyncio.Task[None] | None = None
     try:
-        await _wait_for_checkpoint_async(event=cleanup.entered, operation=request)
+        await wait_for_event_async(event=cleanup.entered, task=request)
+        assert not request.done()
         request.cancel()
         with pytest.raises(asyncio.CancelledError):
             await wait_for_completion_async(future=request)
         assert has_active_analytics_work()
         with patch.object(analytics_service, "close_async", side_effect=close_async):
             close = asyncio.create_task(close_services_async())
-            await _wait_for_checkpoint_async(event=closing, operation=close)
+            await wait_for_event_async(event=closing, task=close)
+            assert not close.done()
             for _ in range(2):
                 close.cancel()
                 await asyncio.sleep(0)
