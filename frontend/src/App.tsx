@@ -831,6 +831,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                       defaultObjectiveTarget={targetDefaults.objectiveTarget}
                       defaultAdversarialTarget={targetDefaults.adversarialTarget}
                       labels={globalLabels}
+                      operationId={operationId}
+                      defaultsReady={newActivityReady}
                     />
                   }
                 />

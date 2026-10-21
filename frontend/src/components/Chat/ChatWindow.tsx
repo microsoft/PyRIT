@@ -1802,9 +1802,20 @@ export default function ChatWindow({
     ...(!runtime.ready ? ['The runtime is not ready. Wait for initialization to finish.'] : []),
     ...(isSending ? ['A message is being sent. Wait for the response.'] : []),
     ...(isLoadingAttack ? ['The attack is loading. Wait for it to finish.'] : []),
+    ...(isEvidenceUnavailable ? ['This finding evidence is unavailable. Sending is disabled.'] : []),
     ...(hasProcessingError
       ? ['This conversation contains a target error. Use Copy or Branch on the failed prompt to branch into a new conversation or attack.']
       : []),
+  ]
+  const sendDisabledReasons = [
+    ...(!activeTarget ? ['Select a target to send a message.'] : []),
+    ...(!attackResultId && !defaultsReady
+      ? [newActivityBlockedReason ?? 'Default labels are not ready. Wait for them to load.'] : []),
+    ...(editDraft !== null ? ['Finish editing the conversation before sending.'] : []),
+    ...(isLoadingMessages || awaitingConversationLoad ? ['The conversation is loading. Wait for it to finish.'] : []),
+    ...(sendIssue?.blocking ? [sendIssue.description] : []),
+    ...(converters.isConverting ? ['A conversion is running. Wait for it to finish.'] : []),
+    ...(unboundHistoryError ? [`${unboundHistoryError} Choose a target that can replay this saved conversation before sending.`] : []),
   ]
 
   const handleUseAsTemplate = (): void => { void beginEdit(defaultBranchTarget ?? activeTarget) }
@@ -2110,7 +2121,7 @@ export default function ChatWindow({
           ),
         )}
         {sendIssue && (
-          <MessageBar intent="error">
+          <MessageBar intent="error" aria-label="Message send status">
             <MessageBarBody>{sendIssue.description}</MessageBarBody>
             <MessageBarActions>
               {sendIssue.draft && (
@@ -2141,7 +2152,8 @@ export default function ChatWindow({
             onUndo: () => { void handleUndoLastSend() },
           } : undefined}
           onSend={handleSend}
-          sendDisabled={!activeTarget || (!attackResultId && !defaultsReady) || editDraft !== null || isLoadingMessages || awaitingConversationLoad || sendIssue?.blocking || converters.isConverting || isUndoingSend || Boolean(unboundHistoryError)}
+          sendDisabled={sendDisabledReasons.length > 0}
+          sendDisabledReasons={sendDisabledReasons}
           repeatDisabledReason={repeatDisabledReason}
           conversionRevisionKey={conversionRevisionKey}
           disabledReasons={inputDisabledReasons}
