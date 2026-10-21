@@ -4,10 +4,11 @@
 """Thin runtime technique service; construction belongs to the registry."""
 
 import asyncio
+from collections.abc import Sequence
 from functools import lru_cache
 from typing import Any, get_args
 
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 
 from pyrit.backend.mappers.technique_mappers import technique_to_instance
 from pyrit.backend.models.common import PaginationInfo
@@ -18,6 +19,7 @@ from pyrit.backend.models.techniques import (
     TechniqueTypeEntry,
     TechniqueTypeResponse,
 )
+from pyrit.models import Parameter
 from pyrit.registry.components import AttackRegistry, AttackTechniqueRegistry
 
 
@@ -95,10 +97,21 @@ class TechniqueService:
             parameter.name: parameter
             for parameter in registry.get_class_metadata(registry.get_class(request.type)).parameters
         }
-        for name, value in request.params.items():
+        cls.validate_parameters(parameters=list(declared.values()), params=request.params)
+
+    @classmethod
+    def validate_parameters(cls, *, parameters: Sequence[Parameter], params: dict[str, JsonValue]) -> None:
+        """
+        Validate partial REST parameter edits against an existing attack's build contract.
+
+        Raises:
+            ValueError: If a supplied parameter is unknown or requires a Python object.
+        """
+        declared = {parameter.name: parameter for parameter in parameters}
+        for name, value in params.items():
             parameter = declared.get(name)
             if parameter is None:
-                raise ValueError(f"Unknown parameter '{name}' for '{request.type}'")
+                raise ValueError(f"Unknown attack parameter '{name}'")
             if parameter.variants is not None:
                 continue
             annotation: Any = parameter.param_type

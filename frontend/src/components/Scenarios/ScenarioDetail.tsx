@@ -33,8 +33,10 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import ConversationEditor, { type ConversationEditorHandle } from '@/components/Chat/ConversationEditor'
 import TargetSelect from '@/components/Config/TargetSelect'
+import TechniqueEditorDialog from '@/components/Techniques/TechniqueEditorDialog'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useRunTechniqueEditor } from '@/hooks/useRunTechniqueEditor'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import ParameterField from '@/components/Parameters/ParameterField'
 import SingleStepSpinButton from '@/components/Parameters/SingleStepSpinButton'
@@ -61,6 +63,7 @@ import type {
   ScenarioDatasetOptions,
   ScenarioRunSizeEstimateResponse,
   TargetInstance,
+  TechniqueOverride,
 } from '@/types'
 import { newDraftMessage, toConversationDraft } from '@/utils/conversationDraft'
 import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
@@ -85,6 +88,7 @@ const COMMON_SCENARIO_PARAMETER_NAMES = new Set([
   'objective_target',
   'scenario_techniques',
   'technique_converters',
+  'local_technique_factory',
   'dataset_config',
   'dataset_overrides',
   'memory_labels',
@@ -242,6 +246,8 @@ interface BuildEstimateRequestInput {
   datasetEdits: ScenarioDatasetRequest
   datasetError: string | null
   includeBaseline: boolean
+  techniqueOverride?: TechniqueOverride
+  techniqueEditError?: string
 }
 
 interface BuildRunRequestInput extends BuildEstimateRequestInput {
@@ -299,7 +305,10 @@ function buildEstimateRequest({
   datasetEdits,
   datasetError,
   includeBaseline,
+  techniqueOverride,
+  techniqueEditError,
 }: BuildEstimateRequestInput): BuildEstimateRequestResult {
+  if (techniqueEditError) return { ok: false, error: techniqueEditError }
   if (supportsParameter(scenario, 'scenario_techniques') && techniques.length === 0) {
     return { ok: false, error: 'Select at least one technique.' }
   }
@@ -320,6 +329,7 @@ function buildEstimateRequest({
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
   if (supportsDatasets && datasetError) return { ok: false, error: datasetError }
   const request: ScenarioRunSizeEstimateRequest = {}
+  if (techniqueOverride) request.technique_override = techniqueOverride
   if (supportsParameter(scenario, 'scenario_techniques')) {
     request.techniques = techniques
   }
@@ -619,6 +629,14 @@ function ScenarioLaunchForm({
     return ''
   })
   const [selectedTechniques, setSelectedTechniques] = useState<string[]>(() => defaultTechniques)
+  const techniqueEditor = useRunTechniqueEditor(
+    singleTechnique && supportsTechniques && selectedTechniques.length === 1 ? selectedTechniques[0] : undefined,
+    runtime.generation, runtime.ready,
+  )
+  const [pendingTechnique, setPendingTechnique] = useState<string | null>(null)
+  const techniqueEditError = techniqueEditor.unresolved
+    ? techniqueEditor.error ?? 'Loading selected technique settings.'
+    : techniqueEditor.editing ? 'Apply or cancel technique edits before launch.' : undefined
   const unavailableSelection = (
     supportsObjectiveTarget && targetName !== ''
     && !targets.some((target) => target.target_registry_name === targetName)
@@ -753,6 +771,8 @@ function ScenarioLaunchForm({
       targetName,
       adversarialTargetName,
       techniques,
+      techniqueOverride: techniqueEditor.override,
+      techniqueEditError,
       dynamicParameters,
       scenarioParamValues,
       datasetEdits,
@@ -770,6 +790,8 @@ function ScenarioLaunchForm({
       scenarioParamValues,
       targetName,
       techniques,
+      techniqueEditor.override,
+      techniqueEditError,
     ],
   )
   const requestResult = useMemo(
@@ -778,6 +800,8 @@ function ScenarioLaunchForm({
       targetName,
       adversarialTargetName,
       techniques,
+      techniqueOverride: techniqueEditor.override,
+      techniqueEditError,
       dynamicParameters,
       scenarioParamValues,
       datasetEdits,
@@ -803,6 +827,8 @@ function ScenarioLaunchForm({
       scenarioParamValues,
       targetName,
       techniques,
+      techniqueEditor.override,
+      techniqueEditError,
     ],
   )
   const estimateRequest = useMemo(
@@ -927,6 +953,11 @@ function ScenarioLaunchForm({
     if (technique.isBaseline) {
       setBaselineChecked(checked)
     } else {
+      if (singleTechnique && checked && technique.name !== selectedTechniques[0] && techniqueEditor.edited) {
+        setPendingTechnique(technique.name)
+        return
+      }
+      if (singleTechnique && technique.name !== selectedTechniques[0]) techniqueEditor.discard()
       setSelectedTechniques((current) => {
         if (checked) {
           if (singleTechnique) return [technique.name]
@@ -978,7 +1009,7 @@ function ScenarioLaunchForm({
   }
 
   const handleLaunchConfirmed = async (): Promise<void> => {
-    if (isSubmittingRef.current || conversationBusy || !runtime.ready || !defaultsReady || staleSelection || unavailableSelection
+    if (isSubmittingRef.current || conversationBusy || techniqueEditError || !runtime.ready || !defaultsReady || staleSelection || unavailableSelection
       || checkingRefreshPolicies) {
       return
     }
@@ -1011,7 +1042,7 @@ function ScenarioLaunchForm({
 
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
-    if (conversationBusy || isSubmittingRef.current) return
+    if (conversationBusy || techniqueEditError || isSubmittingRef.current) return
     setApiError(null)
     if (!requestResult.ok) {
       setValidationError(requestResult.error)
@@ -1239,6 +1270,24 @@ function ScenarioLaunchForm({
                   )
                 })}
               </div>
+              {singleTechnique && supportsTechniques && selectedTechniques.length === 1 && (
+                <div className={styles.previewStack} aria-label="Selected technique settings">
+                  {techniqueEditor.unresolved && !techniqueEditor.error && <Spinner size="tiny" label="Loading technique settings..." />}
+                  {techniqueEditor.error && <MessageBar intent="error"><MessageBarBody>
+                    {techniqueEditor.error}
+                    <Button className={styles.touchTarget} type="button" onClick={techniqueEditor.retry}>Retry technique settings</Button>
+                  </MessageBarBody></MessageBar>}
+                  <div className={styles.previewBadges}>
+                    <Button className={styles.touchTarget} type="button" onClick={techniqueEditor.open}
+                      disabled={!runtime.ready || techniqueEditor.unresolved || submitting || previewOpen || conversationBusy}>
+                      Edit technique
+                    </Button>
+                    {techniqueEditor.edited && <><Badge appearance="outline">Edited for this run</Badge>
+                      <Button className={styles.touchTarget} type="button" disabled={submitting || previewOpen}
+                        onClick={techniqueEditor.reset}>Reset to original</Button></>}
+                  </div>
+                </div>
+              )}
             </section>
             )}
 
@@ -1416,13 +1465,35 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan
               </Button>
             </section>
           </form>
+
+          {techniqueEditor.editing && techniqueEditor.original && <TechniqueEditorDialog
+            original={techniqueEditor.original} initial={techniqueEditor.configuration}
+            onClose={techniqueEditor.close} onApplied={techniqueEditor.apply} />}
+          <Dialog open={pendingTechnique !== null} onOpenChange={(_, data) => {
+            if (!data.open) setPendingTechnique(null)
+          }}>
+            <DialogSurface><DialogBody>
+              <DialogTitle>Discard technique edits?</DialogTitle>
+              <DialogContent>Switching technique removes the edits for this run. The registered technique stays unchanged.</DialogContent>
+              <DialogActions>
+                <Button className={styles.touchTarget} onClick={() => setPendingTechnique(null)}>Cancel</Button>
+                <Button className={styles.touchTarget} appearance="primary" onClick={() => {
+                  if (pendingTechnique) {
+                    techniqueEditor.discard()
+                    setSelectedTechniques([pendingTechnique])
+                  }
+                  setPendingTechnique(null)
+                }}>Discard edits and switch</Button>
+              </DialogActions>
+            </DialogBody></DialogSurface>
+          </Dialog>
 
           {conversation.draft && <Dialog open onOpenChange={(_, data) => {
             if (!data.open) conversationEditorRef.current?.cancel()
@@ -1502,6 +1573,12 @@ function ScenarioLaunchForm({
                             <Badge key={name} appearance="outline">{name}</Badge>
                           ))}
                         </div>
+                      </dd>
+                    </div>}
+                    {techniqueEditor.override && <div className={styles.previewGroup}>
+                      <dt>Run-local technique edits</dt>
+                      <dd><Text>The registered {techniqueEditor.override.source_name} stays unchanged.</Text>
+                        <pre className={styles.techniquePreview} aria-label="Technique edit preview">{JSON.stringify(techniqueEditor.override.changes, null, 2)}</pre>
                       </dd>
                     </div>}
                     {supportsDatasets && <>

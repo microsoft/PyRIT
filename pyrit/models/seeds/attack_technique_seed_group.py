@@ -18,9 +18,11 @@ from pydantic import Field
 from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
+from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
+    from pyrit.models.technique_edit import SimulationChanges
 
 
 class AttackTechniqueSeedGroup(SeedGroup):
@@ -128,6 +130,58 @@ class AttackTechniqueSeedGroup(SeedGroup):
         super()._check_invariants()
         self._enforce_all_general_strategy()
         self._enforce_no_objectives()
+
+    def with_simulation_changes(self, changes: SimulationChanges) -> Self:
+        """
+        Rebuild simulation settings and a fixed final turn without changing the source group.
+
+        Returns:
+            Self: An independent, validated technique seed group.
+
+        Raises:
+            ValueError: If an edit changes the existing final-message mode or overlaps other seeds.
+        """
+        simulation = next((seed for seed in self.seeds if isinstance(seed, SeedSimulatedConversation)), None)
+        if simulation is None:
+            raise ValueError("This technique has no simulated conversation")
+        final_prompts = [prompt for prompt in self.prompts if prompt.sequence == simulation.sequence_range.stop]
+        final = final_prompts[0] if len(final_prompts) == 1 and simulation.next_message_system_prompt is None else None
+        if "final_user_message" in changes.model_fields_set and (
+            final is None or final.role != "user" or final.data_type != "text"
+        ):
+            raise ValueError("This simulation has no editable fixed final user message")
+        prompt_names = (
+            "adversarial_chat_system_prompt",
+            "simulated_target_system_prompt",
+            "next_message_system_prompt",
+        )
+        data = simulation.model_dump(exclude={"id", "value", "value_sha256", *prompt_names})
+        for name in prompt_names:
+            original = getattr(simulation, name)
+            text = getattr(changes, name)
+            if name in changes.model_fields_set and (original is None or text is None):
+                raise ValueError(f"Cannot change the existing simulation message mode through '{name}'")
+            data[name] = original.with_value(text) if text is not None else original
+        if "num_turns" in changes.model_fields_set:
+            if changes.num_turns is None:
+                raise ValueError("num_turns must be a positive integer")
+            data["num_turns"] = changes.num_turns
+        updated = SeedSimulatedConversation.model_validate(data)
+        seeds = []
+        for seed in self.seeds:
+            if seed is simulation:
+                seeds.append(updated)
+            elif seed is final:
+                if "final_user_message" in changes.model_fields_set and changes.final_user_message is None:
+                    raise ValueError("A fixed final user message cannot be cleared")
+                prompt = seed.with_value(
+                    changes.final_user_message if changes.final_user_message is not None else seed.value
+                )
+                prompt.sequence = updated.sequence_range.stop
+                seeds.append(prompt)
+            else:
+                seeds.append(seed.model_copy(deep=True))
+        return type(self).model_validate({**self.model_dump(exclude={"seeds"}), "seeds": seeds})
 
     def _enforce_all_general_strategy(self) -> None:
         """

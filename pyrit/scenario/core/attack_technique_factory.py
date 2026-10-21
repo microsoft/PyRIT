@@ -20,12 +20,16 @@ from __future__ import annotations
 import copy
 import inspect
 import logging
-from dataclasses import replace
+import uuid
+from dataclasses import dataclass, fields, is_dataclass, replace
+from enum import Enum
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
-from pyrit.common import get_global_default_values
+from pydantic import BaseModel
+
+from pyrit.common import REQUIRED_VALUE, get_global_default_values
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
@@ -44,6 +48,7 @@ from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
     SimulatedTargetSystemPromptPaths,
+    config_hash,
     load_next_message_prompt,
     load_simulated_target_prompt,
     resolve_prompt_source,
@@ -59,6 +64,7 @@ if TYPE_CHECKING:
 
     from pyrit.converter import Converter
     from pyrit.executor.attack import AttackStrategy
+    from pyrit.models.technique_edit import SimulationChanges
     from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
 
@@ -66,6 +72,18 @@ logger = logging.getLogger(__name__)
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+
+
+@dataclass
+class TechniqueFactorySettings:
+    """Effective editable settings with independent containers and shared live dependencies."""
+
+    description: str | None
+    attack_kwargs: dict[str, Any]
+    adversarial_chat: PromptTarget | None
+    adversarial_system_prompt: str | SeedPrompt | None
+    adversarial_seed_prompt: str | SeedPrompt | None
+    adversarial_prompt_template: str | SeedPrompt | None
 
 
 def _capture_creation(method: Callable[_P, _R]) -> Callable[_P, _R]:
@@ -130,6 +148,7 @@ class AttackTechniqueFactory(Identifiable):
     """
 
     _creation_calls: list[tuple[str, dict[str, Any]]]
+    _OPAQUE_IDENTITY_SCOPE = uuid.uuid4().hex
 
     @_capture_creation
     def __init__(
@@ -698,6 +717,126 @@ class AttackTechniqueFactory(Identifiable):
         factory._attack_kwargs = merged_attack_kwargs
         factory._validate_kwargs()
         return factory
+
+    def get_effective_settings(self) -> TechniqueFactorySettings:
+        """
+        Project effective settings, including copy helpers, without resolving deferred dependencies.
+
+        Returns:
+            TechniqueFactorySettings: Independent containers; live targets and converters retain identity.
+        """
+        return TechniqueFactorySettings(
+            description=self._description,
+            attack_kwargs=_copy_creation_value(self._attack_kwargs),
+            adversarial_chat=self._adversarial_chat,
+            adversarial_system_prompt=self._adversarial_system_prompt,
+            adversarial_seed_prompt=self._adversarial_seed_prompt,
+            adversarial_prompt_template=self._adversarial_prompt_template,
+        )
+
+    @_capture_creation
+    def with_settings(
+        self, *, settings: TechniqueFactorySettings, simulation: SimulationChanges | None = None
+    ) -> AttackTechniqueFactory:
+        """
+        Copy editable settings while retaining requirements, policies and live dependencies.
+
+        Returns:
+            AttackTechniqueFactory: A private factory, never registered by this operation.
+
+        Raises:
+            ValueError: If simulation settings do not apply to the source technique.
+        """
+        factory = self.with_attack_kwargs(attack_kwargs=settings.attack_kwargs)
+        factory._description = settings.description
+        factory._adversarial_chat = settings.adversarial_chat
+        for name in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
+            previous = getattr(self, f"_{name}")
+            value = getattr(settings, name)
+            if isinstance(previous, SeedPrompt) and isinstance(value, str):
+                value = previous.with_value(value)
+            setattr(factory, f"_{name}", value)
+        factory._has_custom_adversarial_prompt = any(
+            value is not None
+            for value in (
+                factory._adversarial_system_prompt,
+                factory._adversarial_seed_prompt,
+                factory._adversarial_prompt_template,
+            )
+        )
+        if simulation is not None:
+            if self._seed_technique is None:
+                raise ValueError("This technique has no simulated conversation")
+            factory._seed_technique = self._seed_technique.with_simulation_changes(simulation)
+        factory._validate_adversarial_flags()
+        return factory
+
+    def get_configuration_identity(self) -> str:
+        """
+        Fingerprint the full source configuration for lossless editing and replay.
+
+        Unlike the behavioral identifier, this includes descriptive metadata, constructor
+        defaults, seed metadata, requirements and scorer policy. Only the digest is exposed.
+
+        Returns:
+            str: A deterministic configuration digest without live-object credentials.
+        """
+        defaults = {}
+        for name, parameter in inspect.signature(self._attack_class.__init__).parameters.items():
+            if name == "self":
+                continue
+            found, value = get_global_default_values().get_default_value(
+                class_type=self._attack_class, parameter_name=name
+            )
+            if found or parameter.default is not inspect.Parameter.empty and parameter.default is not REQUIRED_VALUE:
+                defaults[name] = value if found else parameter.default
+        return config_hash(
+            self._configuration_value(
+                {
+                    "settings": self.get_effective_settings(),
+                    "attack_type": f"{self._attack_class.__module__}.{self._attack_class.__qualname__}",
+                    "seeds": self._seed_technique,
+                    "requirements": self._requirements,
+                    "scorer_policy": self._scorer_override_policy,
+                    "prefix": self._adversarial_system_prompt_prefix,
+                    "feedback": self._use_score_as_feedback,
+                    "behavior": self._build_identifier().model_dump(mode="json"),
+                    "defaults": defaults,
+                }
+            )
+        )
+
+    @classmethod
+    def _configuration_value(cls, value: Any) -> Any:
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, type):
+            return {"type": f"{value.__module__}.{value.__qualname__}"}
+        if isinstance(value, Identifiable):
+            return value.get_identifier().model_dump(mode="json")
+        if isinstance(value, BaseModel):
+            return {
+                name: cls._configuration_value(getattr(value, name))
+                for name in type(value).model_fields
+                if name not in {"id", "prompt_group_id", "value_sha256", "date_added"}
+            }
+        if is_dataclass(value) and not isinstance(value, type):
+            return {field.name: cls._configuration_value(getattr(value, field.name)) for field in fields(value)}
+        if isinstance(value, dict):
+            return {str(key): cls._configuration_value(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple, set, frozenset)):
+            items = [cls._configuration_value(item) for item in value]
+            return sorted(items, key=str) if isinstance(value, (set, frozenset)) else items
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, Path):
+            return str(value)
+        # Opaque executable state cannot be proved equivalent after a reload. Fail replay closed.
+        return {
+            "opaque_type": f"{type(value).__module__}.{type(value).__qualname__}",
+            "process": cls._OPAQUE_IDENTITY_SCOPE,
+            "instance": id(value),
+        }
 
     def with_extra_turns(self, *, turns: int) -> AttackTechniqueFactory:
         """

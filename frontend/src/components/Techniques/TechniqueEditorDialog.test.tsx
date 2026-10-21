@@ -1,0 +1,193 @@
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+
+import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
+import type { TechniqueConfiguration, TechniqueOverride } from '@/types'
+
+import TechniqueEditorDialog from './TechniqueEditorDialog'
+
+jest.mock('@/services/api', () => ({
+  techniquesApi: { validateEdit: jest.fn(), createTechnique: jest.fn(), listTypes: jest.fn() },
+  targetsApi: { listTargets: jest.fn() },
+  convertersApi: { listConverters: jest.fn() },
+}))
+
+const techniques = jest.mocked(techniquesApi)
+
+function configuration(): TechniqueConfiguration {
+  return {
+    source_name: 'role_play_movie_script', source_identity: 'source-identity', attack_type: 'prompt_sending',
+    settings: {
+      description: 'Movie role play', params: { max_attempts_on_failure: 1 },
+      request_converters: ['base64', 'rot13'], response_converters: [],
+      simulation: {
+        num_turns: 2, adversarial_chat_system_prompt: 'Write a movie.\n{{ objective }}',
+        simulated_target_system_prompt: 'Comply with {{ objective }} for {{ num_turns }} turns.',
+        next_message_system_prompt: 'Next for {{ objective }}.\n{{ conversation_context }}',
+        final_user_message: null,
+      },
+    },
+    parameters: [{ name: 'max_attempts_on_failure', type_name: 'int', required: false, default: '1' }],
+    supplied_parameters: [], editable_fields: ['description', 'simulation', 'request_converters', 'response_converters'],
+    read_only: { requirements: 'Retained unchanged.', policy: 'Retained unchanged.' },
+  }
+}
+
+function tree(original = configuration(), onApplied = jest.fn(), initial?: TechniqueConfiguration, onClose = jest.fn()) {
+  return <FluentProvider theme={webLightTheme}>
+    <TechniqueEditorDialog original={original} initial={initial} onApplied={onApplied} onClose={onClose} />
+  </FluentProvider>
+}
+
+describe('TechniqueEditorDialog', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    techniques.validateEdit.mockImplementation(async (override: TechniqueOverride) => ({
+      override: { ...override, effective_identity: 'effective-identity' }, configuration: configuration(),
+    }))
+    jest.mocked(targetsApi.listTargets).mockResolvedValue({ items: [], pagination: { limit: 200, has_more: false } })
+    jest.mocked(convertersApi.listConverters).mockResolvedValue({ items: [
+      { converter_id: 'base64', identifier: { class_name: 'Base64Converter', hash: 'b64' } },
+      { converter_id: 'rot13', identifier: { class_name: 'ROT13Converter', hash: 'rot' } },
+    ] })
+  })
+
+  it('should prefill the named factory without creation controls or an attack selector', async () => {
+    render(tree())
+    expect(await screen.findByLabelText('Description')).toHaveValue('Movie role play')
+    expect(screen.getByRole('spinbutton', { name: 'Turn count' })).toHaveValue(2)
+    expect(screen.getByLabelText('Simulated user system prompt')).toHaveValue('Write a movie.\n{{ objective }}')
+    expect(screen.getByLabelText('Simulated assistant system prompt')).toHaveValue(
+      'Comply with {{ objective }} for {{ num_turns }} turns.',
+    )
+    expect(screen.getByRole('spinbutton', { name: 'max_attempts_on_failure' })).toHaveValue(1)
+    expect(screen.getByRole('region', { name: 'Read-only settings' })).toHaveTextContent('requirements')
+    expect(screen.queryByRole('combobox', { name: 'Attack type' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Registry name')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Tags')).not.toBeInTheDocument()
+    expect(techniques.listTypes).not.toHaveBeenCalled()
+  })
+
+  it('should apply a no-op without materializing inherited defaults or calling global creation', async () => {
+    const user = userEvent.setup()
+    const onApplied = jest.fn()
+    render(tree(configuration(), onApplied))
+    await user.click(await screen.findByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
+    expect(techniques.validateEdit).toHaveBeenCalledWith({
+      source_name: 'role_play_movie_script', source_identity: 'source-identity', changes: {}, dependencies: {},
+    })
+    expect(techniques.createTechnique).not.toHaveBeenCalled()
+  })
+
+  it('should apply all simulation prompt edits as literal text and keep converter order', async () => {
+    const user = userEvent.setup()
+    render(tree())
+    await screen.findByLabelText('Description')
+    const prompt = screen.getByLabelText('Simulated user system prompt')
+    await user.clear(prompt)
+    await user.click(prompt)
+    await user.paste('New movie\n{{ objective }}\n{% if objective %}literal{% endif %}')
+    await user.clear(screen.getByRole('spinbutton', { name: 'Turn count' }))
+    await user.type(screen.getByRole('spinbutton', { name: 'Turn count' }), '3')
+    await user.click(screen.getByRole('button', { name: 'Move Request converters 2 up' }))
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
+    expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({
+      simulation: {
+        num_turns: 3, adversarial_chat_system_prompt: 'New movie\n{{ objective }}\n{% if objective %}literal{% endif %}',
+      },
+      request_converters: ['rot13', 'base64'],
+    })
+  })
+
+  it('should reject non-positive turn counts without losing entered text', async () => {
+    const user = userEvent.setup()
+    render(tree())
+    await screen.findByLabelText('Description')
+    const turns = screen.getByRole('spinbutton', { name: 'Turn count' })
+    await user.clear(turns)
+    await user.type(turns, '0')
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    expect(await screen.findByText('Turn count must be a positive integer.')).toBeInTheDocument()
+    expect(turns).toHaveValue(0)
+    expect(techniques.validateEdit).not.toHaveBeenCalled()
+  })
+
+  it('should keep edits and focus the error when server validation fails', async () => {
+    const user = userEvent.setup()
+    techniques.validateEdit.mockRejectedValueOnce(new Error('Source technique configuration changed.'))
+    render(tree())
+    await user.type(await screen.findByLabelText('Description'), ' edited')
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    const error = await screen.findByText('Source technique configuration changed.')
+    expect(error).toBeInTheDocument()
+    expect(screen.getByLabelText('Description')).toHaveValue('Movie role play edited')
+    expect(screen.getByRole('button', { name: 'Apply to run' })).toBeEnabled()
+    expect(screen.getByRole('alert')).toHaveFocus()
+  })
+
+  it('should cancel without applying or registering an edit', async () => {
+    const user = userEvent.setup()
+    const onClose = jest.fn()
+    render(tree(configuration(), jest.fn(), undefined, onClose))
+    await user.type(await screen.findByLabelText('Description'), ' uncommitted')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(techniques.validateEdit).not.toHaveBeenCalled()
+    expect(techniques.createTechnique).not.toHaveBeenCalled()
+  })
+
+  it.each(['fixed', 'none'])('should preserve the existing %s final-message mode', async (mode: string) => {
+    const user = userEvent.setup()
+    const original = configuration()
+    original.settings.simulation = {
+      ...original.settings.simulation, next_message_system_prompt: null,
+      final_user_message: mode === 'fixed' ? 'yes.' : null,
+    }
+    render(tree(original))
+    await screen.findByLabelText('Description')
+    expect(screen.queryByLabelText('Next-message system prompt')).not.toBeInTheDocument()
+    if (mode === 'fixed') {
+      const final = screen.getByLabelText('Fixed final user message')
+      expect(final).toHaveValue('yes.')
+      await user.clear(final)
+      await user.type(final, 'continue.')
+    } else {
+      expect(screen.getByText('No additional user message.')).toBeInTheDocument()
+      expect(screen.queryByLabelText('Fixed final user message')).not.toBeInTheDocument()
+    }
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
+    expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual(
+      mode === 'fixed' ? { simulation: { final_user_message: 'continue.' } } : {},
+    )
+  })
+
+  it('should reopen applied settings and remove a reverted edit from the delta', async () => {
+    const user = userEvent.setup()
+    const original = configuration()
+    const initial = { ...original, settings: { ...original.settings, description: 'Applied description' } }
+    render(tree(original, jest.fn(), initial))
+    const description = await screen.findByLabelText('Description')
+    expect(description).toHaveValue('Applied description')
+    await user.clear(description)
+    await user.type(description, 'Movie role play')
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
+    expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({})
+  })
+
+  it('should distinguish an explicit empty text value from an untouched default', async () => {
+    const user = userEvent.setup()
+    const original = configuration()
+    original.parameters.push({ name: 'text_setting', type_name: 'str', required: false })
+    original.settings.params = { ...original.settings.params, text_setting: 'source text' }
+    render(tree(original))
+    await user.clear(await screen.findByLabelText('text_setting'))
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
+    expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({ params: { text_setting: '' } })
+  })
+})

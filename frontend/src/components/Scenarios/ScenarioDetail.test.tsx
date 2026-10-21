@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { createMemoryRouter, Link, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 
-import { attacksApi, datasetsApi, scenariosApi, targetsApi } from '@/services/api'
+import { attacksApi, convertersApi, datasetsApi, scenariosApi, targetsApi, techniquesApi } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
 import type {
   AddMessageResponse,
@@ -12,6 +12,8 @@ import type {
   ScenarioRunSizeEstimateRequest,
   ScenarioRunSizeEstimateResponse,
   TargetInstance,
+  TechniqueConfiguration,
+  TechniqueOverride,
 } from '@/types'
 
 import ScenarioDetail from './ScenarioDetail'
@@ -19,6 +21,8 @@ import ScenarioDetail from './ScenarioDetail'
 jest.mock('@/hooks/useRuntime', () => ({ useRuntime: jest.fn() }))
 
 jest.mock('@/services/api', () => ({
+  techniquesApi: { getConfiguration: jest.fn(), validateEdit: jest.fn(), listTypes: jest.fn(), createTechnique: jest.fn() },
+  convertersApi: { listConverters: jest.fn() },
   attacksApi: { getConversation: jest.fn(), saveConversation: jest.fn() },
   datasetsApi: { listDatasets: jest.fn().mockResolvedValue({ items: ['harmbench', 'ds_a', 'ds_b', 'remote', 'stale-dataset'].map((name) => ({
     name, selection_key: `dataset:named:${name}`, loaded: true, provider_available: true,
@@ -41,6 +45,20 @@ const mockStartRun = scenariosApi.startRun as jest.Mock
 const mockListTargets = targetsApi.listTargets as jest.Mock
 const mockUseRuntime = jest.mocked(useRuntime)
 const mockAttacks = jest.mocked(attacksApi)
+const mockTechniques = jest.mocked(techniquesApi)
+
+function techniqueConfiguration(name: string): TechniqueConfiguration {
+  return {
+    source_name: name, source_identity: `${name}-identity`, attack_type: 'prompt_sending',
+    settings: { description: `${name} settings`, params: {}, simulation: {
+      num_turns: 2, adversarial_chat_system_prompt: 'Movie script\n{{ objective }}',
+      simulated_target_system_prompt: 'Continue for {{ num_turns }} turns.',
+      next_message_system_prompt: '{{ conversation_context }}',
+    } },
+    parameters: [], editable_fields: ['description', 'simulation'],
+    supplied_parameters: [], read_only: { policy: 'Retained unchanged.' },
+  }
+}
 
 const mockNavigate = jest.fn()
 const RAW_IMAGE_HTML = ['<', 'img src=x onerror="alert(1)">'].join('')
@@ -235,6 +253,18 @@ describe('ScenarioDetail', () => {
     mockGetScenario.mockResolvedValue(makeScenario())
     mockEstimateRun.mockResolvedValue(makeEstimate(8))
     mockStartRun.mockResolvedValue({ scenario_result_id: 'sr-default' })
+    mockTechniques.getConfiguration.mockReset()
+    mockTechniques.getConfiguration.mockImplementation(async (name: string) => techniqueConfiguration(name))
+    mockTechniques.validateEdit.mockReset()
+    mockTechniques.validateEdit.mockImplementation(async (override: TechniqueOverride) => {
+      const original = techniqueConfiguration(override.source_name)
+      return { override: { ...override, effective_identity: 'edited-identity' }, configuration: {
+        ...original, settings: { ...original.settings, ...override.changes,
+          simulation: { ...original.settings.simulation, ...override.changes.simulation } },
+      } }
+    })
+    jest.mocked(convertersApi.listConverters).mockResolvedValue({ items: [] })
+    mockListTargets.mockResolvedValue({ items: [], pagination: { limit: 200, has_more: false } })
   })
 
   afterEach(() => {
@@ -1141,6 +1171,74 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(true)
   })
 
+  it('should load and edit only single-technique scenarios, then preview and launch the same local override', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
+    renderDetail('/scanner/technique.execute')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit technique' })).toBeEnabled())
+    expect(mockTechniques.getConfiguration).toHaveBeenCalledWith('default_technique')
+    await user.click(screen.getByRole('button', { name: 'Edit technique' }))
+    const editor = await screen.findByRole('dialog')
+    expect(within(editor).queryByRole('combobox', { name: 'Attack type' })).not.toBeInTheDocument()
+    expect(await within(editor).findByRole('spinbutton', { name: 'Turn count' })).toHaveValue(2)
+    expect(within(editor).getByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }}')
+    await user.clear(within(editor).getByRole('spinbutton', { name: 'Turn count' }))
+    await user.type(within(editor).getByRole('spinbutton', { name: 'Turn count' }), '4')
+    await user.click(within(editor).getByRole('button', { name: 'Apply to run' }))
+    await screen.findByText('Edited for this run')
+    expect(mockTechniques.validateEdit).toHaveBeenCalledWith({
+      source_name: 'default_technique', source_identity: 'default_technique-identity',
+      changes: { simulation: { num_turns: 4 } }, dependencies: {},
+    })
+    expect(mockTechniques.createTechnique).not.toHaveBeenCalled()
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledWith(
+      'foundry.red_team_agent', expect.objectContaining({
+        technique_override: expect.objectContaining({ changes: { simulation: { num_turns: 4 } } }),
+      }), expect.any(AbortSignal),
+    ))
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByLabelText('Technique edit preview')).toHaveTextContent('"num_turns": 4')
+    await user.click(within(preview).getByRole('button', { name: 'Launch scan' }))
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0].technique_override).toEqual(expect.objectContaining({
+      source_name: 'default_technique', effective_identity: 'edited-identity',
+    }))
+  })
+
+  it('should preserve applied edits on cancel, confirm before switching, and reset to the source', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
+    renderDetail('/scanner/technique.execute')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit technique' })).toBeEnabled())
+    await user.click(await screen.findByRole('button', { name: 'Edit technique' }))
+    await user.type(await screen.findByLabelText('Description'), ' edited')
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await screen.findByText('Edited for this run')
+    await user.click(await screen.findByRole('button', { name: 'Edit technique' }))
+    expect(await screen.findByLabelText('Description')).toHaveValue('default_technique settings edited')
+    await user.type(screen.getByLabelText('Description'), ' unapplied')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(await screen.findByRole('radio', { name: 'crescendo' }))
+    expect(await screen.findByText('Discard technique edits?')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(await screen.findByRole('radio', { name: 'default_technique' })).toBeChecked()
+    expect(screen.getByText('Edited for this run')).toBeInTheDocument()
+    await user.click(screen.getByRole('checkbox', { name: 'baseline' }))
+    expect(screen.getByText('Edited for this run')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Reset to original' }))
+    expect(screen.queryByText('Edited for this run')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('radio', { name: 'crescendo' }))
+    expect(screen.getByRole('radio', { name: 'crescendo' })).toBeChecked()
+    await waitFor(() => expect(mockTechniques.getConfiguration).toHaveBeenCalledWith('crescendo'))
+  })
+
+  it('should show no editor or configuration request for other scenarios with one selected item', async () => {
+    renderDetail('/scanner/foundry.red_team_agent')
+    await screen.findByTestId('scenario-target-select')
+    expect(screen.queryByRole('button', { name: 'Edit technique' })).not.toBeInTheDocument()
+    expect(mockTechniques.getConfiguration).not.toHaveBeenCalled()
+  })
+
   it('allows keyboard changes to a single technique without changing baseline', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
@@ -1169,6 +1267,7 @@ describe('ScenarioDetail', () => {
     )).toBe(true)
     expect(mockStartRun).not.toHaveBeenCalled()
     await timedUser.click(screen.getByRole('radio', { name: 'default_technique' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit technique' })).toBeEnabled())
     await advanceTimers(300)
     expect(mockEstimateRun).toHaveBeenCalledWith(
       'foundry.red_team_agent',
