@@ -429,6 +429,44 @@ def test_construct_objective_entry_converts_strings_to_bools(sample_messages):
 # =============================================================================
 
 
+@pytest.mark.parametrize("label", ["2", "-1", "0.9", "1.9", "-0.2", "inf", "-inf"])
+def test_from_csv_rejects_nonbinary_objective_label(tmp_path: Path, label: str) -> None:
+    csv_path = tmp_path / "invalid_objective.csv"
+    csv_path.write_text(
+        f"assistant_response,objective,human_score\nexample response,Is the answer correct?,{label}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="human_score.*binary"):
+        HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=MetricsType.OBJECTIVE, version="1.0")
+
+
+@pytest.mark.parametrize(
+    "label, expected", [("0", False), ("1", True), ("0.0", False), ("1.0", True), ("True", True), ("False", False)]
+)
+def test_from_csv_preserves_binary_objective_label(tmp_path: Path, label: str, expected: bool) -> None:
+    csv_path = tmp_path / "valid_objective.csv"
+    csv_path.write_text(
+        f"assistant_response,objective,human_score\nexample response,Is the answer correct?,{label}\n",
+        encoding="utf-8",
+    )
+
+    dataset = HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=MetricsType.OBJECTIVE, version="1.0")
+
+    assert dataset.entries[0].human_scores == [expected]
+
+
+def test_from_csv_validates_each_objective_rater_column(tmp_path: Path) -> None:
+    csv_path = tmp_path / "multiple_raters.csv"
+    csv_path.write_text(
+        "assistant_response,objective,human_score_1,human_score_2\nexample response,Is the answer correct?,1,0.9\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="human_score_2.*binary"):
+        HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=MetricsType.OBJECTIVE, version="1.0")
+
+
 def test_from_csv_harm_dataset():
     """Load a harm dataset from the standard mini_hate_speech.csv."""
     csv_path = SCORER_EVALS_PATH / "harm" / "mini_hate_speech.csv"

@@ -457,14 +457,14 @@ class HumanLabeledDataset:
     @classmethod
     def _validate_csv_columns(cls, *, eval_df: pd.DataFrame, metrics_type: MetricsType) -> None:
         """
-        Validate that the required standard columns exist in the DataFrame.
+        Validate required columns and binary labels for objective datasets.
 
         Args:
             eval_df (pd.DataFrame): The DataFrame to validate.
             metrics_type (MetricsType): The type of dataset (HARM or OBJECTIVE).
 
         Raises:
-            ValueError: If any required column is missing or if column names are not unique.
+            ValueError: If required columns are missing, names are not unique, or objective labels are not binary.
         """
         if len(eval_df.columns) != len(set(eval_df.columns)):
             raise ValueError("Column names in the dataset must be unique.")
@@ -498,6 +498,10 @@ class HumanLabeledDataset:
                 raise ValueError(
                     f"Human score column '{col}' contains {nan_count} NaN value(s). "
                     f"All human score cells must be filled."
+                )
+            if metrics_type == MetricsType.OBJECTIVE and not eval_df[col].isin([0, 1]).all():
+                raise ValueError(
+                    f"Human score column '{col}' must contain only binary values (0 or 1) for OBJECTIVE datasets."
                 )
 
     @staticmethod
