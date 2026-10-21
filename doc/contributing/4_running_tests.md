@@ -90,6 +90,13 @@ held behind an event until those assertions pass, then awaited separately with t
 finite completion watchdog. The blocked validation read is not released to make
 either step finish.
 
+Concurrent expectation-transport tests hold all valid rows at an explicit scorer
+gate before releasing them together. Startup and real SQLite persistence use the
+finite completion watchdog, not a latency limit. Phase observers also watch the
+attack task so early errors are reported directly. Release gates and cancel and
+drain owned tasks in `finally`. The scorer-validation test uses the same startup
+watchdog but keeps its separate five-second cleanup limit.
+
 For scenario correctness tests, wait for the owned task to finish, including
 persistence and scheduler handoff. Use events to control concurrent steps and a
 finite test watchdog to detect deadlocks, not short per-step latency limits.
