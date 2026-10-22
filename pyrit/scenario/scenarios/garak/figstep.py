@@ -208,7 +208,7 @@ class FigStep(Scenario):
             )
 
         user_converters = ConverterConfiguration.from_converters(
-            converters=self._technique_converters.get(FigStepTechnique.VisualJailbreak.value, [])
+            converters=context.technique_converters.get(FigStepTechnique.VisualJailbreak.value, [])
         )
         attack_technique = _VISUAL_JAILBREAK_FACTORY.create(
             objective_target=context.objective_target,

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from pyrit.common import REQUIRED_VALUE
 from pyrit.models import ComponentIdentifier, Parameter
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetConfiguration
@@ -128,6 +129,23 @@ class TestSetParamsFromArgsScalarCoercion:
         scenario.set_params_from_args(args={"max_turns": "10"})
         assert scenario.params == {"max_turns": 10}
         assert isinstance(scenario.params["max_turns"], int)
+
+    def test_required_parameter_uses_the_shared_resolution_contract(self) -> None:
+        scenario = _make_scenario(
+            declared_params=[
+                Parameter(name="count", description="Required count", param_type=int, default=REQUIRED_VALUE)
+            ]
+        )
+        with pytest.raises(ValueError, match="required.*count"):
+            scenario.set_params_from_args(args={})
+        scenario.set_params_from_args(args={"count": "7"})
+        assert scenario.params == {"count": 7}
+
+    @pytest.mark.parametrize("value", [0.5, -0.5])
+    def test_int_rejects_fractional_native_values(self, value: float) -> None:
+        scenario = _make_scenario(declared_params=[Parameter(name="count", description="Count", param_type=int)])
+        with pytest.raises(ValueError, match="fractional part"):
+            scenario.set_params_from_args(args={"count": value})
 
     def test_float_coercion_from_string(self) -> None:
         scenario = _make_scenario(declared_params=[Parameter(name="threshold", description="d", param_type=float)])

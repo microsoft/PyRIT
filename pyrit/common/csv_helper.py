@@ -2,7 +2,38 @@
 # Licensed under the MIT license.
 
 import csv
+import io
 from typing import IO, Any
+
+
+def strip_leading_comment_block(text: str) -> str:
+    """
+    Drop the leading "#" comment and blank lines of CSV text.
+
+    Mirrors the scan in ``HumanLabeledDataset._read_leading_comment_block``: only the
+    leading block is a comment, so a "#" that starts a data row or sits inside a cell
+    is preserved as data. Callers that hand the result to ``csv.DictReader`` must use
+    this instead of dropping every "#" line, which silently deletes data.
+
+    Universal newline recognition keeps the block boundary identical to the canonical
+    scan without splitting on separators such as "\\v". Newline characters are retained,
+    including CR and CRLF inside quoted cells. CSV readers must also preserve newlines.
+
+    Args:
+        text (str): The full CSV text.
+
+    Returns:
+        str: The text from the first non-comment, non-blank line onward.
+    """
+    stream = io.StringIO(text, newline="")
+    remaining: list[str] = []
+    for line in stream:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            remaining.append(line)
+            break
+    remaining.append(stream.read())
+    return "".join(remaining)
 
 
 def read_csv(file: IO[Any]) -> list[dict[str, str]]:

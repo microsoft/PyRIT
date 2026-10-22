@@ -1291,6 +1291,75 @@ export interface ListRegisteredScenariosResponse {
   pagination: PaginationInfo
 }
 
+/**
+ * A saved, portable scenario configuration.
+ *
+ * Every optional field is tri-state: absent means "use the scenario's own default",
+ * so a preset only pins what the author deliberately chose. It carries no target,
+ * Operation attribution, concurrency, retries or labels — those are launch-time
+ * decisions supplied by `ResolveScenarioPresetRequest`.
+ */
+export interface ScenarioPreset {
+  name: string
+  scenario_name: string
+  description?: string | null
+  /** Who created the preset. Descriptive only; never used to authorize a read or a write. */
+  author?: string | null
+  techniques?: string[] | null
+  /** Dataset sources, limits, fetch policy, and filters. Omit to use the scenario defaults. */
+  datasets?: ScenarioDatasetRequest | null
+  include_baseline?: boolean | null
+  scenario_params?: Record<string, unknown> | null
+}
+
+/** One advisory problem found checking a preset against this deployment's registry. */
+export interface PresetIssue {
+  field: string
+  message: string
+}
+
+export interface ScenarioPresetResponse {
+  preset: ScenarioPreset
+  /**
+   * Whether a stored document or registering code contributed this preset. A
+   * registered preset cannot be updated or deleted through the API.
+   */
+  origin: 'stored' | 'registered'
+  /** Opaque document version; required to update the preset. Null when registered in code. */
+  version: string | null
+  /** Empty when the preset is runnable here. Never blocks a save. */
+  issues: PresetIssue[]
+  /**
+   * How much this preset runs with its own techniques, datasets, and limits.
+   * List responses fill this in only when estimates are explicitly requested
+   * (off by default); it stays null for a preset this deployment cannot resolve.
+   */
+  run_size?: ScenarioRunSizeEstimateResponse | null
+}
+
+export interface ScenarioPresetListResponse {
+  source: string
+  items: ScenarioPresetResponse[]
+}
+
+export interface UpdateScenarioPresetRequest {
+  preset: ScenarioPreset
+  expected_version: string
+}
+
+/** The launch-owned fields a preset deliberately omits. */
+export interface ResolveScenarioPresetRequest {
+  expected_version?: string | null
+  target_name: string
+  adversarial_target_name?: string | null
+  initializers?: string[] | null
+  initializer_args?: Record<string, Record<string, unknown>> | null
+  max_concurrency?: number | null
+  max_retries?: number | null
+  operation_id?: string | null
+  labels?: Record<string, string> | null
+}
+
 export interface RunScenarioRequest {
   scenario_name: string
   target_name?: string | null
@@ -1661,7 +1730,33 @@ export interface ScenarioRunPlanSeedPrompt {
   parameters: string[]
 }
 
+export interface PairedOutcomeStatistics {
+  baseline_group_id: string
+  attack_group_id: string
+  planned_pairs: number
+  decided_pairs: number
+  excluded_pairs: number
+  failure_to_success: number
+  success_to_failure: number
+  failure_to_failure: number
+  success_to_success: number
+  baseline_success_rate: number | null
+  attack_success_rate: number | null
+  paired_difference: number | null
+  missing_baseline: number
+  missing_attack: number
+  missing_both: number
+  baseline_errors: number
+  attack_errors: number
+  baseline_undetermined: number
+  attack_undetermined: number
+  unmatched_baseline_seeds: number
+  unmatched_attack_seeds: number
+  unattributed_attempts: number
+}
+
 export interface ScenarioRunPlanAtomicGroup {
+  kind?: 'baseline' | 'attack' | 'adaptive' | 'unknown' | null
   id: string
   atomic_attack_name: string
   display_group: string
@@ -1773,14 +1868,26 @@ export interface OperationCreate {
   description?: string
 }
 
-/** The editable fields of a saved Operation; renaming is not supported yet. */
+/** The editable fields of a saved Operation. Omitted fields are unchanged. */
 export interface OperationUpdate {
-  description: string
+  name?: string
+  description?: string
 }
 
 export interface Operation extends OperationCreate {
   id: string
   created_at: string
+}
+
+/** What refers to an Operation by ID. Only an Operation with no usage can be deleted. */
+export interface OperationUsage {
+  findings: number
+  attacks: number
+  scenario_runs: number
+}
+
+export interface OperationDetail extends Operation {
+  usage: OperationUsage
 }
 
 export interface OperationListItem extends Operation {

@@ -9,7 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router";
 import App from "./App";
 
-import { attacksApi, targetsApi } from "./services/api";
+import { attacksApi, operationsApi, targetsApi } from "./services/api";
 import { makeTarget } from "./test-utils/targetFixtures";
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "./utils/userPreferences";
 import { DEFAULT_ANALYTICS_VIEW, analyticsViewToHash } from "./utils/attackAnalytics";
@@ -97,12 +97,16 @@ jest.mock("./services/api", () => ({
   authApi: {
     getAccess: jest.fn().mockResolvedValue({ isAdmin: true }),
   },
+  operationsApi: {
+    get: jest.fn(),
+  },
   setMsalInstance: jest.fn(),
 }));
 
 const mockedVersionApi = jest.requireMock("./services/api").versionApi;
 
 const mockGetAttack = attacksApi.getAttack as jest.Mock;
+const mockGetOperation = operationsApi.get as jest.Mock;
 const mockListTargets = targetsApi.listTargets as jest.Mock;
 const mockGetTarget = targetsApi.getTarget as jest.Mock;
 
@@ -442,6 +446,44 @@ jest.mock("./components/Scenarios/ScenarioCatalog", () => {
   };
 });
 
+jest.mock("./components/ScenarioPresets/ScenarioPresetLibrary", () => {
+  const MockScenarioPresetLibrary = ({
+    operationId,
+    defaultsReady,
+  }: {
+    operationId: string | null;
+    defaultsReady: boolean;
+  }) => (
+    <div
+      data-testid="scenario-preset-library"
+      data-operation-id={operationId ?? ""}
+      data-defaults-ready={String(defaultsReady)}
+    />
+  );
+  MockScenarioPresetLibrary.displayName = "MockScenarioPresetLibrary";
+  return {
+    __esModule: true,
+    default: MockScenarioPresetLibrary,
+  };
+});
+
+jest.mock("./components/ScenarioPresets/ScenarioPresetEditor", () => {
+  const { useParams } = jest.requireActual("react-router");
+  const MockScenarioPresetEditor = ({ mode }: { mode: string }) => {
+    const { presetName } = useParams();
+    return (
+      <div data-testid="scenario-preset-editor" data-mode={mode}>
+        {presetName ?? ""}
+      </div>
+    );
+  };
+  MockScenarioPresetEditor.displayName = "MockScenarioPresetEditor";
+  return {
+    __esModule: true,
+    default: MockScenarioPresetEditor,
+  };
+});
+
 jest.mock("./components/Scenarios/ScenarioDetail", () => {
   const MockScenarioDetail = ({
     defaultObjectiveTarget,
@@ -669,6 +711,67 @@ describe("App", () => {
 
     expect(await screen.findByTestId("chat-window")).toBeInTheDocument();
     expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/chat$/);
+  });
+
+  it("renders the preset library as a registry section", () => {
+    renderApp("/registry/scenario-presets");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+    expect(screen.getByTestId("scenario-preset-library")).toBeInTheDocument();
+  });
+
+  it("passes the globally resolved Operation to the preset library", async () => {
+    const operationId = "11111111-1111-4111-8111-111111111111";
+    writeUserPreferences("local", {
+      ...DEFAULT_USER_PREFERENCES,
+      operation: { id: operationId },
+    });
+    mockGetOperation.mockResolvedValue({
+      id: operationId,
+      name: "Preset launch",
+      created_at: "2026-10-20T18:00:00Z",
+    });
+
+    renderApp("/registry/scenario-presets");
+
+    const library = screen.getByTestId("scenario-preset-library");
+    await waitFor(() => {
+      expect(library).toHaveAttribute("data-operation-id", operationId);
+      expect(library).toHaveAttribute("data-defaults-ready", "true");
+    });
+  });
+
+  it("redirects a bookmarked /scanner/presets to the registry section", async () => {
+    render(
+      <MemoryRouter initialEntries={["/scanner/presets"]}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByTestId("scenario-preset-library")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(
+      /^\/registry\/scenario-presets$/
+    );
+  });
+
+  it("redirects a bookmarked preset editor URL, keeping the preset it named", async () => {
+    render(
+      <MemoryRouter initialEntries={["/scanner/presets/nightly_probe/edit"]}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
+    );
+
+    const editor = await screen.findByTestId("scenario-preset-editor");
+    expect(editor).toHaveAttribute("data-mode", "edit");
+    expect(editor).toHaveTextContent("nightly_probe");
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(
+      /^\/registry\/scenario-presets\/nightly_probe\/edit$/
+    );
   });
 
   it("renders the converter registry from its direct URL", async () => {

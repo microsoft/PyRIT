@@ -212,10 +212,8 @@ def build_matrix_atomic_attacks(
             of the context — it is the scenario's own choice.
         display_group_fn (Callable[[MatrixCombo], str] | None): Builds each ``display_group``.
             Defaults to grouping by technique name.
-        technique_converters (dict[str, list[Converter]] | None): Optional mapping from
-            technique name to converters appended after that technique's converters. Pass a
-            scenario's ``self._technique_converters`` so per-technique converter overrides are
-            preserved.
+        technique_converters (dict[str, list[Converter]] | None): Optional override of the
+            context's additional request converters. An empty mapping disables them.
         extra_factories (dict[str, AttackTechniqueFactory] | None): Scenario-local factories
             merged on top of the registry (see ``resolve_technique_factories``), so a scenario
             can offer techniques without registering them globally.
@@ -234,7 +232,7 @@ def build_matrix_atomic_attacks(
         technique_factories=resolve_technique_factories(context=context, extra_factories=extra_factories),
         dataset_groups=context.seed_groups_by_dataset,
         display_group_fn=display_group_fn,
-        technique_converters=technique_converters,
+        technique_converters=(context.technique_converters if technique_converters is None else technique_converters),
         include_baseline=context.include_baseline,
     )
 

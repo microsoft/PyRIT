@@ -4,16 +4,17 @@
 """Atomic branch insertion and reference updates on real SQLite sessions."""
 
 import asyncio
+import sqlite3
 import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.dialects import mssql, sqlite
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from pyrit.memory import MemoryInterface, SQLiteMemory
@@ -36,6 +37,7 @@ from pyrit.models import (
     MessagePiece,
     TargetIdentifier,
 )
+from unit.async_utils import wait_for_completion_async
 from unit.mocks import run_memory_session_async
 
 
@@ -46,9 +48,15 @@ async def file_memory(*, tmp_path: Path) -> AsyncGenerator[SQLiteMemory, None]:
     memory.engine.dispose()
     memory.engine = create_engine(memory.engine.url, connect_args={"timeout": 30})
     memory.SessionFactory = sessionmaker(bind=memory.engine, class_=MemorySession)
-    memory._async_engines[asyncio.get_running_loop()] = create_async_engine(
-        memory.engine.url.set(drivername="sqlite+aiosqlite"), connect_args={"timeout": 30}
-    )
+
+    def configure_busy_timeout(*, dbapi_connection: Any, **kwargs: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA busy_timeout=30000")
+        finally:
+            cursor.close()
+
+    event.listen(memory._get_async_engine().sync_engine, "connect", configure_busy_timeout, named=True)
     try:
         Base.metadata.create_all(memory.engine)
         yield memory
@@ -73,6 +81,21 @@ async def _copy_async(
 ) -> tuple[Conversation, list[MessagePiece]]:
     conversation_id, pieces = await memory.duplicate_messages_async(messages=messages)
     return source.model_copy(update={"conversation_id": conversation_id}, deep=True), list(pieces)
+
+
+async def _change_attack_async(
+    *, memory: MemoryInterface, attack: AttackResult, source: Conversation, branch: Conversation, promote: bool
+) -> bool:
+    if promote:
+        return await memory.promote_attack_conversation_async(
+            attack_result_id=attack.attack_result_id, conversation_id=branch.conversation_id
+        )
+    return await memory.add_conversation_branches_to_attack_async(
+        attack_result_id=attack.attack_result_id,
+        source_conversation=source,
+        conversations=[branch],
+        message_pieces=[],
+    )
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -404,6 +427,165 @@ class TestAtomicConversationBranching:
         }
         assert current.conversation_id in {branch.conversation_id for branch in initial}
         assert len(current.get_pruned_conversation_ids()) == 10
+
+    @pytest.mark.parametrize("promote", [False, True])
+    @pytest.mark.parametrize("commit_holder", [False, True])
+    async def test_contended_write_preserves_error_and_references(
+        self, *, file_memory: SQLiteMemory, promote: bool, commit_holder: bool
+    ) -> None:
+        attack, source = await _store_attack_async(file_memory)
+        initial = [Conversation(conversation_id=str(uuid.uuid4())) for _ in range(2)]
+        assert await file_memory.add_conversation_branches_to_attack_async(
+            attack_result_id=attack.attack_result_id, conversations=initial, message_pieces=[]
+        )
+        branch = initial[1] if promote else Conversation(conversation_id=str(uuid.uuid4()))
+
+        def load_state(session: Session) -> tuple[str, list[str]]:
+            entry = session.get(AttackResultEntry, uuid.UUID(attack.attack_result_id))
+            assert entry is not None
+            assert isinstance(entry.conversation_id, str)
+            return entry.conversation_id, list(entry.pruned_conversation_ids or [])
+
+        def disable_busy_wait(*, dbapi_connection: Any, **kwargs: Any) -> None:
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA busy_timeout=0")
+            finally:
+                cursor.close()
+
+        engine = file_memory._get_async_engine().sync_engine
+        async with await file_memory.get_session_async() as holder:
+            entry = await holder.run_sync(
+                lambda session: file_memory._get_locked_attack_result(
+                    session=session, attack_result_id=attack.attack_result_id
+                )
+            )
+            assert entry is not None
+            entry.conversation_id = initial[0].conversation_id
+            entry.pruned_conversation_ids = [initial[1].conversation_id, source.conversation_id]
+            await holder.flush()
+            event.listen(engine, "checkout", disable_busy_wait, named=True)
+            try:
+                # Force native contention without racing the holder against a wall-clock timeout.
+                with pytest.raises(OperationalError, match="database is locked") as locked:
+                    await _change_attack_async(
+                        memory=file_memory, attack=attack, source=source, branch=branch, promote=promote
+                    )
+                assert isinstance(locked.value.orig, sqlite3.OperationalError)
+                assert locked.value.orig.sqlite_errorcode == sqlite3.SQLITE_BUSY
+                assert locked.value.statement is not None
+                assert locked.value.statement.startswith('UPDATE "AttackResultEntries"')
+                assert await run_memory_session_async(memory=file_memory, operation=load_state) == (
+                    source.conversation_id,
+                    [item.conversation_id for item in initial],
+                )
+                if commit_holder:
+                    await holder.commit()
+                else:
+                    await holder.rollback()
+            finally:
+                event.remove(engine, "checkout", disable_busy_wait)
+                await holder.rollback()
+
+        primary, pruned = await run_memory_session_async(memory=file_memory, operation=load_state)
+        assert (primary, pruned) == (
+            (initial[0].conversation_id, [initial[1].conversation_id, source.conversation_id])
+            if commit_holder
+            else (source.conversation_id, [item.conversation_id for item in initial])
+        )
+        if not promote:
+            assert await file_memory.get_conversation_metadata_async(conversation_id=branch.conversation_id) is None
+            assert await file_memory.get_message_pieces_async(conversation_id=branch.conversation_id) == []
+        assert await _change_attack_async(
+            memory=file_memory, attack=attack, source=source, branch=branch, promote=promote
+        )
+        assert await run_memory_session_async(memory=file_memory, operation=load_state) == (
+            (branch.conversation_id, [value for value in pruned if value != branch.conversation_id] + [primary])
+            if promote
+            else (primary, [*pruned, branch.conversation_id])
+        )
+
+    @pytest.mark.parametrize("cancel", [False, True])
+    @pytest.mark.parametrize("promote", [False, True])
+    async def test_contended_write_waits_or_cancels_without_losing_committed_membership(
+        self, *, file_memory: SQLiteMemory, promote: bool, cancel: bool
+    ) -> None:
+        attack, source = await _store_attack_async(file_memory)
+        branch = Conversation(conversation_id=str(uuid.uuid4()))
+        if promote:
+            assert await file_memory.add_conversation_branches_to_attack_async(
+                attack_result_id=attack.attack_result_id, conversations=[branch], message_pieces=[]
+            )
+        [before] = await file_memory.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        holder_branch = Conversation(conversation_id=str(uuid.uuid4()), attack_result_id=attack.attack_result_id)
+        before.related_conversations.add(
+            ConversationReference(
+                conversation_id=holder_branch.conversation_id, conversation_type=ConversationType.PRUNED
+            )
+        )
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        statements: list[str] = []
+
+        def trace_statement(statement: str) -> None:
+            statements.append(statement)
+            if statement.startswith('UPDATE "AttackResultEntries"'):
+                loop.call_soon_threadsafe(started.set)
+
+        def install_trace(*, dbapi_connection: Any, **kwargs: Any) -> None:
+            dbapi_connection.run_async(lambda driver: driver.set_trace_callback(trace_statement))
+
+        engine = file_memory._get_async_engine().sync_engine
+        async with await file_memory.get_session_async() as holder:
+            entry = await holder.run_sync(
+                lambda session: file_memory._get_locked_attack_result(
+                    session=session, attack_result_id=attack.attack_result_id
+                )
+            )
+            assert entry is not None
+            entry.pruned_conversation_ids = [*(entry.pruned_conversation_ids or []), holder_branch.conversation_id]
+            holder.add(ConversationEntry(conversation=holder_branch))
+            await holder.flush()
+            event.listen(engine, "checkout", install_trace, named=True)
+            task = asyncio.create_task(
+                _change_attack_async(memory=file_memory, attack=attack, source=source, branch=branch, promote=promote)
+            )
+            ready = asyncio.create_task(started.wait())
+            try:
+                await wait_for_completion_async(future=ready)
+                assert not task.done()
+                assert not any(statement.startswith("SELECT") for statement in statements)
+                if cancel:
+                    task.cancel("cancel branch mutation")
+                await holder.commit()
+                if cancel:
+                    with pytest.raises(asyncio.CancelledError, match="cancel branch mutation"):
+                        await wait_for_completion_async(future=task)
+                else:
+                    assert await wait_for_completion_async(future=task)
+                assert (
+                    sum('SET timestamp="AttackResultEntries".timestamp' in statement for statement in statements) == 1
+                )
+            finally:
+                event.remove(engine, "checkout", install_trace)
+                await holder.rollback()
+                for pending in (task, ready):
+                    if not pending.done():
+                        pending.cancel()
+                await asyncio.gather(task, ready, return_exceptions=True)
+        [after] = await file_memory.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        if cancel:
+            assert after == before
+        else:
+            assert after.get_active_conversation_ids() == before.get_active_conversation_ids() | {
+                branch.conversation_id
+            }
+            assert after.conversation_id == (branch.conversation_id if promote else source.conversation_id)
+        if cancel and not promote:
+            assert await file_memory.get_conversation_metadata_async(conversation_id=branch.conversation_id) is None
+        assert await _change_attack_async(
+            memory=file_memory, attack=attack, source=source, branch=branch, promote=promote
+        )
 
     async def test_promotion_preserves_diagnostic_and_prior_pruned_references(
         self, sqlite_instance: SQLiteMemory
