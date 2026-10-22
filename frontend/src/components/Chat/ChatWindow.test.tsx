@@ -2707,6 +2707,35 @@ describe("ChatWindow Integration", () => {
   });
 
   it.each([
+    { interaction: "hover", reconstructionError: "The selected target cannot be recreated with its current settings." },
+    { interaction: "keyboard", reconstructionError: "The selected target cannot be recreated with its current settings." },
+    { interaction: "hover", reconstructionError: undefined },
+    { interaction: "keyboard", reconstructionError: undefined },
+  ])("explains unavailable temperature only on $interaction: $reconstructionError", async ({
+    interaction, reconstructionError,
+  }: { interaction: string; reconstructionError: string | undefined }) => {
+    const user = userEvent.setup();
+    const target = {
+      ...mockTarget,
+      supports_temperature_override: false,
+      reconstruction_error: reconstructionError,
+    };
+    const explanation = reconstructionError ?? "This target does not support a separate temperature setting.";
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target} /></TestWrapper>);
+    const input = screen.getByRole("spinbutton", { name: "Temperature" });
+    expect(input).toBeDisabled();
+    expect(screen.getByText(explanation)).not.toBeVisible();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    if (interaction === "hover") await user.hover(input);
+    else {
+      await user.click(screen.getByRole("combobox", { name: "Chat target" }));
+      await user.tab();
+    }
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(explanation);
+    expect(targetsApi.buildTarget).not.toHaveBeenCalled();
+  });
+
+  it.each([
     { interaction: "hover", supportsOverride: true },
     { interaction: "click", supportsOverride: true },
     { interaction: "hover", supportsOverride: false },
@@ -2726,7 +2755,9 @@ describe("ChatWindow Integration", () => {
     if (interaction === "hover") await user.hover(input);
     else await user.click(input);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Temperature can only be modified in a new attack"
+      supportsOverride
+        ? "Temperature can only be modified in a new attack"
+        : "This target does not support a separate temperature setting."
     );
     expect(input).toHaveAttribute("readonly");
     expect(input).toHaveValue(0.8);

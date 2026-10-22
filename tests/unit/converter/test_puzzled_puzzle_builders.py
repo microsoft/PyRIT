@@ -96,12 +96,14 @@ def test_anagram_uses_fallback_when_shuffles_never_change_source():
     assert result == "BCA"
 
 
-def test_anagram_fallback_keeps_marks_with_their_letters() -> None:
-    assert build_anagram(["q\u0301b"], _NeverShuffles()) == "BQ\u0301"
+@pytest.mark.parametrize("mark", ["\u0301", pytest.param("\u05c8", id="unicode18")])
+def test_anagram_fallback_keeps_marks_with_their_letters(mark: str) -> None:
+    assert build_anagram([f"q{mark}b"], _NeverShuffles()) == f"BQ{mark}"
 
 
-def test_anagram_single_marked_letter_is_not_split() -> None:
-    assert build_anagram(["q\u0301"], random.Random(0)) == "Q\u0301"
+@pytest.mark.parametrize("mark", ["\u0301", pytest.param("\u05c8", id="unicode18")])
+def test_anagram_single_marked_letter_is_not_split(mark: str) -> None:
+    assert build_anagram([f"q{mark}"], random.Random(0)) == f"Q{mark}"
 
 
 def test_anagram_empty_list_raises():
@@ -142,14 +144,16 @@ def test_crossword_single_word_has_no_symbols():
     assert build_crossword(["abduct"]) == "1. ABDUCT"
 
 
-def test_crossword_does_not_treat_a_shared_mark_as_a_letter() -> None:
-    assert crossword_symbol_map(["q\u0301a", "x\u0301b"]) == {}
-    assert build_crossword(["q\u0301a", "x\u0301b"]) == "1. Q\u0301A\n2. X\u0301B"
+@pytest.mark.parametrize("mark", ["\u0301", pytest.param("\u05c8", id="unicode18")])
+def test_crossword_does_not_treat_a_shared_mark_as_a_letter(mark: str) -> None:
+    assert crossword_symbol_map([f"q{mark}a", f"x{mark}b"]) == {}
+    assert build_crossword([f"q{mark}a", f"x{mark}b"]) == f"1. Q{mark}A\n2. X{mark}B"
 
 
-def test_crossword_substitutes_the_whole_marked_letter() -> None:
-    assert crossword_symbol_map(["q\u0301a", "q\u0301b"]) == {"Q\u0301": "#"}
-    assert build_crossword(["q\u0301a", "q\u0301b"]) == "1. #A\n2. #B"
+@pytest.mark.parametrize("mark", ["\u0301", pytest.param("\u05c8", id="unicode18")])
+def test_crossword_substitutes_the_whole_marked_letter(mark: str) -> None:
+    assert crossword_symbol_map([f"q{mark}a", f"q{mark}b"]) == {f"Q{mark}": "#"}
+    assert build_crossword([f"q{mark}a", f"q{mark}b"]) == "1. #A\n2. #B"
 
 
 @pytest.mark.parametrize(
