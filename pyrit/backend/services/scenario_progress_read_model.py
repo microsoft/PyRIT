@@ -607,6 +607,9 @@ class ScenarioProgressReadModel:
         """
         Check for file changes off-loop before reusing a scorer's saved metrics.
 
+        Skips caching on read failures so transient I/O errors retry on the next poll
+        instead of caching as "no metrics" until the file changes.
+
         Returns:
             ScenarioObjectiveScorerMetrics | None: Display metrics, or None if no entry exists.
         """
@@ -618,9 +621,17 @@ class ScenarioProgressReadModel:
         else:
             # Check file metadata so unchanged metrics can be reused without rereading the file.
             file_version = (file_stat.st_mtime_ns, file_stat.st_ctime_ns, file_stat.st_size, file_stat.st_ino)
-        return ScenarioProgressReadModel._load_unchanged_objective_metrics(
+
+        result = ScenarioProgressReadModel._load_unchanged_objective_metrics(
             eval_hash=eval_hash, file_path=file_path, _file_version=file_version
         )
+
+        # If file exists but we got None, a read error likely occurred (not a missing entry).
+        # Skip caching so the next poll can retry instead of staying stuck on None.
+        if result is None and file_path.exists():
+            return None
+
+        return result
 
     @staticmethod
     @lru_cache(maxsize=_CACHE_MAX_RUNS)
@@ -631,9 +642,10 @@ class ScenarioProgressReadModel:
         Reuse metrics for the same scorer and file version, including absent entries.
 
         The file version is part of the cache key, so edits trigger a fresh lookup.
+        Cache key includes file_path and _file_version; changes to either bypass the cache.
 
         Returns:
-            ScenarioObjectiveScorerMetrics | None: Display metrics, or None if no entry exists.
+            ScenarioObjectiveScorerMetrics | None: Display metrics, or None if no entry exists or read fails.
         """
         official_metrics = find_objective_metrics_by_eval_hash(eval_hash=eval_hash, file_path=file_path)
         if official_metrics is None:
