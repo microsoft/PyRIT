@@ -201,13 +201,17 @@ target configuration for the attack; it does not add or change a registered targ
 Temperature is read-only after the attack is bound. In the conversation editor,
 a temperature change requires **New attack**, not **Same attack**.
 Hover over or click the read-only field to see why it cannot be changed.
+If the selected target does not support this control, the field is disabled.
+Hover over the field or focus it with the keyboard to see the reason.
 
 Saved attacks retain the source name, source identity, temperature, and effective
 identity, but not credentials. After a restart, the backend tries to reconstruct
 the target from a matching registered source. If reconstruction fails, sending
 is blocked rather than using the source's default temperature. OpenAI-family
-targets with a temperature parameter support this control. Externally owned HTTP
-clients and temperature set through `extra_body_parameters` are not supported.
+targets with a temperature parameter support this control. OpenAI targets that
+use a custom HTTP client supplied through `httpx_client_kwargs['http_client']`
+cannot be recreated with different settings. Temperature set through
+`extra_body_parameters` is also not supported by this control.
 
 #### Repeating a Message
 
@@ -646,7 +650,7 @@ In active runs and saved scenario results, **Atomic attack groups** defaults to 
 
 Until you expand or collapse the section, its default follows the current group count as progress loads. Once you choose, the section keeps your choice during progress updates for the same run, even if the count crosses 20. Opening a different run resets to that run's count-based default.
 
-### Operations and Findings
+### Operations
 
 An operation groups related red-teaming work. Inside it you record findings:
 human assessments, whether or not an attack produced them.
@@ -658,9 +662,14 @@ scope. The **Operation** dropdown in the labels bar applies the
 selected operation to new attacks and scanner runs, and **New operation…** at the
 top of that list creates one without leaving the page.
 
-On an operation's page, **Add description** or **Edit description** changes the
-description. Saving replaces it, so if two people edit at once, the last save wins.
-Operations can't be renamed or deleted from the GUI.
+Renaming doesn't update anything that stores the old name: Analytics filters and
+links, history from before Operation IDs, and names set in configuration,
+`GLOBAL_MEMORY_LABELS`, or `--memory-labels`.
+
+**Delete** works only when no findings, attacks, or scanner runs are linked; the
+tooltip shows what's left. History from before Operation IDs doesn't count. SDK
+attacks still running under the operation save their results without one.
+Deleting can't be undone.
 
 #### Findings
 

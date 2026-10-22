@@ -1,17 +1,33 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import event
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from pyrit.memory import MemoryInterface
+from pyrit.memory import MemoryInterface, SQLiteMemory
+from pyrit.memory.memory_interface import OperationInUseError
 from pyrit.memory.memory_models import AttackResultEntry, ScenarioResultEntry
-from pyrit.models import AttackResult, ComponentIdentifier, Operation, ScenarioResult
+from pyrit.models import (
+    AttackResult,
+    ComponentIdentifier,
+    Conversation,
+    Finding,
+    Operation,
+    OperationUsage,
+    ScenarioResult,
+)
 from unit.mocks import make_scenario_result
 
 REVISION = "c8d3e5f7a901"
@@ -295,3 +311,151 @@ def test_upgrade_registers_legacy_names_without_changing_activity() -> None:
                 command.downgrade(config, PARENT)
     finally:
         engine.dispose()
+
+
+async def _refer_to_operation_async(memory: MemoryInterface, *, operation_id: UUID, reference: str) -> None:
+    if reference == "finding":
+        await memory.add_finding_async(finding=Finding(operation_id=operation_id, title="Assessment", severity="low"))
+    elif reference == "attack":
+        await memory.add_attack_results_to_memory_async(
+            attack_results=[AttackResult(conversation_id="linked", objective="objective", operation_id=operation_id)]
+        )
+    else:
+        scenario = _scenario()
+        scenario.operation_id = operation_id
+        await memory.add_scenario_results_to_memory_async(scenario_results=[scenario])
+
+
+@pytest.mark.parametrize("reference", ["finding", "attack", "scenario"])
+async def test_delete_operation_refuses_any_id_reference_async(
+    sqlite_instance: MemoryInterface, reference: str
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    await _refer_to_operation_async(sqlite_instance, operation_id=operation.id, reference=reference)
+    usage = OperationUsage(
+        findings=int(reference == "finding"),
+        attacks=int(reference == "attack"),
+        scenario_runs=int(reference == "scenario"),
+    )
+    assert await sqlite_instance.get_operation_usage_async(operation_id=operation.id) == usage
+    with pytest.raises(OperationInUseError) as raised:
+        await sqlite_instance.delete_operation_async(operation_id=operation.id)
+    assert raised.value.usage == usage
+    assert await sqlite_instance.require_operation_async(operation_id=operation.id) == operation
+
+
+async def test_delete_operation_keeps_name_only_activity_and_other_operations_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    other = await sqlite_instance.add_operation_async(Operation(name="Other"))
+    await _refer_to_operation_async(sqlite_instance, operation_id=other.id, reference="attack")
+    legacy = AttackResult(conversation_id="legacy", objective="objective", operation=operation.name)
+    with pytest.warns(DeprecationWarning, match="operation_id"):
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[legacy])
+    empty = OperationUsage(findings=0, attacks=0, scenario_runs=0)
+    assert await sqlite_instance.get_operation_usage_async(operation_id=operation.id) == empty
+    await sqlite_instance.delete_operation_async(operation_id=operation.id)
+    assert await sqlite_instance.get_operations_async() == [other]
+    found = await sqlite_instance.get_attack_results_async(operation=[operation.name])
+    assert [(result.attack_result_id, result.operation_id) for result in found] == [(legacy.attack_result_id, None)]
+    with pytest.raises(LookupError, match="Operation"):
+        await sqlite_instance.delete_operation_async(operation_id=operation.id)
+
+
+def _enforce_foreign_keys(dbapi_connection: Any, _: Any) -> None:
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
+@asynccontextmanager
+async def _foreign_key_memory_async(db_path: Path) -> AsyncGenerator[SQLiteMemory, None]:
+    """Open a file database that enforces foreign keys, as SQL Server does."""
+    # SQLiteMemory(...) would return the sqlite_instance singleton when that fixture is active.
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    with patch.object(memory, "cleanup"):
+        memory.__init__(db_path=db_path, silent=True)
+    for engine in (memory.engine, memory._get_async_engine().sync_engine):
+        event.listen(engine, "connect", _enforce_foreign_keys)
+    memory.engine.dispose()
+    try:
+        yield memory
+    finally:
+        await memory.dispose_engine_async()
+
+
+@pytest.fixture
+async def foreign_key_memory(tmp_path: Path) -> AsyncIterator[SQLiteMemory]:
+    async with _foreign_key_memory_async(tmp_path / "foreign-keys.db") as memory:
+        yield memory
+
+
+@pytest.fixture(params=[False, True], ids=["unenforced", "foreign_keys"])
+async def insert_memory(
+    request: pytest.FixtureRequest, sqlite_instance: SQLiteMemory, tmp_path: Path
+) -> AsyncIterator[MemoryInterface]:
+    if not request.param:
+        yield sqlite_instance
+        return
+    async with _foreign_key_memory_async(tmp_path / "foreign-keys.db") as memory:
+        yield memory
+
+
+@pytest.mark.parametrize("path", ["attack", "new_attack", "scenario", "scenario_update", "finding"])
+async def test_activity_is_rejected_when_its_operation_is_gone_at_insert_async(
+    insert_memory: MemoryInterface, path: str
+) -> None:
+    # Skipping the first check stands in for a concurrent delete between that check and the insert.
+    # Without foreign keys the post-insert check catches it; with them, as on SQL Server, the insert fails first.
+    operation_id = uuid4()
+    attack = AttackResult(conversation_id="orphan", objective="objective", operation_id=operation_id)
+    scenario = _scenario()
+    scenario.operation_id = operation_id
+    with patch.object(MemoryInterface, "_validate_activity_operation"), pytest.raises(LookupError, match="Operation"):
+        if path == "attack":
+            await insert_memory.add_attack_results_to_memory_async(attack_results=[attack])
+        elif path == "new_attack":
+            await insert_memory.add_conversation_branches_to_attack_async(
+                attack_result_id=attack.attack_result_id,
+                conversations=[Conversation(conversation_id=attack.conversation_id)],
+                message_pieces=[],
+                new_attack=attack,
+            )
+        elif path == "scenario":
+            await insert_memory.add_scenario_results_to_memory_async(scenario_results=[scenario])
+        elif path == "scenario_update":
+            await insert_memory.update_scenario_result_async(scenario_result=scenario)
+        else:
+            await insert_memory.add_finding_async(
+                finding=Finding(operation_id=operation_id, title="Orphan", severity="low")
+            )
+    assert not await insert_memory.get_attack_results_async()
+    assert not await insert_memory.get_scenario_results_async()
+    assert not await insert_memory.get_findings_async()
+
+
+async def test_unrelated_integrity_errors_still_propagate_with_foreign_keys_async(
+    foreign_key_memory: SQLiteMemory,
+) -> None:
+    operation = await foreign_key_memory.add_operation_async(Operation(name="Saved"))
+    attack = AttackResult(conversation_id="twice", objective="objective", operation_id=operation.id)
+    await foreign_key_memory.add_attack_results_to_memory_async(attack_results=[attack])
+    with pytest.raises(IntegrityError):
+        await foreign_key_memory.add_attack_results_to_memory_async(attack_results=[attack])
+
+
+async def test_delete_rejected_by_a_foreign_key_reports_the_usage_async(sqlite_instance: MemoryInterface) -> None:
+    # SQL Server's foreign keys fail the delete when a reference commits after the NOT EXISTS checks ran.
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    await _refer_to_operation_async(sqlite_instance, operation_id=operation.id, reference="attack")
+    execute = AsyncSession.execute
+
+    async def reject_delete_async(self: AsyncSession, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        if isinstance(statement, sa.Delete):
+            raise IntegrityError("DELETE", {}, Exception("REFERENCE constraint"))
+        return await execute(self, statement, *args, **kwargs)
+
+    with patch.object(AsyncSession, "execute", reject_delete_async), pytest.raises(OperationInUseError) as raised:
+        await sqlite_instance.delete_operation_async(operation_id=operation.id)
+    assert raised.value.usage == OperationUsage(findings=0, attacks=1, scenario_runs=0)

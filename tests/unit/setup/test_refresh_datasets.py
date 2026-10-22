@@ -42,35 +42,43 @@ class TestRefreshDatasetsProperties:
         assert RefreshDatasets().required_env_vars == []
 
     def test_supported_parameters_defaults(self) -> None:
-        params = {p.name: p for p in RefreshDatasets().supported_parameters}
+        params = {p.name: p for p in RefreshDatasets.supported_parameters()}
         assert params["days"].default == RefreshDatasets.DEFAULT_DAYS
         assert params["dataset_names"].default == []
         assert "tags" not in params
 
 
-class TestRefreshDatasetsParseDays:
+class TestRefreshDatasetsDays:
     """Validation of the days parameter."""
 
     def test_default_when_absent(self) -> None:
         initializer = RefreshDatasets()
-        initializer.params = {}
-        assert initializer._parse_days() == RefreshDatasets.DEFAULT_DAYS
+        assert initializer.params["days"] == RefreshDatasets.DEFAULT_DAYS
 
     def test_zero_allowed(self) -> None:
         initializer = RefreshDatasets()
-        initializer.params = {"days": ["0"]}
-        assert initializer._parse_days() == 0
+        initializer.set_params_from_args(args={"days": ["0"]})
+        assert initializer.params["days"] == 0
 
-    @pytest.mark.parametrize("bad", [["-1"], ["abc"], ["3.5"], ["1", "2"], []])
+    @pytest.mark.parametrize("bad", [["abc"], ["3.5"], ["1", "2"], []])
     def test_invalid_days(self, bad: list[str]) -> None:
         initializer = RefreshDatasets()
-        # An empty list means "absent" -> default, so only non-empty invalid values raise.
-        initializer.params = {"days": bad} if bad else {}
-        if bad:
+        with pytest.raises(ValueError):
+            initializer.set_params_from_args(args={"days": bad})
+
+    @pytest.mark.parametrize("days", [0.5, -0.5, 3.5])
+    def test_fractional_yaml_days_fail_before_memory_access(self, days: float) -> None:
+        initializer = RefreshDatasets()
+        with patch.object(CentralMemory, "get_memory_instance", side_effect=AssertionError("Memory accessed")):
             with pytest.raises(ValueError):
-                initializer._parse_days()
-        else:
-            assert initializer._parse_days() == RefreshDatasets.DEFAULT_DAYS
+                initializer.set_params_from_args(args={"days": days})
+
+    async def test_negative_days_fail_before_memory_access(self) -> None:
+        initializer = RefreshDatasets()
+        initializer.set_params_from_args(args={"days": -1})
+        with patch.object(CentralMemory, "get_memory_instance", side_effect=AssertionError("Memory accessed")):
+            with pytest.raises(ValueError, match="non-negative"):
+                await initializer.initialize_async()
 
 
 class TestRefreshDatasetsSelection:
@@ -95,7 +103,9 @@ class TestRefreshDatasetsSelection:
 
     async def test_explicit_names_skip_unregistered_and_not_in_memory(self) -> None:
         initializer = RefreshDatasets()
-        initializer.params = {"days": ["0"], "dataset_names": ["in_both", "not_registered", "not_in_memory"]}
+        initializer.set_params_from_args(
+            args={"days": 0, "dataset_names": ["in_both", "not_registered", "not_in_memory"]}
+        )
         memory = self._mock_memory(names_in_memory=["in_both", "not_registered"])
 
         with (
@@ -120,7 +130,7 @@ class TestRefreshDatasetsSelection:
     async def test_names_only_consider_registered_and_in_memory(self) -> None:
         # dataset_names selection ignores the tag filter entirely (tags are not a parameter).
         initializer = RefreshDatasets()
-        initializer.params = {"days": ["0"], "dataset_names": ["a"]}
+        initializer.set_params_from_args(args={"days": 0, "dataset_names": ["a"]})
         memory = self._mock_memory(names_in_memory=["a", "b"])
 
         with (
@@ -188,7 +198,7 @@ class TestRefreshDatasetsStaleness:
     async def test_no_op_when_all_fresh(self, sqlite_instance: MemoryInterface) -> None:
         await self._seed(sqlite_instance, dataset_name="fresh", days_old=1)
         initializer = RefreshDatasets()
-        initializer.params = {"days": ["30"]}
+        initializer.set_params_from_args(args={"days": 30})
 
         with (
             patch.object(
@@ -210,7 +220,7 @@ class TestRefreshDatasetsRefreshCorrectness:
 
     async def _run_refresh(self, *, new_dataset: SeedDataset, dataset_name: str) -> None:
         initializer = RefreshDatasets()
-        initializer.params = {"days": ["0"]}
+        initializer.set_params_from_args(args={"days": 0})
         with (
             patch.object(
                 SeedDatasetProvider,
@@ -301,7 +311,7 @@ class TestRefreshDatasetsRefreshCorrectness:
         )
 
         initializer = RefreshDatasets()
-        initializer.params = {"days": ["0"]}
+        initializer.set_params_from_args(args={"days": 0})
         with (
             patch.object(
                 SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock, return_value=["d"]
@@ -325,7 +335,7 @@ class TestRefreshDatasetsRefreshCorrectness:
         )
 
         initializer = RefreshDatasets()
-        initializer.params = {"days": ["0"]}
+        initializer.set_params_from_args(args={"days": 0})
         with (
             patch.object(
                 SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock, return_value=["d"]
@@ -351,7 +361,7 @@ class TestRefreshDatasetsRefreshCorrectness:
         empty_dataset = MagicMock(spec=SeedDataset)
         empty_dataset.seeds = []
         initializer = RefreshDatasets()
-        initializer.params = {"days": ["0"]}
+        initializer.set_params_from_args(args={"days": 0})
         with (
             patch.object(
                 SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock, return_value=["d"]
@@ -380,7 +390,7 @@ class TestRefreshDatasetsRefreshCorrectness:
         new_dataset = _make_dataset(dataset_name="d", values=["v2"])
 
         initializer = RefreshDatasets()
-        initializer.params = {"days": ["0"]}
+        initializer.set_params_from_args(args={"days": 0})
 
         with (
             patch.object(
@@ -418,7 +428,7 @@ class TestRefreshDatasetsRefreshCorrectness:
         wrong = _make_dataset(dataset_name="other", values=["x"])
 
         initializer = RefreshDatasets()
-        initializer.params = {"days": ["0"]}
+        initializer.set_params_from_args(args={"days": 0})
         with (
             patch.object(
                 SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock, return_value=["d"]
