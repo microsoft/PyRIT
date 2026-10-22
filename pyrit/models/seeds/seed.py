@@ -13,7 +13,8 @@ import functools
 import logging
 import uuid
 from datetime import UTC, datetime
-from pathlib import PurePath, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
+from types import ModuleType
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Self, cast
 
 from jinja2 import StrictUndefined, Undefined, meta
@@ -21,13 +22,11 @@ from jinja2.sandbox import SandboxedEnvironment
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
 from typing_extensions import TypeVar
 
-from pyrit.common.template_binding import bind_template_path_operations
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.seeds.seed_origin import SeedOrigin
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -204,15 +203,45 @@ def _serialize_template_binding(value: Any) -> str:
     """
     if isinstance(value, PurePath):
         return f"{str(value)!r} | pyrit_path(windows={isinstance(value, PureWindowsPath)!r})"
-    if isinstance(value, list | tuple):
-        items = ", ".join(_serialize_template_binding(item) for item in value)
-        return f"[{items}]" if isinstance(value, list) else (f"({items},)" if value else "()")
-    if isinstance(value, dict):
-        items = ", ".join(
-            f"{_serialize_template_binding(key)}: {_serialize_template_binding(item)}" for key, item in value.items()
-        )
-        return f"{{{items}}}"
     return repr(value)
+
+
+def _filesystem_free_view(value: Any) -> Any:
+    """
+    Expose a concrete path to a template as a lexical path that cannot reach the filesystem.
+
+    Args:
+        value: A value supplied to a trusted template.
+
+    Returns:
+        A ``PurePath`` with the platform flavor of the original when the value is a concrete ``Path``,
+        so a template can format and manipulate it but cannot read, write, or list files. Any other
+        value is returned unchanged.
+    """
+    return PurePath(value) if isinstance(value, Path) else value
+
+
+class _TemplateSandbox(SandboxedEnvironment):
+    """
+    Sandbox that never hands a module to a template.
+
+    On Python 3.13 and later ``PurePath.parser`` is ``posixpath`` or ``ntpath``, whose ``os`` attribute
+    is the ``os`` module, so even a lexical path would otherwise reach the filesystem and the process.
+    """
+
+    def is_safe_attribute(self, obj: Any, attr: str, value: Any) -> bool:
+        """
+        Refuse attributes holding a module in addition to the sandbox's own checks.
+
+        Args:
+            obj: The object being accessed.
+            attr: The attribute name.
+            value: The attribute value.
+
+        Returns:
+            Whether the template may read the attribute.
+        """
+        return not isinstance(value, ModuleType) and super().is_safe_attribute(obj, attr, value)
 
 
 def _template_environment(undefined: type[Undefined]) -> SandboxedEnvironment:
@@ -225,7 +254,7 @@ def _template_environment(undefined: type[Undefined]) -> SandboxedEnvironment:
     Returns:
         The sandbox with support for restoring serialized path bindings.
     """
-    env = SandboxedEnvironment(undefined=undefined)
+    env = _TemplateSandbox(undefined=undefined)
     env.filters["pyrit_path"] = _restore_path_binding
     return env
 
@@ -359,8 +388,9 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
         Behaves like render_template_value_silent, except when a missing parameter would decide a branch,
         a loop, a comparison, a Jinja test or the `default` filter. Then the template is kept as-is, with a
         `{% set %}` in front for each supplied parameter it uses, so later renders and stored copies keep them.
-        Fully bound path operations are evaluated at load time. Remaining path bindings preserve lexical
-        operations and platform flavor, without providing filesystem access to a reconstructed template.
+        Supplied concrete paths reach the template as filesystem-free ``PurePath`` views, so it can format and
+        manipulate them but cannot read, write, or list files. Their `{% set %}` bindings keep the lexical
+        operations and platform flavor.
 
         Args:
             kwargs: Key-value pairs to replace in the SeedPrompt value.
@@ -369,23 +399,20 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
             The rendered value, or the unchanged value when rendering is deferred.
 
         """
+        kwargs = {name: _filesystem_free_view(value) for name, value in kwargs.items()}
         env = _template_environment(_DeferringUndefined)
         env.tests = {name: _deferring(test) for name, test in env.tests.items()}
         env.filters["default"] = env.filters["d"] = _deferring(env.filters["default"])
 
         try:
-            try:
-                return env.from_string(self.value).render(**kwargs)
-            except _DeferRenderError:
-                value = bind_template_path_operations(
-                    value=self.value, parameters=kwargs, environment=env, serialize=_serialize_template_binding
-                )
-                used = meta.find_undeclared_variables(env.parse(value))
-                bindings = "".join(
-                    f"{{% set {name} = {_serialize_template_binding(kwargs[name])} %}}"
-                    for name in sorted(used & kwargs.keys())
-                )
-                return bindings + value
+            return env.from_string(self.value).render(**kwargs)
+        except _DeferRenderError:
+            used = meta.find_undeclared_variables(env.parse(self.value))
+            bindings = "".join(
+                f"{{% set {name} = {_serialize_template_binding(kwargs[name])} %}}"
+                for name in sorted(used & kwargs.keys())
+            )
+            return bindings + self.value
         except Exception as e:
             logger.error("Error rendering template: %s", e)
             return self.value

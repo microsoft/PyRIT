@@ -77,6 +77,7 @@ from unit.mocks import (
     MockPromptTarget,
     get_mock_target_identifier,
     make_scenario_result,
+    make_sequential_attack_results,
     make_technique_class,
 )
 
@@ -3728,6 +3729,48 @@ class TestScenarioRunServiceFailedAttackReporting:
         assert summary.atomic_attack_name == "baseline_airt_hate"
         assert summary.retries[0].endpoint == "https://ep/"
         assert summary.retries[0].component_role == "objective_scorer"
+
+    @pytest.mark.parametrize(
+        ("child_outcomes", "expected_error_messages"),
+        [
+            ([AttackOutcome.FAILURE, AttackOutcome.ERROR], [None]),
+            ([AttackOutcome.FAILURE], ["sequence error"]),
+        ],
+        ids=["child-error", "sequence-only-error"],
+    )
+    async def test_failed_attacks_report_a_sequence_envelope_only_for_its_own_error(
+        self, mock_memory: MagicMock, child_outcomes: list[AttackOutcome], expected_error_messages: list[str | None]
+    ) -> None:
+        envelope, children = make_sequential_attack_results(
+            atomic_attack_name="attack",
+            envelope_outcome=AttackOutcome.ERROR,
+            child_outcomes=child_outcomes,
+            objective="a",
+        )
+        envelope.error_message = "sequence error"
+        plan = ScenarioRunPlan(
+            atomic_groups=[
+                ScenarioRunPlanAtomicGroup(
+                    id="group",
+                    atomic_attack_name="attack",
+                    display_group="Attack",
+                    technique_name="attack",
+                    technique_eval_hash="eval",
+                    seed_group_ids=["seed-a"],
+                )
+            ],
+            seed_groups=[ScenarioRunPlanSeedGroup(id="seed-a", objective_sha256=to_sha256("a"), objective="a")],
+        )
+        db_result = make_scenario_result(
+            attack_results={"attack": [*children, envelope]},
+            metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")},
+        )
+        mock_memory.get_scenario_results_async.return_value = [db_result]
+
+        fetched = await ScenarioRunService().get_run_async(scenario_result_id=str(db_result.id))
+
+        assert fetched is not None
+        assert [failed.error_message for failed in fetched.failed_attacks] == expected_error_messages
 
 
 class TestResolveTechniquesAndConverters:

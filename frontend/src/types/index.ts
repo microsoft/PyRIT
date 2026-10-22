@@ -605,9 +605,13 @@ export type AttackAnalyticsDimension =
       readonly converter_direction?: 'request'
     }
 
-/** Absence keys cannot collide with literal values such as "Unknown" or "No converters". */
+/**
+ * Absence keys cannot collide with literal values such as "Unknown" or "No converters".
+ * Operation `value` keys are saved Operation IDs; `legacy_operation_name` keys are
+ * names stored without an Operation ID and apply only to the Operation dimension.
+ */
 export type AttackAnalyticsValue =
-  | { readonly kind: 'value'; readonly value: string }
+  | { readonly kind: 'value' | 'legacy_operation_name'; readonly value: string }
   | { readonly kind: 'missing' | 'no_converters'; readonly value: null }
 
 export interface AttackAnalyticsFilter {
@@ -691,6 +695,8 @@ export interface AttackAnalyticsResultRow {
   readonly outcome: AttackOutcome
   readonly updated_at: string
   readonly operation: string | null
+  /** Lowercase saved Operation ID. Null with a non-null `operation` marks legacy activity saved with only a name. */
+  readonly operation_id: string | null
   readonly operator: string | null
   readonly attack_type: string | null
   readonly target_model: string | null

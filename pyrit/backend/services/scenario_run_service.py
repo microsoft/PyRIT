@@ -25,10 +25,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from pyrit.analytics.outcome_statistics import success_percentage
 from pyrit.analytics.scenario_statistics import (
-    ScenarioAttempt,
     compute_scenario_statistics,
-    resolve_attack_result_attempt,
-    select_execution_attempts,
+    select_execution_attack_result_ids,
 )
 from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
@@ -40,7 +38,6 @@ from pyrit.backend.services.pagination import (
 )
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_progress_read_model import (
-    ResultUnitIdentity,
     ScenarioProgressReadModel,
     ScenarioProgressSnapshot,
 )
@@ -1532,21 +1529,7 @@ class ScenarioRunService:
         failed_attacks: list[AttackErrorSummary] = []
         attack_retries: list[AttackRetrySummary] = []
         overload_events: deque[Any] = deque(maxlen=_MAX_OVERLOAD_EVENTS)
-        attempts_by_unit: dict[ResultUnitIdentity, list[ScenarioAttempt]] = {}
-        plan_lookup = self._progress_read_model.build_plan_lookup(plan=plan)
-        for atomic_attack_name, results in scenario_result.attack_results.items():
-            for attack_result in results:
-                attempt = resolve_attack_result_attempt(
-                    atomic_attack_name=atomic_attack_name,
-                    attack_result=attack_result,
-                    plan_lookup=plan_lookup,
-                )
-                attempts_by_unit.setdefault(attempt.unit, []).append(attempt)
-        execution_ids = {
-            attempt.attempt_id
-            for attempts in attempts_by_unit.values()
-            for attempt in select_execution_attempts(attempts)
-        }
+        execution_ids = select_execution_attack_result_ids(scenario_result, plan=plan, use_saved_plan=False)
         for atomic_attack_name, results in scenario_result.attack_results.items():
             for attack_result in results:
                 if str(attack_result.attack_result_id) not in execution_ids:

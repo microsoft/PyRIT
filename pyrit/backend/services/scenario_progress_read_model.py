@@ -303,16 +303,6 @@ class ScenarioProgressReadModel:
                 raise RuntimeError("Scenario progress storage returned an empty page with has_more=True.")
 
     @staticmethod
-    def build_plan_lookup(*, plan: ScenarioRunPlan | None) -> ScenarioPlanLookup:
-        """
-        Build the shared lookup used for progress and legacy run summaries.
-
-        Returns:
-            ScenarioPlanLookup: Indexed plan data.
-        """
-        return ScenarioPlanLookup.from_plan(plan=plan)
-
-    @staticmethod
     def resolve_result_unit_identity(
         *,
         atomic_attack_name: str,
