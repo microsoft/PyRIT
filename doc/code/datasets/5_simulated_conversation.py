@@ -127,6 +127,48 @@ await output_attack_async(new_result)
 # > against `max_turns`, so increase `max_turns` accordingly to leave room for new exchanges.
 
 # %% [markdown]
+# ## Converting History Before Replay
+#
+# Configure converters on the replay attack to convert the completed history before the real
+# target receives it. Use the attack's normal `AttackConverterConfig`; no separate simulation
+# converter configuration is needed.
+#
+# Request converters apply to prepended user messages by default. To translate both sides of
+# the history, opt in to assistant messages with `PrependedConversationConfig`:
+#
+# ```python
+# from pyrit.converter import TranslationConverter
+# from pyrit.executor.attack import AttackConverterConfig
+# from pyrit.executor.attack.component import PrependedConversationConfig
+# from pyrit.prompt_normalizer import ConverterConfiguration
+#
+# new_attack = CrescendoAttack(
+#     objective_target=new_objective_target,
+#     attack_adversarial_config=AttackAdversarialConfig(target=adversarial_chat),
+#     attack_converter_config=AttackConverterConfig(
+#         request_converters=ConverterConfiguration.from_converters(
+#             converters=[TranslationConverter(converter_target=adversarial_chat, language="spanish")]
+#         ),
+#     ),
+#     prepended_conversation_config=PrependedConversationConfig(
+#         apply_converters_to_roles=["user", "assistant"],
+#     ),
+#     max_turns=5,
+#     max_backtracks=2,
+# )
+# ```
+#
+# Pass `prepended_conversation`, `next_message`, and `source_conversations` to this attack as
+# shown above. Its request converters process the selected history roles and each new user
+# request. They do not change the earlier simulation calls, system prompts, or new target replies.
+# The simulation records can therefore remain English while the real target receives Spanish
+# history. Response converters, if configured, control conversion of new target replies.
+#
+# For this replay-only approach, leave `attack_converter_config` unset when calling
+# `generate_simulated_conversation_async`. Passing the same converters to generation and replay
+# can apply them twice to the generated history.
+
+# %% [markdown]
 # ## Key Parameters
 #
 # | Parameter | Type | Description |
