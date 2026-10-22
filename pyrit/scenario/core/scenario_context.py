@@ -20,6 +20,7 @@ from pyrit.scenario.core.technique_requirements import IncompatibleTechniquePoli
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from pyrit.converter import Converter
     from pyrit.models import AttackSeedGroup, ScenarioRunPlan
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
@@ -43,6 +44,8 @@ class ScenarioContext:
         dataset_config (DatasetAttackConfiguration): The effective dataset configuration
             (caller-supplied or the scenario's default).
         memory_labels (dict[str, str]): Labels applied to every attack run.
+        technique_converters (dict[str, list[Converter]]): Additional request converters
+            for each technique, in application order.
         include_baseline (bool): Whether a baseline atomic attack should be emitted
             for this run, already resolved against the scenario's
             ``BASELINE_ATTACK_POLICY``.
@@ -71,3 +74,4 @@ class ScenarioContext:
     seed_groups_by_dataset: Mapping[str, list[AttackSeedGroup]] = field(default_factory=dict)
     stored_run_plan: ScenarioRunPlan | None = None
     scenario_result_id: str | None = None
+    technique_converters: dict[str, list[Converter]] = field(default_factory=dict)

@@ -201,13 +201,17 @@ target configuration for the attack; it does not add or change a registered targ
 Temperature is read-only after the attack is bound. In the conversation editor,
 a temperature change requires **New attack**, not **Same attack**.
 Hover over or click the read-only field to see why it cannot be changed.
+If the selected target does not support this control, the field is disabled.
+Hover over the field or focus it with the keyboard to see the reason.
 
 Saved attacks retain the source name, source identity, temperature, and effective
 identity, but not credentials. After a restart, the backend tries to reconstruct
 the target from a matching registered source. If reconstruction fails, sending
 is blocked rather than using the source's default temperature. OpenAI-family
-targets with a temperature parameter support this control. Externally owned HTTP
-clients and temperature set through `extra_body_parameters` are not supported.
+targets with a temperature parameter support this control. OpenAI targets that
+use a custom HTTP client supplied through `httpx_client_kwargs['http_client']`
+cannot be recreated with different settings. Temperature set through
+`extra_body_parameters` is also not supported by this control.
 
 #### Repeating a Message
 

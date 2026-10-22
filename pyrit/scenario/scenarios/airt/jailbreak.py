@@ -476,11 +476,6 @@ class Jailbreak(Scenario):
                 ``jailbreak_system_prompt`` is the only selected technique but the target cannot
                 support it.
         """
-        if self._objective_target is None:
-            raise ValueError(
-                "Scenario not properly initialized. Call await scenario.initialize_async() before running."
-            )
-
         self._resolved_jailbreaks = await self._resolve_templates_async()
         return await run_legacy_sync_async(self._build_atomic_attacks, context=context)
 
@@ -540,7 +535,7 @@ class Jailbreak(Scenario):
                 technique_converters = {
                     _PROMPT_SENDING: [
                         jailbreak_converter,
-                        *self._technique_converters.get(_PROMPT_SENDING, []),
+                        *context.technique_converters.get(_PROMPT_SENDING, []),
                     ]
                 }
                 atomic_attacks.extend(
