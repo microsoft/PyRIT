@@ -10,7 +10,7 @@ import pytest
 from pyrit.prompt_target import LiteLLMDecisionTarget, OpenAIChatTarget
 from pyrit.registry import TargetRegistry
 from pyrit.setup.initializers import TargetInitializer
-from pyrit.setup.initializers.targets import TARGET_CONFIGS, _auto_group_enabled, generate_rr_name, get_behavioral_key
+from pyrit.setup.initializers.targets import TARGET_CONFIGS, generate_rr_name, get_behavioral_key
 
 
 async def test_target_registration_runs_off_loop_async() -> None:
@@ -30,7 +30,15 @@ async def test_target_registration_runs_off_loop_async() -> None:
     [(False, False), (True, True), ("false", False), ("YES", True), (["no"], False), (["true"], True)],
 )
 def test_auto_group_enabled_accepts_direct_and_yaml_values(value, expected):
-    assert _auto_group_enabled(value) is expected
+    initializer = TargetInitializer()
+    initializer.set_params_from_args(args={"auto_group": value})
+    assert initializer.params["auto_group"] is expected
+
+
+@pytest.mark.parametrize("args", [{"tags": ["not-a-tag"]}, {"auto_group": "maybe"}, {"auto_group": []}])
+def test_target_initializer_rejects_invalid_declared_values(args: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        TargetInitializer().set_params_from_args(args=args)
 
 
 class TestTargetInitializerBasic:
@@ -353,7 +361,7 @@ class TestTargetInitializerTags:
         os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
 
         init = TargetInitializer()
-        init.params = {"tags": ["default"]}
+        init.set_params_from_args(args={"tags": ["default"]})
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
@@ -373,7 +381,7 @@ class TestTargetInitializerTags:
         os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
 
         init = TargetInitializer()
-        init.params = {"tags": ["scorer"]}
+        init.set_params_from_args(args={"tags": ["scorer"]})
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
@@ -393,7 +401,7 @@ class TestTargetInitializerTags:
         os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
 
         init = TargetInitializer()
-        init.params = {"tags": ["default", "scorer"]}
+        init.set_params_from_args(args={"tags": ["default", "scorer"]})
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
@@ -412,7 +420,7 @@ class TestTargetInitializerTags:
         os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
 
         init = TargetInitializer()
-        init.params = {"tags": ["all"]}
+        init.set_params_from_args(args={"tags": ["all"]})
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
@@ -803,7 +811,7 @@ class TestTargetInitializerAdversarialRoundRobin:
 
         self._set_slots(0, 1)
         initializer = TargetInitializer()
-        initializer.params = {"tags": ["default"], "auto_group": False}
+        initializer.set_params_from_args(args={"tags": ["default"], "auto_group": False})
 
         await initializer.initialize_async()
 
@@ -998,7 +1006,7 @@ class TestTargetInitializerAutoGroup:
         os.environ.update(self.GPT4O_2_ENV)
 
         init = TargetInitializer()
-        init.params = {"tags": ["default"], "auto_group": False}
+        init.set_params_from_args(args={"tags": ["default"], "auto_group": False})
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()

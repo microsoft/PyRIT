@@ -20,11 +20,12 @@ from pyrit.executor.promptgen.fuzzer import (
     FuzzerShortenConverter,
 )
 from pyrit.executor.promptgen.fuzzer.fuzzer import _PromptNode
-from pyrit.memory import SQLiteMemory
+from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    Scorable,
     Score,
     SeedDataset,
     SeedPrompt,
@@ -43,7 +44,9 @@ class _DeterministicBatchScorer(MessageFloatScaleScorer):
     def __init__(self, *, values_by_prompt: dict[str, list[float]]) -> None:
         super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
         self._values_by_prompt = values_by_prompt
+        self._batch_ready = asyncio.Barrier(2)
         self._second_scored = asyncio.Event()
+        self.scoring_started = {prompt: asyncio.Event() for prompt in values_by_prompt}
         self.completed_prompts: list[str] = []
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -52,9 +55,12 @@ class _DeterministicBatchScorer(MessageFloatScaleScorer):
     async def _score_piece_async(self, *, message_piece: MessagePiece, objective: str | None = None) -> list[Score]:
         prompt = message_piece.converted_value
         assert objective == prompt
+        self.scoring_started[prompt].set()
+        await self._batch_ready.wait()
+        self.scoring_started[prompt].clear()
         # Complete the second scoring task first without relying on timing.
         if prompt == "first":
-            await asyncio.wait_for(self._second_scored.wait(), timeout=5)
+            await self._second_scored.wait()
             self._second_scored.clear()
         self.completed_prompts.append(prompt)
         if prompt == "second":
@@ -84,13 +90,31 @@ class _DeterministicBatchScorer(MessageFloatScaleScorer):
         pytest.param([1.0], [1.0], id="both-successful"),
     ],
 )
+@pytest.mark.parametrize(
+    ("first_acquired_prompt", "delay_acquisition"),
+    [
+        pytest.param("first", False, id="first-acquired-first"),
+        pytest.param("second", False, id="second-acquired-first"),
+        pytest.param("first", True, id="delayed-second-acquisition"),
+    ],
+)
 async def test_execute_async_preserves_score_attribution_and_query_limit_async(
-    *, sqlite_instance: SQLiteMemory, first_values: list[float], second_values: list[float]
+    *,
+    sqlite_instance: SQLiteMemory,
+    first_values: list[float],
+    second_values: list[float],
+    first_acquired_prompt: str,
+    delay_acquisition: bool,
 ) -> None:
     """Exercise real batching and persistence, including two turns and reversed scoring completion."""
     values_by_prompt = {"first": first_values, "second": second_values}
     responses_by_prompt: dict[str, list[MessagePiece]] = {"first": [], "second": []}
+    acquired_prompts: list[str] = []
     max_queries = 4
+    acquisition_clock_jump = 5.25 if delay_acquisition else 0.0
+    loop = asyncio.get_running_loop()
+    original_time = loop.time
+    clock_offset = 0.0
 
     async def respond_async(*, normalized_conversation: list[Message]) -> list[Message]:
         assert sum(len(responses) for responses in responses_by_prompt.values()) < max_queries
@@ -104,6 +128,22 @@ async def test_execute_async_preserves_score_attribution_and_query_limit_async(
     target = MockPromptTarget()
     converter = FuzzerShortenConverter(converter_target=target)
     scorer = _DeterministicBatchScorer(values_by_prompt=values_by_prompt)
+    resolve_async = scorer._message_resolver.resolve_async
+
+    async def acquire_async(*, scorable: Scorable, memory: MemoryInterface) -> Message:
+        nonlocal clock_offset
+        message = await resolve_async(scorable=scorable, memory=memory)
+        prompt = message.get_piece().converted_value
+        if prompt != first_acquired_prompt:
+            await scorer.scoring_started[first_acquired_prompt].wait()
+            if delay_acquisition and not clock_offset:
+                # Dispatch the old five-second deadline without slowing the test down.
+                clock_offset = acquisition_clock_jump
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+        acquired_prompts.append(prompt)
+        return message
+
     generator = FuzzerGenerator(
         objective_target=target,
         template_converters=[converter],
@@ -111,6 +151,8 @@ async def test_execute_async_preserves_score_attribution_and_query_limit_async(
         target_jailbreak_goal_count=100,
     )
     with (
+        patch.object(loop, "time", side_effect=lambda: original_time() + clock_offset),
+        patch.object(scorer._message_resolver, "resolve_async", side_effect=acquire_async),
         patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, side_effect=respond_async) as send,
         patch.object(
             converter,
@@ -123,11 +165,15 @@ async def test_execute_async_preserves_score_attribution_and_query_limit_async(
             generator.execute_async(
                 prompts=list(values_by_prompt), prompt_templates=["{{ prompt }}"], max_query_limit=max_queries
             ),
-            timeout=10,
+            # Keep the real-time watchdog budget unchanged by the simulated acquisition delay.
+            timeout=10 + acquisition_clock_jump,
         )
 
     assert send.await_count == result.total_queries == max_queries
     assert convert.await_count == 2
+    second_acquired_prompt = "second" if first_acquired_prompt == "first" else "first"
+    assert acquired_prompts == [first_acquired_prompt, second_acquired_prompt] * 2
+    assert clock_offset == acquisition_clock_jump
     assert scorer.completed_prompts == ["second", "first"] * 2
     expected_conversations = [
         responses_by_prompt[prompt][turn].conversation_id

@@ -3,13 +3,22 @@
 
 """Tests for shared backend media persistence."""
 
+import asyncio
+import uuid
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlencode
 
 import pytest
 
-from pyrit.backend.models.attacks import MessagePieceRequest
+from pyrit.backend.models.attacks import (
+    ConversationMessageRequest,
+    ConversationPieceRequest,
+    MessagePieceRequest,
+    SaveConversationRequest,
+)
+from pyrit.backend.services.attack_service import AttackService
 from pyrit.backend.services.media_persistence import (
     MediaAccessDeniedError,
     MediaOrigin,
@@ -20,6 +29,7 @@ from pyrit.backend.services.media_persistence import (
     validate_media_path,
 )
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, DiskStorageIO, SQLiteMemory, data_serializer_factory
+from unit.async_utils import TEST_WATCHDOG_SECONDS, settle_tasks_async, wait_for_completion_async, wait_for_event_async
 
 
 def _serializer(*, value: str = "/saved/media.bin") -> MagicMock:
@@ -480,3 +490,76 @@ async def test_persistence_failure_returns_no_partial_result() -> None:
             data_type="binary_path",
             serializer_factory=MagicMock(return_value=serializer),
         )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
+async def test_cancelled_save_finishes_writer_before_deleting_media_async(sqlite_instance: SQLiteMemory) -> None:
+    request = SaveConversationRequest(
+        save_id=uuid.uuid4(),
+        destination="new_attack",
+        objective="Save media",
+        operator="owner",
+        messages=[
+            ConversationMessageRequest(
+                role="user",
+                pieces=[
+                    ConversationPieceRequest(data_type="binary_path", original_value="data:text/plain;base64,bWVkaWE=")
+                ],
+            )
+        ],
+    )
+    started, release_writer, writer_finished, cancellation_observed = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
+    storage = sqlite_instance.results_storage_io
+    write, delete, shield = storage.write_file_async, storage.delete_file_async, asyncio.shield
+    writers: list[asyncio.Task[Any]] = []
+
+    async def blocked_write_async(*args: Any, **kwargs: Any) -> None:
+        writer = asyncio.current_task()
+        assert writer is not None
+        writers.append(writer)
+        started.set()
+        await release_writer.wait()
+        await write(*args, **kwargs)
+        writer_finished.set()
+
+    async def checked_delete_async(path: str) -> None:
+        assert writer_finished.is_set()
+        await delete(path)
+
+    def observe_shield(future: asyncio.Future[Any]) -> asyncio.Future[Any]:
+        protected = shield(future)
+        protected.add_done_callback(lambda done: cancellation_observed.set() if done.cancelled() else None)
+        return protected
+
+    with (
+        patch.object(storage, "write_file_async", side_effect=blocked_write_async),
+        patch.object(storage, "delete_file_async", side_effect=checked_delete_async) as delete_file,
+        patch.object(asyncio, "shield", side_effect=observe_shield),
+    ):
+        task = asyncio.create_task(AttackService().save_conversation_async(request=request))
+        try:
+            await wait_for_event_async(event=started, tasks=[task])
+            task.cancel()
+            # Observe delivery to the shield, not merely issuance of a cancellation request.
+            await wait_for_event_async(event=cancellation_observed, tasks=[task])
+            assert not task.done()
+            assert not writers[0].done()
+            assert not writer_finished.is_set()
+            delete_file.assert_not_awaited()
+            release_writer.set()
+            with pytest.raises(asyncio.CancelledError):
+                await wait_for_completion_async(future=task)
+            assert writer_finished.is_set()
+            delete_file.assert_awaited_once()
+        finally:
+            release_writer.set()
+            if not task.done() and not task.cancelling():
+                task.cancel()
+            await settle_tasks_async(task, *writers)
+    assert not list(Path(sqlite_instance.results_path).rglob("*.txt"))
