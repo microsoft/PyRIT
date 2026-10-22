@@ -6,6 +6,7 @@ import json
 import logging
 
 from pyrit.common import net_utility
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 class GandalfLevel(enum.Enum):
     """
-    Enumeration of Gandalf challenge levels.
+    Deprecated: Gandalf challenge levels for ``GandalfTarget``; will be removed in 1.4.0.
 
     Each level represents a different difficulty of the Gandalf security challenge,
     from baseline to the most advanced levels.
@@ -35,7 +36,12 @@ class GandalfLevel(enum.Enum):
 
 
 class GandalfTarget(PromptTarget):
-    """A prompt target for the Gandalf security challenge."""
+    """
+    Deprecated: a prompt target for the Gandalf security challenge; will be removed in 1.4.0.
+
+    Use ``HTTPTarget`` or a custom ``PromptTarget`` subclass instead. See the "Creating Custom
+    Targets" documentation for an example.
+    """
 
     def __init__(
         self,
@@ -55,6 +61,11 @@ class GandalfTarget(PromptTarget):
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
               target instance.
         """
+        print_deprecation_message(
+            old_item=GandalfTarget,
+            new_item="HTTPTarget or a custom PromptTarget subclass",
+            removed_in="1.4.0",
+        )
         endpoint = "https://gandalf-api.lakera.ai/api/send-message"
         super().__init__(
             max_requests_per_minute=max_requests_per_minute,

@@ -13,6 +13,24 @@ from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import GandalfLevel, PromptTarget
 from pyrit.score import GandalfScorer, MessageScorable
 
+_DEPRECATION_MATCH = r"GandalfScorer is deprecated and will be removed in 1\.4\.0"
+
+
+def _make_scorer(*, level: GandalfLevel, chat_target: PromptTarget) -> GandalfScorer:
+    with pytest.warns(DeprecationWarning, match=_DEPRECATION_MATCH):
+        return GandalfScorer(level=level, chat_target=chat_target)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_gandalf_scorer_init_warns_deprecated() -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+
+    with pytest.warns(
+        DeprecationWarning,
+        match=rf"{_DEPRECATION_MATCH}\. Use SubStringScorer or SelfAskTrueFalseScorer instead\.",
+    ):
+        GandalfScorer(level=GandalfLevel.LEVEL_1, chat_target=chat_target)
+
 
 def generate_password_extraction_response(response_text: str, conversation_id: str | None = None) -> Message:
     return Message(
@@ -60,7 +78,7 @@ async def test_gandalf_scorer_score(
 
     chat_target.send_prompt_async = AsyncMock(return_value=[response])
 
-    scorer = GandalfScorer(level=level, chat_target=chat_target)
+    scorer = _make_scorer(level=level, chat_target=chat_target)
 
     mocked_post.return_value = MagicMock(json=lambda: {"success": password_correct, "message": "Message"})
 
@@ -95,7 +113,7 @@ async def test_gandalf_scorer_set_system_prompt(
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[response])
 
-    scorer = GandalfScorer(chat_target=chat_target, level=level)
+    scorer = _make_scorer(chat_target=chat_target, level=level)
 
     mocked_post.return_value = MagicMock(json=lambda: {"success": True, "message": "Message"})
 
@@ -123,7 +141,7 @@ async def test_gandalf_scorer_adds_to_memory(mocked_post, level: GandalfLevel, s
 
     patched_pieces = [generated_request.message_pieces[0], response.message_pieces[0]]
     with patch.object(sqlite_instance, "get_message_pieces_async", return_value=patched_pieces):
-        scorer = GandalfScorer(level=level, chat_target=chat_target)
+        scorer = _make_scorer(level=level, chat_target=chat_target)
 
         await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(response)))
 
@@ -138,7 +156,7 @@ async def test_gandalf_scorer_runtime_error_retries(level: GandalfLevel, sqlite_
     chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(side_effect=[RuntimeError("Error"), response])
-    scorer = GandalfScorer(level=level, chat_target=chat_target)
+    scorer = _make_scorer(level=level, chat_target=chat_target)
 
     with pytest.raises(PyritException, match="Error in scorer GandalfScorer"):
         await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(response)))
@@ -166,7 +184,7 @@ async def test_gandalf_scorer_wraps_httpx_error_as_pyrit_exception(mocked_post, 
         response=httpx.Response(500),
     )
 
-    scorer = GandalfScorer(level=GandalfLevel.LEVEL_1, chat_target=chat_target)
+    scorer = _make_scorer(level=GandalfLevel.LEVEL_1, chat_target=chat_target)
     with pytest.raises(PyritException, match="Error in scorer GandalfScorer"):
         await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(response)))
 
@@ -191,7 +209,7 @@ async def test_gandalf_scorer_accepts_no_sentinel_case_and_punctuation_variants(
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[response])
 
-    scorer = GandalfScorer(level=GandalfLevel.LEVEL_1, chat_target=chat_target)
+    scorer = _make_scorer(level=GandalfLevel.LEVEL_1, chat_target=chat_target)
     mocked_post.return_value = MagicMock(json=lambda: {"success": False, "message": "Message"})
 
     scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(response)))
@@ -216,7 +234,7 @@ async def test_gandalf_scorer_scores_negative_prose_as_false_async(
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[response])
 
-    scorer = GandalfScorer(level=GandalfLevel.LEVEL_1, chat_target=chat_target)
+    scorer = _make_scorer(level=GandalfLevel.LEVEL_1, chat_target=chat_target)
     mocked_post.return_value = MagicMock(json=lambda: {"success": False, "message": "Message"})
 
     scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(response)))
@@ -241,7 +259,7 @@ async def test_gandalf_scorer_still_posts_multi_word_passwords(
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[response])
 
-    scorer = GandalfScorer(level=GandalfLevel.LEVEL_1, chat_target=chat_target)
+    scorer = _make_scorer(level=GandalfLevel.LEVEL_1, chat_target=chat_target)
     mocked_post.return_value = MagicMock(json=lambda: {"success": False, "message": "Message"})
 
     scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(response)))

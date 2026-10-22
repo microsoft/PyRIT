@@ -7,6 +7,7 @@ from textwrap import dedent
 import httpx
 from openai import BadRequestError
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.exceptions import PyritException, pyrit_target_retry
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
@@ -26,7 +27,9 @@ _SENTINEL_PUNCTUATION = ".,:;!?\"'*"
 
 class GandalfScorer(MessageTrueFalseScorer):
     """
-    A scorer for evaluating responses in Gandalf challenges.
+    Deprecated: a scorer for Gandalf challenges; will be removed in 1.4.0.
+
+    Use ``SubStringScorer`` when the secret is known, or ``SelfAskTrueFalseScorer`` otherwise.
 
     This scorer checks whether a password or secret has been successfully extracted from
     a Gandalf-style challenge by submitting the response to the Gandalf API and checking
@@ -55,6 +58,11 @@ class GandalfScorer(MessageTrueFalseScorer):
             score_aggregator (TrueFalseAggregatorFunc): Aggregator for combining scores. Defaults to
                 TrueFalseScoreAggregator.OR.
         """
+        print_deprecation_message(
+            old_item=GandalfScorer,
+            new_item="SubStringScorer or SelfAskTrueFalseScorer",
+            removed_in="1.4.0",
+        )
         super().__init__(
             validator=validator or self._DEFAULT_VALIDATOR,
             score_aggregator=score_aggregator,

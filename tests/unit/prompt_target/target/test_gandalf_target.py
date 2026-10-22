@@ -7,10 +7,26 @@ from unit.mocks import get_image_message_piece
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import GandalfLevel, GandalfTarget
 
+_DEPRECATION_MATCH = r"GandalfTarget is deprecated and will be removed in 1\.4\.0"
+
+
+def _make_target(**kwargs) -> GandalfTarget:
+    with pytest.warns(DeprecationWarning, match=_DEPRECATION_MATCH):
+        return GandalfTarget(level=GandalfLevel.LEVEL_1, **kwargs)
+
 
 @pytest.fixture
 def gandalf_target(patch_central_database) -> GandalfTarget:
-    return GandalfTarget(level=GandalfLevel.LEVEL_1)
+    return _make_target()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_gandalf_init_warns_deprecated():
+    with pytest.warns(
+        DeprecationWarning,
+        match=rf"{_DEPRECATION_MATCH}\. Use HTTPTarget or a custom PromptTarget subclass instead\.",
+    ):
+        GandalfTarget(level=GandalfLevel.LEVEL_1)
 
 
 def test_gandalf_initializes(gandalf_target: GandalfTarget):
@@ -19,7 +35,7 @@ def test_gandalf_initializes(gandalf_target: GandalfTarget):
 
 @pytest.mark.usefixtures("patch_central_database")
 def test_gandalf_sets_endpoint_and_rate_limit():
-    target = GandalfTarget(level=GandalfLevel.LEVEL_1, max_requests_per_minute=15)
+    target = _make_target(max_requests_per_minute=15)
     identifier = target.get_identifier()
     assert identifier.params["endpoint"] == "https://gandalf-api.lakera.ai/api/send-message"
     assert target._max_requests_per_minute == 15

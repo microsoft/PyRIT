@@ -132,8 +132,9 @@ def _model_less(*, class_name: str, endpoint: str, model_name: str = "") -> Targ
 def test_targets_without_a_model_name_fall_back_to_their_content_hash() -> None:
     bank = HTTPTarget(http_request="POST /chat HTTP/1.1\nHost: bank.example\n\n{PROMPT}").get_identifier()
     hr = HTTPTarget(http_request="POST /ask HTTP/1.1\nHost: hr.example\n\n{PROMPT}").get_identifier()
-    level_one = GandalfTarget(level=GandalfLevel.LEVEL_1).get_identifier()
-    level_seven = GandalfTarget(level=GandalfLevel.LEVEL_7).get_identifier()
+    with pytest.warns(DeprecationWarning, match=r"GandalfTarget is deprecated"):
+        level_one = GandalfTarget(level=GandalfLevel.LEVEL_1).get_identifier()
+        level_seven = GandalfTarget(level=GandalfLevel.LEVEL_7).get_identifier()
     blank = _model_less(class_name="MockTarget", endpoint="https://blank.example", model_name="   ")
     wrapped = TargetIdentifier(class_name="RoundRobinTarget", class_module="tests", targets=[bank])
 

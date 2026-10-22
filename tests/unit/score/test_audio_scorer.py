@@ -133,7 +133,8 @@ class TestAudioTrueFalseScorer:
         elif history_scorer == "system_prompt":
             scorer = SystemPromptExtractionScorer()
         else:
-            scorer = GandalfScorer(level=GandalfLevel.LEVEL_1, chat_target=MockPromptTarget())
+            with pytest.warns(DeprecationWarning, match=r"GandalfScorer is deprecated"):
+                scorer = GandalfScorer(level=GandalfLevel.LEVEL_1, chat_target=MockPromptTarget())
 
         assert isinstance(scorer, MessageScorer)
         wrapper = MockTextTrueFalseScorer()

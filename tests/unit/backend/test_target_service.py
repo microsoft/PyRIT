@@ -928,7 +928,8 @@ class TestCreateTarget:
             params={"level": "baseline"},
         )
 
-        result = await service.create_target_async(request=request)
+        with pytest.warns(DeprecationWarning, match=r"GandalfTarget is deprecated and will be removed in 1\.4\.0"):
+            result = await service.create_target_async(request=request)
 
         assert result.identifier.class_name == "GandalfTarget"
         assert result.target_specific_params == {"level": "baseline"}
