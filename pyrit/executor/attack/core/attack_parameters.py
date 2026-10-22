@@ -42,10 +42,6 @@ class AttackParameters:
     # Conversation that is automatically prepended to the target model
     prepended_conversation: list[Message] | None = None
 
-    # Explicit contract for a caller-authored, open assistant prefix.
-    # Ordinary assistant-ending histories retain their extraction semantics.
-    continue_final_assistant_message: bool = False
-
     # Additional labels that can be applied to the prompts throughout the attack
     memory_labels: dict[str, str] | None = field(default_factory=dict)
     operation_id: uuid.UUID | None = None
@@ -59,6 +55,11 @@ class AttackParameters:
 
     # Per-execution scoring criteria, supplied directly or by seed preparation.
     expectation: ScoringExpectation | None = None
+
+    # Explicit contract for a caller-authored, open assistant prefix.
+    # Ordinary assistant-ending histories retain their extraction semantics.
+    # Keyword-only so the released positional constructor signature is unchanged.
+    continue_final_assistant_message: bool = field(default=False, kw_only=True)
 
     def __str__(self) -> str:
         """Return a nicely formatted string representation of the attack parameters."""
@@ -282,13 +283,13 @@ class AttackParameters:
         new_fields: list[Any] = []
         for f in dataclasses.fields(cls):
             if f.name not in field_names:
-                # Preserve field defaults
+                # Preserve field defaults and keyword-only status
                 if f.default is not dataclasses.MISSING:
-                    new_fields.append((f.name, f.type, field(default=f.default)))
+                    new_fields.append((f.name, f.type, field(default=f.default, kw_only=f.kw_only)))
                 elif f.default_factory is not dataclasses.MISSING:
-                    new_fields.append((f.name, f.type, field(default_factory=f.default_factory)))
+                    new_fields.append((f.name, f.type, field(default_factory=f.default_factory, kw_only=f.kw_only)))
                 else:
-                    new_fields.append((f.name, f.type))
+                    new_fields.append((f.name, f.type, field(kw_only=f.kw_only)))
 
         # Generate a descriptive class name
         excluded_str = "_".join(sorted(field_names))

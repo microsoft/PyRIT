@@ -27,6 +27,7 @@ from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_response_format,
     build_text_chat_messages,
     is_text_only_conversation,
+    should_skip_audio_piece,
     validate_chat_tool_message,
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import (
@@ -490,6 +491,27 @@ class LiteLLMChatTarget(PromptTarget):
         )
         return await build_multimodal_chat_messages_async(
             conversation, prefer_transcript_for_history=prefer_transcript_for_history
+        )
+
+    def _is_omitted_history_piece(self, *, message_piece: MessagePiece, has_text_piece: bool) -> bool:
+        """
+        Accept stored audio only when the Chat Completions message builder omits it.
+
+        Args:
+            message_piece: Historical message piece to check.
+            has_text_piece: Whether its message contains a text piece.
+
+        Returns:
+            bool: Whether the message builder skips this historical piece.
+        """
+        prefer_transcript_for_history = bool(
+            self._audio_response_config and self._audio_response_config.prefer_transcript_for_history
+        )
+        return should_skip_audio_piece(
+            message_piece=message_piece,
+            is_last_message=False,
+            has_text_piece=has_text_piece,
+            prefer_transcript_for_history=prefer_transcript_for_history,
         )
 
     def _construct_request_body(
