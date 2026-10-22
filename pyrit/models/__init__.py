@@ -162,6 +162,17 @@ if TYPE_CHECKING:
         ScenarioDatasetSizeEstimateKind,
         scenario_dataset_size_from_limit,
     )
+    from pyrit.models.scenario_hierarchy import (
+        ScenarioAttackResultConversations,
+        ScenarioConversationMessagePieceProjection,
+        ScenarioConversationMessageProjection,
+        ScenarioConversationProjection,
+        ScenarioHierarchyDiagnostics,
+        ScenarioHierarchyGroup,
+        ScenarioHierarchyNode,
+        ScenarioHierarchyProjection,
+        ScenarioOrchestrationParentSummary,
+    )
     from pyrit.models.scenario_progress import (
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_PLAN_VERSION,
@@ -471,6 +482,15 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDisplayGroupProgress": "pyrit.models.scenario_progress",
     "ScenarioExecutionStatistics": "pyrit.models.scenario_progress",
     "ScenarioExecutionUnit": "pyrit.models.scenario_progress",
+    "ScenarioConversationMessagePieceProjection": "pyrit.models.scenario_hierarchy",
+    "ScenarioAttackResultConversations": "pyrit.models.scenario_hierarchy",
+    "ScenarioConversationMessageProjection": "pyrit.models.scenario_hierarchy",
+    "ScenarioConversationProjection": "pyrit.models.scenario_hierarchy",
+    "ScenarioHierarchyDiagnostics": "pyrit.models.scenario_hierarchy",
+    "ScenarioHierarchyGroup": "pyrit.models.scenario_hierarchy",
+    "ScenarioHierarchyNode": "pyrit.models.scenario_hierarchy",
+    "ScenarioHierarchyProjection": "pyrit.models.scenario_hierarchy",
+    "ScenarioOrchestrationParentSummary": "pyrit.models.scenario_hierarchy",
     "ScenarioObjectiveScorer": "pyrit.models.scenario_progress",
     "ScenarioObjectiveScorerMetrics": "pyrit.models.scenario_progress",
     "ScenarioProgressCounts": "pyrit.models.scenario_progress",

@@ -6,7 +6,7 @@
 import asyncio
 import logging
 from collections import OrderedDict
-from collections.abc import AsyncGenerator, Iterable, Sequence
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -23,18 +23,27 @@ from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import (
+    AttackOutcome,
     AttackResult,
     AttackResultMetadata,
+    AttackResultRole,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     ScenarioAtomicGroupProgress,
+    ScenarioAttackResultConversations,
     ScenarioAttackResultDelta,
     ScenarioAttackTechniqueDetails,
     ScenarioComponentIdentity,
+    ScenarioConversationProjection,
     ScenarioDisplayGroupProgress,
     ScenarioExecutionUnit,
+    ScenarioHierarchyDiagnostics,
+    ScenarioHierarchyGroup,
+    ScenarioHierarchyNode,
+    ScenarioHierarchyProjection,
     ScenarioObjectiveScorer,
     ScenarioObjectiveScorerMetrics,
+    ScenarioOrchestrationParentSummary,
     ScenarioProgressCounts,
     ScenarioProgressResult,
     ScenarioProgressSummary,
@@ -43,6 +52,7 @@ from pyrit.models import (
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanGroupKind,
     ScenarioRunPlanSeedGroup,
+    ScenarioRunState,
     ScenarioScorerIdentity,
     ScenarioSeedGroupProgress,
     ScenarioTechniqueProgress,
@@ -50,6 +60,7 @@ from pyrit.models import (
     ScorerIdentifier,
     project_behavioral_identity,
 )
+from pyrit.models.catalog.scenario import AttackErrorSummary, AttackRetrySummary
 from pyrit.score.scorer_evaluation.scorer_metrics_io import find_objective_metrics_by_eval_hash
 
 logger = logging.getLogger(__name__)
@@ -64,6 +75,29 @@ __all__ = ["ResultUnitIdentity", "ScenarioPlanLookup", "ScenarioProgressReadMode
 # applied by ``project_behavioral_identity``.
 _TECHNIQUE_SEEDS_CHILD = "technique_seeds"
 _TECHNIQUE_SEED_DISPLAY_PARAMS = ("value", "data_type")
+_MAX_HIERARCHY_DEPTH = 10
+_MAX_HIERARCHY_NODES = 1000
+_MAX_DIAGNOSTIC_ITEMS = 100
+_MAX_RETRIES_PER_NODE = 100
+_MAX_CHILD_REFERENCES = 500
+
+
+def _resolve_executed_turns(delta: ScenarioAttackResultDelta) -> int:
+    """
+    Safely resolve executed turns without falling through on 0 or crashing on invalid metadata.
+
+    Returns:
+        int: The resolved turn count.
+    """
+    if delta.executed_turns is not None:
+        return delta.executed_turns
+    raw_val = delta.attack_metadata.get("executed_turns")
+    if raw_val is not None:
+        try:
+            return int(raw_val)
+        except (ValueError, TypeError):
+            pass
+    return 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +108,7 @@ class ScenarioProgressSnapshot:
     results: tuple[ScenarioProgressResult, ...]
     summary: ScenarioProgressSummary
     plan: ScenarioRunPlan
+    has_more: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +138,7 @@ class _ProgressCacheEntry:
     cursor: AttackResultKeysetCursor | None = None
     summary: ScenarioProgressSummary | None = None
     summary_state: _ProgressSummaryState | None = None
+    has_more: bool = True
 
 
 class ScenarioProgressReadModel:
@@ -126,6 +162,7 @@ class ScenarioProgressReadModel:
         active_group_ids: Sequence[str],
         terminal: bool,
         objective_scorer_identifier: ComponentIdentifier | None,
+        max_deltas: int | None = None,
     ) -> ScenarioProgressSnapshot:
         """
         Refresh and return the mapped progress state for one run.
@@ -137,6 +174,7 @@ class ScenarioProgressReadModel:
             active_group_ids (Sequence[str]): Groups that are running.
             terminal (bool): Whether the run has stopped.
             objective_scorer_identifier (ComponentIdentifier | None): Objective scorer identity.
+            max_deltas (int | None): Maximum deltas to hydrate, bounding cold queries.
 
         Returns:
             ScenarioProgressSnapshot: Deltas, mapped results, summary, and effective plan.
@@ -144,7 +182,12 @@ class ScenarioProgressReadModel:
         async with self._refresh_run_async(scenario_result_id=scenario_result_id):
             entry = self._get_cache_entry(scenario_result_id=scenario_result_id, plan=plan, terminal=terminal)
             first_new_index = len(entry.results)
-            deltas_updated = await self._hydrate_new_deltas_async(scenario_result_id=scenario_result_id, entry=entry)
+            deltas_updated = await self._hydrate_new_deltas_async(
+                scenario_result_id=scenario_result_id,
+                entry=entry,
+                terminal=terminal,
+                max_deltas=max_deltas,
+            )
             return self._build_snapshot(
                 entry=entry,
                 first_new_index=first_new_index,
@@ -255,19 +298,34 @@ class ScenarioProgressReadModel:
             results=tuple(entry.results),
             summary=entry.summary,
             plan=summary_plan,
+            has_more=entry.has_more,
         )
 
-    async def _hydrate_new_deltas_async(self, *, scenario_result_id: str, entry: _ProgressCacheEntry) -> bool:
+    async def _hydrate_new_deltas_async(
+        self,
+        *,
+        scenario_result_id: str,
+        entry: _ProgressCacheEntry,
+        terminal: bool = False,
+        max_deltas: int | None = None,
+    ) -> bool:
         """
         Hydrate persisted deltas while preserving their timestamp/ID keyset order.
 
         Returns:
             bool: Whether any delta was appended or replaced, so the summary rebuilds.
         """
+        if max_deltas is not None and len(entry.deltas) >= max_deltas:
+            return False
         changed = False
         while True:
+            fetch_limit = (
+                min(self._STORAGE_PAGE_SIZE, max_deltas - len(entry.deltas))
+                if max_deltas is not None
+                else self._STORAGE_PAGE_SIZE
+            )
             page, has_more = await self._memory.get_scenario_attack_result_deltas_async(
-                scenario_result_id=scenario_result_id, cursor=entry.cursor, limit=self._STORAGE_PAGE_SIZE
+                scenario_result_id=scenario_result_id, cursor=entry.cursor, limit=fetch_limit
             )
             # The keyset is ordered by (timestamp, id), so an edited row whose timestamp
             # moved forward is emitted again after the cursor. Such a re-emission is an
@@ -297,7 +355,11 @@ class ScenarioProgressReadModel:
                     timestamp=last.timestamp,
                     attack_result_id=last.attack_result_id,
                 )
+            if max_deltas is not None and len(entry.deltas) >= max_deltas:
+                entry.has_more = has_more
+                return changed
             if not has_more:
+                entry.has_more = False
                 return changed
             if not page:
                 raise RuntimeError("Scenario progress storage returned an empty page with has_more=True.")
@@ -771,8 +833,27 @@ class ScenarioProgressReadModel:
             child_attack_result_ids=ScenarioProgressReadModel._read_child_attack_result_ids(
                 attack_metadata=delta.attack_metadata
             ),
+            related_conversation_ids=ScenarioProgressReadModel._read_related_conversation_ids(delta=delta),
             attempt_index=result_metadata.attempt_index,
         )
+
+    @staticmethod
+    def _read_related_conversation_ids(*, delta: ScenarioAttackResultDelta) -> list[str]:
+        """
+        Read related conversation IDs from typed delta or validate legacy metadata fallback.
+
+        Returns:
+            list[str]: Validated list of string conversation IDs.
+        """
+        raw_ids: Any = delta.related_conversation_ids
+        if isinstance(raw_ids, (list, tuple, set)):
+            valid: list[str] = [str(cid) for cid in raw_ids if isinstance(cid, str) and cid]
+            if valid:
+                return valid
+        fallback: Any = delta.attack_metadata.get("related_conversation_ids")
+        if isinstance(fallback, (list, tuple, set)):
+            return [str(cid) for cid in fallback if isinstance(cid, str) and cid]
+        return []
 
     @staticmethod
     def _read_child_attack_result_ids(*, attack_metadata: dict[str, Any]) -> list[str]:
@@ -827,3 +908,691 @@ class ScenarioProgressReadModel:
                 seen_seed_ids.add(mapped.seed_group_id)
                 group.seed_group_ids.append(mapped.seed_group_id)
         return ScenarioRunPlan(atomic_groups=list(groups.values()), seed_groups=list(seeds.values()))
+
+    @staticmethod
+    def build_scenario_hierarchy(
+        *,
+        scenario_result_id: str,
+        scenario_name: str,
+        scenario_version: int,
+        status: ScenarioRunState,
+        snapshot: ScenarioProgressSnapshot,
+        max_nodes: int = _MAX_HIERARCHY_NODES,
+        conversation_stats: Mapping[str, Any] | None = None,
+        overall_counts: ScenarioProgressCounts | None = None,
+        exact_total_errors: int | None = None,
+        exact_total_retries: int | None = None,
+        exact_retrying_attacks_count: int | None = None,
+        exact_group_counts: Mapping[str, ScenarioProgressCounts] | None = None,
+        parent_deltas: Sequence[ScenarioAttackResultDelta] = (),
+        unverified_candidate_ids: set[str] | Sequence[str] | None = None,
+    ) -> ScenarioHierarchyProjection:
+        """
+        Assemble the scenario result hierarchy projection with cycle, depth, and node budget guards.
+
+        Args:
+            scenario_result_id: Persisted scenario run ID.
+            scenario_name: Scenario name.
+            scenario_version: Scenario version.
+            status: Terminal or running state of the scenario.
+            snapshot: Hydrated progress snapshot containing deltas, mapped results, and summary.
+            max_nodes: Maximum nodes to assemble in the hierarchy tree.
+            conversation_stats: Optional mapping of conversation IDs to stats for real message count previews.
+            overall_counts: Optional exact run-wide progress counts overriding truncated snapshot totals.
+            exact_total_errors: Optional exact run-wide error count from database aggregates.
+            exact_total_retries: Optional exact run-wide retry count from database aggregates.
+            exact_retrying_attacks_count: Optional exact run-wide count of retrying attacks from aggregates.
+            exact_group_counts: Optional mapping of atomic group ID to exact counts from aggregates.
+            parent_deltas: Optional orchestration parent deltas to resolve roots and child references
+                beyond delta limits.
+            unverified_candidate_ids: Optional candidates whose parent status could not be verified
+                due to query clipping or budget exhaustion; excluded from root_results.
+
+        Returns:
+            ScenarioHierarchyProjection: Bounded hierarchy projection with diagnostics.
+        """
+        deltas_by_id: dict[str, ScenarioAttackResultDelta] = {d.attack_result_id: d for d in snapshot.deltas}
+        results_by_id: dict[str, ScenarioProgressResult] = {r.attack_result_id: r for r in snapshot.results}
+
+        plan_lookup = ScenarioPlanLookup.from_plan(plan=snapshot.plan)
+        for p_delta in parent_deltas:
+            if p_delta.attack_result_id not in deltas_by_id:
+                deltas_by_id[p_delta.attack_result_id] = p_delta
+            if p_delta.attack_result_id not in results_by_id:
+                results_by_id[p_delta.attack_result_id] = ScenarioProgressReadModel._map_progress_delta(
+                    delta=p_delta, plan_lookup=plan_lookup
+                )
+
+        referenced_child_ids: set[str] = set()
+        for result in results_by_id.values():
+            for child_id in result.child_attack_result_ids:
+                referenced_child_ids.add(child_id)
+
+        # A true root is not referenced as a child by any parent and does not carry an attempt_index
+        # (which designates a child attempt dispatched by an orchestration parent).
+        unverified_set = set(unverified_candidate_ids) if unverified_candidate_ids else set()
+        root_results = [
+            r
+            for r in results_by_id.values()
+            if r.attack_result_id not in referenced_child_ids
+            and r.attempt_index is None
+            and r.attack_result_id not in unverified_set
+        ]
+        root_results.sort(key=lambda r: (r.timestamp, r.attack_result_id))
+
+        visited_ids: set[str] = set()
+        total_nodes_count = 0
+        hierarchy_truncated = bool(snapshot.has_more)
+
+        def _build_node(
+            *,
+            attack_result_id: str,
+            parent_id: str | None,
+            child_index: int | None,
+            active_path: set[str],
+            depth: int,
+        ) -> ScenarioHierarchyNode | None:
+            nonlocal total_nodes_count, hierarchy_truncated
+            delta = deltas_by_id.get(attack_result_id)
+            result = results_by_id.get(attack_result_id)
+            if delta is None or result is None:
+                return None
+
+            if total_nodes_count >= max_nodes:
+                hierarchy_truncated = True
+                return None
+
+            total_nodes_count += 1
+            visited_ids.add(attack_result_id)
+
+            retries = result.retries
+            retries_truncated = False
+            if len(retries) > _MAX_RETRIES_PER_NODE:
+                retries = retries[:_MAX_RETRIES_PER_NODE]
+                retries_truncated = True
+
+            executed_turns = _resolve_executed_turns(delta)
+            outcome_reason = (
+                delta.outcome_reason
+                or delta.attribution_data.get("outcome_reason")
+                or delta.attack_metadata.get("outcome_reason")
+            )
+
+            raw_child_ids = list(result.child_attack_result_ids)
+            child_refs_truncated = len(raw_child_ids) > _MAX_CHILD_REFERENCES
+            bounded_child_ids = raw_child_ids[:_MAX_CHILD_REFERENCES] if child_refs_truncated else raw_child_ids
+
+            orchestration: ScenarioOrchestrationParentSummary | None = None
+            if result.result_role == AttackResultRole.ORCHESTRATION or result.child_attack_result_ids:
+                completion_policy = delta.attack_metadata.get("completion_policy")
+                orchestration = ScenarioOrchestrationParentSummary(
+                    attack_result_id=result.attack_result_id,
+                    result_role=result.result_role,
+                    outcome=result.outcome,
+                    outcome_reason=outcome_reason,
+                    attempt_index=result.attempt_index,
+                    execution_time_ms=result.execution_time_ms,
+                    executed_turns=executed_turns,
+                    completion_policy=str(completion_policy) if completion_policy is not None else None,
+                    child_attack_result_ids=bounded_child_ids,
+                    child_references_truncated=child_refs_truncated,
+                    error_type=result.error_type,
+                    error_message=result.error_message,
+                    timestamp=result.timestamp,
+                    total_retries=result.total_retries,
+                    retries=retries,
+                    retries_truncated=retries_truncated,
+                )
+
+            current_active_path = active_path | {attack_result_id}
+            children: list[ScenarioHierarchyNode] = []
+            unresolved_children: list[str] = []
+
+            for idx, c_id in enumerate(result.child_attack_result_ids):
+                if c_id in current_active_path or depth >= _MAX_HIERARCHY_DEPTH or c_id not in deltas_by_id:
+                    unresolved_children.append(c_id)
+                elif total_nodes_count >= max_nodes:
+                    hierarchy_truncated = True
+                    unresolved_children.append(c_id)
+                else:
+                    child_node = _build_node(
+                        attack_result_id=c_id,
+                        parent_id=attack_result_id,
+                        child_index=idx,
+                        active_path=current_active_path,
+                        depth=depth + 1,
+                    )
+                    if child_node is not None:
+                        children.append(child_node)
+                    else:
+                        unresolved_children.append(c_id)
+
+            conversations: list[ScenarioConversationProjection] = []
+            if result.conversation_id:
+                msg_count: int | None = None
+                messages_truncated: bool = True
+                if conversation_stats is not None and result.conversation_id in conversation_stats:
+                    stat = conversation_stats[result.conversation_id]
+                    c = getattr(stat, "message_count", None)
+                    if c is None and isinstance(stat, int):
+                        c = stat
+                    if isinstance(c, int):
+                        msg_count = c
+                        messages_truncated = c > 0
+
+                conversations.append(
+                    ScenarioConversationProjection(
+                        conversation_id=result.conversation_id,
+                        conversation_type=str(delta.attack_metadata.get("conversation_type") or "main"),
+                        description=str(delta.attack_metadata.get("conversation_description") or "") or None,
+                        message_count=msg_count,
+                        messages=[],
+                        messages_truncated=messages_truncated,
+                    )
+                )
+
+            candidate_ids = (
+                result.related_conversation_ids
+                or getattr(result, "related_conversations", None)
+                or ScenarioProgressReadModel._read_related_conversation_ids(delta=delta)
+            )
+            has_other_conversations = False
+            if candidate_ids:
+                for c in candidate_ids:
+                    cid = getattr(c, "conversation_id", c)
+                    if isinstance(cid, str) and cid and cid != result.conversation_id:
+                        has_other_conversations = True
+                        break
+            if has_other_conversations:
+                node_conversations_count = None
+                node_conversations_truncated = True
+            else:
+                node_conversations_count = len(conversations)
+                node_conversations_truncated = False
+
+            unresolved_refs_truncated = len(unresolved_children) > _MAX_CHILD_REFERENCES
+            bounded_unresolved_children = (
+                unresolved_children[:_MAX_CHILD_REFERENCES] if unresolved_refs_truncated else unresolved_children
+            )
+
+            return ScenarioHierarchyNode(
+                attack_result_id=result.attack_result_id,
+                conversation_id=result.conversation_id or "",
+                parent_attack_result_id=parent_id,
+                child_index=child_index,
+                result_role=result.result_role,
+                attempt_index=result.attempt_index,
+                atomic_attack_name=result.atomic_attack_name,
+                atomic_group_id=result.atomic_group_id,
+                seed_group_id=result.seed_group_id,
+                objective=delta.objective,
+                outcome=result.outcome,
+                outcome_reason=outcome_reason,
+                execution_time_ms=result.execution_time_ms,
+                executed_turns=executed_turns,
+                timestamp=result.timestamp,
+                score=result.score,
+                error_type=result.error_type,
+                error_message=result.error_message,
+                total_retries=result.total_retries,
+                retries=retries,
+                retries_truncated=retries_truncated,
+                child_attack_result_ids=bounded_child_ids,
+                child_references_truncated=child_refs_truncated,
+                children=children,
+                children_truncated=False,
+                unresolved_child_attack_result_ids=bounded_unresolved_children,
+                unresolved_child_references_truncated=unresolved_refs_truncated,
+                conversations=conversations,
+                conversations_count=node_conversations_count,
+                conversations_truncated=node_conversations_truncated,
+                orchestration=orchestration,
+            )
+
+        roots_by_group: dict[str, list[ScenarioHierarchyNode]] = {}
+        for root_result in root_results:
+            if total_nodes_count >= max_nodes:
+                hierarchy_truncated = True
+                break
+            root_node = _build_node(
+                attack_result_id=root_result.attack_result_id,
+                parent_id=None,
+                child_index=None,
+                active_path=set(),
+                depth=0,
+            )
+            if root_node is not None:
+                roots_by_group.setdefault(root_node.atomic_group_id, []).append(root_node)
+
+        # Handle unreached/disconnected components (including detached cycles) in a single linear pass
+        if total_nodes_count < max_nodes:
+            # Nodes that are unverified or descended from unverified candidates can never be emitted as roots
+            unverified_descendants: set[str] = set(unverified_set)
+            unverified_queue = list(unverified_set)
+            while unverified_queue:
+                curr = unverified_queue.pop()
+                res = results_by_id.get(curr)
+                if res:
+                    for cid in res.child_attack_result_ids:
+                        if cid not in unverified_descendants:
+                            unverified_descendants.add(cid)
+                            unverified_queue.append(cid)
+
+            unreached = [
+                r
+                for r in results_by_id.values()
+                if r.attack_result_id not in visited_ids and r.attack_result_id not in unverified_descendants
+            ]
+            unreached.sort(
+                key=lambda r: (
+                    r.timestamp,
+                    r.attack_result_id,
+                )
+            )
+            for next_root in unreached:
+                if total_nodes_count >= max_nodes:
+                    hierarchy_truncated = True
+                    break
+                if next_root.attack_result_id in visited_ids:
+                    continue
+                root_node = _build_node(
+                    attack_result_id=next_root.attack_result_id,
+                    parent_id=None,
+                    child_index=None,
+                    active_path=set(),
+                    depth=0,
+                )
+                if root_node is not None:
+                    roots_by_group.setdefault(root_node.atomic_group_id, []).append(root_node)
+                else:
+                    visited_ids.add(next_root.attack_result_id)
+
+        if not hierarchy_truncated and (
+            any(r.attack_result_id not in visited_ids for r in results_by_id.values()) or bool(unverified_set)
+        ):
+            hierarchy_truncated = True
+
+        for g_roots in roots_by_group.values():
+            g_roots.sort(key=lambda n: n.timestamp)
+
+        groups: list[ScenarioHierarchyGroup] = []
+        seen_group_ids: set[str] = set()
+
+        for ag in snapshot.summary.atomic_groups:
+            seen_group_ids.add(ag.id)
+            group_roots = roots_by_group.get(ag.id, [])
+            if exact_group_counts and ag.id in exact_group_counts:
+                exact_g = exact_group_counts[ag.id]
+                counts = ScenarioProgressCounts(
+                    completed=exact_g.completed,
+                    planned=ag.planned,
+                    succeeded=exact_g.succeeded,
+                    success_percentage=exact_g.success_percentage,
+                    errors=exact_g.errors,
+                    retries=exact_g.retries,
+                    producer_counts=exact_g.producer_counts,
+                    outcomes=exact_g.outcomes,
+                )
+            else:
+                counts = ScenarioProgressCounts(
+                    completed=ag.completed,
+                    planned=ag.planned,
+                    succeeded=ag.succeeded,
+                    success_percentage=ag.success_percentage,
+                    errors=ag.errors,
+                    retries=ag.retries,
+                    producer_counts=ag.producer_counts,
+                    outcomes=ag.outcomes,
+                )
+            groups.append(
+                ScenarioHierarchyGroup(
+                    atomic_group_id=ag.id,
+                    atomic_attack_name=ag.atomic_attack_name,
+                    display_group=ag.display_group,
+                    technique=ag.technique_details,
+                    roots=group_roots,
+                    counts=counts,
+                )
+            )
+
+        for gid, group_roots in roots_by_group.items():
+            if gid not in seen_group_ids:
+                first_root = group_roots[0]
+                group_results = [r for r in snapshot.results if r.atomic_group_id == gid]
+                attempts_by_unit: dict[ResultUnitIdentity, list[ScenarioProgressResult]] = {}
+                for r in group_results:
+                    unit = ResultUnitIdentity(atomic_group_id=r.atomic_group_id, seed_group_id=r.seed_group_id)
+                    attempts_by_unit.setdefault(unit, []).append(r)
+
+                if exact_group_counts and gid in exact_group_counts:
+                    counts = exact_group_counts[gid]
+                else:
+                    counts = count_execution_units(
+                        units=list(attempts_by_unit.keys()),
+                        attempts_by_unit=attempts_by_unit,
+                        planned=None,
+                        producer_attempts=group_results,
+                    )
+                groups.append(
+                    ScenarioHierarchyGroup(
+                        atomic_group_id=gid,
+                        atomic_attack_name=first_root.atomic_attack_name,
+                        display_group=first_root.atomic_attack_name,
+                        technique=None,
+                        roots=group_roots,
+                        counts=counts,
+                    )
+                )
+
+        all_failed_attacks: list[AttackErrorSummary] = []
+        all_attack_retries: list[AttackRetrySummary] = []
+
+        for delta, result in zip(snapshot.deltas, snapshot.results, strict=True):
+            if result.outcome == AttackOutcome.ERROR:
+                all_failed_attacks.append(
+                    AttackErrorSummary(
+                        atomic_attack_name=result.atomic_attack_name,
+                        objective=delta.objective,
+                        error_type=result.error_type,
+                        error_message=result.error_message,
+                        total_retries=result.total_retries,
+                    )
+                )
+            if result.retries or (result.total_retries and result.total_retries > 0):
+                retries_list = list(result.retries) if result.retries else []
+                retries_truncated = False
+                if len(retries_list) > _MAX_RETRIES_PER_NODE:
+                    retries_list = retries_list[:_MAX_RETRIES_PER_NODE]
+                    retries_truncated = True
+                all_attack_retries.append(
+                    AttackRetrySummary(
+                        attack_result_id=result.attack_result_id,
+                        atomic_attack_name=result.atomic_attack_name,
+                        total_retries=result.total_retries,
+                        retries=retries_list,
+                        retries_truncated=retries_truncated,
+                    )
+                )
+
+        failed_attacks_count = (
+            max(len(all_failed_attacks), exact_total_errors)
+            if exact_total_errors is not None
+            else len(all_failed_attacks)
+        )
+        failed_attacks_truncated = bool(
+            (snapshot.has_more and failed_attacks_count > len(all_failed_attacks))
+            or failed_attacks_count > _MAX_DIAGNOSTIC_ITEMS
+        )
+        failed_attacks = all_failed_attacks[:_MAX_DIAGNOSTIC_ITEMS]
+
+        attempts_by_unit: dict[tuple[str, str], list[ScenarioProgressResult]] = {}
+        for r in snapshot.results:
+            attempts_by_unit.setdefault((r.atomic_group_id, r.seed_group_id), []).append(r)
+
+        diagnostic_retries = max(
+            snapshot.summary.overall.retries,
+            ScenarioProgressReadModel.total_retry_pressure(
+                attempts_per_unit=(len(attempts) for attempts in attempts_by_unit.values()),
+                persisted_retries=(r.total_retries for r in snapshot.results),
+            ),
+        )
+        if exact_total_retries is not None:
+            diagnostic_retries = max(diagnostic_retries, exact_total_retries)
+
+        total_persisted_retries = sum(r.total_retries for r in snapshot.results)
+        attack_retries_count = (
+            max(len(all_attack_retries), exact_retrying_attacks_count)
+            if exact_retrying_attacks_count is not None
+            else len(all_attack_retries)
+        )
+        attack_retries_truncated = bool(
+            (
+                snapshot.has_more
+                and (diagnostic_retries > total_persisted_retries or attack_retries_count > len(all_attack_retries))
+            )
+            or attack_retries_count > _MAX_DIAGNOSTIC_ITEMS
+        )
+        attack_retries = all_attack_retries[:_MAX_DIAGNOSTIC_ITEMS]
+
+        diagnostics = ScenarioHierarchyDiagnostics(
+            failed_attacks=failed_attacks,
+            failed_attacks_count=failed_attacks_count,
+            failed_attacks_truncated=failed_attacks_truncated,
+            attack_retries=attack_retries,
+            attack_retries_count=attack_retries_count,
+            attack_retries_truncated=attack_retries_truncated,
+            total_retries=diagnostic_retries,
+        )
+
+        effective_overall_counts = overall_counts if overall_counts is not None else snapshot.summary.overall
+
+        return ScenarioHierarchyProjection(
+            scenario_result_id=scenario_result_id,
+            scenario_name=scenario_name,
+            scenario_version=scenario_version,
+            status=status,
+            groups=groups,
+            overall_counts=effective_overall_counts,
+            diagnostics=diagnostics,
+            truncated=hierarchy_truncated,
+        )
+
+    @staticmethod
+    def build_hierarchy_node(
+        *,
+        delta: ScenarioAttackResultDelta,
+        result: ScenarioProgressResult,
+        children_deltas: Sequence[ScenarioAttackResultDelta] = (),
+        children_results: Sequence[ScenarioProgressResult] = (),
+        conversations: Sequence[ScenarioConversationProjection] | ScenarioAttackResultConversations = (),
+        conversations_count: int | None = None,
+        conversations_truncated: bool = False,
+        children_truncated: bool = False,
+        max_child_references: int = _MAX_CHILD_REFERENCES,
+    ) -> ScenarioHierarchyNode:
+        """
+        Assemble a single hierarchy node with its immediate children and generic conversations.
+
+        Args:
+            delta: The attack result delta for the target node.
+            result: The mapped progress result for the target node.
+            children_deltas: Deltas for immediate children resolved in a single batch.
+            children_results: Mapped results for immediate children.
+            conversations: Generic read-only conversation projections.
+            conversations_count: Total conversations count for this node.
+            conversations_truncated: Flag indicating if conversations list was truncated.
+            children_truncated: Flag indicating if immediate children list was truncated.
+            max_child_references: Maximum number of child references to retain before truncating.
+
+        Returns:
+            ScenarioHierarchyNode: The assembled node.
+        """
+        conv_list: list[ScenarioConversationProjection] = []
+        if isinstance(conversations, ScenarioAttackResultConversations):
+            conv_list = list(conversations.conversations)
+            if conversations_count is None:
+                conversations_count = conversations.total_count
+            conversations_truncated = conversations_truncated or conversations.truncated
+        else:
+            conv_list = list(conversations)
+
+        resolved_conversations_count: int | None = (
+            conversations_count if conversations_count is not None else len(conv_list)
+        )
+
+        children_deltas_by_id = {d.attack_result_id: d for d in children_deltas}
+        children_results_by_id = {r.attack_result_id: r for r in children_results}
+
+        retries = result.retries
+        retries_truncated = False
+        if len(retries) > _MAX_RETRIES_PER_NODE:
+            retries = retries[:_MAX_RETRIES_PER_NODE]
+            retries_truncated = True
+
+        executed_turns = _resolve_executed_turns(delta)
+        outcome_reason = (
+            delta.outcome_reason
+            or delta.attribution_data.get("outcome_reason")
+            or delta.attack_metadata.get("outcome_reason")
+        )
+
+        raw_child_ids = list(result.child_attack_result_ids)
+        child_refs_truncated = len(raw_child_ids) > max_child_references
+        bounded_child_ids = raw_child_ids[:max_child_references] if child_refs_truncated else raw_child_ids
+
+        orchestration: ScenarioOrchestrationParentSummary | None = None
+        if result.result_role == AttackResultRole.ORCHESTRATION or result.child_attack_result_ids:
+            completion_policy = delta.attack_metadata.get("completion_policy")
+            orchestration = ScenarioOrchestrationParentSummary(
+                attack_result_id=result.attack_result_id,
+                result_role=result.result_role,
+                outcome=result.outcome,
+                outcome_reason=outcome_reason,
+                attempt_index=result.attempt_index,
+                execution_time_ms=result.execution_time_ms,
+                executed_turns=executed_turns,
+                completion_policy=str(completion_policy) if completion_policy is not None else None,
+                child_attack_result_ids=bounded_child_ids,
+                child_references_truncated=child_refs_truncated,
+                error_type=result.error_type,
+                error_message=result.error_message,
+                timestamp=result.timestamp,
+                total_retries=result.total_retries,
+                retries=retries,
+                retries_truncated=retries_truncated,
+            )
+
+        children: list[ScenarioHierarchyNode] = []
+        unresolved_children: list[str] = []
+
+        seen_child_ids: set[str] = set()
+        for idx, c_id in enumerate(result.child_attack_result_ids):
+            if c_id == result.attack_result_id or c_id in seen_child_ids or c_id not in children_deltas_by_id:
+                unresolved_children.append(c_id)
+            else:
+                seen_child_ids.add(c_id)
+                c_delta = children_deltas_by_id[c_id]
+                c_res = children_results_by_id[c_id]
+                c_retries = c_res.retries
+                c_retries_truncated = False
+                if len(c_retries) > _MAX_RETRIES_PER_NODE:
+                    c_retries = c_retries[:_MAX_RETRIES_PER_NODE]
+                    c_retries_truncated = True
+
+                c_executed_turns = _resolve_executed_turns(c_delta)
+                c_outcome_reason = (
+                    c_delta.outcome_reason
+                    or c_delta.attribution_data.get("outcome_reason")
+                    or c_delta.attack_metadata.get("outcome_reason")
+                )
+
+                c_child_ids = list(c_res.child_attack_result_ids)
+                c_child_refs_truncated = len(c_child_ids) > max_child_references
+                c_bounded_child_ids = c_child_ids[:max_child_references] if c_child_refs_truncated else c_child_ids
+
+                c_orchestration: ScenarioOrchestrationParentSummary | None = None
+                if c_res.result_role == AttackResultRole.ORCHESTRATION or c_res.child_attack_result_ids:
+                    c_policy = c_delta.attack_metadata.get("completion_policy")
+                    c_orchestration = ScenarioOrchestrationParentSummary(
+                        attack_result_id=c_res.attack_result_id,
+                        result_role=c_res.result_role,
+                        outcome=c_res.outcome,
+                        outcome_reason=c_outcome_reason,
+                        attempt_index=c_res.attempt_index,
+                        execution_time_ms=c_res.execution_time_ms,
+                        executed_turns=c_executed_turns,
+                        completion_policy=str(c_policy) if c_policy is not None else None,
+                        child_attack_result_ids=c_bounded_child_ids,
+                        child_references_truncated=c_child_refs_truncated,
+                        error_type=c_res.error_type,
+                        error_message=c_res.error_message,
+                        timestamp=c_res.timestamp,
+                        total_retries=c_res.total_retries,
+                        retries=c_retries,
+                        retries_truncated=c_retries_truncated,
+                    )
+
+                c_has_related = bool(
+                    c_res.related_conversation_ids
+                    or ScenarioProgressReadModel._read_related_conversation_ids(delta=c_delta)
+                )
+                if c_res.conversation_id or c_has_related:
+                    c_conv_count = None
+                    c_conv_truncated = True
+                else:
+                    c_conv_count = 0
+                    c_conv_truncated = False
+
+                children.append(
+                    ScenarioHierarchyNode(
+                        attack_result_id=c_res.attack_result_id,
+                        conversation_id=c_res.conversation_id or "",
+                        parent_attack_result_id=result.attack_result_id,
+                        child_index=idx,
+                        result_role=c_res.result_role,
+                        attempt_index=c_res.attempt_index,
+                        atomic_attack_name=c_res.atomic_attack_name,
+                        atomic_group_id=c_res.atomic_group_id,
+                        seed_group_id=c_res.seed_group_id,
+                        objective=c_delta.objective,
+                        outcome=c_res.outcome,
+                        outcome_reason=c_outcome_reason,
+                        execution_time_ms=c_res.execution_time_ms,
+                        executed_turns=c_executed_turns,
+                        timestamp=c_res.timestamp,
+                        score=c_res.score,
+                        error_type=c_res.error_type,
+                        error_message=c_res.error_message,
+                        total_retries=c_res.total_retries,
+                        retries=c_retries,
+                        retries_truncated=c_retries_truncated,
+                        child_attack_result_ids=c_bounded_child_ids,
+                        child_references_truncated=c_child_refs_truncated,
+                        children=[],
+                        children_truncated=False,
+                        unresolved_child_attack_result_ids=[],
+                        conversations=[],
+                        conversations_count=c_conv_count,
+                        conversations_truncated=c_conv_truncated,
+                        orchestration=c_orchestration,
+                    )
+                )
+
+        unresolved_refs_truncated = len(unresolved_children) > max_child_references
+        bounded_unresolved_children = (
+            unresolved_children[:max_child_references] if unresolved_refs_truncated else unresolved_children
+        )
+
+        return ScenarioHierarchyNode(
+            attack_result_id=result.attack_result_id,
+            conversation_id=result.conversation_id or "",
+            parent_attack_result_id=None,
+            child_index=None,
+            result_role=result.result_role,
+            attempt_index=result.attempt_index,
+            atomic_attack_name=result.atomic_attack_name,
+            atomic_group_id=result.atomic_group_id,
+            seed_group_id=result.seed_group_id,
+            objective=delta.objective,
+            outcome=result.outcome,
+            outcome_reason=outcome_reason,
+            execution_time_ms=result.execution_time_ms,
+            executed_turns=executed_turns,
+            timestamp=result.timestamp,
+            score=result.score,
+            error_type=result.error_type,
+            error_message=result.error_message,
+            total_retries=result.total_retries,
+            retries=retries,
+            retries_truncated=retries_truncated,
+            child_attack_result_ids=bounded_child_ids,
+            child_references_truncated=child_refs_truncated,
+            children=children,
+            children_truncated=children_truncated,
+            unresolved_child_attack_result_ids=bounded_unresolved_children,
+            unresolved_child_references_truncated=unresolved_refs_truncated,
+            conversations=conv_list,
+            conversations_count=resolved_conversations_count,
+            conversations_truncated=conversations_truncated,
+            orchestration=orchestration,
+        )
