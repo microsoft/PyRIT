@@ -23,13 +23,14 @@ from typing import Any
 
 import regex
 
-from pyrit.converter.puzzled._text import _is_combining_mark, _letter_units
+from pyrit.converter.puzzled._text import _letter_units
 
 logger = logging.getLogger(__name__)
 
 # Scan complete tokens before rejecting numbers, underscores, joiners, or leading marks.
 # Rejecting a whole run prevents a mark from exposing a maskable prefix of an invalid token.
 _WORD_PATTERN = regex.compile(r"[\p{L}\p{M}\p{N}_\u200c\u200d]+")
+_MASKABLE_WORD_PATTERN = regex.compile(r"\p{L}[\p{L}\p{M}]*")
 
 
 def _letter_count(word: str) -> int:
@@ -89,7 +90,8 @@ def _iter_words(prompt: str) -> Iterator[_Word]:
     Keep only runs that start with a letter and contain only letters and attached marks.
     This accepts pointed scripts and NFD accents without exposing fragments of tokens
     such as "h4ck3r", "abc²", or a marked word followed by a digit or underscore.
-    Words containing joiners remain unmaskable.
+    Words containing joiners remain unmaskable. Scanning and validation use the same
+    Unicode properties.
 
     Args:
         prompt (str): The prompt to scan.
@@ -99,7 +101,7 @@ def _iter_words(prompt: str) -> Iterator[_Word]:
     """
     for match in _WORD_PATTERN.finditer(prompt):
         word = match.group()
-        if not word[0].isalpha() or not all(char.isalpha() or _is_combining_mark(char) for char in word):
+        if not _MASKABLE_WORD_PATTERN.fullmatch(word):
             continue
         yield _Word(text=word, start=match.start(), end=match.end())
 

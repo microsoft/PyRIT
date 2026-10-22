@@ -22,8 +22,9 @@ from pyrit.prompt_target import (
     TargetRequirements,
 )
 from pyrit.scenario import DatasetAttackConfiguration, DatasetConfiguration, IncompatibleTechniqueError
+from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.scenarios.airt.scam import Scam, ScamTechnique
-from pyrit.score import TrueFalseCompositeScorer
+from pyrit.score import SubStringScorer, TrueFalseCompositeScorer
 from tests.unit.mocks import MockPromptTarget
 
 SEED_DATASETS_PATH = pathlib.Path(DATASETS_PATH) / "seed_datasets" / "local" / "airt"
@@ -128,6 +129,25 @@ def mock_adversarial_target() -> MagicMock:
 
 
 FIXTURES = ["patch_central_database", "mock_runtime_env"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_scam_construction_uses_context_without_resolved_instance_state() -> None:
+    target = MockPromptTarget()
+    groups = [AttackSeedGroup(seeds=[SeedObjective(value="objective")])]
+    scenario = Scam(objective_scorer=SubStringScorer(substring="yes"), adversarial_chat=MockPromptTarget())
+    scenario.set_params_from_args(args={})
+    context = ScenarioContext(
+        objective_target=target,
+        scenario_techniques=[ScamTechnique("persuasive_rta")],
+        dataset_config=DatasetAttackConfiguration(seed_groups=groups),
+        seed_groups=groups,
+        memory_labels={"source": "context"},
+    )
+    assert scenario._objective_target is None
+    [atomic] = await scenario._build_atomic_attacks_async(context=context)
+    assert atomic.attack_technique.attack.get_objective_target() is target
+    assert atomic._memory_labels == context.memory_labels
 
 
 class TestScamTechniqueEnum:

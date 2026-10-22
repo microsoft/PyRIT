@@ -367,7 +367,7 @@ export default function ChatWindow({
   const [isFindingDialogOpen, setIsFindingDialogOpen] = useState(false)
   const outcomeButtonRef = useRef<HTMLButtonElement>(null)
   const [temperature, setTemperature] = useState('')
-  const [temperatureExplanationAttackId, setTemperatureExplanationAttackId] = useState<string | null>(null)
+  const [temperatureExplanationId, setTemperatureExplanationId] = useState<string | null>(null)
   const [temperatureAttackId, setTemperatureAttackId] = useState(attackResultId)
   if (temperatureAttackId !== attackResultId) {
     setTemperatureAttackId(attackResultId)
@@ -1694,6 +1694,10 @@ export default function ChatWindow({
   const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
   const temperatureTarget = editDraft !== null ? editorTarget : activeTarget
   const temperatureReadOnly = editDraft === null && Boolean(attackResultId) && targetResolutionStatus !== 'unbound'
+  const temperatureExplanation = temperatureTarget && !temperatureTarget.supports_temperature_override
+    ? temperatureTarget.reconstruction_error ?? 'This target does not support a separate temperature setting.'
+    : temperatureReadOnly ? 'Temperature can only be modified in a new attack' : ''
+  const temperatureExplanationContext = attackResultId ?? temperatureTarget?.identifier.hash
   const unboundHistoryError = targetResolutionStatus === 'unbound' && activeTarget
     ? historyReplayDisabledReason(activeTarget, messages) : undefined
   const repeatDisabledReason = converters.repeatDisabledReason
@@ -1863,19 +1867,17 @@ export default function ChatWindow({
         </div>
         {temperatureTarget && (
           <Field label="Temperature:" orientation="horizontal" size="small" className={styles.temperatureField}
-            hint={temperatureReadOnly ? undefined
-              : temperatureTarget.supports_temperature_override
-                ? editDraft !== null ? 'Changes apply only to a new attack.' : undefined
-                : temperatureTarget.reconstruction_error ?? 'This target does not support a separate temperature setting.'}>
-            <Tooltip content="Temperature can only be modified in a new attack" relationship="description"
-              visible={temperatureReadOnly && temperatureExplanationAttackId === attackResultId}
+            hint={!temperatureReadOnly && temperatureTarget.supports_temperature_override && editDraft !== null
+              ? 'Changes apply only to a new attack.' : undefined}>
+            <Tooltip content={temperatureExplanation} relationship="description"
+              visible={Boolean(temperatureExplanation) && temperatureExplanationId === temperatureExplanationContext}
               onVisibleChange={(_, data) => {
-                setTemperatureExplanationAttackId(temperatureReadOnly && data.visible ? attackResultId : null)
+                setTemperatureExplanationId(data.visible ? temperatureExplanationContext ?? null : null)
               }}>
               <span
-                tabIndex={temperatureReadOnly && (isSending || isSavingEditor || !temperatureTarget.supports_temperature_override) ? 0 : undefined}
+                tabIndex={!temperatureTarget.supports_temperature_override || temperatureReadOnly && (isSending || isSavingEditor) ? 0 : undefined}
                 onPointerDownCapture={() => {
-                  if (temperatureReadOnly) setTemperatureExplanationAttackId(attackResultId)
+                  if (temperatureReadOnly) setTemperatureExplanationId(temperatureExplanationContext ?? null)
                 }}>
                 <Input type="number" min={0} max={2} step={0.1} size="small" className={styles.temperatureInput}
                   aria-label="Temperature"

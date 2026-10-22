@@ -176,7 +176,7 @@ class TAPAttackScoringConfig(AttackScoringConfig):
         if refusal_scorer is not None and not isinstance(refusal_scorer, TrueFalseScorer):
             raise ValueError("Refusal scorer must be a TrueFalseScorer")
 
-        self.objective_scorer: FloatScaleThresholdScorer = objective_scorer
+        self.objective_scorer = objective_scorer
         self.refusal_scorer = refusal_scorer
         self.auxiliary_scorers = auxiliary_scorers or []
         self.use_score_as_feedback = use_score_as_feedback

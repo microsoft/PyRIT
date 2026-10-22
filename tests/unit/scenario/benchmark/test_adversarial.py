@@ -993,7 +993,11 @@ class TestGetAtomicAttacksCrossProduct:
         ) as build:
             await _build_atomic_attacks(bench)
 
-        assert build.call_args.kwargs["technique_converters"] is converters
+        forwarded = build.call_args.kwargs["technique_converters"]
+        assert forwarded == converters
+        assert forwarded is not converters
+        assert forwarded["red_teaming"] is not converters["red_teaming"]
+        assert forwarded["red_teaming"][0] is converters["red_teaming"][0]
 
     async def test_atomic_attack_name_format_is_technique__target_dataset(self):
         """Name format: ``{technique}__{target}_{dataset}`` (preserves VERSION=2 cache key shape)."""
