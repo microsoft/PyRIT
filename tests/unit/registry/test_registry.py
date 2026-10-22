@@ -15,11 +15,12 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from threading import Event
 from types import ModuleType
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.registry.registry import Registry, _get_metadata_value, _matches_filters
+from pyrit.registry.registry import ParamBagRegistry, Registry, SupportsParamBag, _get_metadata_value, _matches_filters
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 
@@ -66,6 +67,38 @@ class WidgetRegistry(Registry[object, RegistryMetadata]):
 
     def _metadata_class(self) -> type[RegistryMetadata]:
         return RegistryMetadata
+
+
+class BagRegistry(ParamBagRegistry[SupportsParamBag, RegistryMetadata]):
+    def _metadata_class(self) -> type[RegistryMetadata]:
+        return RegistryMetadata
+
+
+@pytest.mark.parametrize("params", [None, {}, {"mode": "slow"}])
+def test_configure_prefix_distinguishes_absent_and_empty_params(params: dict[str, Any] | None) -> None:
+    registry = BagRegistry()
+    instance = MagicMock(spec=SupportsParamBag)
+    with patch.object(registry, "create_instance", return_value=instance) as create:
+        assert registry._create_and_configure("item", params=params, constructor_kwargs={"size": 2}) is instance
+    create.assert_called_once_with("item", size=2)
+    if params is None:
+        instance.set_params_from_args.assert_not_called()
+    else:
+        instance.set_params_from_args.assert_called_once_with(args=params)
+
+
+@pytest.mark.parametrize("during_configuration", [False, True])
+def test_configure_prefix_propagates_errors(during_configuration: bool) -> None:
+    registry = BagRegistry()
+    instance = MagicMock(spec=SupportsParamBag)
+    error = ValueError("invalid configuration")
+    if during_configuration:
+        instance.set_params_from_args.side_effect = error
+    with patch.object(
+        registry, "create_instance", return_value=instance, side_effect=None if during_configuration else error
+    ):
+        with pytest.raises(ValueError, match="invalid configuration"):
+            registry._create_and_configure("item", params={})
 
 
 class CoordinatedWidgetRegistry(WidgetRegistry):

@@ -1,7 +1,44 @@
 import type {
-  DatasetFetchPolicy, DatasetInfo, ScenarioDatasetOptions, ScenarioDatasetRequest,
-  ScenarioDatasetSettings, ScenarioDatasetSourceInput, ScenarioDatasetSourceSettings,
+  DatasetFetchPolicy,
+  DatasetInfo,
+  RegisteredScenario,
+  ScenarioDatasetOptions,
+  ScenarioDatasetRequest,
+  ScenarioDatasetSettings,
+  ScenarioDatasetSourceInput,
+  ScenarioDatasetSourceSettings,
 } from '@/types'
+
+/**
+ * The scenario's declared dataset defaults, or a stand-in built from its legacy fields.
+ *
+ * A run's estimate projects these per selection; a form with no estimate in hand (the
+ * preset editor) still needs the same baseline, so both read it from here rather than
+ * each carrying its own copy of the fallback.
+ */
+export function scenarioDatasetDefaults(scenario: RegisteredScenario): ScenarioDatasetSettings {
+  return scenario.dataset_defaults ?? {
+    sources: scenario.default_datasets.map(
+      (name) => ({ name, max_size: 'all', fetch: 'if_missing', configured_provider: false }),
+    ),
+    max_per_dataset: 'all',
+    max_total: scenario.default_run_size.dataset_limit.value ?? 'all',
+    fetch: 'if_missing',
+    filters: {},
+  }
+}
+
+/** The scenario's declared dataset capabilities, or a permissive stand-in when it declares none. */
+export function scenarioDatasetOptions(scenario: RegisteredScenario): ScenarioDatasetOptions {
+  return scenario.dataset_options ?? {
+    mode: 'any',
+    allowed_names: [],
+    per_dataset_limit: true,
+    total_limit: scenario.default_run_size.dataset_limit.state !== 'not_applicable',
+    supports_overrides: true,
+    filters: true,
+  }
+}
 
 function explicitDatasetPolicy(value: ScenarioDatasetRequest['fetch']): DatasetFetchPolicy | undefined {
   return value === 'never' || value === 'if_missing' || value === 'always' ? value : undefined

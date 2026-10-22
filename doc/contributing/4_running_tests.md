@@ -78,6 +78,13 @@ CI workers. These are deadlock backstops, not expected runtimes. Production dead
 are unchanged. Deadline and cancellation tests use explicit controls and keep their
 separate timing assertions.
 
+Async correctness tests can use `TEST_WATCHDOG_SECONDS` from `tests/unit/async_utils.py`
+for a finite 300-second deadlock backstop. Tests that start background tasks must
+release any test-controlled waits and join their tasks before removing mocks or
+disposing fixtures, including when a watchdog expires. When waiting for a task to
+signal readiness, also watch for that task finishing so an early exception is not
+hidden by the readiness timeout.
+
 The discovery provider-state test and Copilot cancellation-test startup use the
 shared `TEST_WATCHDOG_SECONDS` backstop in `tests/unit/async_utils.py`. Discovery
 timeout coverage expires the real cancellation path only after the request starts.
@@ -90,9 +97,22 @@ finalization. Expiring the test's wait does not cancel the send; its lifecycle o
 still drains pending work before mocks and memory close. Explicit zero-timeout tests
 check this ownership without requiring the send to finish quickly.
 
+The scorer-validation cancellation test keeps its five-second observer around
+scorer draining and native SQLite connection cleanup. ERROR-result persistence is
+held behind an event until those assertions pass, then awaited separately with the
+finite completion watchdog. The blocked validation read is not released to make
+either step finish.
+
 For scenario correctness tests, wait for the owned task to finish, including
 persistence and scheduler handoff. Use events to control concurrent steps and a
 finite test watchdog to detect deadlocks, not short per-step latency limits.
+Catalog queue-admission and configured-estimate independence tests use the existing
+estimate watchdog fixture. Observe the queued semaphore acquisition before checking
+that its execution deadline has not started, and verify configured completion while
+catalog capacity is still occupied. Check each deadline against completed admissions
+and spy on catalog acquisition during configured work to assert independence directly.
+Release gates and drain owned requests and service workers in `finally`, including
+when a readiness assertion fails.
 For frontend modal tests, use fake timers and wait for an accessible control on
 the destination page. A route change does not mean that modal cleanup has restored
 background accessibility.

@@ -114,7 +114,13 @@ export default function LabelsBar({
   const placeholderKeys = Object.entries(labels)
     .filter(([key, value]) => isDummyValue(key, value))
     .map(([key]) => key)
-  const hasDummyValues = placeholderKeys.length > 0
+  const warnings = [
+    ...(placeholderKeys.length > 0
+      ? [`Set ${placeholderKeys.join(' and ')} in the bar. ${
+        placeholderKeys.length === 1 ? 'The current value is a placeholder.' : 'The current values are placeholders.'
+      }`] : []),
+    ...(operation.status === 'empty' ? ['Set operation in the bar. No operation is selected.'] : []),
+  ]
   const operatorTip = operatorReadOnly ? 'Derived from your signed-in account'
     : isDummyValue('operator', labels.operator ?? '') ? 'Placeholder value — type to change' : null
 
@@ -497,7 +503,7 @@ export default function LabelsBar({
 
   return (
     <div className={styles.root} data-testid="labels-bar" ref={rootRef}>
-      {hasDummyValues && (
+      {warnings.length > 0 && (
         <Popover>
           <PopoverTrigger disableButtonEnhancement>
             <Button
@@ -512,13 +518,7 @@ export default function LabelsBar({
           <PopoverSurface className={styles.popover} aria-label="Warnings">
             <div className={styles.popoverSurface}>
               <Text as="h2" weight="semibold" size={300}>Warnings</Text>
-              <Text size={200}>
-                {`Set ${placeholderKeys.join(' and ')} in the bar. ${
-                  placeholderKeys.length === 1
-                    ? 'The current value is a placeholder.'
-                    : 'The current values are placeholders.'
-                }`}
-              </Text>
+              {warnings.map((warning: string) => <Text key={warning} size={200}>{warning}</Text>)}
             </div>
           </PopoverSurface>
         </Popover>

@@ -138,7 +138,7 @@ class Divergence(Scenario):
             list[AtomicAttack]: Word populations sharing one scorer and attack technique.
         """
         scorer = cast("TrueFalseScorer", self._objective_scorer)
-        converters = self._technique_converters.get("repeat", [])
+        converters = context.technique_converters.get("repeat", [])
         technique = self._REPEAT_FACTORY.create(
             objective_target=context.objective_target,
             attack_scoring_config=AttackScoringConfig(objective_scorer=scorer),
