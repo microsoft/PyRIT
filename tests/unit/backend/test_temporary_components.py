@@ -6,7 +6,7 @@
 import asyncio
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Awaitable, Iterator
 from types import ModuleType
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -46,6 +46,7 @@ from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import HuggingFaceChatTarget, OpenAIChatTarget
 from pyrit.prompt_target.common.utils import _get_rate_limit_lock
 from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
+from unit.async_utils import TEST_WATCHDOG_SECONDS, drain_tasks_async
 from unit.backend.mocks import _settle_send_async
 
 
@@ -429,26 +430,76 @@ class TestTemporaryComponents:
         finally:
             await target.cleanup_target_async()
 
+    @pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
     async def test_cancelled_thread_build_releases_component_async(self) -> None:
-        started = threading.Event()
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
         finish = threading.Event()
         component = source_target()
         cleanup = AsyncMock()
 
         def build() -> OpenAIChatTarget:
-            started.set()
-            assert finish.wait(timeout=5)
+            loop.call_soon_threadsafe(started.set)
+            finish.wait()
             return component
 
-        with patch.object(component, "cleanup_target_async", cleanup):
-            task = asyncio.create_task(construct_component_async(build))
-            assert await asyncio.to_thread(started.wait, 5)
-            task.cancel()
-            finish.set()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            cleanup.assert_awaited_once()
-        await component.cleanup_target_async()
+        try:
+            with patch.object(component, "cleanup_target_async", cleanup):
+                task = asyncio.create_task(construct_component_async(build))
+                try:
+                    await asyncio.wait_for(started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+                    task.cancel()
+                    finish.set()
+                    with pytest.raises(asyncio.CancelledError):
+                        await task
+                    cleanup.assert_awaited_once()
+                finally:
+                    finish.set()
+                    if not task.done():
+                        task.cancel()
+                    await drain_tasks_async(task)
+        finally:
+            await component.cleanup_target_async()
+
+    @pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
+    @pytest.mark.parametrize(
+        ("failure", "cancel_during_drain"),
+        [
+            (AssertionError, False),
+            (TimeoutError, False),
+            (asyncio.CancelledError, False),
+            (asyncio.CancelledError, True),
+        ],
+    )
+    async def test_thread_build_drains_worker_on_early_failure_async(
+        self, *, failure: type[BaseException], cancel_during_drain: bool
+    ) -> None:
+        wait_for = asyncio.wait_for
+        drain = drain_tasks_async
+        component = source_target()
+        pending = asyncio.all_tasks()
+
+        async def fail_after_readiness_async(awaitable: Awaitable[object], *, timeout: float) -> None:
+            await wait_for(awaitable, timeout=timeout)
+            raise failure("injected failure after worker readiness")
+
+        async def interrupt_drain_async(*tasks: asyncio.Task[OpenAIChatTarget]) -> None:
+            if cancel_during_drain:
+                task = asyncio.current_task()
+                assert task is not None
+                asyncio.get_running_loop().call_soon(task.cancel, "cleanup cancellation")
+            await drain(*tasks)
+
+        with (
+            patch(f"{__name__}.source_target", return_value=component),
+            patch.object(asyncio, "wait_for", side_effect=fail_after_readiness_async),
+            patch(f"{__name__}.drain_tasks_async", side_effect=interrupt_drain_async),
+        ):
+            with pytest.raises(failure, match="injected failure"):
+                await self.test_cancelled_thread_build_releases_component_async()
+
+        assert component._client.is_closed()
+        assert asyncio.all_tasks() == pending
 
     async def test_attack_binding_persists_and_same_attack_is_immutable_async(
         self, sqlite_instance: SQLiteMemory

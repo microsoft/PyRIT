@@ -5,11 +5,12 @@ import asyncio
 import json
 import threading
 from asyncio import Task
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Coroutine
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS, drain_tasks_async
 
 from pyrit.models import (
     Message,
@@ -40,15 +41,18 @@ async def test_send_cancellation_does_not_cancel_shared_model_load(patch_central
     shared_load = asyncio.ensure_future(load_model_async())
     target.load_model_and_tokenizer_task = shared_load
     wait_task = asyncio.ensure_future(target._wait_for_model_and_tokenizer_async())
-    await load_started.wait()
-
-    wait_task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await wait_task
-
-    assert not shared_load.cancelled()
-    load_release.set()
-    await shared_load
+    try:
+        await asyncio.wait_for(load_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+        wait_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await wait_task
+        assert not shared_load.cancelled()
+    finally:
+        load_release.set()
+        if not wait_task.done():
+            wait_task.cancel()
+        await drain_tasks_async(wait_task, shared_load)
+    shared_load.result()
     await target._wait_for_model_and_tokenizer_async()
 
 
@@ -210,7 +214,8 @@ async def test_load_model_and_tokenizer():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-async def test_load_model_and_tokenizer_keeps_event_loop_schedulable(patch_central_database):
+@pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
+async def test_load_model_and_tokenizer_keeps_event_loop_schedulable(patch_central_database) -> None:
     """The blocking `transformers` import/model load must run off the event loop.
 
     `_load_from_path` is patched to block a real OS thread (via `threading.Event`) rather than
@@ -221,12 +226,13 @@ async def test_load_model_and_tokenizer_keeps_event_loop_schedulable(patch_centr
     try:
         hf_chat = HuggingFaceChatTarget(model_id="test_model_event_loop_probe", use_cuda=False)
 
-        load_started = threading.Event()
+        loop = asyncio.get_running_loop()
+        load_started = asyncio.Event()
         load_release = threading.Event()
 
         def _blocking_load(path: str, **kwargs: Any) -> None:
-            load_started.set()
-            assert load_release.wait(timeout=5), "load_release was never set; test would hang otherwise"
+            loop.call_soon_threadsafe(load_started.set)
+            load_release.wait()
             hf_chat.tokenizer = MagicMock()
             hf_chat.model = MagicMock()
             hf_chat.model.to.return_value = hf_chat.model
@@ -234,26 +240,60 @@ async def test_load_model_and_tokenizer_keeps_event_loop_schedulable(patch_centr
         with patch.object(hf_chat, "_load_from_path", side_effect=_blocking_load) as mock_load_from_path:
             load_task = asyncio.ensure_future(hf_chat.load_model_and_tokenizer_async())
 
-            # Confirm the blocking call actually started on a worker thread before probing.
-            assert await asyncio.to_thread(load_started.wait, 5)
-            assert not load_task.done()
+            try:
+                await asyncio.wait_for(load_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+                assert not load_task.done()
 
-            # While the worker thread is parked on `load_release`, the event loop itself must
-            # still be able to schedule and complete unrelated work. If `_load_from_path` (and the
-            # `transformers` import it performs) ran directly on the event loop, this would never
-            # get a chance to run and `asyncio.wait_for` would raise `TimeoutError`.
-            probe_result = await asyncio.wait_for(asyncio.sleep(0, result="probe-completed"), timeout=2)
-            assert probe_result == "probe-completed"
-            assert not load_task.done()
-
-            load_release.set()
-            await asyncio.wait_for(load_task, timeout=5)
+                probe_result = await asyncio.wait_for(
+                    asyncio.sleep(0, result="probe-completed"), timeout=TEST_WATCHDOG_SECONDS
+                )
+                assert probe_result == "probe-completed"
+                assert not load_task.done()
+            finally:
+                load_release.set()
+                await drain_tasks_async(load_task)
+            load_task.result()
 
         mock_load_from_path.assert_called_once()
         assert hf_chat.model is not None
         assert hf_chat.tokenizer is not None
     finally:
         HuggingFaceChatTarget.enable_cache()
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
+@pytest.mark.parametrize(
+    ("failure", "cancel_during_drain"),
+    [(AssertionError, False), (TimeoutError, False), (asyncio.CancelledError, False), (asyncio.CancelledError, True)],
+)
+async def test_model_load_drains_worker_on_early_failure(
+    *, patch_central_database: Any, failure: type[BaseException], cancel_during_drain: bool
+) -> None:
+    wait_for = asyncio.wait_for
+    drain = drain_tasks_async
+    pending = asyncio.all_tasks()
+
+    async def fail_after_readiness_async(awaitable: Awaitable[object], *, timeout: float) -> None:
+        await wait_for(awaitable, timeout=timeout)
+        raise failure("injected failure after worker readiness")
+
+    async def interrupt_drain_async(*tasks: asyncio.Task[None]) -> None:
+        if cancel_during_drain:
+            task = asyncio.current_task()
+            assert task is not None
+            asyncio.get_running_loop().call_soon(task.cancel, "cleanup cancellation")
+        await drain(*tasks)
+
+    with (
+        patch.object(asyncio, "wait_for", side_effect=fail_after_readiness_async),
+        patch(f"{__name__}.drain_tasks_async", side_effect=interrupt_drain_async),
+    ):
+        with pytest.raises(failure, match="injected failure"):
+            await test_load_model_and_tokenizer_keeps_event_loop_schedulable(patch_central_database)
+
+    assert HuggingFaceChatTarget._cache_enabled
+    assert asyncio.all_tasks() == pending
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")

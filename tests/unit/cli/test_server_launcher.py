@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import threading
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -20,6 +21,7 @@ import pytest
 
 from pyrit.cli import _server_launcher
 from pyrit.cli._server_launcher import ServerLauncher
+from unit.async_utils import TEST_WATCHDOG_SECONDS, drain_tasks_async
 
 
 @pytest.fixture(autouse=True)
@@ -269,8 +271,10 @@ def test_build_server_launch_plan_rejects_invalid_timeout(startup_timeout):
         )
 
 
+@pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
 async def test_start_async_cancellation_during_spawn_terminates_spawned_process():
-    started = threading.Event()
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
     release = threading.Event()
     launcher = ServerLauncher()
     fake_proc = MagicMock()
@@ -278,8 +282,8 @@ async def test_start_async_cancellation_during_spawn_terminates_spawned_process(
     fake_proc.poll.return_value = None
 
     def delayed_spawn(**_kwargs: object) -> MagicMock:
-        started.set()
-        release.wait(timeout=5)
+        loop.call_soon_threadsafe(started.set)
+        release.wait()
         return fake_proc
 
     with (
@@ -288,11 +292,17 @@ async def test_start_async_cancellation_during_spawn_terminates_spawned_process(
         patch.object(_server_launcher, "_terminate_process_tree", return_value=True) as stop_tree_mock,
     ):
         spawn_task = asyncio.create_task(launcher.start_async(host="localhost", port=8000, startup_timeout=60))
-        assert await asyncio.to_thread(started.wait, 5)
-        spawn_task.cancel()
-        release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await spawn_task
+        try:
+            await asyncio.wait_for(started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            spawn_task.cancel()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await spawn_task
+        finally:
+            release.set()
+            if not spawn_task.done():
+                spawn_task.cancel()
+            await drain_tasks_async(spawn_task)
 
     stop_tree_mock.assert_called_once_with(process=fake_proc)
     assert launcher.pid is None
@@ -456,28 +466,35 @@ async def test_start_async_cancellation_cleans_up_spawned_process():
         patch.object(_server_launcher, "_terminate_process_tree", return_value=True) as stop_tree_mock,
     ):
         startup_task = asyncio.create_task(launcher.start_async(host="localhost", port=8000, startup_timeout=60))
-        await probe_started.wait()
-        startup_task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await startup_task
+        try:
+            await asyncio.wait_for(probe_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            startup_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await startup_task
+        finally:
+            if not startup_task.done():
+                startup_task.cancel()
+            await drain_tasks_async(startup_task)
 
     stop_tree_mock.assert_called_once_with(process=fake_proc)
     assert launcher.pid is None
     assert not _server_launcher._pid_file_path(port=8000).exists()
 
 
+@pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
 async def test_start_async_repeated_cancellation_waits_for_pid_write_before_cleanup():
+    loop = asyncio.get_running_loop()
     launcher = ServerLauncher()
     fake_proc = MagicMock()
     fake_proc.pid = 99
     fake_proc.poll.return_value = None
-    write_started = threading.Event()
+    write_started = asyncio.Event()
     release_write = threading.Event()
     write_finished = threading.Event()
 
     def delayed_write(*, host: str, port: int, pid: int) -> None:
-        write_started.set()
-        release_write.wait(timeout=5)
+        loop.call_soon_threadsafe(write_started.set)
+        release_write.wait()
         _server_launcher._pid_file_path(port=port).parent.mkdir(parents=True, exist_ok=True)
         _server_launcher._pid_file_path(port=port).write_text(
             json.dumps({"host": host, "port": port, "pid": pid}),
@@ -492,16 +509,22 @@ async def test_start_async_repeated_cancellation_waits_for_pid_write_before_clea
         patch.object(_server_launcher, "_terminate_process_tree", return_value=True) as stop_tree_mock,
     ):
         startup_task = asyncio.create_task(launcher.start_async(host="localhost", port=8000, startup_timeout=60))
-        assert await asyncio.to_thread(write_started.wait, 5)
-        startup_task.cancel()
-        await asyncio.sleep(0)
-        assert not startup_task.done()
-        startup_task.cancel()
-        await asyncio.sleep(0)
-        assert not startup_task.done()
-        release_write.set()
-        with pytest.raises(asyncio.CancelledError):
-            await startup_task
+        try:
+            await asyncio.wait_for(write_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            startup_task.cancel()
+            await asyncio.sleep(0)
+            assert not startup_task.done()
+            startup_task.cancel()
+            await asyncio.sleep(0)
+            assert not startup_task.done()
+            release_write.set()
+            with pytest.raises(asyncio.CancelledError):
+                await startup_task
+        finally:
+            release_write.set()
+            if not startup_task.done():
+                startup_task.cancel()
+            await drain_tasks_async(startup_task)
 
     assert write_finished.is_set()
     stop_tree_mock.assert_called_once_with(process=fake_proc)
@@ -509,13 +532,15 @@ async def test_start_async_repeated_cancellation_waits_for_pid_write_before_clea
     assert not _server_launcher._pid_file_path(port=8000).exists()
 
 
+@pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
 async def test_start_async_repeated_cancellation_during_cleanup_stops_process_once():
+    loop = asyncio.get_running_loop()
     launcher = ServerLauncher()
     fake_proc = MagicMock(spec=subprocess.Popen)
     fake_proc.pid = 99
     fake_proc.poll.return_value = None
     probe_started = asyncio.Event()
-    cleanup_started = threading.Event()
+    cleanup_started = asyncio.Event()
     release_cleanup = threading.Event()
     probe_calls = 0
 
@@ -529,8 +554,8 @@ async def test_start_async_repeated_cancellation_during_cleanup_stops_process_on
         return False
 
     def delayed_terminate(*, process: subprocess.Popen[bytes]) -> bool:
-        cleanup_started.set()
-        release_cleanup.wait(timeout=5)
+        loop.call_soon_threadsafe(cleanup_started.set)
+        release_cleanup.wait()
         return True
 
     with (
@@ -539,30 +564,38 @@ async def test_start_async_repeated_cancellation_during_cleanup_stops_process_on
         patch.object(_server_launcher, "_terminate_process_tree", side_effect=delayed_terminate) as stop_tree_mock,
     ):
         startup_task = asyncio.create_task(launcher.start_async(host="localhost", port=8000, startup_timeout=60))
-        await probe_started.wait()
-        startup_task.cancel()
-        assert await asyncio.to_thread(cleanup_started.wait, 5)
-        startup_task.cancel()
-        await asyncio.sleep(0)
-        startup_task.cancel()
-        await asyncio.sleep(0)
-        assert not startup_task.done()
-        release_cleanup.set()
-        with pytest.raises(asyncio.CancelledError):
-            await startup_task
+        try:
+            await asyncio.wait_for(probe_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            startup_task.cancel()
+            await asyncio.wait_for(cleanup_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            startup_task.cancel()
+            await asyncio.sleep(0)
+            startup_task.cancel()
+            await asyncio.sleep(0)
+            assert not startup_task.done()
+            release_cleanup.set()
+            with pytest.raises(asyncio.CancelledError):
+                await startup_task
+        finally:
+            release_cleanup.set()
+            if not startup_task.done():
+                startup_task.cancel()
+            await drain_tasks_async(startup_task)
 
     stop_tree_mock.assert_called_once_with(process=fake_proc)
     assert launcher.pid is None
     assert not _server_launcher._pid_file_path(port=8000).exists()
 
 
+@pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
 async def test_start_async_repeated_cancellation_reports_failed_cleanup(caplog):
+    loop = asyncio.get_running_loop()
     launcher = ServerLauncher()
     fake_proc = MagicMock(spec=subprocess.Popen)
     fake_proc.pid = 99
     fake_proc.poll.return_value = None
     probe_started = asyncio.Event()
-    cleanup_started = threading.Event()
+    cleanup_started = asyncio.Event()
     release_cleanup = threading.Event()
     probe_calls = 0
 
@@ -576,8 +609,8 @@ async def test_start_async_repeated_cancellation_reports_failed_cleanup(caplog):
         return False
 
     def delayed_failed_terminate(*, process: subprocess.Popen[bytes]) -> bool:
-        cleanup_started.set()
-        release_cleanup.wait(timeout=5)
+        loop.call_soon_threadsafe(cleanup_started.set)
+        release_cleanup.wait()
         return False
 
     with (
@@ -586,20 +619,84 @@ async def test_start_async_repeated_cancellation_reports_failed_cleanup(caplog):
         patch.object(_server_launcher, "_terminate_process_tree", side_effect=delayed_failed_terminate),
     ):
         startup_task = asyncio.create_task(launcher.start_async(host="localhost", port=8000, startup_timeout=60))
-        await probe_started.wait()
-        startup_task.cancel()
-        assert await asyncio.to_thread(cleanup_started.wait, 5)
-        startup_task.cancel()
-        await asyncio.sleep(0)
-        startup_task.cancel()
-        await asyncio.sleep(0)
-        assert not startup_task.done()
-        release_cleanup.set()
-        with pytest.raises(asyncio.CancelledError):
-            await startup_task
+        try:
+            await asyncio.wait_for(probe_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            startup_task.cancel()
+            await asyncio.wait_for(cleanup_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            startup_task.cancel()
+            await asyncio.sleep(0)
+            startup_task.cancel()
+            await asyncio.sleep(0)
+            assert not startup_task.done()
+            release_cleanup.set()
+            with pytest.raises(asyncio.CancelledError):
+                await startup_task
+        finally:
+            release_cleanup.set()
+            if not startup_task.done():
+                startup_task.cancel()
+            await drain_tasks_async(startup_task)
 
     assert "Failed to stop backend launcher process 99" in caplog.text
     assert launcher.pid == 99
+
+
+@pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
+@pytest.mark.parametrize(
+    ("failure", "cancel_during_drain"),
+    [(AssertionError, False), (TimeoutError, False), (asyncio.CancelledError, False), (asyncio.CancelledError, True)],
+)
+@pytest.mark.parametrize(
+    ("test_case", "worker_wait"),
+    [
+        (test_start_async_cancellation_during_spawn_terminates_spawned_process, 1),
+        (test_start_async_repeated_cancellation_waits_for_pid_write_before_cleanup, 1),
+        (test_start_async_repeated_cancellation_during_cleanup_stops_process_once, 2),
+        (test_start_async_repeated_cancellation_reports_failed_cleanup, 2),
+    ],
+)
+async def test_startup_drains_worker_on_early_failure(
+    *,
+    test_case: Callable[..., Awaitable[None]],
+    worker_wait: int,
+    failure: type[BaseException],
+    cancel_during_drain: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    wait_for = asyncio.wait_for
+    drain = drain_tasks_async
+    pending = asyncio.all_tasks()
+    readiness_waits = 0
+
+    async def fail_after_readiness_async(awaitable: Awaitable[object], *, timeout: float) -> object:
+        nonlocal readiness_waits
+        result = await wait_for(awaitable, timeout=timeout)
+        if timeout != TEST_WATCHDOG_SECONDS:
+            return result
+        readiness_waits += 1
+        if readiness_waits == worker_wait:
+            raise failure("injected failure after worker readiness")
+        return result
+
+    async def interrupt_drain_async(*tasks: asyncio.Task[str]) -> None:
+        if cancel_during_drain:
+            task = asyncio.current_task()
+            assert task is not None
+            asyncio.get_running_loop().call_soon(task.cancel, "cleanup cancellation")
+        await drain(*tasks)
+
+    with (
+        patch.object(asyncio, "wait_for", side_effect=fail_after_readiness_async),
+        patch(f"{__name__}.drain_tasks_async", side_effect=interrupt_drain_async),
+    ):
+        with pytest.raises(failure, match="injected failure"):
+            if test_case is test_start_async_repeated_cancellation_reports_failed_cleanup:
+                await test_case(caplog)
+            else:
+                await test_case()
+
+    assert readiness_waits == worker_wait
+    assert asyncio.all_tasks() == pending
 
 
 async def test_startup_state_cleanup_without_process_marks_state_cleaned():

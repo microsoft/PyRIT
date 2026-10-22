@@ -85,6 +85,14 @@ disposing fixtures, including when a watchdog expires. When waiting for a task t
 signal readiness, also watch for that task finishing so an early exception is not
 hidden by the readiness timeout.
 
+For held thread workers, release the gate in `finally` and use `drain_tasks_async`
+while patches and fixtures remain active. Unlike `settle_tasks_async`, this helper
+does not cancel worker-owning tasks when the observer is cancelled or its watchdog
+expires: cancelling `asyncio.to_thread` cannot stop the underlying thread. It waits
+through repeated observer cancellation and then propagates the original cancellation
+message. Watchdog expiry explicitly reports incomplete cleanup; it cannot force a
+worker that never returns to finish.
+
 The discovery provider-state test and Copilot cancellation-test startup use the
 shared `TEST_WATCHDOG_SECONDS` backstop in `tests/unit/async_utils.py`. Discovery
 timeout coverage expires the real cancellation path only after the request starts.
