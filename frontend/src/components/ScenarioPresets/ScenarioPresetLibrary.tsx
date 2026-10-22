@@ -46,6 +46,10 @@ interface ScenarioPresetLibraryProps {
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
+  /** The saved Operation that new runs join, or null for none. */
+  operationId: string | null
+  /** False while server defaults or the global Operation selection are unresolved. */
+  defaultsReady: boolean
 }
 
 function techniqueSummary(item: ScenarioPresetResponse): string {
@@ -66,6 +70,8 @@ export default function ScenarioPresetLibrary({
   defaultObjectiveTarget,
   defaultAdversarialTarget,
   labels,
+  operationId,
+  defaultsReady,
 }: ScenarioPresetLibraryProps) {
   const styles = useScenarioPresetLibraryStyles()
   const navigate = useNavigate()
@@ -335,7 +341,7 @@ export default function ScenarioPresetLibrary({
                           className={styles.touchTarget}
                           appearance="primary"
                           icon={<PlayRegular />}
-                          disabled={!runnable}
+                          disabled={!runnable || !defaultsReady}
                           onClick={() => setLaunching(item)}
                           data-testid={`launch-preset-${item.preset.name}`}
                         >
@@ -384,6 +390,8 @@ export default function ScenarioPresetLibrary({
           defaultObjectiveTarget={defaultObjectiveTarget}
           defaultAdversarialTarget={defaultAdversarialTarget}
           labels={labels}
+          operationId={operationId}
+          defaultsReady={defaultsReady}
           onDismiss={() => setLaunching(null)}
           onPresetChanged={() => {
             const changedName = launching.preset.name
