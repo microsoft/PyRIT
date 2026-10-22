@@ -471,7 +471,7 @@ export interface CreateTechniqueRequest {
   adversarial_prompt_template?: string
 }
 
-export interface SimulationChanges {
+export interface SimulationSettings {
   num_turns?: number | null
   adversarial_chat_system_prompt?: string | null
   simulated_target_system_prompt?: string | null
@@ -479,7 +479,9 @@ export interface SimulationChanges {
   final_user_message?: string | null
 }
 
-export interface TechniqueChanges {
+export type SimulationChanges = Partial<SimulationSettings>
+
+interface TechniqueSettingFields {
   description?: string | null
   params?: Record<string, unknown>
   request_converters?: string[] | null
@@ -488,6 +490,13 @@ export interface TechniqueChanges {
   adversarial_system_prompt?: string | null
   adversarial_seed_prompt?: string | null
   adversarial_prompt_template?: string | null
+}
+
+export interface TechniqueSettings extends TechniqueSettingFields {
+  simulation?: SimulationSettings | null
+}
+
+export interface TechniqueChanges extends TechniqueSettingFields {
   simulation?: SimulationChanges | null
 }
 
@@ -503,7 +512,7 @@ export interface TechniqueConfiguration {
   source_name: string
   source_identity: string
   attack_type: string
-  settings: TechniqueChanges
+  settings: TechniqueSettings
   parameters: Parameter[]
   editable_fields: string[]
   supplied_parameters: string[]

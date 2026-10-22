@@ -13,10 +13,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
+from pyrit.backend.models.techniques import CreateTechniqueRequest
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
 from pyrit.backend.services.scenario_service import ScenarioService
 from pyrit.backend.services.technique_edit_service import TechniqueEditService
+from pyrit.backend.services.technique_service import TechniqueService
 from pyrit.common.apply_defaults import GlobalDefaultValues
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH, EXECUTOR_SIMULATED_TARGET_PATH
 from pyrit.converter import Base64Converter, ROT13Converter
@@ -37,7 +39,13 @@ from pyrit.models import (
     load_next_message_prompt,
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioRunSizeEstimateRequest
-from pyrit.models.technique_edit import SimulationChanges, TechniqueChanges, TechniqueOverride
+from pyrit.models.technique_edit import (
+    SimulationChanges,
+    SimulationSettings,
+    TechniqueChanges,
+    TechniqueOverride,
+    TechniqueSettings,
+)
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, Registry, TargetRegistry
 from pyrit.scenario.core import AttackTechniqueFactory
@@ -101,6 +109,116 @@ def _specification(*, changes: TechniqueChanges | None = None) -> TechniqueOverr
     config = TechniqueEditService.configuration("role_play_movie_script")
     return TechniqueOverride(
         source_name=config.source_name, source_identity=config.source_identity, changes=changes or TechniqueChanges()
+    )
+
+
+@pytest.mark.parametrize("value", [0, 2, -1, True, "2", 1.5, None, [], {}])
+async def test_creation_and_editing_share_strict_input_and_attack_validation_async(
+    edit_catalog: AttackTechniqueRegistry, value: Any
+) -> None:
+    configuration = TechniqueEditService.configuration("plain")
+    specification = TechniqueOverride(
+        source_name="plain",
+        source_identity=configuration.source_identity,
+        changes=TechniqueChanges(params={"max_attempts_on_failure": value}),
+    )
+    request = CreateTechniqueRequest(
+        name="parity_created",
+        type="PromptSendingAttack",
+        params={"max_attempts_on_failure": value},
+    )
+    if type(value) is int and value >= 0:
+        created = await TechniqueService().create_async(request)
+        admitted = TechniqueEditService.validate(specification)
+        copied = TechniqueEditService.resolve(admitted.override)
+        assert (
+            copied.get_effective_settings().attack_kwargs
+            == edit_catalog.instances.get(created.name).get_effective_settings().attack_kwargs
+        )
+    else:
+        revision = edit_catalog.catalog_revision
+        with pytest.raises(ValueError):
+            await TechniqueService().create_async(request)
+        with pytest.raises(ValueError):
+            TechniqueEditService.validate(specification)
+        assert edit_catalog.catalog_revision == revision
+
+
+def test_snapshot_and_patch_preserve_existing_presence_and_null_serialization(
+    edit_catalog: AttackTechniqueRegistry,
+) -> None:
+    configuration = TechniqueEditService.configuration("role_play_movie_script")
+    assert isinstance(configuration.settings, TechniqueSettings)
+    assert isinstance(configuration.settings.simulation, SimulationSettings)
+    payload = configuration.model_dump(mode="json")
+    assert set(payload) == {
+        "source_name",
+        "source_identity",
+        "attack_type",
+        "settings",
+        "parameters",
+        "editable_fields",
+        "supplied_parameters",
+        "read_only",
+        "supports_prepended_conversation",
+    }
+    assert payload["settings"] == {
+        "description": "Write a movie script.",
+        "params": {"max_attempts_on_failure": 0},
+        "adversarial_chat": None,
+        "request_converters": [],
+        "response_converters": [],
+        "simulation": {
+            "num_turns": 2,
+            "adversarial_chat_system_prompt": "Write a script.\nObjective: {{ objective }}\nTurns: {{ num_turns }}",
+            "simulated_target_system_prompt": "Continue {{ objective }} for {{ num_turns }} turns.",
+            "next_message_system_prompt": "Next {{ objective }}: {{ conversation_context }}",
+            "final_user_message": None,
+        },
+    }
+    assert TechniqueChanges().model_dump(mode="json") == {}
+    assert TechniqueChanges(description=None).model_dump(mode="json") == {"description": None}
+    assert TechniqueChanges(simulation=SimulationChanges(next_message_system_prompt=None)).model_dump(mode="json") == {
+        "simulation": {"next_message_system_prompt": None},
+    }
+    admitted = TechniqueEditService.validate(_specification())
+    assert admitted.configuration.model_dump(mode="json") == payload
+    assert admitted.override.model_dump(mode="json")["changes"] == {}
+
+
+def test_domain_copy_validates_final_merged_inputs_without_constructing_an_attack(
+    edit_catalog: AttackTechniqueRegistry,
+) -> None:
+    source = edit_catalog.instances.get("plain")
+    before = source.get_configuration_identity()
+    settings = source.get_effective_settings()
+    settings.attack_kwargs["max_attempts_on_failure"] = -1
+    with pytest.raises(ValueError, match="non-negative"):
+        source.with_settings(settings=settings)
+    assert source.get_configuration_identity() == before
+
+
+def test_red_team_snapshot_retains_explicit_null_prompts_without_simulation(
+    edit_catalog: AttackTechniqueRegistry,
+) -> None:
+    source = AttackTechniqueFactory(name="red_teaming", attack_class=RedTeamingAttack, description="Red team")
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    settings = configuration.model_dump(mode="json")["settings"]
+    assert settings == {
+        "description": "Red team",
+        "params": {"max_turns": 10, "score_last_turn_only": False},
+        "request_converters": [],
+        "response_converters": [],
+        "adversarial_chat": None,
+        "adversarial_system_prompt": None,
+        "adversarial_seed_prompt": None,
+        "adversarial_prompt_template": None,
+    }
+    specification = TechniqueOverride(source_name=source.name, source_identity=configuration.source_identity)
+    assert (
+        TechniqueEditService.resolve(TechniqueEditService.validate(specification).override).get_configuration_identity()
+        == source.get_configuration_identity()
     )
 
 

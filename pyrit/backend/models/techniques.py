@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 from pyrit.backend.models.common import IdentifierStr, PaginationInfo, TextStr
 from pyrit.models import Parameter
 from pyrit.models.request_limits import MAX_ITEMS
-from pyrit.models.technique_edit import TechniqueChanges, TechniqueOverride
+from pyrit.models.technique_edit import TechniqueOverride, TechniqueSettings
 
 TechniqueSelector = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
 
@@ -56,7 +56,7 @@ class TechniqueConfiguration(BaseModel):
     source_name: str
     source_identity: str
     attack_type: str
-    settings: TechniqueChanges
+    settings: TechniqueSettings
     parameters: list[Parameter]
     editable_fields: list[str]
     supplied_parameters: list[str]

@@ -20,8 +20,8 @@ class _ChangesModel(BaseModel):
         return {name: value for name, value in handler(self).items() if name in self.model_fields_set}
 
 
-class SimulationChanges(_ChangesModel):
-    """Edits to an existing simulation's generation settings; omitted fields stay unchanged."""
+class _SimulationFields(_ChangesModel):
+    """Shared fields for a simulation snapshot or patch, with explicit omission tracking."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -32,8 +32,16 @@ class SimulationChanges(_ChangesModel):
     final_user_message: str | None = None
 
 
-class TechniqueChanges(_ChangesModel):
-    """Supported edits; source-owned opaque settings are never reconstructed from JSON."""
+class SimulationSettings(_SimulationFields):
+    """Displayed simulation settings, not an instruction to change them."""
+
+
+class SimulationChanges(_SimulationFields):
+    """Edits to an existing simulation; omitted fields stay unchanged."""
+
+
+class _TechniqueFields(_ChangesModel):
+    """Shared wire fields; opaque settings remain on the source factory."""
 
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
 
@@ -45,6 +53,17 @@ class TechniqueChanges(_ChangesModel):
     adversarial_system_prompt: str | None = None
     adversarial_seed_prompt: str | None = None
     adversarial_prompt_template: str | None = None
+
+
+class TechniqueSettings(_TechniqueFields):
+    """Safe displayed settings; field presence reflects what the source can project."""
+
+    simulation: SimulationSettings | None = None
+
+
+class TechniqueChanges(_TechniqueFields):
+    """Partial changes; omission retains the source and explicit clears are validated."""
+
     simulation: SimulationChanges | None = None
 
 

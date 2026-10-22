@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 from pydantic import BaseModel
 
 from pyrit.common import REQUIRED_VALUE, get_global_default_values
+from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
@@ -76,7 +77,7 @@ _R = TypeVar("_R")
 
 @dataclass
 class TechniqueFactorySettings:
-    """Effective editable settings with independent containers and shared live dependencies."""
+    """Supplied factory settings with independent containers and shared live dependencies."""
 
     description: str | None
     attack_kwargs: dict[str, Any]
@@ -720,7 +721,7 @@ class AttackTechniqueFactory(Identifiable):
 
     def get_effective_settings(self) -> TechniqueFactorySettings:
         """
-        Project effective settings, including copy helpers, without resolving deferred dependencies.
+        Copy supplied settings without materializing constructor defaults or deferred dependencies.
 
         Returns:
             TechniqueFactorySettings: Independent containers; live targets and converters retain identity.
@@ -733,6 +734,67 @@ class AttackTechniqueFactory(Identifiable):
             adversarial_seed_prompt=self._adversarial_seed_prompt,
             adversarial_prompt_template=self._adversarial_prompt_template,
         )
+
+    def get_effective_attack_kwargs(self) -> dict[str, Any]:
+        """
+        Resolve constructor defaults without materializing deferred execution inputs.
+
+        Returns:
+            dict[str, Any]: Effective values; live objects retain identity and supplied arguments stay unchanged.
+        """
+        return resolve_constructor_defaults(
+            class_type=self._attack_class,
+            arguments=_copy_creation_value(self._attack_kwargs),
+            excluded_parameters={"objective_target", "attack_adversarial_config", "attack_scoring_config"},
+        )
+
+    def get_converter_config(self) -> AttackConverterConfig:
+        """
+        Resolve the effective converter configuration without constructing an attack.
+
+        Returns:
+            AttackConverterConfig: The supplied or inherited configuration, or an empty configuration.
+
+        Raises:
+            TypeError: If a configured value is not a converter configuration.
+        """
+        config = self.get_effective_attack_kwargs().get("attack_converter_config")
+        if config is None:
+            return AttackConverterConfig()
+        if not isinstance(config, AttackConverterConfig):
+            raise TypeError("attack_converter_config must be an AttackConverterConfig")
+        return config
+
+    def get_editable_settings(self) -> dict[str, Any]:
+        """
+        Expose lossless settings supported by this factory, before registry-name projection.
+
+        Returns:
+            dict[str, Any]: Supported fields with live references; unsupported state stays on the source.
+        """
+        result: dict[str, Any] = {"description": self._description}
+        accepted = self._compatibility_helper.accepted_params
+        if self.uses_adversarial:
+            result["adversarial_chat"] = self._adversarial_chat
+        if "attack_adversarial_config" in accepted:
+            for name in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
+                prompt = getattr(self, f"_{name}")
+                if (
+                    prompt is None
+                    or isinstance(prompt, str)
+                    or isinstance(prompt, SeedPrompt)
+                    and prompt.data_type == "text"
+                ):
+                    result[name] = prompt.value if isinstance(prompt, SeedPrompt) else prompt
+        if "attack_converter_config" in accepted:
+            config = self.get_converter_config()
+            for name in ("request_converters", "response_converters"):
+                chain = getattr(config, name)
+                if all(not item.indexes_to_apply and not item.prompt_data_types_to_apply for item in chain):
+                    result[name] = [converter for item in chain for converter in item.converters]
+        if self._seed_technique is not None and (simulation := self._seed_technique.simulation_settings) is not None:
+            result["simulation"] = simulation
+        return result
 
     @property
     def supports_prepended_conversation(self) -> bool:
@@ -759,7 +821,11 @@ class AttackTechniqueFactory(Identifiable):
 
     @_capture_creation
     def with_settings(
-        self, *, settings: TechniqueFactorySettings, simulation: SimulationChanges | None = None
+        self,
+        *,
+        settings: TechniqueFactorySettings,
+        simulation: SimulationChanges | None = None,
+        converter_changes: dict[str, list[ConverterConfiguration]] | None = None,
     ) -> AttackTechniqueFactory:
         """
         Copy editable settings while retaining requirements, policies and live dependencies.
@@ -771,6 +837,11 @@ class AttackTechniqueFactory(Identifiable):
             ValueError: If simulation settings do not apply to the source technique.
         """
         factory = self.with_attack_kwargs(attack_kwargs=settings.attack_kwargs)
+        if converter_changes:
+            factory._attack_kwargs["attack_converter_config"] = replace(
+                factory.get_converter_config(), **converter_changes
+            )
+        self._attack_class.validate_constructor_parameters(factory.get_effective_attack_kwargs())
         factory._description = settings.description
         factory._adversarial_chat = settings.adversarial_chat
         for name in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
@@ -804,6 +875,7 @@ class AttackTechniqueFactory(Identifiable):
         Returns:
             str: A deterministic configuration digest without live-object credentials.
         """
+        # Retain the saved identity envelope: defaults and supplied settings have separate fingerprints.
         defaults = {}
         for name, parameter in inspect.signature(self._attack_class.__init__).parameters.items():
             if name == "self":

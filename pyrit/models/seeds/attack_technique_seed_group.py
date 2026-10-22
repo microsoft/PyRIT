@@ -19,6 +19,7 @@ from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
+from pyrit.models.technique_edit import SimulationSettings
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
@@ -143,6 +144,18 @@ class AttackTechniqueSeedGroup(SeedGroup):
         prompt = candidates[0]
         return prompt if prompt.role == "user" and prompt.data_type == "text" else None
 
+    @property
+    def simulation_settings(self) -> SimulationSettings | None:
+        """The text simulation snapshot, including the existing final-message mode."""
+        simulation = self.simulated_conversation_config
+        if simulation is None:
+            return None
+        values = simulation.text_settings
+        if values is None:
+            return None
+        final = self.fixed_final_user_prompt
+        return SimulationSettings(**values, final_user_message=final.value if final is not None else None)
+
     def with_simulation_changes(self, changes: SimulationChanges) -> Self:
         """
         Rebuild simulation settings and a fixed final turn without changing the source group.
@@ -159,23 +172,7 @@ class AttackTechniqueSeedGroup(SeedGroup):
         final = self.fixed_final_user_prompt
         if "final_user_message" in changes.model_fields_set and final is None:
             raise ValueError("This simulation has no editable fixed final user message")
-        prompt_names = (
-            "adversarial_chat_system_prompt",
-            "simulated_target_system_prompt",
-            "next_message_system_prompt",
-        )
-        data = simulation.model_dump(exclude={"id", "value", "value_sha256", *prompt_names})
-        for name in prompt_names:
-            original = getattr(simulation, name)
-            text = getattr(changes, name)
-            if name in changes.model_fields_set and (original is None or text is None):
-                raise ValueError(f"Cannot change the existing simulation message mode through '{name}'")
-            data[name] = original.with_value(text) if text is not None else original
-        if "num_turns" in changes.model_fields_set:
-            if changes.num_turns is None:
-                raise ValueError("num_turns must be a positive integer")
-            data["num_turns"] = changes.num_turns
-        updated = SeedSimulatedConversation.model_validate(data)
+        updated = simulation.with_settings(changes)
         seeds = []
         for seed in self.seeds:
             if seed is simulation:

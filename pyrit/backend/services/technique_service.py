@@ -4,11 +4,7 @@
 """Thin runtime technique service; construction belongs to the registry."""
 
 import asyncio
-from collections.abc import Sequence
 from functools import lru_cache
-from typing import Any, get_args
-
-from pydantic import JsonValue, TypeAdapter
 
 from pyrit.backend.mappers.technique_mappers import technique_to_instance
 from pyrit.backend.models.common import PaginationInfo
@@ -19,14 +15,11 @@ from pyrit.backend.models.techniques import (
     TechniqueTypeEntry,
     TechniqueTypeResponse,
 )
-from pyrit.models import Parameter
 from pyrit.registry.components import AttackRegistry, AttackTechniqueRegistry
 
 
 class TechniqueService:
     """List the active factory pool and register basic runtime configurations."""
-
-    _SCALAR_INPUT_TYPES = {"str", "int", "float", "bool", "list[str]", "list[int]", "list[float]", "list[bool]"}
 
     def __init__(self) -> None:
         """Bind to the runtime registry; service lifecycle clears this binding on reset."""
@@ -78,52 +71,13 @@ class TechniqueService:
         return await asyncio.to_thread(self._create, request)
 
     def _create(self, request: CreateTechniqueRequest) -> TechniqueInstance:
-        self._validate_params(request)
         args = request.model_dump(exclude_unset=True, exclude={"name", "type", "tags"})
         factory = self._registry.create_factory(
-            name=request.name, attack_type=request.type, technique_tags=request.tags, **args
+            name=request.name, attack_type=request.type, technique_tags=request.tags, strict_json=True, **args
         )
         result = technique_to_instance(name=request.name, factory=factory)
         self._registry.instances.register_runtime(factory)
         return result
-
-    @classmethod
-    def _validate_params(cls, request: CreateTechniqueRequest) -> None:
-        """Reject REST values that need live Python objects before factory registration."""
-        registry = AttackRegistry.get_registry_singleton()
-        if request.type not in registry:
-            raise ValueError(f"Attack type '{request.type}' is not registered")
-        declared = {
-            parameter.name: parameter
-            for parameter in registry.get_class_metadata(registry.get_class(request.type)).parameters
-        }
-        cls.validate_parameters(parameters=list(declared.values()), params=request.params)
-
-    @classmethod
-    def validate_parameters(cls, *, parameters: Sequence[Parameter], params: dict[str, JsonValue]) -> None:
-        """
-        Validate partial REST parameter edits against an existing attack's build contract.
-
-        Raises:
-            ValueError: If a supplied parameter is unknown or requires a Python object.
-        """
-        declared = {parameter.name: parameter for parameter in parameters}
-        for name, value in params.items():
-            parameter = declared.get(name)
-            if parameter is None:
-                raise ValueError(f"Unknown attack parameter '{name}'")
-            if parameter.variants is not None:
-                continue
-            annotation: Any = parameter.param_type
-            if parameter.reference is not None:
-                annotation = list[str] if parameter.is_list else str
-                if type(None) in get_args(parameter.reference.annotation):
-                    annotation = annotation | None
-            elif parameter.type_name not in cls._SCALAR_INPUT_TYPES and not parameter.choices:
-                raise ValueError(f"Parameter '{name}' requires a Python value; it is not supported through REST")
-            TypeAdapter(annotation).validate_python(
-                parameter.coerce_value(value) if parameter.choices else value, strict=True
-            )
 
     async def types_async(self) -> TechniqueTypeResponse:
         """
