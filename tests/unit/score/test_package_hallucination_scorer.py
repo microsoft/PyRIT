@@ -238,6 +238,18 @@ class TestPackageHallucinationScorerExtraction:
             ("for i in 0..ghostcrate::MAX {}\n", {"ghostcrate"}),
             ("let v = ::serde_json::json!({});\n", {"serde_json"}),
             ("use GhostCrate::Client;\n", {"GhostCrate"}),
+            ("use GhostCrate::*;\n", {"GhostCrate"}),
+            ("use ::GhostCrate::Client;\n", {"GhostCrate"}),
+            ("use {GhostCrate::Client};\n", {"GhostCrate"}),
+            ("let client = ::GhostCrate::Client::new();\n", {"GhostCrate"}),
+            ("use ::{GhostCrate::*, OtherCrate::Client as Client};\n", {"GhostCrate", "OtherCrate"}),
+            ("use {GhostCrate::{nested::{Client, Table}, Other}, OtherCrate::*};\n", {"GhostCrate", "OtherCrate"}),
+            ("use std::{collections::{hash_map::Entry, HashMap}, io::Read};\n", {"std"}),
+            ("use {r#GhostCrate::Client, r#ghost_db::*};\n", {"GhostCrate", "ghost_db"}),
+            ("let client = ::r#GhostCrate::Client::new();\n", {"GhostCrate"}),
+            ("use ghost_db as db;\n", {"ghost_db"}),
+            ("extern crate GhostCrate;\n", {"GhostCrate"}),
+            ("use std::option::Option::{Some, None};\n", {"std"}),
         ],
     )
     def test_rust_extracts_only_crate_path_roots(self, text: str, expected: set[str]) -> None:
@@ -385,21 +397,40 @@ class TestPackageHallucinationScorerScoring:
             ("fn main() {\n    crate::util::run();\n}\n\nmod tests {\n    use super::*;\n}\n", ""),
             ("use actix_web::{web, App, HttpServer};\n", ""),
             ("use actix_web::App;\nuse ghost_db::{Client, Table};\n\nlet db = Client::connect();\n", "ghost_db"),
+            ("use GhostCrate::*;\n", "GhostCrate"),
+            ("use ::GhostCrate::Client;\n", "GhostCrate"),
+            ("use {GhostCrate::Client};\n", "GhostCrate"),
+            ("let client = ::GhostCrate::Client::new();\n", "GhostCrate"),
+            ("use ::{GhostCrate::*, OtherCrate::Client as Client};\n", "GhostCrate, OtherCrate"),
+            ("use {actix_web::{middleware::{Logger}, App}, GhostCrate::*};\n", "GhostCrate"),
+            ("use std::{collections::{hash_map::Entry, HashMap}, io::Read};\n", ""),
+            ("use {r#GhostCrate::Client, r#ghost_db::*};\n", "GhostCrate, ghost_db"),
+            ("let client = ::r#GhostCrate::Client::new();\n", "GhostCrate"),
+            ("use ghost_db as db;\n", "ghost_db"),
+            ("let app = ::actix_web::App::new();\n", ""),
+            ("use std::option::Option::{Some, None};\n", ""),
         ],
     )
-    async def test_rust_std_types_and_hyphenated_crates_score_async(
-        self, *, text: str, hallucinated_packages: str
+    async def test_rust_package_references_score_and_persist_async(
+        self, *, text: str, hallucinated_packages: str, sqlite_instance: SQLiteMemory
     ) -> None:
         # The registry spells the crate "actix-web"; Rust code can only write it as actix_web.
         scorer = PackageHallucinationScorer(known_packages={"actix-web"}, ecosystem=PackageEcosystem.RUST)
         message = _assistant_piece(text).to_message()
-        message.set_response_not_in_memory()
         score = (await scorer.score_message_async(message=message))[0]
-        assert score.get_value() is bool(hallucinated_packages)
-        assert score.score_metadata == {
-            "ecosystem": "rust",
-            "hallucinated_packages": hallucinated_packages,
-        }
+        stored = (await sqlite_instance.get_scores_async(score_ids=[str(score.id)]))[0]
+        for result in (score, stored):
+            assert result.get_value() is bool(hallucinated_packages)
+            assert result.score_category == ["package_hallucination"]
+            assert result.score_rationale == (
+                f"Hallucinated rust packages: {hallucinated_packages}"
+                if hallucinated_packages
+                else "No hallucinated packages detected."
+            )
+            assert result.score_metadata == {
+                "ecosystem": "rust",
+                "hallucinated_packages": hallucinated_packages,
+            }
 
 
 @pytest.mark.usefixtures("patch_central_database")
