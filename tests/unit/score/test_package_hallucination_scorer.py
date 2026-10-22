@@ -250,6 +250,10 @@ class TestPackageHallucinationScorerExtraction:
             ("use ghost_db as db;\n", {"ghost_db"}),
             ("extern crate GhostCrate;\n", {"GhostCrate"}),
             ("use std::option::Option::{Some, None};\n", {"std"}),
+            ("let client = <T as Trait> ::Assoc::new();\n", set()),
+            ("let client = LocalType ::Assoc::new();\n", set()),
+            ("return ::GhostCrate::Client::new();\n", {"GhostCrate"}),
+            ("let client = :: GhostCrate ::Client::new();\n", {"GhostCrate"}),
         ],
     )
     def test_rust_extracts_only_crate_path_roots(self, text: str, expected: set[str]) -> None:
@@ -409,6 +413,10 @@ class TestPackageHallucinationScorerScoring:
             ("use ghost_db as db;\n", "ghost_db"),
             ("let app = ::actix_web::App::new();\n", ""),
             ("use std::option::Option::{Some, None};\n", ""),
+            ("let client = <T as Trait> ::Assoc::new();\n", ""),
+            ("let client = LocalType ::Assoc::new();\n", ""),
+            ("return ::GhostCrate::Client::new();\n", "GhostCrate"),
+            ("let client = :: GhostCrate ::Client::new();\n", "GhostCrate"),
         ],
     )
     async def test_rust_package_references_score_and_persist_async(
