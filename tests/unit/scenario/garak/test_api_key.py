@@ -12,9 +12,18 @@ import pytest
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.converter import Base64Converter, Converter
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import ComponentIdentifier, ScenarioDatasetRequest, ScenarioRunSizeEstimateStatus, Seed, SeedDataset
+from pyrit.models import (
+    ComponentIdentifier,
+    DatasetFetchPolicy,
+    ScenarioDatasetRequest,
+    ScenarioRunSizeEstimateStatus,
+    Seed,
+    SeedDataset,
+)
 from pyrit.prompt_target import PromptTarget
+from pyrit.scenario import DatasetSource, ScenarioRequiredData
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
+from pyrit.scenario.core.required_data import _RequiredDatasetConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     ApiKey,
@@ -59,7 +68,7 @@ async def _initialize_async(
         }
     )
     with patch.object(
-        ApiKeyDatasetConfiguration, "_collect_named_seeds_async", new_callable=AsyncMock, return_value=corpus_seeds
+        _RequiredDatasetConfiguration, "_collect_named_seeds_async", new_callable=AsyncMock, return_value=corpus_seeds
     ):
         await scenario.initialize_async()
 
@@ -80,8 +89,10 @@ class TestApiKey:
         assert scenario.name == "ApiKey"
         assert scenario.VERSION == 1
         assert scenario.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Forbidden
-        assert scenario._default_dataset_config.dataset_names == ApiKey.required_datasets()
-        assert scenario._default_dataset_config.max_dataset_size == 20
+        assert scenario._default_dataset_config.dataset_names == []
+        assert scenario._default_dataset_config.max_total == 20
+        assert scenario.get_required_data().dataset_names == ApiKey.required_datasets()
+        assert scenario.get_default_dataset_names() == ApiKey.required_datasets()
         assert {"dataset_config", "technique_converters"} <= parameters
         assert "prompt_cap" not in parameters
         expected = {ApiKeyTechnique.GetKey, ApiKeyTechnique.CompleteKey}
@@ -108,7 +119,7 @@ class TestApiKey:
             scenario=scenario,
             target=mock_objective_target,
             corpus_seeds=corpus_seeds,
-            dataset_config=ApiKeyDatasetConfiguration(dataset_names=ApiKey.required_datasets(), max_dataset_size="all"),
+            dataset_config=ApiKeyDatasetConfiguration(max_total="all"),
         )
 
         assert {name: len(groups) for name, groups in _objectives(scenario).items()} == {
@@ -133,7 +144,7 @@ class TestApiKey:
                 scenario=scenario,
                 target=mock_objective_target,
                 corpus_seeds=corpus_seeds,
-                dataset_config=ApiKeyDatasetConfiguration(dataset_names=ApiKey.required_datasets(), max_dataset_size=3),
+                dataset_config=ApiKeyDatasetConfiguration(max_total=3),
             )
 
         assert list(_objectives(scenario)) == ["complete_key"]
@@ -146,7 +157,7 @@ class TestApiKey:
         self, size: int, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         original = ApiKey()
-        config = ApiKeyDatasetConfiguration(dataset_names=ApiKey.required_datasets(), max_dataset_size=size)
+        config = ApiKeyDatasetConfiguration(max_total=size)
         await _initialize_async(
             scenario=original, target=mock_objective_target, corpus_seeds=corpus_seeds, dataset_config=config
         )
@@ -157,9 +168,7 @@ class TestApiKey:
                 scenario=resumed,
                 target=mock_objective_target,
                 corpus_seeds={name: list(reversed(seeds)) for name, seeds in corpus_seeds.items()},
-                dataset_config=ApiKeyDatasetConfiguration(
-                    dataset_names=ApiKey.required_datasets(), max_dataset_size=size
-                ),
+                dataset_config=ApiKeyDatasetConfiguration(max_total=size),
             )
 
         assert _objectives(resumed) == _objectives(original)
@@ -191,7 +200,7 @@ class TestApiKey:
             scenario=scenario,
             target=mock_objective_target,
             corpus_seeds=corpus_seeds,
-            dataset_config=ApiKeyDatasetConfiguration(dataset_names=ApiKey.required_datasets()),
+            dataset_config=ApiKeyDatasetConfiguration(),
             technique_converters={"get_key": [converter]},
         )
 
@@ -210,9 +219,7 @@ class TestApiKey:
                 scenario=ApiKey(),
                 target=mock_objective_target,
                 corpus_seeds=corpus_seeds,
-                dataset_config=ApiKeyDatasetConfiguration(
-                    dataset_names=ApiKey.required_datasets(), validators=[validator]
-                ),
+                dataset_config=ApiKeyDatasetConfiguration(validators=[validator]),
             )
         validator.assert_called_once()
 
@@ -251,7 +258,7 @@ class TestApiKey:
         )
         scenario.set_params_from_args(args=args)
         with patch.object(
-            ApiKeyDatasetConfiguration,
+            _RequiredDatasetConfiguration,
             "_collect_named_seeds_async",
             new_callable=AsyncMock,
             return_value=corpus_seeds,
@@ -302,13 +309,14 @@ class TestApiKey:
             args={
                 "objective_target": mock_objective_target,
                 "scenario_techniques": [technique],
-                "dataset_config": ApiKeyDatasetConfiguration(
-                    dataset_names=ApiKey.required_datasets(), max_dataset_size=size
-                ),
+                "dataset_config": ApiKeyDatasetConfiguration(max_total=size),
             }
         )
         with patch.object(
-            ApiKeyDatasetConfiguration, "_collect_named_seeds_async", new_callable=AsyncMock, return_value=corpus_seeds
+            _RequiredDatasetConfiguration,
+            "_collect_named_seeds_async",
+            new_callable=AsyncMock,
+            return_value=corpus_seeds,
         ):
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
 
@@ -332,3 +340,162 @@ class TestApiKey:
         await scenario.initialize_async()
 
         assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == 20
+
+    def test_corpus_is_required_data_and_the_configuration_only_limits_requests(self) -> None:
+        scenario = ApiKey()
+        settings = scenario.get_default_dataset_settings()
+
+        assert scenario._default_dataset_config.sources == ()
+        assert [(source.name, source.max_size) for source in settings.sources] == [
+            (name, "all") for name in ApiKey.required_datasets()
+        ]
+        assert settings.max_total == 20
+
+    async def test_only_a_fresh_run_prepares_the_corpus_async(
+        self, *, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        scenario = ApiKey()
+        with patch.object(ScenarioRequiredData, "prepare_async", new_callable=AsyncMock) as prepare:
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+            await scenario.get_run_size_estimate_async(target_is_configured=True)
+            prepare.assert_not_awaited()
+
+            await _initialize_async(scenario=scenario, target=mock_objective_target, corpus_seeds=corpus_seeds)
+            prepare.assert_awaited_once()
+
+            resumed = ApiKey(scenario_result_id=scenario._scenario_result_id)
+            await _initialize_async(scenario=resumed, target=mock_objective_target, corpus_seeds=corpus_seeds)
+            prepare.assert_awaited_once()
+
+        assert _objectives(resumed) == _objectives(scenario)
+
+    async def test_estimate_never_reads_the_corpus_async(self, *, mock_objective_target: PromptTarget) -> None:
+        scenario = ApiKey()
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        with patch.object(ScenarioRequiredData, "load_async", side_effect=AssertionError("read corpus")):
+            estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
+
+        assert estimate.estimated_attack_count == 20
+
+    async def test_refresh_reaches_the_corpus_async(self, *, mock_objective_target: PromptTarget) -> None:
+        scenario = ApiKey()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_overrides": {
+                    "fetch": "always",
+                    "sources": [
+                        {"name": name, "fetch": "never" if name == DATASET_PARTIAL_KEYS else None}
+                        for name in ApiKey.required_datasets()
+                    ],
+                },
+            }
+        )
+        estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
+
+        assert [(source.name, source.fetch) for source in estimate.effective_datasets.sources] == [
+            (name, DatasetFetchPolicy.NEVER if name == DATASET_PARTIAL_KEYS else DatasetFetchPolicy.ALWAYS)
+            for name in ApiKey.required_datasets()
+        ]
+
+    async def test_corpus_rows_cannot_be_capped_through_overrides_async(
+        self, *, mock_objective_target: PromptTarget
+    ) -> None:
+        scenario = ApiKey()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_overrides": {
+                    "sources": [{"name": name, "max_size": 2} for name in ApiKey.required_datasets()]
+                },
+            }
+        )
+        with pytest.raises(DatasetConstraintError, match="can't be capped"):
+            await scenario.get_run_size_estimate_async(target_is_configured=True)
+
+    async def test_identity_still_lists_the_corpus_async(
+        self, *, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        scenario = ApiKey()
+        await _initialize_async(scenario=scenario, target=mock_objective_target, corpus_seeds=corpus_seeds)
+
+        assert scenario._build_scenario_identifier().datasets == ApiKey.required_datasets()
+
+    async def test_listing_the_corpus_as_sources_still_works_with_a_warning_async(
+        self, *, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        current = ApiKey()
+        await _initialize_async(
+            scenario=current,
+            target=mock_objective_target,
+            corpus_seeds=corpus_seeds,
+            dataset_config=ApiKeyDatasetConfiguration(max_total="all"),
+        )
+        legacy = ApiKey()
+        with pytest.warns(DeprecationWarning, match="ApiKeyDatasetConfiguration"):
+            await _initialize_async(
+                scenario=legacy,
+                target=mock_objective_target,
+                corpus_seeds=corpus_seeds,
+                dataset_config=ApiKeyDatasetConfiguration(
+                    sources=[
+                        DatasetSource(name=name, fetch=DatasetFetchPolicy.IF_MISSING)
+                        for name in ApiKey.required_datasets()
+                    ],
+                    max_total="all",
+                ),
+            )
+
+        assert _objectives(legacy) == _objectives(current)
+        assert legacy._dataset_config.sources == ()
+        assert legacy._required_data is not None
+        assert [source.fetch for source in legacy._required_data.sources] == [DatasetFetchPolicy.IF_MISSING] * 4
+        assert legacy._build_scenario_identifier().datasets == current._build_scenario_identifier().datasets
+
+    async def test_capped_corpus_sources_still_fail_async(self, *, mock_objective_target: PromptTarget) -> None:
+        scenario = ApiKey()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": ApiKeyDatasetConfiguration(
+                    sources=[DatasetSource(name=name) for name in ApiKey.required_datasets()], max_per_dataset=2
+                ),
+            }
+        )
+        with pytest.warns(DeprecationWarning), pytest.raises(DatasetConstraintError, match="can't be capped"):
+            await scenario.get_run_size_estimate_async(target_is_configured=True)
+
+    async def test_missing_template_fails_before_assembly_async(
+        self, *, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        corpus = {**corpus_seeds, "garak_api_key_templates": corpus_seeds["garak_api_key_templates"][:1]}
+        with pytest.raises(DatasetConstraintError, match="one prompt template"):
+            await _initialize_async(scenario=ApiKey(), target=mock_objective_target, corpus_seeds=corpus)
+
+    async def test_listed_corpus_sources_still_take_overrides_async(
+        self, *, mock_objective_target: PromptTarget
+    ) -> None:
+        scenario = ApiKey()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": ApiKeyDatasetConfiguration(
+                    sources=[DatasetSource(name=name) for name in ApiKey.required_datasets()], max_total=5
+                ),
+                "dataset_overrides": {
+                    "max_total": 3,
+                    "sources": [
+                        {"name": name, "fetch": "always" if name == DATASET_PARTIAL_KEYS else None}
+                        for name in ApiKey.required_datasets()
+                    ],
+                },
+            }
+        )
+        with pytest.warns(DeprecationWarning, match="ApiKeyDatasetConfiguration"):
+            estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
+
+        assert estimate.estimated_attack_count == 3
+        assert [(source.name, source.fetch) for source in estimate.effective_datasets.sources] == [
+            (name, DatasetFetchPolicy.ALWAYS if name == DATASET_PARTIAL_KEYS else DatasetFetchPolicy.IF_MISSING)
+            for name in ApiKey.required_datasets()
+        ]
