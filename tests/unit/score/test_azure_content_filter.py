@@ -63,7 +63,7 @@ async def test_score_piece_async_text(*, text_message_piece: MessagePiece, sever
     mock_client = AsyncMock()
     mock_client.analyze_text.return_value = {"categoriesAnalysis": [{"severity": severity, "category": "Hate"}]}
     scorer._azure_cf_client = mock_client
-    scores = await scorer._score_piece_async(text_message_piece)
+    scores = await scorer._score_piece_with_expectation_async(text_message_piece, expectation=None)
     mock_client.analyze_text.assert_awaited_once()
     assert mock_client.analyze_text.await_args.args[0].output_type == "EightSeverityLevels"
     assert len(scores) == 1
@@ -89,7 +89,7 @@ async def test_score_piece_async_image(
     # Return a valid base64 string (represents a tiny 1x1 PNG image)
     valid_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
     with patch.object(scorer, "_get_base64_image_data_async", AsyncMock(return_value=valid_base64)):
-        scores = await scorer._score_piece_async(image_message_piece)
+        scores = await scorer._score_piece_with_expectation_async(image_message_piece, expectation=None)
     mock_client.analyze_image.assert_awaited_once()
     assert mock_client.analyze_image.await_args.args[0].output_type == "FourSeverityLevels"
     assert len(scores) == 1
@@ -297,7 +297,7 @@ async def test_shared_chunking_preserves_request_slices_async(length: int) -> No
     piece = MessagePiece(role="assistant", original_value=text)
     with patch.object(scorer._azure_cf_client, "analyze_text", new_callable=AsyncMock) as analyze:
         analyze.return_value = {"categoriesAnalysis": [{"severity": "2", "category": "Violence"}]}
-        scores = await scorer._score_piece_async(piece)
+        scores = await scorer._score_piece_with_expectation_async(piece, expectation=None)
     expected = [text[i : i + 10000] for i in range(0, length, 10000)] or [""]
     assert [call.args[0].text for call in analyze.await_args_list] == expected
     assert "".join(expected) == text

@@ -43,10 +43,10 @@ from pyrit.score.observation.execution import (
     _ObservationEvidence,
     _ObservationEvidenceResolver,
     _scoring_collection,
-    _scoring_expectation_context,
     _scoring_message_context,
     _scoring_scorable_context,
 )
+from pyrit.score.scorer_capabilities import LegacyScorerHookError, ScorerCapabilities
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
@@ -111,6 +111,23 @@ async def _legacy_score_scorable_async(
     return scores
 
 
+def _reject_typed_legacy_condition(cls: type) -> None:
+    """
+    Reject a typed condition on a scorer whose only hooks receive the objective.
+
+    Raises:
+        LegacyScorerHookError: If the class declares a condition other than ``MatchesObjective``.
+    """
+    condition_type = cls.CONDITION_TYPE  # type: ignore[ty:unresolved-attribute]
+    if condition_type is not None and condition_type is not MatchesObjective:
+        raise LegacyScorerHookError(
+            f"{cls.__name__} declares {condition_type.__name__}, which the legacy objective-only "
+            "hooks cannot receive. Implement _score_scorable_async, or derive from MessageScorer and "
+            "implement _score_piece_with_expectation_async. Legacy hooks support objective-based "
+            "scoring only, until 2.0."
+        )
+
+
 def _adapt_legacy_message_scorer(cls: type) -> None:
     """
     Give a pre-2.0 direct ``Scorer`` subclass an implementation of the scorable contract.
@@ -120,19 +137,29 @@ def _adapt_legacy_message_scorer(cls: type) -> None:
     would otherwise fail to instantiate because ``_score_scorable_async`` is abstract.
     ``ABCMeta`` recomputes ``__abstractmethods__`` after ``__init_subclass__``, so assigning
     here is enough.
+
+    Raises:
+        LegacyScorerHookError: If the class declares a typed condition the legacy hooks cannot receive.
     """
     for base in cls.__mro__:
         if base is Scorer:
             break
-        if "_score_scorable_async" in base.__dict__:
-            return
+        hook = base.__dict__.get("_score_scorable_async")
+        if hook is None:
+            continue
+        if hook is _legacy_score_scorable_async:
+            # An adapted ancestor still routes through the objective-only hooks.
+            _reject_typed_legacy_condition(cls)
+        return
 
     def defines(name: str) -> bool:
         return any(name in base.__dict__ for base in cls.__mro__)
 
+    if not defines("_score_async") and not defines("_score_piece_async"):
+        return
+    _reject_typed_legacy_condition(cls)
+
     if not defines("_score_async"):
-        if not defines("_score_piece_async"):
-            return
         # A leaf that only fans in at the piece level used to inherit the message pipeline
         # from its family base. That pipeline now lives on the message-capable family,
         # so lend the matching family implementation here.
@@ -199,7 +226,7 @@ class Scorer(Identifiable, abc.ABC):
             for name in ("MATCHED_CONDITIONS", "REQUIRED_CONDITIONS", "matched_conditions", "required_conditions")
         ):
             raise TypeError(f"{cls.__name__} must declare one CONDITION_TYPE, not condition sets.")
-        if any(name in cls.__dict__ for name in ("condition_type", "get_condition_types")):
+        if any(name in cls.__dict__ for name in ("condition_type", "get_condition_types", "capabilities")):
             raise TypeError(f"{cls.__name__} cannot override derived condition capabilities.")
         cls._check_condition_type(cls.CONDITION_TYPE)
         if cls.CONDITION_TYPE is not None and any(
@@ -253,6 +280,30 @@ class Scorer(Identifiable, abc.ABC):
         if condition_type is not None and self._get_child_scorers():
             raise TypeError(f"{type(self).__name__} wraps scorers and cannot declare its own condition type.")
         return condition_type
+
+    @property
+    @final
+    def capabilities(self) -> ScorerCapabilities:
+        """
+        The evidence and criterion this scorer accepts.
+
+        The condition is always the derived ``condition_type``, so it cannot disagree with the
+        criterion the scorer retrieves. A wrapper reports no condition of its own; its coverage
+        is ``get_condition_types()``.
+
+        Returns:
+            ScorerCapabilities: The declared evidence and condition support.
+        """
+        return replace(self._get_evidence_capabilities(), condition_type=self.condition_type)
+
+    def _get_evidence_capabilities(self) -> ScorerCapabilities:
+        """
+        Describe the evidence this scorer reads; the condition is filled in by ``capabilities``.
+
+        Returns:
+            ScorerCapabilities: No message evidence by default.
+        """
+        return ScorerCapabilities()
 
     def _get_condition_type(self) -> type[Condition] | None:
         """Return the leaf declaration, or its instance-specific equivalent."""
@@ -327,12 +378,12 @@ class Scorer(Identifiable, abc.ABC):
         Reject criteria a legacy hook claims to match but cannot receive.
 
         Raises:
-            TypeError: If the hook cannot receive a matched non-objective condition.
+            LegacyScorerHookError: If the hook cannot receive a matched non-objective condition.
         """
         if expectation is not None and any(
             not isinstance(condition, MatchesObjective) for condition in expectation.conditions
         ):
-            raise TypeError(
+            raise LegacyScorerHookError(
                 f"{type(self).__name__} must accept and forward expectation for its matched typed conditions. "
                 f"Implement {replacement}."
             )
@@ -487,7 +538,7 @@ class Scorer(Identifiable, abc.ABC):
         expectation = self.prepare_expectation(expectation=expectation)
         with _scoring_collection() as collector:
             try:
-                with _scoring_scorable_context(scorable), _scoring_expectation_context(expectation):
+                with _scoring_scorable_context(scorable):
                     scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
             except PyritException as e:
                 e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
@@ -775,7 +826,7 @@ class Scorer(Identifiable, abc.ABC):
             list[Score]: The validated child scores.
         """
         self._validate_expectation(expectation=expectation)
-        with _scoring_scorable_context(scorable), _scoring_expectation_context(expectation):
+        with _scoring_scorable_context(scorable):
             scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
         self._stamp_scored_expectation(scores=scores, expectation=expectation)
         if scores:

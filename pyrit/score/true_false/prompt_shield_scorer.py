@@ -6,7 +6,7 @@ import logging
 import uuid
 from typing import Any
 
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoreType
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoreType, ScoringExpectation
 from pyrit.prompt_target import PromptShieldTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -60,7 +60,10 @@ class PromptShieldScorer(MessageTrueFalseScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        objective = expectation.objective if expectation else None
         conversation_id = str(uuid.uuid4())
 
         body = message_piece.converted_value

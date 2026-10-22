@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.csv_helper import strip_leading_comment_block
 from pyrit.common.path import SCORER_EVALS_HARM_PATH
-from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoreStatus
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoreStatus, ScoringExpectation
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.text_chunking import iter_chunk_spans
@@ -598,12 +598,10 @@ class LocalViolenceClassifierScorer(MessageFloatScaleScorer):
             }
         )
 
-    async def _score_piece_async(
-        self,
-        message_piece: MessagePiece,
-        *,
-        objective: str | None = None,
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
     ) -> list[Score]:
+        objective = expectation.objective if expectation else None
         await self.load_model_async()
         head = self._head
         if head is None:  # pragma: no cover - load_model_async either sets it or raises.

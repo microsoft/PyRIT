@@ -44,8 +44,15 @@ Requirements:
   without reading the active message or expectation context.
 - Preserve `get_chat_target()` for target discovery. Use `_score_piece_with_expectation_async`
   for migrated judge consumers; do not replace it with an objective-only hook.
-- A legacy `_score_piece_async` override below a typed scorer raises `TypeError` at construction.
-  Keep this fail-fast check: implicit dispatch through both hooks can skip or repeat custom policy.
+- A legacy `_score_piece_async` override below a typed scorer raises `LegacyScorerHookError` (a
+  `TypeError`) at construction. Keep this fail-fast check: implicit dispatch through both hooks can
+  skip or repeat custom policy.
+- In-repo message leaves implement `_score_piece_with_expectation_async`. The objective-only
+  `_score_piece_async` hook remains only so external scorers keep working until 2.0; do not add
+  new in-repo uses of it.
+- A leaf that declares a typed `CONDITION_TYPE` other than `MatchesObjective` must implement an
+  expectation-aware hook. If only a legacy objective-only hook can receive the criterion,
+  construction raises `LegacyScorerHookError`. Legacy hooks support objective-based scoring until 2.0.
 
 ## Condition contract
 
@@ -58,6 +65,10 @@ Requirements:
   only its supported subset, preserving objective context. Shared validation checks every child
   before scoring. Wrappers that transform context expose the same inputs through
   `_get_child_expectations()` for preflight.
+- `Scorer.capabilities` is final and reports the declared condition with the evidence the scorer
+  accepts. Override `_get_evidence_capabilities()` only to describe evidence; message scorers derive
+  it from their validator. A class `CONDITION_TYPE` takes precedence over the validator's
+  `is_objective_required`, which only lets an undeclared scorer require `MatchesObjective`.
 - Do not override the derived capability API, add plural declarations, or repeat missing/duplicate
   condition checks in leaves. Use shared selection helpers; leaves cannot read sibling conditions.
 - Objective-only defaults are resolved before routing. Do not infer missing conditions from a
