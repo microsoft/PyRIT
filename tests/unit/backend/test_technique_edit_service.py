@@ -4,6 +4,8 @@
 """Lossless editor projections and source-pinned, run-local factory reconstruction."""
 
 import asyncio
+import base64
+import codecs
 import json
 from collections.abc import Iterator
 from typing import Any
@@ -24,16 +26,24 @@ from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH, EXECUTOR_SIMULATED_TARG
 from pyrit.converter import Base64Converter, ROT13Converter
 from pyrit.executor.attack import (
     AttackConverterConfig,
+    AttackExecutor,
     AttackParameters,
     AttackScoringConfig,
     AttackStrategy,
     PromptSendingAttack,
     RedTeamingAttack,
 )
+from pyrit.executor.attack.component import PrependedConversationConfig
+from pyrit.executor.attack.multi_turn.simulated_conversation import SimulatedConversationResult
 from pyrit.memory import CentralMemory
+from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import (
+    AttackSeedGroup,
     AttackTechniqueSeedGroup,
+    Message,
+    SeedGroup,
     SeedGroupRequirements,
+    SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
     load_next_message_prompt,
@@ -47,6 +57,7 @@ from pyrit.models.technique_edit import (
     TechniqueSettings,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, Registry, TargetRegistry
 from pyrit.scenario.core import AttackTechniqueFactory
 from pyrit.scenario.core.technique_requirements import TechniqueRequirements
@@ -569,6 +580,180 @@ def test_inherited_conditional_converter_chain_is_read_only(edit_catalog: Attack
             TechniqueEditService.validate(
                 specification.model_copy(update={"changes": TechniqueChanges(request_converters=[])})
             )
+
+
+@pytest.mark.parametrize("editable_history", [False, True])
+async def test_gui_converter_edit_converts_simulated_history_on_replay_only_async(
+    edit_catalog: AttackTechniqueRegistry, editable_history: bool
+) -> None:
+    source = edit_catalog.instances.get("role_play_movie_script")
+    assert source is not None and source.seed_technique is not None
+    source_identity = source.get_configuration_identity()
+    revision = edit_catalog.catalog_revision
+    admitted = TechniqueEditService.validate(
+        _specification(changes=TechniqueChanges(request_converters=["base64"], response_converters=["rot13"]))
+    )
+    factory = TechniqueEditService.resolve(TechniqueOverride.model_validate_json(admitted.override.model_dump_json()))
+    target = TargetRegistry.get_registry_singleton().instances.get("objective")
+    assert isinstance(target, MockPromptTarget)
+    target.apply_capabilities(
+        capabilities=TargetCapabilities(supports_multi_turn=True, supports_editable_history=editable_history)
+    )
+    technique = factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
+    group = AttackSeedGroup(seeds=[SeedObjective(value="Test replay")]).with_technique(technique=source.seed_technique)
+    generated = [
+        SeedPrompt(value=text, role=role, sequence=sequence, data_type="text")
+        for sequence, (role, text) in enumerate(
+            [
+                ("user", "first request"),
+                ("assistant", "first reply"),
+                ("user", "second request"),
+                ("assistant", "second reply"),
+                ("user", "final request"),
+            ]
+        )
+    ]
+    SeedGroup(seeds=generated)
+    original_seeds = [seed.model_dump() for seed in generated]
+    request_converter = ConverterRegistry.get_registry_singleton().instances.get("base64")
+    response_converter = ConverterRegistry.get_registry_singleton().instances.get("rot13")
+    with (
+        patch(
+            "pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async",
+            return_value=SimulatedConversationResult(seed_prompts=generated, related_conversations=frozenset()),
+        ) as generate,
+        patch.object(target, "_send_prompt_to_target_async", wraps=target._send_prompt_to_target_async) as send,
+        patch.object(request_converter, "convert_async", wraps=request_converter.convert_async) as request_conversion,
+        patch.object(
+            response_converter, "convert_async", wraps=response_converter.convert_async
+        ) as response_conversion,
+    ):
+        execution = await AttackExecutor().execute_attack_from_seed_groups_async(
+            attack=technique.attack,
+            seed_groups=[group],
+            adversarial_chat=TargetRegistry.get_registry_singleton().instances.get("adversarial_chat"),
+            objective_scorer=SubStringScorer(substring="done"),
+        )
+    generate.assert_awaited_once()
+    assert generate.call_args.kwargs.get("attack_converter_config") is None
+    send.assert_awaited_once()
+    received = send.call_args.kwargs["normalized_conversation"]
+    encoded = [base64.b64encode(seed.value.encode()).decode() for seed in generated]
+    if editable_history:
+        assert [message.get_value() for message in received] == encoded
+    else:
+        assert all(text in received[0].get_value() for text in encoded)
+    result = execution.completed_results[0]
+    pieces = await CentralMemory.get_memory_instance().get_message_pieces_async(conversation_id=result.conversation_id)
+    replayed = {piece.original_value: piece for piece in pieces}
+    for seed, text in zip(generated, encoded, strict=True):
+        assert replayed[seed.value].converted_value == text
+        assert [identifier.class_name for identifier in replayed[seed.value].converter_identifiers] == [
+            "Base64Converter"
+        ]
+    assert replayed["default"].converted_value == codecs.encode("default", "rot_13")
+    assert request_conversion.await_count == 5
+    assert response_conversion.await_count == 1
+    assert [seed.model_dump() for seed in generated] == original_seeds
+    assert source.get_configuration_identity() == source_identity
+    assert edit_catalog.catalog_revision == revision
+
+
+async def test_gui_created_technique_converts_both_history_roles_but_not_system_prompt_async(
+    edit_catalog: AttackTechniqueRegistry,
+) -> None:
+    created = await TechniqueService().create_async(
+        CreateTechniqueRequest(name="gui_replay", type="PromptSendingAttack", request_converters=["base64"])
+    )
+    factory = edit_catalog.instances.get(created.name)
+    assert factory is not None
+    target = TargetRegistry.get_registry_singleton().instances.get("objective")
+    assert isinstance(target, MockPromptTarget)
+    technique = factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
+    with patch.object(target, "_send_prompt_to_target_async", wraps=target._send_prompt_to_target_async) as send:
+        await technique.attack.execute_async(
+            objective="Test replay",
+            prepended_conversation=[
+                Message.from_prompt(prompt="system prompt", role="system"),
+                Message.from_prompt(prompt="history request", role="user"),
+                Message.from_prompt(prompt="history reply", role="assistant"),
+            ],
+            next_message=Message.from_prompt(prompt="live request", role="user"),
+        )
+    received = send.call_args.kwargs["normalized_conversation"]
+    assert [message.get_value() for message in received] == [
+        "system prompt",
+        *[base64.b64encode(text.encode()).decode() for text in ("history request", "history reply", "live request")],
+    ]
+
+
+@pytest.mark.parametrize("inherited", [False, True])
+def test_gui_request_converters_keep_history_formatting_and_existing_role_opt_ins(
+    edit_catalog: AttackTechniqueRegistry, inherited: bool
+) -> None:
+    normalizer = ConversationContextNormalizer()
+    config = PrependedConversationConfig(message_normalizer=normalizer, apply_converters_to_roles=["system", "user"])
+    source = edit_catalog.instances.get("role_play_movie_script")
+    assert source is not None
+    if not inherited:
+        source = source.with_attack_kwargs(attack_kwargs={"prepended_conversation_config": config})
+        edit_catalog.instances.unregister(source.name)
+        edit_catalog.register_from_factories([source])
+    defaults = GlobalDefaultValues()
+    defaults.set_default_value(class_type=AttackStrategy, parameter_name="prepended_conversation_config", value=config)
+    with patch("pyrit.common.apply_defaults._global_default_values", defaults):
+        identity = source.get_configuration_identity()
+        admitted = TechniqueEditService.validate(
+            _specification(changes=TechniqueChanges(request_converters=["base64"]))
+        )
+        restored = TechniqueEditService.resolve(admitted.override)
+        copied = restored.get_effective_attack_kwargs()["prepended_conversation_config"]
+        assert copied is not config
+        assert copied.apply_converters_to_roles == ["system", "user", "assistant"]
+        assert copied.message_normalizer is normalizer
+        assert config.apply_converters_to_roles == ["system", "user"]
+        assert source.get_configuration_identity() == identity
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        TechniqueChanges(),
+        TechniqueChanges(description="Only description"),
+        TechniqueChanges(request_converters=[]),
+        TechniqueChanges(response_converters=["rot13"]),
+    ],
+)
+def test_other_gui_edits_do_not_change_history_conversion_policy(
+    edit_catalog: AttackTechniqueRegistry, changes: TechniqueChanges
+) -> None:
+    admitted = TechniqueEditService.validate(_specification(changes=changes))
+    restored = TechniqueEditService.resolve(admitted.override)
+    assert "prepended_conversation_config" not in restored.get_effective_settings().attack_kwargs
+
+
+@pytest.mark.parametrize("request_converters", [None, []])
+async def test_gui_creation_without_request_converters_keeps_default_history_policy_async(
+    edit_catalog: AttackTechniqueRegistry, request_converters: list[str] | None
+) -> None:
+    created = await TechniqueService().create_async(
+        CreateTechniqueRequest(
+            name="without_requests",
+            type="PromptSendingAttack",
+            request_converters=request_converters,
+            response_converters=["rot13"],
+        )
+    )
+    factory = edit_catalog.instances.get(created.name)
+    assert factory is not None
+    assert "prepended_conversation_config" not in factory.get_effective_settings().attack_kwargs
+
+
+def test_python_factory_construction_keeps_default_history_roles(edit_catalog: AttackTechniqueRegistry) -> None:
+    factory = edit_catalog.create_factory(
+        name="python_replay", attack_type="PromptSendingAttack", request_converters=["base64"]
+    )
+    assert "prepended_conversation_config" not in factory.get_effective_settings().attack_kwargs
 
 
 async def test_isolated_run_overrides_estimate_and_resume_async(edit_catalog: AttackTechniqueRegistry) -> None:

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache, wraps
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 from weakref import WeakSet
@@ -231,6 +231,8 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         Attack types come from ``AttackRegistry``; converters and the adversarial
         target reference existing instances. Seeds, scoring configurations, and
         conversation configurations remain available through Python factories.
+        Strict GUI creation with request converters also selects user and assistant
+        history for replay conversion; simulation generation is unchanged.
 
         Returns:
             AttackTechniqueFactory: The configured deferred factory.
@@ -300,12 +302,13 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
                 name="adversarial_chat",
             )
         registry.validate_constructor_parameters(attack_class=attack_class, params=attack_args)
-        return AttackTechniqueFactory(
+        factory = AttackTechniqueFactory(
             name=name,
             attack_class=attack_class,
             attack_kwargs=attack_args,
             **factory_kwargs,
         )
+        return self._with_replay_converter_roles(factory) if strict_json and request_converters else factory
 
     @staticmethod
     def get_editable_settings(factory: AttackTechniqueFactory) -> dict[str, Any]:
@@ -370,6 +373,8 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         """
         Resolve a partial external edit and validate a private factory copy without registration.
 
+        Adding request converters selects both user and assistant history for replay.
+
         Returns:
             AttackTechniqueFactory: A validated copy retaining unedited and opaque source settings.
 
@@ -405,7 +410,35 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         converters = self._resolve_converter_changes(
             {name: getattr(changes, name) for name in supplied & {"request_converters", "response_converters"}}
         )
-        return source.with_settings(settings=settings, simulation=changes.simulation, converter_changes=converters)
+        factory = source.with_settings(settings=settings, simulation=changes.simulation, converter_changes=converters)
+        return self._with_replay_converter_roles(factory) if changes.request_converters else factory
+
+    @staticmethod
+    def _with_replay_converter_roles(factory: AttackTechniqueFactory) -> AttackTechniqueFactory:
+        """
+        Apply GUI request converters to both sides of completed history before replay.
+
+        Returns:
+            AttackTechniqueFactory: A copy retaining existing history formatting and explicit role opt-ins.
+
+        Raises:
+            TypeError: If the effective history configuration is not a supported configuration.
+        """
+        from pyrit.executor.attack.component import PrependedConversationConfig
+
+        settings = factory.get_effective_attack_kwargs()
+        if "prepended_conversation_config" not in settings:
+            return factory
+        config = settings["prepended_conversation_config"] or PrependedConversationConfig()
+        if not isinstance(config, PrependedConversationConfig):
+            raise TypeError("prepended_conversation_config must be a PrependedConversationConfig")
+        roles = list(config.apply_converters_to_roles)
+        for role in ("user", "assistant"):
+            if role not in roles:
+                roles.append(role)
+        copied = factory.get_effective_settings()
+        copied.attack_kwargs["prepended_conversation_config"] = replace(config, apply_converters_to_roles=roles)
+        return factory.with_settings(settings=copied)
 
     @staticmethod
     def _resolve_converter_changes(changes: dict[str, list[str] | None]) -> dict[str, list[ConverterConfiguration]]:
