@@ -3,10 +3,10 @@ import type { AttackAnalyticsFilter, AttackAnalyticsViewState } from '@/types'
 
 import {
   DEFAULT_ANALYTICS_VIEW, analyticsDateRangeError, analyticsDimensionKey, analyticsFiltersKey, analyticsLegacyOperationLabel,
-  analyticsOptionLabel,
+  analyticsOptionLabel, analyticsOptionLabelKey,
   analyticsQuery, analyticsQueryKey, analyticsSuccessCountsLabel, analyticsValueKey, analyticsValueLabel, analyticsViewError,
   analyticsViewFromLocation, analyticsViewFromSearchParams, analyticsViewToHash, analyticsViewToSearchParams,
-  appendAnalyticsDrilldown, formatAnalyticsPercent,
+  appendAnalyticsDrilldown, formatAnalyticsPercent, withoutAnalyticsOperationIdLabels,
 } from './attackAnalytics'
 
 describe('attack analytics view state', () => {
@@ -135,6 +135,17 @@ describe('attack analytics view state', () => {
     expect(analyticsLegacyOperationLabel('   ')).toBe('(Blank) (legacy name)')
     expect(analyticsValueLabel({ kind: 'legacy_operation_name', value: '  ' })).toBe('(Blank) (legacy name)')
     expect(analyticsValueLabel({ kind: 'value', value: '' })).toBe('(Empty value)')
+  })
+
+  it('should drop only Operation ID labels from a label cache', () => {
+    const operationId = analyticsOptionLabelKey({ name: 'operation' }, { kind: 'value', value: ANALYTICS_NIGHTLY_ID })
+    const kept = {
+      [analyticsOptionLabelKey({ name: 'operation' }, { kind: 'legacy_operation_name', value: 'Nightly' })]: 'Nightly (legacy name)',
+      [analyticsOptionLabelKey({ name: 'operation' }, { kind: 'missing', value: null })]: 'Unknown',
+      [analyticsOptionLabelKey({ name: 'scenario' }, { kind: 'value', value: ANALYTICS_NIGHTLY_ID })]: 'Nightly scan (1d385514)',
+      [analyticsOptionLabelKey({ name: 'label', label_key: 'operation' }, { kind: 'value', value: ANALYTICS_NIGHTLY_ID })]: 'Team label',
+    }
+    expect(withoutAnalyticsOperationIdLabels({ ...kept, [operationId]: 'Nightly' })).toEqual(kept)
   })
 
   it('should format an unavailable rate differently from zero without deriving a metric', () => {

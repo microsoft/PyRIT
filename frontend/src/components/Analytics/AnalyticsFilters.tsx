@@ -9,14 +9,15 @@ import { AddRegular, DismissRegular, FilterDismissRegular } from '@fluentui/reac
 
 import { useAnalyticsOperationLabels } from '@/hooks/useAnalyticsOperationLabels'
 import { useAttackAnalyticsFacet } from '@/hooks/useAttackAnalyticsFacet'
+import { useRuntime } from '@/hooks/useRuntime'
 import type {
   AttackAnalyticsDimension, AttackAnalyticsFilter, AttackAnalyticsFilters,
   AttackAnalyticsOption, AttackAnalyticsValue, AttackOutcome,
 } from '@/types'
 import {
   ANALYTICS_MAX_VALUES, ANALYTICS_OUTCOMES, analyticsDateRangeError, analyticsDimensionKey, analyticsDimensionLabel,
-  analyticsLegacyOperationLabel, analyticsOptionLabel, analyticsOptionLabelKey, analyticsValueKey, analyticsValueLabel,
-  formatAnalyticsTime, hasAnalyticsFilters,
+  analyticsLabelEpoch, analyticsLegacyOperationLabel, analyticsOptionLabel, analyticsOptionLabelKey, analyticsValueKey,
+  analyticsValueLabel, formatAnalyticsTime, hasAnalyticsFilters, withoutAnalyticsOperationIdLabels,
 } from '@/utils/attackAnalytics'
 
 import AnalyticsDimensionPicker from './AnalyticsDimensionPicker'
@@ -280,11 +281,20 @@ interface FilterEditorState {
  */
 export default function AnalyticsFilters({ filters, refreshVersion, onChange, drilldownLabels }: AnalyticsFiltersProps) {
   const styles = useAnalyticsFiltersStyles()
+  const runtime = useRuntime()
+  const labelEpoch = analyticsLabelEpoch(refreshVersion, runtime.generation)
   const [editor, setEditor] = useState<FilterEditorState | null>(null)
   const [datesOpen, setDatesOpen] = useState(false)
   const [knownLabels, setKnownLabels] = useState<Record<string, string>>({})
-  const operationLabels = useAnalyticsOperationLabels(filters)
-  // Fetched facet labels win over drilled-down server labels; restored Operation IDs fall back to their current names.
+  const [knownLabelsEpoch, setKnownLabelsEpoch] = useState(labelEpoch)
+  // A rename changes only Operation names under a fixed key; other labels are immutable and nothing would refetch them.
+  if (knownLabelsEpoch !== labelEpoch) {
+    setKnownLabelsEpoch(labelEpoch)
+    setKnownLabels((previous: Record<string, string>) => withoutAnalyticsOperationIdLabels(previous))
+  }
+  const operationLabels = useAnalyticsOperationLabels(filters, refreshVersion)
+  // Within a label epoch, a facet pick is newer than the Operation lookup, so facet labels win, then drill-down
+  // labels. A new epoch drops both caches' Operation names, so chips show the looked-up current names.
   const labels: Record<string, string> = {
     ...Object.fromEntries(Object.entries(operationLabels).map(([id, name]: [string, string]) => [
       analyticsOptionLabelKey({ name: 'operation' }, { kind: 'value', value: id }), name,

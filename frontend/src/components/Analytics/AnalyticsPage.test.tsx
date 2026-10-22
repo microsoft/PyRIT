@@ -12,7 +12,7 @@ import {
 } from '@/test-utils/analyticsFixtures'
 import type {
   AttackAnalyticsFilter, AttackAnalyticsFilters, AttackAnalyticsQuery, AttackAnalyticsReport,
-  AttackAnalyticsValue, AttackAnalyticsViewState,
+  AttackAnalyticsValue, AttackAnalyticsViewState, OperationListResponse,
 } from '@/types'
 import {
   ANALYTICS_ASR_NOTE, ANALYTICS_DEBOUNCE_MS, DEFAULT_ANALYTICS_VIEW, analyticsViewToHash, formatAnalyticsTime,
@@ -44,11 +44,14 @@ function NavigationProbe() {
 
 function renderPage(view?: AttackAnalyticsViewState, onOpenAttack: (id: string) => void = jest.fn()) {
   const path = view ? `/analytics${analyticsViewToHash(view)}` : '/analytics'
-  return render(
+  const page = () => (
     <TestWrapper><MemoryRouter initialEntries={[path]}>
       <AnalyticsPage onOpenAttack={onOpenAttack} /><NavigationProbe />
-    </MemoryRouter></TestWrapper>,
+    </MemoryRouter></TestWrapper>
   )
+  const rendered = render(page())
+  // A fresh element re-renders the page, keeping the router's history, so it reads a changed runtime.
+  return { ...rendered, rerenderPage: (): void => { rendered.rerender(page()) } }
 }
 
 function deferred<T>() {
@@ -77,6 +80,31 @@ interface DrilldownBoundaryCase {
   readonly chart: 'outcomes' | 'heatmap'
   readonly budget: 'predicates' | 'values'
   readonly initialSize: number
+}
+
+type LabelEpochChange = 'Reload' | 'runtime change'
+
+const RENAMED_OPERATIONS: OperationListResponse = { items: [{ ...ANALYTICS_OPERATIONS.items[0], name: 'Renamed' }] }
+
+/** Renames Nightly in the reads the page repeats, as a rename in another tab would. */
+function renameNightly(): void {
+  mockList.mockResolvedValue(RENAMED_OPERATIONS)
+  mockQuery.mockImplementation(async (query: AttackAnalyticsQuery) => makeAnalyticsReport({
+    ...echoQuery(query), groups: [{ ...makeAnalyticsReport().groups[0], label: 'Renamed' }],
+  }))
+}
+
+/** Waits for the current report, then clicks Reload or switches the runtime generation. */
+async function changeLabelEpoch(
+  change: LabelEpochChange, user: ReturnType<typeof userEvent.setup>, rerenderPage: () => void,
+): Promise<void> {
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Reload' })).toBeEnabled() })
+  if (change === 'Reload') {
+    await user.click(screen.getByRole('button', { name: 'Reload' }))
+  } else {
+    mockRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'second-runtime' })
+    rerenderPage()
+  }
 }
 
 describe('AnalyticsPage', () => {
@@ -580,6 +608,84 @@ describe('AnalyticsPage', () => {
     expect(screen.getByRole('button', { name: 'Scenario run (ANY): Nightly scan (1e4c8a90)' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: `Scenario run (ANY): ${runId}` })).not.toBeInTheDocument()
   })
+
+  it('should rename a restored Operation chip on Reload, as the report does', async () => {
+    const user = userEvent.setup()
+    const { rerenderPage } = renderPage({
+      ...DEFAULT_ANALYTICS_VIEW, filters: { ...DEFAULT_ANALYTICS_VIEW.filters, dimensions: [ANALYTICS_OPERATION_FILTER] },
+    })
+    expect(await screen.findByRole('button', { name: 'Operation (ANY): Nightly' })).toBeInTheDocument()
+    renameNightly()
+    await changeLabelEpoch('Reload', user, rerenderPage)
+    expect(await screen.findByRole('button', { name: 'Filter to Renamed' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Operation (ANY): Renamed' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Operation (ANY): Nightly' })).not.toBeInTheDocument()
+    expect(mockList).toHaveBeenCalledTimes(2)
+  })
+
+  it.each<LabelEpochChange>(['Reload', 'runtime change'])(
+    'should rename a facet-selected Operation chip after a %s',
+    async (change: LabelEpochChange) => {
+      const user = userEvent.setup()
+      const { rerenderPage } = renderPage()
+      await user.click(screen.getByRole('button', { name: 'Operation' }))
+      await user.click(await screen.findByRole('checkbox', { name: 'Nightly' }))
+      await user.click(screen.getByRole('button', { name: 'Apply filter' }))
+      expect(screen.getByRole('button', { name: 'Operation (ANY): Nightly' })).toBeInTheDocument()
+      await waitFor(() => { expect(mockList).toHaveBeenCalledTimes(1) })
+      renameNightly()
+      await changeLabelEpoch(change, user, rerenderPage)
+      expect(await screen.findByRole('button', { name: 'Operation (ANY): Renamed' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Operation (ANY): Nightly' })).not.toBeInTheDocument()
+    },
+  )
+
+  it.each<LabelEpochChange>(['Reload', 'runtime change'])(
+    'should rename a drill-down Operation chip after a %s',
+    async (change: LabelEpochChange) => {
+      const user = userEvent.setup()
+      const { rerenderPage } = renderPage()
+      await user.click(await screen.findByRole('button', { name: 'Filter to Nightly' }))
+      expect(screen.getByRole('button', { name: 'Operation (ANY): Nightly' })).toBeInTheDocument()
+      await waitFor(() => { expect(mockList).toHaveBeenCalledTimes(1) })
+      renameNightly()
+      await changeLabelEpoch(change, user, rerenderPage)
+      expect(await screen.findByRole('button', { name: 'Operation (ANY): Renamed' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Operation (ANY): Nightly' })).not.toBeInTheDocument()
+    },
+  )
+
+  it.each<LabelEpochChange>(['Reload', 'runtime change'])(
+    'should keep drill-down and facet labels of other dimensions after a %s',
+    async (change: LabelEpochChange) => {
+      const user = userEvent.setup()
+      const scenario: AttackAnalyticsFilter = {
+        dimension: { name: 'scenario' }, values: [{ kind: 'value', value: '7f0c4e2a-5b1d-4c3e-9f8a-2d6b1e4c8a90' }], match_mode: 'any',
+      }
+      mockQuery.mockImplementation(async (query: AttackAnalyticsQuery) => makeAnalyticsReport({
+        ...echoQuery(query),
+        groups: [{
+          key: scenario.values[0], label: 'Nightly scan (1e4c8a90)',
+          statistics: ANALYTICS_TEST_STATISTICS, drilldown_filters: [scenario],
+        }],
+      }))
+      mockFacets.mockResolvedValue(makeAnalyticsFacets({
+        items: [{ key: { kind: 'value', value: 'objective-target-hash' }, label: 'Production chat' }],
+      }))
+      const { rerenderPage } = renderPage({ ...DEFAULT_ANALYTICS_VIEW, groupBy: scenario.dimension })
+      await user.click(await screen.findByRole('button', { name: 'Filter to Nightly scan (1e4c8a90)' }))
+      await user.click(screen.getByRole('button', { name: 'Objective target' }))
+      await user.click(await screen.findByRole('checkbox', { name: 'Production chat' }))
+      await user.click(screen.getByRole('button', { name: 'Apply filter' }))
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Reload' })).toBeEnabled() })
+      const reportReads = mockQuery.mock.calls.length
+      await changeLabelEpoch(change, user, rerenderPage)
+      await waitFor(() => { expect(mockQuery).toHaveBeenCalledTimes(reportReads + 1) })
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Reload' })).toBeEnabled() })
+      expect(screen.getByRole('button', { name: 'Scenario run (ANY): Nightly scan (1e4c8a90)' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Objective target (ANY): Production chat' })).toBeInTheDocument()
+    },
+  )
 
   it('should show a legacy Operation name suffix once on heatmap axes, drill-down chips and the chip editor', async () => {
     const user = userEvent.setup()

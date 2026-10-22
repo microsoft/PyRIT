@@ -16,8 +16,9 @@ import type {
 } from '@/types'
 import {
   ANALYTICS_ASR_NOTE, DEFAULT_ANALYTICS_VIEW, analyticsAsrDefinition,
-  analyticsDimensionKey, analyticsOptionLabelKey, analyticsQuery, analyticsQueryKey, analyticsViewError, analyticsViewFromLocation,
-  analyticsViewToHash, appendAnalyticsDrilldown, formatAnalyticsTime, hasAnalyticsFilters,
+  analyticsDimensionKey, analyticsLabelEpoch, analyticsOptionLabelKey, analyticsQuery, analyticsQueryKey, analyticsViewError,
+  analyticsViewFromLocation, analyticsViewToHash, appendAnalyticsDrilldown, formatAnalyticsTime, hasAnalyticsFilters,
+  withoutAnalyticsOperationIdLabels,
 } from '@/utils/attackAnalytics'
 
 import AnalyticsDimensionPicker from './AnalyticsDimensionPicker'
@@ -85,6 +86,13 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
   const analytics = useAttackAnalytics(query)
   const report = analytics.report
   const filtersActive = hasAnalyticsFilters(view.filters)
+  const labelEpoch = analyticsLabelEpoch(analytics.refreshVersion, runtime.generation)
+  const [drilldownLabelsEpoch, setDrilldownLabelsEpoch] = useState(labelEpoch)
+  // A rename changes only Operation names under a fixed key; other labels are immutable and nothing would refetch them.
+  if (drilldownLabelsEpoch !== labelEpoch) {
+    setDrilldownLabelsEpoch(labelEpoch)
+    setDrilldownLabels((previous: Record<string, string>) => withoutAnalyticsOperationIdLabels(previous))
+  }
 
   useEffect(() => {
     if (!parsed.error && new URLSearchParams(location.search).has('analytics') && !location.hash) {

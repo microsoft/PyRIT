@@ -75,6 +75,22 @@ export function analyticsOptionLabelKey(dimension: AttackAnalyticsDimension, val
   return JSON.stringify([analyticsDimensionKey(dimension), analyticsValueKey(value)])
 }
 
+/** Reload and a runtime change each start a new label epoch, in which cached Operation names are looked up again. */
+export function analyticsLabelEpoch(refreshVersion: number, runtimeGeneration: string): string {
+  return JSON.stringify([refreshVersion, runtimeGeneration])
+}
+
+function isAnalyticsOperationIdLabelKey(key: string): boolean {
+  const [, valueKey]: unknown[] = JSON.parse(key)
+  const [, value]: unknown[] = typeof valueKey === 'string' ? JSON.parse(valueKey) : []
+  return typeof value === 'string' && key === analyticsOptionLabelKey({ name: 'operation' }, { kind: 'value', value })
+}
+
+/** Copies a label cache keyed by `analyticsOptionLabelKey` without its Operation ID names. */
+export function withoutAnalyticsOperationIdLabels(labels: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(Object.entries(labels).filter(([key]: [string, string]) => !isAnalyticsOperationIdLabelKey(key)))
+}
+
 export function analyticsDimensionLabel(dimension: AttackAnalyticsDimension): string {
   if (dimension.name === 'label') return `Label: ${dimension.label_key}`
   return ANALYTICS_DIMENSIONS.find(

@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 
 import { operationsApi } from '@/services/api'
 import { ANALYTICS_NIGHTLY_ID, ANALYTICS_OPERATION_FILTER, ANALYTICS_OPERATIONS, ANALYTICS_TEST_TIME } from '@/test-utils/analyticsFixtures'
+import { deferred } from '@/test-utils/deferred'
 import type { AttackAnalyticsFilters, OperationListItem, OperationListResponse } from '@/types'
 
 import { useAnalyticsOperationLabels } from './useAnalyticsOperationLabels'
@@ -28,10 +29,16 @@ const NIGHTLY_AND_WEEKLY_FILTERS: AttackAnalyticsFilters = {
   dimensions: [ANALYTICS_OPERATION_FILTER, { ...ANALYTICS_OPERATION_FILTER, values: [{ kind: 'value', value: WEEKLY.id }] }],
   outcomes: [],
 }
+const RENAMED_OPERATIONS: OperationListResponse = { items: [{ ...ANALYTICS_OPERATIONS.items[0], name: 'Renamed' }] }
+
+interface LabelsProps {
+  readonly current: AttackAnalyticsFilters
+  readonly refreshVersion?: number
+}
 
 function renderLabels(filters: AttackAnalyticsFilters = RESTORED_FILTERS) {
   return renderHook(
-    ({ current }: { readonly current: AttackAnalyticsFilters }) => useAnalyticsOperationLabels(current),
+    ({ current, refreshVersion = 0 }: LabelsProps) => useAnalyticsOperationLabels(current, refreshVersion),
     { initialProps: { current: filters } },
   )
 }
@@ -123,5 +130,51 @@ describe('useAnalyticsOperationLabels', () => {
     rerender({ current: RESTORED_FILTERS })
     await waitFor(() => { expect(result.current).toEqual({ [ANALYTICS_NIGHTLY_ID]: 'Nightly' }) })
     expect(mockList).toHaveBeenCalledTimes(1)
+  })
+
+  it('should look up names again on Reload and keep the old name until the new one arrives', async () => {
+    const renamed = deferred<OperationListResponse>()
+    mockList.mockResolvedValueOnce(ANALYTICS_OPERATIONS).mockReturnValueOnce(renamed.promise)
+    const { result, rerender } = renderLabels(NIGHTLY_FILTERS)
+    await waitFor(() => { expect(result.current).toEqual({ [ANALYTICS_NIGHTLY_ID]: 'Nightly' }) })
+    rerender({ current: NIGHTLY_FILTERS, refreshVersion: 1 })
+    await waitFor(() => { expect(mockList).toHaveBeenCalledTimes(2) })
+    expect(result.current).toEqual({ [ANALYTICS_NIGHTLY_ID]: 'Nightly' })
+    renamed.resolve(RENAMED_OPERATIONS)
+    await settle()
+    expect(result.current).toEqual({ [ANALYTICS_NIGHTLY_ID]: 'Renamed' })
+  })
+
+  it('should look up names again when the runtime generation changes', async () => {
+    mockList.mockResolvedValueOnce(ANALYTICS_OPERATIONS).mockResolvedValueOnce(RENAMED_OPERATIONS)
+    const { result, rerender } = renderLabels(NIGHTLY_FILTERS)
+    await waitFor(() => { expect(result.current).toEqual({ [ANALYTICS_NIGHTLY_ID]: 'Nightly' }) })
+    mockRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'two' })
+    rerender({ current: NIGHTLY_FILTERS })
+    await waitFor(() => { expect(result.current).toEqual({ [ANALYTICS_NIGHTLY_ID]: 'Renamed' }) })
+    expect(mockList).toHaveBeenCalledTimes(2)
+  })
+
+  it('should drop the name of an Operation missing from the refreshed list', async () => {
+    mockList.mockResolvedValueOnce({ items: [...ANALYTICS_OPERATIONS.items, WEEKLY] }).mockResolvedValueOnce({ items: [WEEKLY] })
+    const { result, rerender } = renderLabels(NIGHTLY_AND_WEEKLY_FILTERS)
+    await waitFor(() => { expect(result.current).toEqual({ [ANALYTICS_NIGHTLY_ID]: 'Nightly', [WEEKLY.id]: 'Weekly' }) })
+    rerender({ current: NIGHTLY_AND_WEEKLY_FILTERS, refreshVersion: 1 })
+    await waitFor(() => { expect(mockList).toHaveBeenCalledTimes(2) })
+    await settle()
+    expect(result.current).toEqual({ [WEEKLY.id]: 'Weekly' })
+  })
+
+  it('should ignore a lookup from an earlier Reload that resolves after a newer one', async () => {
+    const stale = deferred<OperationListResponse>()
+    mockList.mockReturnValueOnce(stale.promise).mockResolvedValueOnce(RENAMED_OPERATIONS)
+    const { result, rerender } = renderLabels(NIGHTLY_FILTERS)
+    await waitFor(() => { expect(mockList).toHaveBeenCalledTimes(1) })
+    rerender({ current: NIGHTLY_FILTERS, refreshVersion: 1 })
+    await waitFor(() => { expect(result.current).toEqual({ [ANALYTICS_NIGHTLY_ID]: 'Renamed' }) })
+    stale.resolve(ANALYTICS_OPERATIONS)
+    await settle()
+    expect(result.current).toEqual({ [ANALYTICS_NIGHTLY_ID]: 'Renamed' })
+    expect(mockList).toHaveBeenCalledTimes(2)
   })
 })
