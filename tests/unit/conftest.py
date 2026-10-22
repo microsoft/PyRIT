@@ -3,6 +3,7 @@
 
 import os
 import sqlite3
+import sys
 import tempfile
 from collections.abc import AsyncGenerator, Generator
 from contextlib import closing, contextmanager
@@ -21,6 +22,17 @@ os.environ["CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS"] = "5"
 os.environ["RETRY_MAX_NUM_ATTEMPTS"] = "2"
 os.environ["RETRY_WAIT_MIN_SECONDS"] = "0"
 os.environ["RETRY_WAIT_MAX_SECONDS"] = "1"
+
+if sys.platform == "win32":
+    from asyncio import AbstractEventLoop
+    from collections.abc import Callable
+
+    from test_support.event_loop import new_test_event_loop
+
+    @pytest.fixture(scope="session")
+    def _asyncio_loop_factory() -> Callable[[], AbstractEventLoop]:
+        # pytest-asyncio 1.4's hook does not select factories for fixture-only runners.
+        return new_test_event_loop
 
 
 @contextmanager
