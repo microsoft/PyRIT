@@ -4,6 +4,7 @@
 
 import logging
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 from uuid import uuid4
@@ -242,6 +243,9 @@ class HumanLabeledDataset:
         - 'objective': For OBJECTIVE datasets, the objective being evaluated
         - 'data_type': Optional data type (defaults to 'text' if not present)
 
+        Objective labels are validated without numeric rounding and must represent
+        exactly 0 or 1, or a boolean. Harm labels are floats between 0.0 and 1.0.
+
         You can optionally include # comment lines at the top of the CSV file to specify
         the dataset version and harm definition path; the metadata may appear on any of
         them. Only leading # lines are treated as comments; a # anywhere else is
@@ -266,7 +270,8 @@ class HumanLabeledDataset:
 
         Raises:
             FileNotFoundError: If the CSV file does not exist.
-            ValueError: If version is not provided and not found in the CSV file.
+            ValueError: If version is not provided and not found in the CSV file,
+                required cells are missing, or objective labels are not binary.
         """
         csv_path = verify_and_resolve_path(csv_path)
         # One scan of the leading block yields both the metadata comments and the number
@@ -318,11 +323,13 @@ class HumanLabeledDataset:
             ),
             str,
         )
+        # Keep objective labels as text until validation, before rounding or underflow can occur.
+        csv_dtypes = str if metrics_type == MetricsType.OBJECTIVE else text_dtypes
         # Try UTF-8 first, fall back to latin-1 for files with special characters
         try:
-            eval_df = pd.read_csv(csv_path, skiprows=skiprows or None, encoding="utf-8", dtype=text_dtypes)
+            eval_df = pd.read_csv(csv_path, skiprows=skiprows or None, encoding="utf-8", dtype=csv_dtypes)
         except UnicodeDecodeError:
-            eval_df = pd.read_csv(csv_path, skiprows=skiprows or None, encoding="latin-1", dtype=text_dtypes)
+            eval_df = pd.read_csv(csv_path, skiprows=skiprows or None, encoding="latin-1", dtype=csv_dtypes)
 
         # Drop rows where every column is NaN (e.g. trailing blank lines in the CSV)
         eval_df = eval_df.dropna(how="all")
@@ -457,14 +464,14 @@ class HumanLabeledDataset:
     @classmethod
     def _validate_csv_columns(cls, *, eval_df: pd.DataFrame, metrics_type: MetricsType) -> None:
         """
-        Validate that the required standard columns exist in the DataFrame.
+        Validate required columns and binary labels for objective datasets.
 
         Args:
             eval_df (pd.DataFrame): The DataFrame to validate.
             metrics_type (MetricsType): The type of dataset (HARM or OBJECTIVE).
 
         Raises:
-            ValueError: If any required column is missing or if column names are not unique.
+            ValueError: If required columns are missing, names are not unique, or objective labels are not binary.
         """
         if len(eval_df.columns) != len(set(eval_df.columns)):
             raise ValueError("Column names in the dataset must be unique.")
@@ -499,6 +506,14 @@ class HumanLabeledDataset:
                     f"Human score column '{col}' contains {nan_count} NaN value(s). "
                     f"All human score cells must be filled."
                 )
+            if metrics_type == MetricsType.OBJECTIVE:
+                try:
+                    for score in eval_df[col]:
+                        cls._parse_objective_label(score)
+                except ValueError as error:
+                    raise ValueError(
+                        f"Human score column '{col}' must contain only binary values (0 or 1) for OBJECTIVE datasets."
+                    ) from error
 
     @staticmethod
     def _construct_harm_entry(*, messages: list[Message], harm: str, human_scores: list[Any]) -> HarmHumanLabeledEntry:
@@ -506,9 +521,21 @@ class HumanLabeledDataset:
         return HarmHumanLabeledEntry(messages, float_scores, harm)
 
     @staticmethod
+    def _parse_objective_label(score: object) -> bool:
+        normalized = str(score).strip().lower()
+        if normalized in ("true", "false"):
+            return normalized == "true"
+        try:
+            numeric_score = Decimal(normalized)
+        except InvalidOperation as error:
+            raise ValueError("Objective labels must be binary (0 or 1).") from error
+        if not numeric_score.is_finite() or numeric_score not in (0, 1):
+            raise ValueError("Objective labels must be binary (0 or 1).")
+        return bool(numeric_score)
+
+    @classmethod
     def _construct_objective_entry(
-        *, messages: list[Message], objective: str, human_scores: list[Any]
+        cls, *, messages: list[Message], objective: str, human_scores: list[Any]
     ) -> "ObjectiveHumanLabeledEntry":
-        # Convert scores to int before casting to bool in case the values (0, 1) are parsed as strings
-        bool_scores = [bool(int(score)) for score in human_scores]
+        bool_scores = [cls._parse_objective_label(score) for score in human_scores]
         return ObjectiveHumanLabeledEntry(messages, bool_scores, objective)

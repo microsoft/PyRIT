@@ -95,12 +95,14 @@ class _MarkdownMetadataScenario(_MetadataScenario):
 
 
 @pytest.mark.parametrize("cancelled", [False, True])
+@pytest.mark.parametrize("estimate", [False, True])
 async def test_construction_offload_retains_context_and_ownership_async(
-    *, patch_central_database: object, cancelled: bool
+    *, patch_central_database: object, cancelled: bool, estimate: bool
 ) -> None:
     registry = ScenarioRegistry()
     scenario = MagicMock(spec=Scenario)
     scenario.initialize_async = AsyncMock()
+    scenario.get_run_size_estimate_async = AsyncMock()
     selected = MockPromptTarget()
     loop = asyncio.get_running_loop()
     backend_thread = threading.get_ident()
@@ -108,7 +110,7 @@ async def test_construction_offload_retains_context_and_ownership_async(
     release = threading.Event()
     configured: list[object] = []
 
-    def construct(name: str, *, params: dict, constructor_kwargs: dict) -> MagicMock:
+    def construct(name: str, *, params: dict, constructor_kwargs: dict | None = None) -> MagicMock:
         assert threading.get_ident() != backend_thread
         assert get_default_adversarial_target() is selected
         configured.append(params["objective_target"])
@@ -117,14 +119,21 @@ async def test_construction_offload_retains_context_and_ownership_async(
             raise TimeoutError("Construction was not released.")
         return scenario
 
-    async def initialize_async() -> None:
+    async def finish_async(**kwargs: object) -> MagicMock:
         assert asyncio.get_running_loop() is loop
         assert get_default_adversarial_target() is selected
+        return scenario
 
-    scenario.initialize_async.side_effect = initialize_async
+    finish = scenario.get_run_size_estimate_async if estimate else scenario.initialize_async
+    finish.side_effect = finish_async
     with patch.object(registry, "_create_and_configure", side_effect=construct):
         with override_default_adversarial_target(selected):
-            task = asyncio.create_task(registry.create_and_initialize_async("test", objective_target=selected))
+            operation = (
+                registry.create_and_estimate_async(name="test", objective_target=selected)
+                if estimate
+                else registry.create_and_initialize_async("test", objective_target=selected)
+            )
+            task = asyncio.create_task(operation)
         try:
             await asyncio.wait_for(entered.wait(), 5)
             if cancelled:
@@ -136,12 +145,16 @@ async def test_construction_offload_retains_context_and_ownership_async(
                 release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(task, 5)
-                scenario.initialize_async.assert_not_awaited()
+                finish.assert_not_awaited()
             else:
                 assert not task.done()
                 release.set()
                 assert await asyncio.wait_for(task, 5) is scenario
-                scenario.initialize_async.assert_awaited_once()
+                finish.assert_awaited_once()
+            if estimate:
+                scenario.initialize_async.assert_not_awaited()
+            else:
+                scenario.get_run_size_estimate_async.assert_not_awaited()
             assert configured == [selected]
         finally:
             release.set()

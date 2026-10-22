@@ -12,21 +12,27 @@
 # # Adaptive Scenarios
 #
 # An **adaptive scenario** doesn't run every attack technique against every objective.
-# Instead, it picks which technique to try next per-objective, learns from what worked,
-# and stops as soon as one technique succeeds. This concentrates spend on techniques
-# that actually work on your target.
+# Instead, it selects an ordered list of techniques for each objective using
+# historical results, then stops execution as soon as one technique succeeds.
 #
 # ## How it works (high level)
 #
-# For each objective, the scenario tries up to `max_attempts_per_objective` techniques:
+# During initialization, the selector chooses up to
+# `max_attempts_per_objective` techniques for each objective:
 #
 # - With probability `epsilon`, it **explores** — picks a random technique.
 # - Otherwise it **exploits** — picks the technique with the highest observed success
 #   rate so far.
-# - It records the outcome and stops early on success.
+# - The ordered choices are saved in the run plan.
 #
-# Unseen techniques are tried first, so the first few objectives effectively round-robin
-# through every technique before the scenario settles on the best performers.
+# The selector is stateless and reads results from memory in its configured scope
+# (all runs by default). Unseen techniques receive an optimistic estimate; ties
+# are resolved randomly, not by guaranteed round-robin selection.
+#
+# All choices are made before this run starts executing. Results from an earlier
+# objective in this prebuilt run do not change a later objective's choices.
+# `SequentialAttack` tries each saved list in order and stops on success.
+# Resume restores the saved choices without calling the selector again.
 #
 # ## Adaptive vs. static scenarios
 #

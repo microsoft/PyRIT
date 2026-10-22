@@ -38,7 +38,7 @@ from pyrit.executor.promptgen.gcg.experiments.log import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
@@ -2390,15 +2390,103 @@ class ModelWorker:
         return task.operation(*task.args, **task.kwargs)
 
 
+def _check_gcg_capabilities(
+    *, model: Any, tokenizer: Any, model_path: str, prompts: Iterable[AttackPrompt] = ()
+) -> None:
+    """
+    Check that GCG can optimize against a model and tokenizer before any worker starts.
+
+    Args:
+        model (Any): The loaded causal language model.
+        tokenizer (Any): The tokenizer paired with the model.
+        model_path (str): The model path, used in error messages.
+        prompts (Iterable[AttackPrompt]): Actual initial prompts to check in addition
+            to the tokenizer's base vocabulary, special tokens, and template probe.
+
+    Raises:
+        ValueError: If the tokenizer is not fast, the model exposes no floating point
+            input embedding matrix, or GCG would use token ids outside that matrix.
+    """
+    if not tokenizer.is_fast:
+        raise ValueError(
+            f"The tokenizer for {model_path!r} ({type(tokenizer).__name__}) is not backed by the Hugging Face "
+            "tokenizers library, so it cannot return the character-to-token offsets GCG uses to locate the goal, "
+            "control and target. Load it with the default tokenizers backend."
+        )
+    try:
+        weight = getattr(model.get_input_embeddings(), "weight", None)
+    except NotImplementedError:
+        weight = None
+    if not isinstance(weight, torch.Tensor):
+        raise ValueError(
+            f"Model {model_path!r} does not expose an input embedding matrix through get_input_embeddings(). "
+            "GCG computes token gradients through that matrix."
+        )
+    if not weight.is_floating_point():
+        raise ValueError(
+            f"The input embeddings of {model_path!r} are {weight.dtype}, so GCG cannot compute token gradients "
+            "through them. Load the model without quantizing the embedding layer."
+        )
+    # Added tokens the chat template never emits (e.g. Gemma 3's image token) may sit past the
+    # embedding rows, so check only the ids GCG uses: the base vocabulary sampled by
+    # get_nonascii_toks, the special token ids, and a conversation rendered as in _update_ids.
+    messages = [{"role": "user", "content": "Say it ! !"}, {"role": "assistant", "content": "Sure"}]
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False)
+    special_ids = (tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.pad_token_id, tokenizer.unk_token_id)
+    max_id = max(
+        tokenizer.vocab_size - 1,
+        *tokenizer(prompt, add_special_tokens=False).input_ids,
+        *(i for i in special_ids if i is not None),
+    )
+    for attack_prompt in prompts:
+        max_id = max(max_id, int(attack_prompt.input_ids.max()))
+    if max_id >= weight.shape[0]:
+        raise ValueError(
+            f"The tokenizer for {model_path!r} produces token id {max_id} but the model's input embeddings "
+            f"have only {weight.shape[0]} rows. Check that the tokenizer matches the model."
+        )
+
+
+def start_workers(*, params: Any, workers: list[ModelWorker]) -> None:
+    """
+    Validate every model's actual training and held-out prompts before starting any worker.
+
+    Args:
+        params (Any): Attack parameters containing model paths, training and held-out
+            goal/target lists, and the resolved ``control_init``.
+        workers (list[ModelWorker]): Loaded workers in model-path order.
+
+    Raises:
+        ValueError: If any model, tokenizer, or rendered initial prompt is incompatible with GCG.
+    """
+    goal_target_pairs = [
+        *zip(params.goals, params.targets, strict=True),
+        *zip(params.test_goals, params.test_targets, strict=True),
+    ]
+    for model_path, worker in zip(params.model_paths, workers, strict=True):
+        prompts = (
+            AttackPrompt(goal=goal, target=target, tokenizer=worker.tokenizer, control_init=params.control_init)
+            for goal, target in goal_target_pairs
+        )
+        _check_gcg_capabilities(model=worker.model, tokenizer=worker.tokenizer, model_path=model_path, prompts=prompts)
+    for worker in workers:
+        worker.start()
+
+
 def get_workers(params: Any, evaluation: bool = False) -> tuple[list[ModelWorker], list[ModelWorker]]:
     """
     Load and optionally start training and held-out model workers.
+
+    When ``evaluation`` is True, only model/tokenizer capabilities are checked.
+    Call ``start_workers`` with the final goals, targets, and resolved initial suffix
+    after preparing the run's inputs.
 
     Returns:
         tuple[list[ModelWorker], list[ModelWorker]]: Training and held-out workers.
 
     Raises:
-        ValueError: If a tokenizer does not define a chat template.
+        ValueError: If a tokenizer does not define a chat template, or a model and
+            tokenizer pair fails the GCG capability check.
     """
     tokenizers = []
     for i in range(len(params.tokenizer_paths)):
@@ -2447,9 +2535,11 @@ def get_workers(params: Any, evaluation: bool = False) -> tuple[list[ModelWorker
         )
         for i in range(len(params.model_paths))
     ]
-    if not evaluation:
-        for worker in workers:
-            worker.start()
+    if evaluation:
+        for model_path, worker in zip(params.model_paths, workers, strict=True):
+            _check_gcg_capabilities(model=worker.model, tokenizer=worker.tokenizer, model_path=model_path)
+    else:
+        start_workers(params=params, workers=workers)
 
     num_train_models = getattr(params, "num_train_models", len(workers))
     logger.info(f"Loaded {num_train_models} train models")

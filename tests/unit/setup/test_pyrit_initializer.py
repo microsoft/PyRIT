@@ -2,16 +2,166 @@
 # Licensed under the MIT license.
 
 import sys
+from typing import Any, Literal
+from unittest.mock import patch
 
 import pytest
 
 from pyrit.common.apply_defaults import (
+    REQUIRED_VALUE,
     reset_default_values,
     set_default_value,
     set_global_variable,
 )
 from pyrit.models import Parameter
 from pyrit.setup.initializers import PyRITInitializer
+
+
+class TypedInitializer(PyRITInitializer):
+    """An initializer with typed parameters and defaults."""
+
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        return [
+            Parameter(name="enabled", description="Enable setup", param_type=bool, default=True),
+            Parameter(name="count", description="Item count", param_type=int, default=7),
+            Parameter(name="tags", description="Selected tags", param_type=list[str], default=[]),
+        ]
+
+    async def initialize_async(self) -> None:
+        pass
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        ({}, {"enabled": True, "count": 7, "tags": []}),
+        ({"enabled": None, "count": None, "tags": None}, {"enabled": True, "count": 7, "tags": []}),
+        ({"enabled": ["false"], "count": ["9"], "tags": "one"}, {"enabled": False, "count": 9, "tags": ["one"]}),
+        ({"enabled": False, "count": 0, "tags": []}, {"enabled": False, "count": 0, "tags": []}),
+    ],
+)
+def test_initializer_resolves_typed_defaults_and_input_shapes(args: dict[str, Any], expected: dict[str, Any]) -> None:
+    initializer = TypedInitializer()
+    initializer.set_params_from_args(args=args)
+    assert initializer.params == expected
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"enabled": "maybe"},
+        {"enabled": []},
+        {"count": ["1", "2"]},
+        {"count": True},
+        {"unknown": "value"},
+    ],
+)
+def test_initializer_rejects_invalid_parameters(args: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        TypedInitializer().set_params_from_args(args=args)
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        [Parameter(name="x", description="One"), Parameter(name="x", description="Two")],
+        [Parameter(name="x", description="Invalid default", param_type=int, default="not an integer")],
+    ],
+)
+def test_initializer_rejects_invalid_declarations(declared: list[Parameter]) -> None:
+    with patch.object(TypedInitializer, "supported_parameters", return_value=declared):
+        with pytest.raises(ValueError):
+            TypedInitializer()
+
+
+def test_initializer_defaults_are_independent_and_validation_does_not_coerce() -> None:
+    first = TypedInitializer()
+    second = TypedInitializer()
+    first.params["tags"].append("first")
+    assert second.params["tags"] == []
+    second.params["count"] = "9"
+    with pytest.raises(ValueError, match="count.*expects int"):
+        second.validate_params()
+    assert second.params == {"enabled": True, "count": "9", "tags": []}
+
+
+@pytest.mark.parametrize(
+    ("annotation", "raw_value", "expected"),
+    [
+        (str, ["name"], "name"),
+        (int, ["7"], 7),
+        (bool, ["false"], False),
+        (list[int], ["1", "2"], [1, 2]),
+        (list[str], [], []),
+        (Literal["fast", "slow"], ["fast"], "fast"),
+    ],
+)
+def test_required_initializer_parameters_can_be_supplied(annotation: Any, raw_value: Any, expected: Any) -> None:
+    declaration = Parameter(name="value", description="Required input", param_type=annotation, default=REQUIRED_VALUE)
+    with patch.object(TypedInitializer, "supported_parameters", return_value=[declaration]):
+        initializer = TypedInitializer()
+        assert initializer.params == {"value": None}
+        initializer.set_params_from_args(args={"value": raw_value})
+        assert initializer.params == {"value": expected}
+        initializer.validate_params()
+
+
+@pytest.mark.parametrize("value", [None, REQUIRED_VALUE])
+@pytest.mark.parametrize("annotation", [str, int, bool, list[str]])
+def test_required_initializer_parameters_fail_when_configuration_is_complete(value: Any, annotation: Any) -> None:
+    declaration = Parameter(name="value", description="Required input", param_type=annotation, default=REQUIRED_VALUE)
+    with patch.object(TypedInitializer, "supported_parameters", return_value=[declaration]):
+        initializer = TypedInitializer()
+        with pytest.raises(ValueError, match="required.*value"):
+            initializer.validate_params()
+        with pytest.raises(ValueError, match="required.*value"):
+            initializer.set_params_from_args(args={"value": value})
+
+
+def test_initializer_validation_preserves_bag_and_live_values() -> None:
+    initializer = TypedInitializer()
+    initializer.set_params_from_args(args={"tags": ["one"]})
+    params = initializer.params
+    tags = params["tags"]
+    with patch.object(initializer, "set_params_from_args", side_effect=AssertionError("Configured twice")):
+        initializer.validate_params()
+        initializer.validate()
+    assert initializer.params is params
+    assert initializer.params["tags"] is tags
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"count": "9"},
+        {"enabled": "false"},
+        {"enabled": None},
+        {"count": None},
+        {"tags": None},
+        {"count": 0.5},
+        {"tags": "one"},
+        {"tags": [1]},
+        {"extra": None},
+    ],
+)
+def test_initializer_validation_rejects_mutated_bag_without_changing_it(params: dict[str, Any]) -> None:
+    initializer = TypedInitializer()
+    original_values = {**initializer.params, **params}
+    initializer.params = original_values
+    with pytest.raises(ValueError):
+        initializer.validate_params()
+    assert initializer.params is original_values
+
+
+def test_initializer_validation_rejects_deleted_defaults_without_reconfiguring() -> None:
+    initializer = TypedInitializer()
+    del initializer.params["count"]
+    params = initializer.params
+    with pytest.raises(ValueError, match="incomplete parameter bag.*count"):
+        initializer.validate_params()
+    assert initializer.params is params
+    assert "count" not in params
 
 
 class TestPyRITInitializerBase:
@@ -492,7 +642,7 @@ class TestSupportedParameters:
                 pass
 
         init = NoParamsInit()
-        assert init.supported_parameters == []
+        assert init.supported_parameters() == []
 
     def test_supported_parameters_declared(self) -> None:
         """Test that subclass can declare supported_parameters."""
@@ -500,8 +650,8 @@ class TestSupportedParameters:
         class WithParamsInit(PyRITInitializer):
             """With params"""
 
-            @property
-            def supported_parameters(self) -> list:
+            @classmethod
+            def supported_parameters(cls) -> list[Parameter]:
                 return [
                     Parameter(name="mode", description="Operation mode", default="fast"),
                     Parameter(name="count", description="Item count"),
@@ -511,9 +661,9 @@ class TestSupportedParameters:
                 pass
 
         init = WithParamsInit()
-        assert len(init.supported_parameters) == 2
-        assert init.supported_parameters[0].name == "mode"
-        assert init.supported_parameters[1].name == "count"
+        assert len(init.supported_parameters()) == 2
+        assert init.supported_parameters()[0].name == "mode"
+        assert init.supported_parameters()[1].name == "count"
 
     def test_validate_params_raises_on_unknown(self) -> None:
         """Test that unknown params raise ValueError."""
@@ -521,8 +671,8 @@ class TestSupportedParameters:
         class StrictInit(PyRITInitializer):
             """Strict"""
 
-            @property
-            def supported_parameters(self) -> list:
+            @classmethod
+            def supported_parameters(cls) -> list[Parameter]:
                 return [Parameter(name="level", description="Level")]
 
             async def initialize_async(self) -> None:
@@ -539,8 +689,8 @@ class TestSupportedParameters:
         class ValidInit(PyRITInitializer):
             """Valid"""
 
-            @property
-            def supported_parameters(self) -> list:
+            @classmethod
+            def supported_parameters(cls) -> list[Parameter]:
                 return [
                     Parameter(name="mode", description="Mode", default="fast"),
                     Parameter(name="key", description="Key"),
@@ -560,8 +710,8 @@ class TestSupportedParameters:
         class ParamInit(PyRITInitializer):
             """Param init"""
 
-            @property
-            def supported_parameters(self) -> list:
+            @classmethod
+            def supported_parameters(cls) -> list[Parameter]:
                 return [Parameter(name="x", description="X")]
 
             async def initialize_async(self) -> None:

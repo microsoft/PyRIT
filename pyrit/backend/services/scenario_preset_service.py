@@ -177,6 +177,7 @@ class ScenarioPresetService:
             adversarial_target_name=launch.adversarial_target_name,
             initializers=launch.initializers,
             initializer_args=launch.initializer_args,
+            operation_id=launch.operation_id,
             labels=launch.labels,
             **{name: value for name, value in run_defaults.items() if value is not None},
         )
