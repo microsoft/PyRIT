@@ -14,6 +14,7 @@ deliberately does not carry.
 """
 
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -113,4 +114,5 @@ class ResolveScenarioPresetRequest(BaseModel):
     max_retries: int | None = Field(
         None, ge=0, le=20, description="Maximum retry attempts on failure; omit to use the run default"
     )
+    operation_id: UUID | None = Field(None, description="Saved Operation reference, or unassigned")
     labels: dict[str, str] | None = Field(None, description="Labels to attach to memory entries")

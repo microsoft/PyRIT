@@ -78,6 +78,13 @@ CI workers. These are deadlock backstops, not expected runtimes. Production dead
 are unchanged. Deadline and cancellation tests use explicit controls and keep their
 separate timing assertions.
 
+Async correctness tests can use `TEST_WATCHDOG_SECONDS` from `tests/unit/async_utils.py`
+for a finite 300-second deadlock backstop. Tests that start background tasks must
+release any test-controlled waits and join their tasks before removing mocks or
+disposing fixtures, including when a watchdog expires. When waiting for a task to
+signal readiness, also watch for that task finishing so an early exception is not
+hidden by the readiness timeout.
+
 The discovery provider-state test and Copilot cancellation-test startup use the
 shared `TEST_WATCHDOG_SECONDS` backstop in `tests/unit/async_utils.py`. Discovery
 timeout coverage expires the real cancellation path only after the request starts.

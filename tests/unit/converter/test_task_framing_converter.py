@@ -56,3 +56,10 @@ def test_identifier_keeps_task_template_param_name():
     assert identifier.params["task_template"] == "TASK is '{{ prompt }}'"
     assert identifier.params["strip_characters"] == "'"
     assert "template" not in identifier.params
+    assert "template_hash" not in identifier.params
+
+
+def test_identifier_keeps_legacy_hash():
+    # Pinned to the v1.1.0 value so the deprecated converter keeps matching identifiers already stored.
+    identifier = _make(strip_characters="'").get_identifier()
+    assert identifier.hash == "b680cca8b216deec74b66758dd6bdc005fe21e593fbd0a9a975fe40e7e9fe56d"

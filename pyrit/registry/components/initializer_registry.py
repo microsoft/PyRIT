@@ -201,8 +201,8 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         """
         Build metadata for an initializer class.
 
-        Instantiates the initializer with no arguments and reads its
-        ``required_env_vars`` / ``supported_parameters`` off the instance.
+        Reads class-level parameter declarations and instantiates the initializer
+        with no arguments for its ``required_env_vars``.
 
         Args:
             name: The registry name of the initializer.
@@ -221,7 +221,7 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
                 class_description=description,
                 registry_name=name,
                 required_env_vars=tuple(instance.required_env_vars),
-                supported_parameters=tuple(instance.supported_parameters),
+                supported_parameters=tuple(cls.supported_parameters()),
             )
         except Exception as e:
             logger.warning(f"Failed to get metadata for {name}: {e}")
@@ -248,7 +248,7 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
             initializer_params (dict[str, Any] | None): Declared parameters to set
                 before initialization. Coerced to ``self.params`` via
                 ``set_params_from_args`` and validated against
-                ``supported_parameters``. Defaults to no parameters.
+                ``supported_parameters()``. Omitted inputs use declared defaults.
 
         Returns:
             PyRITInitializer: The configured initializer, ready for ``initialize_async``.
@@ -257,9 +257,8 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
             KeyError: If the name is not registered.
             ValueError: If the configured parameters are invalid.
         """
-        instance = self._create_and_configure(name, params=initializer_params or None)
-        if initializer_params:
-            instance.validate_params()
+        instance = self._create_and_configure(name, params=initializer_params or {})
+        instance.validate_params()
         return instance
 
     @staticmethod
