@@ -72,3 +72,17 @@ async def wait_for_event_async(
         ready.cancel()
         with suppress(asyncio.CancelledError):
             await ready
+
+
+async def wait_for_worker_ready_async(
+    *, started: asyncio.Event, operation: asyncio.Future[T], timeout: float = TEST_WATCHDOG_SECONDS
+) -> None:
+    """Observe readiness while requiring the worker to remain held for concurrent assertions.
+
+    Workers signal with ``loop.call_soon_threadsafe(started.set)``. The caller still owns releasing
+    and joining the operation, including when this wait fails or is cancelled.
+    """
+    await wait_for_event_async(event=started, tasks=[operation], timeout=timeout)
+    if operation.done():
+        operation.result()
+        raise AssertionError("The operation completed before the test observed worker readiness.")

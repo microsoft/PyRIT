@@ -91,6 +91,23 @@ timeout coverage expires the real cancellation path only after the request start
 Event-controlled analytics expiry tests freeze both deadline clocks so floating-point
 rounding cannot turn a valid query budget into a failed assertion.
 
+For thread-backed concurrency tests, signal an `asyncio.Event` from the worker with
+`loop.call_soon_threadsafe(started.set)`. Do not observe readiness through
+`asyncio.to_thread(threading_event.wait)`: that observer can queue behind the very
+worker it is waiting for when the executor is full. Use
+`wait_for_worker_ready_async(started=started, operation=task)` from
+`tests/unit/async_utils.py` when the worker must remain held during concurrent
+assertions. It builds on `wait_for_event_async` but also rejects completion after
+the readiness signal, propagating worker failure/cancellation immediately.
+
+Cancelling a task wrapping `asyncio.to_thread` does not join its thread. Prefer
+releasing the worker and awaiting the operation with `wait_for_completion_async`;
+if cancellation itself is under test, also observe actual worker completion.
+Gate timeouts should raise on the shared `TEST_WATCHDOG_SECONDS` deadlock backstop,
+not silently release workers after a short elapsed time. Exercise these patterns
+with constrained executors, including a single worker, and failure/cancellation
+paths so readiness never depends on spare executor capacity.
+
 The scorer-validation cancellation test keeps its five-second observer around
 scorer draining and native SQLite connection cleanup. ERROR-result persistence is
 held behind an event until those assertions pass, then awaited separately with the
