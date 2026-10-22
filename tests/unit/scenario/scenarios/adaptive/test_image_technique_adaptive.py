@@ -12,7 +12,7 @@ import pytest
 from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.scenarios.adaptive.image_technique_adaptive import ImageTechniqueAdaptive
 from pyrit.score import TrueFalseScorer
@@ -91,8 +91,9 @@ def test_required_datasets_non_empty():
 
 def test_default_dataset_config():
     config = ImageTechniqueAdaptive.default_dataset_config()
-    assert isinstance(config, CompoundDatasetAttackConfiguration)
-    assert all(child.max_dataset_size == 4 for child in config._configurations)
+    assert isinstance(config, DatasetAttackConfiguration)
+    assert config.max_per_dataset == 4
+    assert config.max_total == "all"
     assert config.dataset_names == ImageTechniqueAdaptive.required_datasets()
 
 
