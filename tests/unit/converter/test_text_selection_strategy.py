@@ -127,6 +127,21 @@ class TestKeywordSelectionStrategy:
         result = strategy.select_range(text="The secret is here")
         assert result == (0, 18)
 
+    @pytest.mark.parametrize("name", ["context_before", "context_after"])
+    @pytest.mark.parametrize("value", [-1, -10, 1.5, True, "3", None])
+    def test_init_rejects_invalid_context(self, name, value):
+        with pytest.raises(ValueError, match=f"{name} must be a non-negative integer"):
+            KeywordSelectionStrategy(keyword="secret", **{name: value})
+
+    @pytest.mark.parametrize("keyword", ["", None, 5])
+    def test_init_rejects_invalid_keyword(self, keyword):
+        with pytest.raises(ValueError, match="keyword must be a non-empty string"):
+            KeywordSelectionStrategy(keyword=keyword)
+
+    def test_init_accepts_zero_context(self):
+        strategy = KeywordSelectionStrategy(keyword="secret", context_before=0, context_after=0)
+        assert strategy.select_range(text="The secret is here") == (4, 10)
+
 
 class TestPositionSelectionStrategy:
     def test_select_range_first_half(self):

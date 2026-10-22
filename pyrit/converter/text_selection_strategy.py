@@ -353,7 +353,17 @@ class KeywordSelectionStrategy(TextSelectionStrategy):
             context_before (int): Number of characters to include before the keyword. Defaults to 0.
             context_after (int): Number of characters to include after the keyword. Defaults to 0.
             case_sensitive (bool): Whether the keyword search is case-sensitive. Defaults to True.
+
+        Raises:
+            ValueError: If ``keyword`` is not a non-empty string, or if ``context_before`` or
+                ``context_after`` is not a non-negative integer.
         """
+        if not isinstance(keyword, str) or not keyword:
+            raise ValueError(f"keyword must be a non-empty string, got {keyword!r}")
+        for name, value in (("context_before", context_before), ("context_after", context_after)):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer, got {value!r}")
+
         self._keyword = keyword
         self._context_before = context_before
         self._context_after = context_after

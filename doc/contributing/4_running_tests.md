@@ -91,6 +91,16 @@ timeout coverage expires the real cancellation path only after the request start
 Event-controlled analytics expiry tests freeze both deadline clocks so floating-point
 rounding cannot turn a valid query budget into a failed assertion.
 
+The target-type route test starts target metadata discovery, waits for a signal
+that it has started, and keeps it paused while checking that `/api/health`
+responds within 10 seconds. Waiting for that signal does not use an extra worker
+thread. The waits for discovery to start and for background work to finish use
+the shared 300-second timeout, so the test fails rather than waiting forever if
+work gets stuck. This timeout is separate from the health-response requirement.
+The test runs with one or two worker threads, including failure and cancellation
+cases. In every case, the request and discovery worker finish before the test
+restores patched functions and closes the HTTP client.
+
 The scorer-validation cancellation test keeps its five-second observer around
 scorer draining and native SQLite connection cleanup. ERROR-result persistence is
 held behind an event until those assertions pass, then awaited separately with the
