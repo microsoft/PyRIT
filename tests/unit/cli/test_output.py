@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from pyrit.cli import _output
 from pyrit.models import AttackOutcome, Parameter, ScenarioRunState, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import (
@@ -835,6 +837,32 @@ async def test_print_conversations_async_leaves_out_orchestration_envelope_and_l
     assert "[FAILURE] crescendo" in out
     assert "[SUCCESS] role_play" in out
     assert "Total attacks: 2" in out
+
+
+@pytest.mark.parametrize("with_result_roles", [True, False], ids=["recorded-roles", "pre-role-rows"])
+@pytest.mark.parametrize(
+    ("child_outcomes", "envelope_listed"),
+    [([AttackOutcome.FAILURE], True), ([AttackOutcome.FAILURE, AttackOutcome.ERROR], False)],
+    ids=["own-error", "child-error"],
+)
+async def test_print_conversations_async_lists_errored_envelope_unless_a_child_records_the_error(
+    capsys, child_outcomes, envelope_listed, with_result_roles
+):
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="adaptive_text_airt_leakage::abc",
+        envelope_outcome=AttackOutcome.ERROR,
+        child_outcomes=child_outcomes,
+        with_result_roles=with_result_roles,
+    )
+    result = make_scenario_result(attack_results={"adaptive_text_airt_leakage::abc": [*children, envelope]})
+    client = _EmptyConversationRejectingClient()
+
+    await _output.print_conversations_async(result=result, client=client, scenario_result_id="SID")
+
+    out = capsys.readouterr().out
+    assert client.requested_conversation_ids == [child.conversation_id for child in children]
+    assert (envelope.attack_result_id in out) is envelope_listed
+    assert f"Total attacks: {len(children) + int(envelope_listed)}" in out
 
 
 async def test_print_conversations_async_shows_requested_orchestration_envelope_without_fetching(capsys):

@@ -279,18 +279,37 @@ def resolve_attack_result_attempt(
     )
 
 
+def _is_orchestration_envelope(attempt: _CountableAttempt) -> bool:
+    """
+    Return whether an attempt only coordinates other attempts.
+
+    Rows persisted before roles were recorded have no role, so an unrecognized role with
+    linked child results, which only ``SequentialAttack`` envelopes record, also marks one.
+
+    Returns:
+        bool: True for a recorded or inferred orchestration envelope.
+    """
+    if attempt.result_role == AttackResultRole.ORCHESTRATION:
+        return True
+    return attempt.result_role in (None, AttackResultRole.UNKNOWN) and bool(attempt.child_attack_result_ids)
+
+
 def select_execution_attempts(attempts: Sequence[_AttemptT]) -> Sequence[_AttemptT]:
     """
     Select actual attempts without counting their orchestration envelope again.
 
+    An envelope is selected only for an ERROR outcome that none of its linked children in
+    ``attempts`` record.
+
     Returns:
-        Sequence[_AttemptT]: Target-facing or legacy attempts, or orchestration-only evidence.
+        Sequence[_AttemptT]: The non-envelope attempts and independently errored envelopes,
+        or every attempt when that selection is empty.
     """
     by_id = {attempt.attack_result_id: attempt for attempt in attempts}
     execution_attempts = [
         attempt
         for attempt in attempts
-        if attempt.result_role != AttackResultRole.ORCHESTRATION
+        if not _is_orchestration_envelope(attempt)
         or (
             attempt.outcome == AttackOutcome.ERROR
             and not any(
@@ -313,7 +332,8 @@ def select_execution_attack_result_ids(
 
     Applies ``select_execution_attempts`` to each execution unit, so the selection matches
     ``ScenarioExecutionStatistics.attempts``: an orchestration envelope is left out when its
-    child attempts are present.
+    child attempts are present, unless it has an ERROR outcome that none of its linked children
+    record.
 
     Args:
         scenario_result (ScenarioResult): The scenario result with its hydrated attack results.

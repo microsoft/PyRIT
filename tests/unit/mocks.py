@@ -134,12 +134,15 @@ def make_sequential_attack_results(
     child_outcomes: Sequence[AttackOutcome],
     child_technique_names: Sequence[str] | None = None,
     objective: str = "obj",
+    with_result_roles: bool = True,
 ) -> tuple[AttackResult, list[AttackResult]]:
     """
     Build the rows a scenario persists for one ``SequentialAttack`` execution.
 
     Mirrors the hydrated rows: the orchestration envelope has no conversation of its own and
     links its target-facing children, which share its attribution and record their position.
+    With ``with_result_roles=False``, the rows omit the role and position, like rows persisted
+    before roles were recorded.
 
     Returns:
         tuple[AttackResult, list[AttackResult]]: The envelope and its children in attempt order.
@@ -149,17 +152,17 @@ def make_sequential_attack_results(
         "parent_eval_hash": "eval",
         "seed_group_id": f"seed-{objective}",
     }
+
+    def attribution_with(**recorded: str | int) -> dict[str, str | int]:
+        return {**attribution, **recorded} if with_result_roles else dict(attribution)
+
     names = child_technique_names if child_technique_names is not None else [""] * len(child_outcomes)
     children = [
         AttackResult(
             conversation_id=str(uuid.uuid4()),
             objective=objective,
             outcome=outcome,
-            attribution_data={
-                **attribution,
-                "result_role": AttackResultRole.TARGET_FACING.value,
-                "attempt_index": index,
-            },
+            attribution_data=attribution_with(result_role=AttackResultRole.TARGET_FACING.value, attempt_index=index),
             metadata={AttackResult.TECHNIQUE_NAME_METADATA_KEY: name} if name else {},
         )
         for index, (outcome, name) in enumerate(zip(child_outcomes, names, strict=True), start=1)
@@ -168,7 +171,7 @@ def make_sequential_attack_results(
         conversation_id="",
         objective=objective,
         outcome=envelope_outcome,
-        attribution_data={**attribution, "result_role": AttackResultRole.ORCHESTRATION.value},
+        attribution_data=attribution_with(result_role=AttackResultRole.ORCHESTRATION.value),
         metadata={
             "child_attack_result_ids": [child.attack_result_id for child in children],
             "completion_policy": "first_success",

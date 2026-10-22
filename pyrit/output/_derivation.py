@@ -170,8 +170,9 @@ def select_attacks(
     Return ``(atomic_attack_name, attack)`` pairs in scenario order.
 
     By default, these are the execution attempts that ``scenario_overview`` counts. An orchestration
-    envelope, such as a ``SequentialAttack`` result, is left out when its child attempts are present
-    because it has no conversation or score of its own. Explicit ids select any stored result.
+    envelope, such as a ``SequentialAttack`` result, has no conversation or score of its own, so it is
+    left out when its child attempts are present, unless it has an ERROR outcome that none of its
+    linked children record. Explicit ids select any stored result.
 
     Args:
         result (ScenarioResult): The scenario result whose attacks to walk.

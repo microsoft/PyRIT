@@ -259,6 +259,7 @@ def test_resolve_execution_unit_precedence() -> None:
     )
 
 
+@pytest.mark.parametrize("with_result_roles", [True, False], ids=["recorded-roles", "pre-role-rows"])
 @pytest.mark.parametrize("saved_plan", [None, _plan()], ids=["legacy", "saved-plan"])
 @pytest.mark.parametrize(
     ("envelope_outcome", "child_outcomes", "envelope_selected"),
@@ -273,9 +274,14 @@ def test_execution_attack_result_ids_select_an_envelope_only_for_its_own_error(
     child_outcomes: list[AttackOutcome],
     envelope_selected: bool,
     saved_plan: ScenarioRunPlan | None,
+    with_result_roles: bool,
 ) -> None:
     envelope, children = make_sequential_attack_results(
-        atomic_attack_name="attack", envelope_outcome=envelope_outcome, child_outcomes=child_outcomes, objective="a"
+        atomic_attack_name="attack",
+        envelope_outcome=envelope_outcome,
+        child_outcomes=child_outcomes,
+        objective="a",
+        with_result_roles=with_result_roles,
     )
     result = make_scenario_result(
         attack_results={"attack": [*children, envelope]},
