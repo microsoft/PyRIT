@@ -6,6 +6,7 @@ import pathlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import wait_for_completion_async
 from unit.mocks import MockPromptTarget, get_mock_scorer_identifier
 
 from pyrit.common.path import DATASETS_PATH
@@ -54,7 +55,7 @@ class _DeterministicBatchScorer(MessageFloatScaleScorer):
         assert objective == prompt
         # Complete the second scoring task first without relying on timing.
         if prompt == "first":
-            await asyncio.wait_for(self._second_scored.wait(), timeout=5)
+            await self._second_scored.wait()
             self._second_scored.clear()
         self.completed_prompts.append(prompt)
         if prompt == "second":
@@ -119,12 +120,18 @@ async def test_execute_async_preserves_score_attribution_and_query_limit_async(
             return_value=ConverterResult(output_text="{{ prompt }}", output_type="text"),
         ) as convert,
     ):
-        result = await asyncio.wait_for(
+        running = asyncio.create_task(
             generator.execute_async(
                 prompts=list(values_by_prompt), prompt_templates=["{{ prompt }}"], max_query_limit=max_queries
-            ),
-            timeout=10,
+            )
         )
+        try:
+            result = await wait_for_completion_async(future=running)
+        finally:
+            scorer._second_scored.set()
+            if not running.done():
+                running.cancel()
+            await wait_for_completion_async(future=asyncio.gather(running, return_exceptions=True))
 
     assert send.await_count == result.total_queries == max_queries
     assert convert.await_count == 2

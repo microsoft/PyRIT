@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from unit.async_utils import wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget
 
 from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
@@ -175,15 +176,21 @@ class TestOperationDeletedDuringRun:
                 objective="Say hello.", operation_id=operation.id
             )
         )
-        await asyncio.wait_for(target.sending.wait(), timeout=10)
-        # Nothing refers to the Operation until the result is saved, so it can be deleted mid-run.
-        assert await sqlite_instance.get_operation_usage_async(operation_id=operation.id) == OperationUsage(
-            findings=0, attacks=0, scenario_runs=0
-        )
-        await sqlite_instance.delete_operation_async(operation_id=operation.id)
-        target.release.set()
-        with caplog.at_level(logging.WARNING):
-            result = await asyncio.wait_for(running, timeout=10)
+        try:
+            await wait_for_event_async(event=target.sending, task=running)
+            # Nothing refers to the Operation until the result is saved, so it can be deleted mid-run.
+            assert await sqlite_instance.get_operation_usage_async(operation_id=operation.id) == OperationUsage(
+                findings=0, attacks=0, scenario_runs=0
+            )
+            await sqlite_instance.delete_operation_async(operation_id=operation.id)
+            target.release.set()
+            with caplog.at_level(logging.WARNING):
+                result = await wait_for_completion_async(future=running)
+        finally:
+            target.release.set()
+            if not running.done():
+                running.cancel()
+            await wait_for_completion_async(future=asyncio.gather(running, return_exceptions=True))
         assert result.operation_id is None
         saved = await sqlite_instance.get_attack_results_async(attack_result_ids=[result.attack_result_id])
         assert [row.operation_id for row in saved] == [None]
@@ -229,10 +236,16 @@ class TestOperationDeletedDuringRun:
             objective_target=target, child_attacks=children, completion_policy=SequenceCompletionPolicy.EXHAUSTIVE
         )
         running = asyncio.create_task(sequence.execute_async(objective="Say hello.", operation_id=operation.id))
-        await asyncio.wait_for(target.sending.wait(), timeout=10)
-        await sqlite_instance.delete_operation_async(operation_id=operation.id)
-        target.release.set()
-        result = await asyncio.wait_for(running, timeout=10)
+        try:
+            await wait_for_event_async(event=target.sending, task=running)
+            await sqlite_instance.delete_operation_async(operation_id=operation.id)
+            target.release.set()
+            result = await wait_for_completion_async(future=running)
+        finally:
+            target.release.set()
+            if not running.done():
+                running.cancel()
+            await wait_for_completion_async(future=asyncio.gather(running, return_exceptions=True))
         assert result.operation_id is None
         assert len(target.prompt_sent) == 2
         saved = await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS)
@@ -251,10 +264,16 @@ class TestOperationDeletedDuringRun:
                 operation_id=operation.id,
             )
         )
-        await asyncio.wait_for(target.sending.wait(), timeout=10)
-        await sqlite_instance.delete_operation_async(operation_id=operation.id)
-        target.release.set()
-        executor_result = await asyncio.wait_for(running, timeout=10)
+        try:
+            await wait_for_event_async(event=target.sending, task=running)
+            await sqlite_instance.delete_operation_async(operation_id=operation.id)
+            target.release.set()
+            executor_result = await wait_for_completion_async(future=running)
+        finally:
+            target.release.set()
+            if not running.done():
+                running.cancel()
+            await wait_for_completion_async(future=asyncio.gather(running, return_exceptions=True))
         assert [result.operation_id for result in executor_result.completed_results] == [None, None]
         assert len(target.prompt_sent) == 2
         saved = await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS)
