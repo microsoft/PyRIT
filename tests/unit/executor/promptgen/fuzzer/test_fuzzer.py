@@ -1,13 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import pathlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from unit.mocks import MockPromptTarget, get_mock_scorer_identifier
 
 from pyrit.common.path import DATASETS_PATH
+from pyrit.converter import ConverterResult
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.promptgen.fuzzer import (
     FuzzerContext,
@@ -18,7 +20,12 @@ from pyrit.executor.promptgen.fuzzer import (
     FuzzerShortenConverter,
 )
 from pyrit.executor.promptgen.fuzzer.fuzzer import _PromptNode
+from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.models import (
+    ComponentIdentifier,
+    Message,
+    MessagePiece,
+    Scorable,
     Score,
     SeedDataset,
     SeedPrompt,
@@ -26,9 +33,174 @@ from pyrit.models import (
 from pyrit.score import (
     FloatScaleScorer,
     FloatScaleThresholdScorer,
+    MessageFloatScaleScorer,
     Scorer,
+    ScorerPromptValidator,
     TrueFalseScorer,
 )
+
+
+class _DeterministicBatchScorer(MessageFloatScaleScorer):
+    def __init__(self, *, values_by_prompt: dict[str, list[float]]) -> None:
+        super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
+        self._values_by_prompt = values_by_prompt
+        self._batch_ready = asyncio.Barrier(2)
+        self._second_scored = asyncio.Event()
+        self.scoring_started = {prompt: asyncio.Event() for prompt in values_by_prompt}
+        self.completed_prompts: list[str] = []
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, *, message_piece: MessagePiece, objective: str | None = None) -> list[Score]:
+        prompt = message_piece.converted_value
+        assert objective == prompt
+        self.scoring_started[prompt].set()
+        await self._batch_ready.wait()
+        self.scoring_started[prompt].clear()
+        # Complete the second scoring task first without relying on timing.
+        if prompt == "first":
+            await self._second_scored.wait()
+            self._second_scored.clear()
+        self.completed_prompts.append(prompt)
+        if prompt == "second":
+            self._second_scored.set()
+        return [
+            Score(
+                score_value=str(value),
+                score_type="float_scale",
+                score_category=["test"],
+                score_rationale=prompt,
+                score_metadata={"prompt": prompt},
+                message_piece_id=message_piece.id,
+                scorer_class_identifier=self.get_identifier(),
+            )
+            for value in self._values_by_prompt[prompt]
+        ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("first_values", "second_values"),
+    [
+        pytest.param([0.0], [1.0], id="one-to-one"),
+        pytest.param([0.0, 0.0], [1.0], id="multiple-scores"),
+        pytest.param([], [1.0], id="skipped-first-response"),
+        pytest.param([], [], id="no-scores"),
+        pytest.param([1.0], [1.0], id="both-successful"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("first_acquired_prompt", "delay_acquisition"),
+    [
+        pytest.param("first", False, id="first-acquired-first"),
+        pytest.param("second", False, id="second-acquired-first"),
+        pytest.param("first", True, id="delayed-second-acquisition"),
+    ],
+)
+async def test_execute_async_preserves_score_attribution_and_query_limit_async(
+    *,
+    sqlite_instance: SQLiteMemory,
+    first_values: list[float],
+    second_values: list[float],
+    first_acquired_prompt: str,
+    delay_acquisition: bool,
+) -> None:
+    """Exercise real batching and persistence, including two turns and reversed scoring completion."""
+    values_by_prompt = {"first": first_values, "second": second_values}
+    responses_by_prompt: dict[str, list[MessagePiece]] = {"first": [], "second": []}
+    acquired_prompts: list[str] = []
+    max_queries = 4
+    acquisition_clock_jump = 5.25 if delay_acquisition else 0.0
+    loop = asyncio.get_running_loop()
+    original_time = loop.time
+    clock_offset = 0.0
+
+    async def respond_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        assert sum(len(responses) for responses in responses_by_prompt.values()) < max_queries
+        request = normalized_conversation[-1].get_piece()
+        response = MessagePiece(
+            role="assistant", original_value=request.converted_value, conversation_id=request.conversation_id
+        )
+        responses_by_prompt[request.converted_value].append(response)
+        return [response.to_message()]
+
+    target = MockPromptTarget()
+    converter = FuzzerShortenConverter(converter_target=target)
+    scorer = _DeterministicBatchScorer(values_by_prompt=values_by_prompt)
+    resolve_async = scorer._message_resolver.resolve_async
+
+    async def acquire_async(*, scorable: Scorable, memory: MemoryInterface) -> Message:
+        nonlocal clock_offset
+        message = await resolve_async(scorable=scorable, memory=memory)
+        prompt = message.get_piece().converted_value
+        if prompt != first_acquired_prompt:
+            await scorer.scoring_started[first_acquired_prompt].wait()
+            if delay_acquisition and not clock_offset:
+                # Dispatch the old five-second deadline without slowing the test down.
+                clock_offset = acquisition_clock_jump
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+        acquired_prompts.append(prompt)
+        return message
+
+    generator = FuzzerGenerator(
+        objective_target=target,
+        template_converters=[converter],
+        scorer=scorer,
+        target_jailbreak_goal_count=100,
+    )
+    with (
+        patch.object(loop, "time", side_effect=lambda: original_time() + clock_offset),
+        patch.object(scorer._message_resolver, "resolve_async", side_effect=acquire_async),
+        patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, side_effect=respond_async) as send,
+        patch.object(
+            converter,
+            "convert_async",
+            new_callable=AsyncMock,
+            return_value=ConverterResult(output_text="{{ prompt }}", output_type="text"),
+        ) as convert,
+    ):
+        result = await asyncio.wait_for(
+            generator.execute_async(
+                prompts=list(values_by_prompt), prompt_templates=["{{ prompt }}"], max_query_limit=max_queries
+            ),
+            # Keep the real-time watchdog budget unchanged by the simulated acquisition delay.
+            timeout=10 + acquisition_clock_jump,
+        )
+
+    assert send.await_count == result.total_queries == max_queries
+    assert convert.await_count == 2
+    second_acquired_prompt = "second" if first_acquired_prompt == "first" else "first"
+    assert acquired_prompts == [first_acquired_prompt, second_acquired_prompt] * 2
+    assert clock_offset == acquisition_clock_jump
+    assert scorer.completed_prompts == ["second", "first"] * 2
+    expected_conversations = [
+        responses_by_prompt[prompt][turn].conversation_id
+        for turn in range(2)
+        for prompt, values in values_by_prompt.items()
+        for value in values
+        if value >= 0.8
+    ]
+    assert result.jailbreak_conversation_ids == expected_conversations
+    assert result.successful_templates == (["{{ prompt }}"] if expected_conversations else [])
+
+    stored_scores = await sqlite_instance.get_scores_async(score_type="float_scale")
+    assert len(stored_scores) == 2 * sum(len(values) for values in values_by_prompt.values())
+    stored_responses = await sqlite_instance.get_message_pieces_async(role="assistant")
+    assert len(stored_responses) == max_queries
+    responses_by_id = {str(piece.id): piece for piece in stored_responses}
+    successful_conversations = []
+    for score in stored_scores:
+        response = responses_by_id[str(score.message_piece_id)]
+        prompt = response.converted_value
+        assert score.objective == score.score_rationale == prompt
+        assert score.score_category == ["test"]
+        assert score.score_metadata == {"prompt": prompt}
+        assert score.get_value() in values_by_prompt[prompt]
+        if score.get_value() >= 0.8:
+            successful_conversations.append(response.conversation_id)
+    assert sorted(successful_conversations) == sorted(result.jailbreak_conversation_ids)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -285,6 +457,66 @@ class TestFuzzerGenerator:
             scorer_class_identifier=get_mock_scorer_identifier(),
         )
         assert generator._is_jailbreak(false_score) is False
+
+    def test_process_scoring_results_attributes_jailbreaks_to_scored_response(
+        self,
+        scoring_target: MockPromptTarget,
+        template_converters: list[FuzzerConverter],
+        mock_scorer: MagicMock,
+        fuzzer_context: FuzzerContext,
+    ) -> None:
+        """A jailbreak verdict must map to the response its score was stored on, not its list position."""
+        generator = FuzzerGenerator(
+            objective_target=scoring_target,
+            template_converters=template_converters,
+            scorer=mock_scorer,
+        )
+
+        first_piece = MessagePiece(role="assistant", original_value="first", conversation_id="conv-first")
+        second_piece = MessagePiece(role="assistant", original_value="second", conversation_id="conv-second")
+        responses = [first_piece.to_message(), second_piece.to_message()]
+
+        def _score(piece: MessagePiece, value: str) -> Score:
+            return Score(
+                score_value=value,
+                score_value_description="",
+                score_type="true_false",
+                score_category=[],
+                score_rationale="",
+                score_metadata={},
+                message_piece_id=piece.id,
+                scorer_class_identifier=get_mock_scorer_identifier(),
+            )
+
+        node = _PromptNode(template="template", parent=None)
+
+        # A scorer can return several scores for one response, so the flattened
+        # batch list does not line up with the responses by position.
+        scores = [_score(first_piece, "false"), _score(first_piece, "false"), _score(second_piece, "true")]
+        jailbreak_count = generator._process_scoring_results(
+            context=fuzzer_context,
+            scores=scores,
+            responses=responses,
+            template_node=node,
+            current_seed=node,
+        )
+        assert jailbreak_count == 1
+        assert fuzzer_context.jailbreak_conversation_ids == ["conv-second"]
+        assert fuzzer_context.total_target_query_count == 2
+
+        # A batch where only the second response produced a score must not credit the first conversation.
+        fuzzer_context.jailbreak_conversation_ids = []
+        fuzzer_context.total_target_query_count = 0
+        jailbreak_count = generator._process_scoring_results(
+            context=fuzzer_context,
+            scores=[_score(second_piece, "true")],
+            responses=responses,
+            template_node=node,
+            current_seed=node,
+        )
+        assert jailbreak_count == 1
+        assert fuzzer_context.jailbreak_conversation_ids == ["conv-second"]
+        assert fuzzer_context.total_target_query_count == 2
 
     def test_is_jailbreak_float_scale_scorer(
         self, scoring_target: MockPromptTarget, template_converters: list[FuzzerConverter]

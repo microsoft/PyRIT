@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get
 from pydantic import TypeAdapter, ValidationError
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
-from pyrit.common.brick_contract import init_parameters_are_forwarded
+from pyrit.common.brick_contract import get_constructor_owners
 from pyrit.models import StructuredParameterValue
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
 
@@ -229,9 +229,8 @@ def _constructor_sources(cls: type) -> list[tuple[type, inspect.Signature]]:
     Raises:
         ValueError: If a constructor signature cannot be inspected.
     """
-    owners = [owner for owner in cls.__mro__ if "__init__" in owner.__dict__]
     sources: list[tuple[type, inspect.Signature]] = []
-    for index, owner in enumerate(owners):
+    for owner in get_constructor_owners(cls):
         init = owner.__dict__["__init__"]
         try:
             signature = inspect.signature(init)
@@ -253,8 +252,6 @@ def _constructor_sources(cls: type) -> list[tuple[type, inspect.Signature]]:
             parameters.append(param.replace(annotation=annotation))
         sources.append((owner, signature.replace(parameters=parameters)))
 
-        if not init_parameters_are_forwarded(init) or index + 1 == len(owners):
-            break
     return sources
 
 
@@ -748,6 +745,7 @@ def resolve_declared_params(
     declared: list[Parameter],
     raw_args: dict[str, Any],
     owner: str,
+    allow_missing_required: bool = False,
 ) -> dict[str, Any]:
     """
     Resolve ``raw_args`` against an explicit declared-parameter contract.
@@ -766,6 +764,8 @@ def resolve_declared_params(
       supplied value, and **materializes every declared default** so the returned
       dict is a complete param bag. Params declared without a default land as
       ``None`` so callers can rely on ``params[name]`` never raising ``KeyError``.
+      Required inputs use ``REQUIRED_VALUE`` as their declaration default and must
+      be supplied unless resolution is preparing constructor defaults.
 
     Args:
         declared (list[Parameter]): The declaration snapshot to validate against.
@@ -773,12 +773,14 @@ def resolve_declared_params(
             ``None`` values are treated as absent (YAML ``null``).
         owner (str): Human-readable owner label used to prefix error messages,
             e.g. ``"Scenario 'FoundryScenario'"``.
+        allow_missing_required (bool): Leave required inputs as None while preparing
+            constructor defaults for later configuration. Defaults to False.
 
     Returns:
         dict[str, Any]: Fully-materialized parameter dict.
 
     Raises:
-        ValueError: Invalid declaration, unknown parameter, coercion failure, or
+        ValueError: Invalid declaration, missing required input, unknown parameter, coercion failure, or
             value not in ``choices``.
     """
     _validate_declarations(declared=declared, owner=owner)
@@ -786,7 +788,13 @@ def resolve_declared_params(
     declared_by_name = {param.name: param for param in declared}
 
     # None values are treated as absent so YAML `key: null` falls through to defaults.
-    supplied = {name: value for name, value in raw_args.items() if value is not None}
+    supplied = {
+        name: value
+        for name, value in raw_args.items()
+        if value is not None and not isinstance(value, _RequiredValueSentinel)
+    }
+    if not allow_missing_required:
+        _reject_missing_required_params(params=supplied, declared=declared, owner=owner)
 
     coerced: dict[str, Any] = {}
     for name, raw_value in supplied.items():
@@ -806,9 +814,53 @@ def resolve_declared_params(
         # ``params[name]`` never raising ``KeyError``. Params declared without an
         # explicit default land as None, and the owner raises a domain-specific
         # error at run time if it cannot proceed.
-        coerced[param.name] = copy.deepcopy(param.coerce_value(param.default)) if param.default is not None else None
+        coerced[param.name] = (
+            copy.deepcopy(param.coerce_value(param.default))
+            if param.default is not None and not param.required
+            else None
+        )
 
     return coerced
+
+
+def validate_declared_params(*, declared: list[Parameter], params: dict[str, Any], owner: str) -> None:
+    """
+    Validate an already-resolved parameter bag without changing it.
+
+    Args:
+        declared (list[Parameter]): The parameter declarations.
+        params (dict[str, Any]): The resolved values to check.
+        owner (str): Human-readable owner for error messages.
+
+    Raises:
+        ValueError: If declarations, required inputs, names, or resolved values are invalid.
+    """
+    _validate_declarations(declared=declared, owner=owner)
+    _reject_undeclared_params(params=params, declared=declared, owner=owner)
+    _reject_missing_required_params(params=params, declared=declared, owner=owner)
+    missing = sorted({param.name for param in declared} - params.keys())
+    if missing:
+        raise ValueError(
+            f"{owner} has an incomplete parameter bag: {', '.join(missing)}. "
+            "Configure inputs with set_params_from_args()."
+        )
+    for param in declared:
+        value = params.get(param.name)
+        if value is not None or param.default is not None:
+            try:
+                param.validate_value(value)
+            except ValueError as exc:
+                raise ValueError(f"{owner} {exc}") from exc
+
+
+def _reject_missing_required_params(*, params: dict[str, Any], declared: list[Parameter], owner: str) -> None:
+    missing = sorted(
+        param.name
+        for param in declared
+        if param.required and (params.get(param.name) is None or isinstance(params[param.name], _RequiredValueSentinel))
+    )
+    if missing:
+        raise ValueError(f"{owner} is missing required parameter(s): {', '.join(missing)}.")
 
 
 def _validate_declarations(*, declared: list[Parameter], owner: str) -> None:
@@ -835,7 +887,7 @@ def _validate_declarations(*, declared: list[Parameter], owner: str) -> None:
         except ValueError as exc:
             raise ValueError(f"{owner} {exc}") from exc
 
-        if param.default is not None:
+        if param.default is not None and not param.required:
             try:
                 param.coerce_value(param.default)
             except ValueError as exc:

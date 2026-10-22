@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import {
   Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
   MessageBar, MessageBarBody, Spinner, Text,
@@ -9,27 +9,34 @@ import { ArrowLeftRegular } from '@fluentui/react-icons'
 import { DEFAULT_HISTORY_FILTERS, filtersToSearchParams } from '@/components/History/historyFilters'
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { Finding, FindingCreate, FindingListItem, FindingListResponse, Operation } from '@/types'
+import type { Finding, FindingCreate, FindingListItem, FindingListResponse, OperationDetail } from '@/types'
 import FindingDialog, { type FindingSaveAttempt } from './FindingDialog'
 import FindingEvidenceList from './FindingEvidenceList'
 import FindingSeverityBadge from './FindingSeverityBadge'
-import OperationDescriptionDialog from './OperationDescriptionDialog'
+import OperationDeleteDialog from './OperationDeleteDialog'
+import OperationEditDialog from './OperationEditDialog'
 import { useOperationsStyles } from './Operations.styles'
 
 const PAGE_SIZE = 20
 
 type OperationState =
-  | { key: string; status: 'loaded'; operation: Operation }
+  | { key: string; status: 'loaded'; operation: OperationDetail }
   | { key: string; status: 'missing' }
   | { key: string; status: 'error'; error: string }
 
-export default function OperationDetailPage() {
-  const { operationId = '' } = useParams()
-  return <OperationDetailContent key={operationId} operationId={operationId} />
+interface OperationDetailPageProps {
+  /** Called after the Operation is renamed or deleted, so views holding it can refresh. */
+  onOperationChanged?: () => void
 }
 
-function OperationDetailContent({ operationId }: { operationId: string }) {
+export default function OperationDetailPage({ onOperationChanged }: OperationDetailPageProps) {
+  const { operationId = '' } = useParams()
+  return <OperationDetailContent key={operationId} operationId={operationId} onOperationChanged={onOperationChanged} />
+}
+
+function OperationDetailContent({ operationId, onOperationChanged }: { operationId: string } & OperationDetailPageProps) {
   const styles = useOperationsStyles()
+  const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const rawOffset = Number(params.get('offset') ?? 0)
   const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0
@@ -70,12 +77,13 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
       .catch((cause: unknown) => {
         if (ignore) return
         const apiError = toApiError(cause)
-        setOperationState(apiError.status === 404
-          ? { key: operationKey, status: 'missing' }
-          : { key: operationKey, status: 'error', error: apiError.detail })
+        // A failed usage refresh after a finding change keeps the page; the server still checks before deleting.
+        setOperationState(state => state?.key === operationKey && state.status === 'loaded' ? state
+          : apiError.status === 404 ? { key: operationKey, status: 'missing' }
+            : { key: operationKey, status: 'error', error: apiError.detail })
       })
     return () => { ignore = true }
-  }, [operationId, operationKey])
+  }, [operationId, operationKey, revision])
 
   useEffect(() => {
     let ignore = false
@@ -183,10 +191,17 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
           {current.operation.name}
         </Text>
         <div className={styles.headerActions}>
-          <OperationDescriptionDialog operation={current.operation} onSaved={operation => {
-            setOperationState({ key: operationKey, status: 'loaded', operation })
-            setNotice('Operation description saved.')
+          <OperationEditDialog operation={current.operation} onSaved={operation => {
+            setOperationState({ key: operationKey, status: 'loaded', operation: { ...current.operation, ...operation } })
+            setNotice('Operation updated.')
+            onOperationChanged?.()
           }} />
+          <OperationDeleteDialog operation={current.operation}
+            onInUse={() => { setRevision(value => value + 1) }}
+            onDeleted={() => {
+              onOperationChanged?.()
+              void navigate('/operations')
+            }} />
           <Button ref={newFindingRef} appearance="primary" className={styles.button} onClick={event => {
             returnFocusRef.current = event.currentTarget
             setEditing(null)

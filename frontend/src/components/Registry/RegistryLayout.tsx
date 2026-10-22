@@ -3,12 +3,30 @@ import { Outlet, useLocation, useNavigate } from 'react-router'
 
 import { useRegistryLayoutStyles } from './Registry.styles'
 
+const REGISTRY_TABS = [
+  'targets',
+  'converters',
+  'techniques',
+  'scenario-presets',
+  'scenario-suites',
+] as const
+
+/**
+ * Keeps a tab selected while its section owns nested create and edit routes.
+ */
+function selectedTabFromPath(pathname: string): string {
+  return (
+    REGISTRY_TABS.find(
+      (tab) => pathname === `/registry/${tab}` || pathname.startsWith(`/registry/${tab}/`),
+    ) ?? 'targets'
+  )
+}
+
 export default function RegistryLayout() {
   const styles = useRegistryLayoutStyles()
   const location = useLocation()
   const navigate = useNavigate()
-  const selectedTab = location.pathname.endsWith('/techniques') ? 'techniques'
-    : location.pathname.endsWith('/converters') ? 'converters' : 'targets'
+  const selectedTab = selectedTabFromPath(location.pathname)
 
   return (
     <div className={styles.root}>
@@ -22,6 +40,8 @@ export default function RegistryLayout() {
         <Tab value="targets">Targets</Tab>
         <Tab value="converters">Converters</Tab>
         <Tab value="techniques">Techniques</Tab>
+        <Tab value="scenario-presets">Scenario presets</Tab>
+        <Tab value="scenario-suites">Suites</Tab>
       </TabList>
       <div className={styles.content}>
         <Outlet />

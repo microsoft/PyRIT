@@ -60,10 +60,16 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
 )
+from pyrit.models.target.target_capabilities import TargetCapabilities
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from unit.async_utils import wait_for_completion_async
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    settle_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 from unit.backend.mocks import (
     _make_matching_target_mock,
     _settle_send_async,
@@ -1957,6 +1963,7 @@ class TestConcurrentMessages:
         send.side_effect = None
         await message_send_service.add_message_async(attack_result_id="attack", request=_request())
 
+    @pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
     @pytest.mark.parametrize("write_method", ["add_message_pieces_to_memory_async", "update_attack_result_by_id_async"])
     async def test_cancellation_joins_memory_write_before_releasing_ownership_async(
         self,
@@ -1970,7 +1977,7 @@ class TestConcurrentMessages:
 
         async def hold_write_async(**_: Any) -> None:
             started.set()
-            await asyncio.wait_for(release.wait(), timeout=5)
+            await release.wait()
             finished.set()
 
         with patch.object(mock_memory, write_method, side_effect=hold_write_async):
@@ -1978,7 +1985,7 @@ class TestConcurrentMessages:
                 message_send_service.add_message_async(attack_result_id="attack", request=_request(send=False))
             )
             try:
-                await started.wait()
+                await wait_for_event_async(event=started, tasks=[active])
                 for _ in range(2):
                     active.cancel()
                     await asyncio.sleep(0)
@@ -1991,8 +1998,9 @@ class TestConcurrentMessages:
                     )
             finally:
                 release.set()
-                with pytest.raises(asyncio.CancelledError):
-                    await active
+                await settle_tasks_async(active)
+            with pytest.raises(asyncio.CancelledError):
+                active.result()
         assert finished.is_set()
         assert not message_send_service._scheduler._conversations
         assert not message_send_service._scheduler._metadata_updates
@@ -2095,6 +2103,7 @@ class TestConcurrentMessages:
         assert stored_target is not None
         assert stored_target.hash == target.get_identifier().hash
 
+    @pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
     @pytest.mark.parametrize("preconverted", [False, True])
     async def test_parallel_sends_serialize_complete_metadata_updates_async(
         self,
@@ -2121,6 +2130,7 @@ class TestConcurrentMessages:
 
         second_target_started, first_write_started = asyncio.Event(), asyncio.Event()
         second_metadata_attempted, release_first_write = asyncio.Event(), asyncio.Event()
+        second_metadata_acquired = asyncio.Event()
         writes: list[dict[str, Any]] = []
         attempts = 0
         send = target._send_prompt_to_target_async
@@ -2140,16 +2150,19 @@ class TestConcurrentMessages:
         async def observe_metadata_async(*, attack_result_id: str) -> AsyncGenerator[None, None]:
             nonlocal attempts
             attempts += 1
-            if attempts == 2:
+            second_attempt = attempts == 2
+            if second_attempt:
                 second_metadata_attempted.set()
             async with guard(attack_result_id=attack_result_id):
+                if second_attempt:
+                    second_metadata_acquired.set()
                 yield
 
         async def delay_first_write_async(*, attack_result_id: str, update_fields: dict[str, Any]) -> None:
             writes.append(update_fields)
             if len(writes) == 1:
                 first_write_started.set()
-                await asyncio.wait_for(release_first_write.wait(), timeout=5)
+                await release_first_write.wait()
             await update(attack_result_id=attack_result_id, update_fields=update_fields)
 
         with (
@@ -2166,15 +2179,18 @@ class TestConcurrentMessages:
                 for service, request in zip([first, second], requests, strict=True)
             ]
             try:
-                await second_metadata_attempted.wait()
+                await wait_for_event_async(event=second_metadata_attempted, tasks=tasks)
                 assert all(not task.done() for task in tasks)
-                with pytest.raises(TimeoutError):
-                    await asyncio.wait_for(asyncio.shield(tasks[1]), timeout=0.1)
+                assert not second_metadata_acquired.is_set()
                 assert len(writes) == 1
                 assert not tasks[1].done()
             finally:
+                second_target_started.set()
+                first_write_started.set()
                 release_first_write.set()
-                await asyncio.gather(*tasks)
+                await settle_tasks_async(*tasks)
+            for task in tasks:
+                task.result()
 
         assert len(writes) == 2
         assert writes[0]["timestamp"] <= writes[1]["timestamp"]
@@ -2773,6 +2789,81 @@ def _submission(
 @pytest.mark.timeout(20)
 @pytest.mark.usefixtures("patch_central_database")
 class TestAsyncMessageSend:
+    async def test_repetitions_cannot_bypass_original_capabilities_through_an_alias_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        sqlite_instance: SQLiteMemory,
+    ) -> None:
+        service, attack, original, _ = real_send_context
+        alias = MockPromptTarget()
+        original.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=True))
+        assert original.get_identifier().hash == alias.get_identifier().hash
+        await sqlite_instance.update_attack_result_by_id_async(
+            attack_result_id=attack.attack_result_id,
+            update_fields={"attack_metadata": {"target_registry_name": "origin"}},
+        )
+        await sqlite_instance.add_message_to_memory_async(
+            request=MessagePiece(
+                role="assistant", original_value="Existing response", conversation_id=attack.conversation_id
+            ).to_message()
+        )
+        target_service = MagicMock(spec=TargetService)
+        target_service.get_target_object.side_effect = lambda target_registry_name: (
+            original if target_registry_name == "origin" else alias
+        )
+        with patch("pyrit.backend.services.message_send_service.get_target_service", return_value=target_service):
+            with pytest.raises(ValueError, match="editable history"):
+                await service.submit_async(
+                    attack_result_id=attack.attack_result_id,
+                    request=_submission(conversation_id=attack.conversation_id, count=2),
+                )
+        assert original.prompt_sent == alias.prompt_sent == []
+        [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        assert stored.get_active_conversation_ids() == {attack.conversation_id}
+
+    @pytest.mark.parametrize("with_history,count", [(False, 2), (True, 2), (True, 1)])
+    async def test_repetitions_require_replay_but_live_continuation_does_not_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        sqlite_instance: SQLiteMemory,
+        with_history: bool,
+        count: int,
+    ) -> None:
+        service, attack, target, _ = real_send_context
+        target.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=True))
+        if with_history:
+            for role in ("user", "assistant"):
+                await sqlite_instance.add_message_to_memory_async(
+                    request=MessagePiece(
+                        role=role,
+                        original_value="Previous turn",
+                        conversation_id=attack.conversation_id,
+                    ).to_message()
+                )
+        before = list(await sqlite_instance.get_message_pieces_async(conversation_id=attack.conversation_id))
+        if with_history and count > 1:
+            with pytest.raises(ValueError, match="editable history"):
+                await service.submit_async(
+                    attack_result_id=attack.attack_result_id,
+                    request=_submission(conversation_id=attack.conversation_id, count=count),
+                )
+            assert target.prompt_sent == []
+            assert (
+                list(await sqlite_instance.get_message_pieces_async(conversation_id=attack.conversation_id)) == before
+            )
+        else:
+            status = await service.submit_async(
+                attack_result_id=attack.attack_result_id,
+                request=_submission(conversation_id=attack.conversation_id, count=count),
+            )
+            status = await _settle_send_async(service=service, status=status)
+            assert status.state == MessageSendState.COMPLETED
+            assert target.prompt_sent == ["Hello"] * count
+        [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        assert len(stored.get_active_conversation_ids()) == (1 if with_history and count > 1 else count)
+
     @pytest.mark.parametrize(
         "terminal_state", [MessageSendState.COMPLETED, MessageSendState.FAILED, MessageSendState.INTERRUPTED]
     )

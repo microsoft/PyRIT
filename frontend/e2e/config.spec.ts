@@ -731,6 +731,6 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await page.getByTitle("Technique.execute").click();
     const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await input.fill("Hello");
-    await expect(page.getByRole("button", { name: /send/i })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
   });
 });

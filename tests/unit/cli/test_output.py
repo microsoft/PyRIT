@@ -14,8 +14,10 @@ from datetime import UTC, datetime
 from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from pyrit.cli import _output
-from pyrit.models import Parameter, ScenarioRunState, TargetCapabilities, TargetIdentifier
+from pyrit.models import AttackOutcome, Parameter, ScenarioRunState, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import (
     AttackErrorSummary,
     AttackRetrySummary,
@@ -26,7 +28,7 @@ from pyrit.models.catalog import (
     TargetInstance,
 )
 from pyrit.models.retry_event import RetryEvent
-from unit.mocks import make_scenario_result
+from unit.mocks import make_scenario_result, make_sequential_attack_results
 
 # ---------------------------------------------------------------------------
 # Typed-object factory helpers
@@ -794,6 +796,107 @@ async def test_print_full_async_json_emits_document(capsys):
     assert payload["view"] == "full"
     assert "overview" in payload
     assert payload["conversations"][0]["technique"] == "tech_a"
+
+
+class _EmptyConversationRejectingClient(_FakeMessagesClient):
+    """Records fetched conversation ids and, like the server, rejects an empty one."""
+
+    def __init__(self, by_conversation=None):
+        super().__init__(by_conversation)
+        self.requested_conversation_ids = []
+
+    async def get_conversation_messages_async(self, *, attack_result_id, conversation_id):
+        if not conversation_id:
+            raise ValueError(f"Attack '{attack_result_id}' has no conversation to fetch")
+        self.requested_conversation_ids.append(conversation_id)
+        return await super().get_conversation_messages_async(
+            attack_result_id=attack_result_id, conversation_id=conversation_id
+        )
+
+
+def _adaptive_result_with_envelope():
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="adaptive_text_airt_leakage::abc",
+        envelope_outcome=AttackOutcome.SUCCESS,
+        child_outcomes=[AttackOutcome.FAILURE, AttackOutcome.SUCCESS],
+        child_technique_names=["crescendo", "role_play"],
+    )
+    result = make_scenario_result(attack_results={"adaptive_text_airt_leakage::abc": [*children, envelope]})
+    return result, envelope, children
+
+
+async def test_print_conversations_async_leaves_out_orchestration_envelope_and_labels_techniques(capsys):
+    result, envelope, children = _adaptive_result_with_envelope()
+    client = _EmptyConversationRejectingClient()
+
+    await _output.print_conversations_async(result=result, client=client, scenario_result_id="SID")
+
+    out = capsys.readouterr().out
+    assert client.requested_conversation_ids == [child.conversation_id for child in children]
+    assert envelope.attack_result_id not in out
+    assert "[FAILURE] crescendo" in out
+    assert "[SUCCESS] role_play" in out
+    assert "Total attacks: 2" in out
+
+
+@pytest.mark.parametrize("with_result_roles", [True, False], ids=["recorded-roles", "pre-role-rows"])
+@pytest.mark.parametrize(
+    ("child_outcomes", "envelope_listed"),
+    [([AttackOutcome.FAILURE], True), ([AttackOutcome.FAILURE, AttackOutcome.ERROR], False)],
+    ids=["own-error", "child-error"],
+)
+async def test_print_conversations_async_lists_errored_envelope_unless_a_child_records_the_error(
+    capsys, child_outcomes, envelope_listed, with_result_roles
+):
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="adaptive_text_airt_leakage::abc",
+        envelope_outcome=AttackOutcome.ERROR,
+        child_outcomes=child_outcomes,
+        with_result_roles=with_result_roles,
+    )
+    result = make_scenario_result(attack_results={"adaptive_text_airt_leakage::abc": [*children, envelope]})
+    client = _EmptyConversationRejectingClient()
+
+    await _output.print_conversations_async(result=result, client=client, scenario_result_id="SID")
+
+    out = capsys.readouterr().out
+    assert client.requested_conversation_ids == [child.conversation_id for child in children]
+    assert (envelope.attack_result_id in out) is envelope_listed
+    assert f"Total attacks: {len(children) + int(envelope_listed)}" in out
+
+
+async def test_print_conversations_async_shows_requested_orchestration_envelope_without_fetching(capsys):
+    result, envelope, _ = _adaptive_result_with_envelope()
+    client = _EmptyConversationRejectingClient()
+
+    await _output.print_conversations_async(
+        result=result, client=client, scenario_result_id="SID", attack_result_ids=[envelope.attack_result_id]
+    )
+
+    out = capsys.readouterr().out
+    assert client.requested_conversation_ids == []
+    assert envelope.attack_result_id in out
+    assert "No messages to display." in out
+    assert "Total attacks: 1" in out
+
+
+async def test_print_full_async_json_shows_requested_orchestration_envelope_without_fetching(capsys):
+    result, envelope, _ = _adaptive_result_with_envelope()
+    client = _EmptyConversationRejectingClient()
+
+    await _output.print_full_async(
+        result=result,
+        client=client,
+        scenario_result_id="SID",
+        format="json",
+        attack_result_ids=[envelope.attack_result_id],
+    )
+
+    [entry] = json.loads(capsys.readouterr().out)["conversations"]
+    assert client.requested_conversation_ids == []
+    assert entry["id"] == envelope.attack_result_id
+    assert entry["conversation_id"] == ""
+    assert entry["messages"] == []
 
 
 # ---------------------------------------------------------------------------

@@ -108,7 +108,8 @@ describe('LabelsBar', () => {
   it('should not show warning when values are customized', () => {
     render(
       <TestWrapper>
-        <LabelsBar labels={{ operator: 'alice', operation: 'my_test' }} onLabelsChange={jest.fn()} />
+        <LabelsBar labels={{ operator: 'alice', operation: 'my_test' }} onLabelsChange={jest.fn()}
+          operation={{ status: 'resolved', operation: SAVED_OPERATION }} />
       </TestWrapper>
     )
 
@@ -135,6 +136,7 @@ describe('LabelsBar', () => {
 
     expect(await screen.findByRole('heading', { name: 'Warnings' })).toBeInTheDocument()
     expect(screen.getByText(message)).toBeInTheDocument()
+    expect(screen.getByText('Set operation in the bar. No operation is selected.')).toBeInTheDocument()
   })
 
   it('should open and dismiss the warning with the keyboard', async () => {

@@ -16,6 +16,7 @@ from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackOutcome,
+    AttackResult,
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
     SeedGroupRequirements,
@@ -248,6 +249,9 @@ class TestBuildAttackAsync:
         # 1-based per-attempt label stamped on each child
         assert attack._child_attacks[0].memory_labels[ADAPTIVE_ATTEMPT_LABEL] == "1"
         assert attack._child_attacks[1].memory_labels[ADAPTIVE_ATTEMPT_LABEL] == "2"
+        # registered technique name recorded on each child's result
+        assert attack._child_attacks[0].result_metadata[AttackResult.TECHNIQUE_NAME_METADATA_KEY] == "a"
+        assert attack._child_attacks[1].result_metadata[AttackResult.TECHNIQUE_NAME_METADATA_KEY] == "b"
         # default policy is FIRST_SUCCESS
         assert attack._completion_policy is SequenceCompletionPolicy.FIRST_SUCCESS
 
@@ -464,6 +468,7 @@ class TestEvalHashRoundTrip:
             techniques={
                 expected_hash: TechniqueBundle(
                     attack=technique.attack,
+                    name="prompt_sending",
                     requirements=technique.requirements,
                     technique_identifier=technique.get_identifier(),
                 )
@@ -497,6 +502,7 @@ class TestEvalHashRoundTrip:
             "technique_eval_hash": expected_hash,
             "adaptation": "objective_only",
         }
+        assert result.technique_name == "prompt_sending"
         assert result.targeted_harm_categories == ["context"]
         assert (result.outcome is AttackOutcome.ERROR) is fail
         assert source.model_dump() == original

@@ -33,13 +33,15 @@ class _Technique(ScenarioTechnique):
 
 
 class _LoadScenario(Scenario):
-    def __init__(self, *, provider: SeedDatasetProvider | None = None) -> None:
+    def __init__(
+        self, *, provider: SeedDatasetProvider | None = None, fetch: DatasetFetchPolicy = DatasetFetchPolicy.NEVER
+    ) -> None:
         super().__init__(
             version=1,
             technique_class=_Technique,
             objective_scorer=SubStringScorer(substring="yes"),
             default_dataset_config=DatasetAttackConfiguration(
-                sources=[DatasetSource(name="manual_load", fetch=DatasetFetchPolicy.NEVER, provider=provider)],
+                sources=[DatasetSource(name="manual_load", fetch=fetch, provider=provider)],
             ),
         )
 
@@ -60,14 +62,15 @@ def _provider() -> MagicMock:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_manual_load_fetches_once_and_preserves_provider_and_scan_policy() -> None:
+@pytest.mark.parametrize("policy", [DatasetFetchPolicy.NEVER, DatasetFetchPolicy.ALWAYS])
+async def test_manual_load_fetches_once_and_preserves_provider_and_scan_policy(policy: DatasetFetchPolicy) -> None:
     provider = _provider()
-    scenario = _LoadScenario(provider=provider)
+    scenario = _LoadScenario(provider=provider, fetch=policy)
     scenario.set_params_from_args(args={})
     settings = await scenario.load_datasets_async()
     await scenario.load_datasets_async()
     provider.fetch_dataset_async.assert_awaited_once()
-    assert settings.sources[0].fetch is DatasetFetchPolicy.NEVER
+    assert settings.sources[0].fetch is policy
     assert scenario._default_dataset_config.sources[0].provider is provider
     assert await CentralMemory.get_memory_instance().get_scenario_results_async() == []
     assert scenario._scenario_result_id is None
@@ -98,14 +101,15 @@ async def test_load_action_uses_registry_and_returns_full_stored_metadata() -> N
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_manual_load_keeps_edited_data_and_does_not_call_provider() -> None:
+@pytest.mark.parametrize("policy", [DatasetFetchPolicy.NEVER, DatasetFetchPolicy.ALWAYS])
+async def test_manual_load_keeps_edited_data_and_does_not_call_provider(policy: DatasetFetchPolicy) -> None:
     memory = CentralMemory.get_memory_instance()
     await memory.add_seeds_to_memory_async(
         seeds=[SeedObjective(value="Edited objective", dataset_name="manual_load")],
         added_by="test",
     )
     provider = _provider()
-    scenario = _LoadScenario(provider=provider)
+    scenario = _LoadScenario(provider=provider, fetch=policy)
     await scenario.load_datasets_async()
     provider.fetch_dataset_async.assert_not_awaited()
     assert [seed.value for seed in await memory.get_seeds_async(dataset_name="manual_load")] == ["Edited objective"]

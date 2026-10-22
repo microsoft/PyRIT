@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 import type { Finding, Operation } from '../src/types'
+import { waitForAppReady } from './_runtime'
 
 for (const width of [1280, 390]) {
   test(`wraps long finding text in detail and evidence picker at ${width}px @seeded`, async ({ page, request }) => {
@@ -21,6 +22,7 @@ for (const width of [1280, 390]) {
     expect(findingResponse.status()).toBe(201)
 
     await page.goto(`/operations/${operation.id}`)
+    await waitForAppReady(page)
     const heading = page.getByRole('heading', { name: title, exact: true })
     await expect(heading).toBeVisible()
     const finding = page.getByRole('listitem').filter({ has: heading })
@@ -37,12 +39,9 @@ for (const width of [1280, 390]) {
     await expect(finding.getByText(`Harm-type: ${harmType}`, { exact: true })).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
 
-    const targetResponse = await request.post('/api/targets', { headers, data: { type: 'TextTarget', params: {} } })
-    expect(targetResponse.ok()).toBeTruthy()
-    const target = await targetResponse.json()
     const attackResponse = await request.post('/api/attacks', {
       headers, data: {
-        target_registry_name: target.target_registry_name,
+        target_registry_name: 'browser_offline',
         operation_id: operation.id,
         prepended_conversation: [{ role: 'user', pieces: [{ original_value: 'Saved offline evidence.' }] }],
       },
@@ -174,10 +173,64 @@ test('creates a unique operation and records findings within it @seeded', async 
   await expect(page.getByRole('button', { name: 'New finding' })).toBeFocused()
 })
 
+test('renames an operation and deletes it only once it is empty @seeded', async ({ page, request }) => {
+  test.setTimeout(90_000)
+  const stamp = Date.now()
+  const version = await (await request.get('/api/version')).json()
+  const headers = { 'PyRIT-Compatibility-ID': version.compatibility_id }
+  const taken: Operation = await (await request.post('/api/operations', {
+    headers, data: { name: `Taken ${stamp}` },
+  })).json()
+  const operation: Operation = await (await request.post('/api/operations', {
+    headers, data: { name: `Typo operation ${stamp}` },
+  })).json()
+  const finding: Finding = await (await request.post(`/api/operations/${operation.id}/findings`, {
+    headers, data: { title: 'Blocks deletion', description: '', severity: 'low' },
+  })).json()
+
+  await page.goto(`/operations/${operation.id}`)
+  const remove = page.getByRole('button', { name: 'Delete', exact: true })
+  await expect(remove).toBeDisabled()
+  await remove.focus()
+  await expect(page.getByRole('tooltip')).toHaveText('Has 1 finding. Only empty operations can be deleted.')
+
+  const edit = page.getByRole('button', { name: 'Edit', exact: true })
+  await edit.click()
+  let dialog = page.getByRole('dialog', { name: 'Edit operation' })
+  await dialog.getByRole('textbox', { name: 'Name' }).fill(` taken ${stamp} `)
+  await dialog.getByRole('button', { name: 'Save operation' }).click()
+  await expect(dialog.getByText(`Another operation is already named “${taken.name}”`)).toBeVisible()
+  await dialog.getByRole('textbox', { name: 'Name' }).fill(operation.name.toUpperCase())
+  await dialog.getByRole('button', { name: 'Save operation' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: operation.name.toUpperCase() })).toBeVisible()
+  await expect(edit).toBeFocused()
+  const renamed = `Fixed operation ${stamp}`
+  await edit.click()
+  await dialog.getByRole('textbox', { name: 'Name' }).fill(renamed)
+  await dialog.getByRole('button', { name: 'Save operation' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: renamed })).toBeVisible()
+
+  await page.getByRole('button', { name: `Delete finding: ${finding.title}` }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete finding' }).click()
+  await expect(remove).toBeEnabled()
+  await remove.click()
+  dialog = page.getByRole('dialog', { name: 'Delete operation?' })
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(remove).toBeFocused()
+  await remove.click()
+  await dialog.getByRole('button', { name: 'Delete operation' }).click()
+  await expect(page).toHaveURL(/\/operations$/)
+  await expect(page.getByRole('heading', { name: 'Operations', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: taken.name })).toBeVisible()
+  await expect(page.getByRole('link', { name: renamed })).toHaveCount(0)
+  expect((await request.get(`/api/operations/${operation.id}`, { headers })).status()).toBe(404)
+})
+
 test('selects saved operations inline and revisits ID-scoped attack history @seeded', async ({ page, request }) => {
   test.setTimeout(90_000)
   const name = `Engagement / α% & ${Date.now()}`
   await page.goto('/')
+  await waitForAppReady(page)
   const bar = page.getByRole('region', { name: 'Default Labels' })
   await bar.getByRole('combobox', { name: 'Operation', exact: true }).click()
   await page.getByRole('option', { name: 'New operation…', exact: true }).click()
@@ -191,6 +244,9 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
   await expect(bar.getByRole('combobox', { name: 'Operation' })).toHaveValue(name)
   await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toBeFocused()
   await expect(page).toHaveURL(/\/$/)
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('pyrit.userPreferences.v1.local') ?? '{}').operation,
+  )).toEqual({ id: operation.id })
   await page.reload()
   await expect(bar.getByRole('combobox', { name: 'Operation' })).toHaveValue(name)
 
@@ -211,7 +267,7 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
 
   const version = await (await request.get('/api/version')).json()
   const headers = { 'PyRIT-Compatibility-ID': version.compatibility_id }
-  const targetResponse = await request.post('/api/targets', { headers, data: { type: 'TextTarget', params: {} } })
+  const targetResponse = await request.get('/api/targets/browser_offline', { headers })
   expect(targetResponse.ok()).toBeTruthy()
   const target = await targetResponse.json()
   let sourceAttack: { attack_result_id: string; conversation_id: string } | null = null

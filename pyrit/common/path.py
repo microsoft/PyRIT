@@ -77,7 +77,8 @@ SCORER_EVALS_TRUE_FALSE_PATH = pathlib.Path(SCORER_EVALS_PATH, "true_false").res
 SCORER_EVALS_LIKERT_PATH = pathlib.Path(SCORER_EVALS_PATH, "likert").resolve()
 
 
-# Dictionary of default PyRIT paths used primarily for rendering jinja templates
+# Dictionary of default PyRIT paths used primarily for rendering jinja templates.
+# Seeds expose these to templates as filesystem-free PurePath views, never as these concrete Paths.
 PATHS_DICT = {
     "content_classifiers_path": SCORER_CONTENT_CLASSIFIERS_PATH,
     "datasets_path": DATASETS_PATH,

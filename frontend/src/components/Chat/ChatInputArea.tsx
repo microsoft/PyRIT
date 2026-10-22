@@ -1,9 +1,9 @@
-import { useState, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle, type KeyboardEvent } from 'react'
+import { useState, useCallback, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle, type KeyboardEvent } from 'react'
 
 import { Button, Caption1, Popover, PopoverSurface, PopoverTrigger, Tooltip, Text } from '@fluentui/react-components'
 import { SendRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 
-import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, MultiSendOptions, PieceConversion, TargetInstance } from '@/types'
+import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, MultiSendOptions, PieceConversion, TargetInstance, UndoLastSendAction } from '@/types'
 import { isTargetResolutionBlocking } from '@/utils/targetIdentity'
 
 import { usePromptEditorStyles } from './PromptEditor.styles'
@@ -11,6 +11,8 @@ import PromptEditor from './PromptEditor'
 import SystemPromptSetup from './SystemPromptSetup'
 import MultiSendSettings from './MultiSendSettings'
 import { PIECE_TYPE_TO_DATA_TYPE, withDraftIdentity } from './converterTypes'
+
+const DISABLED_WARNING_HOVER_DELAY_MS = 700
 
 interface StatusBannerProps {
   icon: React.ReactElement
@@ -104,6 +106,8 @@ export interface ChatInputAreaHandle {
 }
 
 interface ChatInputAreaProps {
+  undoLastSend?: UndoLastSendAction
+  repeatDisabledReason?: string
   onSend: (
     originalValue: string,
     convertedValue: string | undefined,
@@ -114,6 +118,7 @@ interface ChatInputAreaProps {
   disabled?: boolean
   disabledReasons?: string[]
   sendDisabled?: boolean
+  sendDisabledReasons?: string[]
   activeTarget?: TargetInstance | null
   singleTurnLimitReached?: boolean
   onNewConversation?: () => void
@@ -145,19 +150,27 @@ interface ChatInputAreaProps {
 }
 
 const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({
-  onSend, conversionRevisionKey = '', disabled = false, disabledReasons = [], sendDisabled = false, activeTarget,
+  onSend, conversionRevisionKey = '', disabled = false, disabledReasons = [], sendDisabled = false, sendDisabledReasons = [], activeTarget,
   singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false,
   targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, onConfigureTarget,
   onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange,
   convertedValue, onClearConversion, onClearAllConversions, onConvertedValueChange,
   converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip,
   onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange,
+  repeatDisabledReason, undoLastSend,
 }, ref) {
   const styles = usePromptEditorStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
   const [isInputWarningOpen, setIsInputWarningOpen] = useState(false)
+  const warningHoverTimer = useRef<number | undefined>(undefined)
+  const cancelWarningHover = useCallback((): void => {
+    window.clearTimeout(warningHoverTimer.current)
+    warningHoverTimer.current = undefined
+  }, [])
+  useEffect(() => cancelWarningHover, [cancelWarningHover, disabled])
   const [sendOptions, setSendOptions] = useState<MultiSendOptions>({ count: 1, requestConverterMode: 'shared' })
+  const effectiveSendOptions = repeatDisabledReason ? { ...sendOptions, count: 1 } : sendOptions
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const disabledOverlayRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef(input)
@@ -211,17 +224,37 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
     getTextMetadata: (): Record<string, unknown> | undefined => textMetadataRef.current,
   }))
 
-  const unsupportedAttachmentTypes = getUnsupportedAttachmentTypes(attachments, activeTarget)
-  const unsupportedConverterOutputTypes = getUnsupportedConverterOutputTypes(converterOutputDataTypes, activeTarget)
-  const hasUnsupportedModalities = unsupportedAttachmentTypes.length > 0 || unsupportedConverterOutputTypes.length > 0
-  const canSend = !disabled && !sendDisabled && !hasUnsupportedModalities
-    && Boolean(input || convertedValue != null || convertedFileChip || attachments.length)
+  const convertedAttachmentIds = new Set(mediaConversions.map((conversion) => conversion.pieceId))
+  const unsupportedAttachmentTypes = getUnsupportedAttachmentTypes(
+    attachments.filter((attachment: MessageAttachment) => !attachment.draftId || !convertedAttachmentIds.has(attachment.draftId)),
+    activeTarget,
+  )
+  const unsupportedConverterOutputTypes = getUnsupportedConverterOutputTypes(
+    [...converterOutputDataTypes, ...mediaConversions.map((conversion) => conversion.convertedDataType)], activeTarget,
+  )
+  const unsupportedModalityReasons = [
+    ...(unsupportedAttachmentTypes.length > 0
+      ? [`This target does not support ${unsupportedAttachmentTypes.join(', ')} attachments. Remove them to send.`] : []),
+    ...(unsupportedConverterOutputTypes.length > 0
+      ? [`The selected converter produces ${unsupportedConverterOutputTypes.map((type: string) => type.replace('_path', '')).join(', ')} output, which this target does not support.`] : []),
+  ]
+  const hasUnsupportedModalities = unsupportedModalityReasons.length > 0
+  const hasContent = Boolean(input || convertedValue != null || convertedFileChip || attachments.length)
+  const sendBlockedReasons = [
+    ...(disabled ? inputDisabledReasons : []),
+    ...(sendDisabled ? sendDisabledReasons.length > 0
+      ? sendDisabledReasons : ['Sending is temporarily unavailable. Wait for the current operation to finish.'] : []),
+    ...unsupportedModalityReasons,
+    ...(!hasContent ? ['Enter a prompt or attach a file.'] : []),
+  ]
+  const canSend = sendBlockedReasons.length === 0
+  const sendTooltip = canSend ? 'Send message' : `Send message: ${sendBlockedReasons.join(' ')}`
   const handleSend = async (): Promise<void> => {
     if (!canSend) return
     const submittedRevision = draftRevisionRef.current
-    const sending = sendOptions.count === 1
+    const sending = effectiveSendOptions.count === 1
       ? onSend(inputRef.current, convertedValue ?? undefined, attachmentsRef.current)
-      : onSend(inputRef.current, convertedValue ?? undefined, attachmentsRef.current, sendOptions)
+      : onSend(inputRef.current, convertedValue ?? undefined, attachmentsRef.current, effectiveSendOptions)
     setSendOptions((previous: MultiSendOptions) => ({ ...previous, count: 1 }))
     const outcome = await sending
     if (outcome.clearDraft && draftRevisionRef.current === submittedRevision) {
@@ -255,16 +288,22 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
           text="This attack uses a different target. Continue with your target to keep the conversation."
           buttonText="Continue with your target" buttonIcon={<CopyRegular />} onButtonClick={onUseAsTemplate}
           testId="cross-target-banner" buttonTestId="use-as-template-btn" buttonClassName={styles.touchTarget} />
-      ) : singleTurnLimitReached ? (
+      ) : singleTurnLimitReached && !undoLastSend ? (
         <StatusBanner className={styles.statusBanner} textClassName={styles.statusBannerText} icon={<InfoRegular fontSize={18} />}
           text="This target only supports single-turn conversations." buttonText="New Conversation" buttonIcon={<AddRegular />}
           onButtonClick={onNewConversation} testId="single-turn-banner"
           buttonTestId="new-conversation-btn" buttonClassName={styles.touchTarget} />
       ) : (
+        <>
+        {singleTurnLimitReached && <StatusBanner className={styles.statusBanner} textClassName={styles.statusBannerText}
+          icon={<InfoRegular fontSize={18} />} text="This target only supports single-turn conversations."
+          buttonText="New Conversation" buttonIcon={<AddRegular />} onButtonClick={onNewConversation}
+          testId="single-turn-banner" buttonTestId="new-conversation-btn" buttonClassName={styles.touchTarget} />}
         <div className={styles.composerTrigger}>
           <PromptEditor text={input} attachments={attachments} onInputChange={changeText} onAttachmentsChange={changeAttachments}
             disabled={disabled} textareaRef={textareaRef} onKeyDown={handleKeyDown}
             onToggleConverterPanel={onToggleConverterPanel} isConverterPanelOpen={isConverterPanelOpen}
+            undoLastSend={undoLastSend}
             convertedValue={convertedValue} onConvertedValueChange={onConvertedValueChange}
             mediaConversions={mediaConversions} onClearMediaConversion={onClearMediaConversion}
             convertedFileChip={convertedFileChip} onClearConvertedFileChip={onClearConvertedFileChip}
@@ -272,21 +311,19 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               onChange={onSystemPromptChange} disabled={!!activeTarget && !supportsSystemPrompt} />}
             warning={hasUnsupportedModalities && <div className={styles.unsupportedWarning} data-testid="unsupported-modality-warning">
               <WarningRegular fontSize={14} /><Caption1>
-                {unsupportedAttachmentTypes.length > 0 && <>This target does not support {unsupportedAttachmentTypes.join(', ')} attachments. Remove them to send.</>}
-                {unsupportedAttachmentTypes.length > 0 && unsupportedConverterOutputTypes.length > 0 && ' '}
-                {unsupportedConverterOutputTypes.length > 0 && <>The selected converter produces{' '}
-                  {unsupportedConverterOutputTypes.map((type: string) => type.replace('_path', '')).join(', ')} output, which this target does not support.</>}
+                {unsupportedModalityReasons.join(' ')}
               </Caption1>
             </div>}
             actions={<>
-              <MultiSendSettings options={sendOptions} disabled={disabled || sendDisabled} onChange={setSendOptions} />
+              <MultiSendSettings options={effectiveSendOptions} disabled={disabled || sendDisabled}
+                disabledReason={repeatDisabledReason} onChange={setSendOptions} />
               {activeTarget?.capabilities?.supports_multi_turn === false && <Tooltip
                 content="This target does not track conversation history — each turn is sent independently." relationship="description">
                 <span className={styles.singleTurnWarning}><InfoRegular fontSize={18} /></span>
               </Tooltip>}
-              <Tooltip content="Send message" relationship="label">
+              <Tooltip content={sendTooltip} relationship="description">
                 <Button className={styles.sendButton} appearance="primary" icon={<SendRegular />}
-                  onClick={() => { void handleSend() }} disabled={!canSend} aria-label="Send message" data-testid="send-message-btn" />
+                  onClick={() => { void handleSend() }} disabledFocusable={!canSend} aria-label="Send message" data-testid="send-message-btn" />
               </Tooltip>
               {convertedValue != null && <Tooltip content="Clear conversion" relationship="label">
                 <Button appearance="subtle" className={styles.clearConversionButton} icon={<DismissRegular />}
@@ -296,16 +333,25 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
           />
           <Popover openOnHover withArrow open={disabled && isInputWarningOpen}
             onOpenChange={(event: { type: string; key?: string; target: EventTarget | null }, data: { open: boolean }) => {
+              cancelWarningHover()
               const isActivation = event.target === disabledOverlayRef.current
                 && (event.type === 'click'
                   || (event.type === 'keydown' && (event.key === 'Enter' || event.key === ' ')))
-              setIsInputWarningOpen(isActivation || data.open)
+              if (!isActivation && data.open && event.type === 'mouseenter' && !isInputWarningOpen) {
+                warningHoverTimer.current = window.setTimeout(() => {
+                  warningHoverTimer.current = undefined
+                  if (disabledOverlayRef.current && !disabledOverlayRef.current.hidden) setIsInputWarningOpen(true)
+                }, DISABLED_WARNING_HOVER_DELAY_MS)
+              } else {
+                setIsInputWarningOpen(isActivation || data.open)
+              }
             }}>
             <PopoverTrigger disableButtonEnhancement>
               <div ref={disabledOverlayRef} className={styles.disabledComposerOverlay} hidden={!disabled} tabIndex={disabled ? 0 : -1}
+                onMouseLeave={cancelWarningHover}
                 aria-label="Why the prompt box is disabled" />
             </PopoverTrigger>
-            <PopoverSurface className={styles.disabledReasonsPopover}>
+            <PopoverSurface className={styles.disabledReasonsPopover} aria-label="Prompt input is disabled">
               <div className={styles.disabledReasonsHeader}>
                 <InfoRegular fontSize={16} />
                 <Text size={200} weight="semibold">Prompt input is disabled</Text>
@@ -316,6 +362,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             </PopoverSurface>
           </Popover>
         </div>
+        </>
       )}
     </div>
   </div>

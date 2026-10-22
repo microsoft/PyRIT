@@ -499,14 +499,18 @@ test.describe("Chat processing recovery @seeded", () => {
       page.waitForResponse((response) => isMessagePost(response.request())),
       page.getByRole("button", { name: "Send message", exact: true }).click(),
     ]);
+    expect(acceptedResponse.status()).toBe(202);
     const accepted: MessageSendStatus = await acceptedResponse.json();
-    await expect.poll(() => localTarget.requestBodies.length).toBe(1);
+    // Allow the same cold HTTP-client initialization as the acceptance test above.
+    await expect.poll(() => localTarget.requestBodies.length, { timeout: 30_000 }).toBe(1);
     const path = new RegExp(`/api/attacks/${accepted.attack_result_id}$`);
     await page.route(path, async (route: Route) => {
       await route.fulfill({ status: 503, json: { detail: "Controlled metadata read failure" } });
     });
     localTarget.releaseResponse();
-    await expect(page.getByText(/Saved messages or attack details could not be loaded/)).toBeVisible();
+    await expect(page.getByRole("group", { name: "Message send status" })).toContainText(
+      "Saved messages or attack details could not be loaded",
+    );
     await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
     await page.unroute(path);
     await page.getByRole("button", { name: "Refresh saved messages" }).click();
@@ -541,7 +545,7 @@ test.describe("Chat processing recovery @seeded", () => {
     }
     const disabledPrompt = page.getByLabel("Why the prompt box is disabled");
     await disabledPrompt.click({ position: { x: 10, y: 10 } });
-    await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
+    await expect(page.getByRole("group", { name: "Prompt input is disabled" })).toContainText("This conversation contains a target error");
     await test.info().attach("disabled-prompt-reasons", {
       body: await page.screenshot({ animations: "disabled" }),
       contentType: "image/png",
@@ -607,10 +611,10 @@ test.describe("Chat processing recovery @seeded", () => {
       await expect(page.getByRole("button", { name: "Edit in clean conversation", exact: true })).toHaveCount(0);
       const disabledPrompt = page.getByLabel("Why the prompt box is disabled");
       await disabledPrompt.hover({ position: { x: 5, y: 5 } });
-      await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
+      await expect(page.getByRole("group", { name: "Prompt input is disabled" })).toContainText("This conversation contains a target error");
       await page.keyboard.press("Escape");
       await disabledPrompt.click({ position: { x: 10, y: 10 } });
-      await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
+      await expect(page.getByRole("group", { name: "Prompt input is disabled" })).toContainText("This conversation contains a target error");
       await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Copy or Branch", exact: true }).last().click();
       const recover = page.getByRole("menuitem", { name: "Branch conversation", exact: true });
@@ -665,7 +669,9 @@ test.describe("Chat processing recovery @seeded", () => {
       const failed = await sendFromComposer(page, "Edit this failed prompt");
       const sourceAttackId = failed.attack.attack_result_id;
       if (reload) await page.reload();
-      await page.getByRole("button", { name: "Copy or Branch", exact: true }).last().click();
+      await expect(page.getByRole("button", { name: "Edit Conversation", exact: true })).toBeEnabled();
+      await expect(page.getByTestId("message-bubble-2")).toContainText("Edit this failed prompt");
+      await page.getByTestId("copy-to-input-btn-2").click();
       const [savedResponse] = await Promise.all([
         page.waitForResponse((response) => response.request().method() === "POST"
           && new URL(response.url()).pathname === "/api/attacks/save-conversation"),
@@ -720,7 +726,7 @@ test.describe("Chat processing recovery @seeded", () => {
     await page.getByTestId(`converter-option-${imageConverterId}`).click();
     await panel.getByRole("button", { name: "Convert", exact: true }).click();
     await expect(page.getByTestId("converter-preview-result")).toBeVisible();
-    await panel.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await expect(page.getByTestId("clear-media-conversion-image")).toBeVisible();
     await panel.getByRole("button", { name: "Close converters", exact: true }).click();
     localTarget.setProcessingFailure(true);
     const failed = await sendFromComposer(page, "Restore the original image");
@@ -810,7 +816,7 @@ test.describe("Chat processing recovery @seeded", () => {
     }
     await expect(page.getByTestId("message-list").getByText("Only conversation B history")).toBeVisible();
     await page.getByRole("button", { name: "Send message", exact: true }).click();
-    await expect(page.getByText(/Network error/)).toBeVisible();
+    await expect(page.getByRole("group", { name: "Message send status" })).toContainText("Network error");
     expect(postCount).toBe(1);
     await expect(page.getByTestId("chat-input")).toHaveValue("Retain this unsent draft");
     const [download] = await Promise.all([
@@ -848,7 +854,7 @@ test.describe("Chat processing recovery @seeded", () => {
     await expect(panel.getByTestId(`converter-item-${imageConverterId}`)).toBeVisible();
     await panel.getByRole("button", { name: "Convert", exact: true }).click();
     await expect(page.getByTestId("converter-preview-result")).toBeVisible();
-    await panel.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await expect(page.getByTestId("clear-media-conversion-image")).toBeVisible();
     await panel.getByRole("button", { name: "Close converters", exact: true }).click();
     localTarget.setProcessingFailure(true);
     const [originalRequest, first] = await Promise.all([

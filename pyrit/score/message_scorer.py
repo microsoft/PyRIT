@@ -111,7 +111,9 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
         [
             piece.original_value
             for piece in conversation
-            if piece.sequence == previous_sequence and piece.original_value_data_type == "text"
+            if piece.sequence == previous_sequence
+            and piece.original_value_data_type == "text"
+            and piece.api_role == "user"
         ]
     )
 
@@ -154,7 +156,9 @@ async def extract_objective_from_previous_turn_async(*, message: Message, memory
         [
             piece.original_value
             for piece in conversation
-            if piece.sequence == previous_sequence and piece.original_value_data_type == "text"
+            if piece.sequence == previous_sequence
+            and piece.original_value_data_type == "text"
+            and piece.api_role == "user"
         ]
     )
 

@@ -249,7 +249,7 @@ async function activateMockTarget(page: Page) {
 async function sendAndWait(page: Page, text: string, responseText: string) {
   const input = page.getByTestId("chat-input");
   await input.fill(text);
-  await page.getByRole("button", { name: /send/i }).click();
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(page.getByText(responseText)).toBeVisible({ timeout: 10000 });
 }
 
@@ -341,7 +341,7 @@ test.describe("Error: accepted send with target processing failure", () => {
 
     const input = page.getByTestId("chat-input");
     await input.fill("Preserve this draft");
-    await page.getByRole("button", { name: /send/i }).click();
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
 
     await expect(page.getByTestId("message-list")).toContainText(
       "RuntimeError: target failed\nTraceback (most recent call last): ...",
@@ -373,7 +373,7 @@ test.describe("Error: accepted send with target processing failure", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Error: backend 500 on send message", () => {
-  test("should show error bubble and preserve input text", async ({
+  test("should show the send error and preserve input without resending", async ({
     page,
   }) => {
     // First message succeeds, second fails with 500.
@@ -413,17 +413,20 @@ test.describe("Error: backend 500 on send message", () => {
     // Second send should fail
     const input = page.getByTestId("chat-input");
     await input.fill("This should fail");
-    await page.getByRole("button", { name: /send/i }).click();
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
 
-    // Error message should appear in chat
-    await expect(
-      page.getByText(/Internal server error/i),
-    ).toBeVisible({ timeout: 10000 });
+    const status = page.getByRole("group", { name: "Message send status" });
+    await expect(status).toContainText("Internal server error");
 
     // Retain the draft, but uncertain acceptance permits only evidence refresh.
-    await expect(input).toHaveValue("This should fail", { timeout: 5000 });
-    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await expect(input).toHaveValue("This should fail");
+    const send = page.getByRole("button", { name: "Send message", exact: true });
+    await expect(send).toBeDisabled();
+    await send.hover();
+    await expect(page.getByRole("tooltip")).toContainText("Send message: Internal server error");
+    await expect(status).toBeVisible();
     await expect(page.getByRole("button", { name: "Refresh saved messages" })).toBeVisible();
+    expect(callCount).toBe(2);
   });
 
   test("should recover cleanly when the first send fails", async ({ page }) => {
@@ -440,13 +443,11 @@ test.describe("Error: backend 500 on send message", () => {
 
     const input = page.getByTestId("chat-input");
     await input.fill("First send fails");
-    await page.getByRole("button", { name: /send/i }).click();
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
 
-    await expect(page.getByText(/Internal server error/i)).toBeVisible({
-      timeout: 10000,
-    });
+    await expect(page.getByRole("group", { name: "Message send status" })).toContainText("Internal server error");
     await expect(page.getByTestId("loading-state")).toHaveCount(0);
-    await expect(input).toHaveValue("First send fails", { timeout: 5000 });
+    await expect(input).toHaveValue("First send fails");
   });
 });
 
@@ -485,12 +486,13 @@ test.describe("Error: network error on send message", () => {
     // Second send should fail with network error
     const input = page.getByTestId("chat-input");
     await input.fill("Network fail test");
-    await page.getByRole("button", { name: /send/i }).click();
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
 
     // Network error message should appear
-    await expect(
-      page.getByText(/network error|backend is running/i),
-    ).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("group", { name: "Message send status" })).toContainText(/network error|backend is running/i);
+    await expect(input).toHaveValue("Network fail test");
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    expect(callCount).toBe(2);
   });
 });
 
@@ -637,7 +639,7 @@ test.describe("Error: create attack fails", () => {
 
     const input = page.getByTestId("chat-input");
     await input.fill("Should fail to create");
-    await page.getByRole("button", { name: /send/i }).click();
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
 
     // Error should be shown
     await expect(
