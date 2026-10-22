@@ -41,7 +41,7 @@ def _default_model_kwargs() -> dict[str, Any]:
 
 
 def _default_tokenizer_kwargs() -> dict[str, Any]:
-    return {"use_fast": False}
+    return {"use_fast": True}
 
 
 @dataclass
@@ -58,9 +58,8 @@ class GCGModelConfig:
             ``AutoModelForCausalLM.from_pretrained``. Defaults to
             ``{"low_cpu_mem_usage": True, "use_cache": False}``.
         tokenizer_kwargs (dict[str, Any]): Extra keyword arguments forwarded to
-            ``AutoTokenizer.from_pretrained``. Defaults to ``{"use_fast": False}``
-            because several legacy chat tokenizers (Llama-2, Vicuna) ship slow
-            tokenizers only.
+            ``AutoTokenizer.from_pretrained``. Defaults to ``{"use_fast": True}``
+            because GCG needs the character offsets only fast tokenizers provide.
     """
 
     name: str

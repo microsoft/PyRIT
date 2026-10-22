@@ -297,8 +297,9 @@ an empty Operation picker can mean its saved-ID lookup is still loading.
 CI runs two isolated mock shards, one serial seeded job, and one isolated
 analytics job, with one worker per job. Mock and seeded jobs start their own
 Vite server and Python backend because mock specs still depend on backend auth
-bootstrap and some API calls. The analytics job serves its production build
-from the disposable SQLite fixture. Jobs never share backend state.
+bootstrap and some API calls. The seeded job serves a production build through
+`vite preview`, and the analytics job serves its production build from the
+disposable SQLite fixture. Jobs never share backend state.
 The required **Frontend E2E Tests** check merges their reports and fails
 if any shard fails, is cancelled, or is missing a report. Skipped and flaky tests
 also fail CI.
@@ -316,7 +317,12 @@ only a dedicated Vite server, expects the backend to already be running, and
 disables server reuse.
 
 In CI with `E2E_SEEDED_MODE=true`, Playwright starts its own backend and Vite
-servers with reuse disabled, even when `E2E_FRONTEND_PORT` is set.
+servers with reuse disabled, even when `E2E_FRONTEND_PORT` is set. Adding
+`E2E_PRODUCTION_FRONTEND=true` builds the frontend and serves it with
+`vite preview` instead of the dev server. CI sets it for the seeded job because
+those specs reload the app often, and each production-bundle load is much
+faster. Mock specs need the dev server because some import `/src` modules in
+the browser.
 
 > **Note**: `test:e2e:ui` and `test:e2e:headed` require a graphical display and won't work in headless environments like devcontainers. Use `npm run test:e2e` for CI/headless testing.
 
