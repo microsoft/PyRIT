@@ -685,6 +685,7 @@ describe('ScenarioRunPage', () => {
       'Run configuration',
       'Scenario queue',
       'Overall progress',
+      'Paired outcomes',
       'Atomic attack groups',
       'Objective Scorer',
       'Techniques',

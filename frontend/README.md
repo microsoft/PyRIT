@@ -33,6 +33,9 @@ When you save an edited conversation, its final user turn moves to the prompt
 box instead of saved history. Text and attachments retain their metadata,
 including text-only video remix IDs. You can enter and edit prompts without a target.
 Send stays disabled until you select a target; no target-warning box is shown.
+Hover over Send, or focus it with the keyboard, to see why sending is disabled.
+The warning button in the labels bar reports a placeholder operator and an
+unselected operation. Operation remains optional and does not block sending.
 
 **Use in scan** opens the configuration to apply a PyRIT attack technique after
 prepending history including the selected turn. It saves a target-free copy
@@ -249,6 +252,7 @@ npm run test:coverage # Run with coverage report (85%+ threshold)
 # End-to-End Tests (Playwright)
 npm run test:e2e          # Run headless (default local setup uses dev.py)
 npm run test:e2e:headed   # Run with visible browser windows (requires display)
+npm run test:e2e:paired-outcomes # Real SQLite/API paired-outcome acceptance tests
 npm run test:e2e:ui       # Interactive UI mode (requires display)
 ```
 

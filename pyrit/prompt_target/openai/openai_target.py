@@ -187,8 +187,11 @@ class OpenAITarget(PromptTarget):
         Raises:
             ValueError: If the source has an unsupported resource or temperature setting.
         """
-        if "http_client" in self._httpx_client_kwargs:
-            raise ValueError("Reconstruction with an externally owned HTTP client is not supported")
+        if self._httpx_client_kwargs.get("http_client") is not None:
+            raise ValueError(
+                f"{type(self).__name__} cannot be recreated with different settings because it uses a custom "
+                "HTTP client supplied through httpx_client_kwargs['http_client']."
+            )
         if "temperature" in (getattr(self, "_extra_body_parameters", None) or {}):
             raise ValueError(
                 "Separate temperature settings are not supported when extra_body_parameters sets temperature"

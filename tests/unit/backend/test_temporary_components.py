@@ -11,11 +11,13 @@ from types import ModuleType
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from pyrit.backend.authentication_policy import AuthenticationPolicy
+from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models.attacks import (
     CreateAttackRequest,
     CreateConversationRequest,
@@ -286,6 +288,35 @@ class TestTemporaryComponents:
             await first.cleanup_target_async()
             await second.cleanup_target_async()
             await source.cleanup_target_async()
+
+    @pytest.mark.parametrize("client_setting", ["default", "none", "custom"])
+    async def test_temperature_support_with_http_client_async(self, client_setting: str) -> None:
+        async with httpx.AsyncClient() as client:
+            client_kwargs: dict[str, Any] = {}
+            if client_setting != "default":
+                client_kwargs["http_client"] = client if client_setting == "custom" else None
+            source = OpenAIChatTarget(
+                endpoint="https://example.test/v1",
+                model_name="test",
+                api_key="test-only-key",
+                httpx_client_kwargs=client_kwargs,
+            )
+            try:
+                descriptor = target_object_to_instance("source", source)
+                if client_setting == "custom":
+                    assert not descriptor.reconstructable
+                    assert not descriptor.supports_temperature_override
+                    assert descriptor.reconstruction_error == (
+                        "OpenAIChatTarget cannot be recreated with different settings because it uses a custom "
+                        "HTTP client supplied through httpx_client_kwargs['http_client']."
+                    )
+                    assert not client.is_closed
+                else:
+                    assert descriptor.reconstructable
+                    assert descriptor.supports_temperature_override
+                    assert descriptor.reconstruction_error is None
+            finally:
+                await source.cleanup_target_async()
 
     async def test_effective_hash_mismatch_releases_only_the_private_target_async(self) -> None:
         source = source_target()

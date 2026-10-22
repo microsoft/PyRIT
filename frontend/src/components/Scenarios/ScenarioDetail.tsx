@@ -68,6 +68,7 @@ import { sameTarget, targetModelName } from '@/utils/targetIdentity'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import { ScenarioRunEstimateDetails } from './ScenarioRunEstimate'
+import { scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
 import { normalizeScenarioMarkdown } from './scenarioMarkdown'
 import { mapScenarioRunEstimate } from './scenarioRunEstimateAdapter'
 import { techniqueSetName } from './scenarioTechniqueSets'
@@ -630,17 +631,11 @@ function ScenarioLaunchForm({
   const [datasetError, setDatasetError] = useState<string | null>(null)
   const datasetMetadata = useScenarioDatasets()
   const [datasetProjection, setDatasetProjection] = useState<ScenarioRunSizeEstimateResponse | null>(null)
-  const datasetDefaults: ScenarioDatasetSettings = datasetProjection?.dataset_defaults ?? scenario.dataset_defaults ?? {
-    sources: scenario.default_datasets.map((name) => ({ name, max_size: 'all', fetch: 'if_missing', configured_provider: false })),
-    max_per_dataset: 'all', max_total: scenario.default_run_size.dataset_limit.value ?? 'all',
-    fetch: 'if_missing', filters: {},
-  }
+  const datasetDefaults: ScenarioDatasetSettings = datasetProjection?.dataset_defaults
+    ?? scenarioDatasetDefaults(scenario)
   const effectiveDatasets = datasetProjection?.effective_datasets ?? datasetDefaults
-  const datasetOptions: ScenarioDatasetOptions = datasetProjection?.dataset_options ?? scenario.dataset_options ?? {
-    mode: 'any', allowed_names: [], per_dataset_limit: true,
-    total_limit: scenario.default_run_size.dataset_limit.state !== 'not_applicable',
-    supports_overrides: true, filters: true,
-  }
+  const datasetOptions: ScenarioDatasetOptions = datasetProjection?.dataset_options
+    ?? scenarioDatasetOptions(scenario)
   const selectedDatasetNames = (datasetEdits.sources ?? datasetDefaults.sources).map((source) => source.name)
   const datasetSelectionKey = JSON.stringify(selectedDatasetNames)
   const reloadDatasetMetadata = datasetMetadata.reload

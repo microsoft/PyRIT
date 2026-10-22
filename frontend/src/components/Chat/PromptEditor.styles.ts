@@ -197,6 +197,9 @@ export const usePromptEditorStyles = makeStyles({
     ...mobileTouchTarget,
   },
   sendButton: {
+    position: 'relative',
+    // Keep the tooltip reachable above the disabled-composer overlay.
+    zIndex: 1,
     minWidth: '32px',
     width: '32px',
     height: '32px',

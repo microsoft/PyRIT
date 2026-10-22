@@ -43,6 +43,60 @@ class CustomInitializer(PyRITInitializer):
 CustomInitializer()
 
 # %% [markdown]
+# ## Declaring Parameters
+#
+# Declare inputs with a `supported_parameters()` classmethod. The same `Parameter`
+# model and resolver used by scenarios convert values, validate declarations,
+# reject unknown names, and supply defaults. `self.params` contains typed values,
+# not lists of strings for every parameter.
+#
+# CLI syntax is unchanged: `target:tags=default,scorer;auto_group=false` supplies
+# a list of tags and a boolean. YAML can supply native scalars and lists.
+# An omitted or null value uses its declared default.
+#
+# For a required input, use `default=REQUIRED_VALUE` from `pyrit.common`.
+# Construction leaves required values as `None` so catalog metadata remains
+# available. `set_params_from_args` rejects missing or null required inputs.
+# Optional defaults are available immediately, including on directly constructed
+# initializers.
+#
+# Configuration converts inputs once. `validate_params()` and setup validation
+# check the resolved bag without changing it. Use `set_params_from_args` instead
+# of assigning a raw or partial `params` dictionary.
+#
+# Integer inputs reject fractional numbers instead of truncating them. For
+# example, `RefreshDatasets` rejects `days: 0.5`; it cannot become the
+# unconditional-refresh setting `days: 0`.
+#
+# **Migration for custom initializers:** replace the old `@property` declaration
+# with `@classmethod` and use `cls` for class constants. Declare `param_type` and
+# read scalar values directly, such as `self.params["temperature"]`, not `[0]`.
+# Use `set_params_from_args` to configure values before initialization.
+
+# %%
+from pyrit.models import Parameter
+
+
+class ParameterizedInitializer(PyRITInitializer):
+    """Configures the default OpenAI temperature."""
+
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        return [Parameter(name="temperature", description="Sampling temperature", param_type=float, default=0.9)]
+
+    async def initialize_async(self) -> None:
+        set_default_value(
+            class_type=OpenAIChatTarget,
+            parameter_name="temperature",
+            value=self.params["temperature"],
+        )
+
+
+configured_initializer = ParameterizedInitializer()
+configured_initializer.set_params_from_args(args={"temperature": "0.7"})
+assert configured_initializer.params["temperature"] == 0.7
+
+# %% [markdown]
 # ## Built-in Initializers
 #
 # PyRIT includes a few built-in initializers that set more intelligent defaults!
