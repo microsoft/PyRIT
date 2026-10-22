@@ -34,6 +34,7 @@ from pyrit.models.harm_category import HarmCategory
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
 MISSING_ID = UUID(int=404)
+EMPTY_USAGE = {"findings": 0, "attacks": 0, "scenario_runs": 0}
 
 
 def test_operations_create_list_and_get(compatibility_headers: dict[str, str]) -> None:
@@ -45,13 +46,11 @@ def test_operations_create_list_and_get(compatibility_headers: dict[str, str]) -
     client.post("/api/operations", json={"name": "Alpha"})
     assert [item["name"] for item in client.get("/api/operations").json()["items"]] == ["Alpha", "Red team / α%"]
     assert all(item["finding_counts"] == {} for item in client.get("/api/operations").json()["items"])
-    assert client.get(f"/api/operations/{operation['id']}").json() == operation
+    assert client.get(f"/api/operations/{operation['id']}").json() == {**operation, "usage": EMPTY_USAGE}
     assert client.get(f"/api/operations/{MISSING_ID}").status_code == 404
 
 
-def test_operation_description_is_set_on_create_and_edited_without_renaming(
-    compatibility_headers: dict[str, str],
-) -> None:
+def test_operation_description_is_set_on_create_and_edited(compatibility_headers: dict[str, str]) -> None:
     client = TestClient(app, headers=compatibility_headers)
     operation = client.post("/api/operations", json={"name": "Scoped", "description": "Web app only"}).json()
     assert operation["description"] == "Web app only"
@@ -59,12 +58,65 @@ def test_operation_description_is_set_on_create_and_edited_without_renaming(
     updated = client.patch(path, json={"description": "Web app and API\nNo social engineering"})
     assert updated.status_code == 200
     assert updated.json() == {**operation, "description": "Web app and API\nNo social engineering"}
-    assert client.get(path).json() == updated.json()
+    assert client.get(path).json() == {**updated.json(), "usage": EMPTY_USAGE}
     assert client.patch(path, json={"description": ""}).json()["description"] == ""
-    assert client.patch(path, json={"description": "x", "name": "Renamed"}).status_code == 422
+    assert client.patch(path, json={"description": "x", "created_at": operation["created_at"]}).status_code == 422
     assert client.patch(f"/api/operations/{MISSING_ID}", json={"description": "x"}).status_code == 404
     assert TestClient(app).patch(path, json={"description": "x"}).status_code != 200
     assert client.get("/api/operations").json()["items"][0]["description"] == ""
+
+
+def test_operation_rename_keeps_identity_and_rejects_taken_or_invalid_names(
+    compatibility_headers: dict[str, str],
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation = client.post("/api/operations", json={"name": "Scoped", "description": "Web app"}).json()
+    other = client.post("/api/operations", json={"name": "Other"}).json()
+    path = f"/api/operations/{operation['id']}"
+    recased = client.patch(path, json={"name": " SCOPED "})
+    assert recased.status_code == 200
+    assert recased.json() == {**operation, "name": "SCOPED"}
+    conflict = client.patch(path, json={"name": "other", "description": "Lost"})
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["operation"] == other
+    for name in [" ", "😀" * 65]:
+        assert client.patch(path, json={"name": name}).status_code == 422
+    assert client.get(path).json() == {**recased.json(), "usage": EMPTY_USAGE}
+    assert client.patch(path, json={"name": "Engagement / α%"}).json() == {**operation, "name": "Engagement / α%"}
+    assert [item["name"] for item in client.get("/api/operations").json()["items"]] == ["Engagement / α%", "Other"]
+
+
+def test_empty_operation_is_deleted(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation = client.post("/api/operations", json={"name": "Typo"}).json()
+    path = f"/api/operations/{operation['id']}"
+    assert TestClient(app).delete(path).status_code != 204
+    deleted = client.delete(path)
+    assert deleted.status_code == 204
+    assert deleted.content == b""
+    assert client.get(path).status_code == 404
+    assert client.delete(path).status_code == 404
+    assert client.patch(path, json={"name": "Fixed"}).status_code == 404
+    assert client.get("/api/operations").json()["items"] == []
+
+
+async def test_finding_for_an_operation_deleted_during_the_request_is_not_found_async(
+    sqlite_instance: SQLiteMemory, compatibility_headers: dict[str, str]
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Case"))
+    original_get_async = OperationService.get_async
+
+    async def get_then_delete_async(self: OperationService, operation_id: UUID) -> Operation:
+        found = await original_get_async(self, operation_id)
+        await sqlite_instance.delete_operation_async(operation_id=operation_id)
+        return found
+
+    with patch.object(OperationService, "get_async", get_then_delete_async):
+        response = TestClient(app, headers=compatibility_headers).post(
+            f"/api/operations/{operation.id}/findings", json={"title": "Late", "severity": "low"}
+        )
+    assert response.status_code == 404
+    assert await sqlite_instance.get_findings_async() == []
 
 
 def test_duplicate_operation_conflicts_with_existing_record(compatibility_headers: dict[str, str]) -> None:
@@ -252,7 +304,7 @@ def test_finding_update_and_delete_preserve_identity_and_operation(
     assert deleted.status_code == 204
     assert deleted.content == b""
     assert client.get(path).json()["items"] == []
-    assert client.get(f"/api/operations/{operation['id']}").json() == operation
+    assert client.get(f"/api/operations/{operation['id']}").json() == {**operation, "usage": EMPTY_USAGE}
     assert client.delete(finding_path).status_code == 404
     assert client.put(finding_path, json={"title": "Missing", "severity": "low"}).status_code == 404
 
@@ -330,6 +382,24 @@ def test_finding_evidence_attach_returns_created_then_already_attached(
     evidence_id = created.json()["item"]["id"]
     assert client.delete(f"{path}/{evidence_id}").status_code == 204
     assert client.delete(f"{path}/{evidence_id}").status_code == 404
+
+
+def test_operation_in_use_is_not_deleted_and_id_linked_activity_follows_a_rename(
+    compatibility_headers: dict[str, str], evidence_source_async: tuple[Operation, Finding, AttackResult]
+) -> None:
+    operation, finding, attack = evidence_source_async
+    client = TestClient(app, headers=compatibility_headers)
+    path = f"/api/operations/{operation.id}"
+    usage = {"findings": 1, "attacks": 1, "scenario_runs": 0}
+    assert client.get(path).json()["usage"] == usage
+    refused = client.delete(path)
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["usage"] == usage
+    assert client.patch(path, json={"name": "Renamed"}).status_code == 200
+    evidence_path = f"{path}/findings/{finding.id}/evidence"
+    client.post(evidence_path, json={"attack_result_id": attack.attack_result_id})
+    assert client.get(evidence_path).json()["items"][0]["source_operation_name"] == "Renamed"
+    assert client.get(path).json()["name"] == "Renamed"
 
 
 @pytest.mark.parametrize(
