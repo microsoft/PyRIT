@@ -113,17 +113,17 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
   const hasUnsavedChanges = status === 'ready'
     && draftSignature(currentDraft) !== draftSignature(savedDraft)
   const shouldBlockNavigation = useCallback(
-    (): boolean => hasUnsavedChanges && !saving && !allowNavigation.current,
-    [hasUnsavedChanges, saving],
+    (): boolean => hasUnsavedChanges && !allowNavigation.current,
+    [hasUnsavedChanges],
   )
   const blocker = useBlocker(shouldBlockNavigation)
 
   useBeforeUnload(useCallback((event: BeforeUnloadEvent): void => {
-    if (hasUnsavedChanges && !saving && !allowNavigation.current) {
+    if (hasUnsavedChanges && !allowNavigation.current) {
       event.preventDefault()
       event.returnValue = ''
     }
-  }, [hasUnsavedChanges, saving]))
+  }, [hasUnsavedChanges]))
 
   useEffect(() => {
     let cancelled = false

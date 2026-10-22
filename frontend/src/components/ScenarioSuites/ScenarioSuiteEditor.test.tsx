@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 
 import { FluentProvider, useFocusFinders, webLightTheme } from '@fluentui/react-components'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   createMemoryRouter,
@@ -307,6 +307,47 @@ describe('ScenarioSuiteEditor', () => {
     expect(await screen.findByText(
       "Scenario suite 'nightly_suite' changed since it was read; re-read it and retry",
     )).toBeInTheDocument()
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent(
+      '/registry/scenario-suites/nightly_suite/edit',
+    )
+  })
+
+  it('protects the draft while a save is in flight and after a version conflict', async () => {
+    const user = userEvent.setup()
+    let rejectSave: (reason: unknown) => void = () => {
+      throw new Error('Save rejection was not initialized.')
+    }
+    mockUpdateSuite.mockImplementation(
+      () => new Promise((_, reject) => {
+        rejectSave = reject
+      }),
+    )
+    renderEditor('edit')
+
+    const description = await screen.findByTestId('suite-description-input')
+    await user.type(description, ' Updated.')
+    await user.click(screen.getByTestId('save-suite-btn'))
+    expect(await screen.findByRole('button', { name: 'Saving...' })).toBeDisabled()
+
+    const unloadEvent = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(unloadEvent)
+    expect(unloadEvent.defaultPrevented).toBe(true)
+
+    await user.click(screen.getByRole('button', { name: 'Leave editor' }))
+    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent(
+      '/registry/scenario-suites/nightly_suite/edit',
+    )
+
+    await act(async () => {
+      rejectSave(apiError(409, "Scenario suite 'nightly_suite' changed since it was read; re-read it and retry"))
+    })
+    expect(await screen.findByText(
+      "Scenario suite 'nightly_suite' changed since it was read; re-read it and retry",
+    )).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(description).toHaveValue('Nightly checks. Updated.')
     expect(screen.getByLabelText('Current URL')).toHaveTextContent(
       '/registry/scenario-suites/nightly_suite/edit',
     )
