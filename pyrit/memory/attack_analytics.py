@@ -670,7 +670,9 @@ class AttackAnalyticsReader:
             kind = AttackAnalyticsValueKind(record[f"kind{index}"])
             key = AttackAnalyticsValue(
                 kind=kind,
-                value=record[f"value{index}"] if kind is AttackAnalyticsValueKind.VALUE else None,
+                value=record[f"value{index}"]
+                if kind in {AttackAnalyticsValueKind.VALUE, AttackAnalyticsValueKind.LEGACY_OPERATION_NAME}
+                else None,
             )
         except ValidationError as error:
             if any(issue["type"] == "string_too_long" for issue in error.errors()):
@@ -727,8 +729,9 @@ class AttackAnalyticsReader:
         """
         data = dict(record)
         data["attack_result_id"] = str(data["attack_result_id"])
-        if data["scenario_result_id"] is not None:
-            data["scenario_result_id"] = str(data["scenario_result_id"])
+        for key in ("operation_id", "scenario_result_id"):
+            if data[key] is not None:
+                data[key] = str(data[key])
         if data["targeted_harm_categories"] is None:
             data["targeted_harm_categories"] = []
         if data["labels"] is None:

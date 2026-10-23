@@ -125,6 +125,10 @@ class AttackResult(StrategyResult, Generic[_ResponsePieceT, _ScoreT]):
 
     ATTRIBUTION_VALUE_MAX_LENGTH: ClassVar[int] = ATTRIBUTION_VALUE_MAX_LENGTH
 
+    #: ``metadata`` key for the registered name of the technique that produced this result, recorded
+    #: when the atomic attack name alone does not identify it (for example, adaptive scenarios).
+    TECHNIQUE_NAME_METADATA_KEY: ClassVar[str] = "technique_name"
+
     # Identity
     # Unique identifier of the conversation that produced this result
     conversation_id: str
@@ -233,6 +237,12 @@ class AttackResult(StrategyResult, Generic[_ResponsePieceT, _ScoreT]):
     def last_score(self) -> Score | None:
         """The human score when present, otherwise the automated score."""
         return self.human_score or self.automated_score
+
+    @property
+    def technique_name(self) -> str | None:
+        """The registered technique name recorded in ``metadata``, or None when absent."""
+        name = self.metadata.get(self.TECHNIQUE_NAME_METADATA_KEY)
+        return name if isinstance(name, str) and name else None
 
     def get_attack_strategy_identifier(self) -> ComponentIdentifier | None:
         """

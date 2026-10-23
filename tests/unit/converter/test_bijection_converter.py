@@ -81,6 +81,12 @@ def test_letter_converter_fixed_size_all_letters_is_identity_mapping():
     assert converter.mapping == {letter: letter for letter in string.ascii_lowercase}
 
 
+@pytest.mark.parametrize("fixed_size", [-1, -3, 27, True, False, 2.5, "5"])
+def test_letter_converter_rejects_invalid_fixed_size(fixed_size):
+    with pytest.raises(ValueError, match="fixed_size must be an integer from 0 to 26"):
+        LetterBijectionConverter(fixed_size=fixed_size)
+
+
 def test_letter_converter_identifier_includes_fixed_size_and_mapping():
     converter = LetterBijectionConverter(fixed_size=5, seed=42)
     identifier = converter.get_identifier()

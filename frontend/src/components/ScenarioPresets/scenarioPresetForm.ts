@@ -7,6 +7,7 @@ import {
   type ScenarioConfigFormState,
 } from '@/components/Scenarios/scenarioConfigForm'
 import type { RegisteredScenario, ScenarioPreset } from '@/types'
+import { validateRegistryName } from '@/utils/registryName'
 
 /**
  * Preset-specific form logic: the translation between a stored `ScenarioPreset`
@@ -21,18 +22,7 @@ import type { RegisteredScenario, ScenarioPreset } from '@/types'
  * deployment's current defaults into the document on the first unrelated edit.
  */
 
-/** Mirrors the server-side `ScenarioPreset.name` pattern so the editor fails fast instead of on a 422. */
-const PRESET_NAME_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
-
-export function validatePresetName(name: string): string | null {
-  if (name.length === 0) {
-    return 'Name is required.'
-  }
-  if (!PRESET_NAME_PATTERN.test(name)) {
-    return 'Use lowercase letters, digits and underscores, starting with a letter (max 64 characters).'
-  }
-  return null
-}
+export const validatePresetName = validateRegistryName
 
 /**
  * Parameters the preset stores that this editor renders no control for — a key the

@@ -46,6 +46,7 @@ from pyrit.models import (
     Operation,
     RetryEvent,
     ScenarioAttackResultDelta,
+    ScenarioObjectiveScorerMetrics,
     ScenarioProgressResult,
     ScenarioProgressScore,
     ScenarioResult,
@@ -71,12 +72,12 @@ from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
 from pyrit.scenario.scenarios.airt.scam import Scam
-from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
 from unit.async_utils import wait_for_completion_async
 from unit.mocks import (
     MockPromptTarget,
     get_mock_target_identifier,
     make_scenario_result,
+    make_sequential_attack_results,
     make_technique_class,
 )
 
@@ -3729,6 +3730,48 @@ class TestScenarioRunServiceFailedAttackReporting:
         assert summary.retries[0].endpoint == "https://ep/"
         assert summary.retries[0].component_role == "objective_scorer"
 
+    @pytest.mark.parametrize(
+        ("child_outcomes", "expected_error_messages"),
+        [
+            ([AttackOutcome.FAILURE, AttackOutcome.ERROR], [None]),
+            ([AttackOutcome.FAILURE], ["sequence error"]),
+        ],
+        ids=["child-error", "sequence-only-error"],
+    )
+    async def test_failed_attacks_report_a_sequence_envelope_only_for_its_own_error(
+        self, mock_memory: MagicMock, child_outcomes: list[AttackOutcome], expected_error_messages: list[str | None]
+    ) -> None:
+        envelope, children = make_sequential_attack_results(
+            atomic_attack_name="attack",
+            envelope_outcome=AttackOutcome.ERROR,
+            child_outcomes=child_outcomes,
+            objective="a",
+        )
+        envelope.error_message = "sequence error"
+        plan = ScenarioRunPlan(
+            atomic_groups=[
+                ScenarioRunPlanAtomicGroup(
+                    id="group",
+                    atomic_attack_name="attack",
+                    display_group="Attack",
+                    technique_name="attack",
+                    technique_eval_hash="eval",
+                    seed_group_ids=["seed-a"],
+                )
+            ],
+            seed_groups=[ScenarioRunPlanSeedGroup(id="seed-a", objective_sha256=to_sha256("a"), objective="a")],
+        )
+        db_result = make_scenario_result(
+            attack_results={"attack": [*children, envelope]},
+            metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")},
+        )
+        mock_memory.get_scenario_results_async.return_value = [db_result]
+
+        fetched = await ScenarioRunService().get_run_async(scenario_result_id=str(db_result.id))
+
+        assert fetched is not None
+        assert [failed.error_message for failed in fetched.failed_attacks] == expected_error_messages
+
 
 class TestResolveTechniquesAndConverters:
     """Tests for per-technique converter resolution from ``--techniques`` tokens."""
@@ -4183,6 +4226,124 @@ async def test_get_progress_maps_persisted_failure_details(mock_memory) -> None:
     assert progress is not None
     assert progress.run.error == "Scenario initialization failed."
     assert progress.run.error_type == "ValueError"
+
+
+@pytest.mark.parametrize(
+    ("cursor_id", "result_ids", "expected_ids", "has_more"),
+    [
+        pytest.param(None, [2, 4, 6, 8], [2, 4], True, id="first-page"),
+        pytest.param(1, [2, 4, 6, 8], [2, 4], True, id="before-first-result"),
+        pytest.param(4, [2, 4, 6, 8], [6, 8], False, id="exact-last-page"),
+        pytest.param(5, [2, 4, 6, 8], [6, 8], False, id="bookmark-between-results"),
+        pytest.param(6, [2, 4, 6, 8], [8], False, id="partial-last-page"),
+        pytest.param(8, [2, 4, 6, 8], [], False, id="at-last-result"),
+        pytest.param(9, [2, 4, 6, 8], [], False, id="after-last-result"),
+        pytest.param(None, [], [], False, id="empty-run"),
+    ],
+)
+async def test_progress_page_starts_after_bookmark_when_results_share_timestamp(
+    *,
+    mock_memory: MagicMock,
+    cursor_id: int | None,
+    result_ids: list[int],
+    expected_ids: list[int],
+    has_more: bool,
+) -> None:
+    header = make_scenario_result(attack_results={})
+    run_id = str(header.id)
+    timestamp = datetime(2025, 1, 1, tzinfo=UTC)
+
+    def make_delta(result_id: int) -> ScenarioAttackResultDelta:
+        return ScenarioAttackResultDelta(
+            attack_result_id=str(uuid.UUID(int=result_id)),
+            conversation_id=f"conversation-{result_id}",
+            objective=f"objective-{result_id}",
+            outcome=AttackOutcome.SUCCESS,
+            execution_time_ms=0,
+            timestamp=timestamp,
+        )
+
+    # Gaps in IDs let us test bookmarks that no longer match a cached result.
+    deltas = [make_delta(result_id) for result_id in result_ids]
+    mock_memory.get_scenario_result_header_async = AsyncMock(return_value=header)
+    mock_memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=(deltas, False))
+    service = ScenarioRunService()
+    since = (
+        service._encode_progress_cursor(scenario_result_id=run_id, delta=make_delta(cursor_id))
+        if cursor_id is not None
+        else None
+    )
+    page_size = 2
+
+    progress = await service.get_run_progress_async(scenario_result_id=run_id, since=since, limit=page_size)
+
+    assert progress is not None
+    assert [result.attack_result_id for result in progress.results] == [
+        str(uuid.UUID(int=result_id)) for result_id in expected_ids
+    ]
+    assert progress.has_more is has_more
+    assert (progress.plan is not None) is (since is None)
+    assert progress.summary.overall.completed == len(deltas)
+    if expected_ids:
+        assert progress.next_cursor == service._encode_progress_cursor(
+            scenario_result_id=run_id, delta=make_delta(expected_ids[-1])
+        )
+    else:
+        assert progress.next_cursor == since
+
+
+async def test_progress_page_finds_bookmark_without_scanning_all_results(mock_memory: MagicMock) -> None:
+    header = make_scenario_result(attack_results={})
+    run_id = str(header.id)
+    result_count = 128
+    page_size = 2
+    deltas = [
+        ScenarioAttackResultDelta(
+            attack_result_id=str(uuid.UUID(int=index + 1)),
+            conversation_id=f"conversation-{index}",
+            objective=f"objective-{index}",
+            outcome=AttackOutcome.SUCCESS,
+            execution_time_ms=0,
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC) + timedelta(seconds=index),
+        )
+        for index in range(result_count)
+    ]
+    mock_memory.get_scenario_result_header_async = AsyncMock(return_value=header)
+    mock_memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=(deltas, False))
+    service = ScenarioRunService()
+    snapshot = await service._progress_read_model.get_snapshot_async(
+        scenario_result_id=run_id,
+        plan=None,
+        plan_complete=False,
+        active_group_ids=(),
+        terminal=False,
+        objective_scorer_identifier=None,
+    )
+    bookmark_index = result_count // 2
+    since = service._encode_progress_cursor(scenario_result_id=run_id, delta=deltas[bookmark_index])
+    tracked_deltas = MagicMock(spec=tuple)
+    tracked_deltas.__len__.return_value = len(snapshot.deltas)
+    tracked_deltas.__iter__.side_effect = lambda: iter(snapshot.deltas)
+    tracked_deltas.__getitem__.side_effect = snapshot.deltas.__getitem__
+    tracked_results = MagicMock(spec=tuple)
+    tracked_results.__len__.return_value = len(snapshot.results)
+    tracked_results.__getitem__.side_effect = snapshot.results.__getitem__
+    tracked_snapshot = replace(snapshot, deltas=tracked_deltas, results=tracked_results)
+
+    with patch.object(service._progress_read_model, "get_snapshot_async", return_value=tracked_snapshot):
+        progress = await service.get_run_progress_async(scenario_result_id=run_id, since=since, limit=page_size)
+
+    assert progress is not None
+    start = bookmark_index + 1
+    end = start + page_size
+    assert progress.results == list(snapshot.results[start:end])
+    assert progress.has_more
+    tracked_results.__iter__.assert_not_called()
+    tracked_results.__getitem__.assert_called_once_with(slice(start, end))
+    # Binary search halves the range each step; allow one extra access for the final page slice.
+    assert tracked_deltas.__getitem__.call_count <= result_count.bit_length() + 1
+    # Retry-event reporting still reads all deltas, but page selection must not add another scan.
+    assert tracked_deltas.__iter__.call_count == 1
 
 
 async def test_get_progress_cache_only_maps_new_storage_rows(mock_memory) -> None:
@@ -4912,9 +5073,7 @@ def test_progress_summary_uses_latest_attempt_for_backend_owned_counts() -> None
             "sub_scorers": [sub_scorer_identifier],
         },
     )
-    metrics = ObjectiveScorerMetrics(
-        num_responses=100,
-        num_human_raters=3,
+    metrics = ScenarioObjectiveScorerMetrics(
         accuracy=0.95,
         accuracy_standard_error=0.01,
         f1_score=0.94,
@@ -4922,16 +5081,16 @@ def test_progress_summary_uses_latest_attempt_for_backend_owned_counts() -> None
         recall=0.92,
         average_score_time_seconds=0.25,
     )
-    with patch.object(_progress_mod, "find_objective_metrics_by_eval_hash", return_value=metrics):
-        summary = ScenarioProgressReadModel._build_progress_summary(
-            plan=plan,
-            plan_complete=True,
-            results=results,
-            active_group_ids=["group"],
-            terminal=False,
-            objective_scorer_identifier=scorer_identifier,
-            technique_details_by_group={},
-        )
+    summary = ScenarioProgressReadModel._build_progress_summary(
+        plan=plan,
+        plan_complete=True,
+        results=results,
+        active_group_ids=["group"],
+        terminal=False,
+        objective_scorer_identifier=scorer_identifier,
+        technique_details_by_group={},
+        scorer_metrics=metrics,
+    )
 
     assert summary.overall.completed == 2
     assert summary.overall.succeeded == 0

@@ -66,6 +66,11 @@ def test_paths_dict_contains_expected_keys():
     assert expected.issubset(set(PATHS_DICT.keys()))
 
 
+def test_paths_dict_values_are_flat_paths():
+    # Seeds demote each of these to a filesystem-free PurePath; a path nested in a container would escape that.
+    assert all(isinstance(value, pathlib.Path) for value in PATHS_DICT.values())
+
+
 def test_in_git_repo_returns_bool():
     result = in_git_repo()
     assert isinstance(result, bool)
