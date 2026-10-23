@@ -68,11 +68,14 @@ import {
 import { attacksApi, authApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
 import { useTour } from './hooks/useTour'
+import { ChatDraftProvider, useChatDraftHandoff } from './hooks/useChatDraftHandoff'
 import {
   attackConversationRoutePath,
   attackRoutePath,
   DATASET_DETAIL_PATH,
   DATASETS_PATH,
+  isChatPath,
+  isDatasetsPath,
   routerPathParamValue,
   scenarioRunProvenance,
   findingEvidenceOrigin,
@@ -218,16 +221,23 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const scorerRegistry = useScorerRegistry()
   const { preferences, updatePreferences, error: preferenceError } = useUserPreferences()
   const targetDefaults = useTargetPreferences(registry.targets)
+  const draftHandoff = useChatDraftHandoff()
   const [draftSession, setDraftSession] = useState<{
     pathname: string
     key: number
     target: TargetReference | null
   }>({ pathname: location.pathname, key: 0, target: targetDefaults.preferences.objective })
   if (draftSession.pathname !== location.pathname) {
+    const isReturningToUnsavedChatWithPreservedDraft =
+      location.pathname === VIEW_PATHS.chat &&
+      draftHandoff.preservedDraft?.originatingAttackId === null
+    const nextTarget = isReturningToUnsavedChatWithPreservedDraft && draftHandoff.preservedDraft?.draft.target !== undefined
+      ? draftHandoff.preservedDraft.draft.target
+      : targetDefaults.preferences.objective
     setDraftSession({
       pathname: location.pathname,
-      key: draftSession.key + (location.pathname === VIEW_PATHS.chat ? 1 : 0),
-      target: targetDefaults.preferences.objective,
+      key: draftSession.key + (location.pathname === VIEW_PATHS.chat && !isReturningToUnsavedChatWithPreservedDraft ? 1 : 0),
+      target: nextTarget,
     })
   }
   const draftTarget = !registry.loading && !registry.error && draftSession.target
@@ -330,6 +340,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const lastHistorySearch = useRef('')
   const lastScenarioHistorySearch = useRef('')
   const lastAnalyticsLocation = useRef('')
+  const lastDatasetsLocation = useRef<{ path: string; state: unknown }>({ path: '', state: null })
+  const lastChatLocation = useRef<{ path: string; state: unknown }>({ path: '', state: null })
   useEffect(() => {
     if (location.pathname === HISTORY_ATTACKS_PATH) {
       lastHistorySearch.current = location.search
@@ -340,7 +352,22 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     if (location.pathname === VIEW_PATHS.analytics) {
       lastAnalyticsLocation.current = location.search + location.hash
     }
-  }, [location.pathname, location.search, location.hash])
+    if (isDatasetsPath(location.pathname)) {
+      lastDatasetsLocation.current = {
+        path: location.pathname + location.search + location.hash,
+        state: location.state,
+      }
+    }
+    if (isChatPath(location.pathname)) {
+      lastChatLocation.current = {
+        path: location.pathname + location.search + location.hash,
+        state: location.state,
+      }
+    }
+    if (!isDatasetsPath(location.pathname) && !isChatPath(location.pathname)) {
+      draftHandoff.clearPreservedDraft()
+    }
+  }, [location.pathname, location.search, location.hash, location.state, draftHandoff])
 
   const handleFiltersChange = useCallback((filters: HistoryFilters) => {
     // The label search is controlled by this URL state and must not lag behind typing.
@@ -569,12 +596,39 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       navigate(VIEW_PATHS.analytics + lastAnalyticsLocation.current)
       return
     }
+    if (view === 'datasets') {
+      if (lastDatasetsLocation.current.path) {
+        navigate(lastDatasetsLocation.current.path, { state: lastDatasetsLocation.current.state })
+      } else {
+        navigate(VIEW_PATHS.datasets)
+      }
+      return
+    }
+    if (view === 'chat') {
+      if (draftHandoff.preservedDraft?.originatingPath) {
+        navigate(draftHandoff.preservedDraft.originatingPath, { state: draftHandoff.preservedDraft.originatingState })
+        return
+      }
+      if (lastChatLocation.current.path) {
+        navigate(lastChatLocation.current.path, { state: lastChatLocation.current.state })
+        return
+      }
+      navigate(VIEW_PATHS.chat)
+      return
+    }
     navigate(VIEW_PATHS[view])
-  }, [navigate])
+  }, [navigate, draftHandoff.preservedDraft])
 
   const handleNewAttack = useCallback(() => {
+    draftHandoff.clearPreservedDraft()
+    lastChatLocation.current = { path: VIEW_PATHS.chat, state: null }
+    setDraftSession((current) => ({
+      ...current,
+      key: current.key + 1,
+      target: targetDefaults.preferences.objective,
+    }))
     navigate(VIEW_PATHS.chat)
-  }, [navigate])
+  }, [navigate, draftHandoff, targetDefaults.preferences.objective])
 
   const handleConversationCreated = useCallback((
     arId: string,
@@ -970,7 +1024,9 @@ function App() {
       <RuntimeBanner />
       <UserPreferencesProvider key={accountKey ?? 'account-loading'} accountKey={accountKey}>
         <ThemeProvider>
-          <AppContent operatorAlias={operatorAlias} />
+          <ChatDraftProvider>
+            <AppContent operatorAlias={operatorAlias} />
+          </ChatDraftProvider>
         </ThemeProvider>
       </UserPreferencesProvider>
     </RuntimeProvider>
