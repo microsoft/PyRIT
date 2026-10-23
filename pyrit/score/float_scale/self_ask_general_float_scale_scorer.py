@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pyrit.models import MatchesObjective
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.llm_scoring import (
@@ -44,10 +45,8 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
     rendered per-piece from ``system_prompt_format_string``.
     """
 
-    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
-        supported_data_types=["text"],
-        is_objective_required=True,
-    )
+    CONDITION_TYPE = MatchesObjective
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     def __init__(
@@ -90,7 +89,8 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
                 to a ``JsonSchemaResponseHandler`` built from the ``*_output_key`` arguments that
                 uses ``CategoryConflictPolicy.PREFER_CONFIGURED``.
             validator (ScorerPromptValidator | None): Custom validator. If omitted, a default
-                validator will be used requiring text input and an objective.
+                validator will be used requiring text input. The objective is always required
+                because the scorer declares ``MatchesObjective``.
             score_value_output_key (str): JSON key for the score value. Defaults to "score_value".
             rationale_output_key (str): JSON key for the rationale. Defaults to "rationale".
             description_output_key (str): JSON key for the description. Defaults to "description".

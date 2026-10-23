@@ -87,12 +87,14 @@ class VideoHelper:
             scorer: The scorer to validate.
 
         Raises:
-            ValueError: If the scorer does not support audio_path data type.
+            ValueError: If the scorer does not read message pieces or does not support audio_path data type.
         """
-        if "audio_path" not in scorer._validator._supported_data_types:
+        supported_data_types = scorer.capabilities.supported_data_types
+        if supported_data_types is None or "audio_path" not in supported_data_types:
+            supported = sorted(supported_data_types) if supported_data_types is not None else "none reported"
             raise ValueError(
-                f"audio_scorer must support 'audio_path' data type. "
-                f"Supported types: {scorer._validator._supported_data_types}"
+                "audio_scorer must be a message scorer that supports 'audio_path' data type. "
+                f"Supported types: {supported}"
             )
 
     @staticmethod

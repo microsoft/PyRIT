@@ -10,7 +10,7 @@ import uuid
 from abc import abstractmethod
 from contextlib import nullcontext
 from dataclasses import replace
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.task_utils import gather_with_cleanup_async
@@ -48,15 +48,15 @@ from pyrit.score.observation.execution import (
     _get_current_scored_message_piece,
     _ObservationEvidence,
     _scoring_collection,
-    _scoring_expectation_context,
     _scoring_message_context,
     _scoring_scorable_context,
     _suppress_observation_collection,
 )
 from pyrit.score.scorer import LEGACY_SCORE_ASYNC_REMOVED_IN, Scorer
+from pyrit.score.scorer_capabilities import LegacyScorerHookError, ScorerCapabilities
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from pyrit.memory import MemoryInterface
     from pyrit.prompt_target import PromptTarget
@@ -64,6 +64,8 @@ if TYPE_CHECKING:
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 logger = logging.getLogger(__name__)
+
+_F = TypeVar("_F", bound="Callable[..., Any]")
 
 #: Release in which the message-shaped batch API is removed, two minor releases out.
 MESSAGE_BATCH_REMOVED_IN = "1.3.0"
@@ -283,6 +285,25 @@ def _normalize_scoring_expectation(
     return expectation if expectation is not None else ScoringExpectation(objective=objective)
 
 
+_PIPELINE_HOOKS = (
+    "_score_scorable_async",
+    "_score_message_scorable_async",
+    "_score_resolved_message_async",
+    "_score_prepared_message_async",
+)
+
+
+def _fans_out_to_piece_hooks(function: _F) -> _F:
+    """
+    Mark a message-family ``_score_async`` that scores through the piece hooks.
+
+    Returns:
+        _F: The same function, marked.
+    """
+    function._fans_out_to_piece_hooks = True  # type: ignore[attr-defined, ty:unresolved-attribute]
+    return function
+
+
 class MessageScorer(Scorer):
     """
     Base class for scorers whose evidence is a single message.
@@ -339,7 +360,8 @@ class MessageScorer(Scorer):
             message_resolver (MessageScorableResolver | None): Evidence resolver.
 
         Raises:
-            TypeError: If a legacy piece override would be hidden by an inherited typed hook.
+            LegacyScorerHookError: If a legacy piece override would be hidden by an inherited typed hook,
+                or the declared condition can only reach a legacy hook.
         """
         typed_hook_owner = next(
             cls for cls in type(self).__mro__ if "_score_piece_with_expectation_async" in cls.__dict__
@@ -351,10 +373,11 @@ class MessageScorer(Scorer):
                 if "_score_piece_async" in cls.__dict__ or "_score_piece_with_expectation_async" in cls.__dict__
             )
             if "_score_piece_with_expectation_async" not in hook_owner.__dict__:
-                raise TypeError(
+                raise LegacyScorerHookError(
                     f"{type(self).__name__} overrides _score_piece_async below an expectation-aware scorer. "
                     "Move the custom policy to _score_piece_with_expectation_async."
                 )
+        self._check_typed_condition_reaches_hook()
         self._validator = validator
         self._message_resolver = message_resolver or MessageScorableResolver()
         super().__init__(chat_target=chat_target)
@@ -375,6 +398,52 @@ class MessageScorer(Scorer):
         scoped = copy.copy(self)
         scoped.raise_if_scorer_blocks = raise_if_scorer_blocks
         return scoped
+
+    def _check_typed_condition_reaches_hook(self) -> None:
+        """
+        Require a declared typed condition to reach an expectation-aware hook.
+
+        Legacy hooks receive only the objective. A leaf that declares a typed condition but
+        scores through one would otherwise construct and then fail on every call, so the
+        migration error is raised here instead.
+
+        Raises:
+            LegacyScorerHookError: If the declared condition can only reach a legacy hook.
+        """
+        condition_type = type(self).CONDITION_TYPE
+        if condition_type is None or condition_type is MatchesObjective:
+            return
+        mro = type(self).__mro__
+        own_bases = mro[: mro.index(MessageScorer)]
+        if any(name in base.__dict__ for base in own_bases for name in _PIPELINE_HOOKS):
+            return
+        score_async = type(self)._score_async
+        if "expectation" not in inspect.signature(score_async).parameters:
+            replacement = "_score_async(..., expectation=...)"
+        elif getattr(score_async, "_fans_out_to_piece_hooks", False) and not any(
+            "_score_piece_with_expectation_async" in base.__dict__ for base in own_bases
+        ):
+            replacement = "_score_piece_with_expectation_async"
+        else:
+            return
+        raise LegacyScorerHookError(
+            f"{type(self).__name__} declares {condition_type.__name__}, which its legacy objective-only "
+            f"hook cannot receive. Implement {replacement}. Legacy hooks support objective-based "
+            "scoring only, until 2.0."
+        )
+
+    def _get_evidence_capabilities(self) -> ScorerCapabilities:
+        """
+        Describe the message evidence this scorer reads, from its validator.
+
+        Returns:
+            ScorerCapabilities: The supported data types, roles, and required metadata.
+        """
+        return ScorerCapabilities(
+            supported_data_types=frozenset(self._validator.supported_data_types),
+            supported_roles=frozenset(self._validator.supported_roles),
+            required_metadata=frozenset(self._validator.required_metadata),
+        )
 
     def _get_condition_type(self) -> type[Condition] | None:
         """Return the declared criterion, using the objective validator only for undeclared leaves."""
@@ -524,7 +593,7 @@ class MessageScorer(Scorer):
         """
         self._validate_expectation(expectation=expectation)
         anchor = await self._context_scorable_from_message_async(message=message)
-        with _scoring_scorable_context(anchor), _scoring_expectation_context(expectation):
+        with _scoring_scorable_context(anchor):
             scores = await self._score_resolved_message_async(
                 message=message,
                 expectation=expectation,
@@ -1039,11 +1108,7 @@ class MessageScorer(Scorer):
             nullcontext() if scoring_view_matches_acquired_message else _suppress_observation_collection()
         )
         try:
-            with (
-                observation_context,
-                _scoring_message_context(scoring_message),
-                _scoring_expectation_context(effective_expectation),
-            ):
+            with observation_context, _scoring_message_context(scoring_message):
                 scores = await self._score_prepared_message_async(
                     message=scoring_message,
                     expectation=effective_expectation,
@@ -1269,6 +1334,7 @@ class MessageScorer(Scorer):
         """
         raise NonReplayableObservationError(f"{type(self).__name__} does not implement judgment observation replay.")
 
+    @_fans_out_to_piece_hooks
     async def _score_async(
         self, message: Message, *, objective: str | None = None, expectation: ScoringExpectation | None = None
     ) -> list[Score]:

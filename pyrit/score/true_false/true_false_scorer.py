@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyrit.models import Message, Score, ScoreStatus, ScoringExpectation, UndeterminedScoreError
-from pyrit.score.message_scorer import MessageScorer
+from pyrit.score.message_scorer import MessageScorer, _fans_out_to_piece_hooks
 from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.scorer import Scorer
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
@@ -168,6 +168,7 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
         """
         return self._build_neutral_fallback_score(message=message, objective=objective, neutral_value="false")
 
+    @_fans_out_to_piece_hooks
     async def _score_async(
         self, message: Message, *, objective: str | None = None, expectation: ScoringExpectation | None = None
     ) -> list[Score]:
