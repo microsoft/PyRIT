@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
 from pyrit.models import JsonResponseConfig, UnvalidatedScore
+from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
 if TYPE_CHECKING:
     import uuid
@@ -160,6 +161,17 @@ def _build_unvalidated_score(
     else:
         # Unrecognized metadata shape; drop to avoid downstream errors
         normalized_md = None
+
+    if normalized_md:
+        # The judge's JSON body is untrusted with respect to score arithmetic:
+        # normalize_score_to_float prefers an "original_float_value" metadata
+        # key over the validated score_value, so a judge (or a target that
+        # steered the judge) could store score_value "0.0" while every
+        # consumer computes the metadata float. The threshold wrapper writes
+        # this key itself after parsing (float_scale_threshold_scorer), and
+        # true_false_score_aggregator / true_false_inverter_scorer already
+        # strip it defensively on the same grounds.
+        normalized_md.pop(ORIGINAL_FLOAT_VALUE_KEY, None)
 
     return UnvalidatedScore(
         raw_score_value=str(parsed_response[score_value_output_key]),
