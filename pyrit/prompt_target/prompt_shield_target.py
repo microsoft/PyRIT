@@ -223,7 +223,7 @@ class PromptShieldTarget(PromptTarget):
             "api-version": self._api_version,
         }
 
-        parsed_prompt: dict[str, Any] = self._input_parser(request.original_value)
+        parsed_prompt: dict[str, Any] = self._input_parser(request.converted_value)
 
         body = {"userPrompt": parsed_prompt["userPrompt"], "documents": parsed_prompt["documents"]}
 
