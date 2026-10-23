@@ -38,6 +38,7 @@ Most tests should be unit tests. Integration and end-to-end tests are for testin
 ## Correctness Test Timeouts
 
 - For unit-test subprocesses whose timeout only prevents a hang, use `TEST_WATCHDOG_SECONDS` from `unit.async_utils` rather than a short wall-clock deadline. The shared watchdog allows for startup, filesystem, and scheduling delays on busy CI workers; it is not an expected runtime.
+- Use the same watchdog for thread-barrier rendezvous that test concurrency correctness, not worker startup speed. Keep the barrier and assertions that require distinct workers.
 - Preserve intentional performance limits, operation deadlines, timeout/cancellation assertions, and JavaScript VM execution limits. Do not increase them merely to make a test pass.
 - For a single `node:test` suite that does not need child-process isolation, run `node --test-reporter=tap <suite>` without `--test` to avoid an extra Node process. Preserve fresh subprocesses where isolation is part of the test contract, such as import guards.
 - Still require a successful process exit and, for Node suites, a positive collected-test count with every collected test passing. A longer watchdog must not hide failures, skipped tests, or an empty suite.

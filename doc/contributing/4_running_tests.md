@@ -79,6 +79,10 @@ The Bash deployment helper in `test_code_deployment.py` uses the same shared
 watchdog for subprocess completion. Readiness and rollback tests retain their
 simulated operation deadlines, polling assertions, and signal exit-code checks.
 
+The seeded-converter worker-thread test also uses the shared watchdog for its
+two-worker barrier. It still requires distinct random generators and identical
+seeded draws; worker startup speed is not part of that contract.
+
 ## Running a subset while iterating
 
 For a narrower run, invoke `pytest` directly. You can invoke pytest if it's in your path or via python; either `pytest` or `python -m pytest`. For the following examples, we will use `pytest`.
