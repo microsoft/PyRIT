@@ -140,6 +140,8 @@ jobs:
           CI: true
           # Mock specs still use the backend for auth bootstrap and some API calls.
           E2E_SEEDED_MODE: true
+          # Mock specs import /src modules that only the Vite dev server serves.
+          E2E_PRODUCTION_FRONTEND: ${{ matrix.project == 'seeded' }}
           FAIL_ON_SKIPPED_TESTS: true
 
       - name: Upload Playwright blob report

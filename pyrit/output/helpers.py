@@ -286,7 +286,10 @@ async def _collect_conversation_entries_async(
     printer = JsonConversationPrinter(source=source)
     entries: list[ConversationEntry] = []
     for atomic_attack_name, attack in selected:
-        messages = await source.get_messages_async(conversation_id=attack.conversation_id)
+        # Orchestration envelopes have no conversation of their own.
+        messages = (
+            await source.get_messages_async(conversation_id=attack.conversation_id) if attack.conversation_id else []
+        )
         structured = await printer.build_async(
             messages,
             include_scores=objective_scorer_identifier is not None,

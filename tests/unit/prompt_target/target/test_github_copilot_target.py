@@ -388,7 +388,7 @@ async def test_distinct_conversations_progress_on_shared_client_async(
     )
     second_task: asyncio.Task[list[Message]] | None = None
     try:
-        await wait_for_event_async(event=first_send_started, task=first_task)
+        await wait_for_event_async(event=first_send_started, tasks=[first_task])
         second_task = asyncio.create_task(
             target.send_prompt_async(
                 message=_user_message(
@@ -546,7 +546,7 @@ async def test_retained_reset_does_not_confirm_failed_sdk_disconnect_async(
             )
         reset_task = asyncio.create_task(target.reset_conversation_async(conversation_id="conversation-a"))
         try:
-            await wait_for_event_async(event=release_started, task=reset_task)
+            await wait_for_event_async(event=release_started, tasks=[reset_task])
             first_failure: BaseException
             if cancel_release:
                 reset_task.cancel("cancel selected reset")
@@ -635,9 +635,9 @@ async def test_reset_waits_for_in_progress_cleanup_release_async(
     cleanup_task = asyncio.create_task(target.cleanup_target_async())
     reset_task: asyncio.Task[None] | None = None
     try:
-        await wait_for_event_async(event=disconnect_started, task=cleanup_task)
+        await wait_for_event_async(event=disconnect_started, tasks=[cleanup_task])
         reset_task = asyncio.create_task(reset_async())
-        await wait_for_event_async(event=reset_started, task=reset_task)
+        await wait_for_event_async(event=reset_started, tasks=[reset_task])
         assert not reset_task.done()
 
         release_disconnect.set()
@@ -687,9 +687,9 @@ async def test_reset_waits_for_conversation_creation_async(
     )
     reset_task: asyncio.Task[None] | None = None
     try:
-        await wait_for_event_async(event=create_started, task=first_task)
+        await wait_for_event_async(event=create_started, tasks=[first_task])
         reset_task = asyncio.create_task(reset_async())
-        await wait_for_event_async(event=reset_started, task=reset_task)
+        await wait_for_event_async(event=reset_started, tasks=[reset_task])
         assert not reset_task.done()
         client.delete_session.assert_not_awaited()
 
@@ -753,7 +753,7 @@ async def test_repeated_reset_does_not_join_unrelated_cleanup_async(
     cleanup_task = asyncio.create_task(target.cleanup_target_async())
     reset_task: asyncio.Task[None] | None = None
     try:
-        await wait_for_event_async(event=disconnect_started, task=cleanup_task)
+        await wait_for_event_async(event=disconnect_started, tasks=[cleanup_task])
         if not reset_before_cleanup:
             session_a.disconnect.assert_awaited_once()
         reset_task = asyncio.create_task(target.reset_conversation_async(conversation_id="conversation-a"))
@@ -856,14 +856,14 @@ async def test_reset_during_cleanup_propagates_only_selected_session_failure_asy
     cleanup_task = asyncio.create_task(target.cleanup_target_async())
     reset_task: asyncio.Task[None] | None = None
     try:
-        await wait_for_event_async(event=a_release_started, task=cleanup_task)
+        await wait_for_event_async(event=a_release_started, tasks=[cleanup_task])
         reset_task = asyncio.create_task(reset_async())
-        await wait_for_event_async(event=reset_started, task=reset_task)
+        await wait_for_event_async(event=reset_started, tasks=[reset_task])
         assert not reset_task.done()
 
         release_a.set()
-        await wait_for_event_async(event=a_release_finished, task=cleanup_task)
-        await wait_for_event_async(event=b_release_started, task=cleanup_task)
+        await wait_for_event_async(event=a_release_finished, tasks=[cleanup_task])
+        await wait_for_event_async(event=b_release_started, tasks=[cleanup_task])
         assert a_release_finished.is_set()
 
         if failure_kind == "caller-cancel":
@@ -1144,10 +1144,10 @@ async def test_cancelled_send_keeps_retirement_owned_until_cleanup_async(
     )
     cleanup_task = asyncio.create_task(cleanup_target_for_test_async())
     try:
-        await wait_for_event_async(event=delete_started, task=send_task)
+        await wait_for_event_async(event=delete_started, tasks=[send_task])
         send_task.cancel("cancelled during session retirement")
         cleanup_requested.set()
-        await wait_for_event_async(event=cleanup_started, task=cleanup_task)
+        await wait_for_event_async(event=cleanup_started, tasks=[cleanup_task])
 
         assert not send_task.done()
         assert not cleanup_task.done()
@@ -1207,7 +1207,7 @@ async def test_cancelled_send_preserves_cancellation_when_retirement_fails_async
     )
 
     try:
-        await wait_for_event_async(event=send_started, task=send_task)
+        await wait_for_event_async(event=send_started, tasks=[send_task])
         send_task.cancel()
         with pytest.raises(asyncio.CancelledError) as exc_info:
             await wait_for_completion_async(future=send_task)
@@ -1263,12 +1263,12 @@ async def test_cleanup_rejects_queued_turn_and_drains_active_send_async(
     cleanup_task: asyncio.Task[None] | None = None
     fresh_task: asyncio.Task[list[Message]] | None = None
     try:
-        await wait_for_event_async(event=first_send_started, task=first_task)
+        await wait_for_event_async(event=first_send_started, tasks=[first_task])
         queued_task = asyncio.create_task(queued_send_async())
-        await wait_for_event_async(event=queued_started, task=queued_task)
+        await wait_for_event_async(event=queued_started, tasks=[queued_task])
         assert not queued_task.done()
         cleanup_task = asyncio.create_task(cleanup_async())
-        await wait_for_event_async(event=cleanup_started, task=cleanup_task)
+        await wait_for_event_async(event=cleanup_started, tasks=[cleanup_task])
         assert not cleanup_task.done()
 
         fresh_task = asyncio.create_task(
@@ -1487,7 +1487,7 @@ async def test_direct_send_captures_model_identity_before_startup_async(
         )
     )
     try:
-        await wait_for_event_async(event=startup_entered, task=first_task)
+        await wait_for_event_async(event=startup_entered, tasks=[first_task])
         with pytest.raises(RuntimeError, match="new target"):
             target.set_model_name(model_name="gpt-5.4")
 
@@ -2107,9 +2107,9 @@ async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after
             )
         )
         try:
-            await wait_for_event_async(event=allocated, task=request_task)
+            await wait_for_event_async(event=allocated, tasks=[request_task])
             request_task.cancel(cancellation_message)
-            await wait_for_event_async(event=delete_started, task=request_task)
+            await wait_for_event_async(event=delete_started, tasks=[request_task])
             assert not request_task.done()
             assert request_task.cancelling() == 1
             assert sessions == {"unrelated-session-id", client.create_session.await_args.kwargs["session_id"]}
@@ -2200,7 +2200,7 @@ async def test_failed_startup_stop_preserves_cancellation_and_ownership_async(
         target.send_prompt_async(message=_user_message(conversation_id="failed-startup", original_value="hello"))
     )
     try:
-        await wait_for_event_async(event=stop_started, task=send_task)
+        await wait_for_event_async(event=stop_started, tasks=[send_task])
         if stop_failure == "caller-cancel":
             send_task.cancel("caller cancelled during startup cleanup")
             with pytest.raises(asyncio.CancelledError) as cancellation:
@@ -2299,7 +2299,7 @@ async def test_normalizer_stops_owned_client_when_startup_is_cancelled_async(
     target = GitHubCopilotTarget(model_name="gpt-5-mini")
     request_task = asyncio.create_task(_send_normalized_async(target=target, original_value="Reply exactly HELLO."))
     try:
-        await wait_for_event_async(event=allocated, task=request_task)
+        await wait_for_event_async(event=allocated, tasks=[request_task])
         request_task.cancel()
         with pytest.raises(asyncio.CancelledError) as exc_info:
             await wait_for_completion_async(future=request_task)

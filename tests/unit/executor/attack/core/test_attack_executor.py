@@ -398,7 +398,7 @@ class TestExecuteAttackAsync:
         )
         execution_tasks: set[asyncio.Task[Any]] = set()
         try:
-            await wait_for_event_async(event=all_slots_started, task=execution_task)
+            await wait_for_event_async(event=all_slots_started, tasks=[execution_task])
             execution_tasks = asyncio.all_tasks() - tasks_before_execution - {execution_task}
 
             assert len(execution_tasks) == 3

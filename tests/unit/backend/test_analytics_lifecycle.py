@@ -210,7 +210,7 @@ async def test_http_timeout_keeps_native_cleanup_busy_until_runtime_drain_async(
             request = asyncio.create_task(client.post("/api/analytics/attacks/results", json={}))
             shutdown: asyncio.Task[None] | None = None
             try:
-                await wait_for_event_async(event=cleanup.entered, task=request)
+                await wait_for_event_async(event=cleanup.entered, tasks=[request])
                 assert not request.done()
                 assert has_active_analytics_work()
                 expire.set()
@@ -222,7 +222,7 @@ async def test_http_timeout_keeps_native_cleanup_busy_until_runtime_drain_async(
                 assert analytics_runtime.outcome == "busy"
                 assert analytics_runtime.generation == "original"
                 shutdown = asyncio.create_task(analytics_runtime.shutdown_async())
-                await wait_for_event_async(event=closing, task=shutdown)
+                await wait_for_event_async(event=closing, tasks=[shutdown])
                 assert not shutdown.done()
                 assert not analytics_service.is_closed
                 assert get_analytics_service() is analytics_service
@@ -268,7 +268,7 @@ async def test_caller_and_repeated_close_cancellation_retain_native_owner_async(
     request = asyncio.create_task(analytics_service.results_async())
     close: asyncio.Task[None] | None = None
     try:
-        await wait_for_event_async(event=cleanup.entered, task=request)
+        await wait_for_event_async(event=cleanup.entered, tasks=[request])
         assert not request.done()
         request.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -276,7 +276,7 @@ async def test_caller_and_repeated_close_cancellation_retain_native_owner_async(
         assert has_active_analytics_work()
         with patch.object(analytics_service, "close_async", side_effect=close_async):
             close = asyncio.create_task(close_services_async())
-            await wait_for_event_async(event=closing, task=close)
+            await wait_for_event_async(event=closing, tasks=[close])
             assert not close.done()
             for _ in range(2):
                 close.cancel()

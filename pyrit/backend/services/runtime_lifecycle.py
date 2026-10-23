@@ -16,6 +16,7 @@ from pyrit.backend.services.analytics_service import get_analytics_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service, peek_scenario_run_service
+from pyrit.backend.services.scenario_suite_service import get_scenario_suite_service
 from pyrit.backend.services.service_lifecycle import (
     close_services_async,
     has_active_analytics_work,
@@ -102,6 +103,7 @@ class RuntimeLifecycle:
         # configured, and the scan reads every stored document, so both stay off the event loop.
         await asyncio.to_thread(preset_registry.configure_source, config.scenario_presets_source)
         await asyncio.to_thread(preset_registry.scan_stored_presets)
+        await asyncio.to_thread(get_scenario_suite_service().configure_source, config.scenario_suites_source)
 
     def _publish(self, config: ConfigurationLoader) -> None:
         self.app.state.configured_initializers = [

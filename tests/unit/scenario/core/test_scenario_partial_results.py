@@ -517,8 +517,8 @@ class TestScenarioPartialAttackCompletion:
 
         scenario_task = asyncio.create_task(scenario.run_async())
         try:
-            await wait_for_event_async(event=completed_persisted, task=scenario_task)
-            await wait_for_event_async(event=in_flight_started, task=scenario_task)
+            await wait_for_event_async(event=completed_persisted, tasks=[scenario_task])
+            await wait_for_event_async(event=in_flight_started, tasks=[scenario_task])
             task_to_cancel = worker_tasks[1] if cancel_worker else scenario_task
             task_to_cancel.cancel()
 
@@ -597,7 +597,7 @@ class TestScenarioPartialAttackCompletion:
 
         parent = asyncio.create_task(scenario.run_async())
         try:
-            await wait_for_event_async(event=all_started, task=parent)
+            await wait_for_event_async(event=all_started, tasks=[parent])
             release_workers.set()
             parent.cancel("stop scenario")
             with pytest.raises(asyncio.CancelledError, match="stop scenario"):
@@ -669,10 +669,10 @@ class TestScenarioPartialAttackCompletion:
 
         parent = asyncio.create_task(scenario.run_async())
         try:
-            await wait_for_event_async(event=all_started, task=parent)
+            await wait_for_event_async(event=all_started, tasks=[parent])
             release_sibling.set()
             parent.cancel("stop scenario")
-            await wait_for_event_async(event=cleanup_started, task=parent)
+            await wait_for_event_async(event=cleanup_started, tasks=[parent])
             assert not parent.done()
             assert worker_tasks[0].cancelling() == 1
             [stored] = await scenario._memory.get_scenario_results_async(
@@ -684,7 +684,7 @@ class TestScenarioPartialAttackCompletion:
                 parent.cancel("stop scenario again")
                 cancellation_delivered = asyncio.Event()
                 asyncio.get_running_loop().call_soon(cancellation_delivered.set)
-                await wait_for_event_async(event=cancellation_delivered, task=parent)
+                await wait_for_event_async(event=cancellation_delivered, tasks=[parent])
                 assert not parent.done()
                 assert worker_tasks[0].cancelling() == 1
 
@@ -741,7 +741,7 @@ class TestScenarioPartialAttackCompletion:
 
         parent = asyncio.create_task(cancel_then_resume_async())
         try:
-            await wait_for_event_async(event=started, task=parent)
+            await wait_for_event_async(event=started, tasks=[parent])
             parent.cancel("stop first run")
             result = await wait_for_completion_async(future=parent)
             assert result.scenario_run_state is ScenarioRunState.COMPLETED
@@ -808,7 +808,7 @@ class TestScenarioPartialAttackCompletion:
             )
         )
         try:
-            await wait_for_event_async(event=cleanup_started, task=task)
+            await wait_for_event_async(event=cleanup_started, tasks=[task])
             assert not task.done()
             assert len(worker_tasks) == 2
             assert worker_tasks[0].cancelled()
@@ -817,7 +817,7 @@ class TestScenarioPartialAttackCompletion:
                 task.cancel("caller cancelled during cleanup")
                 cancellation_delivered = asyncio.Event()
                 asyncio.get_running_loop().call_soon(cancellation_delivered.set)
-                await wait_for_event_async(event=cancellation_delivered, task=task)
+                await wait_for_event_async(event=cancellation_delivered, tasks=[task])
                 assert not task.done()
                 assert not cleanup_finished.is_set()
                 assert worker_tasks[1].cancelling() == 1
@@ -889,10 +889,10 @@ class TestScenarioPartialAttackCompletion:
         ):
             parent = asyncio.create_task(scenario.run_async())
             try:
-                await wait_for_event_async(event=all_started, task=parent)
+                await wait_for_event_async(event=all_started, tasks=[parent])
                 parent.cancel("stop scenario")
-                await wait_for_event_async(event=cleanup_started, task=parent)
-                await wait_for_event_async(event=fast_worker_finished, task=parent)
+                await wait_for_event_async(event=cleanup_started, tasks=[parent])
+                await wait_for_event_async(event=fast_worker_finished, tasks=[parent])
                 assert sends["slow"].cancelling() == 1
                 assert not cleanup_finished.is_set()
                 assert not parent.done()
@@ -905,7 +905,7 @@ class TestScenarioPartialAttackCompletion:
                     parent.cancel("stop scenario again")
                     cancellation_delivered = asyncio.Event()
                     asyncio.get_running_loop().call_soon(cancellation_delivered.set)
-                    await wait_for_event_async(event=cancellation_delivered, task=parent)
+                    await wait_for_event_async(event=cancellation_delivered, tasks=[parent])
                     assert sends["slow"].cancelling() == 1
                     assert not parent.done()
 

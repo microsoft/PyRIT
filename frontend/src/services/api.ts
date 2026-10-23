@@ -51,7 +51,11 @@ import type {
   ScenarioPreset,
   ScenarioPresetListResponse,
   ScenarioPresetResponse,
+  ScenarioSuite,
+  ScenarioSuiteListResponse,
+  ScenarioSuiteResponse,
   UpdateScenarioPresetRequest,
+  UpdateScenarioSuiteRequest,
   ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
   ScenarioDatasetLoadResponse,
@@ -778,6 +782,42 @@ export const scenarioPresetsApi = {
       request,
     )
     return response.data
+  },
+}
+
+export const scenarioSuitesApi = {
+  list: async (signal?: AbortSignal): Promise<ScenarioSuiteListResponse> => {
+    const response = await apiClient.get('/scenario-suites', { signal })
+    return response.data
+  },
+
+  get: async (name: string): Promise<ScenarioSuiteResponse> => {
+    const response = await apiClient.get(`/scenario-suites/${encodeURIComponent(name)}`)
+    return response.data
+  },
+
+  /** Creates a suite that must not already exist; the server returns 409 when the name is taken. */
+  create: async (suite: ScenarioSuite): Promise<ScenarioSuiteResponse> => {
+    const response = await apiClient.post('/scenario-suites', suite)
+    return response.data
+  },
+
+  /**
+   * Replaces a suite the caller has read. The expected version makes concurrent
+   * edits fail with 409 instead of silently overwriting another administrator.
+   */
+  update: async (
+    name: string,
+    suite: ScenarioSuite,
+    expectedVersion: string,
+  ): Promise<ScenarioSuiteResponse> => {
+    const body: UpdateScenarioSuiteRequest = { suite, expected_version: expectedVersion }
+    const response = await apiClient.put(`/scenario-suites/${encodeURIComponent(name)}`, body)
+    return response.data
+  },
+
+  remove: async (name: string): Promise<void> => {
+    await apiClient.delete(`/scenario-suites/${encodeURIComponent(name)}`)
   },
 }
 

@@ -14,6 +14,7 @@ import contextlib
 import json
 import logging
 import uuid
+from bisect import bisect_right
 from collections import OrderedDict, deque
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -25,10 +26,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from pyrit.analytics.outcome_statistics import success_percentage
 from pyrit.analytics.scenario_statistics import (
-    ScenarioAttempt,
     compute_scenario_statistics,
-    resolve_attack_result_attempt,
-    select_execution_attempts,
+    select_execution_attack_result_ids,
 )
 from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
@@ -40,7 +39,6 @@ from pyrit.backend.services.pagination import (
 )
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_progress_read_model import (
-    ResultUnitIdentity,
     ScenarioProgressReadModel,
     ScenarioProgressSnapshot,
 )
@@ -1532,21 +1530,7 @@ class ScenarioRunService:
         failed_attacks: list[AttackErrorSummary] = []
         attack_retries: list[AttackRetrySummary] = []
         overload_events: deque[Any] = deque(maxlen=_MAX_OVERLOAD_EVENTS)
-        attempts_by_unit: dict[ResultUnitIdentity, list[ScenarioAttempt]] = {}
-        plan_lookup = self._progress_read_model.build_plan_lookup(plan=plan)
-        for atomic_attack_name, results in scenario_result.attack_results.items():
-            for attack_result in results:
-                attempt = resolve_attack_result_attempt(
-                    atomic_attack_name=atomic_attack_name,
-                    attack_result=attack_result,
-                    plan_lookup=plan_lookup,
-                )
-                attempts_by_unit.setdefault(attempt.unit, []).append(attempt)
-        execution_ids = {
-            attempt.attempt_id
-            for attempts in attempts_by_unit.values()
-            for attempt in select_execution_attempts(attempts)
-        }
+        execution_ids = select_execution_attack_result_ids(scenario_result, plan=plan, use_saved_plan=False)
         for atomic_attack_name, results in scenario_result.attack_results.items():
             for attack_result in results:
                 if str(attack_result.attack_result_id) not in execution_ids:
@@ -2218,20 +2202,26 @@ class ScenarioRunService:
         queue_position: int | None,
         active_scenario_result_id: str | None,
     ) -> ScenarioRunProgress:
+        if len(progress_snapshot.deltas) != len(progress_snapshot.results):
+            raise ValueError("Scenario progress deltas and results have different lengths.")
         overload_events: deque[Any] = deque(maxlen=_MAX_OVERLOAD_EVENTS)
+
         for delta in progress_snapshot.deltas:
             overload_events.extend(delta.retry_events)
-        available = [
-            (delta, result)
-            for delta, result in zip(progress_snapshot.deltas, progress_snapshot.results, strict=True)
-            if cursor is None
-            or (delta.timestamp, uuid.UUID(delta.attack_result_id))
-            > (cursor.timestamp, uuid.UUID(cursor.attack_result_id))
-        ]
-        page = available[:limit]
-        deltas = [delta for delta, _ in page]
-        results = [result for _, result in page]
-        has_more = len(available) > limit
+        # Use binary search to locate the bookmark in results sorted by timestamp and ID.
+        start = (
+            bisect_right(
+                progress_snapshot.deltas,
+                (cursor.timestamp, uuid.UUID(cursor.attack_result_id)),
+                key=lambda delta: (delta.timestamp, uuid.UUID(delta.attack_result_id)),
+            )
+            if cursor is not None
+            else 0
+        )
+        end = start + limit
+        deltas = progress_snapshot.deltas[start:end]
+        results = list(progress_snapshot.results[start:end])
+        has_more = end < len(progress_snapshot.deltas)
         response_plan = progress_snapshot.plan if since is None else None
         next_cursor = (
             self._encode_progress_cursor(scenario_result_id=scenario_result_id, delta=deltas[-1]) if deltas else since

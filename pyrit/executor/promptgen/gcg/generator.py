@@ -12,8 +12,9 @@ Follows the same lifecycle/identity pattern as ``FuzzerGenerator`` and
   strategy flags, output paths).
 - Per-execution data (``goals`` / ``targets`` plus optional held-out splits and
   ``memory_labels``) goes through ``execute_async``.
-- ``_setup_async`` / ``_perform_async`` / ``_teardown_async`` cleanly split
-  worker spawning, the optimization loop, and worker shutdown. Teardown runs
+- ``_setup_async`` resolves the initial suffix and augmented targets, validates
+  their rendered token IDs against every model, and only then starts workers.
+  ``_perform_async`` / ``_teardown_async`` own the optimization loop and shutdown. Teardown runs
   even on errors, fixing the worker-leak-on-failure case the previous lifecycle
   tests had to characterize as a known bug.
 - ``_build_identifier`` exposes the model name(s) and key hyper-parameters so
@@ -58,6 +59,7 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
     ProgressiveMultiPromptAttack,
     RngBundle,
     get_workers,
+    start_workers,
 )
 from pyrit.executor.promptgen.gcg.config import (
     GCGAlgorithmConfig,
@@ -87,6 +89,8 @@ class GCGContext(PromptGeneratorStrategyContext):
             ``test_goals``. Same length as ``test_goals``.
         memory_labels (dict[str, str]): Optional labels propagated to memory
             for downstream filtering / analysis. Defaults to an empty dict.
+        control_init (str | None): Resolved initial suffix, set during setup and
+            reused unchanged by prompt validation and attack construction.
     """
 
     goals: list[str] = field(default_factory=list)
@@ -100,6 +104,7 @@ class GCGContext(PromptGeneratorStrategyContext):
     attack: Any | None = None
     logfile_path: str | None = None
     rng_bundle: RngBundle | None = None
+    control_init: str | None = None
 
 
 class GCGResult(PromptGeneratorStrategyResult):
@@ -259,7 +264,7 @@ class GCGGenerator(
             )
 
     async def _setup_async(self, *, context: GCGContext) -> None:
-        """Apply target augmentation and spawn worker subprocesses."""
+        """Prepare and validate the actual attack inputs, then start worker subprocesses."""
         self._ensure_spawn_start_method()
         context.memory_labels = combine_dict({}, context.memory_labels)
 
@@ -267,7 +272,7 @@ class GCGGenerator(
         log_train_goals(train_goals=context.goals)
 
         params = self._to_attack_params(context=context)
-        context.workers, context.test_workers = await asyncio.to_thread(get_workers, params)
+        context.workers, context.test_workers = await asyncio.to_thread(get_workers, params, evaluation=True)
 
         context.rng_bundle = RngBundle.from_seed(
             base_seed=self._algorithm.random_seed,
@@ -276,6 +281,12 @@ class GCGGenerator(
 
         context.targets, context.test_targets = self._apply_target_augmentation(
             train_targets=context.targets, test_targets=context.test_targets, np_rng=context.rng_bundle.np_rng
+        )
+        context.control_init = await asyncio.to_thread(self._resolve_control_init, workers=context.workers)
+        await asyncio.to_thread(
+            start_workers,
+            params=self._to_attack_params(context=context),
+            workers=[*context.workers, *context.test_workers],
         )
 
     async def _perform_async(self, *, context: GCGContext) -> GCGResult:
@@ -445,6 +456,7 @@ class GCGGenerator(
             targets=context.targets,
             test_goals=context.test_goals,
             test_targets=context.test_targets,
+            control_init=context.control_init if context.control_init is not None else self._algorithm.control_init,
         )
 
     def _create_attack(
@@ -466,7 +478,7 @@ class GCGGenerator(
         Returns:
             Any: The configured attack implementation.
         """
-        control_init = self._resolve_control_init(workers=workers)
+        control_init = params.control_init
         if self._strategy.transfer:
             return ProgressiveMultiPromptAttack(
                 train_goals,

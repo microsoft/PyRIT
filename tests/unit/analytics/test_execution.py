@@ -137,7 +137,7 @@ async def test_default_execution_deadline_retains_capacity_until_cleanup(
         caller = harness.submit(execution=execution, operation=operation, report=report)
         closing: asyncio.Task[None] | None = None
         try:
-            await wait_for_event_async(event=operation.entered, task=caller)
+            await wait_for_event_async(event=operation.entered, tasks=[caller])
             assert observed_timeouts == [timeout]
             assert operation.control.deadline == 100.0 + timeout
             assert not caller.done()

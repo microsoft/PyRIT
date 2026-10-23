@@ -484,6 +484,32 @@ jest.mock("./components/ScenarioPresets/ScenarioPresetEditor", () => {
   };
 });
 
+jest.mock("./components/ScenarioSuites/ScenarioSuiteLibrary", () => {
+  const MockScenarioSuiteLibrary = () => <div data-testid="scenario-suite-library" />;
+  MockScenarioSuiteLibrary.displayName = "MockScenarioSuiteLibrary";
+  return {
+    __esModule: true,
+    default: MockScenarioSuiteLibrary,
+  };
+});
+
+jest.mock("./components/ScenarioSuites/ScenarioSuiteEditor", () => {
+  const { useParams } = jest.requireActual("react-router");
+  const MockScenarioSuiteEditor = ({ mode }: { mode: string }) => {
+    const { suiteName } = useParams();
+    return (
+      <div data-testid="scenario-suite-editor" data-mode={mode}>
+        {suiteName ?? ""}
+      </div>
+    );
+  };
+  MockScenarioSuiteEditor.displayName = "MockScenarioSuiteEditor";
+  return {
+    __esModule: true,
+    default: MockScenarioSuiteEditor,
+  };
+});
+
 jest.mock("./components/Scenarios/ScenarioDetail", () => {
   const MockScenarioDetail = ({
     defaultObjectiveTarget,
@@ -721,6 +747,24 @@ describe("App", () => {
       "registry"
     );
     expect(screen.getByTestId("scenario-preset-library")).toBeInTheDocument();
+  });
+
+  it("renders the suite library as a registry section", () => {
+    renderApp("/registry/scenario-suites");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+    expect(screen.getByTestId("scenario-suite-library")).toBeInTheDocument();
+  });
+
+  it("renders the suite editor as a nested registry route", () => {
+    renderApp("/registry/scenario-suites/nightly_suite/edit");
+
+    const editor = screen.getByTestId("scenario-suite-editor");
+    expect(editor).toHaveAttribute("data-mode", "edit");
+    expect(editor).toHaveTextContent("nightly_suite");
   });
 
   it("passes the globally resolved Operation to the preset library", async () => {

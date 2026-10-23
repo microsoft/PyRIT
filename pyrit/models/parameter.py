@@ -14,7 +14,16 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Union, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    computed_field,
+    field_serializer,
+    model_validator,
+)
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE
 
@@ -97,8 +106,8 @@ class Parameter(BaseModel):
     while ``type_name`` and ``is_list`` expose whether clients supply one name or a
     list of names.
 
-    ``coerce_value`` and ``validate`` are the only public behaviors; all coercion
-    branching lives behind them so callers never touch a free function.
+    ``coerce_value`` resolves input values, ``validate_value`` checks resolved values
+    without changing them, and ``validate`` checks declarations.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
@@ -391,6 +400,24 @@ class Parameter(BaseModel):
             return _coerce_simple_value(param_name=self.name, annotation=param_type, raw_value=raw_value)
         return raw_value
 
+    def validate_value(self, value: Any) -> None:
+        """
+        Check a resolved scalar or list without coercing or replacing it.
+
+        Args:
+            value (Any): The resolved parameter value.
+
+        Raises:
+            ValueError: If the value does not match its declared type or choices.
+        """
+        if self.reference is not None or self.opaque:
+            return
+        if self.is_string_coercible or self.is_list:
+            try:
+                TypeAdapter(self.param_type).validate_python(value, strict=True)
+            except ValidationError as exc:
+                raise ValueError(f"Parameter '{self.name}' expects {self.type_name}: {exc}") from exc
+
     def validate(self) -> None:  # type: ignore[ty:invalid-method-override]
         """
         Reject a declaration with an unsupported ``param_type``.
@@ -599,24 +626,27 @@ def _coerce_enum(*, param_name: str, enum_type: type[Enum], raw_value: Any) -> A
 
 def _coerce_scalar(*, param_name: str, scalar_type: type, raw_value: Any) -> Any:
     """
-    Coerce ``raw_value`` to ``int`` or ``float`` while rejecting native ``bool`` inputs.
+    Coerce numbers, rejecting booleans and integer conversions that lose a fractional part.
 
     Returns:
         Any: The value coerced to ``scalar_type``.
 
     Raises:
-        ValueError: If ``raw_value`` is a native ``bool`` or cannot be coerced to ``scalar_type``.
+        ValueError: If conversion fails or an integer conversion would lose a fractional part.
     """
     if isinstance(raw_value, bool):
         raise ValueError(
             f"Parameter '{param_name}' expects {scalar_type.__name__} but received a bool ({raw_value!r})."
         )
     try:
-        return scalar_type(raw_value)
-    except (TypeError, ValueError) as exc:
+        result = scalar_type(raw_value)
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(
             f"Parameter '{param_name}' could not be coerced to {scalar_type.__name__}: {raw_value!r} ({exc})."
         ) from exc
+    if scalar_type is int and not isinstance(raw_value, (str, bytes, bytearray)) and result != raw_value:
+        raise ValueError(f"Parameter '{param_name}' expects an integer without a fractional part, got {raw_value!r}.")
+    return result
 
 
 def _coerce_bool(*, param_name: str, raw_value: Any) -> bool:
