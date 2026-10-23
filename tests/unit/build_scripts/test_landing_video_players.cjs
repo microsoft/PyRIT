@@ -83,6 +83,8 @@ for (const visible of [true, false]) {
 test("standalone player does not observe tabs", () => {
   const player = createPlayer({ standalone: true });
   assert.equal(player.observer, undefined);
+  assert.equal(player.video.paused, false);
+  assert.equal(player.siblingVideo.paused, false);
 });
 
 test("pagehide disconnects the observer", () => {
