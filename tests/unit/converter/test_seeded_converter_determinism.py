@@ -18,6 +18,7 @@ from pyrit.converter import (
     ColloquialWordswapConverter,
     Converter,
     ConverterResult,
+    DecisionOptionOrderConverter,
     EmojiConverter,
     InsertPunctuationConverter,
     LeetspeakConverter,
@@ -72,6 +73,10 @@ def _stochastic_converter_cases() -> list[tuple[Callable[[], Converter], str]]:
         (MathObfuscationConverter, "deterministic math output"),
         (lambda: SearchReplaceConverter(pattern="x", replace=["a", "b", "c"]), "xxx"),
         (UnicodeConfusableConverter, "deterministic confusable output"),
+        (
+            lambda: DecisionOptionOrderConverter(order="shuffle"),
+            '{"state": "s", "questions": {"q": {"type": "choice", "criteria": {"a": "", "b": "", "c": "", "d": ""}}}}',
+        ),
         *_pinyin_converter_cases(),
     ]
 
