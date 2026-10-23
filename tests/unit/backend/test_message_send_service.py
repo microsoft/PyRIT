@@ -2787,7 +2787,7 @@ def _submission(
     )
 
 
-@pytest.mark.timeout(20)
+@pytest.mark.timeout(2 * TEST_WATCHDOG_SECONDS)
 @pytest.mark.usefixtures("patch_central_database")
 class TestAsyncMessageSend:
     async def test_repetitions_cannot_bypass_original_capabilities_through_an_alias_async(
@@ -2884,9 +2884,12 @@ class TestAsyncMessageSend:
             for call in service.get_status_async.await_args_list
         )
 
-    def test_settle_send_defaults_to_shared_watchdog(self) -> None:
+    def test_settle_send_defaults_to_shared_watchdog(self, request: pytest.FixtureRequest) -> None:
         parameter = inspect.signature(_settle_send_async).parameters["timeout_seconds"]
         assert parameter.default == TEST_WATCHDOG_SECONDS
+        timeout = request.node.get_closest_marker("timeout")
+        assert timeout is not None
+        assert timeout.args[0] > TEST_WATCHDOG_SECONDS
 
     async def test_settle_send_timeout_preserves_send_until_success_async(
         self,
@@ -3578,9 +3581,14 @@ class TestAsyncMessageSend:
         ).state == MessageSendState.INTERRUPTED
 
 
-@pytest.mark.timeout(20)
+@pytest.mark.timeout(2 * TEST_WATCHDOG_SECONDS)
 @pytest.mark.usefixtures("patch_central_database")
 class TestRepeatedMessageSend:
+    def test_whole_test_timeout_exceeds_send_watchdog(self, request: pytest.FixtureRequest) -> None:
+        timeout = request.node.get_closest_marker("timeout")
+        assert timeout is not None
+        assert timeout.args[0] > TEST_WATCHDOG_SECONDS
+
     async def test_missing_validated_target_fails_before_branch_registration_async(
         self,
         *,

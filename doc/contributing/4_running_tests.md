@@ -96,6 +96,8 @@ use the shared watchdog. Manual sends are polled until a terminal snapshot, incl
 finalization. Expiring the test's wait does not cancel the send; its lifecycle owner
 still drains pending work before mocks and memory close. Explicit zero-timeout tests
 check this ownership without requiring the send to finish quickly.
+The async and repeated manual-send test classes use 600-second whole-test backstops
+so the 300-second completion watchdog can expire and allow cleanup before pytest stops the test.
 
 The scorer-validation cancellation test keeps its five-second observer around
 scorer draining and native SQLite connection cleanup. ERROR-result persistence is
