@@ -126,6 +126,7 @@ from pyrit.models import (
     Operation,
     OperationUsage,
     PromptDataType,
+    RequestTraceContext,
     RetryEvent,
     ScenarioAttackResultDelta,
     ScenarioIdentifier,
@@ -3651,6 +3652,10 @@ class MemoryInterface(abc.ABC):
         """
         Retrieve the request that produced the given response.
 
+        Outbound request markers identify caller-supplied messages of any role, skipping
+        target-generated tool calls and outputs. Unmarked history falls back to the last
+        user message, or the preceding message when no user message exists.
+
         Args:
             response (Message): The response message object to match.
 
@@ -3675,6 +3680,12 @@ class MemoryInterface(abc.ABC):
             raise ValueError(
                 f"The provided request does not have a preceding request in conversation '{response.conversation_id}'."
             )
+        for message in reversed(preceding_messages):
+            if message.api_role == "user" or any(
+                piece.prompt_metadata.get(RequestTraceContext.REQUEST_METADATA_KEY) == 1
+                for piece in message.message_pieces
+            ):
+                return message
         return preceding_messages[-1]
 
     def _build_message_piece_identifier_conditions(
@@ -7209,16 +7220,21 @@ class MemoryInterface(abc.ABC):
         links = JsonArrayItems(parents.c.attack_metadata, literal("$.child_attack_result_ids")).table_valued(
             "key", "value", "type"
         )
-        duplicate_errors = (
-            select(parents.c.id.label("parent_id"))
+        child_links = (
+            select(
+                parents.c.id.label("parent_id"),
+                func.max(case((children.c.outcome == AttackOutcome.ERROR.value, 1), else_=0)).label(
+                    "duplicates_child_error"
+                ),
+            )
             .select_from(JsonArrayJoin(parents, links, literal(True)))
-            .join(
+            .outerjoin(
                 children,
                 func.replace(sql_cast(children.c.id, String(36)), "-", "") == func.replace(links.c.value, "-", ""),
             )
-            .where(parents.c.attribution_parent_id.in_(entry_ids), children.c.outcome == AttackOutcome.ERROR.value)
-            .distinct()
-            .subquery("history_duplicate_errors")
+            .where(parents.c.attribution_parent_id.in_(entry_ids), links.c.value.is_not(None))
+            .group_by(parents.c.id)
+            .subquery("history_child_links")
         )
         # Explicit seed attribution is authoritative, then the objective hash. Runs with attempts identified only by
         # their atomic identifier's seeds are flagged instead (see _get_scenario_history_runs_needing_sdk_statistics),
@@ -7243,12 +7259,11 @@ class MemoryInterface(abc.ABC):
                 ).label("total_retries"),
                 JsonScalar(AttackResultEntry.attribution_data, literal("$.result_role")).label("result_role"),
                 JsonScalar(AttackResultEntry.attribution_data, literal("$.attempt_index")).label("attempt_index"),
-                case((duplicate_errors.c.parent_id.is_not(None), 1), else_=0).label("duplicates_child_error"),
+                case((child_links.c.parent_id.is_not(None), 1), else_=0).label("has_child_links"),
+                func.coalesce(child_links.c.duplicates_child_error, 0).label("duplicates_child_error"),
             )
             .select_from(
-                AttackResultEntry.__table__.outerjoin(
-                    duplicate_errors, AttackResultEntry.id == duplicate_errors.c.parent_id
-                )
+                AttackResultEntry.__table__.outerjoin(child_links, AttackResultEntry.id == child_links.c.parent_id)
             )
             .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
             .subquery("history_attempts")
@@ -7258,29 +7273,14 @@ class MemoryInterface(abc.ABC):
         )
 
         unit_partition = (units.c.scenario_result_id, units.c.unit_group_id, units.c.unit_seed_id)
-        is_execution = or_(
-            units.c.result_role.is_(None),
-            not_(
-                self._get_scenario_role_match_condition(
-                    role_expression=units.c.result_role, role=AttackResultRole.ORCHESTRATION
-                )
-            ),
-        )
         units = select(
             units,
-            func.max(case((is_execution, 1), else_=0))
+            func.max(case((self._get_scenario_execution_attempt_condition(attempts=units), 1), else_=0))
             .over(partition_by=unit_partition)
             .label("has_execution_attempts"),
         ).subquery("history_classified_units")
         unit_partition = (units.c.scenario_result_id, units.c.unit_group_id, units.c.unit_seed_id)
-        is_execution = or_(
-            units.c.result_role.is_(None),
-            not_(
-                self._get_scenario_role_match_condition(
-                    role_expression=units.c.result_role, role=AttackResultRole.ORCHESTRATION
-                )
-            ),
-        )
+        is_execution = self._get_scenario_execution_attempt_condition(attempts=units)
         independent_error = and_(units.c.outcome == AttackOutcome.ERROR.value, units.c.duplicates_child_error == 0)
         pressure_attempt = case((or_(units.c.has_execution_attempts == 0, is_execution, independent_error), 1), else_=0)
         is_completion = case((units.c.attempt_index.is_(None), 1), else_=0)
@@ -7367,6 +7367,36 @@ class MemoryInterface(abc.ABC):
             .order_by(ranked.c.scenario_result_id)
         )
 
+    def _get_scenario_execution_attempt_condition(self, *, attempts: Any) -> Any:
+        """
+        Return the SQL form of ``select_execution_attempts``'s envelope test, negated.
+
+        An orchestration role marks an envelope. An unrecognized role marks one only with
+        child links, as for envelopes persisted before roles were recorded.
+
+        Args:
+            attempts (Any): A subquery with ``result_role`` and ``has_child_links`` columns.
+
+        Returns:
+            Any: A condition that is true for attempts that are not orchestration envelopes.
+        """
+        is_envelope = case(
+            (
+                self._get_scenario_role_match_condition(
+                    role_expression=attempts.c.result_role, role=AttackResultRole.ORCHESTRATION
+                ),
+                1,
+            ),
+            (
+                self._get_scenario_role_match_condition(
+                    role_expression=attempts.c.result_role, role=AttackResultRole.TARGET_FACING
+                ),
+                0,
+            ),
+            else_=attempts.c.has_child_links,
+        )
+        return is_envelope == 0
+
     def _build_scenario_history_unit_statement(self, *, attempts: Any, plan_entry_ids: Sequence[uuid.UUID]) -> Any:
         """
         Resolve every persisted attempt to the logical work unit whose counters it feeds.
@@ -7390,6 +7420,7 @@ class MemoryInterface(abc.ABC):
                 attempts.c.total_retries,
                 attempts.c.result_role,
                 attempts.c.attempt_index,
+                attempts.c.has_child_links,
                 attempts.c.duplicates_child_error,
                 unplanned_group_id.label("unit_group_id"),
                 attempts.c.seed_group_id.label("unit_seed_id"),
@@ -7472,6 +7503,7 @@ class MemoryInterface(abc.ABC):
                 attempts.c.total_retries,
                 attempts.c.result_role,
                 attempts.c.attempt_index,
+                attempts.c.has_child_links,
                 attempts.c.duplicates_child_error,
                 attempts.c.atomic_attack_name,
                 unplanned_group_id.label("unplanned_group_id"),
@@ -7500,6 +7532,7 @@ class MemoryInterface(abc.ABC):
             matched.c.total_retries,
             matched.c.result_role,
             matched.c.attempt_index,
+            matched.c.has_child_links,
             matched.c.duplicates_child_error,
             func.coalesce(matched.c.atomic_group_id, matched.c.unplanned_group_id).label("unit_group_id"),
             func.coalesce(matched.c.planned_seed_group_id, matched.c.seed_group_id).label("unit_seed_id"),
@@ -9102,6 +9135,10 @@ class MemoryInterface(abc.ABC):
     async def get_request_from_response_async(self, *, response: Message) -> Message:
         """
         Retrieve the request that produced the given response.
+
+        Returns the latest preceding outbound request of any role, skipping target-generated
+        tool messages. For unmarked history, returns the last user message or, if absent,
+        the immediately preceding message.
 
         Args:
             response (Message): The response message object to match.

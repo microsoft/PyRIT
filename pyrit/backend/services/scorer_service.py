@@ -15,9 +15,13 @@ from pyrit.backend.models.scorers import (
     ScorerTypeResponse,
     UnregisteredScorer,
 )
+from pyrit.models import ScorerEvaluationIdentifier, project_behavioral_identity
 from pyrit.models.catalog.scorer import ScorerInstance
+from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
+from pyrit.output.scorer.json import format_scorer_type, scorer_metrics_to_dict
 from pyrit.registry import ScorerRegistry
+from pyrit.score import Scorer
 
 
 class ScorerService:
@@ -28,11 +32,58 @@ class ScorerService:
         self._registry = ScorerRegistry.get_registry_singleton()
 
     def _build_instance(self, *, name: str, scorer: Any) -> ScorerInstance:
+        from pyrit.backend.services.chat_scoring_service import ChatScoringService
+
         metadata = self._registry.get_registered_class_metadata(scorer.__class__.__name__)
+        identifier = ScorerIdentifier.from_component_identifier(scorer.get_identifier())
+        evaluation_identifier = project_behavioral_identity(identifier, identifier_type=ScorerIdentifier)
         return ScorerInstance(
             scorer_registry_name=name,
-            identifier=ScorerIdentifier.from_component_identifier(scorer.get_identifier()),
+            identifier=identifier,
+            display_type=format_scorer_type(identifier),
+            scorable_types=sorted(
+                kind.model_fields["scorable_type"].default for kind in scorer.get_supported_scorable_types()
+            ),
+            condition_types=sorted(kind.__name__ for kind in scorer.get_condition_types()),
+            evaluation_identifier=evaluation_identifier.with_eval_hash(
+                ScorerEvaluationIdentifier(identifier).eval_hash
+            ),
+            metrics=scorer_metrics_to_dict(scorer.get_scorer_metrics()),
             description=metadata.class_description or None if metadata else None,
+            chat_scoring_disabled_reason=ChatScoringService.disabled_reason(scorer),
+        )
+
+    def resolve_registered_scorer(self, reference: RegisteredComponentReference) -> Scorer:
+        """
+        Resolve the exact configured instance without silently replacing its identity.
+
+        Returns:
+            The configured response scorer.
+
+        Raises:
+            ValueError: The selected scorer is missing, changed, or incompatible.
+        """
+        scorer = self._registry.instances.get(reference.registry_name)
+        if scorer is None:
+            raise ValueError("The selected chat scorer is no longer registered.")
+        if scorer.get_identifier().hash != reference.identifier_hash:
+            raise ValueError("The selected chat scorer configuration changed. Select it again.")
+        return scorer
+
+    def find_registered_scorer(self, identifier_hash: str) -> Scorer | None:
+        """
+        Find the exact recorded scorer even when its registry alias differs.
+
+        Returns:
+            An existing configured scorer, or None when no exact match is registered.
+        """
+        return next(
+            (
+                entry.instance
+                for entry in self._registry.instances.get_all_instances()
+                if entry.instance.get_identifier().hash == identifier_hash
+            ),
+            None,
         )
 
     async def list_scorer_types_async(self) -> ScorerTypeResponse:

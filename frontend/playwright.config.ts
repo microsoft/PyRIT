@@ -18,6 +18,9 @@ const E2E_FRONTEND_URL = `http://127.0.0.1:${E2E_FRONTEND_PORT}`;
 const USE_DEDICATED_VITE =
   Boolean(process.env.CI) || process.env.E2E_FRONTEND_PORT !== undefined;
 const SEEDED_MODE = process.env.E2E_SEEDED_MODE === "true";
+const PRODUCTION_FRONTEND = process.env.E2E_PRODUCTION_FRONTEND === "true";
+const VITE_SERVER_OPTIONS =
+  `--host 127.0.0.1 --port ${E2E_FRONTEND_PORT} --strictPort`;
 const E2E_BACKEND_PORT = process.env.PYRIT_E2E_BACKEND_PORT ?? "18000";
 const E2E_BACKEND_URL = `http://127.0.0.1:${E2E_BACKEND_PORT}`;
 
@@ -117,9 +120,12 @@ export default defineConfig({
           timeout: 120_000,
         },
         {
-          command:
-            `npx vite --host 127.0.0.1 --port ${E2E_FRONTEND_PORT} ` +
-            "--strictPort",
+          // Seeded specs reload the app often, and a production bundle loads
+          // about 10x faster than Vite's unbundled dev graph. Mock specs need
+          // the dev server because some import /src modules in the browser.
+          command: PRODUCTION_FRONTEND
+            ? `npx vite build && npx vite preview ${VITE_SERVER_OPTIONS}`
+            : `npx vite ${VITE_SERVER_OPTIONS}`,
           env: { PYRIT_BACKEND_URL: E2E_BACKEND_URL },
           // Use 127.0.0.1 to avoid Node.js 17+ resolving localhost to IPv6 ::1
           url: E2E_FRONTEND_URL,
@@ -130,7 +136,7 @@ export default defineConfig({
     : {
         // Mock CI needs only Vite. Local live runs use dev.py.
         command: USE_DEDICATED_VITE
-          ? `npx vite --host 127.0.0.1 --port ${E2E_FRONTEND_PORT} --strictPort`
+          ? `npx vite ${VITE_SERVER_OPTIONS}`
           : "python dev.py",
         url: E2E_FRONTEND_URL,
         reuseExistingServer: !USE_DEDICATED_VITE,

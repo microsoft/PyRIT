@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import update
+from sqlalchemy import text, update
 
 from pyrit.analytics import AttackResultAnalytics, compute_scenario_statistics
 from pyrit.common.task_utils import gather_with_cleanup_async
@@ -32,11 +32,12 @@ from pyrit.models import (
     AttackOutcome,
     AttackResultMetadata,
     AttackResultRole,
+    Operation,
     TargetIdentifier,
 )
 from pyrit.prompt_target import HTTPTarget
 from unit.memory.test_attack_analytics import make_result, predicate
-from unit.mocks import make_scenario_result
+from unit.mocks import add_legacy_attack_results_async, make_scenario_result
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -343,6 +344,30 @@ def test_display_labels_do_not_change_typed_keys(
     assert option.key == raw.key
 
 
+async def test_operation_option_labels(analytics: AttackResultAnalytics, sqlite_instance: SQLiteMemory) -> None:
+    saved, removed = [await sqlite_instance.add_operation_async(Operation(name=name)) for name in ("Saved", "Gone")]
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[
+            make_result(operation=None, operation_id=saved.id),
+            make_result(index=2, operation=None, operation_id=removed.id),
+            make_result(index=3, operation="  "),
+            make_result(index=4, operation="Engagement"),
+        ],
+    )
+    async with sqlite_instance._get_async_engine().begin() as connection:
+        await connection.execute(text('DELETE FROM "OperationEntries" WHERE id = :id'), {"id": str(removed.id)})
+
+    report = await analytics.query_async()
+    assert {(group.key.kind.value, group.key.value): group.label for group in report.groups} == {
+        ("value", str(saved.id)): "Saved",
+        ("value", str(removed.id)): str(removed.id),
+        ("legacy_operation_name", "  "): "(Blank) (legacy name)",
+        ("legacy_operation_name", "Engagement"): "Engagement (legacy name)",
+    }
+    assert all(group.drilldown_filters[0].values[0] == group.key for group in report.groups)
+
+
 @pytest.mark.parametrize("counts", [{"unexpected": 1}, {"success": True}, {"error": -1}, {"failure": 1.5}])
 def test_statistics_reject_invalid_raw_data(counts: dict[str, int]) -> None:
     with pytest.raises(AnalyticsDataException):
@@ -363,7 +388,7 @@ async def test_pages_and_facets_are_fresh_reads_without_reports(
             query=AttackAnalyticsFacetQuery(
                 dimension=AttackAnalyticsDimension(name="operation"),
                 filters=AttackAnalyticsFilters.model_validate(
-                    {"dimensions": [predicate(name="operation", values=["operation-a"])]}
+                    {"dimensions": [predicate(name="operation", values=["operation-a"], kind="legacy_operation_name")]}
                 ),
                 limit=1,
             )
@@ -501,7 +526,8 @@ async def test_mutated_models_are_revalidated_before_execution(
     filters = AttackAnalyticsFilters(
         dimensions=[
             AttackAnalyticsFilter(
-                dimension=AttackAnalyticsDimension(name="operation"), values=[AttackAnalyticsValue(value="operation-a")]
+                dimension=AttackAnalyticsDimension(name="operation"),
+                values=[AttackAnalyticsValue(kind="legacy_operation_name", value="operation-a")],
             )
         ]
     )

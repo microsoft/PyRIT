@@ -8,13 +8,11 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from unit.mocks import MockPromptTarget, get_mock_scorer_identifier
+from unit.mocks import get_mock_scorer_identifier
 
 from pyrit.models import AnswerMatches, ComponentIdentifier, MessagePiece, Score, ScoringExpectation
-from pyrit.prompt_target import GandalfLevel
 from pyrit.score import (
     DecodingScorer,
-    GandalfScorer,
     MessageScorer,
     QuestionAnswerScorer,
     SystemPromptExtractionScorer,
@@ -122,7 +120,7 @@ class TestAudioTrueFalseScorer:
 
         assert audio_scorer._audio_helper.text_scorer is text_scorer
 
-    @pytest.mark.parametrize("history_scorer", ["decoding", "conversation", "system_prompt", "gandalf"])
+    @pytest.mark.parametrize("history_scorer", ["decoding", "conversation", "system_prompt"])
     @pytest.mark.parametrize("nested", [False, True])
     def test_rejects_history_dependent_transcript_scorers(self, *, history_scorer: str, nested: bool) -> None:
         scorer: Scorer
@@ -130,10 +128,8 @@ class TestAudioTrueFalseScorer:
             scorer = DecodingScorer()
         elif history_scorer == "conversation":
             scorer = create_conversation_scorer(scorer=MockTextTrueFalseScorer())
-        elif history_scorer == "system_prompt":
-            scorer = SystemPromptExtractionScorer()
         else:
-            scorer = GandalfScorer(level=GandalfLevel.LEVEL_1, chat_target=MockPromptTarget())
+            scorer = SystemPromptExtractionScorer()
 
         assert isinstance(scorer, MessageScorer)
         wrapper = MockTextTrueFalseScorer()

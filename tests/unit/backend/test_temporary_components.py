@@ -39,7 +39,14 @@ from pyrit.backend.services.scorer_service import ScorerService, get_scorer_serv
 from pyrit.backend.services.target_service import TargetService, get_target_service
 from pyrit.common.apply_defaults import reset_default_values, set_default_value
 from pyrit.common.brick_contract import forward_init_parameters
-from pyrit.converter import CaesarConverter, Converter, ConverterResult, LLMGenericTextConverter, TranslationConverter
+from pyrit.converter import (
+    CaesarConverter,
+    Converter,
+    ConverterResult,
+    LLMGenericTextConverter,
+    PuzzledConverter,
+    TranslationConverter,
+)
 from pyrit.memory import SQLiteMemory
 from pyrit.models import JSONValue, Operation, PromptDataType
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
@@ -363,6 +370,39 @@ class TestTemporaryComponents:
             await source.cleanup_target_async()
             await replacement.cleanup_target_async()
 
+    async def test_clearing_an_optional_target_resets_it_async(self) -> None:
+        target = source_target()
+        try:
+            source = PuzzledConverter(converter_target=target)
+
+            rebuilt = ConverterRegistry.get_registry_singleton().recreate_instance(
+                source=source, params={"converter_target": ""}, external_input=True
+            )
+
+            assert rebuilt._converter_target is None
+            assert source._converter_target is target
+        finally:
+            await target.cleanup_target_async()
+
+    async def test_clearing_a_defaulted_target_uses_the_current_default_async(self) -> None:
+        target = source_target()
+        replacement = source_target()
+        try:
+            set_default_value(class_type=TranslationConverter, parameter_name="converter_target", value=target)
+            source = TranslationConverter(language="Spanish")
+            set_default_value(class_type=TranslationConverter, parameter_name="converter_target", value=replacement)
+
+            rebuilt = ConverterRegistry.get_registry_singleton().recreate_instance(
+                source=source, params={"converter_target": ""}, external_input=True
+            )
+
+            assert rebuilt.converter_target is replacement
+            assert source.converter_target is target
+        finally:
+            reset_default_values()
+            await target.cleanup_target_async()
+            await replacement.cleanup_target_async()
+
     async def test_translation_reconstruction_uses_only_its_declared_inputs_async(self) -> None:
         target = source_target()
         replacement = source_target()
@@ -643,7 +683,7 @@ class TestTemporaryComponents:
                 )
                 status = await _settle_send_async(service=sender, status=status)
             assert status.state == MessageSendState.COMPLETED
-            targets = [call.kwargs["target"] for call in execute.await_args_list]
+            targets = [call.kwargs["validated"].target for call in execute.await_args_list]
             assert len(targets) == 3
             assert len({id(target) for target in targets}) == 3
             assert all(target._temperature == 0.8 and target._client.is_closed() for target in targets)
