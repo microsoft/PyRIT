@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import os
+import threading
 import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -545,6 +546,36 @@ async def test_video_true_false_scorer_with_audio_scorer(video_converter_sample_
         assert scores[0].score_type == "true_false"
         assert scores[0].score_value == "true"
         assert "visual" in scores[0].score_rationale.lower() or "audio" in scores[0].score_rationale.lower()
+
+
+@pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
+async def test_video_scorer_decodes_frames_and_audio_off_the_event_loop(video_converter_sample_video):
+    event_loop_thread = threading.get_ident()
+    decode_threads: dict[str, int] = {}
+    scorer = VideoTrueFalseScorer(
+        image_capable_scorer=MockTrueFalseScorer(return_value=True),
+        audio_scorer=MockAudioTrueFalseScorer(return_value=True),
+        num_sampled_frames=3,
+    )
+    extract_frames = scorer._video_helper._extract_frames
+
+    def record_frames(video_path: str) -> list[str]:
+        decode_threads["frames"] = threading.get_ident()
+        return extract_frames(video_path)
+
+    def record_audio(video_path: str) -> str | None:
+        decode_threads["audio"] = threading.get_ident()
+        return None
+
+    with (
+        patch.object(scorer._video_helper, "_extract_frames", side_effect=record_frames),
+        patch.object(AudioTranscriptHelper, "extract_audio_from_video", side_effect=record_audio),
+    ):
+        scores = await scorer._score_piece_with_expectation_async(video_converter_sample_video, expectation=None)
+
+    assert scores[0].score_value == "true"
+    assert decode_threads["frames"] != event_loop_thread
+    assert decode_threads["audio"] != event_loop_thread
 
 
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")

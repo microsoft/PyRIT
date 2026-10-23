@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 import random
 import tempfile
@@ -167,7 +168,7 @@ class VideoHelper:
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
         # Extract frames from video
-        frames = self._extract_frames(video_path)
+        frames = await asyncio.to_thread(self._extract_frames, video_path)
         if not frames:
             raise ValueError("No frames extracted from video for scoring.")
 
@@ -283,7 +284,7 @@ class VideoHelper:
 
         # Use BaseAudioTranscriptScorer's static method to extract audio
 
-        audio_path = AudioTranscriptHelper.extract_audio_from_video(video_path)
+        audio_path = await asyncio.to_thread(AudioTranscriptHelper.extract_audio_from_video, video_path)
         if not audio_path:
             logger.warning("Video does not have any audio! Skipping audio scoring.")
             return []
