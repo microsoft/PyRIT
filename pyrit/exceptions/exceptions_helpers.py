@@ -115,6 +115,14 @@ def extract_json_from_string(response_msg: str) -> str:
     """
     Extract JSON (object or array) from within a larger string.
 
+    Returns the ONLY top-level JSON literal in the string. When the string
+    contains multiple distinct top-level JSON literals, the reply is ambiguous
+    (e.g. a judge quoting an embedded JSON object before its own verdict) and
+    no single literal can be trusted as the response, so the original string is
+    returned unchanged (making the caller fail as invalid JSON and retry).
+
+    Identical repeated literals (a model stutter) are accepted.
+
     Args:
         response_msg (str): The response message to check.
 
@@ -122,18 +130,44 @@ def extract_json_from_string(response_msg: str) -> str:
         str: The extracted JSON string if found, otherwise the original string.
 
     """
-    decoder = json.JSONDecoder()
-    for index, char in enumerate(response_msg):
-        if char not in "[{":
-            continue
-
-        try:
-            _, end_index = decoder.raw_decode(response_msg, idx=index)
-            return response_msg[index:end_index]
-        except json.JSONDecodeError:
-            continue
-
+    candidates = _top_level_json_candidates(response_msg)
+    if not candidates:
+        return response_msg
+    if len(candidates) == 1:
+        return candidates[0]
+    try:
+        parsed = [json.loads(candidate) for candidate in candidates]
+    except json.JSONDecodeError:
+        return response_msg
+    if all(candidate == parsed[0] for candidate in parsed[1:]):
+        return candidates[0]
     return response_msg
+
+
+def _top_level_json_candidates(response_msg: str) -> list[str]:
+    """
+    Scan left-to-right for non-overlapping top-level JSON literals.
+
+    Args:
+        response_msg (str): The response message to scan.
+
+    Returns:
+        str: The list of top-level JSON literal substrings, outermost-first at each position.
+    """
+    decoder = json.JSONDecoder()
+    found: list[str] = []
+    index, length = 0, len(response_msg)
+    while index < length:
+        if response_msg[index] in "[{":
+            try:
+                _, end_index = decoder.raw_decode(response_msg, idx=index)
+                found.append(response_msg[index:end_index])
+                index = end_index
+                continue
+            except json.JSONDecodeError:
+                pass
+        index += 1
+    return found
 
 
 def remove_markdown_json(response_msg: str) -> str:
