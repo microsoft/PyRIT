@@ -387,7 +387,7 @@ describe("ChatWindow Integration", () => {
       defaultChatScorer={{ registry_name: "personal", identifier_hash: "personal-hash" }} /></TestWrapper>);
     await screen.findByText("Original automated response", { exact: true });
     expect(screen.getByRole("button", { name: "Edit Conversation", exact: true })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.queryByRole("button", { name: "Edit objective" })).not.toBeInTheDocument();
     expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
