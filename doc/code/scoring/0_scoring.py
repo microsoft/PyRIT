@@ -33,6 +33,10 @@
 #
 # The two are convertible: a `float_scale` score becomes `true_false` by applying a
 # threshold (see [Combining & stacking scorers](3_combining_scorers.ipynb)).
+#
+# To change a verdict after a score is created, call `score.set_value(...)` with a `bool`, a
+# number, or `None` for undetermined. It keeps `score_value` and `status` consistent. Assigning
+# `score_value` directly on a `true_false` score is deprecated until 2.0.
 # %% [markdown]
 # ## Scorer reference table
 #

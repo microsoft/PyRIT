@@ -385,7 +385,7 @@ async def test_migrated_typed_override_preserves_custom_verdict_async() -> None:
             self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
         ) -> list[Score]:
             scores = await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
-            scores[0].score_value = str(not scores[0].get_value()).lower()
+            scores[0].set_value(not scores[0].get_value())
             return scores
 
     target = MagicMock(spec=PromptTarget)

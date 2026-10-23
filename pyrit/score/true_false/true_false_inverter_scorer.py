@@ -127,7 +127,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
                 f"Inverted score from {scorer_type} is undetermined\n{inv_score.score_rationale}"
             )
         else:
-            inv_score.score_value = str(True) if not inv_score.get_value() else str(False)
+            inv_score.set_value(not inv_score.get_value())
             # The wrapped threshold score's float describes the uninverted verdict, and
             # normalize_score_to_float would prefer it over this one.
             if inv_score.score_metadata and ORIGINAL_FLOAT_VALUE_KEY in inv_score.score_metadata:
