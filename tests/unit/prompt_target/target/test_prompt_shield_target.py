@@ -226,3 +226,26 @@ def test_identity_auth_mode_with_explicit_key_raises(sqlite_instance, explicit_k
 def test_identity_auth_mode_non_azure_endpoint_raises(sqlite_instance):
     with pytest.raises(ValueError, match="Identity-based authentication requires a recognized Azure Content Safety"):
         PromptShieldTarget(endpoint="https://test.endpoint.com", auth_mode="identity")
+
+
+async def test_prompt_shield_send_prompt_async_sends_converted_value(promptshield_target: PromptShieldTarget):
+    request = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                conversation_id="123",
+                original_value="original prompt",
+                converted_value="converted prompt",
+            )
+        ]
+    )
+    with patch("pyrit.common.net_utility.make_request_and_raise_if_error_async") as mock_request:
+        mock_response = MagicMock()
+        mock_response.content = b'{"userPromptAnalysis": {"attackDetected": false}, "documentsAnalysis": []}'
+        mock_request.return_value = mock_response
+
+        await promptshield_target.send_prompt_async(message=request)
+
+        mock_request.assert_called_once()
+        body = mock_request.call_args.kwargs["request_body"]
+        assert body["userPrompt"] == "converted prompt"
