@@ -53,6 +53,7 @@ no queries, migration, repair, or database-setting changes.
 
 ```python
 from pyrit.analytics import AttackResultAnalytics
+from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackAnalyticsDimension,
     AttackAnalyticsFacetQuery,
@@ -63,6 +64,8 @@ from pyrit.models import (
     AttackAnalyticsValue,
 )
 
+operation = (await CentralMemory.get_memory_instance().get_operations_async(name="operation-a"))[0]
+
 async with AttackResultAnalytics() as analytics:
     report = await analytics.query_async(
         query=AttackAnalyticsQuery(
@@ -70,7 +73,7 @@ async with AttackResultAnalytics() as analytics:
                 dimensions=[
                     AttackAnalyticsFilter(
                         dimension=AttackAnalyticsDimension(name="operation"),
-                        values=[AttackAnalyticsValue(value="operation-a")],
+                        values=[AttackAnalyticsValue(value=str(operation.id))],
                     )
                 ]
             ),
@@ -101,6 +104,9 @@ async with AttackResultAnalytics() as analytics:
         )
     )
 ```
+
+Activity saved with only an Operation name, not an Operation ID, uses
+`AttackAnalyticsValue(kind="legacy_operation_name", value="...")`.
 
 ### The same statistics for scenario units
 
@@ -325,6 +331,9 @@ Use typed keys, not display labels, when filtering:
 - `MISSING` is labeled `"Not recorded"` and is not a string sentinel.
 - `NO_CONVERTERS` is labeled `"No converters"` and distinguishes a known empty
   pipeline from missing converter metadata.
+- `LEGACY_OPERATION_NAME` applies only to Operation. It holds the name stored on
+  activity saved without an Operation ID and is labeled with the name followed by
+  `"(legacy name)"`.
 
 Case-insensitive categorical keys use the reader's backend semantics. In SQLite,
 the SQL function and SDK profiles both use Python `str.lower`, including Unicode.
@@ -344,6 +353,11 @@ identify saved runs, not potentially repeated scenario names. The SDK adds short
 identity suffixes to target/scenario display labels and forwards reader warnings.
 Whitespace-only model labels use the target class name and short identity suffix;
 SQLite and SQL Server recognize the same Unicode whitespace as Python `str.strip`.
+
+Operation keys are saved Operation IDs; labels show the Operation's current name,
+so renaming an Operation never changes its key. Operation options list
+`"Not recorded"` first, then saved Operations by name, then legacy names by name;
+groups with equal counts follow the same order.
 
 ## Freshness and projection limits
 
@@ -581,7 +595,8 @@ without discovering user dotenv files, the existing `PYTHON_DOTENV_DISABLED=1`
 setting can be used; it does not control whether the test runs.
 
 The deterministic data contains 100,000 result IDs, two per conversation, all
-outcomes and result roles, 100 skewed operations (the largest exceeds 60%), 50
+outcomes and result roles, skewed operations (one saved Operation holds 60%; the
+rest use 100 legacy Operation names), 50
 operators, 40 overlapping harm categories, 64 shared identifier configurations,
 eight models, overlapping converter pairs, known empty pipelines, supported
 legacy documents, missing identifiers, and 100,000 distinct case labels.
@@ -634,7 +649,9 @@ Environment: Windows 11 build 26200, 16 logical CPUs, AMD64 family 25/model 117;
 Python 3.14.4, SQLite 3.50.4, FastAPI 0.142.2, Starlette 1.7.0, Pydantic 2.13.5,
 SQLAlchemy 2.1.1, aiosqlite 0.22.1, and HTTPX 0.28.1. WAL applied only to the
 disposable database. The data shape and timing inclusions/exclusions are those
-described above.
+described above. These recorded numbers predate the saved Operation in that data
+shape: they were measured with every row using a legacy Operation name and with
+a facet workload filtered by Operation name.
 
 | Workload | Cold (s) | Concurrent p95 (s) | Maximum (s) | Successful / error requests |
 |---|---:|---:|---:|---:|

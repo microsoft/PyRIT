@@ -81,7 +81,7 @@ def test_minimal_config_constructs_with_defaults() -> None:
     assert config.models[0].name == _LLAMA_2
     assert config.models[0].device == "cuda:0"
     assert config.models[0].model_kwargs == {"low_cpu_mem_usage": True, "use_cache": False}
-    assert config.models[0].tokenizer_kwargs == {"use_fast": False}
+    assert config.models[0].tokenizer_kwargs == {"use_fast": True}
     assert config.test_models == []
     assert config.algorithm.n_steps == 500
     assert config.algorithm.batch_size == 512

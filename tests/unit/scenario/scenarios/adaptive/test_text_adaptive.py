@@ -33,6 +33,7 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
+from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher
 from pyrit.scenario.scenarios.adaptive.selectors import (
     EpsilonGreedyTechniqueSelector,
@@ -147,6 +148,32 @@ FIXTURES = ["patch_central_database", "mock_runtime_env"]
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestTextAdaptiveBasics:
+    async def test_construction_uses_context_without_resolved_instance_state(self, mock_objective_scorer) -> None:
+        target = MockPromptTarget()
+        source = _make_seed_group(value="objective")
+        selector = MagicMock(spec=TechniqueSelector)
+        selector.select_async = AsyncMock(side_effect=lambda **kwargs: list(kwargs["technique_identifiers"])[:1])
+        scenario = TextAdaptive(objective_scorer=mock_objective_scorer, selector=selector)
+        scenario.set_params_from_args(args={})
+        factory = _make_fake_factory()
+        context = ScenarioContext(
+            objective_target=target,
+            scenario_techniques=[scenario.get_technique_class()("many_shot")],
+            dataset_config=DatasetAttackConfiguration(seed_groups=[source]),
+            seed_groups=[source],
+            seed_groups_by_dataset={"dataset": [source]},
+            memory_labels={"source": "context"},
+            scenario_result_id=str(uuid.uuid4()),
+        )
+        assert scenario._objective_target is None
+        assert not scenario._scenario_techniques
+        with patch.object(scenario, "_get_attack_technique_factories", return_value={"many_shot": factory}):
+            [atomic] = await scenario._build_atomic_attacks_async(context=context)
+        assert factory.create.call_args.kwargs["objective_target"] is target
+        assert atomic.attack_technique.attack.get_objective_target() is target
+        assert atomic._memory_labels == context.memory_labels
+        assert selector.select_async.call_args.kwargs["scenario_result_id"] == context.scenario_result_id
+
     def test_default_adversarial_usage_comes_from_adaptive_pool(self, mock_objective_scorer: MagicMock) -> None:
         scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
         assert scenario.uses_default_adversarial_target is True
@@ -577,7 +604,9 @@ class TestTextAdaptiveAtomicAttacks:
                 )
                 await scenario.initialize_async()
                 attacks = scenario._atomic_attacks
-                techniques = scenario._build_techniques_dict(objective_target=mock_objective_target)
+                techniques = scenario._build_techniques_dict(
+                    context=scenario._build_scenario_context(seed_groups_by_dataset={})
+                )
 
         # One atomic for the single objective.
         assert len(attacks) == 1
@@ -631,7 +660,9 @@ class TestTextAdaptiveAtomicAttacks:
                 )
                 await scenario.initialize_async()
                 attacks = scenario._atomic_attacks
-                techniques = scenario._build_techniques_dict(objective_target=mock_objective_target)
+                techniques = scenario._build_techniques_dict(
+                    context=scenario._build_scenario_context(seed_groups_by_dataset={})
+                )
 
         # Atomic survives because the plain factory keeps the compatible pool non-empty.
         assert len(attacks) == 1
@@ -773,7 +804,9 @@ class TestTextAdaptiveAtomicAttacks:
                         }
                     )
                     await scenario.initialize_async()
-                    techniques = scenario._build_techniques_dict(objective_target=mock_objective_target)
+                    techniques = scenario._build_techniques_dict(
+                        context=scenario._build_scenario_context(seed_groups_by_dataset={})
+                    )
 
         # Strict factory's create is never called — incompatibility surfaces
         # before construction, not via the factory's override policy.

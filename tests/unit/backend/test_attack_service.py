@@ -78,6 +78,7 @@ from pyrit.models import (
 )
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_normalizer import PromptNormalizer
+from unit.async_utils import TEST_WATCHDOG_SECONDS, settle_tasks_async, wait_for_event_async
 from unit.backend.mocks import _make_matching_target_mock, make_attack_result, make_mock_memory
 from unit.mocks import MockPromptTarget
 
@@ -1566,7 +1567,7 @@ class TestAddMessage:
             await attack_service.add_message_async(attack_result_id="attack", request=request)
         reader.assert_not_called()
 
-    @pytest.mark.timeout(10)
+    @pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
     @pytest.mark.parametrize("read_method", ["get_attack_async", "get_conversation_messages_async"])
     @pytest.mark.parametrize("incoming_send", [False, True])
     async def test_response_assembly_keeps_conversation_reserved_async(
@@ -1602,7 +1603,7 @@ class TestAddMessage:
                 service.add_message_async(attack_result_id=ar.attack_result_id, request=request)
             )
             try:
-                await started.wait()
+                await wait_for_event_async(event=started, tasks=[active])
                 with pytest.raises(ManualSendConflictError):
                     await peer.add_message_async(
                         attack_result_id=ar.attack_result_id,
@@ -1615,7 +1616,8 @@ class TestAddMessage:
                     )
             finally:
                 release.set()
-                result = await active
+                await settle_tasks_async(active)
+            result = active.result()
 
         assert result.attack.message_count == 2
         assert [message.message_pieces[0].original_value for message in result.messages.messages] == [
@@ -1634,7 +1636,7 @@ class TestAddMessage:
             ),
         )
 
-    @pytest.mark.timeout(10)
+    @pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
     @pytest.mark.parametrize("read_method", ["get_attack_async", "get_conversation_messages_async"])
     @pytest.mark.parametrize("cancel", [False, True])
     async def test_response_failure_releases_conversation_async(
@@ -1659,14 +1661,15 @@ class TestAddMessage:
         ):
             active = asyncio.create_task(attack_service.add_message_async(attack_result_id="attack", request=request))
             try:
-                await started.wait()
+                await wait_for_event_async(event=started, tasks=[active])
                 assert sender._scheduler._conversations == {"conversation"}
                 if cancel:
                     active.cancel()
             finally:
                 release.set()
-                with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
-                    await active
+                await settle_tasks_async(active)
+            with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
+                active.result()
             assert not sender._scheduler._conversations
             await sender.add_message_async(attack_result_id="attack", request=request)
 

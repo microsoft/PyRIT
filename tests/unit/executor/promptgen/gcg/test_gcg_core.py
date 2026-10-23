@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, call, patch, sentinel
 
@@ -33,6 +34,8 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E
     get_embedding_matrix,
     get_embeddings,
 )
+from pyrit.executor.promptgen.gcg.config import GCGAlgorithmConfig, GCGModelConfig, GCGStrategyConfig  # noqa: E402
+from pyrit.executor.promptgen.gcg.extension_protocols import SuffixInitializer  # noqa: E402
 
 gcg_attack_mod = pytest.importorskip(
     "pyrit.executor.promptgen.gcg.attack.gcg.gcg_attack",
@@ -558,6 +561,37 @@ def _fast_tokenizer(*, chat_template: str = _CHATML_TEMPLATE, byte_level: bool =
     return tokenizer
 
 
+@pytest.fixture
+def preflight_workers() -> list[MagicMock]:
+    tokenizer = _fast_tokenizer()
+    bounded_model = _tiny_model("llama").eval()
+    bounded_model.resize_token_embeddings(len(tokenizer), mean_resizing=False)
+    tokenizer.add_tokens(["new_domain_term"])
+    workers = [MagicMock(spec=ModelWorker), MagicMock(spec=ModelWorker)]
+    for worker, model in zip(workers, [_tiny_model("llama").eval(), bounded_model], strict=True):
+        worker.model = model
+        worker.tokenizer = tokenizer
+    return workers
+
+
+@pytest.fixture
+def preflight_params() -> SimpleNamespace:
+    return SimpleNamespace(
+        tokenizer_paths=["fake/train-model", "fake/held-out-model"],
+        tokenizer_kwargs=[{}, {}],
+        model_paths=["fake/train-model", "fake/held-out-model"],
+        model_kwargs=[{}, {}],
+        devices=["cpu", "cpu"],
+        token=None,
+        num_train_models=1,
+        goals=["Say it", "hello"],
+        targets=["Sure", "done"],
+        test_goals=["world"],
+        test_targets=["Sure"],
+        control_init="! !",
+    )
+
+
 class TestUpdateIdsErrorPaths:
     """Real-tokenizer coverage of prompt boundaries and unsupported templates."""
 
@@ -1073,7 +1107,38 @@ class TestGetWorkersChatTemplateValidation:
             with pytest.raises(ValueError, match="no chat_template configured"):
                 get_workers(params)
 
-    def test_starts_workers_for_training(self) -> None:
+    def test_starts_workers_for_training_with_default_model_config(self, tmp_path: Path) -> None:
+        _fast_tokenizer().save_pretrained(tmp_path)
+        model_config = GCGModelConfig(name=str(tmp_path), device="cpu")
+        params = MagicMock()
+        params.tokenizer_paths = [model_config.name]
+        params.tokenizer_kwargs = [model_config.tokenizer_kwargs]
+        params.model_paths = [model_config.name]
+        params.model_kwargs = [model_config.model_kwargs]
+        params.devices = [model_config.device]
+        params.token = None
+        params.num_train_models = 1
+        params.goals = ["Say it"]
+        params.targets = ["Sure"]
+        params.test_goals = []
+        params.test_targets = []
+        params.control_init = "! !"
+
+        worker = MagicMock(model=_tiny_model("llama"))
+
+        def build_worker(model_path: str, token: Any, model_kwargs: Any, tokenizer: Any, device: str) -> MagicMock:
+            worker.tokenizer = tokenizer
+            return worker
+
+        with patch.object(attack_manager_mod, "ModelWorker", side_effect=build_worker):
+            train_workers, test_workers = attack_manager_mod.get_workers(params, evaluation=False)
+
+        assert worker.tokenizer.is_fast
+        worker.start.assert_called_once_with()
+        assert train_workers == [worker]
+        assert test_workers == []
+
+    def test_capability_check_runs_before_workers_start(self) -> None:
         params = MagicMock()
         params.tokenizer_paths = ["fake/chat-model"]
         params.tokenizer_kwargs = [{}]
@@ -1081,22 +1146,184 @@ class TestGetWorkersChatTemplateValidation:
         params.model_kwargs = [{}]
         params.devices = ["cpu"]
         params.token = ""
-        params.num_train_models = 1
 
         tokenizer = MagicMock()
         tokenizer.pad_token = "<pad>"
         tokenizer.chat_template = "{{ messages[0]['content'] }}"
-        worker = MagicMock()
+        tokenizer.is_fast = False
+        worker = MagicMock(tokenizer=tokenizer)
 
         with (
             patch.object(attack_manager_mod.AutoTokenizer, "from_pretrained", return_value=tokenizer),
             patch.object(attack_manager_mod, "ModelWorker", return_value=worker),
+            pytest.raises(ValueError, match="'fake/chat-model' .* is not backed by the Hugging Face tokenizers"),
         ):
-            train_workers, test_workers = attack_manager_mod.get_workers(params, evaluation=False)
+            attack_manager_mod.get_workers(params, evaluation=False)
 
-        worker.start.assert_called_once_with()
-        assert train_workers == [worker]
-        assert test_workers == []
+        worker.start.assert_not_called()
+
+
+class TestCheckGcgCapabilities:
+    def test_accepts_tiny_model_with_fast_tokenizer(self) -> None:
+        attack_manager_mod._check_gcg_capabilities(
+            model=_tiny_model("llama"), tokenizer=_fast_tokenizer(), model_path="fake/model"
+        )
+
+    def test_accepts_unused_added_tokens_beyond_embeddings(self) -> None:
+        # <start_of_turn> and <end_of_turn> (ids 25 and 26) are added tokens the ChatML
+        # template never emits, like Gemma 3's image token; the rendered prompt tops out at 24.
+        model = MagicMock()
+        model.get_input_embeddings.return_value = torch.nn.Embedding(25, 4)
+        attack_manager_mod._check_gcg_capabilities(model=model, tokenizer=_fast_tokenizer(), model_path="fake/model")
+
+    @pytest.mark.parametrize(
+        ("embeddings", "match"),
+        [
+            (NotImplementedError(), "does not expose an input embedding matrix"),
+            (None, "does not expose an input embedding matrix"),
+            (SimpleNamespace(weight=torch.zeros(256, 4, dtype=torch.int8)), "are torch.int8"),
+            (torch.nn.Embedding(24, 4), "produces token id 24 but the model's input embeddings have only 24 rows"),
+        ],
+    )
+    def test_rejects_unusable_embeddings(self, embeddings: Any, match: str) -> None:
+        model = MagicMock()
+        if isinstance(embeddings, Exception):
+            model.get_input_embeddings.side_effect = embeddings
+        else:
+            model.get_input_embeddings.return_value = embeddings
+        with pytest.raises(ValueError, match=match):
+            attack_manager_mod._check_gcg_capabilities(
+                model=model, tokenizer=_fast_tokenizer(), model_path="fake/model"
+            )
+
+
+@pytest.mark.parametrize("field", ["goals", "targets", "test_goals", "test_targets", "control_init"])
+def test_get_workers_rejects_used_added_tokens_before_any_worker_starts(
+    *, field: str, preflight_workers: list[MagicMock], preflight_params: SimpleNamespace
+) -> None:
+    if field == "control_init":
+        preflight_params.control_init = "new_domain_term"
+    else:
+        getattr(preflight_params, field)[-1] = "new_domain_term"
+
+    with (
+        patch.object(attack_manager_mod.AutoTokenizer, "from_pretrained", return_value=preflight_workers[0].tokenizer),
+        patch.object(attack_manager_mod, "ModelWorker", side_effect=preflight_workers),
+        pytest.raises(ValueError, match="'fake/held-out-model' produces token id 27.*only 27 rows"),
+    ):
+        attack_manager_mod.get_workers(preflight_params)
+
+    for worker in preflight_workers:
+        worker.start.assert_not_called()
+
+
+def test_get_workers_accepts_unused_added_tokens_beyond_embeddings(
+    *, preflight_workers: list[MagicMock], preflight_params: SimpleNamespace
+) -> None:
+    with (
+        patch.object(attack_manager_mod.AutoTokenizer, "from_pretrained", return_value=preflight_workers[0].tokenizer),
+        patch.object(attack_manager_mod, "ModelWorker", side_effect=preflight_workers),
+    ):
+        train_workers, test_workers = attack_manager_mod.get_workers(preflight_params)
+
+    assert train_workers == preflight_workers[:1]
+    assert test_workers == preflight_workers[1:]
+    for worker in preflight_workers:
+        worker.start.assert_called_once()
+    prompt = gcg_attack_mod.GCGAttackPrompt(
+        goal="Say it", target="Sure", tokenizer=test_workers[0].tokenizer, control_init="! !"
+    )
+    gradient = prompt.grad(test_workers[0].model)
+    assert gradient.shape == (2, 27)
+    assert torch.isfinite(gradient).all()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "input_source",
+    [
+        "goals",
+        "targets",
+        "test_goals",
+        "test_targets",
+        "control_init",
+        "suffix_init",
+        "augmented_target",
+        "augmented_test_target",
+    ],
+)
+async def test_generator_checks_final_inputs_before_any_worker_starts_async(
+    *, input_source: str, preflight_workers: list[MagicMock], preflight_params: SimpleNamespace
+) -> None:
+    initializer = MagicMock(spec=SuffixInitializer)
+    initializer.make_initial_suffix.return_value = "new_domain_term"
+    generator = GCGGenerator(
+        models=[GCGModelConfig(name=preflight_params.model_paths[0], device="cpu")],
+        test_models=[GCGModelConfig(name=preflight_params.model_paths[1], device="cpu")],
+        algorithm=GCGAlgorithmConfig(
+            control_init="new_domain_term" if input_source == "control_init" else "! !",
+            suffix_init=initializer if input_source == "suffix_init" else None,
+        ),
+    )
+    inputs = {
+        "goals": preflight_params.goals,
+        "targets": preflight_params.targets,
+        "test_goals": preflight_params.test_goals,
+        "test_targets": preflight_params.test_targets,
+    }
+    if input_source in inputs:
+        inputs[input_source][-1] = "new_domain_term"
+
+    with (
+        patch.object(attack_manager_mod.AutoTokenizer, "from_pretrained", return_value=preflight_workers[0].tokenizer),
+        patch.object(attack_manager_mod, "ModelWorker", side_effect=preflight_workers),
+        patch.object(generator, "_apply_target_augmentation", wraps=generator._apply_target_augmentation) as augment,
+        patch.object(generator, "_perform_async", return_value=generator_mod.GCGResult()) as perform,
+    ):
+        if input_source == "augmented_target":
+            augment.return_value = (["Sure", "new_domain_term"], inputs["test_targets"])
+        elif input_source == "augmented_test_target":
+            augment.return_value = (inputs["targets"], ["new_domain_term"])
+        with pytest.raises(RuntimeError, match="'fake/held-out-model' produces token id 27.*only 27 rows") as error:
+            await generator.execute_async(**inputs)
+
+    assert isinstance(error.value.__cause__, ValueError)
+    perform.assert_not_awaited()
+    for worker in preflight_workers:
+        worker.start.assert_not_called()
+        worker.stop.assert_called_once()
+    if input_source == "suffix_init":
+        initializer.make_initial_suffix.assert_called_once()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("transfer", [False, True])
+async def test_generator_reuses_the_validated_initial_suffix_async(
+    *, transfer: bool, preflight_workers: list[MagicMock], preflight_params: SimpleNamespace
+) -> None:
+    initializer = MagicMock(spec=SuffixInitializer)
+    initializer.make_initial_suffix.side_effect = ["hello", "new_domain_term"]
+    generator = GCGGenerator(
+        models=[GCGModelConfig(name=preflight_params.model_paths[0], device="cpu")],
+        test_models=[GCGModelConfig(name=preflight_params.model_paths[1], device="cpu")],
+        algorithm=GCGAlgorithmConfig(suffix_init=initializer),
+        strategy=GCGStrategyConfig(transfer=transfer, progressive_goals=transfer, progressive_models=transfer),
+    )
+    attack_class = "ProgressiveMultiPromptAttack" if transfer else "IndividualPromptAttack"
+    with (
+        patch.object(attack_manager_mod.AutoTokenizer, "from_pretrained", return_value=preflight_workers[0].tokenizer),
+        patch.object(attack_manager_mod, "ModelWorker", side_effect=preflight_workers),
+        patch.object(generator_mod, attack_class) as attack,
+        patch.object(generator, "_read_result", return_value=generator_mod.GCGResult()),
+    ):
+        await generator.execute_async(goals=preflight_params.goals, targets=preflight_params.targets)
+
+    initializer.make_initial_suffix.assert_called_once()
+    assert initializer.make_initial_suffix.call_args.kwargs["tokenizer"] is preflight_workers[0].tokenizer
+    assert attack.call_args.kwargs["control_init"] == "hello"
+    for worker in preflight_workers:
+        worker.start.assert_called_once()
+        worker.stop.assert_called_once()
 
 
 def test_model_worker_uses_model_device_dispatch() -> None:

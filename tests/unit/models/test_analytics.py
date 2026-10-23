@@ -33,6 +33,8 @@ from pyrit.models import (
     ScenarioProgressCounts,
 )
 
+OPERATION_ID = "1d385514-6557-41e5-a385-907e35d23a69"
+
 
 def test_attack_stats_preserves_existing_import_and_constructor() -> None:
     assert AnalyticsAttackStats is ResultAnalysisAttackStats is AttackStats
@@ -245,6 +247,35 @@ def test_analytics_filter_keeps_additional_membership_constraints() -> None:
     assert AttackAnalyticsFilters.model_validate_json(filters.model_dump_json()) == filters
 
 
+@pytest.mark.parametrize("raw", [OPERATION_ID.upper(), "{" + OPERATION_ID + "}", "urn:uuid:" + OPERATION_ID])
+def test_operation_value_is_canonical_operation_id(raw: str) -> None:
+    filters = AttackAnalyticsFilters.model_validate(
+        {"dimensions": [{"dimension": {"name": "operation"}, "values": [{"value": raw}]}]}
+    )
+    assert filters.dimensions[0].values[0].value == OPERATION_ID
+
+
+def test_operation_value_rejects_names() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="Operation values must be saved Operation IDs; use legacy_operation_name for legacy activity",
+    ):
+        AttackAnalyticsFilter.model_validate({"dimension": {"name": "operation"}, "values": [{"value": "Nightly"}]})
+
+
+def test_legacy_operation_name_applies_only_to_operation() -> None:
+    with pytest.raises(ValidationError, match="The legacy_operation_name bucket applies only to operation"):
+        AttackAnalyticsFilter.model_validate(
+            {"dimension": {"name": "operator"}, "values": [{"kind": "legacy_operation_name", "value": "x"}]}
+        )
+
+
+def test_legacy_operation_name_carries_a_string() -> None:
+    assert AttackAnalyticsValue(kind="legacy_operation_name", value="").value == ""
+    with pytest.raises(ValidationError):
+        AttackAnalyticsValue(kind="legacy_operation_name")
+
+
 @pytest.mark.parametrize(
     "data",
     [
@@ -256,7 +287,7 @@ def test_analytics_filter_keeps_additional_membership_constraints() -> None:
             "dimensions": [
                 {
                     "dimension": {"name": "operation"},
-                    "values": [{"value": "x" * 129}],
+                    "values": [{"kind": "legacy_operation_name", "value": "x" * 129}],
                 }
             ]
         },

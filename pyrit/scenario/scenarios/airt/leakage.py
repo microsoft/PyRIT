@@ -147,6 +147,5 @@ class Leakage(Scenario):
             build_matrix_atomic_attacks,
             context=context,
             objective_scorer=self._objective_scorer,
-            technique_converters=self._technique_converters,
             extra_factories={factory.name: factory for factory in _leakage_factories()},
         )

@@ -433,6 +433,30 @@ def test_image_compression_converter_preserves_rgb_icc_profile(mode: str) -> Non
             assert output.info["icc_profile"] == icc_profile
 
 
+@pytest.mark.usefixtures("sqlite_instance")
+@pytest.mark.parametrize(
+    ("pixel_value", "expected_value"),
+    [(-1, 0), (0, 0), (1024, 1024), (65535, 65535), (65536, 65535)],
+)
+async def test_image_compression_converter_integer_tiff_to_png(
+    *, tmp_path: Path, pixel_value: int, expected_value: int
+) -> None:
+    converter = ImageCompressionConverter(output_format="PNG", min_compression_threshold=0, fallback_to_original=False)
+    input_path = tmp_path / "integer.tiff"
+    with Image.new("I", (32, 32), pixel_value) as image:
+        image.save(input_path, "TIFF")
+
+    result = await converter.convert_async(prompt=str(input_path), input_type="image_path")
+
+    assert result.output_type == "image_path"
+    assert Path(result.output_text).suffix == ".png"
+    with Image.open(result.output_text) as output:
+        assert output.format == "PNG"
+        assert output.mode == "I;16"
+        assert output.size == (32, 32)
+        assert output.getextrema() == (expected_value, expected_value)
+
+
 @pytest.mark.parametrize(
     "settings",
     [

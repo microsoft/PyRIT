@@ -3,11 +3,17 @@ import { Outlet, useLocation, useNavigate } from 'react-router'
 
 import { useRegistryLayoutStyles } from './Registry.styles'
 
-const REGISTRY_TABS = ['targets', 'converters', 'scorers', 'techniques', 'scenario-presets'] as const
+const REGISTRY_TABS = [
+  'targets',
+  'converters',
+  'scorers',
+  'techniques',
+  'scenario-presets',
+  'scenario-suites',
+] as const
 
 /**
- * Keeps the tab selected while a section owns nested routes, which the preset
- * editor does — `/registry/scenario-presets/new` is still the presets tab.
+ * Keeps a tab selected while its section owns nested create and edit routes.
  */
 function selectedTabFromPath(pathname: string): string {
   return (
@@ -37,6 +43,7 @@ export default function RegistryLayout() {
         <Tab value="scorers">Scorers</Tab>
         <Tab value="techniques">Techniques</Tab>
         <Tab value="scenario-presets">Scenario presets</Tab>
+        <Tab value="scenario-suites">Suites</Tab>
       </TabList>
       <div className={styles.content}>
         <Outlet />

@@ -252,8 +252,27 @@ async def test_resume_retains_stored_id_or_legacy_null_async(
     assert stored.operation_id == operation_id
     resumed = ConcreteScenario(version=1, scenario_result_id=str(stored.id))
     resumed.set_params_from_args(args={"objective_target": mock_objective_target})
-    await resumed.initialize_async()
+    with patch.object(
+        sqlite_instance, "get_scenario_results_async", wraps=sqlite_instance.get_scenario_results_async
+    ) as load:
+        await resumed.initialize_async()
+    load.assert_awaited_once_with(scenario_result_ids=[str(stored.id)])
     assert resumed._operation_id == operation_id
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_context_snapshots_converter_containers_without_copying_instances() -> None:
+    from pyrit.converter import Base64Converter
+
+    scenario = ConcreteScenario(version=1)
+    scenario._objective_target = MockPromptTarget()
+    converter = Base64Converter()
+    scenario._technique_converters = {"technique": [converter]}
+    context = scenario._build_scenario_context(seed_groups_by_dataset={})
+    scenario._technique_converters["technique"].clear()
+    scenario._technique_converters["other"] = []
+    assert context.technique_converters == {"technique": [converter]}
+    assert context.technique_converters["technique"][0] is converter
 
 
 @pytest.mark.usefixtures("patch_central_database")

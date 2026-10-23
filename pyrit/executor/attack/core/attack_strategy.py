@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, assert_never, overload
 
 from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.logger import logger
@@ -599,12 +599,14 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
 
         if result.outcome == AttackOutcome.SUCCESS:
             message = f"{attack_name} achieved the objective. {reason}"
+        elif result.outcome == AttackOutcome.FAILURE:
+            message = f"{attack_name} did not achieve the objective. {reason}"
         elif result.outcome == AttackOutcome.UNDETERMINED:
             message = f"{attack_name} outcome is undetermined. {reason}"
         elif result.outcome == AttackOutcome.ERROR:
             message = f"{attack_name} failed with an error. {reason}"
         else:
-            message = f"{attack_name} did not achieve the objective. {reason}"
+            assert_never(result.outcome)
 
         self._logger.info(message)
 
