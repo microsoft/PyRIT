@@ -1002,11 +1002,7 @@ class AttackTechniqueFactory(Identifiable):
             attack=attack,
             seed_technique=self._seed_technique,
             requirements=self._requirements,
-            adversarial_prompts=(
-                seed_group.adversarial_prompts.model_copy(deep=True)
-                if seed_group is not None and seed_group.adversarial_prompts is not None
-                else None
-            ),
+            adversarial_prompts=(seed_group.adversarial_prompts if seed_group is not None else None),
         )
 
     def _apply_score_feedback_override(self, *, attack_scoring_config: AttackScoringConfig) -> AttackScoringConfig:

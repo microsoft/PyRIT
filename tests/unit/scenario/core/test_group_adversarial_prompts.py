@@ -17,6 +17,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     TreeOfAttacksWithPruningAttack,
 )
+from pyrit.executor.attack.compound import SequentialAttack, SequentialChildAttack
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AdversarialPrompts,
@@ -27,11 +28,14 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    ScenarioRunPlanGroupKind,
     Score,
     SeedObjective,
     SeedPrompt,
     get_common_json_schema,
 )
+from pyrit.scenario import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
 from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, IncompatibleTechniquePolicy
@@ -72,6 +76,55 @@ class _PolicyScorer(SubStringScorer):
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestGroupAdversarialPrompts:
+    @pytest.mark.parametrize("group_kind", [ScenarioRunPlanGroupKind.ATTACK, ScenarioRunPlanGroupKind.ADAPTIVE])
+    @pytest.mark.parametrize("binding", ["unbound", "different", "changed"])
+    def test_atomic_boundary_rejects_unbound_or_mismatched_prompts(
+        self, *, group_kind: ScenarioRunPlanGroupKind, binding: str
+    ) -> None:
+        source = _group()
+        bound_group = None
+        if binding == "different":
+            bound_group = _group(instructions="A different role.")
+        elif binding == "changed":
+            bound_group = source
+        technique = _factory(MockPromptTarget()).create(
+            objective_target=MockPromptTarget(),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=SubStringScorer(substring="policy")),
+            seed_group=bound_group,
+        )
+        if binding == "changed":
+            source.adversarial_prompts.system_prompt.value += "\nChanged instructions."
+            source.objective.metadata.update(source.adversarial_prompts.to_metadata())
+        with pytest.raises(IncompatibleTechniqueError, match="adversarial prompts.*bound"):
+            AtomicAttack(
+                atomic_attack_name="unbound",
+                attack_technique=technique,
+                seed_groups=[source],
+                group_kind=group_kind,
+            )
+
+    def test_compound_binding_retains_configured_child_identity(self) -> None:
+        source = _group()
+        target = MockPromptTarget()
+        child = _factory(MockPromptTarget()).create(
+            objective_target=target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=SubStringScorer(substring="policy")),
+            seed_group=source,
+        )
+        sequence = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(
+                    strategy=child.attack, seed_group=source, technique_identifier=child.get_identifier()
+                )
+            ],
+        )
+        unbound = AttackTechnique(attack=sequence)
+        bound = AttackTechnique(attack=sequence, adversarial_prompts=source.adversarial_prompts)
+        assert bound.get_identifier() == unbound.get_identifier()
+        atomic = AtomicAttack(atomic_attack_name="compound", attack_technique=bound, seed_groups=[source])
+        assert atomic.seed_groups == [source]
+
     def test_bound_technique_identity_includes_the_response_contract(self) -> None:
         group = _group()
         factory = _factory(MockPromptTarget())

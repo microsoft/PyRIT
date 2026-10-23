@@ -194,6 +194,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - A technique declares target and dataset requirements and permitted adaptation; targets own capabilities and adapters.
 - Named adversarial prompts use the attack's declared slot, parameter, and response-schema
   contracts. Dataset groups and inline groups use the same checks before construction.
+- Atomic attacks reject named group prompts that the technique has not bound. Baselines
+  deliberately omit adversarial inputs; compound techniques retain their child bindings.
 - **Does not own**: the conversation algorithm itself. Branching, turn management, and scoring decisions live in the executor it wraps — a technique only selects and configures existing components, and shouldn't implement new sending, scoring, or branching logic.
 
 **Framework Plans**:
