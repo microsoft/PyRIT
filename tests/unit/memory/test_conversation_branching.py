@@ -12,10 +12,10 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import event, select
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.memory.memory_models import (
@@ -26,7 +26,6 @@ from pyrit.memory.memory_models import (
     PromptConverterIdentifierEntry,
     TargetIdentifierEntry,
 )
-from pyrit.memory.memory_session import MemorySession
 from pyrit.models import (
     AttackResult,
     Conversation,
@@ -45,18 +44,6 @@ from unit.mocks import run_memory_session_async
 async def file_memory(*, tmp_path: Path) -> AsyncGenerator[SQLiteMemory, None]:
     memory = SQLiteMemory.__new__(SQLiteMemory)
     memory.__init__(db_path=tmp_path / "branching.db", skip_schema_migration=True)
-    memory.engine.dispose()
-    memory.engine = create_engine(memory.engine.url, connect_args={"timeout": 30})
-    memory.SessionFactory = sessionmaker(bind=memory.engine, class_=MemorySession)
-
-    def configure_busy_timeout(*, dbapi_connection: Any, **kwargs: Any) -> None:
-        cursor = dbapi_connection.cursor()
-        try:
-            cursor.execute("PRAGMA busy_timeout=30000")
-        finally:
-            cursor.close()
-
-    event.listen(memory._get_async_engine().sync_engine, "connect", configure_busy_timeout, named=True)
     try:
         Base.metadata.create_all(memory.engine)
         yield memory
