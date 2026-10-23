@@ -36,6 +36,8 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
+    validate_frequency_penalty,
+    validate_presence_penalty,
     validate_temperature,
     validate_top_p,
 )
@@ -161,6 +163,8 @@ class OpenAIChatTarget(OpenAITarget):
         # Validate temperature and top_p
         validate_temperature(temperature)
         validate_top_p(top_p)
+        validate_presence_penalty(presence_penalty)
+        validate_frequency_penalty(frequency_penalty)
 
         self._temperature = temperature
         self._top_p = top_p

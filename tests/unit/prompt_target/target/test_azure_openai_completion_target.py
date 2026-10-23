@@ -222,6 +222,28 @@ def test_invalid_temperature_raises(patch_central_database):
         )
 
 
+@pytest.mark.parametrize("presence_penalty", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_invalid_presence_penalty_raises(patch_central_database, presence_penalty: float):
+    with pytest.raises(PyritException, match="presence_penalty must be between -2 and 2"):
+        OpenAICompletionTarget(
+            model_name="gpt-35-turbo",
+            endpoint="https://mock.azure.com/",
+            api_key="mock-api-key",
+            presence_penalty=presence_penalty,
+        )
+
+
+@pytest.mark.parametrize("frequency_penalty", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_invalid_frequency_penalty_raises(patch_central_database, frequency_penalty: float):
+    with pytest.raises(PyritException, match="frequency_penalty must be between -2 and 2"):
+        OpenAICompletionTarget(
+            model_name="gpt-35-turbo",
+            endpoint="https://mock.azure.com/",
+            api_key="mock-api-key",
+            frequency_penalty=frequency_penalty,
+        )
+
+
 def test_invalid_top_p_raises(patch_central_database):
     """Test that invalid top_p values raise PyritException, as on the chat target."""
     with pytest.raises(PyritException, match="top_p must be between 0 and 1"):

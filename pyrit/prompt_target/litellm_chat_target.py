@@ -49,6 +49,8 @@ from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALIT
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
+    validate_frequency_penalty,
+    validate_presence_penalty,
     validate_temperature,
     validate_top_p,
     warn_truncated_response,
@@ -248,6 +250,8 @@ class LiteLLMChatTarget(PromptTarget):
 
         validate_temperature(temperature)
         validate_top_p(top_p)
+        validate_presence_penalty(presence_penalty)
+        validate_frequency_penalty(frequency_penalty)
 
         super().__init__(
             model_name=resolved_model,
