@@ -16,11 +16,11 @@ The returned attack is a plain ``SequentialAttack`` with
 (which technique ran, with what outcome, in what order) is not stamped onto
 the envelope — every child ``AttackResult`` in
 ``SequentialAttackResult.child_attack_results`` already carries its own
-``outcome`` and its own ``atomic_attack_identifier.eval_hash``. Callers that
-want a human-readable technique label per child read it directly from the
-child via ``child.get_attack_strategy_identifier().unique_name`` (the
-executor auto-stamps ``class_name`` and ``unique_name`` on every persisted
-row), so there is no separate ``{eval_hash: name}`` map to consult.
+``outcome`` and its own ``atomic_attack_identifier.eval_hash``. Each child also
+records the registered name of its technique (for example, ``crescendo``) in
+its metadata, read via ``child.technique_name``, so reports can label it
+without consulting a separate ``{eval_hash: name}`` map. The attack class
+remains available via ``child.get_attack_strategy_identifier()``.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from pyrit.executor.attack.compound.sequential_attack import (
     SequentialAttack,
     SequentialChildAttack,
 )
-from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier
+from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier, AttackResult
 from pyrit.scenario.core.technique_requirements import (
     IncompatibleTechniqueError,
     IncompatibleTechniquePolicy,
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
     from pyrit.executor.attack.core.attack_strategy import AttackStrategy
-    from pyrit.models import AttackResult, AttackSeedGroup, AttackTechniqueSeedGroup, ComponentIdentifier
+    from pyrit.models import AttackSeedGroup, AttackTechniqueSeedGroup, ComponentIdentifier
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.scenarios.adaptive.selectors import TechniqueSelector
@@ -68,6 +68,7 @@ class TechniqueBundle:
     seeds remain authoritative. Compatible candidates bind before selection so saved
     choices, statistics, and child results use the full configured technique identity.
     Concrete attacks remain supported for groups without named prompts.
+    The catalog name is recorded on each child's result metadata for reporting.
     """
 
     attack: AttackStrategy[Any, AttackResult] | None = None
@@ -278,10 +279,9 @@ class AdaptiveTechniqueDispatcher:
         Returns:
             SequentialAttack: The ready-to-run attack. Each child's
                 identity is captured by its own
-                ``atomic_attack_identifier.eval_hash`` after execution;
-                callers wanting the friendly technique name read it
-                directly from the child via
-                ``child.get_attack_strategy_identifier().unique_name``.
+                ``atomic_attack_identifier.eval_hash`` after execution,
+                and each child records its bundle's registered technique
+                name, read via ``child.technique_name``.
 
         Raises:
             ValueError: If ``seed_group.objective`` is not initialized,
@@ -351,6 +351,8 @@ class AdaptiveTechniqueDispatcher:
                 else None
             )
             metadata: dict[str, Any] = {}
+            if bundle.name:
+                metadata[AttackResult.TECHNIQUE_NAME_METADATA_KEY] = bundle.name
             if prepared.adaptation is not None:
                 self._selected_adaptations[chosen] = prepared.adaptation
                 metadata["seed_group_adaptation"] = {

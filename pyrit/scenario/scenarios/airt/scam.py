@@ -22,7 +22,6 @@ from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.core.technique_requirements import (
-    IncompatibleTechniquePolicy,
     TechniqueRequirements,
     check_target_compatibility,
     filter_seed_groups,
@@ -167,9 +166,9 @@ class Scam(Scenario):
     def _get_atomic_attack_from_technique(
         self,
         *,
+        context: ScenarioContext,
         technique: str,
         seed_groups: list[AttackSeedGroup],
-        incompatible_technique_policy: IncompatibleTechniquePolicy = IncompatibleTechniquePolicy.SKIP,
     ) -> AtomicAttack | None:
         """
         Translate the techniques into actual AtomicAttacks.
@@ -177,19 +176,14 @@ class Scam(Scenario):
         Args:
             technique (str): The technique to create the attack from.
             seed_groups (list[AttackSeedGroup]): Seed groups the attack draws from.
-            incompatible_technique_policy (IncompatibleTechniquePolicy): Action for known mismatches.
+            context (ScenarioContext): The resolved runtime inputs.
 
         Returns:
             AtomicAttack | None: The configured attack, or None when incompatible under SKIP.
 
         Raises:
-            ValueError: If scenario is not properly initialized or an unknown ScamTechnique is provided.
+            ValueError: If an unknown ScamTechnique is provided.
         """
-        # objective_target is guaranteed to be non-None by parent class validation
-        if self._objective_target is None:
-            raise ValueError(
-                "Scenario not properly initialized. Call await scenario.initialize_async() before running."
-            )
         factory: AttackTechniqueFactory | None = None
 
         if technique == "persuasive_rta":
@@ -229,11 +223,11 @@ class Scam(Scenario):
             raise ValueError(f"Unknown ScamTechnique: {technique}")
 
         if not check_target_compatibility(
-            target=self._objective_target,
+            target=context.objective_target,
             attack_class=factory.attack_class if factory is not None else RedTeamingAttack,
             requirements=requirements,
             technique_name=technique,
-            policy=incompatible_technique_policy,
+            policy=context.incompatible_technique_policy,
         ):
             return None
         compatible_groups = filter_seed_groups(
@@ -242,13 +236,13 @@ class Scam(Scenario):
             seed_technique=factory.seed_technique if factory is not None else None,
             technique_name=technique,
             dataset_name="scam",
-            policy=incompatible_technique_policy,
+            policy=context.incompatible_technique_policy,
         )
         if not compatible_groups:
             return None
         if factory is not None:
             attack_technique = factory.create(
-                objective_target=self._objective_target,
+                objective_target=context.objective_target,
                 attack_scoring_config=self._scorer_config,
                 adversarial_chat=self._adversarial_chat,
             )
@@ -258,7 +252,7 @@ class Scam(Scenario):
             )
             attack_technique = AttackTechnique(
                 attack=RedTeamingAttack(
-                    objective_target=self._objective_target,
+                    objective_target=context.objective_target,
                     attack_scoring_config=self._scorer_config,
                     attack_adversarial_config=self._adversarial_config,
                     max_turns=self.params["max_turns"],
@@ -270,7 +264,7 @@ class Scam(Scenario):
             seed_groups=compatible_groups,
             adversarial_chat=self._adversarial_chat,
             objective_scorer=self._scorer_config.objective_scorer,
-            memory_labels=self._memory_labels,
+            memory_labels=context.memory_labels,
         )
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
@@ -301,9 +295,9 @@ class Scam(Scenario):
         for technique in techniques:
             atomic = await asyncio.to_thread(
                 self._get_atomic_attack_from_technique,
+                context=context,
                 technique=technique,
                 seed_groups=seed_groups,
-                incompatible_technique_policy=context.incompatible_technique_policy,
             )
             if atomic is not None:
                 atomic_attacks.append(atomic)

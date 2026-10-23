@@ -201,13 +201,13 @@ class TestLoadDefaultDatasetsParameters:
     """Tests for the dataset_names and tags selection parameters."""
 
     def test_supported_parameters_defaults(self) -> None:
-        params = {p.name: p for p in LoadDefaultDatasets().supported_parameters}
+        params = {p.name: p for p in LoadDefaultDatasets.supported_parameters()}
         assert params["dataset_names"].default == []
         assert params["tags"].default == []
 
     async def test_dataset_names_loads_exact_names(self) -> None:
         initializer = LoadDefaultDatasets()
-        initializer.params = {"dataset_names": ["alpha", "beta"]}
+        initializer.set_params_from_args(args={"dataset_names": ["alpha", "beta"]})
 
         with (
             patch.object(ScenarioRegistry, "get_all_registered_class_metadata") as mock_list_metadata,
@@ -228,7 +228,7 @@ class TestLoadDefaultDatasetsParameters:
 
     async def test_tags_selects_via_metadata_filter(self) -> None:
         initializer = LoadDefaultDatasets()
-        initializer.params = {"tags": ["safety"]}
+        initializer.set_params_from_args(args={"tags": ["safety"]})
 
         with (
             patch.object(SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock) as mock_names,
@@ -250,7 +250,7 @@ class TestLoadDefaultDatasetsParameters:
 
     async def test_dataset_names_take_precedence_over_tags(self) -> None:
         initializer = LoadDefaultDatasets()
-        initializer.params = {"dataset_names": ["alpha"], "tags": ["safety"]}
+        initializer.set_params_from_args(args={"dataset_names": ["alpha"], "tags": ["safety"]})
 
         with (
             patch.object(SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock) as mock_names,

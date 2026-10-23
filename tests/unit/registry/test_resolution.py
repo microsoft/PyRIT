@@ -15,7 +15,7 @@ from pyrit.common import REQUIRED_VALUE, forward_init_parameters
 from pyrit.common.apply_defaults import _RequiredValueSentinel
 from pyrit.models import Message, MessagePiece
 from pyrit.models.identifiers import ConverterIdentifier, TargetIdentifier
-from pyrit.models.parameter import ComponentType
+from pyrit.models.parameter import ComponentType, Parameter
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components import ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.resolution import (
@@ -24,7 +24,48 @@ from pyrit.registry.resolution import (
     display_choices,
     reject_non_external_params,
     resolve_constructor_args,
+    resolve_declared_params,
+    validate_declared_params,
 )
+
+
+@pytest.mark.parametrize(
+    ("annotation", "raw", "expected"),
+    [
+        (str, "name", "name"),
+        (int, "7", 7),
+        (bool, "false", False),
+        (list[str], [], []),
+        (list[int], ["1", "2"], [1, 2]),
+    ],
+)
+def test_declared_required_values_resolve(annotation: Any, raw: Any, expected: Any) -> None:
+    declared = [Parameter(name="value", description="Required input", param_type=annotation, default=REQUIRED_VALUE)]
+    result = resolve_declared_params(declared=declared, raw_args={"value": raw}, owner="Test")
+    assert result == {"value": expected}
+    validate_declared_params(declared=declared, params=result, owner="Test")
+
+
+@pytest.mark.parametrize("raw_args", [{}, {"value": None}, {"value": REQUIRED_VALUE}])
+def test_declared_required_values_reject_missing_input(raw_args: dict[str, Any]) -> None:
+    declared = [Parameter(name="value", description="Required input", param_type=str, default=REQUIRED_VALUE)]
+    with pytest.raises(ValueError, match="required.*value"):
+        resolve_declared_params(declared=declared, raw_args=raw_args, owner="Test")
+
+
+def test_declared_required_values_can_be_deferred_for_metadata() -> None:
+    declared = [Parameter(name="value", description="Required input", param_type=int, default=REQUIRED_VALUE)]
+    result = resolve_declared_params(declared=declared, raw_args={}, owner="Test", allow_missing_required=True)
+    assert result == {"value": None}
+    with pytest.raises(ValueError, match="required.*value"):
+        validate_declared_params(declared=declared, params=result, owner="Test")
+
+
+def test_declared_optional_none_is_not_a_required_sentinel() -> None:
+    declared = [Parameter(name="value", description="Optional input", param_type=int)]
+    result = resolve_declared_params(declared=declared, raw_args={}, owner="Test")
+    assert result == {"value": None}
+    validate_declared_params(declared=declared, params=result, owner="Test")
 
 
 class MockPromptTarget(PromptTarget):

@@ -7,9 +7,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pyrit.cli._cli_args import _parse_initializer_arg
+from pyrit.common import REQUIRED_VALUE
 from pyrit.models.parameter import Parameter
 from pyrit.registry.components.initializer_registry import PYRIT_PATH, InitializerRegistry
 from pyrit.registry.custom_initializer_storage import CustomInitializerStorage
+from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup.initialization import _execute_initializers_async
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
@@ -381,9 +385,9 @@ def test_create_from_script_paths_missing_file_raises(lazy_registry):
 class _ParamInitializer(PyRITInitializer):
     """An initializer that accepts a single declared parameter."""
 
-    @property
-    def supported_parameters(self) -> list[Parameter]:
-        return [Parameter(name="mode", description="Operation mode", default="fast")]
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        return [Parameter(name="mode", description="Operation mode", param_type=str, default="fast")]
 
     async def initialize_async(self) -> None:
         pass
@@ -396,17 +400,17 @@ def test_create_and_configure_builds_and_sets_params(lazy_registry):
     instance = lazy_registry.create_and_configure("param_init", initializer_params={"mode": "slow"})
 
     assert isinstance(instance, _ParamInitializer)
-    assert instance.params == {"mode": ["slow"]}
+    assert instance.params == {"mode": "slow"}
 
 
-def test_create_and_configure_without_params_leaves_instance_unconfigured(lazy_registry):
-    """Test that create_and_configure returns an unconfigured instance when no params are given."""
+def test_create_and_configure_without_params_resolves_defaults(lazy_registry):
+    """Omitted arguments still populate declared defaults."""
     lazy_registry.register_class(_ParamInitializer, name="param_init")
 
     instance = lazy_registry.create_and_configure("param_init")
 
     assert isinstance(instance, _ParamInitializer)
-    assert instance.params == {}
+    assert instance.params == {"mode": "fast"}
 
 
 def test_create_and_configure_unknown_param_raises_value_error(lazy_registry):
@@ -421,6 +425,80 @@ def test_create_and_configure_unknown_name_raises_key_error(lazy_registry):
     """Test that an unregistered name raises KeyError."""
     with pytest.raises(KeyError):
         lazy_registry.create_and_configure("does_not_exist")
+
+
+@pytest.mark.parametrize("cli", [False, True])
+def test_configuration_resolves_real_initializer_without_execution(
+    lazy_registry: InitializerRegistry, cli: bool
+) -> None:
+    class ConfiguredInitializer(PyRITInitializer):
+        executed = False
+
+        @classmethod
+        def supported_parameters(cls) -> list[Parameter]:
+            return [
+                Parameter(name="enabled", description="Enable setup", param_type=bool, default=True),
+                Parameter(name="count", description="Count", param_type=int, default=7),
+                Parameter(name="tags", description="Tags", param_type=list[str], default=[]),
+            ]
+
+        @property
+        def required_env_vars(self) -> list[str]:
+            return ["PYRIT_TEST_UNSET_REQUIRED_VARIABLE"]
+
+        async def initialize_async(self) -> None:
+            self.executed = True
+
+    lazy_registry.register_class(ConfiguredInitializer, name="configured")
+    selection = (
+        _parse_initializer_arg("configured:enabled=false;count=9;tags=one,two")
+        if cli
+        else {"name": "configured", "args": {"enabled": False, "count": 9, "tags": ["one", "two"]}}
+    )
+    config = ConfigurationLoader(initializers=[selection])
+    [initializer] = config.resolve_initializers(registry=lazy_registry)
+    assert isinstance(initializer, ConfiguredInitializer)
+    assert initializer.params == {"enabled": False, "count": 9, "tags": ["one", "two"]}
+    assert not initializer.executed
+    [metadata] = lazy_registry.get_all_registered_class_metadata()
+    assert [parameter.name for parameter in metadata.supported_parameters] == ["enabled", "count", "tags"]
+
+
+class _RequiredInitializer(PyRITInitializer):
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        return [Parameter(name="count", description="Required count", param_type=int, default=REQUIRED_VALUE)]
+
+    async def initialize_async(self) -> None:
+        self.executed_count = self.params["count"]
+
+
+def test_required_initializer_metadata_does_not_need_runtime_values(lazy_registry: InitializerRegistry) -> None:
+    lazy_registry.register_class(_RequiredInitializer, name="required")
+    [metadata] = lazy_registry.get_all_registered_class_metadata()
+    [parameter] = metadata.supported_parameters
+    assert parameter.required
+    assert parameter.default is REQUIRED_VALUE
+    assert metadata.class_description != "Error loading initializer metadata"
+
+
+async def test_required_initializer_configures_once_before_bootstrap(lazy_registry: InitializerRegistry) -> None:
+    lazy_registry.register_class(_RequiredInitializer, name="required")
+    configure = PyRITInitializer.set_params_from_args
+    with patch.object(PyRITInitializer, "set_params_from_args", autospec=True, side_effect=configure) as configured:
+        initializer = lazy_registry.create_and_configure("required", initializer_params={"count": ["7"]})
+        params = initializer.params
+        await _execute_initializers_async(initializers=[initializer], raise_on_initializer_error=True)
+    configured.assert_called_once()
+    assert isinstance(initializer, _RequiredInitializer)
+    assert initializer.executed_count == 7
+    assert initializer.params is params
+
+
+def test_required_initializer_configuration_rejects_missing_value(lazy_registry: InitializerRegistry) -> None:
+    lazy_registry.register_class(_RequiredInitializer, name="required")
+    with pytest.raises(ValueError, match="required.*count"):
+        lazy_registry.create_and_configure("required")
 
 
 # ============================================================================

@@ -24,6 +24,7 @@ from pyrit.registry import ScenarioPresetConflictError, ScenarioPresetNameRegist
 
 PRESET_NAME = "quick_scan"
 SCENARIO_NAME = "foundry.red_team_agent"
+OPERATION_ID = "11111111-1111-4111-8111-111111111111"
 
 
 @pytest.fixture
@@ -474,7 +475,7 @@ class TestResolvePreset:
 
         response = client.post(
             f"/api/scenario-presets/{PRESET_NAME}/resolve",
-            json={"target_name": "gpt4"},
+            json={"target_name": "gpt4", "operation_id": OPERATION_ID},
         )
 
         assert response.status_code == 200
@@ -482,6 +483,7 @@ class TestResolvePreset:
         assert body["scenario_name"] == SCENARIO_NAME
         assert body["target_name"] == "gpt4"
         assert body["max_concurrency"] == 10
+        assert body["operation_id"] == OPERATION_ID
         assert body["techniques"] is None
 
     def test_resolve_reports_a_missing_preset(self, client: TestClient, service: MagicMock) -> None:

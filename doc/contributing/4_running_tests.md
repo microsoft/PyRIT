@@ -78,15 +78,45 @@ CI workers. These are deadlock backstops, not expected runtimes. Production dead
 are unchanged. Deadline and cancellation tests use explicit controls and keep their
 separate timing assertions.
 
+Async correctness tests can use `TEST_WATCHDOG_SECONDS` from `tests/unit/async_utils.py`
+for a finite 300-second deadlock backstop. Tests that start background tasks must
+release any test-controlled waits and join their tasks before removing mocks or
+disposing fixtures, including when a watchdog expires. When waiting for a task to
+signal readiness, also watch for that task finishing so an early exception is not
+hidden by the readiness timeout.
+
 The discovery provider-state test and Copilot cancellation-test startup use the
 shared `TEST_WATCHDOG_SECONDS` backstop in `tests/unit/async_utils.py`. Discovery
 timeout coverage expires the real cancellation path only after the request starts.
 Event-controlled analytics expiry tests freeze both deadline clocks so floating-point
 rounding cannot turn a valid query budget into a failed assertion.
 
+The target-type route test starts target metadata discovery, waits for a signal
+that it has started, and keeps it paused while checking that `/api/health`
+responds within 10 seconds. Waiting for that signal does not use an extra worker
+thread. The waits for discovery to start and for background work to finish use
+the shared 300-second timeout, so the test fails rather than waiting forever if
+work gets stuck. This timeout is separate from the health-response requirement.
+The test runs with one or two worker threads, including failure and cancellation
+cases. In every case, the request and discovery worker finish before the test
+restores patched functions and closes the HTTP client.
+
+The scorer-validation cancellation test keeps its five-second observer around
+scorer draining and native SQLite connection cleanup. ERROR-result persistence is
+held behind an event until those assertions pass, then awaited separately with the
+finite completion watchdog. The blocked validation read is not released to make
+either step finish.
+
 For scenario correctness tests, wait for the owned task to finish, including
 persistence and scheduler handoff. Use events to control concurrent steps and a
 finite test watchdog to detect deadlocks, not short per-step latency limits.
+Catalog queue-admission and configured-estimate independence tests use the existing
+estimate watchdog fixture. Observe the queued semaphore acquisition before checking
+that its execution deadline has not started, and verify configured completion while
+catalog capacity is still occupied. Check each deadline against completed admissions
+and spy on catalog acquisition during configured work to assert independence directly.
+Release gates and drain owned requests and service workers in `finally`, including
+when a readiness assertion fails.
 For frontend modal tests, use fake timers and wait for an accessible control on
 the destination page. A route change does not mean that modal cleanup has restored
 background accessibility.

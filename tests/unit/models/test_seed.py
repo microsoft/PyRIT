@@ -281,9 +281,9 @@ def test_seed_prompt_keeps_path_resolved_at_load_when_its_condition_is_deferred(
         "{{ datasets_path }}",
         "{{ datasets_path.name }}",
         "{{ datasets_path.as_posix() }}",
-        "{{ datasets_path.exists() }}",
-        "{{ datasets_path.is_dir() }}",
-        "{{ datasets_path.resolve().name }}",
+        "{{ datasets_path.is_absolute() }}",
+        "{{ datasets_path.parent.name }}",
+        "{{ (datasets_path / 'sample.txt').name }}",
         "{% for part in datasets_path.parts %}[{{ part }}]{% endfor %}",
         "{{ datasets_path is string }}",
     ],
@@ -357,14 +357,17 @@ def test_untrusted_template_path_filter_does_not_expose_file_access(
 @pytest.mark.parametrize(
     "source",
     [
-        "{% if datasets_path.exists() and flag %}{{ prompt }}{% endif %}",
-        "{% if datasets_path . exists () and flag %}{{ prompt }}{% endif %}",
-        "{{ datasets_path.exists() }} {{ prompt }}{% if flag %}yes{% endif %}",
-        "{% set local = datasets_path %}{{ local.exists() }} {% if flag %}{{ prompt }}{% endif %}",
-        "{% set local = datasets_path.parent %}{{ local.is_dir() }} {% if flag %}{{ prompt }}{% endif %}",
+        "{% if datasets_path.is_absolute() and flag %}{{ prompt }}{% endif %}",
+        "{% if datasets_path . is_absolute () and flag %}{{ prompt }}{% endif %}",
+        "{{ datasets_path.is_absolute() }} {{ prompt }}{% if flag %}yes{% endif %}",
+        "{% set local = datasets_path %}{{ local.is_absolute() }} {% if flag %}{{ prompt }}{% endif %}",
+        "{% set local = datasets_path.parent %}{{ local.name }} {% if flag %}{{ prompt }}{% endif %}",
         "{{ datasets_path.name ~ prompt }}{% if flag %}yes{% endif %}",
-        "{%- if flag -%}{{ datasets_path.exists() }} {{ prompt }}{%- endif -%}",
-        "{% raw %}{{ datasets_path.exists() }}{% endraw %}{{ datasets_path.exists() }}{% if flag %}yes{% endif %}",
+        "{%- if flag -%}{{ datasets_path.is_absolute() }} {{ prompt }}{%- endif -%}",
+        (
+            "{% raw %}{{ datasets_path.is_absolute() }}{% endraw %}{{ datasets_path.is_absolute() }}"
+            "{% if flag %}yes{% endif %}"
+        ),
     ],
 )
 def test_deferred_template_preserves_bound_path_operations_in_expressions(
@@ -382,12 +385,12 @@ def test_deferred_template_preserves_bound_path_operations_in_expressions(
 
 
 @pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
-def test_deferred_template_keeps_fully_bound_directory_loop(
+def test_deferred_template_keeps_fully_bound_path_loop(
     *, seed_class: type[SeedPrompt | SeedObjective], tmp_path: pathlib.Path
 ) -> None:
-    (tmp_path / "sample.txt").write_text("rainbows", encoding="utf-8")
     source = (
-        "{% for entry in datasets_path.iterdir() %}{{ entry.name }}:{{ entry.exists() }}{% endfor %}"
+        "{% for part in datasets_path.parts %}[{{ part }}]{% endfor %}"
+        "{% for parent in datasets_path.parents %}<{{ parent.name }}>{% endfor %}"
         "{% if flag %}{{ prompt }}{% endif %}"
     )
     expected = (
@@ -406,24 +409,132 @@ def test_deferred_template_keeps_fully_bound_directory_loop(
 
 
 @pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
-def test_deferred_template_keeps_file_read_result_at_load(
-    *, seed_class: type[SeedPrompt | SeedObjective], tmp_path: pathlib.Path
+@pytest.mark.parametrize(
+    "source",
+    [
+        "{{ (datasets_path / 'secret.txt').read_text() }}",
+        "{{ (datasets_path / 'secret.txt').read_bytes() }}",
+        "{{ (datasets_path / 'secret.txt').open().read() }}",
+        "{{ (datasets_path / 'secret.txt').exists() }}",
+        "{% for entry in datasets_path.iterdir() %}{{ entry.name }}{% endfor %}",
+        "{% for entry in datasets_path.glob('*') %}{{ entry.name }}{% endfor %}",
+    ],
+)
+def test_trusted_template_cannot_read_the_filesystem_through_a_supplied_path(
+    *, seed_class: type[SeedPrompt | SeedObjective], source: str, tmp_path: pathlib.Path
 ) -> None:
-    source_file = tmp_path / "sample.txt"
-    source_file.write_text("rainbows 'quoted' \\ text", encoding="utf-8")
+    (tmp_path / "secret.txt").write_text("TOP-SECRET", encoding="utf-8")
     with (
-        patch("pyrit.models.seeds.seed_prompt.PATHS_DICT", {"datasets_path": source_file}),
-        patch("pyrit.models.seeds.seed_objective.PATHS_DICT", {"datasets_path": source_file}),
+        patch("pyrit.models.seeds.seed_prompt.PATHS_DICT", {"datasets_path": tmp_path}),
+        patch("pyrit.models.seeds.seed_objective.PATHS_DICT", {"datasets_path": tmp_path}),
     ):
-        template = seed_class(
-            value="{% if flag %}{{ datasets_path.read_text(encoding='utf-8') }}{% endif %}",
-            data_type="text",
-            is_jinja_template=True,
-        )
-    source_file.unlink()
-    reloaded = seed_class(value=template.value, data_type="text")
+        template = seed_class(value=source, data_type="text", is_jinja_template=True)
 
-    assert reloaded.render_template_value(flag=True) == "rainbows 'quoted' \\ text"
+    assert template.value == source
+
+
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "{{ (datasets_path / 'pwned.txt').write_text('owned') }}",
+        "{{ (datasets_path / 'pwned.txt').write_bytes('owned'.encode()) }}",
+        "{{ (datasets_path / 'pwned.txt').touch() }}",
+        "{{ (datasets_path / 'pwned').mkdir() }}",
+        "{{ (datasets_path / 'secret.txt').rename(datasets_path / 'pwned.txt') }}",
+        "{{ (datasets_path / 'secret.txt').unlink() }}",
+    ],
+)
+def test_trusted_template_cannot_modify_the_filesystem_through_a_supplied_path(
+    *, seed_class: type[SeedPrompt | SeedObjective], source: str, tmp_path: pathlib.Path
+) -> None:
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP-SECRET", encoding="utf-8")
+    with (
+        patch("pyrit.models.seeds.seed_prompt.PATHS_DICT", {"datasets_path": tmp_path}),
+        patch("pyrit.models.seeds.seed_objective.PATHS_DICT", {"datasets_path": tmp_path}),
+    ):
+        seed_class(value=source, data_type="text", is_jinja_template=True)
+
+    assert list(tmp_path.iterdir()) == [secret]
+    assert secret.read_text(encoding="utf-8") == "TOP-SECRET"
+
+
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "{{ datasets_path.parser.os.environ['PYRIT_TEST_SECRET'] }}",
+        "{{ (datasets_path | attr('parser')).os.environ['PYRIT_TEST_SECRET'] }}",
+        "{{ datasets_path['parser'].os.environ['PYRIT_TEST_SECRET'] }}",
+        "{{ '{0.parser.os.environ}'.format(datasets_path) }}",
+    ],
+)
+def test_trusted_template_cannot_reach_the_os_module_through_a_supplied_path(
+    *, seed_class: type[SeedPrompt | SeedObjective], source: str
+) -> None:
+    with patch.dict("os.environ", {"PYRIT_TEST_SECRET": "leaked-env-value"}):
+        template = seed_class(value=source, data_type="text", is_jinja_template=True)
+
+    assert "leaked-env-value" not in template.value
+
+
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+@pytest.mark.parametrize(
+    "access",
+    [
+        "{{ (datasets_path / 'secret.txt').read_text() }}",
+        "{{ (datasets_path / 'pwned.txt').write_text('owned') }}",
+        "{{ datasets_path.parser.os.environ['PYRIT_TEST_SECRET'] }}",
+    ],
+)
+def test_deferred_template_cannot_reach_the_filesystem_through_a_supplied_path(
+    *, seed_class: type[SeedPrompt | SeedObjective], access: str, tmp_path: pathlib.Path
+) -> None:
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP-SECRET", encoding="utf-8")
+    source = "{% if flag %}{{ prompt }}{% endif %}" + access
+    with (
+        patch.dict("os.environ", {"PYRIT_TEST_SECRET": "leaked-env-value"}),
+        patch("pyrit.models.seeds.seed_prompt.PATHS_DICT", {"datasets_path": tmp_path}),
+        patch("pyrit.models.seeds.seed_objective.PATHS_DICT", {"datasets_path": tmp_path}),
+    ):
+        template = seed_class(value=source, data_type="text", is_jinja_template=True)
+        reloaded = seed_class(value=template.value, data_type="text")
+        with pytest.raises(ValueError, match="Error rendering template") as error:
+            reloaded.render_template_value(flag=True, prompt="rainbows")
+
+    assert template.value.startswith("{% set datasets_path = ")
+    assert template.value.endswith(source)
+    leaked = template.value + str(error.value)
+    assert "TOP-SECRET" not in leaked
+    assert "leaked-env-value" not in leaked
+    assert list(tmp_path.iterdir()) == [secret]
+
+
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+def test_untrusted_template_path_filter_does_not_expose_the_os_module(
+    seed_class: type[SeedPrompt | SeedObjective],
+) -> None:
+    template = seed_class(
+        value="{{ ('sample' | pyrit_path).parser.os.environ['PYRIT_TEST_SECRET'] }}",
+        data_type="text",
+    )
+
+    with (
+        patch.dict("os.environ", {"PYRIT_TEST_SECRET": "leaked-env-value"}),
+        pytest.raises(ValueError, match="Error rendering template") as error,
+    ):
+        template.render_template_value()
+
+    assert "leaked-env-value" not in str(error.value)
+
+
+@pytest.mark.parametrize(("name", "path"), list(PATHS_DICT.items()))
+def test_trusted_template_formats_every_path_constant_unchanged(*, name: str, path: pathlib.Path) -> None:
+    template = SeedPrompt(value="{{ " + name + " }}", data_type="text", is_jinja_template=True)
+
+    assert template.value == str(path)
 
 
 @pytest.mark.parametrize("bound", [None, False, 0, (), ("rainbows",), ["rainbows"], {"label": "rainbows"}])

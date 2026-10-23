@@ -367,7 +367,7 @@ export default function ChatWindow({
   const [isFindingDialogOpen, setIsFindingDialogOpen] = useState(false)
   const outcomeButtonRef = useRef<HTMLButtonElement>(null)
   const [temperature, setTemperature] = useState('')
-  const [temperatureExplanationAttackId, setTemperatureExplanationAttackId] = useState<string | null>(null)
+  const [temperatureExplanationId, setTemperatureExplanationId] = useState<string | null>(null)
   const [temperatureAttackId, setTemperatureAttackId] = useState(attackResultId)
   if (temperatureAttackId !== attackResultId) {
     setTemperatureAttackId(attackResultId)
@@ -1694,6 +1694,10 @@ export default function ChatWindow({
   const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
   const temperatureTarget = editDraft !== null ? editorTarget : activeTarget
   const temperatureReadOnly = editDraft === null && Boolean(attackResultId) && targetResolutionStatus !== 'unbound'
+  const temperatureExplanation = temperatureTarget && !temperatureTarget.supports_temperature_override
+    ? temperatureTarget.reconstruction_error ?? 'This target does not support a separate temperature setting.'
+    : temperatureReadOnly ? 'Temperature can only be modified in a new attack' : ''
+  const temperatureExplanationContext = attackResultId ?? temperatureTarget?.identifier.hash
   const unboundHistoryError = targetResolutionStatus === 'unbound' && activeTarget
     ? historyReplayDisabledReason(activeTarget, messages) : undefined
   const repeatDisabledReason = converters.repeatDisabledReason
@@ -1802,9 +1806,20 @@ export default function ChatWindow({
     ...(!runtime.ready ? ['The runtime is not ready. Wait for initialization to finish.'] : []),
     ...(isSending ? ['A message is being sent. Wait for the response.'] : []),
     ...(isLoadingAttack ? ['The attack is loading. Wait for it to finish.'] : []),
+    ...(isEvidenceUnavailable ? ['This finding evidence is unavailable. Sending is disabled.'] : []),
     ...(hasProcessingError
       ? ['This conversation contains a target error. Use Copy or Branch on the failed prompt to branch into a new conversation or attack.']
       : []),
+  ]
+  const sendDisabledReasons = [
+    ...(!activeTarget ? ['Select a target to send a message.'] : []),
+    ...(!attackResultId && !defaultsReady
+      ? [newActivityBlockedReason ?? 'Default labels are not ready. Wait for them to load.'] : []),
+    ...(editDraft !== null ? ['Finish editing the conversation before sending.'] : []),
+    ...(isLoadingMessages || awaitingConversationLoad ? ['The conversation is loading. Wait for it to finish.'] : []),
+    ...(sendIssue?.blocking ? [sendIssue.description] : []),
+    ...(converters.isConverting ? ['A conversion is running. Wait for it to finish.'] : []),
+    ...(unboundHistoryError ? [`${unboundHistoryError} Choose a target that can replay this saved conversation before sending.`] : []),
   ]
 
   const handleUseAsTemplate = (): void => { void beginEdit(defaultBranchTarget ?? activeTarget) }
@@ -1852,19 +1867,17 @@ export default function ChatWindow({
         </div>
         {temperatureTarget && (
           <Field label="Temperature:" orientation="horizontal" size="small" className={styles.temperatureField}
-            hint={temperatureReadOnly ? undefined
-              : temperatureTarget.supports_temperature_override
-                ? editDraft !== null ? 'Changes apply only to a new attack.' : undefined
-                : temperatureTarget.reconstruction_error ?? 'This target does not support a separate temperature setting.'}>
-            <Tooltip content="Temperature can only be modified in a new attack" relationship="description"
-              visible={temperatureReadOnly && temperatureExplanationAttackId === attackResultId}
+            hint={!temperatureReadOnly && temperatureTarget.supports_temperature_override && editDraft !== null
+              ? 'Changes apply only to a new attack.' : undefined}>
+            <Tooltip content={temperatureExplanation} relationship="description"
+              visible={Boolean(temperatureExplanation) && temperatureExplanationId === temperatureExplanationContext}
               onVisibleChange={(_, data) => {
-                setTemperatureExplanationAttackId(temperatureReadOnly && data.visible ? attackResultId : null)
+                setTemperatureExplanationId(data.visible ? temperatureExplanationContext ?? null : null)
               }}>
               <span
-                tabIndex={temperatureReadOnly && (isSending || isSavingEditor || !temperatureTarget.supports_temperature_override) ? 0 : undefined}
+                tabIndex={!temperatureTarget.supports_temperature_override || temperatureReadOnly && (isSending || isSavingEditor) ? 0 : undefined}
                 onPointerDownCapture={() => {
-                  if (temperatureReadOnly) setTemperatureExplanationAttackId(attackResultId)
+                  if (temperatureReadOnly) setTemperatureExplanationId(temperatureExplanationContext ?? null)
                 }}>
                 <Input type="number" min={0} max={2} step={0.1} size="small" className={styles.temperatureInput}
                   aria-label="Temperature"
@@ -2110,7 +2123,7 @@ export default function ChatWindow({
           ),
         )}
         {sendIssue && (
-          <MessageBar intent="error">
+          <MessageBar intent="error" aria-label="Message send status">
             <MessageBarBody>{sendIssue.description}</MessageBarBody>
             <MessageBarActions>
               {sendIssue.draft && (
@@ -2141,7 +2154,8 @@ export default function ChatWindow({
             onUndo: () => { void handleUndoLastSend() },
           } : undefined}
           onSend={handleSend}
-          sendDisabled={!activeTarget || (!attackResultId && !defaultsReady) || editDraft !== null || isLoadingMessages || awaitingConversationLoad || sendIssue?.blocking || converters.isConverting || isUndoingSend || Boolean(unboundHistoryError)}
+          sendDisabled={sendDisabledReasons.length > 0}
+          sendDisabledReasons={sendDisabledReasons}
           repeatDisabledReason={repeatDisabledReason}
           conversionRevisionKey={conversionRevisionKey}
           disabledReasons={inputDisabledReasons}

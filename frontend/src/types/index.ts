@@ -605,9 +605,13 @@ export type AttackAnalyticsDimension =
       readonly converter_direction?: 'request'
     }
 
-/** Absence keys cannot collide with literal values such as "Unknown" or "No converters". */
+/**
+ * Absence keys cannot collide with literal values such as "Unknown" or "No converters".
+ * Operation `value` keys are saved Operation IDs; `legacy_operation_name` keys are
+ * names stored without an Operation ID and apply only to the Operation dimension.
+ */
 export type AttackAnalyticsValue =
-  | { readonly kind: 'value'; readonly value: string }
+  | { readonly kind: 'value' | 'legacy_operation_name'; readonly value: string }
   | { readonly kind: 'missing' | 'no_converters'; readonly value: null }
 
 export interface AttackAnalyticsFilter {
@@ -691,6 +695,8 @@ export interface AttackAnalyticsResultRow {
   readonly outcome: AttackOutcome
   readonly updated_at: string
   readonly operation: string | null
+  /** Lowercase saved Operation ID. Null with a non-null `operation` marks legacy activity saved with only a name. */
+  readonly operation_id: string | null
   readonly operator: string | null
   readonly attack_type: string | null
   readonly target_model: string | null
@@ -1296,8 +1302,8 @@ export interface ListRegisteredScenariosResponse {
  *
  * Every optional field is tri-state: absent means "use the scenario's own default",
  * so a preset only pins what the author deliberately chose. It carries no target,
- * concurrency, retries or labels — those are launch-time decisions supplied by
- * `ResolveScenarioPresetRequest`.
+ * Operation attribution, concurrency, retries or labels — those are launch-time
+ * decisions supplied by `ResolveScenarioPresetRequest`.
  */
 export interface ScenarioPreset {
   name: string
@@ -1347,6 +1353,49 @@ export interface UpdateScenarioPresetRequest {
   expected_version: string
 }
 
+export interface ScenarioSuiteEntry {
+  entry_id: string
+  preset_name: string
+}
+
+/** A user-authored, ordered collection of scenario preset references. */
+export interface ScenarioSuite {
+  name: string
+  schema_version: number
+  description?: string | null
+  /** Who created the suite. Descriptive only; never used to authorize a read or a write. */
+  author?: string | null
+  entries: ScenarioSuiteEntry[]
+}
+
+/** Current deployment-specific status for one suite entry. */
+export interface ScenarioSuiteEntryStatus {
+  entry_id: string
+  preset_name: string
+  origin: 'stored' | 'registered' | null
+  preset_version: string | null
+  /** Advisory only. Missing or invalid preset references do not prevent saving the suite. */
+  issues: PresetIssue[]
+}
+
+export interface ScenarioSuiteResponse {
+  suite: ScenarioSuite
+  /** Opaque document version required to update the suite. */
+  version: string
+  /** Ordered exactly like `suite.entries`. */
+  entry_statuses: ScenarioSuiteEntryStatus[]
+}
+
+export interface ScenarioSuiteListResponse {
+  source: string
+  items: ScenarioSuiteResponse[]
+}
+
+export interface UpdateScenarioSuiteRequest {
+  suite: ScenarioSuite
+  expected_version: string
+}
+
 /** The launch-owned fields a preset deliberately omits. */
 export interface ResolveScenarioPresetRequest {
   expected_version?: string | null
@@ -1356,6 +1405,7 @@ export interface ResolveScenarioPresetRequest {
   initializer_args?: Record<string, Record<string, unknown>> | null
   max_concurrency?: number | null
   max_retries?: number | null
+  operation_id?: string | null
   labels?: Record<string, string> | null
 }
 
