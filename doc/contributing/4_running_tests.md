@@ -75,6 +75,10 @@ The documentation JavaScript suites in `test_docs_javascript.py` also use one
 Node process per suite and the shared correctness watchdog. Their per-VM
 execution limits remain unchanged.
 
+The Bash deployment helper in `test_code_deployment.py` uses the same shared
+watchdog for subprocess completion. Readiness and rollback tests retain their
+simulated operation deadlines, polling assertions, and signal exit-code checks.
+
 ## Running a subset while iterating
 
 For a narrower run, invoke `pytest` directly. You can invoke pytest if it's in your path or via python; either `pytest` or `python -m pytest`. For the following examples, we will use `pytest`.
