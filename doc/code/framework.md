@@ -295,6 +295,13 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Surface sources read what a location holds for a `SurfaceScorable`, such as files under one
   root directory. `FileWriteScorer` evaluates its `ContentWritten` condition against that
   evidence. The caller owns workspace isolation; a snapshot does not identify its writer.
+- Program-execution sources run a program for a `ProgramExecutionScorable` through an injected
+  client from the experimental `pyrit._code_execution` module, and turn its results into scoring evidence.
+  `ProgramExecutionScorer` splits its `ProgramBehaves` condition so the source receives only the
+  runtime profile and invocations, never the expected results. A program that fails is observed
+  evidence; a sandbox that cannot run it is an acquisition error, so the verdict is undetermined
+  rather than false.
+  Each scoring call runs afresh; an observation identifies the run and supports explicit replay.
 - Observation lifecycle is optional. A scorer that implements `AttemptObserver`, whether it is a
   root scorer or wrapped inside one, is asked by the attack to start observing after setup, once
   its attempt ID is allocated and before anything is sent, and to stop when the attempt ends. A
@@ -367,6 +374,20 @@ The below talks about responsibilities of most modules in the PyRIT library
 **Responsibility**: Provide authentication helpers for the external services PyRIT talks to, behind a common `Authenticator` abstraction.
 
 - Components that need credentials should go through these helpers rather than handling tokens themselves.
+
+## Code Execution (Experimental)
+
+**Responsibility**: Connect to caller-configured execution backends and return typed invocation results.
+
+- The client API is private and experimental in `pyrit._code_execution`; it may change without a deprecation cycle.
+- Targets, converters, dataset generators, and scorers can inject the same `SandboxClient` contract
+  from `pyrit._code_execution`. Execution inputs and results are private types in `pyrit.models.code_execution`.
+- `runtime_profile_name` selects a client-owned configuration by name, not by supplying an image or command.
+  Clients advertise the available names through `get_runtime_profile_names()`.
+- PyRIT does not own environments. The one-image Docker example is the only exception:
+  `DockerSandboxClient` manages disposable containers; callers supply the daemon and pinned image.
+- **Does not own**: interpreting results, scoring criteria, message or seed creation, memory
+  persistence, or infrastructure setup. Those remain with the consumer or caller.
 
 ## [Exceptions](../contributing/9_exception)
 
