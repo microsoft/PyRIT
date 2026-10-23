@@ -94,6 +94,7 @@ project:
         - file: scanner/adaptive.ipynb
         - file: scanner/airt.ipynb
         - file: scanner/benchmark.ipynb
+        - file: scanner/benchmark_sampling_sweep.md
         - file: scanner/foundry.ipynb
         - file: scanner/garak.ipynb
         - file: scanner/technique.ipynb
