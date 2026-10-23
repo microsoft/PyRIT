@@ -24,12 +24,15 @@ async def _seed_async(memory: SQLiteMemory) -> None:
         AttackIdentifier,
         AttackOutcome,
         AttackResult,
+        Conversation,
+        MessagePiece,
         ScenarioIdentifier,
         ScenarioResult,
         ScenarioRunPlan,
         ScenarioRunPlanAtomicGroup,
         ScenarioRunPlanGroupKind,
         ScenarioRunPlanSeedGroup,
+        ScenarioRunPlanSeedPrompt,
         ScenarioRunState,
         TargetIdentifier,
     )
@@ -45,34 +48,75 @@ async def _seed_async(memory: SQLiteMemory) -> None:
             objective_target=target,
         )
     )
-    plan = ScenarioRunPlan(
-        atomic_groups=[
-            ScenarioRunPlanAtomicGroup(
-                id=name,
-                atomic_attack_name=name,
-                display_group=name.title(),
-                technique_eval_hash=f"{name}-eval",
-                kind=kind,
-                seed_group_ids=shared + [extra],
-            )
-            for name, kind, extra in [
-                ("baseline", ScenarioRunPlanGroupKind.BASELINE, "base-only"),
-                ("attack", ScenarioRunPlanGroupKind.ATTACK, "attack-only"),
-            ]
-        ],
-        seed_groups=[
-            ScenarioRunPlanSeedGroup(id=seed, objective=seed, objective_sha256=to_sha256(seed))
-            for seed in shared + ["base-only", "attack-only"]
-        ],
-    )
-    for index, state in enumerate([ScenarioRunState.COMPLETED, ScenarioRunState.COMPLETED, ScenarioRunState.FAILED]):
+    for index, state in enumerate(
+        [
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.FAILED,
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.COMPLETED,
+        ]
+    ):
         scenario_id = UUID(int=9100 + index)
+        page_seeds = (
+            [f"page-{number:02d}" + ("x" * 900 if index == 4 and number == 23 else "") for number in range(30)]
+            if index in (3, 4)
+            else []
+        )
+        selected_seeds = shared + page_seeds
+        plan = ScenarioRunPlan(
+            atomic_groups=[
+                ScenarioRunPlanAtomicGroup(
+                    id=name,
+                    atomic_attack_name=name,
+                    display_group=name.title(),
+                    technique_eval_hash=f"{name}-eval",
+                    kind=kind,
+                    seed_group_ids=selected_seeds + [extra],
+                )
+                for name, kind, extra in [
+                    ("baseline", ScenarioRunPlanGroupKind.BASELINE, "base-only"),
+                    ("attack", ScenarioRunPlanGroupKind.ATTACK, "attack-only"),
+                ]
+            ],
+            seed_groups=[
+                ScenarioRunPlanSeedGroup(
+                    id=seed,
+                    objective=seed,
+                    objective_sha256=to_sha256(seed),
+                    prompts=[
+                        ScenarioRunPlanSeedPrompt(value="LongPrompt" * 80, sequence=0, data_type="text", role="user")
+                    ]
+                    if index == 4 and seed == "a"
+                    else [],
+                )
+                for seed in selected_seeds + ["base-only", "attack-only"]
+            ],
+        )
         rows: dict[str, list[AttackResult]] = {"baseline": [], "attack": []}
         for name, outcomes in [
             ("baseline", [AttackOutcome.FAILURE, AttackOutcome.SUCCESS, AttackOutcome.FAILURE, AttackOutcome.SUCCESS]),
             ("attack", [AttackOutcome.SUCCESS, AttackOutcome.FAILURE, AttackOutcome.FAILURE, AttackOutcome.SUCCESS]),
         ]:
             for seed, outcome in zip(shared[:4], outcomes, strict=True):
+                rows[name].append(
+                    AttackResult(
+                        attack_result_id=str(uuid4()),
+                        conversation_id=str(uuid4()),
+                        objective=seed,
+                        outcome=outcome,
+                        timestamp=timestamp,
+                        atomic_attack_identifier=identifier,
+                        attribution_parent_id=str(scenario_id),
+                        attribution_data={
+                            "seed_group_id": seed,
+                            "parent_eval_hash": f"{name}-eval",
+                            "parent_collection": name,
+                        },
+                    )
+                )
+        for seed in page_seeds:
+            for name, outcome in [("baseline", AttackOutcome.FAILURE), ("attack", AttackOutcome.SUCCESS)]:
                 rows[name].append(
                     AttackResult(
                         attack_result_id=str(uuid4()),
@@ -128,6 +172,42 @@ async def _seed_async(memory: SQLiteMemory) -> None:
                 },
             )
         )
+        if index == 4:
+            parent = rows["attack"][0]
+            child = parent.model_copy(deep=True)
+            child.attack_result_id = str(uuid4())
+            child.conversation_id = str(uuid4())
+            assert child.attribution_data is not None
+            child.attribution_data["attempt_index"] = 1
+            parent.conversation_id = ""
+            parent.metadata["child_attack_result_ids"] = [child.attack_result_id]
+            rows["attack"].append(child)
+        for attack_result in (item for group in rows.values() for item in group):
+            if not attack_result.conversation_id:
+                continue
+            await memory.add_conversation_to_memory_async(
+                conversation=Conversation(
+                    conversation_id=attack_result.conversation_id,
+                    target_identifier=target,
+                    attack_result_id=attack_result.attack_result_id,
+                )
+            )
+            await memory.add_message_pieces_to_memory_async(
+                message_pieces=[
+                    MessagePiece(
+                        role="user",
+                        conversation_id=attack_result.conversation_id,
+                        sequence=0,
+                        original_value=f"Offline objective: {attack_result.objective}",
+                    ),
+                    MessagePiece(
+                        role="assistant",
+                        conversation_id=attack_result.conversation_id,
+                        sequence=1,
+                        original_value=f"Offline {attack_result.outcome.value} example; no model was called.",
+                    ),
+                ]
+            )
         await memory.add_attack_results_to_memory_async(
             attack_results=[row for group in rows.values() for row in group]
         )
