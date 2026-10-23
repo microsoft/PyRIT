@@ -170,21 +170,23 @@ class AttackTechniqueSeedGroup(SeedGroup):
         if simulation is None:
             raise ValueError("This technique has no simulated conversation")
         final = self.fixed_final_user_prompt
-        if "final_user_message" in changes.model_fields_set and final is None:
-            raise ValueError("This simulation has no editable fixed final user message")
+        if "final_user_message" in changes.model_fields_set:
+            if final is None:
+                raise ValueError("This simulation has no editable fixed final user message")
+            if changes.final_user_message is None:
+                raise ValueError("A fixed final user message cannot be cleared")
         updated = simulation.with_settings(changes)
         seeds = []
         for seed in self.seeds:
             if seed is simulation:
                 seeds.append(updated)
             elif seed is final:
-                if "final_user_message" in changes.model_fields_set and changes.final_user_message is None:
-                    raise ValueError("A fixed final user message cannot be cleared")
-                prompt = seed.with_value(
-                    changes.final_user_message if changes.final_user_message is not None else seed.value
+                seeds.append(
+                    seed.with_value(
+                        changes.final_user_message if changes.final_user_message is not None else seed.value,
+                        sequence=updated.sequence_range.stop,
+                    )
                 )
-                prompt.sequence = updated.sequence_range.stop
-                seeds.append(prompt)
             else:
                 seeds.append(seed.model_copy(deep=True))
         return type(self).model_validate({**self.model_dump(exclude={"seeds"}), "seeds": seeds})
