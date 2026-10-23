@@ -46,7 +46,6 @@ if TYPE_CHECKING:
         tool,
     )
     from pyrit.prompt_target.common.utils import limit_requests_per_minute
-    from pyrit.prompt_target.gandalf_target import GandalfLevel, GandalfTarget
     from pyrit.prompt_target.github_copilot_target import GitHubCopilotTarget
     from pyrit.prompt_target.hack_a_prompt_target import HackAPromptChallenge, HackAPromptTarget
     from pyrit.prompt_target.http_target.http_target import HTTPTarget
@@ -86,8 +85,6 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "CopilotType": "pyrit.prompt_target.playwright_copilot_target",
     "ConversationNormalizationPipeline": "pyrit.prompt_target.common.conversation_normalization_pipeline",
     "FunctionTool": "pyrit.prompt_target.common.tool_provider",
-    "GandalfLevel": "pyrit.prompt_target.gandalf_target",
-    "GandalfTarget": "pyrit.prompt_target.gandalf_target",
     "GitHubCopilotTarget": "pyrit.prompt_target.github_copilot_target",
     "get_http_target_json_response_callback_function": "pyrit.prompt_target.http_target.http_target_callback_functions",
     "get_http_target_regex_matching_callback_function": (
