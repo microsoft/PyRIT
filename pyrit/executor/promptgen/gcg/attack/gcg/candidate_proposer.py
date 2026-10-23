@@ -23,9 +23,9 @@ class CandidateProposalBatch:
 
     Attributes:
         control_candidates_by_group: List of filtered candidate string lists, one per
-            compatible gradient shape group.
+            compatible gradient group (same shape and vocabulary).
         group_worker_indices: Index of the last worker in each contiguous compatible
-            gradient shape group, used for sampling and filtering that group.
+            gradient group, used for sampling and filtering that group.
     """
 
     control_candidates_by_group: list[list[str]]
@@ -78,6 +78,16 @@ class GCGCandidateProposer:
         self._sample_fn = sample_fn
         self._filter_fn = filter_fn
         self._main_device = main_device
+        # Gradients are summed per token id, so equal shapes are not enough: two tokenizers with the
+        # same vocabulary size (e.g. Llama-2 and Mistral) map most ids to different tokens. Added tokens
+        # are ignored since candidates containing them never survive filtering.
+        base_vocabs = [
+            {token: i for token, i in worker.tokenizer.get_vocab().items() if i < worker.tokenizer.vocab_size}
+            for worker in workers
+        ]
+        self._shares_vocab_with_previous = [True] + [
+            previous == current for previous, current in zip(base_vocabs, base_vocabs[1:], strict=False)
+        ]
 
     def propose_candidates(
         self,
@@ -101,7 +111,7 @@ class GCGCandidateProposer:
             current_control_str: The current decoded control string used as a fallback by length filters.
 
         Returns:
-            CandidateProposalBatch containing filtered candidate strings per gradient shape group
+            CandidateProposalBatch containing filtered candidate strings per gradient group
             and corresponding group worker indices.
 
         Raises:
@@ -123,8 +133,8 @@ class GCGCandidateProposer:
             if grad is None:
                 grad = torch.zeros_like(new_grad)
 
-            if grad.shape != new_grad.shape:
-                # Shape mismatch: finalize the preceding group
+            if grad.shape != new_grad.shape or not self._shares_vocab_with_previous[j]:
+                # Shape or vocabulary mismatch: finalize the preceding group
                 with torch.no_grad():
                     sampled = self._sample_group(
                         worker_idx=j - 1,
@@ -189,7 +199,7 @@ class GCGCandidateProposer:
 
         Args:
             worker_idx: Index of the representative worker.
-            gradient: Aggregated gradient tensor for this shape group.
+            gradient: Aggregated gradient tensor for this gradient group.
             batch_size: Number of candidates to sample.
             topk: Top gradient coordinates to sample from.
             temp: Sampling temperature.
