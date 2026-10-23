@@ -53,6 +53,11 @@ def corpus_seeds() -> dict[str, list[Seed[Any]]]:
 
 
 @pytest.fixture
+def garak_dataset_names(corpus_seeds: dict[str, list[Seed[Any]]]) -> list[str]:
+    return list(corpus_seeds)
+
+
+@pytest.fixture
 def synthetic_seeds(corpus_seeds: dict[str, list[Seed[Any]]]) -> dict[str, list[Seed[Any]]]:
     record = SeedPrompt(
         value="Jordan Example",
@@ -86,8 +91,11 @@ async def _initialize_async(
             "technique_converters": technique_converters,
         }
     )
-    with patch.object(
-        ProPILEDatasetConfiguration, "_collect_named_seeds_async", new_callable=AsyncMock, return_value=seeds
+    with (
+        patch.object(ProPILEDatasetConfiguration, "prepare_async", new_callable=AsyncMock),
+        patch.object(
+            ProPILEDatasetConfiguration, "_collect_named_seeds_async", new_callable=AsyncMock, return_value=seeds
+        ),
     ):
         await scenario.initialize_async()
 
@@ -415,6 +423,7 @@ class TestProPILE:
         assert objectives(resumed) == objectives(original)
 
     @pytest.mark.parametrize("size", [1, 20, 81, None, "all"])
+    @pytest.mark.usefixtures("mock_dataset_preparation")
     async def test_launch_and_estimate_use_standard_dataset_size(
         self, size: int | Literal["all"] | None, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
@@ -449,6 +458,7 @@ class TestProPILE:
                 [("combined configuration cap", total)] if total is not None else []
             )
 
+    @pytest.mark.usefixtures("mock_garak_dataset_fetch")
     async def test_real_local_datasets_resolve_through_memory(self) -> None:
         scenario = ProPILE()
         scenario.set_params_from_args(args={"objective_target": MockPromptTarget()})

@@ -33,6 +33,11 @@ Most tests should be unit tests. Integration and end-to-end tests are for testin
   - Do not rely on memory or singleton state left behind by another test. Each test must declare its own memory dependency.
 - When changing shared memory fixtures, install all optional dependencies with `uv sync --extra all` and run `make unit-test`. Optional component tests must also exercise fixture isolation.
 - No network calls should ever happen in unit tests, but file access is okay
+- Scenario unit tests fail on unexpected dataset provider lookup via `tests/unit/scenario/conftest.py`.
+  Mocking seed resolution alone does not isolate initialization, which prepares datasets first.
+  Use inline seeds or the opt-in `mock_dataset_preparation` fixture for mocked populations.
+  Tests exercising preparation must explicitly patch lookup with fake providers; local Garak
+  corpus tests can use `mock_garak_dataset_fetch`. Do not disable the shared guard.
 - Unit tests should be fast and can be run in parallel.
 
 ## Integration Test Rules
