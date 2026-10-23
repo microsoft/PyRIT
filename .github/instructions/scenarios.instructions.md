@@ -286,10 +286,14 @@ async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list
 ```
 
 `initialize_async` resolves the run's inputs once (objective target, techniques, dataset
-config, memory labels, baseline flag, and seed groups), snapshots them into an immutable
+config, memory labels, technique converters, baseline flag, and seed groups), snapshots them into an immutable
 `ScenarioContext`, and calls this method. Each scenario emits its own baseline from within
 `_build_atomic_attacks_async` (see the Baseline section below). Scenario authors never read
 half-initialized `self._*` state to build attacks — read everything from `context`.
+Nested construction helpers must also use context inputs, not the corresponding
+`self._objective_target`, `self._scenario_techniques`, `self._memory_labels`,
+`self._incompatible_technique_policy`, or `self._technique_converters` fields.
+Scenario-specific scorers, selectors, and construction options stay on the scenario.
 
 On resume, `context.stored_run_plan` carries the original plan. Restore committed
 per-input technique choices from it instead of selecting again. The base restores
@@ -302,14 +306,15 @@ Scenarios whose construction is the plain technique × dataset cross-product del
 `build_matrix_atomic_attacks` helper in one line (see `Cyber`, `RapidResponse`):
 
 ```python
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 
 
 async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
-    return build_matrix_atomic_attacks(
+    return await run_legacy_sync_async(
+        build_matrix_atomic_attacks,
         context=context,
         objective_scorer=self._objective_scorer,
-        technique_converters=self._technique_converters,  # optional CLI converter stacks
     )
 ```
 
@@ -319,7 +324,7 @@ async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list
    raises ``TechniqueResolutionError`` if any selected technique has no registered factory).
 2. Iterates every (technique × dataset) pair from `context.seed_groups_by_dataset`.
 3. Calls `factory.create()` with the objective target, conditional scorer override, and any
-   per-technique converters (from `--techniques <technique>:converter.<name>`) as
+   `context.technique_converters` (from `--techniques <technique>:converter.<name>`) as
    `extra_request_converters`.
 4. Builds each `AtomicAttack` with a unique `atomic_attack_name` and a `display_group`
    (customizable via `display_group_fn`).

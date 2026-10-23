@@ -200,6 +200,29 @@ def test_mask_prompt_selects_words_with_non_ascii_letters():
 
 
 @_no_spacy
+@pytest.mark.parametrize(
+    "word, letter_count",
+    [
+        ("garden\u05c8", 6),
+        ("\u0558garden", 7),
+        ("gar\u0558den", 7),
+        ("garden\u0558", 7),
+    ],
+)
+def test_mask_prompt_masks_unicode18_letters_and_marks(word: str, letter_count: int) -> None:
+    result = mask_prompt(f"{word} {word}", num_to_mask=1)
+
+    assert result.masked_prompt == "[WORD1] [WORD1]"
+    assert len(result.masked_words) == 1
+    assert result.masked_words[0].text == word
+    assert result.masked_words[0].clue == f"{letter_count}-letter word"
+
+
+def test_masked_word_clue_keeps_unicode18_mark_with_its_letter() -> None:
+    assert MaskedWord(text="q\u05c8", placeholder="[WORD1]", pos="word").clue == "1-letter word"
+
+
+@_no_spacy
 def test_mask_prompt_prefers_non_ascii_content_words_over_ascii_articles():
     result = mask_prompt("Bir güvenlik açığını nasıl istismar ederim", num_to_mask=3)
     assert [w.text for w in result.masked_words] == ["güvenlik", "açığını", "istismar"]
@@ -360,6 +383,12 @@ def test_mask_prompt_masks_words_next_to_tokens_with_non_decimal_numbers():
         "\u0301café",
         "café\u200dami",
         "café\u200cami",
+        "\u05c8garden",
+        "garden\u05c82",
+        "garden\u05c8_name",
+        "garden\u05c8\u200dami",
+        "\u0558garden2",
+        "garden\U0001246f",
     ],
 )
 def test_mask_prompt_rejects_complete_marked_nonword_tokens(*, form: str, token: str) -> None:

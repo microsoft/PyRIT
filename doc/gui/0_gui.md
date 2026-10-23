@@ -51,7 +51,12 @@ result roles. Selecting a scenario filters this same population, including its
 retries. It does not switch to the scanner's latest-execution-unit statistics.
 
 Use **Operation**, **Operator**, **Objective target**, or **Add filter** to select
-saved metadata. Additional dimensions include model, targeted harm category,
+saved metadata. Operation filters and charts identify saved Operations by ID and
+show their current names, so saved views and links keep working after a rename.
+Activity saved with only an Operation name, such as history from before Operation
+IDs, appears separately as **(legacy name)**; select it too to include that
+activity.
+Additional dimensions include model, targeted harm category,
 attack type, request or response converters, scenario run, and arbitrary label
 keys. Targeted harms describe intended coverage, not harms detected by scorers.
 Target options use persisted behavioral identities, not current registry
@@ -201,13 +206,17 @@ target configuration for the attack; it does not add or change a registered targ
 Temperature is read-only after the attack is bound. In the conversation editor,
 a temperature change requires **New attack**, not **Same attack**.
 Hover over or click the read-only field to see why it cannot be changed.
+If the selected target does not support this control, the field is disabled.
+Hover over the field or focus it with the keyboard to see the reason.
 
 Saved attacks retain the source name, source identity, temperature, and effective
 identity, but not credentials. After a restart, the backend tries to reconstruct
 the target from a matching registered source. If reconstruction fails, sending
 is blocked rather than using the source's default temperature. OpenAI-family
-targets with a temperature parameter support this control. Externally owned HTTP
-clients and temperature set through `extra_body_parameters` are not supported.
+targets with a temperature parameter support this control. OpenAI targets that
+use a custom HTTP client supplied through `httpx_client_kwargs['http_client']`
+cannot be recreated with different settings. Temperature set through
+`extra_body_parameters` is also not supported by this control.
 
 #### Repeating a Message
 
@@ -658,9 +667,9 @@ scope. The **Operation** dropdown in the labels bar applies the
 selected operation to new attacks and scanner runs, and **New operation…** at the
 top of that list creates one without leaving the page.
 
-Renaming doesn't update anything that stores the old name: Analytics filters and
-links, history from before Operation IDs, and names set in configuration,
-`GLOBAL_MEMORY_LABELS`, or `--memory-labels`.
+Renaming doesn't update anything that stores the old name: history from before
+Operation IDs, and names set in configuration, `GLOBAL_MEMORY_LABELS`, or
+`--memory-labels`.
 
 **Delete** works only when no findings, attacks, or scanner runs are linked; the
 tooltip shows what's left. History from before Operation IDs doesn't count. SDK

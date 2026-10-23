@@ -22,6 +22,8 @@ function renderLayout(initialPath = '/registry/targets') {
             <Route path="techniques" element={<div>Technique registry content</div>} />
             <Route path="scenario-presets" element={<div>Preset library content</div>} />
             <Route path="scenario-presets/new" element={<div>Preset editor content</div>} />
+            <Route path="scenario-suites" element={<div>Suite library content</div>} />
+            <Route path="scenario-suites/new" element={<div>Suite editor content</div>} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -30,12 +32,13 @@ function renderLayout(initialPath = '/registry/targets') {
 }
 
 describe('RegistryLayout', () => {
-  it('shows target, converter and preset registry tabs', () => {
+  it('shows target, converter, preset, and suite registry tabs', () => {
     renderLayout()
 
     expect(screen.getByRole('tab', { name: 'Targets' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'Converters' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByRole('tab', { name: 'Scenario presets' })).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('tab', { name: 'Suites' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByText('Target registry content')).toBeInTheDocument()
   })
 
@@ -64,6 +67,23 @@ describe('RegistryLayout', () => {
 
     expect(screen.getByRole('tab', { name: 'Scenario presets' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('Preset editor content')).toBeInTheDocument()
+  })
+
+  it('opens the suite library and keeps the tab selected on nested routes', async () => {
+    const user = userEvent.setup()
+    renderLayout()
+
+    await user.click(screen.getByRole('tab', { name: 'Suites' }))
+
+    expect(screen.getByRole('tab', { name: 'Suites' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Suite library content')).toBeInTheDocument()
+  })
+
+  it('keeps the suite tab selected on the new-suite route', () => {
+    renderLayout('/registry/scenario-suites/new')
+
+    expect(screen.getByRole('tab', { name: 'Suites' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Suite editor content')).toBeInTheDocument()
   })
 
   it('supports the Techniques direct URL and browser history', async () => {

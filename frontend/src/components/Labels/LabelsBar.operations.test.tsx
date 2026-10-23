@@ -49,6 +49,21 @@ describe('saved operation workflow', () => {
     expect(DEFAULT_GLOBAL_LABELS).not.toHaveProperty('operation')
   })
 
+  it('warns when no operation is selected, removes the warning on selection, and restores it on clear', async () => {
+    const user = userEvent.setup()
+    renderBar()
+    await user.click(screen.getByRole('button', { name: 'Show warnings' }))
+    expect(screen.getByText('Set operation in the bar. No operation is selected.')).toBeInTheDocument()
+    expect(screen.queryByText(/Set operator in the bar/)).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('combobox', { name: 'Operation' }))
+    await user.click(await screen.findByRole('option', { name: SAVED.name }))
+    expect(screen.queryByRole('button', { name: 'Show warnings' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Clear operation' }))
+    await user.click(screen.getByRole('button', { name: 'Show warnings' }))
+    expect(screen.getByText('Set operation in the bar. No operation is selected.')).toBeInTheDocument()
+  })
+
   it('shows persistent named controls and pins creation above filtered choices', async () => {
     const user = userEvent.setup()
     renderBar()

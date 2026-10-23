@@ -1,6 +1,6 @@
 const SCENARIO_RESULT_ID_QUERY_KEY = 'scenarioResultId'
 const FINDING_EVIDENCE_ID_QUERY_KEY = 'findingEvidenceId'
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
  * Returns the original value represented by a React Router path parameter.

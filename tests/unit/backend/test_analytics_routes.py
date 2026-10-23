@@ -152,7 +152,17 @@ async def test_concurrent_first_requests_construct_one_sdk_on_the_runtime_loop_a
         {},
         {"filters": {"outcomes": ["error"]}},
         {"group_by": {"name": "targeted_harm_category"}, "compare_by": {"name": "converter_type"}},
-        {"filters": {"dimensions": [{"dimension": {"name": "operation"}, "values": [{"value": "operation-a"}]}] * 16}},
+        {
+            "filters": {
+                "dimensions": [
+                    {
+                        "dimension": {"name": "operation"},
+                        "values": [{"kind": "legacy_operation_name", "value": "operation-a"}],
+                    }
+                ]
+                * 16
+            }
+        },
     ],
 )
 async def test_report_matches_shared_sdk_serialization_async(
@@ -244,6 +254,22 @@ async def test_invalid_queries_are_problem_responses_async(
     assert response.status_code == response.json()["status"] == 422
     assert response.json()["errors"]
     assert "summary" not in response.json()
+
+
+async def test_operation_name_in_value_returns_422(*, analytics_client: httpx.AsyncClient) -> None:
+    body = {"filters": {"dimensions": [{"dimension": {"name": "operation"}, "values": [{"value": "Nightly"}]}]}}
+    response = await analytics_client.post("/api/analytics/attacks/query", json=body)
+    assert response.status_code == response.json()["status"] == 422
+    assert any(
+        "Operation values must be saved Operation IDs; use legacy_operation_name for legacy activity"
+        in error["message"]
+        for error in response.json()["errors"]
+    )
+
+
+def test_openapi_lists_legacy_operation_name(analytics_app: CompatibilityAPI) -> None:
+    schema = analytics_app.openapi()["components"]["schemas"]["AttackAnalyticsValueKind"]
+    assert "legacy_operation_name" in schema["enum"]
 
 
 @pytest.mark.usefixtures("analytics_results")

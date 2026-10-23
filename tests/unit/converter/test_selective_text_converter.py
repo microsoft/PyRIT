@@ -766,14 +766,36 @@ class TestSelectiveTextConverter:
         assert right.get_identifier().params["selection_strategy_params"]["indices"] == [3]
         assert "indices" not in left.get_identifier().params
 
-    def test_identifier_uses_empty_strategy_params_for_char_level_strategies(self):
+    def test_identifier_includes_nested_char_strategy_params(self):
         converter = SelectiveTextConverter(
             sub_converter=Base64Converter(),
             selection_strategy=IndexSelectionStrategy(start=0, end=5),
         )
         params = converter.get_identifier().params
         assert params["selection_strategy"] == "IndexSelectionStrategy"
-        assert params["selection_strategy_params"] == {}
+        assert params["selection_strategy_params"] == {"start": 0, "end": 5}
+
+    async def test_identifier_distinguishes_char_level_selections_async(self):
+        first = SelectiveTextConverter(
+            sub_converter=Base64Converter(),
+            selection_strategy=IndexSelectionStrategy(start=0, end=5),
+        )
+        second = SelectiveTextConverter(
+            sub_converter=Base64Converter(),
+            selection_strategy=IndexSelectionStrategy(start=6, end=11),
+        )
+
+        first_result = await first.convert_async(prompt="Hello World")
+        second_result = await second.convert_async(prompt="Hello World")
+
+        assert first_result.output_text != second_result.output_text
+        assert first.get_identifier().hash != second.get_identifier().hash
+
+        instances = ConverterRegistry().instances
+        instances.register(first)
+        instances.register(second)
+        assert instances.get(first.get_identifier().unique_name) is first
+        assert instances.get(second.get_identifier().unique_name) is second
 
 
 def test_identifier_distinguishes_word_separator_for_word_level_strategies() -> None:

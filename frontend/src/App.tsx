@@ -28,6 +28,8 @@ import ScenarioRunPage from './components/Scenarios/ScenarioRunPage'
 import ScenarioPresetEditor from './components/ScenarioPresets/ScenarioPresetEditor'
 import ScenarioPresetLibrary from './components/ScenarioPresets/ScenarioPresetLibrary'
 import { presetEditorRoutePath } from './components/ScenarioPresets/presetRoutes'
+import ScenarioSuiteEditor from './components/ScenarioSuites/ScenarioSuiteEditor'
+import ScenarioSuiteLibrary from './components/ScenarioSuites/ScenarioSuiteLibrary'
 import DatasetCatalog from './components/Datasets/DatasetCatalog'
 import DatasetSelection from './components/Datasets/DatasetSelection'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
@@ -838,6 +840,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 />
                 <Route path="scenario-presets/new" element={<ScenarioPresetEditor mode="create" />} />
                 <Route path="scenario-presets/:presetName/edit" element={<ScenarioPresetEditor mode="edit" />} />
+                <Route path="scenario-suites" element={<ScenarioSuiteLibrary />} />
+                <Route path="scenario-suites/new" element={<ScenarioSuiteEditor mode="create" />} />
+                <Route path="scenario-suites/:suiteName/edit" element={<ScenarioSuiteEditor mode="edit" />} />
               </Route>
               <Route path="/targets" element={<Navigate to="/registry/targets" replace />} />
               <Route path="/scanner" element={<ScenarioCatalog />} />

@@ -8,7 +8,7 @@ import {
 import HistoryPagination from '@/components/History/HistoryPagination'
 import OutcomeBadge from '@/components/OutcomeBadge'
 import type { AttackAnalyticsResultRow, AttackAnalyticsResults } from '@/types'
-import { formatAnalyticsCount, formatAnalyticsTime } from '@/utils/attackAnalytics'
+import { analyticsLegacyOperationLabel, formatAnalyticsCount, formatAnalyticsTime } from '@/utils/attackAnalytics'
 
 import { useAnalyticsResultsTableStyles } from './AnalyticsResultsTable.styles'
 
@@ -81,7 +81,11 @@ export default function AnalyticsResultsTable({
                   </span>
                   <Text size={100} className={styles.secondary}>{result.attack_result_id}</Text>
                 </TableCell>
-                <TableCell className={styles.metadata}>{result.operation ?? '(Missing operation)'}</TableCell>
+                <TableCell className={styles.metadata}>
+                  {result.operation_id === null && result.operation !== null
+                    ? analyticsLegacyOperationLabel(result.operation)
+                    : result.operation ?? '(Missing operation)'}
+                </TableCell>
                 <TableCell className={styles.metadata}>{result.operator ?? '(Missing operator)'}</TableCell>
                 <TableCell className={styles.metadata}>
                   {result.attack_type ?? '(Missing attack type)'}

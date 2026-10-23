@@ -320,7 +320,7 @@ class ApiKey(Scenario):
         for technique_name, seed_groups in context.seed_groups_by_dataset.items():
             if not seed_groups:
                 continue
-            converters = self._technique_converters.get(technique_name, [])
+            converters = context.technique_converters.get(technique_name, [])
             converter_config = (
                 AttackConverterConfig(
                     request_converters=ConverterConfiguration.from_converters(converters=list(converters))
