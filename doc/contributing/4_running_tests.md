@@ -114,6 +114,14 @@ timeout coverage expires the real cancellation path only after the request start
 Event-controlled analytics expiry tests freeze both deadline clocks so floating-point
 rounding cannot turn a valid query budget into a failed assertion.
 
+Backend manual-send completion and first-request analytics correctness tests also
+use the shared watchdog. Manual sends are polled until a terminal snapshot, including
+finalization. Expiring the test's wait does not cancel the send; its lifecycle owner
+still drains pending work before mocks and memory close. Explicit zero-timeout tests
+check this ownership without requiring the send to finish quickly.
+The async and repeated manual-send test classes use 600-second whole-test backstops
+so the 300-second completion watchdog can expire and allow cleanup before pytest stops the test.
+
 The target-type route test starts target metadata discovery, waits for a signal
 that it has started, and keeps it paused while checking that `/api/health`
 responds within 10 seconds. Waiting for that signal does not use an extra worker

@@ -47,7 +47,7 @@ from collections.abc import Collection, Sequence
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get_origin, get_type_hints
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import JsonValue, ValidationError
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
 from pyrit.common.brick_contract import get_constructor_owners
@@ -573,12 +573,53 @@ def resolve_reference_value(
     return _resolve_registry_reference(value=value, getter=getter, owner=owner, name=name)
 
 
+def reference_name(*, component_type: ComponentType, value: Any) -> str | None:
+    """
+    Find the registered name of a live instance without reading its configuration.
+
+    Returns:
+        str | None: The matching name, or None when the object is not registered.
+    """
+    getter = _registry_getter_for_component_type(component_type)
+    if getter is None:
+        return None
+    registry = getter()
+    return next((name for name in registry.get_names() if registry.get(name) is value), None)
+
+
+def project_parameter_value(*, parameter: Parameter, value: Any) -> JsonValue:
+    """
+    Project a lossless scalar or named target/converter input without copying live objects.
+
+    Returns:
+        JsonValue: The source value or its registered names, preserving list order.
+
+    Raises:
+        ValueError: If a structured, opaque, or unregistered source cannot be edited losslessly.
+    """
+    if parameter.reference is None:
+        return parameter.project_json_value(value)
+    if parameter.reference.component_type not in {ComponentType.TARGET, ComponentType.CONVERTER}:
+        raise ValueError("Unsupported registry reference")
+    if value is None:
+        return None
+    values = value if isinstance(value, list) else [value]
+    names = [reference_name(component_type=parameter.reference.component_type, value=item) for item in values]
+    if None in names:
+        raise ValueError("Unregistered reference")
+    if isinstance(value, list):
+        result: list[JsonValue] = [name for name in names if name is not None]
+        return result
+    return names[0]
+
+
 def resolve_constructor_args(
     *,
     cls: type,
     raw_args: dict[str, Any],
     identifier_type: type[ComponentIdentifier] | None = None,
     external_input: bool = False,
+    strict_json: bool = False,
     seam_base_type: type | None = None,
 ) -> dict[str, Any]:
     """
@@ -603,6 +644,8 @@ def resolve_constructor_args(
             External callers may set only parameters with ``Parameter.is_external_input``
             and must name registry references. Defaults to False (in-process callers, which
             may pass any Python object).
+        strict_json (bool): Validate JSON-native value types before resolution. Opt-in for REST
+            contracts; ordinary CLI and Python resolution remain unchanged.
         seam_base_type (type | None): The domain base type whose non-required
             declared references are construction seams (see ``derive_parameters``).
 
@@ -628,6 +671,8 @@ def resolve_constructor_args(
             raise ValueError(
                 f"Unknown parameter '{name}' for '{cls.__name__}'. Valid parameters: {sorted(by_name.keys())}"
             )
+        if strict_json:
+            value = param.validate_json_value(value)
 
         value_type = _unwrap_optional(param.param_type)
         if param.reference is not None:
@@ -764,7 +809,7 @@ def _coerce_structured_input(*, parameter: Parameter, value: Any) -> Any:
         ValueError: If the value does not match the declared JSON type.
     """
     try:
-        TypeAdapter(parameter.param_type).validate_python(value, strict=True)
+        parameter.validate_value(value)
     except ValidationError as exc:
         raise ValueError(f"'{parameter.name}' expects {parameter.type_name}: {exc}") from exc
     return parameter.coerce_value(value)

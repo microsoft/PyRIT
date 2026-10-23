@@ -345,8 +345,8 @@ values retain the existing Python conversion and lowercasing.
 
 Objective-target keys are persisted frozen-v1 behavioral evaluation hashes.
 Deployment changes need not split behaviorally equivalent targets. Targets
-without a model name, such as HTTP or Gandalf targets, are keyed by their
-content hash instead, so different endpoints or levels stay separate. The
+without a model name, such as HTTP targets, are keyed by their content hash
+instead, so different endpoints stay separate. The
 `target_identifier_hash` in a result row is instead its exact content hash for
 inspection. Neither key is recomputed from current registry state. Scenario keys
 identify saved runs, not potentially repeated scenario names. The SDK adds short
