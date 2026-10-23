@@ -58,14 +58,18 @@ cancellation when a matrix job has already failed. The CodeQL job needs
 Fork PRs use native CodeQL publishing and GitHub's read-only fork token policy.
 
 Run the deterministic, offline regression coverage with Node.js installed.
-The pytest entry point runs the Node scenario tests and checks workflow wiring:
+The pytest entry point runs the Node scenario tests and checks workflow wiring.
+It runs `node:test` in a single Node process, with the shared 300-second correctness
+watchdog to allow for startup and filesystem delays on busy Windows runners.
+The watchdog is a hang backstop, not a performance requirement; API calls and
+polling delays remain mocked.
 
 ```bash
 uv run --frozen pytest tests/unit/build_scripts/test_codeql_merge_group.py -q
 ```
 
 The helper's scenarios can also run directly with
-`node --test tests/unit/build_scripts/test_codeql_merge_group.cjs`.
+`node --test-reporter=tap tests/unit/build_scripts/test_codeql_merge_group.cjs`.
 
 ## Running a subset while iterating
 
