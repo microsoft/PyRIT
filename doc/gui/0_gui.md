@@ -808,6 +808,63 @@ If an attack no longer exists, its entry stays, shows the attack's ID and
 attachment time, and reads **Evidence unavailable**. **Remove link** removes only
 the link, never the attack. Deleting a finding removes its links the same way.
 
+#### Exporting findings
+
+**Export findings** on an operation page downloads the findings you select as
+one document to copy into a larger report. The dialog lists every finding in the
+operation, not only the 20 on the current page, and starts with all of them
+selected. Clear the findings to leave out, or use **Select all** to select or
+clear the whole list; it shows a mixed state when only some are selected. A
+finding added after you open the dialog appears the next time you open it.
+
+Under **Format**, choose **Word (.docx)**, the default, or **Markdown (.md)**, then
+**Download Word** or **Download Markdown**. Both formats hold the same findings,
+fields, and evidence. Word puts every finding in one table with **Finding** and
+**Assessment** columns, so you can copy rows into your report. Markdown lists
+the same information from top to bottom.
+PyRIT doesn't use report templates and never uploads or reads your report.
+Files are named after the operation and your computer's local time, for example
+`copyrit-findings-synthetic-evaluation-2026-10-22-1258.docx`.
+
+The document is headed with the operation's name, and findings follow the
+dashboard's order: most severe first, newest first within each level. The
+**Finding** column holds each title, description, and evidence; **Assessment**
+holds severity and harm-type. Markdown puts severity and harm-type first under
+each title. A Word row with synthetic content reads:
+
+```text
+Finding                                           | Assessment
+--------------------------------------------------+------------------------------------
+Restricted test marker disclosed                  | Severity: Important
+Description: The assistant returned a synthetic   | Harm-type: Proprietary, Confidential
+marker that the test policy instructed it to      | & Classified Information
+withhold.                                         |
+Evidence:                                         |
+• Restricted-marker test (link)                   |
+  Outcome: Success · Score: True (SubStringScorer)|
+  Rationale: The response contained the           |
+  restricted marker.                              |
+```
+
+Each attached attack is a bullet led by its objective, which links to the same
+conversation as **Open attack**. Under it come the outcome, the same score as
+the evidence table (with **human review** as the scorer when a person scored it,
+or **Not scored**), the score's rationale, and the attack's operation when it
+isn't this one. An attack that no longer exists keeps its entry under its attack
+ID and reads **Evidence unavailable**; a finding without evidence reads
+**Evidence: none attached**. Messages, attachments, and media are never
+included. The document reads fine offline, but its links open only for someone
+with access to this PyRIT deployment.
+
+Each download reads the findings and evidence as saved at that moment, and its
+links open the live attacks, which can gain messages and scores later. If a
+selected finding is deleted before you download, the download fails.
+
+> **Note:** Findings, attack objectives, and score rationales can contain
+> sensitive content, and nothing is redacted automatically. Your PyRIT server
+> generates the document and sends it to no other service. Store and share
+> exported files responsibly.
+
 #### Upgrading an existing database
 
 One migration adds Operations, findings, evidence, and optional Operation IDs on

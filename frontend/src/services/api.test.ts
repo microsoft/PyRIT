@@ -1,6 +1,7 @@
-// Mock axios before importing the module
+// Mock axios before importing the module. The instance is callable, like a
+// real Axios instance, so the 401 handler can replay a request through it.
 jest.mock("axios", () => ({
-  create: jest.fn(() => ({
+  create: jest.fn(() => Object.assign(jest.fn(), {
     get: jest.fn(),
     post: jest.fn(),
     put: jest.fn(),
@@ -36,9 +37,12 @@ import {
   scenarioSuitesApi,
   datasetsApi,
   analyticsApi,
+  setMsalInstance,
 } from "./api";
 import { compatibility, COMPATIBILITY_HEADER } from "./compatibility";
+import { toApiError } from "./errors";
 import { makeAnalyticsFacets, makeAnalyticsReport, makeAnalyticsResults } from "@/test-utils/analyticsFixtures";
+import type { FindingExportRequest } from "@/types";
 import { DEFAULT_ANALYTICS_VIEW } from "@/utils/attackAnalytics";
 
 describe("api service", () => {
@@ -87,6 +91,22 @@ describe("api service", () => {
       (apiClient.delete as jest.Mock).mockResolvedValueOnce({ data: undefined });
       expect(await operationsApi.deleteFinding("a/b", "c/d")).toBeUndefined();
       expect(apiClient.delete).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd");
+    });
+    it("downloads the explicitly selected findings as a cancellable file", async () => {
+      const request: FindingExportRequest = {
+        finding_ids: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],
+        format: "markdown",
+        dashboard_base_url: "https://pyrit.example.test/red-team/",
+      };
+      const blob = new Blob(["# Findings"], { type: "text/markdown" });
+      const controller = new AbortController();
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: blob });
+      expect(await operationsApi.exportFindings("a/b", request, controller.signal)).toBe(blob);
+      expect(apiClient.post).toHaveBeenCalledWith(
+        "/operations/a%2Fb/findings/export",
+        request,
+        { responseType: "blob", signal: controller.signal },
+      );
     });
   });
   // Interceptor functions are registered at module-load time.
@@ -267,6 +287,117 @@ describe("api service", () => {
       );
 
       consoleSpy.mockRestore();
+    });
+
+    describe("file download errors", () => {
+      const backendId = `1.2.0.dev0+g${"b".repeat(40)}`;
+
+      function jsonBlob(body: unknown): Blob {
+        return new Blob([JSON.stringify(body)], { type: "application/json" });
+      }
+
+      function fileRequestError(status: number, data: unknown) {
+        const headers: Record<string, string> = { "X-Request-ID": "export-request" };
+        return {
+          isAxiosError: true,
+          config: {
+            method: "post",
+            url: "/operations/op/findings/export",
+            responseType: "blob",
+            headers: Object.assign(headers, { set: (name: string, value: string) => { headers[name] = value; } }),
+          },
+          response: { status, data },
+        };
+      }
+
+      function replaceCompatibilityStore() {
+        const compatibilityModule = jest.requireMock<typeof import("./compatibility")>("./compatibility");
+        const store = new compatibilityModule.CompatibilityStore(compatibility.bundledId);
+        jest.replaceProperty(compatibilityModule, "compatibility", store);
+        return store;
+      }
+
+      let consoleError: jest.SpyInstance;
+
+      beforeEach(() => {
+        consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+      });
+
+      afterEach(() => {
+        setMsalInstance(null);
+        jest.restoreAllMocks();
+      });
+
+      it.each([
+        ["JSON", 409, "urn:pyrit:compatibility:mismatch", false],
+        ["Blob", 409, "urn:pyrit:compatibility:mismatch", true],
+        ["Blob", 400, "urn:pyrit:compatibility:invalid", true],
+      ])("blocks an incompatible frontend on a %s %i compatibility problem", async (_body, status, type, asBlob) => {
+        const store = replaceCompatibilityStore();
+        const problem = { type, expected: backendId, actual: compatibility.bundledId };
+        const error = fileRequestError(status, asBlob ? jsonBlob(problem) : problem);
+
+        await expect(responseOnError(error)).rejects.toBe(error);
+
+        expect(store.getSnapshot()).toEqual({
+          status: "blocked",
+          reason: "The backend rejected this frontend build identity.",
+          expected: backendId,
+          actual: compatibility.bundledId,
+        });
+      });
+
+      it.each([["JSON", false], ["Blob", true]])(
+        "refreshes the token and replays the file request once after a %s 401",
+        async (_body, asBlob) => {
+          const acquireTokenSilent = jest.fn().mockResolvedValue({ accessToken: "fresh-token" });
+          setMsalInstance({
+            getActiveAccount: () => ({ username: "user@example.com" }),
+            acquireTokenSilent,
+          } as unknown as Parameters<typeof setMsalInstance>[0]);
+          const replayed = { status: 200, data: new Blob(["document"]) };
+          (apiClient as unknown as jest.Mock).mockResolvedValueOnce(replayed);
+          const unauthorized = { detail: "Not authenticated" };
+          const error = fileRequestError(401, asBlob ? jsonBlob(unauthorized) : unauthorized);
+
+          await expect(responseOnError(error)).resolves.toBe(replayed);
+
+          expect(acquireTokenSilent).toHaveBeenCalledWith(expect.objectContaining({ forceRefresh: true }));
+          expect(apiClient).toHaveBeenCalledTimes(1);
+          expect(apiClient).toHaveBeenCalledWith(error.config);
+          expect(error.config).toMatchObject({ _retried: true, responseType: "blob" });
+          expect(error.config.headers.Authorization).toBe("Bearer fresh-token");
+          expect(consoleError).not.toHaveBeenCalled();
+        },
+      );
+
+      it("logs and rejects with a Blob error's decoded detail and original status", async () => {
+        const error = fileRequestError(404, jsonBlob({ detail: "Finding not found" }));
+
+        await expect(responseOnError(error)).rejects.toBe(error);
+
+        expect(toApiError(error)).toMatchObject({ status: 404, detail: "Finding not found" });
+        expect(consoleError).toHaveBeenCalledWith(
+          "[API] POST /operations/op/findings/export failed | status=404 | "
+            + "requestId=export-request | Finding not found",
+        );
+      });
+
+      it("keeps an unreadable Blob error a visible failure with its status", async () => {
+        const read = jest.spyOn(FileReader.prototype, "readAsText").mockImplementation(() => undefined);
+        const body = jsonBlob({ detail: "Unreadable" });
+        const error = fileRequestError(500, body);
+
+        const rejected = expect(responseOnError(error)).rejects.toBe(error);
+        const reader = read.mock.contexts[0];
+        if (!(reader instanceof FileReader)) throw new Error("Blob read did not start");
+        reader.dispatchEvent(new ProgressEvent("error"));
+        await rejected;
+
+        expect(error.response.data).toBe(body);
+        expect(toApiError(error)).toMatchObject({ status: 500, detail: "Server error (500)" });
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("status=500"));
+      });
     });
   });
 

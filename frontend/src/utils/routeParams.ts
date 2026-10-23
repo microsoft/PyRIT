@@ -41,7 +41,12 @@ export function attackRoutePath(
   )
 }
 
-/** Builds an attack-conversation route with optional bounded scenario-run provenance. */
+/**
+ * Builds an attack-conversation route with optional bounded scenario-run provenance.
+ *
+ * Exported findings documents link to this route (`_conversation_link` in
+ * `pyrit/backend/services/finding_export.py`), so keep its old shape working if it changes.
+ */
 export function attackConversationRoutePath(
   attackResultId: string,
   conversationId: string,

@@ -4,7 +4,7 @@
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
 
 from pyrit.backend.models.attacks import ScoreView
 from pyrit.models import (
@@ -134,3 +134,54 @@ class FindingEvidenceListResponse(BaseModel):
     items: list[FindingEvidenceItem]
     has_more: bool
     next_offset: int | None
+
+
+class FindingExportFormat(str, Enum):
+    """A file format for exported findings."""
+
+    DOCX = "docx"
+    MARKDOWN = "markdown"
+
+
+class FindingExportRequest(BaseModel):
+    """The findings to download, the file format, and the dashboard address their evidence links open."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    finding_ids: list[UUID] = Field(min_length=1, description="Distinct findings of the operation to include")
+    format: FindingExportFormat = FindingExportFormat.DOCX
+    dashboard_base_url: AnyHttpUrl = Field(
+        description="The dashboard's address, including any path prefix, that evidence links open"
+    )
+
+    @field_validator("finding_ids")
+    @classmethod
+    def _reject_duplicates(cls, finding_ids: list[UUID]) -> list[UUID]:
+        """
+        Require each finding to be selected once.
+
+        Returns:
+            list[UUID]: The selected finding IDs.
+
+        Raises:
+            ValueError: If a finding is selected more than once.
+        """
+        if len(set(finding_ids)) != len(finding_ids):
+            raise ValueError("Each finding can be selected only once.")
+        return finding_ids
+
+    @field_validator("dashboard_base_url")
+    @classmethod
+    def _reject_credentials_query_and_fragment(cls, url: AnyHttpUrl) -> AnyHttpUrl:
+        """
+        Allow an application path prefix, but not credentials, a query, or a fragment.
+
+        Returns:
+            AnyHttpUrl: The dashboard address.
+
+        Raises:
+            ValueError: If the address has credentials, a query, or a fragment.
+        """
+        if url.username or url.password or url.query is not None or url.fragment is not None:
+            raise ValueError("Must not include credentials, a query, or a fragment.")
+        return url
