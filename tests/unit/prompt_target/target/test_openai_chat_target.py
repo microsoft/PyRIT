@@ -1700,6 +1700,102 @@ async def test_build_chat_messages_strips_audio_from_history(patch_central_datab
     assert messages[1]["content"][0]["text"] == "Follow up question"
 
 
+async def test_send_prompt_async_replays_audio_response_as_transcript(patch_central_database):
+    """The public send path must allow generated audio history that the chat adapter omits."""
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=OpenAIChatAudioConfig(voice="alloy"),
+    )
+    conversation_id = "audio-history-conversation"
+    first_request = Message(
+        message_pieces=[MessagePiece(role="user", conversation_id=conversation_id, original_value="Hi")]
+    )
+    second_request = Message(
+        message_pieces=[MessagePiece(role="user", conversation_id=conversation_id, original_value="Continue")]
+    )
+
+    first_completion = create_mock_completion(content=None)
+    first_completion.choices[0].message.audio = SimpleNamespace(
+        transcript="Spoken response", data=base64.b64encode(b"fake audio").decode("utf-8")
+    )
+    create = AsyncMock(side_effect=[first_completion, create_mock_completion(content="Follow-up answer")])
+    target._async_client.chat.completions.create = create  # type: ignore[method-assign]
+
+    with patch("pyrit.prompt_target.common.chat_completions_response_parser.data_serializer_factory") as factory:
+        serializer = factory.return_value
+        serializer.value = "/path/to/generated.wav"
+        serializer.save_data_async = AsyncMock()
+        with patch.object(target._memory, "get_conversation_messages_async", new_callable=AsyncMock) as get_history:
+            get_history.return_value = []
+            first_response = (await target.send_prompt_async(message=first_request))[0]
+            assert [piece.converted_value_data_type for piece in first_response.message_pieces] == [
+                "text",
+                "audio_path",
+            ]
+            assert first_response.message_pieces[0].converted_value == "Spoken response"
+
+            # The caller persists both turns before invoking the public send method again.
+            get_history.return_value = [first_request, first_response]
+            second_response = (await target.send_prompt_async(message=second_request))[0]
+
+    assert second_response.get_value() == "Follow-up answer"
+    assert create.await_count == 2
+    second_messages = create.await_args_list[1].kwargs["messages"]
+    assert second_messages[1]["role"] == "assistant"
+    assert second_messages[1]["content"] == [{"type": "text", "text": "Spoken response"}]
+    assert second_messages[-1]["content"] == [{"type": "text", "text": "Continue"}]
+    assert not any(part.get("type") == "input_audio" for msg in second_messages for part in msg["content"])
+
+
+def test_audio_history_validation_still_rejects_unsupported_images(patch_central_database):
+    """Skipping assistant audio must not exempt actual unsupported image history."""
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=OpenAIChatAudioConfig(voice="alloy"),
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_multi_message_pieces=True,
+                input_modalities=frozenset({frozenset({"text"})}),
+            )
+        ),
+    )
+    historical_message = Message(
+        message_pieces=[
+            MessagePiece(role="assistant", original_value="A description"),
+            MessagePiece(
+                role="assistant",
+                original_value="/path/to/image.png",
+                converted_value="/path/to/image.png",
+                original_value_data_type="image_path",
+                converted_value_data_type="image_path",
+            ),
+        ]
+    )
+    current_request = Message(message_pieces=[MessagePiece(role="user", original_value="Continue")])
+
+    with pytest.raises(ValueError, match="Received: image_path"):
+        target._validate_request(normalized_conversation=[historical_message, current_request])
+
+
+def test_audio_history_validation_still_rejects_current_user_audio(patch_central_database):
+    """An audio response in history must not enable unsupported live audio input."""
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=OpenAIChatAudioConfig(voice="alloy"),
+    )
+    current_request = Message(message_pieces=[_create_audio_message_piece(role="user")])
+
+    with pytest.raises(ValueError, match="Received: audio_path"):
+        target._validate_request(normalized_conversation=[current_request])
+
+
 # ============================================================================
 # Audio Response Saving Tests
 # ============================================================================

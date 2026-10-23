@@ -56,6 +56,11 @@ class AttackParameters:
     # Per-execution scoring criteria, supplied directly or by seed preparation.
     expectation: ScoringExpectation | None = None
 
+    # Explicit contract for a caller-authored, open assistant prefix.
+    # Ordinary assistant-ending histories retain their extraction semantics.
+    # Keyword-only so the released positional constructor signature is unchanged.
+    continue_final_assistant_message: bool = field(default=False, kw_only=True)
+
     def __str__(self) -> str:
         """Return a nicely formatted string representation of the attack parameters."""
         lines = [f"{self.__class__.__name__}:"]
@@ -208,10 +213,17 @@ class AttackParameters:
 
         # Use extraction_group properties for prepended_conversation/next_message
         if "next_message" in valid_fields:
-            params["next_message"] = extraction_group.next_message
+            params["next_message"] = extraction_group.get_next_message(
+                include_final_assistant=seed_group.continue_final_assistant_message
+            )
+
+        if "continue_final_assistant_message" in valid_fields:
+            params["continue_final_assistant_message"] = seed_group.continue_final_assistant_message
 
         if "prepended_conversation" in valid_fields:
-            params["prepended_conversation"] = extraction_group.prepended_conversation
+            params["prepended_conversation"] = extraction_group.get_prepended_conversation(
+                include_final_assistant=seed_group.continue_final_assistant_message
+            )
 
         # Apply overrides (already validated above)
         params.update(overrides)
@@ -271,13 +283,13 @@ class AttackParameters:
         new_fields: list[Any] = []
         for f in dataclasses.fields(cls):
             if f.name not in field_names:
-                # Preserve field defaults
+                # Preserve field defaults and keyword-only status
                 if f.default is not dataclasses.MISSING:
-                    new_fields.append((f.name, f.type, field(default=f.default)))
+                    new_fields.append((f.name, f.type, field(default=f.default, kw_only=f.kw_only)))
                 elif f.default_factory is not dataclasses.MISSING:
-                    new_fields.append((f.name, f.type, field(default_factory=f.default_factory)))
+                    new_fields.append((f.name, f.type, field(default_factory=f.default_factory, kw_only=f.kw_only)))
                 else:
-                    new_fields.append((f.name, f.type))
+                    new_fields.append((f.name, f.type, field(kw_only=f.kw_only)))
 
         # Generate a descriptive class name
         excluded_str = "_".join(sorted(field_names))

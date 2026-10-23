@@ -29,6 +29,7 @@ class TestCapabilityHandlingPolicy:
         assert CapabilityName.JSON_OUTPUT.value == "supports_json_output"
         assert CapabilityName.EDITABLE_HISTORY.value == "supports_editable_history"
         assert CapabilityName.SYSTEM_PROMPT.value == "supports_system_prompt"
+        assert CapabilityName.PREFILL.value == "supports_prefill"
 
     def test_unsupported_capability_behavior_values(self):
         assert UnsupportedCapabilityBehavior.ADAPT.value == "adapt"
@@ -111,6 +112,18 @@ class TestCapabilityHandlingPolicy:
         assert capabilities.includes(capability=CapabilityName.JSON_OUTPUT) is True
         assert capabilities.includes(capability=CapabilityName.EDITABLE_HISTORY) is False
 
+    def test_supports_prefill_defaults_false_and_round_trips(self):
+        default_caps = TargetCapabilities()
+        assert default_caps.supports_prefill is False
+        assert default_caps.includes(capability=CapabilityName.PREFILL) is False
+
+        caps = TargetCapabilities(supports_prefill=True)
+        assert caps.includes(capability=CapabilityName.PREFILL) is True
+
+        dumped = caps.model_dump()
+        assert dumped["supports_prefill"] is True
+        assert TargetCapabilities.model_validate(dumped) == caps
+
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 # Clear them so that targets use _DEFAULT_CONFIGURATION instead of _KNOWN_CAPABILITIES.
@@ -179,6 +192,26 @@ class TestDefaultConfigurationDefined:
                 f"{cls.__name__}._DEFAULT_CONFIGURATION must be a TargetConfiguration instance, "
                 f"got {type(cls._DEFAULT_CONFIGURATION)}"
             )
+
+
+class TestSupportsPrefillDefaults:
+    """Verify which targets declare supports_prefill via _DEFAULT_CONFIGURATION."""
+
+    def test_local_hugging_face_target_supports_prefill(self):
+        from pyrit.prompt_target import HuggingFaceChatTarget
+
+        assert HuggingFaceChatTarget._DEFAULT_CONFIGURATION.capabilities.supports_prefill is True
+
+    def test_completion_target_does_not_support_prefill(self):
+        # The completion target sends only the last message's text, so a prefill would drop the user turn.
+        from pyrit.prompt_target import OpenAICompletionTarget
+
+        assert OpenAICompletionTarget._DEFAULT_CONFIGURATION.capabilities.supports_prefill is False
+
+    def test_hosted_chat_target_does_not_support_prefill(self):
+        from pyrit.prompt_target import OpenAIChatTarget
+
+        assert OpenAIChatTarget._DEFAULT_CONFIGURATION.capabilities.supports_prefill is False
 
 
 @pytest.mark.usefixtures("patch_central_database")

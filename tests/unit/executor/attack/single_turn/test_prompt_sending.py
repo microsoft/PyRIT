@@ -121,6 +121,26 @@ async def test_attack_marker_pipelines_cover_history_request_response_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
+async def test_released_positional_parameters_keep_labels_and_request_converters_async() -> None:
+    target = MockPromptTarget()
+    attack = PromptSendingAttack(
+        objective_target=target,
+        attack_converter_config=AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()])
+        ),
+    )
+    context = SingleTurnAttackContext(
+        params=AttackParameters("Test objective", None, None, {"run": "example"}),
+        conversation_id=str(uuid.uuid4()),
+    )
+
+    result = await attack.execute_with_context_async(context=context)
+
+    assert target.prompt_sent == [base64.b64encode(b"Test objective").decode("utf-8")]
+    assert result.labels == {"run": "example"}
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_execute_resets_invoked_objective_target_conversation() -> None:
     target = MockPromptTarget()
     target.reset_conversation_async = AsyncMock()  # type: ignore[method-assign]

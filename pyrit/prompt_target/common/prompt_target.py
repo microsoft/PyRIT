@@ -343,8 +343,8 @@ class PromptTarget(Identifiable):
         Validate the normalized conversation before sending to the target.
 
         Called after the normalization pipeline has run. Validates the last
-        message (the current request) for piece count, data types, and checks
-        whether the full conversation violates multi-turn constraints.
+        message (the current request) for piece count, every normalized turn for
+        supported data types, and the full conversation for multi-turn constraints.
 
         Args:
             normalized_conversation: The normalized conversation to validate.
@@ -378,17 +378,40 @@ class PromptTarget(Identifiable):
                 f"{custom_configuration_message}"
             )
 
-        for piece in message.message_pieces:
-            piece_type = piece.converted_value_data_type
-            if piece_type not in supported_types_flat:
-                supported_types = ", ".join(sorted(supported_types_flat))
-                raise ValueError(
-                    f"This target supports only the following data types: {supported_types}. Received: {piece_type}. "
-                    f"{custom_configuration_message}"
-                )
+        for turn in normalized_conversation:
+            has_text_piece = any(piece.converted_value_data_type == "text" for piece in turn.message_pieces)
+            for piece in turn.message_pieces:
+                piece_type = piece.converted_value_data_type
+                if piece_type not in supported_types_flat:
+                    if turn is not message and self._is_omitted_history_piece(
+                        message_piece=piece, has_text_piece=has_text_piece
+                    ):
+                        continue
+                    supported_types = ", ".join(sorted(supported_types_flat))
+                    raise ValueError(
+                        f"This target supports only the following data types: {supported_types}. "
+                        f"Received: {piece_type}. "
+                        f"{custom_configuration_message}"
+                    )
 
         if not self.configuration.includes(capability=CapabilityName.MULTI_TURN) and len(normalized_conversation) > 1:
             raise ValueError(f"This target only supports a single turn conversation. {custom_configuration_message}")
+
+    def _is_omitted_history_piece(self, *, message_piece: MessagePiece, has_text_piece: bool) -> bool:
+        """
+        Return whether the target's request adapter omits this historical piece.
+
+        Only used for unsupported input types in prior turns. Subclasses may override
+        this when they serialize history without certain stored response modalities.
+
+        Args:
+            message_piece: Historical message piece to check.
+            has_text_piece: Whether its message contains a text piece.
+
+        Returns:
+            bool: Whether the piece is omitted from the provider request.
+        """
+        return False
 
     async def _get_normalized_conversation_async(
         self,

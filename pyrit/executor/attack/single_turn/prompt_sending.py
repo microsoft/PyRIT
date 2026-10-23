@@ -403,7 +403,9 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 message=message,
                 target=self._objective_target,
                 conversation_id=context.conversation_id,
-                request_converter_configurations=self._request_converters,
+                request_converter_configurations=(
+                    [] if context.params.continue_final_assistant_message else self._request_converters
+                ),
                 response_converter_configurations=self._response_converters,
                 normalizer_overrides=self._get_prepended_normalizer_overrides(
                     prepended_history_send_context=context.prepended_history_send_context,

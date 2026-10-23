@@ -49,6 +49,7 @@ class CapabilityName(str, Enum):
     EDITABLE_HISTORY = "supports_editable_history"
     SYSTEM_PROMPT = "supports_system_prompt"
     STREAMING_AUDIO = "supports_streaming_audio"
+    PREFILL = "supports_prefill"
 
 
 class TargetCapabilities(BaseModel):
@@ -98,6 +99,12 @@ class TargetCapabilities(BaseModel):
 
     #: Whether the target natively supports system prompts.
     supports_system_prompt: bool = False
+
+    #: Whether the target sends the full conversation and continues a trailing assistant message
+    #: instead of ignoring or rejecting it. Locally hosted chat models can; most hosted chat APIs
+    #: cannot, and completion-style targets that forward only the last message's text do not qualify.
+    #: Techniques that prime the model by prefilling the start of its reply require this.
+    supports_prefill: bool = False
 
     #: Whether the target supports the streaming audio API: opening a long-lived
     #: streaming session via ``open_streaming_session`` that pushes user audio chunks,
