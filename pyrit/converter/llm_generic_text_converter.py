@@ -4,6 +4,7 @@
 import hashlib
 import logging
 import uuid
+from pathlib import PurePath
 from typing import TYPE_CHECKING, Any
 
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_none
@@ -26,6 +27,65 @@ if TYPE_CHECKING:
     from tenacity.wait import wait_base
 
 logger = logging.getLogger(__name__)
+
+
+def _describe_template_value(value: Any, *, enclosing: frozenset[int] = frozenset()) -> str:
+    """
+    Describe a template parameter value so that values which render differently are told apart.
+
+    The description keeps container types and dictionary order (a Jinja loop renders entries in
+    insertion order) and never raises, so any value the renderer accepts can be identified. Values
+    without a dedicated case are described by their ``repr``.
+
+    Args:
+        value (Any): The template parameter value.
+        enclosing (frozenset[int]): Ids of the containers being described, to stop at self-references.
+
+    Returns:
+        str: A deterministic description of the value, tagged with its type.
+    """
+    type_name = f"{type(value).__module__}.{type(value).__qualname__}"
+    try:
+        if id(value) in enclosing:
+            return f"{type_name}(<recursive>)"
+        nested = enclosing | {id(value)}
+
+        def describe(item: Any) -> str:
+            return _describe_template_value(item, enclosing=nested)
+
+        if isinstance(value, dict):
+            entries = ", ".join(f"{describe(key)}: {describe(item)}" for key, item in value.items())
+            return f"{type_name}{{{entries}}}"
+        if isinstance(value, (list, tuple)):
+            return f"{type_name}[{', '.join(describe(item) for item in value)}]"
+        if isinstance(value, (set, frozenset)):
+            # Set iteration order can change between processes, so sort the element descriptions.
+            return f"{type_name}{{{', '.join(sorted(describe(item) for item in value))}}}"
+        if isinstance(value, PurePath):
+            # Describe paths the same way on every platform (WindowsPath and PosixPath differ in repr).
+            return f"path({value.as_posix()!r})"
+        return f"{type_name}({value!r})"
+    except Exception:
+        return f"{type_name}(<unrepresentable>)"
+
+
+def _hash_template_parameters(parameters: dict[str, Any]) -> str | None:
+    """
+    Hash template parameters for a converter identifier.
+
+    Args:
+        parameters (dict[str, Any]): Template parameter names and values.
+
+    Returns:
+        str | None: The first 16 hex characters of the SHA-256 digest, or ``None`` if there are no parameters.
+    """
+    if not parameters:
+        return None
+    # Keyword argument order does not change the rendered prompt, so sort by parameter name.
+    description = ", ".join(
+        f"{name!r}: {_describe_template_value(value)}" for name, value in sorted(parameters.items())
+    )
+    return hashlib.sha256(description.encode("utf-8", errors="backslashreplace")).hexdigest()[:16]
 
 
 class LLMGenericTextConverter(Converter):
@@ -92,6 +152,9 @@ class LLMGenericTextConverter(Converter):
         self._converter_target = converter_target
         self._system_prompt_template = system_prompt_template
         self._prompt_kwargs = kwargs
+        # Some subclasses add per-call values (such as the current prompt) to ``_prompt_kwargs``
+        # before converting, so the identifier is based on the parameters given here only.
+        self._template_parameters_hash = _hash_template_parameters(kwargs)
         self._retry_exceptions = retry_exceptions if retry_exceptions is not None else self.RETRY_EXCEPTIONS
         self._max_retry_attempts = max_retry_attempts
         self._retry_wait_max_seconds = retry_wait_max_seconds
@@ -128,6 +191,8 @@ class LLMGenericTextConverter(Converter):
             params={
                 "system_prompt_template_hash": system_prompt_hash,
                 "user_prompt_template_hash": user_prompt_hash,
+                # Template parameters are rendered into both prompts, so they change what is sent.
+                "template_parameters_hash": self._template_parameters_hash,
             },
             converter_target=self._converter_target.get_identifier(),
         )
