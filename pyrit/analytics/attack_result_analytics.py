@@ -315,6 +315,8 @@ class AttackResultAnalytics:
                 and label != raw.key.value
             ):
                 label = f"{label} ({raw.key.value[-8:]})"
+            if raw.key.kind is AttackAnalyticsValueKind.LEGACY_OPERATION_NAME:
+                label = f"{label} (legacy name)"
         return AttackAnalyticsOption(key=raw.key, label=label)
 
     @staticmethod

@@ -33,8 +33,8 @@ from pyrit.models import (
     PromptResponseError,
     Score,
 )
-from pyrit.models.component_spec import TargetBinding
-from pyrit.models.results.attack_result import normalize_legacy_attack_attribution
+from pyrit.models.component_spec import RegisteredComponentReference, TargetBinding
+from pyrit.models.results.attack_result import ManualContinuation, ScoringFailure, normalize_legacy_attack_attribution
 
 
 class TargetInfo(BaseModel):
@@ -241,6 +241,19 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Attack creation timestamp")
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Last update timestamp")
 
+    chat_scorer: RegisteredComponentReference | None = Field(
+        default=None, description="Scorer for future manual responses"
+    )
+    chat_scorer_inherited: bool = Field(default=False, description="Uses the scan's registered original scorer")
+    execution_read_only: bool = Field(default=False, description="Execution changes require a manual continuation")
+
+    @computed_field
+    @property
+    def manual_continuation(self) -> ManualContinuation | None:
+        """The original automated conversation and handoff response, when this is a continuation."""
+        value = self.metadata.get(ManualContinuation.METADATA_KEY)
+        return ManualContinuation.model_validate(value) if value is not None else None
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def target_unbound(self) -> bool:
@@ -335,6 +348,7 @@ class ConversationMessagesResponse(BaseModel):
 
     conversation_id: str = Field(..., description="Conversation identifier")
     messages: list[MessageView] = Field(default_factory=list, description="All messages in order")
+    scoring_failure: ScoringFailure | None = None
     target_response_status: TargetResponseStatus | None = Field(
         default=None,
         description=(
@@ -497,6 +511,7 @@ class CreateAttackRequest(_AttackAttributionInput):
 
     name: TextStr | None = Field(None, description="Attack name/label")
     target_binding: TargetBinding | None = None
+    chat_scorer: RegisteredComponentReference | None = None
     target_registry_name: IdentifierStr | None = Field(
         None, description="Target registry name, or None for a saved unbound attack"
     )
@@ -536,6 +551,8 @@ class UpdateAttackRequest(BaseModel):
         default=None,
         description="Updated attack outcome",
     )
+    chat_scorer: RegisteredComponentReference | None = None
+    default_chat_scorer: RegisteredComponentReference | None = None
     objective: TextStr | None = Field(default=None, description="Shared objective for all conversations in the attack")
     expected_objective: str | None = Field(
         default=None, description="Objective read before editing, for conflict detection"
@@ -549,7 +566,7 @@ class UpdateAttackRequest(BaseModel):
         Returns:
             UpdateAttackRequest: The validated request.
         """
-        if self.outcome is None and self.objective is None:
+        if self.outcome is None and self.objective is None and "chat_scorer" not in self.model_fields_set:
             raise ValueError("At least one mutable attack field must be supplied")
         if self.objective is not None:
             self.objective = self.objective.strip()
@@ -610,6 +627,8 @@ class SaveConversationRequest(_AttackAttributionInput):
     """Save a complete draft without sending it, optionally reusing unsent history."""
 
     save_id: uuid.UUID
+    chat_scorer: RegisteredComponentReference | None = None
+    default_chat_scorer: RegisteredComponentReference | None = None
     destination: Literal["same_attack", "new_attack"]
     attack_result_id: uuid.UUID | None = None
     source_attack_result_id: uuid.UUID | None = None

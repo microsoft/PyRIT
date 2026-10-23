@@ -3871,8 +3871,7 @@ class TestRepeatedMessageSend:
             return await send(normalized_conversation=normalized_conversation)
 
         async def finalize_async(**kwargs: Any) -> None:
-            pieces = await sqlite_instance.get_message_pieces_async(prompt_ids=[kwargs["last_response_id"]])
-            if pieces[0].conversation_id == attack.conversation_id:
+            if kwargs["last_response"].conversation_id == attack.conversation_id:
                 finalizing.set()
                 await release_metadata.wait()
             await finalize(**kwargs)

@@ -8,6 +8,7 @@ from colorama import Fore, Style
 from pyrit.models import AttackOutcome, ScenarioResult
 from pyrit.output._derivation import (
     attack_score_display,
+    attack_technique_label,
     resolve_target_info,
     scenario_overview,
     select_attacks,
@@ -293,7 +294,8 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
                 )
             )
             lines.append(self._format_colored(f"{self._indent * 2}id:        {attack.attack_result_id}", Fore.CYAN))
-            lines.append(self._format_colored(f"{self._indent * 2}technique: {name}", Fore.CYAN))
+            technique = attack_technique_label(atomic_attack_name=name, attack=attack)
+            lines.append(self._format_colored(f"{self._indent * 2}technique: {technique}", Fore.CYAN))
             lines.append(self._format_colored(f"{self._indent * 2}objective: {attack.objective}", Fore.CYAN))
 
         shown = len(selected)

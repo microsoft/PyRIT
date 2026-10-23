@@ -54,6 +54,7 @@ _LEGACY_MANUAL_ATTACK_PLACEHOLDER = "Manual attack via GUI"
 
 if TYPE_CHECKING:
     from pyrit.models.conversation_stats import ConversationStats
+    from pyrit.models.results.attack_result import AttackScoringInputs
 
 # ============================================================================
 # Domain → DTO  (for API responses)
@@ -223,6 +224,8 @@ async def attack_result_to_summary_async(
     *,
     stats: ConversationStats,
     operation_name: str | None = None,
+    scoring_inputs: AttackScoringInputs | None = None,
+    execution_read_only: bool = False,
 ) -> AttackSummary:
     """
     Build an AttackSummary view from an AttackResult.
@@ -237,6 +240,8 @@ async def attack_result_to_summary_async(
         stats: Pre-aggregated conversation stats (from ``get_conversation_stats``).
         operation_name: The current name of the saved Operation, when the attack has one.
             Legacy attacks without an Operation ID show their historical name instead.
+        scoring_inputs: Effective inputs resolved against the current registry by the service.
+        execution_read_only: Whether execution changes require a manual continuation.
 
     Returns:
         AttackSummary view ready for the API response.
@@ -250,6 +255,9 @@ async def attack_result_to_summary_async(
     data = {name: getattr(ar, name) for name in AttackResult.model_fields}
     data.update(
         objective=_normalize_summary_objective(ar),
+        chat_scorer=scoring_inputs.scorer if scoring_inputs else None,
+        chat_scorer_inherited=scoring_inputs.inherited if scoring_inputs else False,
+        execution_read_only=execution_read_only,
         last_response=await _summary_last_response_async(ar.last_response),
         automated_score=(
             ScoreView.from_domain(ar.automated_score, is_objective_score=True) if ar.automated_score else None

@@ -22,6 +22,7 @@ from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import CompileError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.sql import Select, visitors
+from sqlalchemy.sql.elements import Case
 from sqlalchemy.sql.functions import Function
 from sqlalchemy.sql.selectable import CTE
 
@@ -37,7 +38,7 @@ from pyrit.memory.analytics_sql import (
     UnicodeLower,
     UnicodeStrip,
 )
-from pyrit.memory.attack_analytics import AttackAnalyticsReader
+from pyrit.memory.attack_analytics import AttackAnalyticsReader, RawAnalyticsOption
 from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
 from pyrit.memory.memory_models import AttackIdentifierEntry, AttackResultEntry, Base, TargetIdentifierEntry
 from pyrit.memory.query_control import QueryControl
@@ -72,6 +73,7 @@ def make_result(
     index: int = 1,
     outcome: AttackOutcome = AttackOutcome.SUCCESS,
     operation: str | None = "operation-a",
+    operation_id: uuid.UUID | None = None,
     categories: list[str] | None = None,
     converters: list[str] | None = None,
     response_converters: list[str] | None = None,
@@ -83,6 +85,7 @@ def make_result(
         conversation_id="shared-main-conversation",
         objective=f"Synthetic objective {index}",
         operation=operation,
+        operation_id=operation_id,
         operator="operator-a",
         labels=labels or {},
         targeted_harm_categories=categories or [],
@@ -122,12 +125,16 @@ def test_correctness_query_control_retains_a_finite_deadline() -> None:
             query_control.check()
 
 
-def predicate(*, name: str, values: list[str | None], **options: Any) -> dict[str, Any]:
+def predicate(*, name: str, values: list[str | None], kind: str = "value", **options: Any) -> dict[str, Any]:
     return {
         "dimension": {"name": name, **options.pop("dimension_options", {})},
-        "values": [{"value": value} if value is not None else {"kind": "missing"} for value in values],
+        "values": [{"kind": kind, "value": value} if value is not None else {"kind": "missing"} for value in values],
         **options,
     }
+
+
+def typed_key(option: RawAnalyticsOption) -> tuple[str, str | None]:
+    return option.key.kind.value, option.key.value
 
 
 async def test_report_counts_result_ids_not_conversations(sqlite_instance: SQLiteMemory) -> None:
@@ -266,7 +273,11 @@ async def test_scalar_facet_filter_uses_index_and_preserves_exact_any_values(sql
         ]
     )
     filters = AttackAnalyticsFilters.model_validate(
-        {"dimensions": [predicate(name="operation", values=["operation-a", "operation-b"])]}
+        {
+            "dimensions": [
+                predicate(name="operation", values=["operation-a", "operation-b"], kind="legacy_operation_name")
+            ]
+        }
     )
     query = AttackAnalyticsFacetQuery(
         filters=filters, dimension=AttackAnalyticsDimension(name="label", label_key="case"), search="s"
@@ -279,6 +290,40 @@ async def test_scalar_facet_filter_uses_index_and_preserves_exact_any_values(sql
     assert any("SEARCH analytics_results" in step and "operation=?" in step for step in steps), steps
     result = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(query=query, control=control())
     assert {item.key.value for item in result.items} == {"first", "second"}
+
+
+@pytest.mark.parametrize(
+    ("legacy_names", "expected"),
+    [([], {"first"}), (["Engagement"], {"first", "second"})],
+    ids=["id_only", "id_and_legacy_name"],
+)
+async def test_operation_id_filter_uses_operation_id_index(
+    *, sqlite_instance: SQLiteMemory, legacy_names: list[str], expected: set[str]
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    linked = make_result(index=1, operation=None, operation_id=operation.id, labels={"case": "first"})
+    legacy = make_result(index=2, operation="Engagement", labels={"case": "second"})
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[linked, legacy])
+    values = [
+        {"value": str(operation.id)},
+        *({"kind": "legacy_operation_name", "value": name} for name in legacy_names),
+    ]
+    filters = AttackAnalyticsFilters.model_validate(
+        {"dimensions": [{"dimension": {"name": "operation"}, "values": values}]}
+    )
+    query = AttackAnalyticsFacetQuery(
+        filters=filters, dimension=AttackAnalyticsDimension(name="label", label_key="case"), search="s"
+    )
+    statement = AttackAnalyticsQueryCompiler(dialect="sqlite", filters=filters).facet(query)
+    compiled = str(statement.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+    async with await sqlite_instance.get_session_async() as session:
+        plan = await session.execute(text("EXPLAIN QUERY PLAN " + compiled))
+        steps = [row[3] for row in plan]
+    assert any("USING INDEX ix_AttackResultEntries_operation_id " in step for step in steps), steps
+    if legacy_names:
+        assert any("SEARCH analytics_results" in step and "operation=?" in step for step in steps), steps
+    result = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(query=query, control=control())
+    assert {item.key.value for item in result.items} == expected
 
 
 @pytest.mark.parametrize("version", [(3, 34, 0), (3, 35, 0)])
@@ -396,7 +441,7 @@ async def test_missing_values_do_not_collide_with_literal_labels(sqlite_instance
     )
     assert {(group.option.key.kind.value, group.option.key.value) for group in report.groups} == {
         ("missing", None),
-        ("value", "Not recorded"),
+        ("legacy_operation_name", "Not recorded"),
     }
 
 
@@ -485,7 +530,7 @@ async def test_facet_excludes_its_own_filters_but_keeps_other_dimensions(sqlite_
     filters = AttackAnalyticsFilters.model_validate(
         {
             "dimensions": [
-                predicate(name="operation", values=["one"]),
+                predicate(name="operation", values=["one"], kind="legacy_operation_name"),
                 predicate(name="converter_type", values=["Alpha"]),
             ]
         }
@@ -494,70 +539,438 @@ async def test_facet_excludes_its_own_filters_but_keeps_other_dimensions(sqlite_
         query=AttackAnalyticsFacetQuery(filters=filters, dimension=AttackAnalyticsDimension(name="operation")),
         control=control(),
     )
-    assert [item.key.value for item in values.items] == ["one", "two"]
+    assert [typed_key(item) for item in values.items] == [
+        ("legacy_operation_name", "one"),
+        ("legacy_operation_name", "two"),
+    ]
 
 
-async def test_operation_resolves_saved_operation_names_like_history(sqlite_instance: SQLiteMemory) -> None:
+async def test_operation_keys_use_ids_and_legacy_names(sqlite_instance: SQLiteMemory) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
-    by_id = make_result(operation=None)
-    by_id.operation_id = operation.id
-    # A deprecated name that resolved to the saved Operation is stored with both.
-    linked_name = make_result(index=2, operation=" ENGAGEMENT", outcome=AttackOutcome.FAILURE)
-    linked_name.operation_id = operation.id
+    by_id = make_result(operation=None, operation_id=operation.id)
+    # A deprecated name that resolved to the saved Operation is stored with both; the ID wins.
+    linked_name = make_result(
+        index=2, operation=" ENGAGEMENT", operation_id=operation.id, outcome=AttackOutcome.FAILURE
+    )
+    # The same name as the legacy row, but linked by ID: only the ID filter may select it.
+    linked_exact = make_result(index=5, operation="Engagement", operation_id=operation.id)
     by_name = make_result(index=3, operation="Engagement")
     unassigned = make_result(index=4, operation=None)
-    await add_legacy_attack_results_async(sqlite_instance, attack_results=[by_id, linked_name, by_name, unassigned])
+    await add_legacy_attack_results_async(
+        sqlite_instance, attack_results=[by_id, linked_name, linked_exact, by_name, unassigned]
+    )
     reader = AttackAnalyticsReader(memory=sqlite_instance)
+    saved = ("value", str(operation.id))
 
     report = await reader.report_async(query=AttackAnalyticsQuery(), control=control())
-    assert {(group.option.key.kind.value, group.option.key.value): group.counts for group in report.groups} == {
-        ("value", "Engagement"): {"success": 2, "failure": 1},
+    groups = {typed_key(group.option): group.counts for group in report.groups}
+    labels = {typed_key(group.option): group.option.label for group in report.groups}
+    assert groups == {
+        saved: {"success": 2, "failure": 1},
+        ("legacy_operation_name", "Engagement"): {"success": 1},
         ("missing", None): {"success": 1},
     }
+    assert labels[saved] == "Engagement"
     assert sorted(item.operation or "" for item in report.results.items) == [
         "",
         "Engagement",
         "Engagement",
         "Engagement",
+        "Engagement",
     ]
-
-    filters = AttackAnalyticsFilters.model_validate(
-        {"dimensions": [predicate(name="operation", values=["Engagement"])]}
-    )
-    filtered = await reader.report_async(query=AttackAnalyticsQuery(filters=filters), control=control())
-    assert filtered.counts == {"success": 2, "failure": 1}
-    unassigned_only = AttackAnalyticsFilters.model_validate(
-        {"dimensions": [predicate(name="operation", values=[None])]}
-    )
-    missing = await reader.report_async(query=AttackAnalyticsQuery(filters=unassigned_only), control=control())
-    assert missing.counts == {"success": 1}
     facet = await reader.facets_async(
         query=AttackAnalyticsFacetQuery(dimension=AttackAnalyticsDimension(name="operation")), control=control()
     )
-    assert [(item.key.kind.value, item.key.value) for item in facet.items] == [
+    assert {typed_key(item) for item in facet.items} == set(groups)
+
+    all_kinds = {
+        "dimension": {"name": "operation"},
+        "values": [
+            {"value": str(operation.id)},
+            {"kind": "legacy_operation_name", "value": "Engagement"},
+            {"kind": "missing"},
+        ],
+    }
+    for selected, counts, results in (
+        (
+            predicate(name="operation", values=[str(operation.id)]),
+            {"success": 2, "failure": 1},
+            [by_id, linked_name, linked_exact],
+        ),
+        (predicate(name="operation", values=["Engagement"], kind="legacy_operation_name"), {"success": 1}, [by_name]),
+        (predicate(name="operation", values=[None]), {"success": 1}, [unassigned]),
+        (all_kinds, {"success": 4, "failure": 1}, [by_id, linked_name, linked_exact, by_name, unassigned]),
+    ):
+        filters = AttackAnalyticsFilters.model_validate({"dimensions": [selected]})
+        filtered = await reader.report_async(query=AttackAnalyticsQuery(filters=filters), control=control())
+        assert filtered.counts == counts
+        assert {item.attack_result_id for item in filtered.results.items} == {
+            result.attack_result_id for result in results
+        }
+
+
+async def test_operation_id_filter_survives_rename(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    legacy = make_result(index=2, operation="Engagement", outcome=AttackOutcome.FAILURE)
+    await add_legacy_attack_results_async(
+        sqlite_instance, attack_results=[make_result(operation=None, operation_id=operation.id), legacy]
+    )
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    by_id = AttackAnalyticsFilters.model_validate(
+        {"dimensions": [predicate(name="operation", values=[str(operation.id)])]}
+    )
+
+    async def read_by_id_async() -> tuple[dict[str, int], list[tuple[tuple[str, str | None], str | None]]]:
+        report = await reader.report_async(query=AttackAnalyticsQuery(filters=by_id), control=control())
+        return report.counts, [(typed_key(group.option), group.option.label) for group in report.groups]
+
+    saved = ("value", str(operation.id))
+    assert await read_by_id_async() == ({"success": 1}, [(saved, "Engagement")])
+    await sqlite_instance.update_operation_async(operation_id=operation.id, name="Renamed")
+    assert await read_by_id_async() == ({"success": 1}, [(saved, "Renamed")])
+
+    reused = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    assert reused.id != operation.id
+    await add_legacy_attack_results_async(
+        sqlite_instance, attack_results=[make_result(index=3, operation=None, operation_id=reused.id)]
+    )
+    assert await read_by_id_async() == ({"success": 1}, [(saved, "Renamed")])
+    by_name = AttackAnalyticsFilters.model_validate(
+        {"dimensions": [predicate(name="operation", values=["Engagement"], kind="legacy_operation_name")]}
+    )
+    named = await reader.report_async(query=AttackAnalyticsQuery(filters=by_name), control=control())
+    assert [item.attack_result_id for item in named.results.items] == [legacy.attack_result_id]
+
+
+async def test_operation_id_filter_normalizes_hand_written_ids(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    linked = make_result(operation=None, operation_id=operation.id)
+    await add_legacy_attack_results_async(
+        sqlite_instance, attack_results=[linked, make_result(index=2, operation="Engagement")]
+    )
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    canonical = str(operation.id)
+    for spelling in (canonical, canonical.upper(), "{" + canonical + "}", "urn:uuid:" + canonical):
+        filters = AttackAnalyticsFilters.model_validate(
+            {"dimensions": [predicate(name="operation", values=[spelling])]}
+        )
+        report = await reader.report_async(query=AttackAnalyticsQuery(filters=filters), control=control())
+        assert report.counts == {"success": 1}
+        assert [item.attack_result_id for item in report.results.items] == [linked.attack_result_id]
+
+
+async def test_operation_key_survives_missing_saved_operation(sqlite_instance: SQLiteMemory) -> None:
+    first, second = [await sqlite_instance.add_operation_async(Operation(name=name)) for name in ("First", "Second")]
+    named = make_result(operation="Kept", operation_id=first.id)
+    unnamed = make_result(index=2, operation=None, operation_id=second.id, outcome=AttackOutcome.FAILURE)
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[named, unnamed])
+    async with sqlite_instance._get_async_engine().begin() as connection:
+        await connection.execute(text('DELETE FROM "OperationEntries"'))
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    dimension = AttackAnalyticsDimension(name="operation")
+
+    report = await reader.report_async(query=AttackAnalyticsQuery(group_by=dimension), control=control())
+    options = {typed_key(group.option): group.option for group in report.groups}
+    kept, bare = ("value", str(first.id)), ("value", str(second.id))
+    assert set(options) == {kept, bare}
+    assert [options[kept].label, options[bare].label] == ["Kept", str(second.id)]
+    assert {item.attack_result_id: item.operation for item in report.results.items} == {
+        named.attack_result_id: "Kept",
+        unnamed.attack_result_id: str(second.id),
+    }
+    facet = await reader.facets_async(
+        query=AttackAnalyticsFacetQuery(dimension=dimension, search=str(second.id)[:8]), control=control()
+    )
+    assert [(typed_key(item), item.label) for item in facet.items] == [(bare, str(second.id))]
+    filters = AttackAnalyticsFilters.model_validate(
+        {"dimensions": [predicate(name="operation", values=[str(second.id)])]}
+    )
+    filtered = await reader.report_async(query=AttackAnalyticsQuery(filters=filters), control=control())
+    assert filtered.counts == {"failure": 1}
+
+
+async def test_uuid_shaped_legacy_name_stays_separate(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    linked = make_result(operation=None, operation_id=operation.id)
+    lookalike = make_result(index=2, operation=str(operation.id), outcome=AttackOutcome.FAILURE)
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[linked, lookalike])
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+
+    report = await reader.report_async(query=AttackAnalyticsQuery(), control=control())
+    expected = {
+        ("value", str(operation.id)): {"success": 1},
+        ("legacy_operation_name", str(operation.id)): {"failure": 1},
+    }
+    assert {typed_key(group.option): group.counts for group in report.groups} == expected
+    facet = await reader.facets_async(
+        query=AttackAnalyticsFacetQuery(dimension=AttackAnalyticsDimension(name="operation")), control=control()
+    )
+    assert {typed_key(item) for item in facet.items} == set(expected)
+    filters = AttackAnalyticsFilters.model_validate(
+        {"dimensions": [predicate(name="operation", values=[str(operation.id)])]}
+    )
+    filtered = await reader.report_async(query=AttackAnalyticsQuery(filters=filters), control=control())
+    assert [item.attack_result_id for item in filtered.results.items] == [linked.attack_result_id]
+
+
+async def test_blank_legacy_name_keeps_its_key(sqlite_instance: SQLiteMemory) -> None:
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[make_result(operation=""), make_result(index=2, operation="  ", outcome=AttackOutcome.FAILURE)],
+    )
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+
+    report = await reader.report_async(query=AttackAnalyticsQuery(), control=control())
+    assert {typed_key(group.option): group.counts for group in report.groups} == {
+        ("legacy_operation_name", ""): {"success": 1},
+        ("legacy_operation_name", "  "): {"failure": 1},
+    }
+    for name, counts in (("", {"success": 1}), ("  ", {"failure": 1})):
+        filters = AttackAnalyticsFilters.model_validate(
+            {"dimensions": [predicate(name="operation", values=[name], kind="legacy_operation_name")]}
+        )
+        filtered = await reader.report_async(query=AttackAnalyticsQuery(filters=filters), control=control())
+        assert filtered.counts == counts
+
+
+async def test_operation_heatmap_compaction_keeps_operation_keys(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[
+            make_result(index=1, operation=None, operation_id=operation.id),
+            make_result(
+                index=2,
+                operation="Old name",
+                operation_id=operation.id,
+                outcome=AttackOutcome.FAILURE,
+                attack_class_name="OtherAttack",
+            ),
+            make_result(index=3, operation="Engagement", attack_class_name="OtherAttack"),
+            make_result(index=4, operation=str(operation.id), outcome=AttackOutcome.FAILURE),
+            make_result(index=5, operation=None, attack_class_name="OtherAttack"),
+        ],
+    )
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    heatmap = AttackAnalyticsQuery(compare_by=AttackAnalyticsDimension(name="attack_type"))
+    grouping = AttackAnalyticsQuery()
+    compiled = [
+        str(statement.compile(dialect=sqlite.dialect()))
+        for statement in (
+            AttackAnalyticsQueryCompiler(dialect="sqlite", filters=heatmap.filters).matrix(heatmap),
+            AttackAnalyticsQueryCompiler(dialect="sqlite", filters=grouping.filters).groups(grouping),
+        )
+    ]
+    assert ["analytics_facts" in sql for sql in compiled] == [True, False]
+
+    matrix = await reader.report_async(query=heatmap, control=control())
+    groups = await reader.report_async(query=grouping, control=control())
+    saved = ("value", str(operation.id))
+    assert {(typed_key(cell.option), cell.column.key.value): cell.counts for cell in matrix.cells if cell.column} == {
+        (saved, "probeattack"): {"success": 1},
+        (saved, "otherattack"): {"failure": 1},
+        (("legacy_operation_name", "Engagement"), "otherattack"): {"success": 1},
+        (("legacy_operation_name", str(operation.id)), "probeattack"): {"failure": 1},
+        (("missing", None), "otherattack"): {"success": 1},
+    }
+    assert {typed_key(row): row.label for row in matrix.rows} == {
+        typed_key(group.option): group.option.label for group in groups.groups
+    }
+    totals: dict[tuple[str, str | None], int] = {}
+    for cell in matrix.cells:
+        totals[typed_key(cell.option)] = totals.get(typed_key(cell.option), 0) + sum(cell.counts.values())
+    assert totals == {typed_key(group.option): sum(group.counts.values()) for group in groups.groups}
+
+
+async def test_operation_options_list_saved_before_legacy(sqlite_instance: SQLiteMemory) -> None:
+    for index, name in ((1, "Zulu"), (2, "Alpha")):
+        await sqlite_instance.add_operation_async(Operation(id=uuid.UUID(int=index), name=name))
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[
+            make_result(index=1, operation=None, operation_id=uuid.UUID(int=1)),
+            make_result(index=2, operation=None, operation_id=uuid.UUID(int=2)),
+            make_result(index=3, operation="Alpha"),
+            make_result(index=4, operation="Bravo"),
+            make_result(index=5, operation="Bravo"),
+            make_result(index=6, operation=None),
+        ],
+    )
+    keys = [
         ("missing", None),
-        ("value", "Engagement"),
+        ("value", str(uuid.UUID(int=2))),
+        ("value", str(uuid.UUID(int=1))),
+        ("legacy_operation_name", "Alpha"),
+        ("legacy_operation_name", "Bravo"),
+    ]
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    operation = AttackAnalyticsDimension(name="operation")
+    attack_type = AttackAnalyticsDimension(name="attack_type")
+
+    facet = await reader.facets_async(query=AttackAnalyticsFacetQuery(dimension=operation), control=control())
+    assert [typed_key(item) for item in facet.items] == keys
+    page = await reader.facets_async(
+        query=AttackAnalyticsFacetQuery(dimension=operation, limit=2, offset=2), control=control()
+    )
+    assert [typed_key(item) for item in page.items] == keys[2:4]
+    assert page.has_more
+
+    by_rows = await reader.report_async(
+        query=AttackAnalyticsQuery(group_by=operation, compare_by=attack_type), control=control()
+    )
+    assert [typed_key(row) for row in by_rows.rows] == keys
+    assert [typed_key(cell.option) for cell in by_rows.cells] == keys
+    by_columns = await reader.report_async(
+        query=AttackAnalyticsQuery(group_by=attack_type, compare_by=operation), control=control()
+    )
+    assert [typed_key(column) for column in by_columns.columns] == keys
+    assert [typed_key(cell.column) for cell in by_columns.cells if cell.column] == keys
+    truncated = await reader.report_async(
+        query=AttackAnalyticsQuery(group_by=operation, compare_by=attack_type, axis_limit=3), control=control()
+    )
+    assert [typed_key(row) for row in truncated.rows] == keys[:3]
+    assert truncated.axes_truncated
+
+    groups = await reader.report_async(query=AttackAnalyticsQuery(group_by=operation), control=control())
+    assert [typed_key(group.option) for group in groups.groups] == [
+        ("legacy_operation_name", "Bravo"),
+        ("missing", None),
+        ("value", str(uuid.UUID(int=2))),
+        ("value", str(uuid.UUID(int=1))),
+        ("legacy_operation_name", "Alpha"),
     ]
 
-    matrix = await reader.report_async(
-        query=AttackAnalyticsQuery(compare_by=AttackAnalyticsDimension(name="attack_type")), control=control()
+
+async def test_result_rows_carry_operation_id(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    linked = make_result(operation=None, operation_id=operation.id)
+    legacy = make_result(index=2, operation="Legacy")
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[linked, legacy])
+
+    page = await AttackAnalyticsReader(memory=sqlite_instance).results_async(
+        query=AttackAnalyticsResultsQuery(), control=control()
     )
-    assert {cell.option.key.value: cell.counts for cell in matrix.cells} == {
-        "Engagement": {"success": 2, "failure": 1},
-        None: {"success": 1},
+    assert {item.attack_result_id: (item.operation_id, item.operation) for item in page.items} == {
+        linked.attack_result_id: (str(operation.id), "Engagement"),
+        legacy.attack_result_id: (None, "Legacy"),
     }
 
 
 @pytest.mark.parametrize("dialect", [sqlite.dialect(), mssql.dialect(deprecate_large_types=True)])
 def test_operation_joins_saved_operations_once_per_statement(dialect: Dialect) -> None:
     filters = AttackAnalyticsFilters.model_validate(
-        {"dimensions": [predicate(name="operation", values=["Engagement"])]}
+        {"dimensions": [predicate(name="operation", values=[str(uuid.UUID(int=1))])]}
     )
     query = AttackAnalyticsQuery(group_by=AttackAnalyticsDimension(name="operation"), filters=filters)
     grouped = AttackAnalyticsQueryCompiler(dialect=dialect.name, filters=filters).groups(query)
     page = AttackAnalyticsQueryCompiler(dialect=dialect.name, filters=filters).results(limit=10)
     for statement in (grouped, page):
         assert str(statement.compile(dialect=dialect)).count("AS analytics_operation") == 1
+
+
+def test_mssql_operation_filter_has_no_sqlite_hint() -> None:
+    filters = AttackAnalyticsFilters.model_validate(
+        {
+            "dimensions": [
+                {
+                    "dimension": {"name": "operation"},
+                    "values": [
+                        {"value": str(uuid.UUID(int=1))},
+                        {"kind": "legacy_operation_name", "value": "Engagement"},
+                        {"kind": "missing"},
+                    ],
+                }
+            ]
+        }
+    )
+    dimension = AttackAnalyticsDimension(name="operation")
+    heatmap = AttackAnalyticsQuery(
+        filters=filters, group_by=dimension, compare_by=AttackAnalyticsDimension(name="attack_type")
+    )
+    statements = (
+        lambda compiler: compiler.groups(AttackAnalyticsQuery(filters=filters, group_by=dimension)),
+        lambda compiler: compiler.matrix(heatmap),
+        lambda compiler: compiler.facet(AttackAnalyticsFacetQuery(filters=filters, dimension=dimension)),
+        lambda compiler: compiler.results(limit=10),
+    )
+    for make_statement in statements:
+        statement = make_statement(AttackAnalyticsQueryCompiler(dialect="mssql", filters=filters))
+        sql = str(statement.compile(dialect=mssql.dialect(deprecate_large_types=True)))
+        assert "likely(" not in sql
+        assert "OPENJSON(" in sql
+        assert "AS UNIQUEIDENTIFIER)" in sql
+
+
+@pytest.mark.parametrize("compare_by", [None, "attack_type"])
+def test_mssql_operation_profiles_group_kind_without_bind_parameters(compare_by: str | None) -> None:
+    query = AttackAnalyticsQuery(
+        group_by=AttackAnalyticsDimension(name="operation"),
+        compare_by=AttackAnalyticsDimension(name=compare_by) if compare_by else None,
+    )
+    compiler = AttackAnalyticsQueryCompiler(dialect="mssql", filters=query.filters)
+    statement = compiler.matrix(query) if compare_by else compiler.groups(query)
+    profiles = next(
+        node for node in visitors.iterate(statement) if isinstance(node, CTE) and node.name == "analytics_profiles"
+    )
+    dialect = mssql.dialect(paramstyle="qmark", deprecate_large_types=True)
+    assert ("analytics_facts" in str(statement.compile(dialect=dialect))) == (compare_by is not None)
+    grouped = [
+        str(expression.compile(dialect=dialect, compile_kwargs={"render_postcompile": True}))
+        for expression in profiles.element._group_by_clauses
+    ]
+    assert any("'legacy_operation_name'" in expression for expression in grouped)
+    assert not any("?" in expression for expression in grouped)
+    if compare_by is None:
+        order = [
+            str(expression.compile(dialect=dialect, compile_kwargs={"render_postcompile": True}))
+            for expression in statement._order_by_clauses
+        ]
+        assert order[0] == "group_members_counts.total DESC"
+        assert re.fullmatch(r"CASE WHEN \(\S+ = 'missing'\) THEN 0 WHEN \(\S+ = 'value'\) THEN 1 ELSE 2 END", order[1])
+        assert order[2:] == [
+            "group_members_counts.label0 COLLATE Latin1_General_100_BIN2",
+            "group_members_counts.value0",
+        ]
+        assert not any("?" in term for term in order)
+
+
+@pytest.mark.parametrize(
+    ("method", "order"),
+    [
+        ("facet", None),
+        ("rows", "ORDER BY record, rank0, label0, value0, kind1, value1"),
+        ("columns", "ORDER BY record, kind0, value0, rank1, label1, value1"),
+    ],
+)
+def test_mssql_operation_order_ranks_kinds_without_bind_parameters(method: str, order: str | None) -> None:
+    operation = AttackAnalyticsDimension(name="operation")
+    attack_type = AttackAnalyticsDimension(name="attack_type")
+    query = (
+        AttackAnalyticsFacetQuery(dimension=operation)
+        if method == "facet"
+        else AttackAnalyticsQuery(
+            group_by=operation if method == "rows" else attack_type,
+            compare_by=attack_type if method == "rows" else operation,
+        )
+    )
+    compiler = AttackAnalyticsQueryCompiler(dialect="mssql", filters=query.filters)
+    statement = compiler.facet(query) if method == "facet" else compiler.matrix(query)
+    dialect = mssql.dialect(paramstyle="qmark", deprecate_large_types=True)
+    ranks = {
+        id(node): str(node.compile(dialect=dialect, compile_kwargs={"render_postcompile": True}))
+        for node in visitors.iterate(statement)
+        if isinstance(node, Case) and getattr(node.else_, "value", None) == 2
+    }
+    assert ranks
+    for rank in ranks.values():
+        assert re.fullmatch(r"CASE WHEN \(\S+ = 'missing'\) THEN 0 WHEN \(\S+ = 'value'\) THEN 1 ELSE 2 END", rank)
+        assert "?" not in rank
+    sql = str(statement.compile(dialect=dialect, compile_kwargs={"render_postcompile": True}))
+    if order is not None:
+        # A UNION orders only by its selected columns, so the axis label must already be binary-collated.
+        assert sql.endswith(order)
+        index = 0 if method == "rows" else 1
+        assert f"min(axis{index}_members.label{index} COLLATE Latin1_General_100_BIN2) AS label{index}" in sql
 
 
 async def test_results_pagination_never_queries_aggregates_or_scores(sqlite_instance: SQLiteMemory) -> None:
@@ -620,7 +1033,7 @@ async def test_report_snapshots_mutable_filters_and_axes(sqlite_instance: SQLite
             dimensions=[
                 AttackAnalyticsFilter(
                     dimension=AttackAnalyticsDimension(name="operation"),
-                    values=[AttackAnalyticsValue(value="selected")],
+                    values=[AttackAnalyticsValue(kind="legacy_operation_name", value="selected")],
                 )
             ],
         )
@@ -646,7 +1059,9 @@ async def test_report_snapshots_mutable_filters_and_axes(sqlite_instance: SQLite
         event.remove(engine, "after_cursor_execute", change_request_after_totals)
     assert mutated
     assert report.counts == {"success": 1}
-    assert [(group.option.key.value, group.counts) for group in report.groups] == [("selected", {"success": 1})]
+    assert [(typed_key(group.option), group.counts) for group in report.groups] == [
+        (("legacy_operation_name", "selected"), {"success": 1})
+    ]
     assert [row.attack_result_id for row in report.results.items] == [str(uuid.UUID(int=1))]
 
 
@@ -996,7 +1411,7 @@ def test_mssql_array_membership_keys_share_projected_columns_with_positional_bin
     assert checked == members.keys()
 
 
-@pytest.mark.parametrize("filter_name", ["converter_type", "label"])
+@pytest.mark.parametrize("filter_name", ["converter_type", "label", "operation"])
 def test_mssql_accepted_filter_budget_stays_below_2100_positional_parameters(filter_name: str) -> None:
     filters = AttackAnalyticsFilters.model_validate(
         {
@@ -1008,9 +1423,14 @@ def test_mssql_accepted_filter_budget_stays_below_2100_positional_parameters(fil
                             {"label_key": f"team{index}"}
                             if filter_name == "label"
                             else {"converter_direction": "request" if index % 2 == 0 else "response"}
+                            if filter_name == "converter_type"
+                            else {}
                         ),
                     },
-                    "values": [{"value": f"Value_{index}_{number}"} for number in range(100)],
+                    "values": [
+                        {"value": str(uuid.uuid4()) if filter_name == "operation" else f"Value_{index}_{number}"}
+                        for number in range(100)
+                    ],
                     "match_mode": "all" if filter_name == "converter_type" and index == 0 else "any",
                 }
                 for index in range(5)
@@ -1839,7 +2259,7 @@ async def test_group_matrix_and_facet_limits_keep_complete_counts(sqlite_instanc
     assert first.results.has_more
     last = await reader.report_async(query=query.model_copy(update={"group_offset": 2}), control=control())
     assert last.counts == first.counts
-    assert last.groups[0].option.key.value == "op-2"
+    assert typed_key(last.groups[0].option) == ("legacy_operation_name", "op-2")
     assert not last.has_more_groups
     matrix = await reader.report_async(
         query=AttackAnalyticsQuery(
@@ -1854,12 +2274,15 @@ async def test_group_matrix_and_facet_limits_keep_complete_counts(sqlite_instanc
     assert matrix.axes_truncated
     assert matrix.cells[0].counts == {"success": 1}
     facet = await reader.facets_async(query=AttackAnalyticsFacetQuery(dimension=dimension, limit=2), control=control())
-    assert [item.key.value for item in facet.items] == ["op-0", "op-1"]
+    assert [typed_key(item) for item in facet.items] == [
+        ("legacy_operation_name", "op-0"),
+        ("legacy_operation_name", "op-1"),
+    ]
     assert facet.has_more
     last_facet = await reader.facets_async(
         query=AttackAnalyticsFacetQuery(dimension=dimension, limit=2, offset=2), control=control()
     )
-    assert [item.key.value for item in last_facet.items] == ["op-2"]
+    assert [typed_key(item) for item in last_facet.items] == [("legacy_operation_name", "op-2")]
     assert not last_facet.has_more
 
 

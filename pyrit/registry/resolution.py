@@ -319,7 +319,12 @@ def _parameters_from_signature(
     return parameters
 
 
-def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] | None = None) -> list[Parameter]:
+def derive_parameters(
+    *,
+    cls: type,
+    identifier_type: type[ComponentIdentifier] | None = None,
+    seam_base_type: type | None = None,
+) -> list[Parameter]:
     """
     Derive the declarative ``Parameter`` list for ``cls`` from its constructor.
 
@@ -330,11 +335,22 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
     in MRO order is merged. Child declarations take precedence over same-named
     base declarations.
 
+    A non-required reference parameter declared by ``seam_base_type`` is a
+    construction seam, not a build input of every subclass: the base accepts it so
+    subclasses can forward a value (e.g. for validation) through one construction
+    path, and a subclass that does not declare the parameter itself has nothing
+    for it to configure. Such a parameter is skipped unless a subclass redeclares
+    it. A required reference the base declares is kept, since the base's own
+    construction needs it supplied.
+
     Args:
         cls (type): The component class whose ``__init__`` drives derivation.
         identifier_type (type[ComponentIdentifier] | None): The domain identifier
             whose ``Param.*`` markers declare which parameters are registry
             references. When None, no parameter is treated as a reference.
+        seam_base_type (type | None): The domain base type whose non-required
+            declared references are construction seams. When None, every declared
+            parameter is included.
 
     Returns:
         list[Parameter]: One ``Parameter`` per settable constructor parameter,
@@ -365,6 +381,10 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
             identity_conflicting_parameter_names=identity_conflicting_parameter_names,
         ):
             if parameter.name in seen:
+                continue
+            if owner is seam_base_type and parameter.reference is not None and not parameter.required:
+                # A construction seam: the base tolerates the parameter so subclasses can
+                # forward it; a subclass that does not declare it has no such input.
                 continue
             parameters.append(parameter)
             seen.add(parameter.name)
@@ -559,6 +579,7 @@ def resolve_constructor_args(
     raw_args: dict[str, Any],
     identifier_type: type[ComponentIdentifier] | None = None,
     external_input: bool = False,
+    seam_base_type: type | None = None,
 ) -> dict[str, Any]:
     """
     Resolve a flat argument dict into constructor-ready keyword arguments.
@@ -567,6 +588,10 @@ def resolve_constructor_args(
     ``raw_args``. For each raw argument: validate it is a declared parameter;
     resolve registry-reference parameters by name; coerce constrained values and simple string values
     via ``Parameter.coerce_value``; pass everything else through unchanged.
+    An empty string supplied for a registry reference is treated as unsupplied:
+    it is the "no selection" a cleared form field sends, not a registry name, so
+    the constructor's default (e.g. a target defaulted via ``apply_defaults``)
+    applies instead of an empty-name lookup failing.
 
     Args:
         cls (type): The class being built.
@@ -578,6 +603,8 @@ def resolve_constructor_args(
             External callers may set only parameters with ``Parameter.is_external_input``
             and must name registry references. Defaults to False (in-process callers, which
             may pass any Python object).
+        seam_base_type (type | None): The domain base type whose non-required
+            declared references are construction seams (see ``derive_parameters``).
 
     Returns:
         dict[str, Any]: Arguments ready to pass to ``cls(**resolved)``.
@@ -587,7 +614,10 @@ def resolve_constructor_args(
             reference cannot be resolved, a simple value cannot be coerced, or
             external input sets a parameter that is not an external input.
     """
-    by_name = {param.name: param for param in derive_parameters(cls=cls, identifier_type=identifier_type)}
+    by_name = {
+        param.name: param
+        for param in derive_parameters(cls=cls, identifier_type=identifier_type, seam_base_type=seam_base_type)
+    }
     if external_input:
         reject_non_external_params(params=raw_args, declared=list(by_name.values()), owner=cls.__name__)
 
@@ -601,6 +631,11 @@ def resolve_constructor_args(
 
         value_type = _unwrap_optional(param.param_type)
         if param.reference is not None:
+            if value == "":
+                # A cleared selection: treat the empty string as unsupplied so the
+                # constructor default (or an apply_defaults-registered one) applies
+                # instead of looking up '' as a registry name and failing.
+                continue
             getter = _registry_getter_for_component_type(param.reference.component_type)
             if getter is None:
                 raise ValueError(

@@ -1,8 +1,9 @@
 import type {
   AttackAnalyticsFacets, AttackAnalyticsFilter, AttackAnalyticsReport,
-  AttackAnalyticsResultRow, AttackAnalyticsResults, AttackAnalyticsStatistics,
+  AttackAnalyticsResultRow, AttackAnalyticsResults, AttackAnalyticsStatistics, OperationListResponse,
 } from '@/types'
 
+export const ANALYTICS_NIGHTLY_ID = '1d385514-6557-41e5-a385-907e35d23a69'
 export const ANALYTICS_TEST_TIME = '2026-09-14T12:00:00Z'
 export const ANALYTICS_PAGE_TIME = '2026-09-14T12:05:00Z'
 export const ANALYTICS_PREDICATE_LIMIT_REASON =
@@ -40,8 +41,12 @@ export const ANALYTICS_EMPTY_STATISTICS: AttackAnalyticsStatistics = {
 
 export const ANALYTICS_OPERATION_FILTER: AttackAnalyticsFilter = {
   dimension: { name: 'operation' },
-  values: [{ kind: 'value', value: 'Nightly' }],
+  values: [{ kind: 'value', value: ANALYTICS_NIGHTLY_ID }],
   match_mode: 'any',
+}
+
+export const ANALYTICS_OPERATIONS: OperationListResponse = {
+  items: [{ id: ANALYTICS_NIGHTLY_ID, name: 'Nightly', created_at: ANALYTICS_TEST_TIME, finding_counts: {} }],
 }
 
 export function makeAnalyticsRow(overrides: Partial<AttackAnalyticsResultRow> = {}): AttackAnalyticsResultRow {
@@ -50,6 +55,7 @@ export function makeAnalyticsRow(overrides: Partial<AttackAnalyticsResultRow> = 
     objective_preview: 'Inspect a saved response',
     outcome: 'success',
     updated_at: ANALYTICS_TEST_TIME,
+    operation_id: ANALYTICS_NIGHTLY_ID,
     operation: 'Nightly',
     operator: 'Alice',
     attack_type: 'PromptSendingAttack',
@@ -84,7 +90,7 @@ export function makeAnalyticsReport(overrides: Partial<AttackAnalyticsReport> = 
     groups_overlap: false,
     drilldown_unavailable_reason: null,
     groups: [{
-      key: { kind: 'value', value: 'Nightly' },
+      key: { kind: 'value', value: ANALYTICS_NIGHTLY_ID },
       label: 'Nightly',
       statistics: ANALYTICS_TEST_STATISTICS,
       drilldown_filters: [ANALYTICS_OPERATION_FILTER],
@@ -105,8 +111,8 @@ export function makeAnalyticsReport(overrides: Partial<AttackAnalyticsReport> = 
 export function makeAnalyticsFacets(overrides: Partial<AttackAnalyticsFacets> = {}): AttackAnalyticsFacets {
   return {
     items: [
-      { key: { kind: 'value', value: 'Nightly' }, label: 'Nightly' },
-      { key: { kind: 'value', value: 'Unknown' }, label: 'Unknown' },
+      { key: { kind: 'value', value: ANALYTICS_NIGHTLY_ID }, label: 'Nightly' },
+      { key: { kind: 'legacy_operation_name', value: 'Unknown' }, label: 'Unknown (legacy name)' },
       { key: { kind: 'missing', value: null }, label: 'Unknown' },
     ],
     has_more: false,

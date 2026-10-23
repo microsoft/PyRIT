@@ -272,6 +272,40 @@ export interface UserPreferences {
   readonly operation?: OperationSelection | null
   readonly theme: ThemeMode
   readonly chatMarkdown: boolean
+  readonly chatScorer?: RegisteredComponentReference | null
+}
+
+export interface RegisteredComponentReference {
+  readonly registry_name: string
+  readonly identifier_hash: string
+}
+
+export interface ScorerInstance {
+  scorer_registry_name: string
+  identifier: ComponentIdentifier & { scorer_type?: string | null }
+  description?: string | null
+  display_type?: string | null
+  scorable_types?: string[]
+  condition_types?: string[]
+  evaluation_identifier?: ComponentIdentifier | null
+  metrics?: ScorerEvaluationMetrics | null
+  chat_scoring_disabled_reason?: string | null
+}
+
+export type ScorerEvaluationMetrics = Record<string, number | string | null | undefined>
+
+export interface ScoringFailure {
+  scorer: RegisteredComponentReference
+  objective: string
+  response_id: string
+  conversation_id: string
+  error: string
+}
+
+export interface ManualContinuation {
+  source_attack_result_id: string
+  source_conversation_id: string
+  source_response_id?: string | null
 }
 
 export interface TargetCapabilities {
@@ -605,9 +639,13 @@ export type AttackAnalyticsDimension =
       readonly converter_direction?: 'request'
     }
 
-/** Absence keys cannot collide with literal values such as "Unknown" or "No converters". */
+/**
+ * Absence keys cannot collide with literal values such as "Unknown" or "No converters".
+ * Operation `value` keys are saved Operation IDs; `legacy_operation_name` keys are
+ * names stored without an Operation ID and apply only to the Operation dimension.
+ */
 export type AttackAnalyticsValue =
-  | { readonly kind: 'value'; readonly value: string }
+  | { readonly kind: 'value' | 'legacy_operation_name'; readonly value: string }
   | { readonly kind: 'missing' | 'no_converters'; readonly value: null }
 
 export interface AttackAnalyticsFilter {
@@ -691,6 +729,8 @@ export interface AttackAnalyticsResultRow {
   readonly outcome: AttackOutcome
   readonly updated_at: string
   readonly operation: string | null
+  /** Lowercase saved Operation ID. Null with a non-null `operation` marks legacy activity saved with only a name. */
+  readonly operation_id: string | null
   readonly operator: string | null
   readonly attack_type: string | null
   readonly target_model: string | null
@@ -765,6 +805,10 @@ export interface AttackSummary {
   outcome?: AttackOutcome | null
   automated_score?: BackendScore | null
   human_score?: BackendScore | null
+  chat_scorer?: RegisteredComponentReference | null
+  chat_scorer_inherited?: boolean
+  execution_read_only?: boolean
+  manual_continuation?: ManualContinuation | null
   last_score?: BackendScore | null
   last_response?: BackendMessagePiece | null
   last_message_preview?: string | null
@@ -789,6 +833,7 @@ export interface CreateAttackRequest {
   target_registry_name?: string
   target_binding?: TargetBinding
   name?: string
+  chat_scorer?: RegisteredComponentReference | null
   operator?: string
   operation_id?: string
   labels?: Record<string, string>
@@ -802,6 +847,8 @@ export interface UpdateAttackRequest {
   outcome?: 'undetermined' | 'success' | 'failure' | 'error'
   objective?: string
   expected_objective?: string
+  chat_scorer?: RegisteredComponentReference | null
+  default_chat_scorer?: RegisteredComponentReference | null
 }
 
 export type ConversationDraftRole = 'system' | 'user' | 'simulated_assistant' | 'simulated_tool' | 'developer'
@@ -829,6 +876,8 @@ export interface NewAttackContext {
   ready: boolean
   labels?: Record<string, string>
   operationId?: string | null
+  chatScorer?: RegisteredComponentReference | null
+  chatScorerExplicit?: boolean
 }
 
 export interface ConvertedFileChip {
@@ -845,6 +894,8 @@ export interface ConversationDraftMessage extends MessageRequest {
 
 export interface SaveConversationRequest {
   save_id: string
+  chat_scorer?: RegisteredComponentReference | null
+  default_chat_scorer?: RegisteredComponentReference | null
   destination: 'same_attack' | 'new_attack'
   attack_result_id?: string
   source_attack_result_id?: string
@@ -948,6 +999,7 @@ export interface TargetResponseStatus {
 }
 
 export interface ConversationMessagesResponse {
+  scoring_failure?: ScoringFailure | null
   conversation_id: string
   messages: BackendMessage[]
   target_response_status: TargetResponseStatus | null
@@ -1029,6 +1081,8 @@ export interface MessageSendConversation {
   state: 'queued' | 'preparing' | 'sending' | 'finalizing' | 'completed' | 'failed' | 'interrupted'
   error: string | null
   failure_stage: 'preparation' | 'sending' | 'finalization' | 'interrupted' | null
+  scoring_error?: string | null
+  is_scoring?: boolean
 }
 
 export interface MessageSendStatus extends MessageSendConversation {
@@ -1344,6 +1398,49 @@ export interface ScenarioPresetListResponse {
 
 export interface UpdateScenarioPresetRequest {
   preset: ScenarioPreset
+  expected_version: string
+}
+
+export interface ScenarioSuiteEntry {
+  entry_id: string
+  preset_name: string
+}
+
+/** A user-authored, ordered collection of scenario preset references. */
+export interface ScenarioSuite {
+  name: string
+  schema_version: number
+  description?: string | null
+  /** Who created the suite. Descriptive only; never used to authorize a read or a write. */
+  author?: string | null
+  entries: ScenarioSuiteEntry[]
+}
+
+/** Current deployment-specific status for one suite entry. */
+export interface ScenarioSuiteEntryStatus {
+  entry_id: string
+  preset_name: string
+  origin: 'stored' | 'registered' | null
+  preset_version: string | null
+  /** Advisory only. Missing or invalid preset references do not prevent saving the suite. */
+  issues: PresetIssue[]
+}
+
+export interface ScenarioSuiteResponse {
+  suite: ScenarioSuite
+  /** Opaque document version required to update the suite. */
+  version: string
+  /** Ordered exactly like `suite.entries`. */
+  entry_statuses: ScenarioSuiteEntryStatus[]
+}
+
+export interface ScenarioSuiteListResponse {
+  source: string
+  items: ScenarioSuiteResponse[]
+}
+
+export interface UpdateScenarioSuiteRequest {
+  suite: ScenarioSuite
   expected_version: string
 }
 
