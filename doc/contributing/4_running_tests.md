@@ -96,6 +96,10 @@ release any test-controlled waits and join their tasks before removing mocks or
 disposing fixtures, including when a watchdog expires. When waiting for a task to
 signal readiness, also watch for that task finishing so an early exception is not
 hidden by the readiness timeout.
+The analytics quick-lane capacity test observes request admission and completion
+with these shared watchdogs, then releases its reader gate and drains all requests
+before restoring mocks. Its 503/Retry-After and independent-execution assertions
+remain unchanged.
 Use `wait_for_event_async` to observe readiness and `wait_for_completion_async` to
 observe the outcome, including failures after readiness. Observation timeouts do
 not cancel owned work. Release gates before calling `settle_tasks_async` in `finally`.

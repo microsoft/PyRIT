@@ -43,7 +43,7 @@ from pyrit.models import (
     AttackAnalyticsResultsQuery,
     AttackOutcome,
 )
-from unit.async_utils import wait_for_completion_async, wait_for_event_async
+from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.memory.test_attack_analytics import make_result
 
 
@@ -439,18 +439,18 @@ async def test_full_quick_lane_returns_retry_after_without_coalescing_async(
             asyncio.create_task(analytics_client.post("/api/analytics/attacks/results", json={})) for _ in range(12)
         ]
         try:
-            await asyncio.wait_for(admitted.wait(), 10)
+            await wait_for_event_async(event=admitted, tasks=requests)
             rejected = await analytics_client.post("/api/analytics/attacks/results", json={})
             assert rejected.status_code == 503
             assert rejected.headers["Retry-After"] == "1"
             assert analytics_service.has_active_work
             release.set()
-            responses = await asyncio.wait_for(asyncio.gather(*requests), 30)
+            responses = await wait_for_completion_async(future=asyncio.gather(*requests))
             assert all(response.status_code == 200 for response in responses)
             assert read.await_count == 12
         finally:
             release.set()
-            await asyncio.gather(*requests, return_exceptions=True)
+            await settle_tasks_async(*requests)
 
 
 @pytest.mark.parametrize(
