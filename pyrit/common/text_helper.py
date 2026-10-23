@@ -38,7 +38,7 @@ def write_txt(file: IO[Any], examples: list[dict[str, str]]) -> None:
         file: A file-like object opened for writing TXT data.
         examples (list[dict[str, str]]): List of dictionaries to write as TXT.
     """
-    file.write("\n".join([ex["prompt"] for ex in examples]))
+    file.write("\n".join([str(ex.get("prompt") or "") for ex in examples]))
 
 
 def escape_control_characters(text: str) -> str:

@@ -5,7 +5,12 @@ from io import StringIO
 
 import pytest
 
-from pyrit.common.text_helper import escape_control_characters, is_non_empty_string, read_txt
+from pyrit.common.text_helper import (
+    escape_control_characters,
+    is_non_empty_string,
+    read_txt,
+    write_txt,
+)
 
 
 def test_read_txt_ignores_blank_lines():
@@ -48,3 +53,37 @@ def test_escape_control_characters_leaves_other_text_unchanged(text: str):
 )
 def test_is_non_empty_string_preserves_runtime_validation(value, expected):
     assert is_non_empty_string(value) is expected
+
+
+def test_write_txt_produces_expected_output():
+    file = StringIO()
+    examples = [{"prompt": "first line"}, {"prompt": "second line"}]
+    write_txt(file, examples)
+
+    assert file.getvalue() == "first line\nsecond line"
+
+
+def test_write_txt_empty_examples_writes_nothing():
+    file = StringIO()
+    write_txt(file, [])
+
+    assert file.getvalue() == ""
+
+
+def test_write_then_read_roundtrip():
+    examples = [{"prompt": "first prompt"}, {"prompt": "second prompt"}]
+    file = StringIO()
+    write_txt(file, examples)
+    file.seek(0)
+
+    assert read_txt(file) == examples
+
+
+def test_write_txt_handles_missing_prompt_key_and_none():
+    file = StringIO()
+    examples = [{"prompt": "first"}, {}, {"prompt": None}, {"prompt": "second"}]
+    write_txt(file, examples)
+
+    assert file.getvalue() == "first\n\n\nsecond"
+    file.seek(0)
+    assert read_txt(file) == [{"prompt": "first"}, {"prompt": "second"}]
