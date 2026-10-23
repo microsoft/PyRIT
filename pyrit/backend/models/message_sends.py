@@ -71,6 +71,8 @@ class MessageSendConversation(BaseModel):
     state: MessageSendState = MessageSendState.QUEUED
     error: str | None = None
     failure_stage: MessageSendFailureStage | None = None
+    scoring_error: str | None = None
+    is_scoring: bool = False
 
 
 class MessageSendStatus(MessageSendConversation):

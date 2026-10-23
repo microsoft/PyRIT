@@ -43,6 +43,7 @@ from pyrit.models import (
     AttackAnalyticsResultsQuery,
     AttackOutcome,
 )
+from unit.async_utils import wait_for_completion_async, wait_for_event_async
 from unit.memory.test_attack_analytics import make_result
 
 
@@ -479,28 +480,39 @@ async def test_production_deadlines_return_504_and_keep_capacity_through_cleanup
 
     async def expire_async(tasks: set[Any], *, timeout: float) -> tuple[set[Any], set[Any]]:
         observed.append(timeout)
-        await expire.wait()
-        return set(), tasks
+        expiry = asyncio.create_task(expire.wait())
+        try:
+            done, pending = await asyncio.wait(tasks | {expiry}, return_when=asyncio.FIRST_COMPLETED)
+            return done & tasks, pending & tasks
+        finally:
+            expiry.cancel()
+            await asyncio.gather(expiry, return_exceptions=True)
 
     with (
         patch("pyrit.analytics.attack_result_analytics.AnalyticsExecution", new=AnalyticsExecution),
         patch("pyrit.analytics._execution.monotonic", return_value=100.0),
         patch("pyrit.memory.query_control.time") as clock,
-        patch("pyrit.analytics._execution.asyncio.wait", side_effect=expire_async),
+        patch(
+            "pyrit.analytics._execution.asyncio",
+            wraps=asyncio,
+            wait=AsyncMock(side_effect=expire_async),
+            CancelledError=asyncio.CancelledError,
+        ),
         patch.object(analytics_service._reader, method, side_effect=blocked_async),
     ):
         clock.monotonic.return_value = 100.0
         request = asyncio.create_task(analytics_client.post(f"/api/analytics/attacks/{endpoint}", json=body))
         try:
-            await asyncio.wait_for(entered.wait(), 10)
+            await wait_for_event_async(event=entered, tasks=[request])
+            assert not request.done()
             assert observed == [deadline]
             expire.set()
-            response = await asyncio.wait_for(request, 10)
+            response = await wait_for_completion_async(future=request)
             assert response.status_code == response.json()["status"] == 504
             assert "Retry-After" not in response.headers
             assert analytics_service.has_active_work
         finally:
             expire.set()
             release.set()
-            await request
-            await analytics_service.close_async()
+            await wait_for_completion_async(future=request)
+            await wait_for_completion_async(future=asyncio.create_task(analytics_service.close_async()))

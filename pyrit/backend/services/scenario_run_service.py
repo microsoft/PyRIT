@@ -14,6 +14,7 @@ import contextlib
 import json
 import logging
 import uuid
+from bisect import bisect_right
 from collections import OrderedDict, deque
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -2201,20 +2202,26 @@ class ScenarioRunService:
         queue_position: int | None,
         active_scenario_result_id: str | None,
     ) -> ScenarioRunProgress:
+        if len(progress_snapshot.deltas) != len(progress_snapshot.results):
+            raise ValueError("Scenario progress deltas and results have different lengths.")
         overload_events: deque[Any] = deque(maxlen=_MAX_OVERLOAD_EVENTS)
+
         for delta in progress_snapshot.deltas:
             overload_events.extend(delta.retry_events)
-        available = [
-            (delta, result)
-            for delta, result in zip(progress_snapshot.deltas, progress_snapshot.results, strict=True)
-            if cursor is None
-            or (delta.timestamp, uuid.UUID(delta.attack_result_id))
-            > (cursor.timestamp, uuid.UUID(cursor.attack_result_id))
-        ]
-        page = available[:limit]
-        deltas = [delta for delta, _ in page]
-        results = [result for _, result in page]
-        has_more = len(available) > limit
+        # Use binary search to locate the bookmark in results sorted by timestamp and ID.
+        start = (
+            bisect_right(
+                progress_snapshot.deltas,
+                (cursor.timestamp, uuid.UUID(cursor.attack_result_id)),
+                key=lambda delta: (delta.timestamp, uuid.UUID(delta.attack_result_id)),
+            )
+            if cursor is not None
+            else 0
+        )
+        end = start + limit
+        deltas = progress_snapshot.deltas[start:end]
+        results = list(progress_snapshot.results[start:end])
+        has_more = end < len(progress_snapshot.deltas)
         response_plan = progress_snapshot.plan if since is None else None
         next_cursor = (
             self._encode_progress_cursor(scenario_result_id=scenario_result_id, delta=deltas[-1]) if deltas else since

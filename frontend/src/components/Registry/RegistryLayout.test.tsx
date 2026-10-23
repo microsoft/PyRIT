@@ -22,6 +22,7 @@ function renderLayout(initialPath = '/registry/targets') {
             <Route path="techniques" element={<div>Technique registry content</div>} />
             <Route path="scenario-presets" element={<div>Preset library content</div>} />
             <Route path="scenario-presets/new" element={<div>Preset editor content</div>} />
+            <Route path="scorers" element={<div>Scorer registry content</div>} />
             <Route path="scenario-suites" element={<div>Suite library content</div>} />
             <Route path="scenario-suites/new" element={<div>Suite editor content</div>} />
           </Route>
@@ -50,6 +51,9 @@ describe('RegistryLayout', () => {
 
     expect(screen.getByRole('tab', { name: 'Converters' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('Converter registry content')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: 'Scorers' }))
+    expect(screen.getByRole('tab', { name: 'Scorers' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Scorer registry content')).toBeInTheDocument()
   })
 
   it('opens the preset library from its tab', async () => {

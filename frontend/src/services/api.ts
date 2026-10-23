@@ -590,6 +590,16 @@ export const scoresApi = {
   },
 }
 
+export const scorersApi = {
+  listScorers: async (limit = 200, cursor?: string): Promise<{
+    items: import('@/types').ScorerInstance[]
+    pagination: { has_more: boolean; next_cursor: string | null }
+  }> => {
+    const response = await apiClient.get('/scorers', { params: { limit, cursor } })
+    return response.data
+  },
+}
+
 export const labelsApi = {
   getLabels: async (
     source: 'attacks' | 'scenarios' = 'attacks',
