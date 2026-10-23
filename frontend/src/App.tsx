@@ -32,6 +32,7 @@ import ScenarioPresetEditor from './components/ScenarioPresets/ScenarioPresetEdi
 import ScenarioPresetLibrary from './components/ScenarioPresets/ScenarioPresetLibrary'
 import { presetEditorRoutePath } from './components/ScenarioPresets/presetRoutes'
 import ScenarioSuiteEditor from './components/ScenarioSuites/ScenarioSuiteEditor'
+import ScenarioSuiteExecutionPage from './components/ScenarioSuites/ScenarioSuiteExecutionPage'
 import ScenarioSuiteLibrary from './components/ScenarioSuites/ScenarioSuiteLibrary'
 import DatasetCatalog from './components/Datasets/DatasetCatalog'
 import DatasetSelection from './components/Datasets/DatasetSelection'
@@ -866,7 +867,23 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 />
                 <Route path="scenario-presets/new" element={<ScenarioPresetEditor mode="create" />} />
                 <Route path="scenario-presets/:presetName/edit" element={<ScenarioPresetEditor mode="edit" />} />
-                <Route path="scenario-suites" element={<ScenarioSuiteLibrary />} />
+                <Route
+                  path="scenario-suites"
+                  element={
+                    <ScenarioSuiteLibrary
+                      targets={registry.targets}
+                      defaultObjectiveTarget={targetDefaults.objectiveTarget}
+                      defaultAdversarialTarget={targetDefaults.adversarialTarget}
+                      labels={globalLabels}
+                      operationId={operationId}
+                      defaultsReady={newActivityReady}
+                    />
+                  }
+                />
+                <Route
+                  path="scenario-suites/executions/:executionId"
+                  element={<ScenarioSuiteExecutionPage />}
+                />
                 <Route path="scenario-suites/new" element={<ScenarioSuiteEditor mode="create" />} />
                 <Route path="scenario-suites/:suiteName/edit" element={<ScenarioSuiteEditor mode="edit" />} />
               </Route>

@@ -1482,8 +1482,13 @@ export interface ScenarioSuiteEntryStatus {
 
 export interface ScenarioSuiteResponse {
   suite: ScenarioSuite
-  /** Opaque document version required to update the suite. */
-  version: string
+  /**
+   * Whether a stored document or registering code contributed this suite. A
+   * registered suite cannot be updated or deleted through the API.
+   */
+  origin: 'stored' | 'registered'
+  /** Opaque document version required to update a stored suite. Null when registered in code. */
+  version: string | null
   /** Ordered exactly like `suite.entries`. */
   entry_statuses: ScenarioSuiteEntryStatus[]
 }
@@ -1496,6 +1501,73 @@ export interface ScenarioSuiteListResponse {
 export interface UpdateScenarioSuiteRequest {
   suite: ScenarioSuite
   expected_version: string
+}
+
+/** The preset state the operator reviewed for one suite entry. */
+export interface ScenarioSuiteLaunchEntrySnapshot {
+  entry_id: string
+  preset_name: string
+  origin: 'stored' | 'registered' | null
+  preset_version: string | null
+}
+
+/** Launch-owned fields and optimistic preconditions for one suite execution. */
+export interface LaunchScenarioSuiteRequest {
+  expected_version: string | null
+  entries: ScenarioSuiteLaunchEntrySnapshot[]
+  target_name: string
+  adversarial_target_name?: string | null
+  initializers?: string[] | null
+  initializer_args?: Record<string, Record<string, unknown>> | null
+  max_concurrency?: number | null
+  max_retries?: number | null
+  operation_id?: string | null
+  labels?: Record<string, string> | null
+}
+
+export type ScenarioSuiteExecutionStatus =
+  | 'QUEUING'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+
+export type ScenarioSuiteExecutionEntryState =
+  | 'PENDING'
+  | 'SUBMITTING'
+  | 'SUBMISSION_FAILED'
+  | 'CREATED'
+  | 'QUEUED'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+
+/** Current process-local state for one ordered suite entry. */
+export interface ScenarioSuiteExecutionEntrySummary {
+  entry_id: string
+  entry_position: number
+  preset_name: string
+  preset_origin: 'stored' | 'registered'
+  preset_version: string | null
+  state: ScenarioSuiteExecutionEntryState
+  run: ScenarioRunSummary | null
+  /** User-safe failure text. The UI still maps it to state-owned copy before display. */
+  error: string | null
+  /** Internal exception class for diagnostics; never display it to operators. */
+  error_type: string | null
+}
+
+/** Transient progress and grouped child runs for one suite launch. */
+export interface ScenarioSuiteExecutionSummary {
+  suite_execution_id: string
+  suite_name: string
+  suite_origin: 'stored' | 'registered'
+  suite_version: string | null
+  status: ScenarioSuiteExecutionStatus
+  created_at: string
+  updated_at: string
+  entries: ScenarioSuiteExecutionEntrySummary[]
 }
 
 /** The launch-owned fields a preset deliberately omits. */

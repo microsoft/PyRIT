@@ -55,6 +55,8 @@ import type {
   ScenarioPresetListResponse,
   ScenarioPresetResponse,
   ScenarioSuite,
+  LaunchScenarioSuiteRequest,
+  ScenarioSuiteExecutionSummary,
   ScenarioSuiteListResponse,
   ScenarioSuiteResponse,
   UpdateScenarioPresetRequest,
@@ -835,6 +837,40 @@ export const scenarioSuitesApi = {
 
   remove: async (name: string): Promise<void> => {
     await apiClient.delete(`/scenario-suites/${encodeURIComponent(name)}`)
+  },
+
+  launch: async (
+    name: string,
+    request: LaunchScenarioSuiteRequest,
+  ): Promise<ScenarioSuiteExecutionSummary> => {
+    const response = await apiClient.post(
+      `/scenario-suites/${encodeURIComponent(name)}/launch`,
+      request,
+    )
+    return response.data
+  },
+
+  getExecution: async (
+    executionId: string,
+    signal?: AbortSignal,
+  ): Promise<ScenarioSuiteExecutionSummary> => {
+    const response = await apiClient.get(
+      `/scenario-suites/executions/${encodeURIComponent(executionId)}`,
+      { signal },
+    )
+    return response.data
+  },
+
+  cancelExecution: async (
+    executionId: string,
+    signal?: AbortSignal,
+  ): Promise<ScenarioSuiteExecutionSummary> => {
+    const response = await apiClient.post(
+      `/scenario-suites/executions/${encodeURIComponent(executionId)}/cancel`,
+      undefined,
+      { signal },
+    )
+    return response.data
   },
 }
 

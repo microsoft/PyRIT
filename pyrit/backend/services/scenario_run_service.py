@@ -17,6 +17,7 @@ import uuid
 from bisect import bisect_right
 from collections import OrderedDict, deque
 from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -101,6 +102,18 @@ _RESTART_INTERRUPTION_REASON = (
 _SHUTDOWN_INTERRUPTION_REASON = "The backend process shut down before this scenario run completed."
 _USER_CANCELLATION_REASON = "Run was cancelled by user"
 _LAUNCH_REQUEST_METADATA_KEY = "scenario_launch_request_v1"
+_RESERVED_INITIAL_METADATA_KEYS = frozenset(
+    {
+        _SCHEDULER_METADATA_KEY,
+        _LAUNCH_REQUEST_METADATA_KEY,
+        SCENARIO_RUN_PLAN_METADATA_KEY,
+        SCENARIO_RUN_STARTED_AT_METADATA_KEY,
+    }
+)
+_INITIAL_METADATA_CONTEXT: ContextVar[Mapping[str, Any] | None] = ContextVar(
+    "scenario_run_initial_metadata",
+    default=None,
+)
 _LAUNCH_REQUEST_FIELDS = (
     "scenario_name",
     "target_name",
@@ -247,16 +260,28 @@ class ScenarioRunService:
         """Reject new preparations and prevent queued runs from starting."""
         self._stopping = True
 
-    async def start_run_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
+    async def start_run_async(
+        self,
+        *,
+        request: RunScenarioRequest,
+        initial_metadata: Mapping[str, Any] | None = None,
+    ) -> ScenarioRunSummary:
         """
         Initialize and schedule a new run or an explicitly configured continuation.
+
+        Args:
+            request: Scenario launch configuration.
+            initial_metadata: Internal caller-owned scenario metadata persisted
+                atomically with a fresh result. Reserved run-service keys cannot
+                be supplied.
 
         Returns:
             ScenarioRunSummary: Current scheduled run state.
         """
+        metadata = self._validate_initial_metadata(initial_metadata=initial_metadata)
         async with self._reserve_resume_request_async(request.scenario_result_id), self._launch_lock:
             await self._validate_resume_admission_async(scenario_result_id=request.scenario_result_id)
-            return await self._start_run_locked_async(request=request)
+            return await self._start_run_locked_async(request=request, initial_metadata=metadata)
 
     async def resume_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary:
         """
@@ -271,7 +296,7 @@ class ScenarioRunService:
             )
             assert stored is not None
             request = await asyncio.to_thread(self._restore_launch_request, stored=stored)
-            return await self._start_run_locked_async(request=request)
+            return await self._start_run_locked_async(request=request, initial_metadata={})
 
     @contextlib.asynccontextmanager
     async def _reserve_resume_request_async(self, scenario_result_id: str | None) -> AsyncGenerator[None, None]:
@@ -397,7 +422,12 @@ class ScenarioRunService:
             deep=True,
         )
 
-    async def _start_run_locked_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
+    async def _start_run_locked_async(
+        self,
+        *,
+        request: RunScenarioRequest,
+        initial_metadata: Mapping[str, Any],
+    ) -> ScenarioRunSummary:
         """
         Initialize and schedule a scenario run.
 
@@ -408,6 +438,8 @@ class ScenarioRunService:
 
         Args:
             request: The run request with scenario name, target, and options.
+            initial_metadata: Internal caller-owned metadata persisted with a
+                fresh scenario result.
 
         Returns:
             ScenarioRunSummary with a stable ID and current active or queued state.
@@ -427,7 +459,11 @@ class ScenarioRunService:
             resumed_from_cancelled = await self._is_run_cancelled_async(scenario_result_id=request.scenario_result_id)
             if request.scenario_result_id:
                 self._preparing_run_ids.add(request.scenario_result_id)
-            prepare_task = asyncio.create_task(self._prepare_run_async(request=request))
+            metadata_token = _INITIAL_METADATA_CONTEXT.set(initial_metadata)
+            try:
+                prepare_task = asyncio.create_task(self._prepare_run_async(request=request))
+            finally:
+                _INITIAL_METADATA_CONTEXT.reset(metadata_token)
             self._preparations.add(prepare_task)
             prepared = await asyncio.shield(prepare_task)
             return await self._schedule_prepared_run_async(
@@ -612,12 +648,19 @@ class ScenarioRunService:
         labels = {key: value for key, value in (request.labels or {}).items() if key != "operation"}
         return request.model_copy(update={"labels": labels if request.labels is not None else None})
 
-    async def _prepare_run_async(self, *, request: RunScenarioRequest) -> _PreparedRun:
+    async def _prepare_run_async(
+        self,
+        *,
+        request: RunScenarioRequest,
+        initial_metadata: Mapping[str, Any] | None = None,
+    ) -> _PreparedRun:
         """
         Resolve and initialize the scenario for a run request.
 
         Args:
             request: The run request with scenario name, target, and options.
+            initial_metadata: Internal caller-owned metadata persisted with a
+                fresh scenario result.
 
         Returns:
             _PreparedRun: The initialized scenario and its scoped default.
@@ -665,8 +708,31 @@ class ScenarioRunService:
                 memory_labels=request.labels,
             )
             init_kwargs["operation_id"] = request.operation_id
-            scenario = await self._initialize_scenario_async(request=request, init_kwargs=init_kwargs)
+            scenario = await self._initialize_scenario_async(
+                request=request,
+                init_kwargs=init_kwargs,
+                initial_metadata=(
+                    initial_metadata if initial_metadata is not None else (_INITIAL_METADATA_CONTEXT.get() or {})
+                ),
+            )
         return _PreparedRun(scenario=scenario, adversarial_target=adversarial_target)
+
+    @staticmethod
+    def _validate_initial_metadata(*, initial_metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+        """
+        Copy caller metadata after protecting run-service-owned fields.
+
+        Returns:
+            dict[str, Any]: A detached mapping safe to merge into scenario metadata.
+
+        Raises:
+            ValueError: If the caller attempts to replace a reserved metadata key.
+        """
+        metadata = dict(initial_metadata or {})
+        reserved = sorted(_RESERVED_INITIAL_METADATA_KEYS.intersection(metadata))
+        if reserved:
+            raise ValueError(f"Initial scenario metadata cannot set reserved keys: {', '.join(reserved)}")
+        return metadata
 
     async def get_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
         """
@@ -1251,7 +1317,13 @@ class ScenarioRunService:
                 raise ValueError(f"Initializer not found: {e}") from None
             await instance.initialize_async()
 
-    async def _initialize_scenario_async(self, *, request: RunScenarioRequest, init_kwargs: dict[str, Any]) -> Scenario:
+    async def _initialize_scenario_async(
+        self,
+        *,
+        request: RunScenarioRequest,
+        init_kwargs: dict[str, Any],
+        initial_metadata: Mapping[str, Any] | None = None,
+    ) -> Scenario:
         """
         Build and initialize the scenario via the registry.
 
@@ -1267,6 +1339,8 @@ class ScenarioRunService:
                 scenario_result_id).
             init_kwargs: The resolved common parameters to pass to
                 scenario.initialize_async.
+            initial_metadata: Internal caller-owned metadata persisted with a
+                fresh scenario result.
 
         Returns:
             The fully initialized Scenario instance ready for run_async.
@@ -1333,6 +1407,7 @@ class ScenarioRunService:
             scenario_params=request.scenario_params or {},
             scenario_result_id=request.scenario_result_id or None,
             initial_metadata={
+                **(initial_metadata or {}),
                 _SCHEDULER_METADATA_KEY: _SCHEDULER_METADATA_VALUE,
                 _LAUNCH_REQUEST_METADATA_KEY: launch_request,
             },

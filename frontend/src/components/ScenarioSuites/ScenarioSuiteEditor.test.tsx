@@ -68,6 +68,7 @@ function makeSuite(): ScenarioSuiteResponse {
         { entry_id: SECOND_ENTRY_ID, preset_name: 'retired_probe' },
       ],
     },
+    origin: 'stored',
     version: 'suite-v1',
     entry_statuses: [
       {
@@ -270,6 +271,27 @@ describe('ScenarioSuiteEditor', () => {
       expect.objectContaining({ description: 'Nightly checks. Updated.' }),
       'suite-v1',
     ))
+  })
+
+  it('shows a registered suite as read-only and never offers mutation controls', async () => {
+    mockGetSuite.mockResolvedValue({
+      ...makeSuite(),
+      origin: 'registered',
+      version: null,
+    })
+    renderEditor('edit')
+
+    expect(await screen.findByRole('heading', { name: 'View nightly_suite' })).toBeInTheDocument()
+    expect(screen.getByText(
+      'This suite is defined in code. It is read-only and cannot be edited or deleted here.',
+    )).toBeInTheDocument()
+    expect(screen.getByTestId('suite-description-input')).toBeDisabled()
+    expect(screen.getByTestId('suite-preset-select')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Move entry 2 up' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Remove entry 1' })).toBeDisabled()
+    expect(screen.queryByTestId('save-suite-btn')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Back to suites' })).toBeEnabled()
+    expect(mockUpdateSuite).not.toHaveBeenCalled()
   })
 
   it('removes entries and adds a registered preset without changing existing IDs', async () => {

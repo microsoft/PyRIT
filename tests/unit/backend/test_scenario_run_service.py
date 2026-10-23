@@ -314,6 +314,47 @@ async def test_prepare_and_restore_preserve_common_input_support_async(
     await service.close_async()
 
 
+async def test_prepare_persists_internal_initial_metadata_with_run_service_fields(
+    patch_central_database: MagicMock,
+) -> None:
+    """Test suite attribution is created atomically with the scenario result."""
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.get_class.return_value = Scam
+    registry.create_and_initialize_async = AsyncMock(return_value=MagicMock(spec=Scenario))
+    service = ScenarioRunService()
+    suite_metadata = {"version": 1, "suite_execution_id": "execution-id"}
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
+        patch.object(service._configuration_resolver, "resolve_target"),
+    ):
+        await service._prepare_run_async(
+            request=RunScenarioRequest(scenario_name="test.support", target_name="my_target"),
+            initial_metadata={"scenario_suite_execution_v1": suite_metadata},
+        )
+
+    metadata = registry.create_and_initialize_async.call_args.kwargs["initial_metadata"]
+    assert metadata["scenario_suite_execution_v1"] == suite_metadata
+    assert metadata[_svc_mod._SCHEDULER_METADATA_KEY] == _svc_mod._SCHEDULER_METADATA_VALUE
+    assert _svc_mod._LAUNCH_REQUEST_METADATA_KEY in metadata
+    await service.close_async()
+
+
+async def test_start_rejects_caller_metadata_that_overwrites_run_service_fields(
+    patch_central_database: MagicMock,
+) -> None:
+    """Test internal launch callers cannot replace scheduler-owned metadata."""
+    service = ScenarioRunService()
+
+    with pytest.raises(ValueError, match="reserved keys"):
+        await service.start_run_async(
+            request=_make_request(),
+            initial_metadata={_svc_mod._LAUNCH_REQUEST_METADATA_KEY: {"forged": True}},
+        )
+
+    await service.close_async()
+
+
 async def test_prepare_requires_target_for_scenarios_that_declare_it_async(
     patch_central_database: MagicMock,
 ) -> None:

@@ -485,11 +485,36 @@ jest.mock("./components/ScenarioPresets/ScenarioPresetEditor", () => {
 });
 
 jest.mock("./components/ScenarioSuites/ScenarioSuiteLibrary", () => {
-  const MockScenarioSuiteLibrary = () => <div data-testid="scenario-suite-library" />;
+  const MockScenarioSuiteLibrary = ({
+    operationId,
+    defaultsReady,
+  }: {
+    operationId: string | null;
+    defaultsReady: boolean;
+  }) => (
+    <div
+      data-testid="scenario-suite-library"
+      data-operation-id={operationId ?? ""}
+      data-defaults-ready={String(defaultsReady)}
+    />
+  );
   MockScenarioSuiteLibrary.displayName = "MockScenarioSuiteLibrary";
   return {
     __esModule: true,
     default: MockScenarioSuiteLibrary,
+  };
+});
+
+jest.mock("./components/ScenarioSuites/ScenarioSuiteExecutionPage", () => {
+  const { useParams } = jest.requireActual("react-router");
+  const MockScenarioSuiteExecutionPage = () => {
+    const { executionId } = useParams();
+    return <div data-testid="scenario-suite-execution-page">{executionId ?? ""}</div>;
+  };
+  MockScenarioSuiteExecutionPage.displayName = "MockScenarioSuiteExecutionPage";
+  return {
+    __esModule: true,
+    default: MockScenarioSuiteExecutionPage,
   };
 });
 
@@ -767,6 +792,16 @@ describe("App", () => {
     expect(editor).toHaveTextContent("nightly_suite");
   });
 
+  it("renders transient suite execution progress as a nested registry route", () => {
+    renderApp("/registry/scenario-suites/executions/execution-1");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+    expect(screen.getByTestId("scenario-suite-execution-page")).toHaveTextContent("execution-1");
+  });
+
   it("passes the globally resolved Operation to the preset library", async () => {
     const operationId = "11111111-1111-4111-8111-111111111111";
     writeUserPreferences("local", {
@@ -782,6 +817,27 @@ describe("App", () => {
     renderApp("/registry/scenario-presets");
 
     const library = screen.getByTestId("scenario-preset-library");
+    await waitFor(() => {
+      expect(library).toHaveAttribute("data-operation-id", operationId);
+      expect(library).toHaveAttribute("data-defaults-ready", "true");
+    });
+  });
+
+  it("passes the globally resolved Operation to the suite library", async () => {
+    const operationId = "11111111-1111-4111-8111-111111111111";
+    writeUserPreferences("local", {
+      ...DEFAULT_USER_PREFERENCES,
+      operation: { id: operationId },
+    });
+    mockGetOperation.mockResolvedValue({
+      id: operationId,
+      name: "Suite launch",
+      created_at: "2026-10-20T18:00:00Z",
+    });
+
+    renderApp("/registry/scenario-suites");
+
+    const library = screen.getByTestId("scenario-suite-library");
     await waitFor(() => {
       expect(library).toHaveAttribute("data-operation-id", operationId);
       expect(library).toHaveAttribute("data-defaults-ready", "true");

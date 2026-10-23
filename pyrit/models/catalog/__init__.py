@@ -41,7 +41,12 @@ if TYPE_CHECKING:
         ScenarioTechniqueSummary,
     )
     from pyrit.models.catalog.scenario_preset import PresetEntry, PresetIssue, ScenarioPreset, StoredPreset
-    from pyrit.models.catalog.scenario_suite import ScenarioSuite, ScenarioSuiteEntry, StoredScenarioSuite
+    from pyrit.models.catalog.scenario_suite import (
+        ScenarioSuite,
+        ScenarioSuiteEntry,
+        ScenarioSuiteRegistryEntry,
+        StoredScenarioSuite,
+    )
     from pyrit.models.catalog.scorer import ScorerInstance
     from pyrit.models.catalog.target import TargetInstance
 
@@ -60,6 +65,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioPreset": "pyrit.models.catalog.scenario_preset",
     "ScenarioSuite": "pyrit.models.catalog.scenario_suite",
     "ScenarioSuiteEntry": "pyrit.models.catalog.scenario_suite",
+    "ScenarioSuiteRegistryEntry": "pyrit.models.catalog.scenario_suite",
     "ScenarioProducerCategoryCounts": "pyrit.models.catalog.scenario",
     "ScenarioProducerCounts": "pyrit.models.catalog.scenario",
     "ScenarioRunListItem": "pyrit.models.catalog.scenario",

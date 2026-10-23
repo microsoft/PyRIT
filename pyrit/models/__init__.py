@@ -195,6 +195,11 @@ if TYPE_CHECKING:
         ScenarioSeedGroupProgress,
         ScenarioTechniqueProgress,
     )
+    from pyrit.models.scenario_suite_execution import (
+        SCENARIO_SUITE_EXECUTION_METADATA_KEY,
+        SCENARIO_SUITE_EXECUTION_METADATA_VERSION,
+        ScenarioSuiteExecutionMetadata,
+    )
     from pyrit.models.score import (
         Acquisition,
         AnswerMatches,
@@ -469,6 +474,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SCENARIO_RUN_PLAN_METADATA_KEY": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_PLAN_VERSION": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_STARTED_AT_METADATA_KEY": "pyrit.models.scenario_progress",
+    "SCENARIO_SUITE_EXECUTION_METADATA_KEY": "pyrit.models.scenario_suite_execution",
+    "SCENARIO_SUITE_EXECUTION_METADATA_VERSION": "pyrit.models.scenario_suite_execution",
+    "ScenarioSuiteExecutionMetadata": "pyrit.models.scenario_suite_execution",
     "ScenarioAttackResultDelta": "pyrit.models.scenario_progress",
     "ScenarioAtomicGroupProgress": "pyrit.models.scenario_progress",
     "ScenarioAttackTechniqueDetails": "pyrit.models.scenario_progress",
