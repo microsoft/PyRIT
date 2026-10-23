@@ -71,6 +71,10 @@ uv run --frozen pytest tests/unit/build_scripts/test_codeql_merge_group.py -q
 The helper's scenarios can also run directly with
 `node --test-reporter=tap tests/unit/build_scripts/test_codeql_merge_group.cjs`.
 
+The documentation JavaScript suites in `test_docs_javascript.py` also use one
+Node process per suite and the shared correctness watchdog. Their per-VM
+execution limits remain unchanged.
+
 ## Running a subset while iterating
 
 For a narrower run, invoke `pytest` directly. You can invoke pytest if it's in your path or via python; either `pytest` or `python -m pytest`. For the following examples, we will use `pytest`.
