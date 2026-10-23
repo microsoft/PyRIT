@@ -776,7 +776,12 @@ class TestScenarioServiceListScenarios:
         service = ScenarioService()
         service._registry = MagicMock(spec=ScenarioRegistry)
         service._registry.create_instance.side_effect = create_instance
-        with patch("pyrit.backend.services.scenario_service.asyncio.wait", side_effect=expire_async):
+        with patch(
+            "pyrit.backend.services.scenario_service.asyncio",
+            wraps=asyncio,
+            wait=AsyncMock(side_effect=expire_async),
+            CancelledError=asyncio.CancelledError,
+        ):
             request = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
             try:
                 async with asyncio.timeout(estimate_watchdog_seconds):
@@ -1032,7 +1037,12 @@ class TestScenarioServiceListScenarios:
 
         with (
             patch.object(service._estimate_semaphore, "acquire", side_effect=acquire_async),
-            patch("pyrit.backend.services.scenario_service.asyncio.wait", side_effect=wait_async),
+            patch(
+                "pyrit.backend.services.scenario_service.asyncio",
+                wraps=asyncio,
+                wait=AsyncMock(side_effect=wait_async),
+                CancelledError=asyncio.CancelledError,
+            ),
         ):
             catalog_task = asyncio.create_task(service.list_scenarios_async())
             try:
