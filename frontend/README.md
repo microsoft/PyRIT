@@ -79,8 +79,8 @@ Expanded details stack each label above its stored value.
 ## Resuming a scenario run
 
 Failed runs offer **Resume run** on the run page and **Resume** in Scanner History.
-See the [GUI guide](../doc/gui/0_gui.md#resuming-a-failed-scanner-run) for resume
-behavior and the saved launch configuration requirement.
+See the [GUI History guide](../doc/gui/0_gui.md#history) for a short overview
+of resume behavior.
 
 ## Default labels after runtime changes
 
@@ -99,8 +99,7 @@ and keep that attack's attribution.
 
 Open **Analytics** to filter saved results, compare SDK-computed outcome
 statistics, and drill into matching attacks. See the
-[analytics GUI guide](../doc/gui/0_gui.md#attack-results-analytics) for cohort
-semantics, denominators, time bounds, URL sharing, and refresh behavior.
+[analytics GUI guide](../doc/gui/0_gui.md#analytics) for a short overview.
 The implementation follows
 [part 5 of the analytics roadmap](https://gist.github.com/romanlutz/34230aba87f7fa07996772a4099e9a78).
 
