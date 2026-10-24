@@ -1,8 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import inspect
+import subprocess
+import sys
 import unicodedata
 from collections import Counter
+from pathlib import Path
+from textwrap import dedent
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -164,6 +169,68 @@ async def test_crossword_falls_back_to_anagram_when_it_cannot_hide_the_word():
 
     assert "anagram" in result.output_text
     assert "malware" not in result.output_text.lower()
+
+
+@pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
+def test_puzzle_dispatch_type_exhaustiveness(tmp_path: Path, extend_enum: bool) -> None:
+    enum_source = inspect.getsource(PuzzleType)
+    if extend_enum:
+        enum_source += '\n    FUTURE_KIND = "future_kind"\n'
+    probe = tmp_path / "dispatch.py"
+    converter_source = inspect.getsource(PuzzledConverter._build_puzzle_body)
+    probe.write_text(
+        "\n".join(
+            [
+                "import random",
+                "from collections.abc import Callable",
+                "from enum import Enum",
+                "from typing import assert_never",
+                enum_source,
+                dedent(
+                    """
+                    def build_word_search(words: list[str], rng: random.Random) -> str:
+                        return ""
+
+                    def build_anagram(words: list[str], rng: random.Random) -> str:
+                        return ""
+
+                    def build_crossword(words: list[str]) -> str:
+                        return ""
+
+                    class PuzzledConverter:
+                        def _get_random_generator(self, *, stream: str) -> random.Random:
+                            return random.Random()
+                    """
+                ),
+                converter_source,
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ty",
+            "check",
+            "--project",
+            str(Path(__file__).resolve().parents[3]),
+            "--python-version",
+            "3.11",
+            str(probe),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == (1 if extend_enum else 0), output
+    if extend_enum:
+        assert output.count("error[") == 1, output
+        assert "type-assertion-failure" in output, output
+        assert "assert_never(puzzle_type)" in output, output
+        assert "FUTURE_KIND" in output, output
 
 
 # --- non-ASCII words end to end ----------------------------------------------

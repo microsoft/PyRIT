@@ -5,6 +5,7 @@ import asyncio
 import json
 import pathlib
 import uuid
+from typing import TYPE_CHECKING, assert_never
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.converter import Converter, ConverterResult
@@ -20,6 +21,9 @@ from pyrit.exceptions import EmptyResponseException
 from pyrit.exceptions.exceptions_helpers import remove_markdown_json
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # Instruction for the optional clue-generation model. It produces the paper's "indirect
 # semantic description" (Ahn & Lee, arXiv:2508.01306): a short euphemistic definition that lets
@@ -192,13 +196,7 @@ class PuzzledConverter(Converter):
         if puzzle_type is PuzzleType.CROSSWORD and not crossword_symbol_map(words):
             puzzle_type = PuzzleType.ANAGRAM
 
-        rng = self._get_random_generator(stream="puzzle")
-        if puzzle_type is PuzzleType.WORD_SEARCH:
-            puzzle_body = build_word_search(words, rng)
-        elif puzzle_type is PuzzleType.ANAGRAM:
-            puzzle_body = build_anagram(words, rng)
-        else:
-            puzzle_body = build_crossword(words)
+        puzzle_body = self._build_puzzle_body(words=words, puzzle_type=puzzle_type)
 
         semantics = await self._semantic_clues_async(words)
         clues = "\n".join(self._clue_line(masked, semantics) for masked in mask_result.masked_words)
@@ -212,6 +210,29 @@ class PuzzledConverter(Converter):
         )
 
         return ConverterResult(output_text=formatted_prompt, output_type="text")
+
+    def _build_puzzle_body(self, *, words: list[str], puzzle_type: PuzzleType) -> str:
+        """
+        Build the configured puzzle encoding and reject unhandled enum extensions.
+
+        Args:
+            words (list[str]): The masked words to encode.
+            puzzle_type (PuzzleType): The selected encoding after any safe fallback.
+
+        Returns:
+            str: The rendered puzzle body.
+        """
+        builder: Callable[..., str]
+        if puzzle_type is PuzzleType.WORD_SEARCH:
+            builder = build_word_search
+        elif puzzle_type is PuzzleType.ANAGRAM:
+            builder = build_anagram
+        elif puzzle_type is PuzzleType.CROSSWORD:
+            return build_crossword(words)
+        else:
+            assert_never(puzzle_type)
+
+        return builder(words, self._get_random_generator(stream="puzzle"))
 
     @staticmethod
     def _clue_line(masked: MaskedWord, semantics: dict[str, str]) -> str:
