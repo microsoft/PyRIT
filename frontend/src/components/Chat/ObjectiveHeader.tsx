@@ -1,4 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react'
+import type { KeyboardEvent } from 'react'
 
 import {
   Badge,
@@ -102,6 +103,7 @@ export default function ObjectiveHeader({
   const [draft, setDraft] = useState('')
   const [initialObjective, setInitialObjective] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const savePending = useRef(false)
   const [error, setError] = useState('')
   const initialVerdict = scoreVerdict(humanScore ?? automatedScore)
   const [humanVerdict, setHumanVerdict] = useState<'success' | 'failure'>(
@@ -149,8 +151,9 @@ export default function ObjectiveHeader({
 
   const handleSave = async (): Promise<void> => {
     const trimmedObjective = draft.trim()
-    if ((!trimmedObjective && missingObjective) || !onAdd) return
+    if (savePending.current || (!trimmedObjective && missingObjective) || !onAdd) return
 
+    savePending.current = true
     setIsSaving(true)
     setError('')
     try {
@@ -160,6 +163,7 @@ export default function ObjectiveHeader({
     } catch {
       setError('Unable to save the objective.')
     } finally {
+      savePending.current = false
       setIsSaving(false)
     }
   }
@@ -410,6 +414,13 @@ export default function ObjectiveHeader({
                   className={styles.input}
                   value={draft}
                   onChange={(_event, data) => setDraft(data.value)}
+                  onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+                    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    void handleSave()
+                  }}
+                  disabled={isSaving}
                   placeholder="Enter an objective"
                   aria-label="Attack objective"
                   autoFocus

@@ -90,6 +90,25 @@ describe("MessageList", () => {
     expect(screen.getByRole("menuitem", { name: "Branch attack" })).not.toHaveAttribute("aria-disabled", "true");
   });
 
+  it("disables next-message copying without disabling branching", async () => {
+    const user = userEvent.setup();
+    const onCopyToInput = jest.fn();
+    const reason = "This target only supports single-turn conversations.";
+    render(<TestWrapper><MessageList messages={mockMessages}
+      onCopyToInput={onCopyToInput} copyToInputDisabledReason={reason}
+      onCopyToNewConversation={jest.fn()} onCopyToNewAttack={jest.fn()} /></TestWrapper>);
+    for (const button of screen.getAllByRole("button", { name: "Copy or Branch" })) {
+      await user.click(button);
+      const copy = screen.getByRole("menuitem", { name: "Copy to next message" });
+      expect(copy).toHaveAttribute("aria-disabled", "true");
+      expect(copy).toHaveAccessibleDescription(reason);
+      await user.click(copy);
+      expect(onCopyToInput).not.toHaveBeenCalled();
+      expect(screen.getByRole("menuitem", { name: "Branch conversation" })).not.toHaveAttribute("aria-disabled", "true");
+      await user.keyboard("{Escape}");
+    }
+  });
+
   it("should show an accessible description for every copy or branch action and support keyboard selection", async () => {
     const user = userEvent.setup();
     const onUseInTechnique = jest.fn();
