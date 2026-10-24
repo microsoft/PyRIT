@@ -554,10 +554,11 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
             dict[str, str]: File name to current SHA-256, for re-pinning after a deliberate
             dataset update.
         """
-        return {
-            file_name: hashlib.sha256((_REFUSAL_EVALS_PATH / file_name).read_bytes()).hexdigest()
-            for file_name in _TRAINING_DATASETS
-        }
+        hashes: dict[str, str] = {}
+        for file_name in _TRAINING_DATASETS:
+            with (_REFUSAL_EVALS_PATH / file_name).open("rb") as dataset_file:
+                hashes[file_name] = hashlib.file_digest(dataset_file, "sha256").hexdigest()
+        return hashes
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

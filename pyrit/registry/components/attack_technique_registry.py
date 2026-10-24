@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import logging
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache, wraps
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 from weakref import WeakSet
+
+from pydantic import ValidationError
 
 from pyrit.models import AttackIdentifier, ComponentType
 from pyrit.registry.instance_registry import DefaultInstanceRegistry
@@ -36,6 +38,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Protocol
 
+    from pyrit.models import Parameter
+    from pyrit.models.technique_edit import TechniqueChanges
+    from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.scenario.core.attack_technique_factory import (
         AttackTechniqueFactory,
         ScorerOverridePolicy,
@@ -186,6 +191,12 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
     _FACTORY_PREVIEW: ClassVar[ContextVar[tuple[object, dict[str, AttackTechniqueFactory]] | None]] = ContextVar(
         "technique_factory_preview", default=None
     )
+    _DEFERRED_EDIT_PARAMETERS = {
+        "objective_target",
+        "attack_scoring_config",
+        "attack_adversarial_config",
+        "attack_converter_config",
+    }
 
     def __init__(self, *, lazy_discovery: bool = True) -> None:
         """
@@ -211,6 +222,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         params: dict[str, Any] | None = None,
         request_converters: list[str] | None = None,
         response_converters: list[str] | None = None,
+        strict_json: bool = False,
         **factory_kwargs: Any,
     ) -> AttackTechniqueFactory:
         """
@@ -219,6 +231,8 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         Attack types come from ``AttackRegistry``; converters and the adversarial
         target reference existing instances. Seeds, scoring configurations, and
         conversation configurations remain available through Python factories.
+        Strict GUI creation with request converters also selects user and assistant
+        history for replay conversion; simulation generation is unchanged.
 
         Returns:
             AttackTechniqueFactory: The configured deferred factory.
@@ -227,7 +241,6 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             ValueError: If the attack or its inputs are not supported.
         """
         from pyrit.executor.attack import AttackConverterConfig
-        from pyrit.prompt_normalizer import ConverterConfiguration
         from pyrit.registry.components.attack_registry import AttackRegistry
         from pyrit.registry.resolution import resolve_constructor_args, resolve_reference_value
         from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
@@ -261,21 +274,15 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             cls=attack_class,
             raw_args=params,
             identifier_type=AttackIdentifier,
+            strict_json=strict_json,
         )
         if request_converters is not None or response_converters is not None:
-            converter_args = {}
-            for key, values in {
-                "request_converters": request_converters,
-                "response_converters": response_converters,
-            }.items():
-                converter_args[key] = ConverterConfiguration.from_converters(
-                    converters=[
-                        resolve_reference_value(
-                            component_type=ComponentType.CONVERTER, value=value, owner="Technique", name=key
-                        )
-                        for value in values or []
-                    ]
-                )
+            converter_args = self._resolve_converter_changes(
+                {
+                    "request_converters": request_converters or [],
+                    "response_converters": response_converters or [],
+                }
+            )
             attack_args["attack_converter_config"] = AttackConverterConfig(**converter_args)
         if "attack_adversarial_config" not in names and any(
             factory_kwargs.get(key) is not None
@@ -295,12 +302,171 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
                 name="adversarial_chat",
             )
         registry.validate_constructor_parameters(attack_class=attack_class, params=attack_args)
-        return AttackTechniqueFactory(
+        factory = AttackTechniqueFactory(
             name=name,
             attack_class=attack_class,
             attack_kwargs=attack_args,
             **factory_kwargs,
         )
+        return self._with_replay_converter_roles(factory) if strict_json and request_converters else factory
+
+    @staticmethod
+    def get_editable_settings(factory: AttackTechniqueFactory) -> dict[str, Any]:
+        """
+        Project supported factory fields onto registered names without reconstructing source state.
+
+        Returns:
+            dict[str, Any]: Fields that can be represented losslessly through registry input.
+        """
+        from pyrit.registry.resolution import reference_name
+
+        settings = factory.get_editable_settings()
+        for key in ("adversarial_chat", "request_converters", "response_converters"):
+            if key not in settings or settings[key] is None:
+                continue
+            component_type = ComponentType.TARGET if key == "adversarial_chat" else ComponentType.CONVERTER
+            values = [settings[key]] if key == "adversarial_chat" else settings[key]
+            names = [reference_name(component_type=component_type, value=value) for value in values]
+            if None in names:
+                del settings[key]
+            else:
+                settings[key] = names[0] if key == "adversarial_chat" else names
+        return settings
+
+    @classmethod
+    def get_editable_parameters(cls, factory: AttackTechniqueFactory) -> list[Parameter]:
+        """
+        Select constructor inputs whose source values have a lossless external representation.
+
+        Returns:
+            list[Parameter]: Editable inputs; deferred and opaque source values remain untouched.
+        """
+        from pyrit.registry.resolution import project_parameter_value
+
+        values = factory.get_effective_attack_kwargs()
+        result = []
+        for parameter in cls.get_constructor_parameters(factory):
+            try:
+                project_parameter_value(parameter=parameter, value=values.get(parameter.name, parameter.default))
+            except (ValueError, TypeError, ValidationError):
+                continue
+            result.append(parameter)
+        return result
+
+    @classmethod
+    def get_constructor_parameters(cls, factory: AttackTechniqueFactory) -> list[Parameter]:
+        """
+        Describe factory-owned constructor inputs while leaving execution inputs deferred.
+
+        Returns:
+            list[Parameter]: Constructor parameters eligible for source-value projection.
+        """
+        from pyrit.registry.components.attack_registry import AttackRegistry
+
+        return [
+            parameter
+            for parameter in AttackRegistry.get_registry_singleton().get_class_metadata(factory.attack_class).parameters
+            if parameter.name not in cls._DEFERRED_EDIT_PARAMETERS
+        ]
+
+    def edit_factory(self, *, source: AttackTechniqueFactory, changes: TechniqueChanges) -> AttackTechniqueFactory:
+        """
+        Resolve a partial external edit and validate a private factory copy without registration.
+
+        Adding request converters selects both user and assistant history for replay.
+
+        Returns:
+            AttackTechniqueFactory: A validated copy retaining unedited and opaque source settings.
+
+        Raises:
+            ValueError: If a supplied field is read-only, invalid, or no longer registered.
+        """
+        from pyrit.registry.resolution import resolve_constructor_args, resolve_reference_value
+
+        supplied = changes.model_fields_set - {"params"}
+        if unsupported := supplied - self.get_editable_settings(source).keys():
+            raise ValueError(f"Technique settings are read-only: {', '.join(sorted(unsupported))}")
+        if "simulation" in supplied and changes.simulation is None:
+            raise ValueError("Simulation settings cannot be cleared")
+        if unsupported_params := changes.params.keys() - {p.name for p in self.get_editable_parameters(source)}:
+            raise ValueError(f"Technique parameters are read-only or unknown: {', '.join(sorted(unsupported_params))}")
+        settings = source.get_effective_settings()
+        settings.attack_kwargs.update(
+            resolve_constructor_args(
+                cls=source.attack_class,
+                raw_args=changes.params,
+                identifier_type=AttackIdentifier,
+                external_input=True,
+                strict_json=True,
+            )
+        )
+        for name in supplied - {"simulation", "request_converters", "response_converters"}:
+            value = getattr(changes, name)
+            if name == "adversarial_chat" and value is not None:
+                value = resolve_reference_value(
+                    component_type=ComponentType.TARGET, value=value, owner="Technique", name=name
+                )
+            setattr(settings, name, value)
+        converters = self._resolve_converter_changes(
+            {name: getattr(changes, name) for name in supplied & {"request_converters", "response_converters"}}
+        )
+        factory = source.with_settings(settings=settings, simulation=changes.simulation, converter_changes=converters)
+        return self._with_replay_converter_roles(factory) if changes.request_converters else factory
+
+    @staticmethod
+    def _with_replay_converter_roles(factory: AttackTechniqueFactory) -> AttackTechniqueFactory:
+        """
+        Apply GUI request converters to both sides of completed history before replay.
+
+        Returns:
+            AttackTechniqueFactory: A copy retaining existing history formatting and explicit role opt-ins.
+
+        Raises:
+            TypeError: If the effective history configuration is not a supported configuration.
+        """
+        from pyrit.executor.attack.component import PrependedConversationConfig
+
+        settings = factory.get_effective_attack_kwargs()
+        if "prepended_conversation_config" not in settings:
+            return factory
+        config = settings["prepended_conversation_config"] or PrependedConversationConfig()
+        if not isinstance(config, PrependedConversationConfig):
+            raise TypeError("prepended_conversation_config must be a PrependedConversationConfig")
+        roles = list(config.apply_converters_to_roles)
+        for role in ("user", "assistant"):
+            if role not in roles:
+                roles.append(role)
+        copied = factory.get_effective_settings()
+        copied.attack_kwargs["prepended_conversation_config"] = replace(config, apply_converters_to_roles=roles)
+        return factory.with_settings(settings=copied)
+
+    @staticmethod
+    def _resolve_converter_changes(changes: dict[str, list[str] | None]) -> dict[str, list[ConverterConfiguration]]:
+        """
+        Resolve ordered converter names for creation and copies without registering new instances.
+
+        Returns:
+            dict[str, list[ConverterConfiguration]]: Ordered chains with shared live converter instances.
+
+        Raises:
+            ValueError: If a chain is null or a name is not registered.
+        """
+        from pyrit.prompt_normalizer import ConverterConfiguration
+        from pyrit.registry.resolution import resolve_reference_value
+
+        converters = {}
+        for name, names in changes.items():
+            if names is None:
+                raise ValueError(f"Use an empty list to clear {name}")
+            converters[name] = ConverterConfiguration.from_converters(
+                converters=[
+                    resolve_reference_value(
+                        component_type=ComponentType.CONVERTER, value=value, owner="Technique", name=name
+                    )
+                    for value in names
+                ]
+            )
+        return converters
 
     @property
     def catalog_revision(self) -> tuple[object, int]:

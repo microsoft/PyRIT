@@ -46,6 +46,7 @@ class TestConfigurationLoader:
         assert config.env_akv_ref is None
         assert config.env_akv_strict is True
         assert config.custom_initializers_source is None
+        assert config.scenario_suites_source is None
         assert config.silent is False
 
     def test_custom_initializers_source_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
@@ -65,6 +66,24 @@ class TestConfigurationLoader:
         """Test rejecting empty or non-string custom initializer sources."""
         with pytest.raises(ValueError, match="custom_initializers_source"):
             ConfigurationLoader(custom_initializers_source=invalid_value)  # type: ignore[arg-type]
+
+    def test_scenario_suites_source_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
+        """Test loading an Azure Blob container URI for scenario suites."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "scenario_suites_source: https://account.blob.core.windows.net/suites\n",
+            encoding="utf-8",
+        )
+
+        config = ConfigurationLoader.from_yaml_file(config_path)
+
+        assert config.scenario_suites_source == "https://account.blob.core.windows.net/suites"
+
+    @pytest.mark.parametrize("invalid_value", ["", "   ", 42])
+    def test_scenario_suites_source_rejects_invalid_value(self, invalid_value: object) -> None:
+        """Test rejecting empty or non-string scenario suite sources."""
+        with pytest.raises(ValueError, match="scenario_suites_source"):
+            ConfigurationLoader(scenario_suites_source=invalid_value)  # type: ignore[arg-type]
 
     def test_target_upload_directory_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
         config_path = tmp_path / "config.yaml"

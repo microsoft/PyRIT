@@ -57,6 +57,21 @@ async def persistable_score_async(sqlite_memory_async: SQLiteMemory) -> Score:
     )
 
 
+async def _assert_score_not_persisted_async(*, memory: SQLiteMemory, score: Score) -> None:
+    """Use an explicit ID because an unfiltered score read always returns no scores."""
+    stored = await memory.get_scores_async(score_ids=[str(score.id)])
+    assert stored == [], f"Score {score.id} was unexpectedly persisted"
+
+
+async def test_score_absence_assertion_detects_persisted_score_async(
+    *, sqlite_memory_async: SQLiteMemory, persistable_score_async: Score
+) -> None:
+    await _assert_score_not_persisted_async(memory=sqlite_memory_async, score=persistable_score_async)
+    await sqlite_memory_async.add_scores_to_memory_async(scores=[persistable_score_async])
+    with pytest.raises(AssertionError, match=f"Score {persistable_score_async.id} was unexpectedly persisted"):
+        await _assert_score_not_persisted_async(memory=sqlite_memory_async, score=persistable_score_async)
+
+
 async def _assert_error_result_write_async(memory: SQLiteMemory) -> None:
     error_result = AttackResult(
         conversation_id="cancelled-score",
@@ -146,7 +161,7 @@ async def test_cancelled_score_transaction_finishes_cleanup_before_return_async(
     assert selected_cursor is not None
     assert connection_closed.is_set()
     assert raised.value.args == ("cancel score transaction",)
-    assert await sqlite_memory_async.get_scores_async() == []
+    await _assert_score_not_persisted_async(memory=sqlite_memory_async, score=persistable_score_async)
     await _assert_error_result_write_async(sqlite_memory_async)
 
 
@@ -431,7 +446,7 @@ async def test_invalidation_failure_preserves_cancellation_and_cause_async(
     assert original_cancellation is not None
     assert raised.value is original_cancellation
     assert raised.value.__cause__ is original
-    assert await sqlite_memory_async.get_scores_async() == []
+    await _assert_score_not_persisted_async(memory=sqlite_memory_async, score=persistable_score_async)
     await _assert_error_result_write_async(sqlite_memory_async)
 
 
@@ -450,5 +465,5 @@ async def test_sqlite_validation_error_preserves_original_exception_async(
         await sqlite_memory_async.add_scores_to_memory_async(scores=[persistable_score_async])
 
     assert raised.value is original
-    assert await sqlite_memory_async.get_scores_async() == []
+    await _assert_score_not_persisted_async(memory=sqlite_memory_async, score=persistable_score_async)
     await _assert_error_result_write_async(sqlite_memory_async)

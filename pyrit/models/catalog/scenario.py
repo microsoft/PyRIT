@@ -45,6 +45,7 @@ from pyrit.models.scenario_dataset_size_estimate import (
     IndeterminateDatasetSize,
     ScenarioDatasetSizeEstimate,
 )
+from pyrit.models.technique_edit import TechniqueOverride
 
 # Technique tokens can append converter modifiers (``technique:converter.<name>:...``).
 _MAX_REQUEST_TECHNIQUE_LENGTH = 4_096
@@ -447,6 +448,8 @@ class RegisteredScenario(BaseModel):
 class ScenarioRunSizeEstimateRequest(_DatasetRequestModel):
     """Request-specific scenario run-size configuration."""
 
+    technique_override: TechniqueOverride | None = None
+
     adversarial_target_name: _RequestName | None = Field(
         None,
         min_length=1,
@@ -471,6 +474,8 @@ class ScenarioRunSizeEstimateRequest(_DatasetRequestModel):
 
 class RunScenarioRequest(_DatasetRequestModel):
     """Request body for starting a scenario run."""
+
+    technique_override: TechniqueOverride | None = None
 
     scenario_name: _RequestName = Field(..., description="Scenario name (e.g., 'foundry.red_team_agent')")
     target_name: _RequestName | None = Field(

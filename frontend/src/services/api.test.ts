@@ -32,6 +32,8 @@ import {
   labelsApi,
   scenariosApi,
   operationsApi,
+  scenarioPresetsApi,
+  scenarioSuitesApi,
   datasetsApi,
   analyticsApi,
 } from "./api";
@@ -104,6 +106,57 @@ describe("api service", () => {
 
       await expect(authApi.getAccess()).resolves.toEqual(response.data);
       expect(apiClient.get).toHaveBeenCalledWith("/auth/access");
+    });
+  });
+
+  describe("scenarioPresetsApi", () => {
+    it("lists definitions without opting in to run-size estimates", async () => {
+      const response = { source: "presets", items: [] };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: response });
+
+      await expect(scenarioPresetsApi.list()).resolves.toEqual(response);
+      expect(apiClient.get).toHaveBeenCalledWith("/scenario-presets", {
+        params: { include_estimates: false },
+        signal: undefined,
+      });
+    });
+
+    it("explicitly opts in to estimates and forwards cancellation", async () => {
+      const controller = new AbortController();
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { source: "presets", items: [] } });
+
+      await scenarioPresetsApi.list(controller.signal, true);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenario-presets", {
+        params: { include_estimates: true },
+        signal: controller.signal,
+      });
+    });
+  });
+
+  describe("scenarioSuitesApi", () => {
+    it("supports collection and encoded item CRUD with optimistic concurrency", async () => {
+      const suite = { name: "nightly_suite", schema_version: 1, entries: [] };
+      const response = { suite, version: "v1", entry_statuses: [] };
+      const controller = new AbortController();
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: response });
+      (apiClient.post as jest.Mock).mockResolvedValue({ data: response });
+      (apiClient.put as jest.Mock).mockResolvedValue({ data: response });
+      (apiClient.delete as jest.Mock).mockResolvedValue({ data: undefined });
+
+      await scenarioSuitesApi.list(controller.signal);
+      expect(apiClient.get).toHaveBeenCalledWith("/scenario-suites", { signal: controller.signal });
+      await expect(scenarioSuitesApi.get("a/b")).resolves.toEqual(response);
+      expect(apiClient.get).toHaveBeenCalledWith("/scenario-suites/a%2Fb");
+      await expect(scenarioSuitesApi.create(suite)).resolves.toEqual(response);
+      expect(apiClient.post).toHaveBeenCalledWith("/scenario-suites", suite);
+      await expect(scenarioSuitesApi.update("a/b", suite, "v1")).resolves.toEqual(response);
+      expect(apiClient.put).toHaveBeenCalledWith("/scenario-suites/a%2Fb", {
+        suite,
+        expected_version: "v1",
+      });
+      await scenarioSuitesApi.remove("a/b");
+      expect(apiClient.delete).toHaveBeenCalledWith("/scenario-suites/a%2Fb");
     });
   });
 

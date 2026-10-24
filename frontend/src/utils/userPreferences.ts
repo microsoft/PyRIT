@@ -1,5 +1,5 @@
 import { isThemeMode } from '@/themes/themePresets'
-import type { OperationSelection, TargetReference, UserPreferences } from '@/types'
+import type { RegisteredComponentReference, OperationSelection, TargetReference, UserPreferences } from '@/types'
 
 const STORAGE_PREFIX = 'pyrit.userPreferences.v1.'
 
@@ -32,6 +32,13 @@ function isOperationSelection(value: unknown): value is OperationSelection | nul
   return typeof reference === 'string' && reference.length > 0
 }
 
+function isScorerReference(value: unknown): value is RegisteredComponentReference | null {
+  return value === null || (
+    isRecord(value) && typeof value.registry_name === 'string' && value.registry_name.length > 0
+    && typeof value.identifier_hash === 'string' && value.identifier_hash.length > 0
+  )
+}
+
 /** Earlier versions kept the Operation's name as a label. It becomes a name selection that the user must resolve. */
 function withMigratedOperation(preferences: UserPreferences): UserPreferences {
   if (!('operation' in preferences.labels)) return preferences
@@ -52,6 +59,7 @@ function parsePreferences(raw: string): UserPreferences {
     || !Object.values(value.labels).every((label: unknown) => label === null || typeof label === 'string')
     || !isThemeMode(value.theme)
     || typeof value.chatMarkdown !== 'boolean'
+    || (value.chatScorer !== undefined && !isScorerReference(value.chatScorer))
     || (value.operation !== undefined && !isOperationSelection(value.operation))
     || (
       value.hiddenTargetRegistryNames !== undefined
@@ -72,6 +80,7 @@ function parsePreferences(raw: string): UserPreferences {
     ...(value.operation !== undefined ? { operation: value.operation } : {}),
     theme: value.theme,
     chatMarkdown: value.chatMarkdown,
+    ...(value.chatScorer !== undefined ? { chatScorer: value.chatScorer } : {}),
   }
 }
 

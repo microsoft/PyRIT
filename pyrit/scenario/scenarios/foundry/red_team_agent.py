@@ -515,16 +515,19 @@ class RedTeamAgent(Scenario):
                 policy=context.incompatible_technique_policy,
             ):
                 continue
-            atomic_attacks.append(self._get_attack_from_technique(composite=composition, seed_groups=seed_groups))
+            atomic_attacks.append(
+                self._get_attack_from_technique(context=context, composite=composition, seed_groups=seed_groups)
+            )
         return atomic_attacks
 
     def _get_attack_from_technique(
-        self, *, composite: FoundryComposite, seed_groups: list[AttackSeedGroup]
+        self, *, context: ScenarioContext, composite: FoundryComposite, seed_groups: list[AttackSeedGroup]
     ) -> AtomicAttack:
         """
         Get an atomic attack for the specified FoundryComposite.
 
         Args:
+            context (ScenarioContext): The resolved runtime inputs.
             composite (FoundryComposite): Typed composite with an optional attack technique
                 and zero or more converter techniques.
             seed_groups (list[AttackSeedGroup]): Seed groups the attack draws from.
@@ -547,6 +550,7 @@ class RedTeamAgent(Scenario):
             converters.append(converter_specification.create(converter_target=self._adversarial_chat))
 
         attack = self._get_attack(
+            objective_target=context.objective_target,
             attack_type=attack_specification.attack_type,
             converters=converters,
             attack_kwargs=dict(attack_specification.kwargs),
@@ -558,12 +562,13 @@ class RedTeamAgent(Scenario):
             seed_groups=seed_groups,
             adversarial_chat=self._adversarial_chat,
             objective_scorer=self._attack_scoring_config.objective_scorer,
-            memory_labels=self._memory_labels,
+            memory_labels=context.memory_labels,
         )
 
     def _get_attack(
         self,
         *,
+        objective_target: PromptTarget,
         attack_type: type[AttackStrategyT],
         converters: list[Converter],
         attack_kwargs: dict[str, Any] | None = None,
@@ -583,6 +588,7 @@ class RedTeamAgent(Scenario):
         - Other attacks with compatible constructors
 
         Args:
+            objective_target (PromptTarget): Target supplied by the construction context.
             attack_type (type[AttackStrategyT]): The attack strategy class to instantiate.
                 Must accept objective_target and attack_converter_config parameters.
             converters (list[Converter]): List of converters to apply as request converters.
@@ -601,7 +607,7 @@ class RedTeamAgent(Scenario):
 
         # Build kwargs with required parameters
         kwargs = {
-            "objective_target": self._objective_target,
+            "objective_target": objective_target,
             "attack_converter_config": attack_converter_config,
             "attack_scoring_config": self._attack_scoring_config,
         }

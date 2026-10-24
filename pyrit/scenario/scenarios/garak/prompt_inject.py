@@ -344,7 +344,7 @@ class PromptInject(Scenario):
                                 pattern=r"\{\{\s*technique_text\s*\}\}",
                                 replace=technique_text.replace("\\", "\\\\"),
                             ),
-                            *self._technique_converters.get(technique.value, []),
+                            *context.technique_converters.get(technique.value, []),
                         ]
                     )
                 )

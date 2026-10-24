@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import hashlib
 import re
 
 from pyrit.converter.converter import Converter, ConverterResult
@@ -16,6 +17,10 @@ class PromptTemplateConverter(Converter):
     framing (e.g. ``TASK is '{{ prompt }}'``) as well as wrapping the prompt in
     surrounding content, such as hiding it in an HTML comment for indirect prompt
     injection (e.g. ``<p>Visible text</p><!-- {{ prompt }} -->``).
+
+    The converter identifier stores a fixed-size hash of the configured template,
+    rather than the template text. The deprecated ``TaskFramingConverter`` retains
+    its legacy identifier.
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
@@ -56,9 +61,10 @@ class PromptTemplateConverter(Converter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        template_hash = hashlib.sha256(self._template.encode("utf-8")).hexdigest()[:16]
         return self._create_identifier(
             params={
-                "template": self._template,
+                "template_hash": template_hash,
                 "strip_characters": self._strip_characters,
             },
         )

@@ -78,6 +78,7 @@ from pyrit.models import (
 )
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_normalizer import PromptNormalizer
+from unit.async_utils import TEST_WATCHDOG_SECONDS, settle_tasks_async, wait_for_event_async
 from unit.backend.mocks import _make_matching_target_mock, make_attack_result, make_mock_memory
 from unit.mocks import MockPromptTarget
 
@@ -1495,7 +1496,7 @@ class TestUpdateAttack:
 
         await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
 
-        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        update_fields = mock_memory.update_attack_result_conditionally_async.call_args.kwargs["update_fields"]
         assert update_fields["human_score_id"] is None
         assert update_fields["outcome"] == expected_outcome
         assert update_fields["outcome_reason"] == "Automated rationale"
@@ -1511,7 +1512,7 @@ class TestUpdateAttack:
 
         await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
 
-        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        update_fields = mock_memory.update_attack_result_conditionally_async.call_args.kwargs["update_fields"]
         assert update_fields["human_score_id"] is None
         assert update_fields["outcome"] == "undetermined"
         assert update_fields["outcome_reason"] is None
@@ -1566,7 +1567,7 @@ class TestAddMessage:
             await attack_service.add_message_async(attack_result_id="attack", request=request)
         reader.assert_not_called()
 
-    @pytest.mark.timeout(10)
+    @pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
     @pytest.mark.parametrize("read_method", ["get_attack_async", "get_conversation_messages_async"])
     @pytest.mark.parametrize("incoming_send", [False, True])
     async def test_response_assembly_keeps_conversation_reserved_async(
@@ -1602,7 +1603,7 @@ class TestAddMessage:
                 service.add_message_async(attack_result_id=ar.attack_result_id, request=request)
             )
             try:
-                await started.wait()
+                await wait_for_event_async(event=started, tasks=[active])
                 with pytest.raises(ManualSendConflictError):
                     await peer.add_message_async(
                         attack_result_id=ar.attack_result_id,
@@ -1615,7 +1616,8 @@ class TestAddMessage:
                     )
             finally:
                 release.set()
-                result = await active
+                await settle_tasks_async(active)
+            result = active.result()
 
         assert result.attack.message_count == 2
         assert [message.message_pieces[0].original_value for message in result.messages.messages] == [
@@ -1634,7 +1636,7 @@ class TestAddMessage:
             ),
         )
 
-    @pytest.mark.timeout(10)
+    @pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
     @pytest.mark.parametrize("read_method", ["get_attack_async", "get_conversation_messages_async"])
     @pytest.mark.parametrize("cancel", [False, True])
     async def test_response_failure_releases_conversation_async(
@@ -1659,14 +1661,15 @@ class TestAddMessage:
         ):
             active = asyncio.create_task(attack_service.add_message_async(attack_result_id="attack", request=request))
             try:
-                await started.wait()
+                await wait_for_event_async(event=started, tasks=[active])
                 assert sender._scheduler._conversations == {"conversation"}
                 if cancel:
                     active.cancel()
             finally:
                 release.set()
-                with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
-                    await active
+                await settle_tasks_async(active)
+            with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
+                active.result()
             assert not sender._scheduler._conversations
             await sender.add_message_async(attack_result_id="attack", request=request)
 
@@ -2873,7 +2876,17 @@ class TestCreateRelatedConversation:
         service = AttackService()
         target = TargetIdentifier(class_name="ExampleTarget", class_module="tests.unit", pyrit_version="1.1.0")
         source = Conversation(conversation_id=str(uuid.uuid4()), target_identifier=target)
-        attack = AttackResult(conversation_id=source.conversation_id, objective="Branch older history")
+        attack = AttackResult(
+            conversation_id=source.conversation_id,
+            objective="Branch older history",
+            atomic_attack_identifier=AtomicAttackIdentifier.build(
+                attack_identifier=AttackIdentifier(
+                    class_name="ManualAttack",
+                    class_module="pyrit.backend",
+                    objective_target=target,
+                )
+            ),
+        )
         await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
         with patch.object(pyrit, "__version__", "1.1.0"):
             await sqlite_instance.add_conversation_to_memory_async(conversation=source)
@@ -3535,7 +3548,7 @@ class TestRemoveHumanScoreOutcomeByScoreType:
 
         await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
 
-        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        update_fields = mock_memory.update_attack_result_conditionally_async.call_args.kwargs["update_fields"]
         assert update_fields["outcome"] == expected_outcome
 
     async def test_remove_human_score_with_undetermined_automated_score_is_undetermined(
@@ -3554,6 +3567,6 @@ class TestRemoveHumanScoreOutcomeByScoreType:
 
         await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
 
-        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        update_fields = mock_memory.update_attack_result_conditionally_async.call_args.kwargs["update_fields"]
         assert update_fields["outcome"] == "undetermined"
         assert update_fields["outcome_reason"] is None

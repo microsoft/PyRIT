@@ -30,6 +30,88 @@ class _Unsupported:
     """Stand-in for an arbitrary (non-scalar, non-registry) constructor type."""
 
 
+@pytest.mark.parametrize(
+    ("annotation", "value", "expected"),
+    [
+        (str, "", ""),
+        (int, 0, 0),
+        (float, 0.5, 0.5),
+        (bool, False, False),
+        (list[str], ["a", "a"], ["a", "a"]),
+        (list[int], [0, 2], [0, 2]),
+        (int | None, None, None),
+        (_Speed, "FAST", _Speed.FAST),
+        (list[_Speed], ["slow", "FAST"], [_Speed.SLOW, _Speed.FAST]),
+        (Literal["a", "b"], "a", "a"),
+    ],
+)
+def test_strict_json_input_preserves_supported_values(annotation: Any, value: Any, expected: Any) -> None:
+    parameter = Parameter(name="setting", description="", param_type=annotation)
+    assert parameter.is_json_input
+    assert parameter.validate_json_value(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("annotation", "value"),
+    [
+        (int, "1"),
+        (int, True),
+        (int, 1.5),
+        (int, None),
+        (bool, "false"),
+        (bool, 0),
+        (str, 1),
+        (str, {}),
+        (list[int], ["1"]),
+        (list[str], [None]),
+        (list[str], "a"),
+    ],
+)
+def test_strict_json_input_rejects_coercible_wrong_types(annotation: Any, value: Any) -> None:
+    parameter = Parameter(name="setting", description="", param_type=annotation)
+    with pytest.raises(ValidationError):
+        parameter.validate_json_value(value)
+
+
+@pytest.mark.parametrize("annotation", [Path, object, dict[str, str], Sequence[str], str | Callable[[], str]])
+def test_strict_json_input_does_not_widen_the_technique_rest_contract(annotation: Any) -> None:
+    parameter = Parameter(name="setting", description="", param_type=annotation, default=None)
+    assert not parameter.is_json_input
+    with pytest.raises(ValueError, match="requires a Python value"):
+        parameter.validate_json_value("value")
+
+
+def test_strict_json_reference_shape_and_nullable_names() -> None:
+    parameter = Parameter(
+        name="targets",
+        description="",
+        reference=RegistryReference(component_type=ComponentType.TARGET, annotation=list[object] | None),
+    )
+    assert parameter.validate_json_value(None) is None
+    assert parameter.validate_json_value(["one", "one"]) == ["one", "one"]
+    with pytest.raises(ValidationError):
+        parameter.validate_json_value([object()])
+
+
+def test_scalar_projection_keeps_enum_values_but_does_not_coerce_source_types() -> None:
+    parameter = Parameter(name="speeds", description="", param_type=list[_Speed])
+    assert parameter.project_json_value([_Speed.SLOW, _Speed.FAST]) == ["slow", "fast"]
+    with pytest.raises(ValueError):
+        Parameter(name="opaque", description="", param_type=object).project_json_value(object())
+
+
+def test_supplied_value_validation_does_not_apply_the_strict_external_support_policy() -> None:
+    path = Path("local.txt")
+    parameter = Parameter(name="path", description="", param_type=Path)
+    parameter.validate_value(path)
+    with pytest.raises(ValueError, match="requires a Python value"):
+        parameter.validate_json_value(path)
+    enum = Parameter(name="speed", description="", param_type=_Speed)
+    with pytest.raises(ValueError, match="expects"):
+        enum.validate_value("FAST")
+    assert enum.validate_json_value("FAST") is _Speed.FAST
+
+
 class TestParameter:
     """Tests for the five-field pyrit.common.Parameter."""
 
@@ -343,12 +425,69 @@ class TestIsReferenceTo:
         assert p.is_reference_to(ComponentType.TARGET) is False
 
 
+class TestValidateValue:
+    @pytest.mark.parametrize(
+        ("annotation", "value"),
+        [(int, "7"), (int, 0.5), (bool, "false"), (str, 7), (list[str], [7]), (_Speed, "fast")],
+    )
+    def test_rejects_values_that_still_need_coercion(self, annotation: Any, value: Any) -> None:
+        parameter = Parameter(name="value", description="Input", param_type=annotation)
+        with pytest.raises(ValueError, match="expects"):
+            parameter.validate_value(value)
+
+    def test_preserves_resolved_list_and_enum_identity(self) -> None:
+        parameter = Parameter(name="speeds", description="Speeds", param_type=list[_Speed])
+        values = [_Speed.FAST]
+        parameter.validate_value(values)
+        assert values == [_Speed.FAST]
+        assert values[0] is _Speed.FAST
+
+    @pytest.mark.parametrize("reference", [False, True])
+    def test_live_values_are_not_coerced(self, reference: bool) -> None:
+        parameter = Parameter(
+            name="value",
+            description="Live object",
+            reference=RegistryReference(component_type=ComponentType.TARGET) if reference else None,
+            opaque=not reference,
+        )
+        parameter.validate_value(object())
+
+
 class TestCoerceValueScalars:
     """``Parameter.coerce_value`` coerces plain scalars."""
 
     def test_int(self) -> None:
         p = Parameter(name="n", description="d", param_type=int)
         assert p.coerce_value("5") == 5
+
+    @pytest.mark.parametrize("value", [0.5, -0.5, 3.5, float("inf"), float("-inf"), float("nan")])
+    def test_int_rejects_non_integral_numbers(self, value: float) -> None:
+        parameter = Parameter(name="count", description="Count", param_type=int)
+        with pytest.raises(ValueError):
+            parameter.coerce_value(value)
+
+    @pytest.mark.parametrize("value", [0, 7, 7.0, "7"])
+    def test_int_preserves_integral_inputs(self, value: int | float | str) -> None:
+        parameter = Parameter(name="count", description="Count", param_type=int)
+        result = parameter.coerce_value(value)
+        assert result == int(value)
+        assert type(result) is int
+
+    def test_int_list_rejects_fractional_elements(self) -> None:
+        parameter = Parameter(name="counts", description="Counts", param_type=list[int])
+        with pytest.raises(ValueError):
+            parameter.coerce_value([1, 0.5])
+
+    def test_int_rejects_fractional_decimal_and_fraction(self) -> None:
+        from decimal import Decimal
+        from fractions import Fraction
+
+        parameter = Parameter(name="count", description="Count", param_type=int)
+        for value in (Decimal("0.5"), Fraction(-1, 2)):
+            with pytest.raises(ValueError, match="fractional part"):
+                parameter.coerce_value(value)
+        assert parameter.coerce_value(Decimal("7")) == 7
+        assert parameter.coerce_value(Fraction(7, 1)) == 7
 
     def test_float(self) -> None:
         p = Parameter(name="r", description="d", param_type=float)

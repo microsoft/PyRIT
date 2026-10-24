@@ -11,6 +11,10 @@ export const useRegistryLayoutStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     height: '100%',
+    // Without this the tall content of a nested route (the preset editor form)
+    // raises the automatic minimum size, so the layout cannot shrink to the
+    // space the labels bar leaves and its bottom is clipped by `main`.
+    minHeight: 0,
     minWidth: 0,
   },
   tabs: {

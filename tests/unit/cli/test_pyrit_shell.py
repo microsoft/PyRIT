@@ -7,6 +7,7 @@ Unit tests for the pyrit_shell CLI module (thin REST client).
 
 import asyncio
 from datetime import UTC
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -1197,6 +1198,18 @@ class TestDoScenarioResults:
         assert "Conversations" in out
         assert "do it" in out
         assert client.get_conversation_messages_async.await_count == 2
+
+    def test_unknown_view_does_not_fall_back_to_conversations(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
+        unknown_view: Any = "future_view"
+        with (
+            patch("pyrit.cli._results.resolve_view", return_value=unknown_view),
+            patch("pyrit.cli._output.print_conversations_async", new_callable=AsyncMock) as mock_conversations,
+        ):
+            s.do_scenario_results("rid-1")
+        assert "future_view" in capsys.readouterr().out
+        mock_conversations.assert_not_awaited()
 
     def test_full_view_prints_overview_then_transcripts(self, shell, capsys):
         s, client = shell

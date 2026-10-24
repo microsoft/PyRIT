@@ -356,6 +356,21 @@ def test_last_score_falls_back_to_automated_score() -> None:
         result.last_score = None
 
 
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        ({AttackResult.TECHNIQUE_NAME_METADATA_KEY: "crescendo"}, "crescendo"),
+        ({}, None),
+        ({AttackResult.TECHNIQUE_NAME_METADATA_KEY: ""}, None),
+        ({AttackResult.TECHNIQUE_NAME_METADATA_KEY: 42}, None),
+    ],
+)
+def test_technique_name_reads_a_non_empty_string_from_metadata(metadata: dict, expected: str | None) -> None:
+    result = AttackResult(conversation_id="conv-1", objective="test", metadata=metadata)
+
+    assert result.technique_name == expected
+
+
 class TestAttackResultValidation:
     """Tests for the Pydantic validation behaviour introduced by the BaseModel conversion."""
 

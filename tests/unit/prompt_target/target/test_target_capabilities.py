@@ -145,7 +145,6 @@ class TestDefaultConfigurationDefined:
         from pyrit.prompt_target import (
             AzureBlobStorageTarget,
             AzureMLChatTarget,
-            GandalfTarget,
             HTTPTarget,
             HTTPXAPITarget,
             HuggingFaceChatTarget,
@@ -166,7 +165,6 @@ class TestDefaultConfigurationDefined:
         return [
             AzureBlobStorageTarget,
             AzureMLChatTarget,
-            GandalfTarget,
             HTTPTarget,
             HTTPXAPITarget,
             HuggingFaceChatTarget,

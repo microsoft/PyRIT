@@ -1,18 +1,27 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import MockPromptTarget
+from openai.types.responses import Response
+from unit.mocks import MockPromptTarget, openai_response_json_dict
 
 from pyrit.analytics import ApproximateTextMatching, ExactTextMatching
 from pyrit.converter import AskToDecodeConverter, Base64Converter
-from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
+from pyrit.executor.attack import (
+    AttackConverterConfig,
+    AttackScoringConfig,
+    PrependedConversationConfig,
+    PromptSendingAttack,
+)
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import AttackOutcome, Message, MessagePiece
+from pyrit.models import AttackOutcome, ChatMessageRole, Message, MessagePiece, RequestTraceContext
 from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.score import DecodingScorer
 
 
@@ -50,6 +59,32 @@ class _EchoTarget(MockPromptTarget):
                 original_value=self._reply.format(received=request.converted_value),
                 conversation_id=request.conversation_id,
             ).to_message()
+        ]
+
+
+class _ToolCallingTarget(MockPromptTarget):
+    """Calls a tool before answering with ``reply``, storing the turn the way ``OpenAIResponseTarget`` does."""
+
+    def __init__(self, *, reply: str) -> None:
+        super().__init__()
+        self._reply = reply
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        conversation_id = normalized_conversation[-1].message_pieces[0].conversation_id
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value=json.dumps({"type": "function_call", "call_id": "call_1", "name": "decode_base64"}),
+                original_value_data_type="function_call",
+                conversation_id=conversation_id,
+            ).to_message(),
+            MessagePiece(
+                role="tool",
+                original_value=json.dumps({"type": "function_call_output", "call_id": "call_1", "output": "secret"}),
+                original_value_data_type="function_call_output",
+                conversation_id=conversation_id,
+            ).to_message(),
+            MessagePiece(role="assistant", original_value=self._reply, conversation_id=conversation_id).to_message(),
         ]
 
 
@@ -268,3 +303,147 @@ class TestDecodingScorer:
         result = await attack.execute_async(objective="secret")
 
         assert result.outcome == expected_outcome
+
+    @pytest.mark.parametrize(
+        "reply,expected_outcome",
+        [
+            pytest.param("Decoded: secret", AttackOutcome.SUCCESS, id="plaintext"),
+            pytest.param("I refuse", AttackOutcome.FAILURE, id="refusal"),
+        ],
+    )
+    async def test_encoding_attack_scores_reply_after_tool_call(self, patch_central_database, reply, expected_outcome):
+        attack = PromptSendingAttack(
+            objective_target=_ToolCallingTarget(reply=reply),
+            attack_converter_config=AttackConverterConfig(
+                request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()])
+            ),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=DecodingScorer()),
+        )
+
+        result = await attack.execute_async(objective="secret")
+
+        assert result.outcome == expected_outcome
+
+
+def _sdk_response(*, output: list[dict[str, Any]]) -> Response:
+    return Response.model_validate(
+        {
+            **openai_response_json_dict(),
+            "created_at": 1,
+            "parallel_tool_calls": True,
+            "tool_choice": "auto",
+            "tools": [],
+            "output": output,
+        }
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("request_role", ["user", "system", "developer", "assistant", "tool"])
+@pytest.mark.parametrize("tool_rounds", [(), (1,), (1, 1), (2,)], ids=["plain", "single", "chained", "parallel"])
+@pytest.mark.parametrize(
+    "reply,expected_outcome",
+    [
+        pytest.param("Decoded: secret", AttackOutcome.SUCCESS, id="plaintext"),
+        pytest.param("I refuse", AttackOutcome.FAILURE, id="refusal"),
+        pytest.param("Earlier request", AttackOutcome.FAILURE, id="earlier-request-echo"),
+    ],
+)
+async def test_encoding_attack_scores_explicit_request_async(
+    *,
+    sqlite_instance: MemoryInterface,
+    request_role: ChatMessageRole,
+    tool_rounds: tuple[int, ...],
+    reply: str,
+    expected_outcome: AttackOutcome,
+) -> None:
+    async def decode_async(arguments: dict[str, Any]) -> str:
+        return "secret"
+
+    target = OpenAIResponseTarget(
+        model_name="test-model",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-key",
+        custom_functions={"decode": decode_async},
+    )
+    history = [
+        Message.from_prompt(prompt="Earlier request", role="user"),
+        Message.from_prompt(prompt="Earlier answer", role="assistant"),
+    ]
+    request = Message.from_prompt(prompt="secret", role=request_role)
+    converters = ConverterConfiguration.from_converters(converters=[Base64Converter()])
+    if request_role == "tool":
+        history[-1] = MessagePiece(
+            role="assistant",
+            original_value=json.dumps(
+                {"type": "function_call", "call_id": "prior_call", "name": "lookup", "arguments": "{}"}
+            ),
+            original_value_data_type="function_call",
+        ).to_message()
+        request.get_piece().converted_value = json.dumps(
+            {"type": "function_call_output", "call_id": "prior_call", "output": "c2VjcmV0"}
+        )
+        request.get_piece().converted_value_data_type = "function_call_output"
+        converters = []
+    responses = []
+    for round_index, call_count in enumerate(tool_rounds):
+        responses.append(
+            _sdk_response(
+                output=[
+                    {
+                        "id": f"fc_{round_index}_{call_index}",
+                        "type": "function_call",
+                        "call_id": f"call_{round_index}_{call_index}",
+                        "name": "decode",
+                        "arguments": "{}",
+                        "status": "completed",
+                    }
+                    for call_index in range(call_count)
+                ]
+            )
+        )
+    responses.append(
+        _sdk_response(
+            output=[
+                {
+                    "id": "msg_reply",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": reply, "annotations": []}],
+                }
+            ]
+        )
+    )
+    attack = PromptSendingAttack(
+        objective_target=target,
+        attack_converter_config=AttackConverterConfig(request_converters=converters),
+        attack_scoring_config=AttackScoringConfig(objective_scorer=DecodingScorer(categories=["decoding"])),
+        prepended_conversation_config=PrependedConversationConfig(apply_converters_to_roles=[]),
+    )
+    try:
+        with patch.object(
+            target._client.responses, "create", new_callable=AsyncMock, side_effect=responses
+        ) as create_response:
+            result = await attack.execute_async(
+                objective="secret", next_message=request, prepended_conversation=history
+            )
+
+        assert create_response.await_count == len(responses)
+        assert result.outcome == expected_outcome
+        assert result.last_response is not None
+        stored_request = await sqlite_instance.get_request_from_response_async(
+            response=result.last_response.to_message()
+        )
+        assert stored_request.api_role == request_role
+        assert stored_request.get_piece().original_value == "secret"
+        assert stored_request.get_piece().prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] == 1
+        assert result.last_score is not None
+        scores = await sqlite_instance.get_scores_async(score_ids=[str(result.last_score.id)])
+        assert len(scores) == 1
+        assert scores[0].get_value() is (expected_outcome == AttackOutcome.SUCCESS)
+        assert scores[0].score_category == ["decoding"]
+        assert scores[0].score_rationale == ""
+        assert scores[0].score_metadata == {"text_matcher": "<class 'pyrit.analytics.text_matching.ExactTextMatching'>"}
+    finally:
+        await target._client.close()

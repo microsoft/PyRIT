@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         AdaptiveTechniqueDispatcher,
         TechniqueBundle,
     )
+    from pyrit.scenario.scenarios.adaptive.image_technique_adaptive import ImageTechniqueAdaptive
     from pyrit.scenario.scenarios.adaptive.selectors import (
         EpsilonGreedyTechniqueSelector,
         SelectorScope,
@@ -27,6 +28,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AdaptiveScenario": "pyrit.scenario.scenarios.adaptive.adaptive_scenario",
     "AdaptiveTechniqueDispatcher": "pyrit.scenario.scenarios.adaptive.dispatcher",
     "EpsilonGreedyTechniqueSelector": "pyrit.scenario.scenarios.adaptive.selectors",
+    "ImageTechniqueAdaptive": "pyrit.scenario.scenarios.adaptive.image_technique_adaptive",
     "SelectorScope": "pyrit.scenario.scenarios.adaptive.selectors",
     "TechniqueBundle": "pyrit.scenario.scenarios.adaptive.dispatcher",
     "TechniqueSelector": "pyrit.scenario.scenarios.adaptive.selectors",

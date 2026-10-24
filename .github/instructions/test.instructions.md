@@ -35,6 +35,14 @@ Most tests should be unit tests. Integration and end-to-end tests are for testin
 - No network calls should ever happen in unit tests, but file access is okay
 - Unit tests should be fast and can be run in parallel.
 
+## Correctness Test Timeouts
+
+- For unit-test subprocesses whose timeout only prevents a hang, use `TEST_WATCHDOG_SECONDS` from `unit.async_utils` rather than a short wall-clock deadline. The shared watchdog allows for startup, filesystem, and scheduling delays on busy CI workers; it is not an expected runtime.
+- Use the same watchdog for thread-barrier rendezvous that test concurrency correctness, not worker startup speed. Keep the barrier and assertions that require distinct workers.
+- Preserve intentional performance limits, operation deadlines, timeout/cancellation assertions, and JavaScript VM execution limits. Do not increase them merely to make a test pass.
+- For a single `node:test` suite that does not need child-process isolation, run `node --test-reporter=tap <suite>` without `--test` to avoid an extra Node process. Preserve fresh subprocesses where isolation is part of the test contract, such as import guards.
+- Still require a successful process exit and, for Node suites, a positive collected-test count with every collected test passing. A longer watchdog must not hide failures, skipped tests, or an empty suite.
+
 ## Integration Test Rules
 
 - Mark with `@pytest.mark.run_only_if_all_tests` (skipped unless `RUN_ALL_TESTS=true`)

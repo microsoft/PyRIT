@@ -365,7 +365,10 @@ async def remove_human_score(attack_result_id: IdentifierStr) -> AttackSummary: 
         AttackSummary: Updated attack details.
     """
     service = get_attack_service()
-    attack = await service.remove_human_score_async(attack_result_id=attack_result_id)
+    try:
+        attack = await service.remove_human_score_async(attack_result_id=attack_result_id)
+    except AttackObjectiveConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if not attack:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -542,6 +545,7 @@ async def update_main_conversation(  # pyrit-async-suffix-exempt
     responses={
         404: {"model": ProblemDetail, "description": "Attack not found"},
         400: {"model": ProblemDetail, "description": "Message send failed"},
+        403: {"model": ProblemDetail, "description": "Automated results require a manual continuation"},
         409: {"model": ProblemDetail, "description": "Conversation has an active manual operation"},
         429: {"model": ProblemDetail, "description": "Manual-message admission limit reached"},
     },
@@ -569,6 +573,8 @@ async def add_message(  # pyrit-async-suffix-exempt
 
     try:
         return await service.add_message_async(attack_result_id=attack_result_id, request=request)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     except ManualSendConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except ManualSendQueueFullError as e:

@@ -4,15 +4,15 @@
 """Per-execution expectations reach real outcome scorers without becoming attack prompts."""
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from contextlib import nullcontext
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from aiosqlite import Cursor
+from aiosqlite import Connection, Cursor
 from sqlalchemy import event
-from unit.async_utils import wait_for_completion_async
+from unit.async_utils import wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget, store_message_async
 
 from pyrit.exceptions import (
@@ -44,6 +44,7 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AttackOutcome,
+    AttackResult,
     AttackSeedGroup,
     ComponentIdentifier,
     Condition,
@@ -77,12 +78,10 @@ class _RecordingScorer(TrueFalseScorer):
         *,
         condition_type: type[Condition] | None = _OutcomeCondition,
         value: bool = True,
-        barrier: asyncio.Barrier | None = None,
     ) -> None:
         super().__init__()
         self._condition_type = condition_type
         self.value = value
-        self.barrier = barrier
         self.calls: list[tuple[Scorable, ScoringExpectation | None]] = []
         self.contexts: list[ExecutionContext | None] = []
 
@@ -97,8 +96,6 @@ class _RecordingScorer(TrueFalseScorer):
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
         self.calls.append((scorable, expectation))
         self.contexts.append(get_execution_context())
-        if self.barrier is not None:
-            await self.barrier.wait()
         return [
             Score(
                 score_value=str(self.value).lower(),
@@ -267,16 +264,30 @@ class TestExecutionExpectationTransport:
         send.assert_not_awaited()
 
     @pytest.mark.parametrize("from_seeds", [False, True], ids=["objectives", "seed_groups"])
-    async def test_concurrent_rows_keep_effective_expectations_isolated_async(self, from_seeds: bool) -> None:
+    async def test_concurrent_rows_keep_effective_expectations_isolated_async(
+        self, *, from_seeds: bool, sqlite_instance: SQLiteMemory
+    ) -> None:
         objectives = ["broadcast row", "replaced row", "cleared row", "empty row"]
         supplied = _expectation(None)
         replaced = ScoringExpectation(objective="replacement", conditions=(_OutcomeCondition(value="different"),))
         empty = _expectation("")
         overrides = [{}, {"expectation": replaced}, {"expectation": None}, {"expectation": empty}]
-        scorer = _RecordingScorer(barrier=asyncio.Barrier(3))
+        original = supplied.model_dump()
+        scorer = _RecordingScorer()
+        target = MockPromptTarget()
         attack = PromptSendingAttack(
-            objective_target=MockPromptTarget(), attack_scoring_config=AttackScoringConfig(objective_scorer=scorer)
+            objective_target=target, attack_scoring_config=AttackScoringConfig(objective_scorer=scorer)
         )
+        scoring_started, release_scoring = asyncio.Event(), asyncio.Event()
+        record_score = scorer._score_scorable_async
+
+        async def gated_score_async(*, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
+            scores = await record_score(scorable=scorable, expectation=expectation)
+            if len(scorer.calls) == 3:
+                scoring_started.set()
+            await release_scoring.wait()
+            return scores
+
         executor = AttackExecutor(max_concurrency=4)
         kwargs = {
             "attack": attack,
@@ -291,8 +302,21 @@ class TestExecutionExpectationTransport:
         else:
             execution = executor.execute_attack_async(objectives=objectives, **kwargs)
 
-        batch = await asyncio.wait_for(execution, timeout=10)
+        with patch.object(scorer, "_score_scorable_async", side_effect=gated_score_async):
+            task = asyncio.create_task(execution)
+            try:
+                await wait_for_event_async(event=scoring_started, tasks=[task])
+                assert len(scorer.calls) == 3
+                assert not task.done()
+                release_scoring.set()
+                batch = await wait_for_completion_async(future=task)
+            finally:
+                release_scoring.set()
+                if not task.done():
+                    task.cancel()
+                await wait_for_completion_async(future=asyncio.gather(task, return_exceptions=True))
 
+        valid_objectives = [objectives[0], objectives[1], objectives[3]]
         expected = [
             supplied.model_copy(update={"objective": objectives[0]}),
             replaced,
@@ -300,13 +324,34 @@ class TestExecutionExpectationTransport:
         ]
         results = batch.completed_results
         assert len(results) == 3
+        assert batch.input_indices == [0, 1, 3]
+        assert sorted(target.prompt_sent) == sorted(valid_objectives)
         [(failed_objective, error)] = batch.incomplete_objectives
         assert failed_objective == objectives[2]
         assert "requires one _OutcomeCondition" in str(error)
-        for result, expectation in zip(results, expected, strict=True):
+        stored_scores = {score.id: score for score in await sqlite_instance.get_scores_async(score_type="true_false")}
+        stored_results = {
+            result.attack_result_id: result
+            for result in await sqlite_instance.get_attack_results_async(
+                attack_result_ids=[result.attack_result_id for result in results]
+            )
+        }
+        assert len(stored_scores) == len(stored_results) == 3
+        for result, objective, expectation in zip(results, valid_objectives, expected, strict=True):
+            assert result.objective == objective
+            assert result.last_response is not None
             assert result.automated_score is not None
             assert result.automated_score.scored_expectation == expectation
-        assert supplied.objective is None
+            scorable = MessageScorable(message_piece_ids=(result.last_response.id,))
+            assert (scorable, expectation) in scorer.calls
+            stored_score = stored_scores[result.automated_score.id]
+            assert stored_score.scorable == scorable
+            assert stored_score.scored_expectation == expectation
+            stored_result = stored_results[result.attack_result_id]
+            assert stored_result.automated_score is not None
+            assert stored_result.automated_score.id == stored_score.id
+            assert stored_result.automated_score.scored_expectation == expectation
+        assert supplied.model_dump() == original
 
     async def test_multi_prompt_seed_group_override_reaches_final_score_async(self) -> None:
         target = MockPromptTarget()
@@ -604,7 +649,9 @@ class TestExecutionExpectationTransport:
             attack_scoring_config=AttackScoringConfig(objective_scorer=objective, auxiliary_scorers=[auxiliary]),
         )
         write_started, validation_started, release_read = asyncio.Event(), asyncio.Event(), asyncio.Event()
-        validation_cancelled = asyncio.Event()
+        validation_cancelled, connection_closed = asyncio.Event(), asyncio.Event()
+        persistence_started, release_persistence = asyncio.Event(), asyncio.Event()
+        validation_connection: Connection | None = None
         original = ValueError("scoring failed")
 
         def record_write(*args: Any) -> None:
@@ -615,10 +662,13 @@ class TestExecutionExpectationTransport:
             await validation_started.wait()
             raise original
 
-        fetchall = Cursor.fetchall
+        fetchall, close_connection = Cursor.fetchall, Connection.close
+        persist_results = sqlite_instance.add_attack_results_to_memory_async
 
         async def delayed_fetchall_async(cursor: Cursor) -> Iterable[Any]:
+            nonlocal validation_connection
             if write_started.is_set() and not validation_started.is_set():
+                validation_connection = cursor._conn
                 validation_started.set()
                 try:
                     await release_read.wait()
@@ -627,28 +677,47 @@ class TestExecutionExpectationTransport:
                     raise
             return await fetchall(cursor)
 
+        async def observed_connection_close_async(connection: Connection) -> None:
+            await close_connection(connection)
+            if connection is validation_connection:
+                connection_closed.set()
+
+        async def delayed_persistence_async(*, attack_results: Sequence[AttackResult]) -> None:
+            persistence_started.set()
+            await release_persistence.wait()
+            await persist_results(attack_results=attack_results)
+
         engine = sqlite_instance._get_async_engine()
         event.listen(engine.sync_engine, "after_cursor_execute", record_write)
         try:
             with (
                 patch.object(auxiliary, "_score_scorable_async", side_effect=fail_auxiliary_async),
                 patch.object(Cursor, "fetchall", new=delayed_fetchall_async),
+                patch.object(Connection, "close", new=observed_connection_close_async),
+                patch.object(
+                    sqlite_instance, "add_attack_results_to_memory_async", side_effect=delayed_persistence_async
+                ),
             ):
                 task = asyncio.create_task(
                     attack.execute_async(objective="attack objective", expectation=_expectation())
                 )
                 try:
-                    # Time cancellation cleanup separately from attack startup and target persistence.
-                    await asyncio.wait_for(validation_started.wait(), timeout=30)
-                    with pytest.raises(RuntimeError, match="Strategy execution failed for auxiliary_scorer") as raised:
-                        await wait_for_completion_async(future=task, timeout=5)
+                    # ERROR persistence follows scorer draining, but is not part of the cleanup budget.
+                    await wait_for_event_async(event=validation_started, tasks=[task])
+                    await wait_for_event_async(event=persistence_started, tasks=[task], timeout=5)
                     assert validation_cancelled.is_set()
+                    assert connection_closed.is_set()
                     assert not release_read.is_set()
+                    assert not task.done()
+                    release_persistence.set()
+                    with pytest.raises(RuntimeError, match="Strategy execution failed for auxiliary_scorer") as raised:
+                        await wait_for_completion_async(future=task)
                 finally:
                     release_read.set()
+                    release_persistence.set()
                     if not task.done():
                         task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
+                    await wait_for_completion_async(future=asyncio.gather(task, return_exceptions=True))
         finally:
             event.remove(engine.sync_engine, "after_cursor_execute", record_write)
 
