@@ -269,6 +269,7 @@ class ScenarioService:
                 scenario_name=scenario_name,
                 scenario_class=scenario_class,
                 techniques=request.techniques,
+                technique_override=request.technique_override,
                 datasets=request.dataset_request,
                 objective_target=objective_target,
                 include_baseline=request.include_baseline,
@@ -543,11 +544,13 @@ class ScenarioService:
         objective_target = resolver.resolve_target(target_name=request.target_name) if request.target_name else None
         adversarial_target = resolver.resolve_adversarial_target(target_name=request.adversarial_target_name)
         with override_default_adversarial_target(adversarial_target):
-            estimate_kwargs = resolver.resolve_configuration(
+            estimate_kwargs = await asyncio.to_thread(
+                resolver.resolve_configuration,
                 scenario_name=scenario_name,
                 scenario_class=scenario_class,
                 objective_target=objective_target,
                 techniques=request.techniques,
+                technique_override=request.technique_override,
                 datasets=request.dataset_request,
                 include_baseline=request.include_baseline,
             )
