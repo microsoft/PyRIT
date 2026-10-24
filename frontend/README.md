@@ -291,8 +291,13 @@ For ordinary interactions with startup controls, call `waitForAppReady(page)`
 from `e2e/_runtime.ts` after navigation or reload. A visible control can still
 move as runtime readiness and configured defaults arrive. Tests that deliberately
 interact before startup finishes should control those responses instead.
-Before reloading to check a preference change, wait for its value in localStorage;
+
+Before reloading to check a saved preference, poll its stored value rather than
+relying on the optimistic input value. After reload, wait for app readiness
+before asserting the restored value, especially when an empty input is expected:
 an empty Operation picker can mean its saved-ID lookup is still loading.
+The operation-picker suite keeps this persistence barrier local so its deliberate
+early-startup interactions remain unsynchronized.
 
 CI runs two isolated mock shards, one serial seeded job, and one isolated
 analytics job, with one worker per job. Mock and seeded jobs start their own

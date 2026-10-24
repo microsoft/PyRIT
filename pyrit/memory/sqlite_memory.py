@@ -14,7 +14,7 @@ from pathlib import Path
 from sqlite3 import Connection as SQLiteConnection
 from sqlite3 import Cursor as SQLiteCursor
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from sqlalchemy import and_, case, create_engine, event, exists, func, or_, select, text
 from sqlalchemy.engine import AdaptedConnection, ExceptionContext
@@ -190,10 +190,16 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     Failed disconnects and session rollbacks preserve the original cancellation
     and expose cleanup failures as its cause.
 
+    File-backed databases wait up to 30 seconds for locks held by other connections
+    before failing with ``database is locked``.
+
     Note: this is replacing the old DuckDB implementation.
     """
 
     DEFAULT_DB_FILE_NAME = "pyrit.db"
+    # Concurrent scenario writers can wait several seconds for SQLite's single write lock,
+    # which outlasts sqlite3's 5 second default.
+    _FILE_BUSY_TIMEOUT_SECONDS: ClassVar[float] = 30.0
 
     def __init__(
         self,
@@ -253,9 +259,12 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
     def _create_async_engine(self) -> AsyncEngine:
         database = self._memory_uri if self.db_path == ":memory:" else str(self.db_path)
-        kwargs: dict[str, Any] = {"connect_args": {"factory": _CursorClosingSQLiteConnection}}
+        connect_args: dict[str, Any] = {"factory": _CursorClosingSQLiteConnection}
+        kwargs: dict[str, Any] = {"connect_args": connect_args}
         if self.db_path == ":memory:":
             kwargs["poolclass"] = StaticPool
+        else:
+            connect_args["timeout"] = self._FILE_BUSY_TIMEOUT_SECONDS
         engine = create_async_engine(f"sqlite+aiosqlite:///{database}", echo=self._verbose, **kwargs)
         self._register_analytics_lower(engine=engine.sync_engine)
         event.listen(engine.sync_engine, "handle_error", _cleanup_interrupted_sqlite_connection)
@@ -355,6 +364,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                 # the connection will be shared across threads.
                 extra_kwargs["poolclass"] = StaticPool
                 extra_kwargs["connect_args"] = {"check_same_thread": False}
+            else:
+                extra_kwargs["connect_args"] = {"timeout": self._FILE_BUSY_TIMEOUT_SECONDS}
 
             database = self._memory_uri if self.db_path == ":memory:" else str(self.db_path)
             engine = create_engine(f"sqlite:///{database}", echo=has_echo, **extra_kwargs)

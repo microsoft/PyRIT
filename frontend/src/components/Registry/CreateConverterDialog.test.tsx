@@ -908,7 +908,8 @@ describe('CreateConverterDialog', () => {
     await selectConverterType('TextConverter')
     await user.selectOptions(screen.getByRole('combobox', { name: 'word_selection_strategy' }), 'random')
 
-    const proportion = screen.getByRole('spinbutton', { name: 'proportion *' })
+    const proportion = screen.getByRole('spinbutton', { name: 'proportion' })
+    expect(proportion).toBeRequired()
     expect(proportion).toHaveValue(null)
     await user.click(screen.getByRole('button', { name: 'Add Converter' }))
     expect(screen.getByText('proportion is required.')).toBeInTheDocument()
@@ -934,7 +935,7 @@ describe('CreateConverterDialog', () => {
     expect(screen.getByText('indices is required.')).toBeInTheDocument()
     expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
 
-    await user.type(screen.getByRole('textbox', { name: 'indices *' }), '0, 2, 5')
+    await user.type(screen.getByRole('textbox', { name: 'indices' }), '0, 2, 5')
     await user.click(screen.getByRole('button', { name: 'Add Converter' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'TextConverter',
@@ -954,7 +955,7 @@ describe('CreateConverterDialog', () => {
     await user.selectOptions(strategy, 'keywords')
 
     expect(screen.queryByRole('spinbutton', { name: 'seed' })).not.toBeInTheDocument()
-    const keywords = screen.getByRole('textbox', { name: 'keywords *' })
+    const keywords = screen.getByRole('textbox', { name: 'keywords' })
     expect(keywords).toHaveValue('')
     await user.type(keywords, 'hello, world')
     await user.selectOptions(screen.getByRole('combobox', { name: 'case_sensitive' }), 'false')
@@ -983,10 +984,10 @@ describe('CreateConverterDialog', () => {
     await selectConverterType('TextConverter')
     await user.selectOptions(screen.getByRole('combobox', { name: 'word_selection_strategy' }), strategy)
     if (strategy === 'random') {
-      await user.type(screen.getByRole('spinbutton', { name: 'proportion *' }), '0.3')
+      await user.type(screen.getByRole('spinbutton', { name: 'proportion' }), '0.3')
     }
     const input = strategy === 'indices'
-      ? screen.getByRole('textbox', { name: 'indices *' })
+      ? screen.getByRole('textbox', { name: 'indices' })
       : screen.getByRole('spinbutton', { name: 'seed' })
     await user.type(input, value)
     await user.click(screen.getByRole('button', { name: 'Add Converter' }))

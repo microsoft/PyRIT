@@ -278,6 +278,10 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       await route.fulfill(jsonResponse({ items: [] }));
       return;
     }
+    if (apiPath === "/scorers" && method === "GET") {
+      await route.fulfill(jsonResponse({ items: [], pagination: { has_more: false } }));
+      return;
+    }
     if (apiPath === "/attacks" && method === "GET") {
       await route.fulfill(
         jsonResponse({
@@ -320,6 +324,16 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
             model_name: "mobile-router",
             identifier_hash: "mobile-round-robin-hash",
           },
+          human_score: {
+            id: "mobile-human-score",
+            message_piece_id: "mobile-assistant-piece",
+            scorer_type: "ManualScorer",
+            score_type: "true_false",
+            score_value: "True",
+            score_rationale: "A human confirmed success.",
+            timestamp: "2026-07-22T13:10:02.000Z",
+          },
+          automated_score: MESSAGES[1].message_pieces[0].scores[1],
           updated_at: "2026-07-22T13:10:01.000Z",
         })
       );
@@ -747,6 +761,18 @@ test.describe("Mobile touch targets", () => {
       name: /Objective achieved outcome:/,
     });
     await outcomeButton.click();
+    await expect(page.getByRole("group", { name: "Automated score", exact: true })).toContainText("Failure");
+    await expect(page.getByText("Overridden by the human score.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Human scores always override automated scores", { exact: true })).toHaveCount(0);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const resultActions = ["Add as finding", "Remove", "Add"];
+    await expect(async () => {
+      const positions = await Promise.all(resultActions.map(async (name: string) => (
+        await page.getByRole("button", { name, exact: true }).boundingBox()
+      )?.y));
+      expect(positions[0]).not.toBeUndefined();
+      expect(new Set(positions).size).toBe(1);
+    }).toPass();
     await page.setViewportSize({ width: 320, height: 568 });
 
     const resultDetails = page.getByText("Attack Result Details").locator("..");
@@ -759,9 +785,10 @@ test.describe("Mobile touch targets", () => {
       expect(popoverBounds.y).toBeGreaterThanOrEqual(0);
       expect(popoverBounds.y + popoverBounds.height).toBeLessThanOrEqual(568);
     }).toPass();
-    await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Update" })
-    );
+    for (const name of resultActions) {
+      await expectMinimumTouchTarget(page.getByRole("button", { name, exact: true }));
+    }
+    await expectMinimumTouchTarget(page.getByRole("button", { name: /^Automated scorer:/ }));
     await expectNoDocumentOverflow(page);
     await page.keyboard.press("Escape");
     await page.setViewportSize({ width: 320, height: MOBILE_VIEWPORT.height });

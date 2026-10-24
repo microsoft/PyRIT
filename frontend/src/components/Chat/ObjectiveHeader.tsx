@@ -4,6 +4,7 @@ import type { KeyboardEvent } from 'react'
 import {
   Badge,
   Button,
+  Divider,
   Field,
   Input,
   MessageBar,
@@ -26,9 +27,12 @@ import {
 } from '@fluentui/react-icons'
 
 import OutcomeBadge from '@/components/OutcomeBadge'
-import type { AttackOutcome, BackendScore } from '@/types'
+import type { AttackOutcome, BackendScore, RegisteredComponentReference, ScoringFailure, ScorerInstance } from '@/types'
+import { findRegisteredScorer } from '@/utils/scorerPresentation'
+import { toApiError } from '@/services/errors'
 
 import { useObjectiveHeaderStyles } from './ObjectiveHeader.styles'
+import ChatScorerPicker from './ChatScorerPicker'
 
 interface ObjectiveHeaderProps {
   objective: string
@@ -47,6 +51,14 @@ interface ObjectiveHeaderProps {
   canAddFinding?: boolean
   /** Receives the outcome badge button, so a dialog opened from its details can return focus to it. */
   outcomeButtonRef?: React.Ref<HTMLButtonElement>
+  chatScorer?: RegisteredComponentReference | null
+  chatScorerInherited?: boolean
+  scoringFailure?: ScoringFailure | null
+  scorers?: ScorerInstance[]
+  scorersLoading?: boolean
+  scorersError?: string | null
+  canUpdateScorer?: boolean
+  onUpdateScorer?: (reference: RegisteredComponentReference | null) => Promise<void>
 }
 
 function scoreVerdict(score?: BackendScore | null): 'success' | 'failure' | 'undetermined' {
@@ -56,12 +68,12 @@ function scoreVerdict(score?: BackendScore | null): 'success' | 'failure' | 'und
 
 function scoreLabel(score?: BackendScore | null): string {
   const verdict = scoreVerdict(score)
-  return verdict === 'undetermined' ? 'Not set' : verdict === 'success' ? 'Success' : 'Failure'
+  if (!score) return 'Not set'
+  return verdict === 'undetermined' ? 'Undetermined' : verdict === 'success' ? 'Success' : 'Failure'
 }
 
 export default function ObjectiveHeader({
   objective,
-  draftMode = false,
   outcome,
   automatedScore,
   humanScore,
@@ -74,6 +86,14 @@ export default function ObjectiveHeader({
   onAddFinding,
   canAddFinding = false,
   outcomeButtonRef,
+  chatScorer = null,
+  chatScorerInherited = false,
+  scoringFailure,
+  scorers = [],
+  scorersLoading,
+  scorersError,
+  canUpdateScorer = false,
+  onUpdateScorer,
 }: ObjectiveHeaderProps) {
   const styles = useObjectiveHeaderStyles()
   const [resultOpen, setResultOpen] = useState(false)
@@ -94,11 +114,18 @@ export default function ObjectiveHeader({
   )
   const [isUpdatingResult, setIsUpdatingResult] = useState(false)
   const [resultError, setResultError] = useState('')
-  const [showAutomatedIdentity, setShowAutomatedIdentity] = useState(false)
+  const [showAutomatedDetails, setShowAutomatedDetails] = useState(false)
+  const [showScorerPicker, setShowScorerPicker] = useState(false)
   const contentRef = useRef<HTMLElement>(null)
   const humanScoreDisabledReasonId = useId()
   const missingObjective = !objective.trim()
   const ObjectiveContent = canAdd && onAdd ? 'button' : 'span'
+  const registeredScorer = findRegisteredScorer(chatScorer, scorers, chatScorerInherited)
+  const scorerName = registeredScorer?.scorer_registry_name ?? chatScorer?.registry_name ?? 'Not set'
+  const scorerType = registeredScorer
+    ? registeredScorer.display_type ?? registeredScorer.identifier.class_name
+    : chatScorer ? scorersLoading ? 'Loading...' : 'Unavailable' : undefined
+  const scorerLabel = scorerType ? `${scorerName} - ${scorerType}` : scorerName
 
   useLayoutEffect(() => {
     const content = contentRef.current
@@ -148,6 +175,7 @@ export default function ObjectiveHeader({
     setResultError('')
     try {
       await onUpdateHumanScore(humanVerdict === 'success', rationale)
+      setResultOpen(false)
     } catch {
       setResultError('Unable to update the attack result.')
     } finally {
@@ -169,7 +197,20 @@ export default function ObjectiveHeader({
     }
   }
 
-  const resultControl = outcome && (
+  const handleScorerChange = async (reference: RegisteredComponentReference | null): Promise<void> => {
+    if (!canUpdateScorer || !onUpdateScorer) return
+    setIsUpdatingResult(true)
+    setResultError('')
+    try {
+      await onUpdateScorer(reference)
+    } catch (cause: unknown) {
+      setResultError(toApiError(cause).detail)
+    } finally {
+      setIsUpdatingResult(false)
+    }
+  }
+  const scoringFailed = scoringFailure != null
+  const resultControl = (outcome || objective.trim()) && (
     <div className={styles.outcomeSection}>
       <Badge className={styles.label} appearance="tint" color="brand" size="small">
         Objective Achieved Outcome
@@ -185,7 +226,8 @@ export default function ObjectiveHeader({
             setHumanVerdict(currentHumanVerdict === 'failure' ? 'failure' : 'success')
             setRationale(humanScore?.score_rationale ?? automatedScore?.score_rationale ?? '')
             setResultError('')
-            setShowAutomatedIdentity(false)
+            setShowAutomatedDetails(false)
+            setShowScorerPicker(false)
           }
         }}
       >
@@ -195,36 +237,73 @@ export default function ObjectiveHeader({
             appearance="transparent"
             size="small"
             className={styles.outcomeButton}
-            aria-label={`Objective achieved outcome: ${outcome}`}
+            aria-label={`Objective achieved outcome: ${outcome ?? 'undetermined'}${scoringFailed ? '. Scoring error' : ''}`}
             data-testid="objective-outcome-button"
           >
-            <OutcomeBadge outcome={outcome} appearance="tint" size="small" />
+            <OutcomeBadge outcome={outcome ?? 'undetermined'} appearance="tint" size="small" />
           </Button>
         </PopoverTrigger>
         <PopoverSurface className={styles.resultPopover}>
           <Text size={400} weight="semibold">Attack Result Details</Text>
-          <div className={styles.resultScoreRow}>
+          <div className={styles.resultScoreRow} role="group" aria-label="Automated scorer">
+            <Text weight="semibold">Automated scorer</Text>
+            {!missingObjective && onUpdateScorer ? (
+              <Button appearance="subtle" size="small"
+                className={mergeClasses(styles.scoreValueButton, styles.scorerValue)}
+                icon={showScorerPicker ? <ChevronUpRegular /> : <ChevronDownRegular />} iconPosition="after"
+                aria-label={`Automated scorer: ${scorerLabel}`} aria-expanded={showScorerPicker}
+                onClick={() => setShowScorerPicker((visible) => !visible)}>
+                <span className={styles.scorerLabel}>
+                  <Text>{scorerName}</Text>
+                  {scorerType && <Text size={200} className={styles.secondaryText}>{scorerType}</Text>}
+                </span>
+              </Button>
+            ) : (
+              <span className={mergeClasses(styles.scorerValue, styles.scorerLabel)}>
+                <Text>{scorerName}</Text>
+                {scorerType && <Text size={200} className={styles.secondaryText}>{scorerType}</Text>}
+              </span>
+            )}
+          </div>
+          {showScorerPicker && !missingObjective && onUpdateScorer && (
+            <div className={styles.scorerSelection} role="region" aria-label="Automated scorer selection">
+              <ChatScorerPicker value={chatScorer} scorers={scorers} inherited={chatScorerInherited}
+                loading={scorersLoading} error={scorersError}
+                disabled={!canUpdateScorer || isUpdatingResult}
+                onChange={(reference: RegisteredComponentReference | null) => { void handleScorerChange(reference) }} />
+              <Text size={200}>Scores future responses in all conversations in this attack.</Text>
+            </div>
+          )}
+          <div className={styles.resultScoreRow} role="group" aria-label="Automated score">
             <Text weight="semibold">Automated score</Text>
-            {automatedScore ? (
+            {scoringFailed && !missingObjective ? (
+              <Button appearance="subtle" size="small" onClick={() => setShowAutomatedDetails((visible) => !visible)}
+                aria-expanded={showAutomatedDetails}>Scoring error · {showAutomatedDetails ? 'Hide details' : 'View details'}</Button>
+            ) : automatedScore ? (
               <Button
                 appearance="subtle"
                 size="small"
                 icon={<InfoRegular />}
                 className={styles.scoreValueButton}
-                onClick={() => setShowAutomatedIdentity((visible) => !visible)}
-                aria-expanded={showAutomatedIdentity}
+                onClick={() => setShowAutomatedDetails((visible) => !visible)}
+                aria-expanded={showAutomatedDetails}
                 aria-label={`${scoreLabel(automatedScore)} automated score. ${
-                  showAutomatedIdentity ? 'Hide' : 'View'
-                } scorer details`}
+                  showAutomatedDetails ? 'Hide' : 'View'
+                } score details`}
               >
-                {scoreLabel(automatedScore)} · {showAutomatedIdentity ? 'Hide details' : 'View details'}
+                {scoreLabel(automatedScore)} · {showAutomatedDetails ? 'Hide details' : 'View details'}
               </Button>
             ) : (
-              <Text className={styles.scoreValueText}>Not set</Text>
+              <Text className={styles.scoreValueText}>
+                {chatScorer && !missingObjective ? 'This will be generated on the next turn' : 'Not set'}
+              </Text>
             )}
           </div>
-          {showAutomatedIdentity && automatedScore && (
-            <div className={styles.scorerIdentity} data-testid="automated-scorer-identity">
+          {humanScore && automatedScore && (
+            <Text size={200} className={styles.secondaryText}>Overridden by the human score.</Text>
+          )}
+          {showAutomatedDetails && automatedScore && (
+            <div className={styles.scorerIdentity} data-testid="automated-score-details">
               <Text size={200}><strong>Scorer:</strong> {automatedScore.scorer_type}</Text>
               {automatedScore.scorer_class_identifier?.class_module && (
                 <Text size={200}>
@@ -238,6 +317,16 @@ export default function ObjectiveHeader({
               )}
             </div>
           )}
+          {showAutomatedDetails && scoringFailed && (
+            <MessageBar intent="error">
+              <MessageBarBody>
+                <pre className={styles.errorDetails} tabIndex={0} aria-label="Scorer failure details">
+                  {`Scorer ${scoringFailure.scorer.registry_name}: ${scoringFailure.error}`}
+                </pre>
+              </MessageBarBody>
+            </MessageBar>
+          )}
+          <Divider className={styles.resultDivider} aria-label="Human scoring" />
           <div className={styles.resultScoreRow}>
             <Text weight="semibold">Human score</Text>
             <Text className={styles.scoreValueText}>{scoreLabel(humanScore)}</Text>
@@ -249,19 +338,18 @@ export default function ObjectiveHeader({
               </MessageBarBody>
             </MessageBar>
           )}
-          <Field label="Update human score">
-            <RadioGroup
-              className={styles.verdictOptions}
-              layout="horizontal"
-              value={humanVerdict}
-              onChange={(_event, data) => setHumanVerdict(data.value as 'success' | 'failure')}
-              disabled={!canUpdateOutcome}
-              aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}
-            >
-              <Radio value="success" label="Success" />
-              <Radio value="failure" label="Failure" />
-            </RadioGroup>
-          </Field>
+          <RadioGroup
+            className={styles.verdictOptions}
+            aria-label="Human score"
+            layout="horizontal"
+            value={humanVerdict}
+            onChange={(_event, data) => setHumanVerdict(data.value as 'success' | 'failure')}
+            disabled={!canUpdateOutcome}
+            aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}
+          >
+            <Radio value="success" label="Success" />
+            <Radio value="failure" label="Failure" />
+          </RadioGroup>
           <Field label="Rationale">
             <Textarea
               rows={5}
@@ -292,7 +380,7 @@ export default function ObjectiveHeader({
                 onClick={handleRemoveResult}
                 disabled={!canRemoveHumanScore || isUpdatingResult}
               >
-                Remove human score
+                Remove
               </Button>
             )}
             <Button
@@ -302,7 +390,7 @@ export default function ObjectiveHeader({
               disabled={!canUpdateOutcome || isUpdatingResult}
               aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}
             >
-              {isUpdatingResult ? 'Updating...' : 'Update'}
+              {isUpdatingResult ? 'Saving...' : 'Add'}
             </Button>
           </div>
         </PopoverSurface>
@@ -340,7 +428,6 @@ export default function ObjectiveHeader({
                 <Button appearance="primary" size="small" className={styles.editorAction} onClick={handleSave} disabled={(!draft.trim() && missingObjective) || isSaving}>
                   {isSaving ? 'Saving...' : 'Save'}
                 </Button>
-                {objective && !draftMode && <Text>This changes the shared attack objective and resets the outcome. Old scores stay in history.</Text>}
                 <Button appearance="subtle" size="small" className={styles.editorAction} onClick={() => setIsEditing(false)} disabled={isSaving}>
                   Cancel
                 </Button>
