@@ -27,7 +27,7 @@ from pyrit.prompt_target.openai._openai_realtime_event_router import (
     _OpenAIRealtimeEventRouter,
 )
 from pyrit.prompt_target.openai.openai_realtime_target import _RealtimeReceiveState
-from tests.unit.async_utils import wait_for_completion_async
+from tests.unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 _CLEAN_UNDERLYING_MODEL_ENV = {
@@ -1701,7 +1701,7 @@ async def test_reset_conversation_async_swallows_close_error(target):
     assert "conv" not in target._existing_conversation
 
 
-async def test_reset_conversation_async_finishes_close_before_propagating_cancellation(target):
+async def test_reset_conversation_finishes_close_before_propagating_cancellation_async(target: RealtimeTarget) -> None:
     close_started = asyncio.Event()
     close_release = asyncio.Event()
     close_finished = asyncio.Event()
@@ -1716,14 +1716,18 @@ async def test_reset_conversation_async_finishes_close_before_propagating_cancel
     target._existing_conversation["conv"] = mock_connection
 
     cleanup_task = asyncio.create_task(target.reset_conversation_async(conversation_id="conv"))
-    await close_started.wait()
-    cleanup_task.cancel()
-    await asyncio.sleep(0)
+    try:
+        await wait_for_event_async(event=close_started, tasks=[cleanup_task])
+        cleanup_task.cancel()
+        await asyncio.sleep(0)
 
-    assert not cleanup_task.done()
-    close_release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await cleanup_task
+        assert not cleanup_task.done()
+        close_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await wait_for_completion_async(future=cleanup_task)
+    finally:
+        close_release.set()
+        await settle_tasks_async(cleanup_task)
 
     assert close_finished.is_set()
     assert "conv" not in target._existing_conversation

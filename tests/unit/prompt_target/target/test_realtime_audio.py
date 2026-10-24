@@ -119,7 +119,7 @@ async def test_dispatcher_register_turn_allows_replacement_after_completion():
     assert dispatcher._current_turn is second
 
 
-async def test_dispatcher_loop_routes_events_to_active_turn():
+async def test_dispatcher_loop_routes_events_to_active_turn_async() -> None:
     """The dispatch loop must forward events from the connection to _route_event_async."""
     finish = _sentinel_event(finish=True)
     other = _sentinel_event()
@@ -128,8 +128,10 @@ async def test_dispatcher_loop_routes_events_to_active_turn():
     dispatcher.register_turn(state)
 
     await dispatcher.start_async()
-    await asyncio.wait_for(state.completion, timeout=1.0)
-    await dispatcher.stop_async()
+    try:
+        await wait_for_completion_async(future=state.completion)
+    finally:
+        await dispatcher.stop_async()
 
     assert dispatcher.routed_events == [other, finish]
 
@@ -153,7 +155,7 @@ async def test_dispatcher_loop_routes_events_with_no_turn_as_state_none_async() 
     assert dispatcher.routed_events == [other, finish]
 
 
-async def test_dispatcher_loop_sets_exception_on_router_failure():
+async def test_dispatcher_loop_sets_exception_on_router_failure_async() -> None:
     """A router exception must propagate to the active turn's completion future."""
 
     class _ExplodingDispatcher(_RecordingDispatcher):
@@ -166,9 +168,11 @@ async def test_dispatcher_loop_sets_exception_on_router_failure():
     dispatcher.register_turn(state)
 
     await dispatcher.start_async()
-    with pytest.raises(ValueError, match="router boom"):
-        await asyncio.wait_for(state.completion, timeout=1.0)
-    await dispatcher.stop_async()
+    try:
+        with pytest.raises(ValueError, match="router boom"):
+            await wait_for_completion_async(future=state.completion)
+    finally:
+        await dispatcher.stop_async()
 
 
 async def test_dispatcher_fires_committed_callback_as_background_task_async() -> None:
