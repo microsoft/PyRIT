@@ -505,6 +505,60 @@ export interface CreateTechniqueRequest {
   adversarial_prompt_template?: string
 }
 
+export interface SimulationSettings {
+  num_turns?: number | null
+  adversarial_chat_system_prompt?: string | null
+  simulated_target_system_prompt?: string | null
+  next_message_system_prompt?: string | null
+  final_user_message?: string | null
+}
+
+export type SimulationChanges = Partial<SimulationSettings>
+
+interface TechniqueSettingFields {
+  description?: string | null
+  params?: Record<string, unknown>
+  request_converters?: string[] | null
+  response_converters?: string[] | null
+  adversarial_chat?: string | null
+  adversarial_system_prompt?: string | null
+  adversarial_seed_prompt?: string | null
+  adversarial_prompt_template?: string | null
+}
+
+export interface TechniqueSettings extends TechniqueSettingFields {
+  simulation?: SimulationSettings | null
+}
+
+export interface TechniqueChanges extends TechniqueSettingFields {
+  simulation?: SimulationChanges | null
+}
+
+export interface TechniqueOverride {
+  source_name: string
+  source_identity: string
+  changes: TechniqueChanges
+  dependencies: Record<string, string>
+  effective_identity?: string | null
+}
+
+export interface TechniqueConfiguration {
+  source_name: string
+  source_identity: string
+  attack_type: string
+  settings: TechniqueSettings
+  parameters: Parameter[]
+  editable_fields: string[]
+  supplied_parameters: string[]
+  read_only: Record<string, string>
+  supports_prepended_conversation: boolean
+}
+
+export interface TechniqueEditResponse {
+  configuration: TechniqueConfiguration
+  override: TechniqueOverride
+}
+
 export interface RegistryReferenceOption {
   name: string
   type: string
@@ -1463,6 +1517,7 @@ export interface RunScenarioRequest {
   adversarial_target_name?: string | null
   initializers?: string[] | null
   techniques?: string[] | null
+  technique_override?: TechniqueOverride | null
   dataset_names?: string[] | null
   max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
@@ -1529,6 +1584,7 @@ export interface ScenarioRunSizeEstimateRequest {
   target_name?: string | null
   adversarial_target_name?: string | null
   techniques?: string[] | null
+  technique_override?: TechniqueOverride | null
   dataset_names?: string[] | null
   max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null

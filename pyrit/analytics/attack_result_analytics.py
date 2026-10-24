@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, ClassVar, Self, TypeVar
+from typing import TYPE_CHECKING, ClassVar, Self, TypeVar, assert_never
 from weakref import WeakKeyDictionary
 
 from pydantic import BaseModel
@@ -305,19 +305,32 @@ class AttackResultAnalytics:
             label = "Not recorded"
         elif raw.key.kind is AttackAnalyticsValueKind.NO_CONVERTERS:
             label = "No converters"
+        elif raw.key.kind is AttackAnalyticsValueKind.VALUE:
+            label = AttackResultAnalytics._value_label(raw=raw, dimension=dimension)
+        elif raw.key.kind is AttackAnalyticsValueKind.LEGACY_OPERATION_NAME:
+            label = f"{AttackResultAnalytics._value_label(raw=raw, dimension=dimension)} (legacy name)"
         else:
-            label = raw.label if raw.label is not None else raw.key.value or ""
-            if not label.strip():
-                label = "(Blank)"
-            elif (
-                dimension.name in {AttackAnalyticsDimensionName.OBJECTIVE_TARGET, AttackAnalyticsDimensionName.SCENARIO}
-                and raw.key.value is not None
-                and label != raw.key.value
-            ):
-                label = f"{label} ({raw.key.value[-8:]})"
-            if raw.key.kind is AttackAnalyticsValueKind.LEGACY_OPERATION_NAME:
-                label = f"{label} (legacy name)"
+            assert_never(raw.key.kind)
         return AttackAnalyticsOption(key=raw.key, label=label)
+
+    @staticmethod
+    def _value_label(*, raw: RawAnalyticsOption, dimension: AttackAnalyticsDimension) -> str:
+        """
+        Format the text-bearing value kinds without changing their stored keys.
+
+        Returns:
+            str: The SDK display label for a text-bearing value kind.
+        """
+        label = raw.label if raw.label is not None else raw.key.value or ""
+        if not label.strip():
+            return "(Blank)"
+        if (
+            dimension.name in {AttackAnalyticsDimensionName.OBJECTIVE_TARGET, AttackAnalyticsDimensionName.SCENARIO}
+            and raw.key.value is not None
+            and label != raw.key.value
+        ):
+            return f"{label} ({raw.key.value[-8:]})"
+        return label
 
     @staticmethod
     def _drilldown_unavailable_reason(query: AttackAnalyticsQuery) -> str | None:

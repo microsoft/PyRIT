@@ -508,6 +508,36 @@ class TestAdditionalPackageEcosystems:
         text = "use JSON::MaybeXS;\nuse Fake::Module;\n"
         assert scorer._extract_package_references(text) == {"JSON::MaybeXS", "Fake::Module"}
 
+    @pytest.mark.parametrize(
+        "declaration",
+        ["use 5;", "use 5.010;", "use 5.010_001;", "use 5.36.0;", "use v5;", "use v5.36;", "```perl\nuse v5.36;"],
+    )
+    def test_perl_ignores_version_declarations(self, declaration):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.PERL,
+        )
+        text = f"{declaration}\nuse JSON::MaybeXS;\n"
+        assert scorer._extract_package_references(text) == {"JSON::MaybeXS"}
+
+    def test_perl_keeps_modules_whose_names_contain_digits(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.PERL,
+        )
+        text = "use Digest::SHA1;\nuse v5.36;\nuse Fake::Module2;\n"
+        assert scorer._extract_package_references(text) == {"Digest::SHA1", "Fake::Module2"}
+
+    async def test_perl_version_declarations_are_not_hallucinated_packages(self):
+        scorer = PackageHallucinationScorer(
+            known_packages={"JSON::MaybeXS"},
+            ecosystem=PackageEcosystem.PERL,
+        )
+        code = "```perl\nuse 5.010;\nuse v5.36;\nuse JSON::MaybeXS;\nprint encode_json({ ok => 1 });\n```"
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
+
     def test_raku_extracts_module_references(self):
         scorer = PackageHallucinationScorer(
             known_packages=set(),

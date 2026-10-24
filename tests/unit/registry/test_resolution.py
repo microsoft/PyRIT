@@ -228,6 +228,39 @@ class _NeedsTargets:
         self.targets = targets
 
 
+def test_strict_rest_resolution_is_opt_in_and_does_not_materialize_required_inputs() -> None:
+    assert resolve_constructor_args(cls=_Plain, raw_args={}, strict_json=True) == {}
+    assert resolve_constructor_args(cls=_Plain, raw_args={"count": "2"}) == {"count": 2}
+    with pytest.raises(ValueError):
+        resolve_constructor_args(cls=_Plain, raw_args={"count": "2"}, strict_json=True)
+    assert resolve_constructor_args(cls=_EnumOnly, raw_args={"speed": "FAST"}, strict_json=True) == {
+        "speed": _Speed.FAST
+    }
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_strict_rest_reference_resolution_preserves_registered_identity(target_registry: TargetRegistry) -> None:
+    target = target_registry.instances.get("my_target")
+    args = {"converter_target": "my_target", "offset": 0}
+    resolved = resolve_constructor_args(
+        cls=_NeedsTarget, raw_args=args, identifier_type=ConverterIdentifier, strict_json=True
+    )
+    assert resolved["converter_target"] is target
+    with pytest.raises(ValueError):
+        resolve_constructor_args(
+            cls=_NeedsTarget,
+            raw_args={"converter_target": target},
+            identifier_type=ConverterIdentifier,
+            strict_json=True,
+        )
+    assert (
+        resolve_constructor_args(
+            cls=_NeedsTarget, raw_args={"converter_target": target}, identifier_type=ConverterIdentifier
+        )["converter_target"]
+        is target
+    )
+
+
 def _resolve(cls: type, raw_args: dict[str, object], *, identifier_type: type | None = None) -> dict[str, object]:
     """Resolve ``raw_args`` against the derived parameter contract for ``cls``."""
     return dict[str, object](resolve_constructor_args(cls=cls, raw_args=raw_args, identifier_type=identifier_type))

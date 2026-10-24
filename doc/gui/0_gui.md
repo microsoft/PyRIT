@@ -962,6 +962,7 @@ Use **Reload file** to fetch the latest source content; unsaved edits require ex
 **Save** only persists a source. **Reinitialize PyRIT** separately applies saved configuration, environment sources,
 and stored initializer scripts for every user of this backend. Save or discard editor changes first.
 Custom initializer scripts execute under the backend service identity, so only trusted administrators should manage them.
+This includes anyone with write access to the configured `custom_initializers_source` or the `.pyrit_conf` source.
 
 ### Reinitializing without a process restart
 

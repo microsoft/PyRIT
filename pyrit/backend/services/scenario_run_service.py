@@ -106,6 +106,7 @@ _LAUNCH_REQUEST_FIELDS = (
     "target_name",
     "adversarial_target_name",
     "techniques",
+    "technique_override",
     "datasets",
     "dataset_names",
     "max_dataset_size",
@@ -115,7 +116,7 @@ _LAUNCH_REQUEST_FIELDS = (
     "include_baseline",
 )
 # Fields added after the first saved launch records; older records omit them.
-_OPTIONAL_LAUNCH_FIELDS = frozenset({"adversarial_target_name", "datasets", "max_dataset_size"})
+_OPTIONAL_LAUNCH_FIELDS = frozenset({"adversarial_target_name", "datasets", "max_dataset_size", "technique_override"})
 
 _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
     {
@@ -449,7 +450,7 @@ class ScenarioRunService:
         self, *, request: RunScenarioRequest, prepared: _PreparedRun, resumed_from_cancelled: bool
     ) -> ScenarioRunSummary:
         """
-        Validate persisted preparation and admit it to the FIFO scheduler.
+        Validate the persisted header before admission; build details only for the returned response.
 
         Returns:
             ScenarioRunSummary: The persisted active, queued, or terminal state.
@@ -460,10 +461,10 @@ class ScenarioRunService:
             raise ValueError("Scenario did not produce a scenario_result_id during initialization.")
         if request.scenario_result_id and scenario_result_id != request.scenario_result_id:
             raise ValueError("Scenario initialization changed the saved result ID; resume was not started.")
-        persisted = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
-        if not persisted:
+        persisted = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+        if persisted is None:
             raise RuntimeError(f"Scenario run {scenario_result_id} was not persisted during initialization.")
-        if not resumed_from_cancelled and persisted[0].scenario_run_state == ScenarioRunState.CANCELLED:
+        if not resumed_from_cancelled and persisted.scenario_run_state == ScenarioRunState.CANCELLED:
             response = await self._build_response_async(
                 scenario_result_id=scenario_result_id,
                 active_error=None,
@@ -475,23 +476,13 @@ class ScenarioRunService:
                     f"Scenario run {scenario_result_id} was not found in the database after initialization."
                 )
             return response
-        if (
-            await self._build_response_async(
-                scenario_result_id=scenario_result_id,
-                active_error=None,
-                queue_position=None,
-                active_scenario_result_id=self._active_scenario_result_id,
-            )
-            is None
-        ):
-            raise RuntimeError(f"Scenario run {scenario_result_id} was not found in the database after initialization.")
         scheduled = _ActiveTask(
             scenario_result_id=scenario_result_id,
             scenario=scenario,
             adversarial_target=prepared.adversarial_target,
-            scenario_name=persisted[0].scenario_name,
+            scenario_name=persisted.scenario_name,
             scenario_registry_name=request.scenario_name,
-            created_at=persisted[0].creation_time,
+            created_at=persisted.creation_time,
             enqueued_at=datetime.now(UTC),
         )
         await self._enqueue_run_async(scheduled=scheduled)
@@ -652,6 +643,7 @@ class ScenarioRunService:
                 scenario_class=scenario_class,
                 objective_target=objective_target,
                 techniques=request.techniques,
+                technique_override=request.technique_override,
                 datasets=request.dataset_request,
                 include_baseline=request.include_baseline,
                 max_concurrency=request.max_concurrency
@@ -837,11 +829,11 @@ class ScenarioRunService:
         Raises:
             ValueError: If the run is already in a terminal state or not active.
         """
-        results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
-        if not results:
+        header = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+        if header is None:
             return None
 
-        db_status = results[0].scenario_run_state
+        db_status = header.scenario_run_state
         if self._is_terminal_state(db_status):
             raise ValueError(f"Cannot cancel run in '{db_status}' state.")
 
@@ -868,9 +860,9 @@ class ScenarioRunService:
                 active.cancellation_error_type = "CancelledError"
                 task = active.task
             else:
-                latest = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
-                if latest and self._is_terminal_state(latest[0].scenario_run_state):
-                    raise ValueError(f"Cannot cancel run in '{latest[0].scenario_run_state}' state.")
+                latest = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+                if latest is not None and self._is_terminal_state(latest.scenario_run_state):
+                    raise ValueError(f"Cannot cancel run in '{latest.scenario_run_state}' state.")
                 await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
                     expected_states={
@@ -1091,10 +1083,10 @@ class ScenarioRunService:
                 return
             while self._queued_runs:
                 next_run = self._queued_runs[0]
-                persisted = await self._memory.get_scenario_results_async(
-                    scenario_result_ids=[next_run.scenario_result_id]
+                persisted = await self._memory.get_scenario_result_header_async(
+                    scenario_result_id=next_run.scenario_result_id
                 )
-                if not persisted or persisted[0].scenario_run_state != ScenarioRunState.QUEUED:
+                if persisted is None or persisted.scenario_run_state != ScenarioRunState.QUEUED:
                     self._queued_runs.popleft()
                     self._queue_revision += 1
                     continue
