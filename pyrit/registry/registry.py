@@ -460,7 +460,13 @@ class Registry(ABC, Generic[T, MetadataT]):
         Returns:
             tuple[Parameter, ...]: The derived build contract.
         """
-        return tuple(derive_parameters(cls=cls, identifier_type=self._identifier_type()))
+        return tuple(
+            derive_parameters(
+                cls=cls,
+                identifier_type=self._identifier_type(),
+                seam_base_type=self._seam_base_type(),
+            )
+        )
 
     def _class_attributes(self, cls: type[T]) -> Mapping[str, Any]:
         """
@@ -489,6 +495,23 @@ class Registry(ABC, Generic[T, MetadataT]):
 
         Returns:
             type[ComponentIdentifier] | None: The domain identifier type, or None.
+        """
+        return None
+
+    def _seam_base_type(self) -> type[T] | None:
+        """
+        Return the domain base type whose non-required reference parameters are construction seams.
+
+        A base can declare a non-required registry reference that it only validates
+        and discards, so subclasses share one construction path for forwarding that
+        value (e.g. ``Converter.converter_target``). Such a parameter is not a
+        build input of a subclass that does not declare it itself, so the derived
+        contract, the metadata, and ``create_instance`` exclude it (see
+        ``resolution.derive_parameters``). A required reference the base declares
+        is kept: the base's own construction needs it supplied.
+
+        Returns:
+            type[T] | None: The seam base type, or None when this registry has none.
         """
         return None
 
@@ -736,6 +759,7 @@ class Registry(ABC, Generic[T, MetadataT]):
             cls=cls,
             raw_args=dict(kwargs),
             identifier_type=self._identifier_type(),
+            seam_base_type=self._seam_base_type(),
         )
         return cls(**resolved)
 
@@ -767,6 +791,7 @@ class Registry(ABC, Generic[T, MetadataT]):
             raw_args=dict(params),
             identifier_type=self._identifier_type(),
             external_input=True,
+            seam_base_type=self._seam_base_type(),
         )
         return cls(**resolved)
 
@@ -909,7 +934,11 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
         if not isinstance(source, Reconstructable):
             raise ValueError(f"{type(source).__name__} does not support reconstruction")
         inputs = source.get_reconstruction_parameters()
-        parameters = derive_parameters(cls=type(source), identifier_type=self._identifier_type())
+        parameters = derive_parameters(
+            cls=type(source),
+            identifier_type=self._identifier_type(),
+            seam_base_type=self._seam_base_type(),
+        )
         retained = getattr(source, "_reconstruction_parameters", {})
         unsupported = set(retained) - {parameter.name for parameter in parameters}
         if unsupported:
@@ -935,24 +964,37 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
             ValueError: If overrides are unknown or the source class is unavailable.
         """
         inputs = self.get_reconstruction_parameters(source)
-        unknown = set(params) - {
-            parameter.name for parameter in derive_parameters(cls=type(source), identifier_type=self._identifier_type())
-        }
+        raw_params = dict(params)
+        parameters = derive_parameters(
+            cls=type(source),
+            identifier_type=self._identifier_type(),
+            seam_base_type=self._seam_base_type(),
+        )
+        by_name = {parameter.name: parameter for parameter in parameters}
+        unknown = set(raw_params) - set(by_name)
         if unknown:
             raise ValueError(f"Unknown constructor parameters: {', '.join(sorted(unknown))}")
+        # An empty string is a cleared reference, not a value to look up. Resolving
+        # would drop the key, which lets the source input reappear in the merge
+        # below; remove it from the retained inputs so the constructor default
+        # (including an apply_defaults-registered one) applies instead.
+        cleared = {name for name, value in raw_params.items() if value == "" and by_name[name].reference is not None}
+        if cleared:
+            inputs = {name: value for name, value in inputs.items() if name not in cleared}
         if external_input:
-            params = resolve_constructor_args(
+            raw_params = resolve_constructor_args(
                 cls=type(source),
-                raw_args=dict(params),
+                raw_args=raw_params,
                 identifier_type=self._identifier_type(),
                 external_input=True,
+                seam_base_type=self._seam_base_type(),
             )
         with self._catalog_lock:
             self._ensure_discovered()
             names = sorted(name for name, cls in self._classes.items() if cls is type(source))
         if not names:
             raise ValueError("The source component's class is no longer registered")
-        instance = self.create_instance(names[0], **{**inputs, **params})
+        instance = self.create_instance(names[0], **{**inputs, **raw_params})
         if isinstance(instance, ReconstructionContext):
             instance.attach_reconstruction_source(source)
         return instance

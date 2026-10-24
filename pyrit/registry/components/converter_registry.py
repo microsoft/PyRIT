@@ -116,3 +116,20 @@ class ConverterRegistry(InstanceHoldingRegistry["Converter", ConverterMetadata])
     def _metadata_class(self) -> type[ConverterMetadata]:
         """Return ``ConverterMetadata``; the base populates it from the common fields."""
         return ConverterMetadata
+
+    def _seam_base_type(self) -> type[Converter]:
+        """
+        Return ``Converter``: its non-required ``converter_target`` is a construction seam.
+
+        ``Converter.__init__`` declares ``converter_target=None`` so subclasses can
+        forward a target to it for validation — see the base class's construction
+        contract. A converter that does not declare the parameter itself has no
+        target input, so the seam is dropped from its derived contract. That keeps
+        the parameter list (and the LLM-based badge derived from it) aligned with
+        what the class actually builds from, and keeps a cleared target selection
+        from being looked up as a registry name.
+
+        Returns:
+            type[Converter]: The ``Converter`` base class.
+        """
+        return self._base_type()

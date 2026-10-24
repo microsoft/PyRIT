@@ -78,6 +78,25 @@ result = await scenario.run_async()  # type: ignore
 await printer.write_async(result)  # type: ignore
 
 # %% [markdown]
+# ## ImageTechniqueAdaptive
+#
+# `ImageTechniqueAdaptive` is the image subclass of `AdaptiveScenario`. It renders each text
+# objective into an image (blank canvas, QR code, grid composite, comic panel, ...) and sends it to a
+# vision-capable target, then scores the text response. Because the objective target must accept
+# **both text and image input** and return text, the direct-text baseline stays a valid comparison —
+# use a multimodal target such as `openai_chat` (e.g. gpt-4o).
+
+# %%
+from pyrit.scenario.scenarios.adaptive import ImageTechniqueAdaptive
+
+image_scenario = ImageTechniqueAdaptive()
+
+image_scenario.set_params_from_args(args={"objective_target": objective_target})  # type: ignore
+await image_scenario.initialize_async()  # type: ignore
+image_result = await image_scenario.run_async()  # type: ignore
+await printer.write_async(image_result)  # type: ignore
+
+# %% [markdown]
 # ## Configuring a run
 #
 # - **`max_attempts_per_objective`** — caps techniques tried per objective. Higher means
@@ -164,6 +183,11 @@ await printer.write_async(resumed_result)  # type: ignore
 # human-readable label, and `unique_name` (e.g. `"CrescendoAttack::a1b2c3d4"`)
 # when you need to distinguish two factories that wrap the same attack class
 # with different configurations.
+#
+# Each child also records the name its technique was registered under (e.g.
+# `"crescendo"`) as `child.technique_name`, which scenario result printers and
+# `pyrit_scan scenario-results` show as the technique label. It is `None` for
+# results saved before the name was recorded.
 #
 # Use `result.get_display_groups()` to aggregate `attack_results` by the
 # per-dataset display label set by the scenario.
