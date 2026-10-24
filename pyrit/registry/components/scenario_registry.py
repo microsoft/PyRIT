@@ -232,7 +232,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             )
             for aggregate in technique_class.get_aggregate_techniques()
         )
-        default_datasets = tuple(instance._default_dataset_config.dataset_names)
+        default_datasets = tuple(instance.get_default_dataset_names())
 
         return ScenarioMetadata(
             class_name=cls.__name__,

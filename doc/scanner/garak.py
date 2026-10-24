@@ -338,8 +338,9 @@ await output_scenario_async(exploitation_result)
 #
 # **Available techniques:** `GetKey` and `CompleteKey`. `DEFAULT` and `ALL` both select the two
 # techniques. `max_total` samples across all selected technique populations, not per service.
-# The base scenario persists the sample for resume. Use `ApiKeyDatasetConfiguration` with
-# `max_total="all"` to run all 348 requests. Standard technique converter stacks are supported.
+# The base scenario persists the sample for resume. The four corpus datasets are the scenario's
+# required data and are always read in full; `ApiKeyDatasetConfiguration` only limits the assembled
+# requests. Use `max_total="all"` to run all 348 requests. Standard technique converter stacks are supported.
 
 # %%
 api_key_scenario = ApiKey()
@@ -347,9 +348,7 @@ api_key_scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
         "scenario_techniques": [ApiKeyTechnique.GetKey],
-        "dataset_config": ApiKeyDatasetConfiguration(
-            sources=[DatasetSource(name=name) for name in ApiKey.required_datasets()], max_total=2
-        ),
+        "dataset_config": ApiKeyDatasetConfiguration(max_total=2),
     }
 )
 await api_key_scenario.initialize_async()  # type: ignore

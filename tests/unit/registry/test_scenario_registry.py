@@ -81,6 +81,10 @@ class _MetadataScenario:
         """Return default dataset settings."""
         return ScenarioDatasetSettings(max_total=4)
 
+    def get_default_dataset_names(self) -> list[str]:
+        """Return the datasets a default run loads."""
+        return ["sample"]
+
 
 class _MarkdownMetadataScenario(_MetadataScenario):
     """
