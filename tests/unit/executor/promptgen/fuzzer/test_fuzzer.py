@@ -3,6 +3,7 @@
 
 import asyncio
 import pathlib
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -326,6 +327,58 @@ class TestFuzzerGenerator:
                 batch_size=0,
             )
         assert exc_info.match("Batch size must be at least 1.")
+
+    @pytest.mark.parametrize("goal_count", [0, -1, True, 1.5, "2", None])
+    def test_fuzzer_generator_initialization_rejects_non_positive_jailbreak_goal(
+        self,
+        scoring_target: MockPromptTarget,
+        template_converters: list[FuzzerConverter],
+        mock_scorer: MagicMock,
+        goal_count: Any,
+    ) -> None:
+        """A goal below 1 is already met before the first iteration, so nothing would be sent."""
+        with pytest.raises(ValueError, match="target_jailbreak_goal_count must be a positive integer"):
+            FuzzerGenerator(
+                objective_target=scoring_target,
+                template_converters=template_converters,
+                scorer=mock_scorer,
+                target_jailbreak_goal_count=goal_count,
+            )
+
+    @pytest.mark.parametrize("threshold", [-0.1, 1.5, float("nan"), True, "0.8", None])
+    def test_fuzzer_generator_initialization_rejects_threshold_outside_unit_interval(
+        self,
+        scoring_target: MockPromptTarget,
+        template_converters: list[FuzzerConverter],
+        mock_scorer: MagicMock,
+        threshold: Any,
+    ) -> None:
+        """Float scores lie in [0, 1], so a threshold outside it marks every or no response a jailbreak."""
+        with pytest.raises(ValueError, match="scoring_success_threshold must be between 0.0 and 1.0"):
+            FuzzerGenerator(
+                objective_target=scoring_target,
+                template_converters=template_converters,
+                scorer=mock_scorer,
+                scoring_success_threshold=threshold,
+            )
+
+    @pytest.mark.parametrize("threshold", [0, 0.0, 1, 1.0])
+    def test_fuzzer_generator_initialization_accepts_threshold_bounds(
+        self,
+        scoring_target: MockPromptTarget,
+        template_converters: list[FuzzerConverter],
+        mock_scorer: MagicMock,
+        threshold: float,
+    ) -> None:
+        """The interval is closed, and integer bounds are accepted."""
+        generator = FuzzerGenerator(
+            objective_target=scoring_target,
+            template_converters=template_converters,
+            scorer=mock_scorer,
+            scoring_success_threshold=threshold,
+        )
+
+        assert generator._scoring_success_threshold == threshold
 
     def test_fuzzer_generator_initialization_missing_scorer(
         self, scoring_target: MockPromptTarget, template_converters: list[FuzzerConverter]

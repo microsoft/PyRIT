@@ -717,6 +717,7 @@ class FuzzerGenerator(
                 Defaults to None.
             scorer (Scorer | None): Configuration for scoring responses. Defaults to None.
             scoring_success_threshold (float): The score threshold to consider a jailbreak successful.
+                Must be between 0.0 and 1.0. Defaults to 0.8.
             prompt_normalizer (PromptNormalizer | None): The prompt normalizer to use. Defaults to None.
             frequency_weight (float): Constant that balances between high reward and selection frequency.
                 Defaults to 0.5.
@@ -727,7 +728,8 @@ class FuzzerGenerator(
             non_leaf_node_probability (float): Probability of selecting a non-leaf node.
                 Defaults to 0.1.
             batch_size (int): The (max) batch size for sending prompts. Defaults to 10.
-            target_jailbreak_goal_count (int): Target number of jailbreaks to find. Defaults to 1.
+            target_jailbreak_goal_count (int): Target number of jailbreaks to find. Must be at least 1.
+                Defaults to 1.
 
         Raises:
             ValueError: If required parameters are invalid or missing.
@@ -736,7 +738,12 @@ class FuzzerGenerator(
         super().__init__(logger=logger, context_type=FuzzerContext)
 
         # Validate inputs
-        self._validate_inputs(template_converters=template_converters, batch_size=batch_size)
+        self._validate_inputs(
+            template_converters=template_converters,
+            batch_size=batch_size,
+            target_jailbreak_goal_count=target_jailbreak_goal_count,
+            scoring_success_threshold=scoring_success_threshold,
+        )
 
         # Store configuration
         self._objective_target = objective_target
@@ -807,6 +814,8 @@ class FuzzerGenerator(
         *,
         template_converters: list[FuzzerConverter],
         batch_size: int,
+        target_jailbreak_goal_count: int,
+        scoring_success_threshold: float,
     ) -> None:
         """
         Validate input parameters.
@@ -814,6 +823,8 @@ class FuzzerGenerator(
         Args:
             template_converters (list[FuzzerConverter]): List of template converters.
             batch_size (int): The batch size for sending prompts.
+            target_jailbreak_goal_count (int): Target number of jailbreaks to find.
+            scoring_success_threshold (float): The score threshold to consider a jailbreak successful.
 
         Raises:
             ValueError: If validation fails.
@@ -822,6 +833,25 @@ class FuzzerGenerator(
             raise ValueError("Template converters cannot be empty.")
         if batch_size < 1:
             raise ValueError("Batch size must be at least 1.")
+        # A goal below 1 is met before the first iteration, so the fuzzer would send nothing.
+        if (
+            isinstance(target_jailbreak_goal_count, bool)
+            or not isinstance(target_jailbreak_goal_count, int)
+            or target_jailbreak_goal_count < 1
+        ):
+            raise ValueError(
+                f"target_jailbreak_goal_count must be a positive integer, got {target_jailbreak_goal_count!r}."
+            )
+        # Float scores are normalized to [0, 1]; a threshold outside it makes every response
+        # a jailbreak (below 0) or none of them (above 1).
+        if (
+            isinstance(scoring_success_threshold, bool)
+            or not isinstance(scoring_success_threshold, (int, float))
+            or not 0.0 <= scoring_success_threshold <= 1.0
+        ):
+            raise ValueError(
+                f"scoring_success_threshold must be between 0.0 and 1.0, got {scoring_success_threshold!r}."
+            )
 
     def _validate_context(self, *, context: FuzzerContext) -> None:
         """
