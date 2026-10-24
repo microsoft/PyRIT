@@ -14,7 +14,17 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Union, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    TypeAdapter,
+    ValidationError,
+    computed_field,
+    field_serializer,
+    model_validator,
+)
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE
 
@@ -97,8 +107,9 @@ class Parameter(BaseModel):
     while ``type_name`` and ``is_list`` expose whether clients supply one name or a
     list of names.
 
-    ``coerce_value`` and ``validate`` are the only public behaviors; all coercion
-    branching lives behind them so callers never touch a free function.
+    Coercion, strict supplied-value checks, and scalar JSON projection live here.
+    ``validate`` checks declarations; ``validate_value`` checks an existing value,
+    while ``validate_json_value`` applies the opt-in strict external-input contract.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
@@ -354,6 +365,63 @@ class Parameter(BaseModel):
         """
         return self.reference is not None and self.reference.component_type is component_type
 
+    @property
+    def is_json_input(self) -> bool:
+        """Whether strict JSON callers can supply this declared scalar, list, reference, or variant."""
+        if self.opaque:
+            return False
+        if self.reference is not None or self.variants is not None:
+            return True
+        annotation = _unwrap_optional(self.param_type)
+        if get_origin(annotation) is list:
+            annotation = get_args(annotation)[0] if get_args(annotation) else None
+        return annotation in (str, int, float, bool) or bool(self.choices)
+
+    def validate_json_value(self, value: Any) -> Any:
+        """
+        Validate a supplied JSON value without enabling CLI-style scalar coercion.
+
+        Enum names and values retain their declared coercion. Structured values are
+        validated recursively by registry resolution, not by this lightweight model.
+
+        Returns:
+            Any: The validated value, with constrained scalars converted to their declared members.
+
+        Raises:
+            ValueError: If this parameter requires a Python object or the JSON type is invalid.
+        """
+        if not self.is_json_input:
+            raise ValueError(f"Parameter '{self.name}' requires a Python value; it is not supported through REST")
+        TypeAdapter(JsonValue).validate_python(value, strict=True)
+        if self.variants is not None:
+            return value
+        if self.reference is not None:
+            annotation = list[str] if self.is_list else str
+            if type(None) in get_args(self.reference.annotation):
+                annotation = annotation | None
+            return TypeAdapter(annotation).validate_python(value, strict=True)
+        if self.choices:
+            value = self.coerce_value(value)
+        return TypeAdapter(self.param_type).validate_python(value, strict=True)
+
+    def project_json_value(self, value: Any) -> JsonValue:
+        """
+        Project a scalar source value without reconstructing opaque or structured state.
+
+        Returns:
+            JsonValue: A lossless JSON-native value for a supported scalar or list.
+
+        Raises:
+            ValueError: If the source requires a structured or Python-only representation.
+        """
+        if self.reference is not None or self.variants is not None or not self.is_json_input:
+            raise ValueError(f"Parameter '{self.name}' has no lossless scalar JSON projection")
+        if isinstance(value, Enum):
+            value = value.value
+        if isinstance(value, list):
+            value = [item.value if isinstance(item, Enum) else item for item in value]
+        return TypeAdapter(JsonValue).validate_python(value, strict=True)
+
     def coerce_value(self, raw_value: Any) -> Any:
         """
         Coerce ``raw_value`` to this parameter's declared type.
@@ -390,6 +458,24 @@ class Parameter(BaseModel):
         if _is_scalar_param_type(param_type):
             return _coerce_simple_value(param_name=self.name, annotation=param_type, raw_value=raw_value)
         return raw_value
+
+    def validate_value(self, value: Any) -> None:
+        """
+        Check a resolved scalar or list without coercing or replacing it.
+
+        Args:
+            value (Any): The resolved parameter value.
+
+        Raises:
+            ValueError: If the value does not match its declared type or choices.
+        """
+        if self.reference is not None or self.opaque:
+            return
+        if self.is_string_coercible or self.is_list:
+            try:
+                TypeAdapter(self.param_type).validate_python(value, strict=True)
+            except ValidationError as exc:
+                raise ValueError(f"Parameter '{self.name}' expects {self.type_name}: {exc}") from exc
 
     def validate(self) -> None:  # type: ignore[ty:invalid-method-override]
         """
@@ -599,24 +685,27 @@ def _coerce_enum(*, param_name: str, enum_type: type[Enum], raw_value: Any) -> A
 
 def _coerce_scalar(*, param_name: str, scalar_type: type, raw_value: Any) -> Any:
     """
-    Coerce ``raw_value`` to ``int`` or ``float`` while rejecting native ``bool`` inputs.
+    Coerce numbers, rejecting booleans and integer conversions that lose a fractional part.
 
     Returns:
         Any: The value coerced to ``scalar_type``.
 
     Raises:
-        ValueError: If ``raw_value`` is a native ``bool`` or cannot be coerced to ``scalar_type``.
+        ValueError: If conversion fails or an integer conversion would lose a fractional part.
     """
     if isinstance(raw_value, bool):
         raise ValueError(
             f"Parameter '{param_name}' expects {scalar_type.__name__} but received a bool ({raw_value!r})."
         )
     try:
-        return scalar_type(raw_value)
-    except (TypeError, ValueError) as exc:
+        result = scalar_type(raw_value)
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(
             f"Parameter '{param_name}' could not be coerced to {scalar_type.__name__}: {raw_value!r} ({exc})."
         ) from exc
+    if scalar_type is int and not isinstance(raw_value, (str, bytes, bytearray)) and result != raw_value:
+        raise ValueError(f"Parameter '{param_name}' expects an integer without a fractional part, got {raw_value!r}.")
+    return result
 
 
 def _coerce_bool(*, param_name: str, raw_value: Any) -> bool:

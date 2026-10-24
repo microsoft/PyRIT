@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from pyrit.common import apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.attack.component.conversation_manager import get_prepended_turn_count
 from pyrit.executor.attack.compound.sequential_attack import (
@@ -33,6 +33,7 @@ from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechnique,
+    AttackTechniqueFactory,
     BaselineAttackPolicy,
     DatasetAttackConfiguration,
     Scenario,
@@ -86,6 +87,7 @@ class Execute(Scenario):
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
     MAX_CONCRETE_TECHNIQUES: ClassVar[int | None] = 1
     PREPENDED_CONVERSATION_HASH_KEY: ClassVar[str] = "prepended_conversation_hash"
+    LOCAL_TECHNIQUE_HASH_KEY: ClassVar[str] = "local_technique_configuration_hash"
 
     @apply_defaults
     def __init__(
@@ -93,6 +95,7 @@ class Execute(Scenario):
     ) -> None:
         """Initialize the scenario with an optional scorer and resume ID."""
         self._prepended_conversation_hash: str | None = None
+        self._local_technique_hash: str | None = None
         self._objective_scorer: TrueFalseScorer = objective_scorer or self._get_default_objective_scorer()
         super().__init__(
             version=self.VERSION,
@@ -113,6 +116,11 @@ class Execute(Scenario):
         return [parameter for parameter in super().supported_parameters() if parameter.name != "dataset_config"]
 
     @classmethod
+    def _common_scenario_parameter_names(cls) -> frozenset[str]:
+        """Return common inputs, excluding the live local factory from JSON scenario parameters."""
+        return super()._common_scenario_parameter_names() | {"local_technique_factory"}
+
+    @classmethod
     def additional_parameters(cls) -> list[Parameter]:
         """
         Declare the objective, categories, retries, and source conversation.
@@ -122,10 +130,17 @@ class Execute(Scenario):
         """
         return [
             Parameter(
+                name="local_technique_factory",
+                description="Private copied factory for this execution only.",
+                param_type=AttackTechniqueFactory,
+                default=None,
+                opaque=True,
+            ),
+            Parameter(
                 name="objective",
                 description="Free-text objective to achieve.",
                 param_type=str,
-                default=None,
+                default=REQUIRED_VALUE,
                 multiline=True,
             ),
             Parameter(
@@ -163,6 +178,13 @@ class Execute(Scenario):
         conversation_id = self.params.get("prepended_conversation_id")
         if conversation_id is not None and not conversation_id.strip():
             raise ValueError("prepended_conversation_id must not be blank")
+        factory = self.params.get("local_technique_factory")
+        if factory is not None and (
+            not isinstance(factory, AttackTechniqueFactory)
+            or len(self._scenario_techniques) != 1
+            or factory.name != self._scenario_techniques[0].value
+        ):
+            raise ValueError("The local technique factory must match the one selected concrete technique")
 
     def _get_run_size_budget(self) -> BoundedDatasetSize:
         return BoundedDatasetSize(value=1)
@@ -221,12 +243,16 @@ class Execute(Scenario):
         metadata = super()._build_initial_scenario_metadata()
         if self._prepended_conversation_hash is not None:
             metadata[self.PREPENDED_CONVERSATION_HASH_KEY] = self._prepended_conversation_hash
+        if self._local_technique_hash is not None:
+            metadata[self.LOCAL_TECHNIQUE_HASH_KEY] = self._local_technique_hash
         return metadata
 
     def _validate_stored_scenario(
         self, *, stored_result: ScenarioResult, current_identifier: ScenarioIdentifier
     ) -> None:
         super()._validate_stored_scenario(stored_result=stored_result, current_identifier=current_identifier)
+        if stored_result.metadata.get(self.LOCAL_TECHNIQUE_HASH_KEY) != self._local_technique_hash:
+            raise ValueError("The run-local technique does not match the saved configuration")
         if stored_result.metadata.get(self.PREPENDED_CONVERSATION_HASH_KEY) != self._prepended_conversation_hash:
             raise ValueError(
                 f"Prepended conversation '{self.params.get('prepended_conversation_id')}' "
@@ -234,7 +260,14 @@ class Execute(Scenario):
             )
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
-        name, factory = next(iter(resolve_technique_factories(context=context).items()))
+        local = self.params.get("local_technique_factory")
+        name, factory = next(
+            iter(
+                resolve_technique_factories(
+                    context=context, extra_factories={local.name: local} if local is not None else None
+                ).items()
+            )
+        )
         if not check_target_compatibility(
             target=context.objective_target,
             attack_class=factory.attack_class,
@@ -259,7 +292,7 @@ class Execute(Scenario):
             factory = factory.with_prepended_history_converters(
                 enabled=self.params["apply_converters_to_prepended_history"]
             )
-        converters = self._technique_converters.get(name)
+        converters = context.technique_converters.get(name)
         technique = factory.create(
             objective_target=context.objective_target,
             attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),
@@ -268,6 +301,18 @@ class Execute(Scenario):
             ),
         )
         adversarial_chat = factory.resolve_adversarial_chat()
+        self._local_technique_hash = (
+            config_hash(
+                {
+                    "configuration": local.get_configuration_identity(),
+                    "simulation_target": adversarial_chat.get_identifier().hash
+                    if adversarial_chat is not None
+                    else None,
+                }
+            )
+            if local is not None
+            else None
+        )
         execution_technique = self._with_objective_retries(
             context=context, technique=technique, group=groups[0], adversarial_chat=adversarial_chat
         )

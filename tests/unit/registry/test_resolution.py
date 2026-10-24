@@ -15,7 +15,7 @@ from pyrit.common import REQUIRED_VALUE, forward_init_parameters
 from pyrit.common.apply_defaults import _RequiredValueSentinel
 from pyrit.models import Message, MessagePiece
 from pyrit.models.identifiers import ConverterIdentifier, TargetIdentifier
-from pyrit.models.parameter import ComponentType
+from pyrit.models.parameter import ComponentType, Parameter
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components import ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.resolution import (
@@ -24,7 +24,48 @@ from pyrit.registry.resolution import (
     display_choices,
     reject_non_external_params,
     resolve_constructor_args,
+    resolve_declared_params,
+    validate_declared_params,
 )
+
+
+@pytest.mark.parametrize(
+    ("annotation", "raw", "expected"),
+    [
+        (str, "name", "name"),
+        (int, "7", 7),
+        (bool, "false", False),
+        (list[str], [], []),
+        (list[int], ["1", "2"], [1, 2]),
+    ],
+)
+def test_declared_required_values_resolve(annotation: Any, raw: Any, expected: Any) -> None:
+    declared = [Parameter(name="value", description="Required input", param_type=annotation, default=REQUIRED_VALUE)]
+    result = resolve_declared_params(declared=declared, raw_args={"value": raw}, owner="Test")
+    assert result == {"value": expected}
+    validate_declared_params(declared=declared, params=result, owner="Test")
+
+
+@pytest.mark.parametrize("raw_args", [{}, {"value": None}, {"value": REQUIRED_VALUE}])
+def test_declared_required_values_reject_missing_input(raw_args: dict[str, Any]) -> None:
+    declared = [Parameter(name="value", description="Required input", param_type=str, default=REQUIRED_VALUE)]
+    with pytest.raises(ValueError, match="required.*value"):
+        resolve_declared_params(declared=declared, raw_args=raw_args, owner="Test")
+
+
+def test_declared_required_values_can_be_deferred_for_metadata() -> None:
+    declared = [Parameter(name="value", description="Required input", param_type=int, default=REQUIRED_VALUE)]
+    result = resolve_declared_params(declared=declared, raw_args={}, owner="Test", allow_missing_required=True)
+    assert result == {"value": None}
+    with pytest.raises(ValueError, match="required.*value"):
+        validate_declared_params(declared=declared, params=result, owner="Test")
+
+
+def test_declared_optional_none_is_not_a_required_sentinel() -> None:
+    declared = [Parameter(name="value", description="Optional input", param_type=int)]
+    result = resolve_declared_params(declared=declared, raw_args={}, owner="Test")
+    assert result == {"value": None}
+    validate_declared_params(declared=declared, params=result, owner="Test")
 
 
 class MockPromptTarget(PromptTarget):
@@ -143,11 +184,81 @@ class _StrTargetArg:
         self.converter_target = converter_target
 
 
+class _OptionalTarget:
+    """Helper whose constructor takes an optional registry-reference target."""
+
+    def __init__(self, *, converter_target: PromptTarget | None = None) -> None:
+        self.converter_target = converter_target
+
+
+class _SeamBase:
+    """Helper base declaring an optional reference that it only tolerates."""
+
+    def __init__(self, *, count: int = 1, converter_target: PromptTarget | None = None) -> None:
+        self.count = count
+        self.converter_target = converter_target
+
+
+class _SeamChild(_SeamBase):
+    """Helper inheriting the seam reference without declaring its own."""
+
+
+class _SeamRequiredBase:
+    """Helper base whose reference is required, so subclasses inherit a real input."""
+
+    def __init__(self, *, converter_target: PromptTarget = REQUIRED_VALUE) -> None:  # type: ignore[assignment]
+        self.converter_target = converter_target
+
+
+class _SeamRequiredChild(_SeamRequiredBase):
+    """Helper inheriting a required reference from its base."""
+
+
+class _SeamRedeclaringChild(_SeamBase):
+    """Helper that re-declares its own optional reference."""
+
+    def __init__(self, *, converter_target: PromptTarget | None = None) -> None:
+        super().__init__(converter_target=converter_target)
+
+
 class _NeedsTargets:
     """Helper whose constructor takes a list-typed registry reference."""
 
     def __init__(self, *, targets: list[PromptTarget]) -> None:
         self.targets = targets
+
+
+def test_strict_rest_resolution_is_opt_in_and_does_not_materialize_required_inputs() -> None:
+    assert resolve_constructor_args(cls=_Plain, raw_args={}, strict_json=True) == {}
+    assert resolve_constructor_args(cls=_Plain, raw_args={"count": "2"}) == {"count": 2}
+    with pytest.raises(ValueError):
+        resolve_constructor_args(cls=_Plain, raw_args={"count": "2"}, strict_json=True)
+    assert resolve_constructor_args(cls=_EnumOnly, raw_args={"speed": "FAST"}, strict_json=True) == {
+        "speed": _Speed.FAST
+    }
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_strict_rest_reference_resolution_preserves_registered_identity(target_registry: TargetRegistry) -> None:
+    target = target_registry.instances.get("my_target")
+    args = {"converter_target": "my_target", "offset": 0}
+    resolved = resolve_constructor_args(
+        cls=_NeedsTarget, raw_args=args, identifier_type=ConverterIdentifier, strict_json=True
+    )
+    assert resolved["converter_target"] is target
+    with pytest.raises(ValueError):
+        resolve_constructor_args(
+            cls=_NeedsTarget,
+            raw_args={"converter_target": target},
+            identifier_type=ConverterIdentifier,
+            strict_json=True,
+        )
+    assert (
+        resolve_constructor_args(
+            cls=_NeedsTarget, raw_args={"converter_target": target}, identifier_type=ConverterIdentifier
+        )["converter_target"]
+        is target
+    )
 
 
 def _resolve(cls: type, raw_args: dict[str, object], *, identifier_type: type | None = None) -> dict[str, object]:
@@ -185,6 +296,30 @@ class TestDisplayChoices:
 
     def test_unconstrained_returns_none(self) -> None:
         assert display_choices(int) is None
+
+
+class TestSeamParameters:
+    """The derived contract excludes a base's non-required reference seams."""
+
+    def test_optional_base_reference_seam_is_excluded(self) -> None:
+        parameters = derive_parameters(cls=_SeamChild, identifier_type=ConverterIdentifier, seam_base_type=_SeamBase)
+        assert [p.name for p in parameters] == ["count"]
+
+    def test_seam_is_kept_without_the_seam_base(self) -> None:
+        parameters = derive_parameters(cls=_SeamChild, identifier_type=ConverterIdentifier)
+        assert "converter_target" in {p.name for p in parameters}
+
+    def test_required_base_reference_is_kept(self) -> None:
+        parameters = derive_parameters(
+            cls=_SeamRequiredChild, identifier_type=ConverterIdentifier, seam_base_type=_SeamRequiredBase
+        )
+        assert "converter_target" in {p.name for p in parameters}
+
+    def test_redeclared_optional_reference_is_kept(self) -> None:
+        parameters = derive_parameters(
+            cls=_SeamRedeclaringChild, identifier_type=ConverterIdentifier, seam_base_type=_SeamBase
+        )
+        assert "converter_target" in {p.name for p in parameters}
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -300,6 +435,24 @@ class TestResolveConstructorArgs:
     def test_unknown_registry_reference_empty_registry_hint(self, empty_target_registry: TargetRegistry) -> None:
         with pytest.raises(ValueError, match="is empty"):
             _resolve(_NeedsTarget, {"converter_target": "missing"}, identifier_type=ConverterIdentifier)
+
+    @pytest.mark.parametrize("external_input", [False, True])
+    def test_empty_reference_value_is_treated_as_unsupplied(self, *, external_input: bool) -> None:
+        # A cleared form field sends ""; it is the "no selection" state, not a
+        # registry name, so it must not be looked up -- the constructor default
+        # (or an apply_defaults-registered default) applies instead.
+        resolved = resolve_constructor_args(
+            cls=_OptionalTarget,
+            raw_args={"converter_target": ""},
+            identifier_type=ConverterIdentifier,
+            external_input=external_input,
+        )
+        assert resolved == {}
+
+    def test_empty_reference_value_is_not_looked_up(self, target_registry: TargetRegistry) -> None:
+        # Even with a populated registry, "" never resolves to some instance.
+        resolved = _resolve(_NeedsTarget, {"converter_target": "", "offset": "5"}, identifier_type=ConverterIdentifier)
+        assert resolved == {"offset": 5}
 
 
 class _Handle:

@@ -496,6 +496,7 @@ async def test_launch_survives_registration_between_resolution_and_construction_
         ("PromptSendingAttack", {"max_attempts_on_failure": -1}),
         ("ManyShotJailbreakAttack", {"max_attempts_on_failure": -1}),
         ("ManyShotJailbreakAttack", {"example_count": 0}),
+        ("ManyShotJailbreakAttack", {"example_count": -1}),
         ("ManyShotJailbreakAttack", {"many_shot_examples": []}),
         ("CrescendoAttack", {"max_backtracks": -1}),
         ("CrescendoAttack", {"max_turns": 0}),

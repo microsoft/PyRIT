@@ -9,6 +9,7 @@ from pydantic import TypeAdapter
 from pyrit.models import AttackResult, OutcomeStatistics, ScenarioProducerCounts, ScenarioResult
 from pyrit.output._derivation import (
     attack_score_display,
+    attack_technique_label,
     resolve_target_info,
     scenario_overview,
     select_attacks,
@@ -238,7 +239,8 @@ def _attack_entry(*, atomic_attack_name: str, attack: AttackResult) -> dict[str,
     Build the per-attack summary shared by the attacks and conversations views.
 
     Args:
-        atomic_attack_name (str): The atomic attack (technique) name.
+        atomic_attack_name (str): The atomic attack name, the technique label unless the result
+            records its own technique name.
         attack (AttackResult): The attack result to summarize.
 
     Returns:
@@ -246,7 +248,7 @@ def _attack_entry(*, atomic_attack_name: str, attack: AttackResult) -> dict[str,
     """
     return {
         "id": attack.attack_result_id,
-        "technique": atomic_attack_name,
+        "technique": attack_technique_label(atomic_attack_name=atomic_attack_name, attack=attack),
         "objective": attack.objective,
         "outcome": attack.outcome.value,
         "executed_turns": attack.executed_turns,

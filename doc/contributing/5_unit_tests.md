@@ -29,10 +29,37 @@ When observing an operation's cancellation or cleanup, use `wait_for_completion_
 `unit.async_utils`. Unlike `asyncio.wait_for`, its watchdog does not send another cancellation
 request to the operation when the wait expires. Release blocked workers and drain owned tasks
 in `finally` so a failed assertion does not leave background work behind.
+Use `settle_tasks_async` for the final join: it retains the gather, cancels pending work
+if its watchdog expires, and drains cancellation cleanup before raising `TimeoutError`.
+That final drain intentionally waits for cooperative cleanup rather than abandoning a task
+at a second deadline. An outer test timeout can interrupt this drain; it is a deadlock
+backstop, not a guarantee that an uncooperative task settles. A whole-test timeout equal
+to an inner watchdog can fire before that watchdog's expiry handling runs.
+Use `wait_for_event_async` to watch readiness alongside owned tasks, so a task failure
+before readiness is reported immediately instead of waiting for an event. Once readiness
+is set, the caller observes the task's outcome separately, even if it has already failed.
 
 For deadline tests, expire a real `asyncio.Timeout` with `reschedule` once the operation reaches
 the intended pending await. Check the configured timeout arguments, cancellation, cleanup, and
 original outcome. This avoids short wall-clock deadlines expiring during unrelated setup.
+
+## Windows event loops
+
+Windows unit tests keep a native Proactor event loop for each test. Each loop uses
+a private TCP socket pair for thread wakeups. Normal closure can leave these
+connections in `TIME_WAIT`, which can exhaust ephemeral ports during the full suite
+and fail a later test before its body runs.
+
+The unit-test loop factory uses abortive close only for those two internal sockets
+when the loop closes. Application sockets, subprocess support, cancellation, and
+function-scoped loop isolation stay unchanged. Do not share loops between tests or
+retry loop creation to hide socket allocation failures.
+
+Both coroutine tests and synchronous tests with async fixtures use the factory.
+The suite requires pytest-asyncio 1.4 or later and overrides its internal
+`_asyncio_loop_factory` fixture because the public loop-factories hook does not
+cover fixture-only runners in 1.4. Regression tests check both paths, so a plugin
+upgrade that changes this fixture contract fails explicitly.
 
 ## SQLite memory fixtures
 

@@ -17,8 +17,10 @@ if TYPE_CHECKING:
     from pyrit.backend.services.converter_service import ConverterService, get_converter_service
     from pyrit.backend.services.dataset_service import DatasetService, get_dataset_service
     from pyrit.backend.services.initializer_service import InitializerService, get_initializer_service
+    from pyrit.backend.services.scenario_preset_service import ScenarioPresetService, get_scenario_preset_service
     from pyrit.backend.services.scenario_run_service import ScenarioRunService, get_scenario_run_service
     from pyrit.backend.services.scenario_service import ScenarioService, get_scenario_service
+    from pyrit.backend.services.scenario_suite_service import ScenarioSuiteService, get_scenario_suite_service
     from pyrit.backend.services.target_service import TargetService, get_target_service
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
@@ -32,6 +34,10 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "get_initializer_service": "pyrit.backend.services.initializer_service",
     "ScenarioService": "pyrit.backend.services.scenario_service",
     "get_scenario_service": "pyrit.backend.services.scenario_service",
+    "ScenarioPresetService": "pyrit.backend.services.scenario_preset_service",
+    "get_scenario_preset_service": "pyrit.backend.services.scenario_preset_service",
+    "ScenarioSuiteService": "pyrit.backend.services.scenario_suite_service",
+    "get_scenario_suite_service": "pyrit.backend.services.scenario_suite_service",
     "ScenarioRunService": "pyrit.backend.services.scenario_run_service",
     "get_scenario_run_service": "pyrit.backend.services.scenario_run_service",
     "TargetService": "pyrit.backend.services.target_service",

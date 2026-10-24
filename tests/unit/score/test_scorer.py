@@ -4,12 +4,12 @@
 import asyncio
 import logging
 import uuid
-from contextlib import suppress
 from dataclasses import replace
 from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, store_message_async
 
 import pyrit.score.scorer as scorer_module
@@ -669,15 +669,16 @@ async def test_fresh_llm_scoring_preserves_caller_cancellation_async(
         )
         try:
             cancellation_point = send_started if cancel_during == "send" else reset_started
-            await asyncio.wait_for(cancellation_point.wait(), timeout=5)
+            await wait_for_event_async(event=cancellation_point, tasks=[scoring_task])
             scoring_task.cancel(caller_cancellation_message)
             with pytest.raises(asyncio.CancelledError) as exc_info:
-                await asyncio.wait_for(scoring_task, timeout=5)
+                await wait_for_completion_async(future=scoring_task)
         finally:
+            send_gate.set()
+            reset_gate.set()
             if not scoring_task.done():
                 scoring_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await asyncio.wait_for(scoring_task, timeout=5)
+            await wait_for_completion_async(future=asyncio.gather(scoring_task, return_exceptions=True))
 
     assert scoring_task.done()
     assert scoring_task.cancelled()

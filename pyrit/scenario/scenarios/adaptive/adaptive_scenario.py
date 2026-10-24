@@ -47,7 +47,6 @@ from pyrit.scenario.scenarios.adaptive.selectors import EpsilonGreedyTechniqueSe
 
 if TYPE_CHECKING:
     from pyrit.models import AttackSeedGroup, ScenarioRunPlan, ScenarioRunPlanAtomicGroup
-    from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
     from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -181,9 +180,9 @@ class AdaptiveScenario(Scenario):
         For each dataset, construct a single ``AdaptiveTechniqueDispatcher``
         shared across that dataset's seed groups. For each seed group, ask
         the dispatcher to build its per-objective ``SequentialAttack`` and
-        wrap it in its own ``AtomicAttack``.         All dispatchers across all
-        datasets share one ``TechniqueSelector`` instance so learning
-        accumulates globally; selection is committed up-front during
+        wrap it in its own ``AtomicAttack``. All dispatchers share a selector
+        that reads historical results in its configured scope.
+        Selection is committed up-front during
         scenario initialization, before any execution starts. Resume restores the
         ordered choices from the stored run plan without calling the selector.
 
@@ -222,7 +221,7 @@ class AdaptiveScenario(Scenario):
 
         # Building the technique catalog reads each technique's prompt YAML, so keep the
         # synchronous builder off the event loop.
-        techniques = await asyncio.to_thread(self._build_techniques_dict, objective_target=context.objective_target)
+        techniques = await asyncio.to_thread(self._build_techniques_dict, context=context)
         self._selected_seed_group_adaptations = []
         self._selected_technique_hashes = {}
 
@@ -239,12 +238,12 @@ class AdaptiveScenario(Scenario):
         for dataset_name, seed_groups in context.seed_groups_by_dataset.items():
             atomic_attacks.extend(
                 await self._build_atomics_for_dataset_async(
+                    context=context,
                     dataset_name=dataset_name,
                     seed_groups=seed_groups,
                     techniques=techniques,
                     selector=self._selector,
                     stored_groups=stored_groups,
-                    scenario_result_id=context.scenario_result_id,
                 )
             )
 
@@ -299,7 +298,7 @@ class AdaptiveScenario(Scenario):
     def _build_techniques_dict(
         self,
         *,
-        objective_target: PromptTarget,
+        context: ScenarioContext,
     ) -> dict[str, TechniqueBundle]:
         """
         Resolve selected techniques into a ``{eval_hash: TechniqueBundle}`` map.
@@ -329,7 +328,7 @@ class AdaptiveScenario(Scenario):
             ValueError: If no techniques remain after filtering. Includes the
                 requested techniques and skip reasons.
         """
-        selected_techniques = sorted({s.value for s in self._scenario_techniques})
+        selected_techniques = sorted({s.value for s in context.scenario_techniques})
         factories = self._get_attack_technique_factories()
 
         techniques: dict[str, TechniqueBundle] = {}
@@ -342,11 +341,11 @@ class AdaptiveScenario(Scenario):
                 logger.warning(f"No factory for technique '{technique_name}', skipping.")
                 continue
             if not check_target_compatibility(
-                target=objective_target,
+                target=context.objective_target,
                 attack_class=factory.attack_class,
                 requirements=factory.requirements,
                 technique_name=technique_name,
-                policy=self._incompatible_technique_policy,
+                policy=context.incompatible_technique_policy,
             ):
                 skipped_incompatible[technique_name] = "objective target requirements are not met"
                 continue
@@ -355,13 +354,13 @@ class AdaptiveScenario(Scenario):
                 required_type = factory.scoring_config_type
                 required_name = required_type.__name__ if required_type is not None else "AttackScoringConfig"
                 reason = f"scenario scorer is incompatible with required {required_name}"
-                if self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
+                if context.incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
                     raise IncompatibleTechniqueError(f"Technique '{technique_name}': {reason}")
                 skipped_incompatible[technique_name] = reason
                 logger.warning(f"Skipping technique '{technique_name}': {reason}")
                 continue
             technique = factory.create(
-                objective_target=objective_target,
+                objective_target=context.objective_target,
                 attack_scoring_config=scoring_config,
             )
             technique_identifier = technique.get_identifier()
@@ -435,12 +434,12 @@ class AdaptiveScenario(Scenario):
     async def _build_atomics_for_dataset_async(
         self,
         *,
+        context: ScenarioContext,
         dataset_name: str,
         seed_groups: list[AttackSeedGroup],
         techniques: dict[str, TechniqueBundle],
         selector: TechniqueSelector,
         stored_groups: dict[str, ScenarioRunPlanAtomicGroup] | None = None,
-        scenario_result_id: str | None = None,
     ) -> list[AtomicAttack]:
         """
         Build one ``AtomicAttack`` per seed group with at least one
@@ -457,26 +456,19 @@ class AdaptiveScenario(Scenario):
         groups in the stored plan are rebuilt, using their saved choices.
 
         Args:
+            context (ScenarioContext): The resolved runtime inputs.
             dataset_name (str): The source dataset name.
             seed_groups (list[AttackSeedGroup]): Original dataset groups.
             techniques (dict[str, TechniqueBundle]): The resolved technique pool.
             selector (TechniqueSelector): The selector used for new runs.
             stored_groups (dict[str, ScenarioRunPlanAtomicGroup] | None): Saved groups on resume.
-            scenario_result_id (str | None): The run id passed to the technique selector.
 
         Returns:
             list[AtomicAttack]: One atomic per compatible seed group.
                 Empty list when every seed group is incompatible with
                 every technique.
 
-        Raises:
-            ValueError: If ``self._objective_target`` is not set
-                (defensive guard; ``_build_atomic_attacks_async`` enforces
-                this earlier).
         """
-        if self._objective_target is None:  # pragma: no cover - defensive
-            raise ValueError("objective_target must be set before creating attacks")
-
         named_seed_groups = [
             (
                 f"{self._atomic_attack_prefix()}_{dataset_name}::{to_sha256(group.objective.value)}",
@@ -489,13 +481,13 @@ class AdaptiveScenario(Scenario):
         seed_groups = [group for _, group in named_seed_groups]
 
         dispatcher = AdaptiveTechniqueDispatcher(
-            objective_target=self._objective_target,
+            objective_target=context.objective_target,
             techniques=techniques,
             selector=selector,
             objective_scorer=self._objective_scorer,
             max_attempts_per_objective=self.params.get("max_attempts_per_objective", 3),
-            scenario_result_id=scenario_result_id,
-            incompatible_technique_policy=self._incompatible_technique_policy,
+            scenario_result_id=context.scenario_result_id,
+            incompatible_technique_policy=context.incompatible_technique_policy,
         )
 
         compatible_source_ids = {
@@ -507,7 +499,7 @@ class AdaptiveScenario(Scenario):
                     seed_technique=bundle.seed_technique,
                     technique_name=bundle.name,
                     dataset_name=dataset_name,
-                    policy=self._incompatible_technique_policy,
+                    policy=context.incompatible_technique_policy,
                 )
             }
             for technique_hash, bundle in techniques.items()
@@ -535,7 +527,7 @@ class AdaptiveScenario(Scenario):
                 attack_technique=AttackTechnique(attack=attack),
                 seed_groups=[seed_group],
                 objective_scorer=self._objective_scorer,
-                memory_labels=dict(self._memory_labels),
+                memory_labels=dict(context.memory_labels),
                 display_group=dataset_name,
                 group_kind=ScenarioRunPlanGroupKind.ADAPTIVE,
             )

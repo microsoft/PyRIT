@@ -60,9 +60,7 @@ export default function ParameterField({
 }: ParameterFieldProps) {
   const styles = useParameterFieldStyles()
   const kind = getParameterControlKind(parameter)
-  const label = parameter.required
-    ? `${labelOverride ?? parameter.name} *`
-    : labelOverride ?? parameter.name
+  const label = labelOverride ?? parameter.name
   const testId = `${testIdPrefix}-${parameter.name}`
   const defaultText = Array.isArray(parameter.default)
     ? parameter.default.join(', ')
@@ -81,6 +79,7 @@ export default function ParameterField({
       <>
         <Field
           label={label}
+          required={parameter.required}
           hint={descriptiveHint || undefined}
           validationMessage={showRequiredError && !current.type ? 'Required' : undefined}
         >
@@ -130,6 +129,7 @@ export default function ParameterField({
     return (
       <Field
         label={label}
+        required={parameter.required}
         hint={jsonHint}
         validationMessage={validationMessage}
         validationState={validationMessage ? 'error' : 'none'}
@@ -152,7 +152,7 @@ export default function ParameterField({
   if (kind === 'boolean') {
     const current = value === 'true' || value === 'false' ? value : ''
     return (
-      <Field label={label} hint={descriptiveHint || undefined}>
+      <Field label={label} required={parameter.required} hint={descriptiveHint || undefined}>
         <Select
           className={styles.control}
           value={current}
@@ -173,7 +173,7 @@ export default function ParameterField({
   if (kind === 'multiselect') {
     const selected = Array.isArray(value) ? value : []
     return (
-      <Field label={label} hint={descriptiveHint || undefined}>
+      <Field label={label} required={parameter.required} hint={descriptiveHint || undefined}>
         <div className={styles.checkboxGroup} role="group" aria-labelledby={`${testId}-group-label`}>
           <span id={`${testId}-group-label`} className={styles.srOnly}>
             {label}
@@ -210,7 +210,7 @@ export default function ParameterField({
 
   if (kind === 'select') {
     return (
-      <Field label={label} hint={descriptiveHint || undefined}>
+      <Field label={label} required={parameter.required} hint={descriptiveHint || undefined}>
         <Select
           className={styles.control}
           value={stringValue}
@@ -239,7 +239,7 @@ export default function ParameterField({
 
   if (kind === 'multiline') {
     return (
-      <Field label={label} hint={hint}>
+      <Field label={label} required={parameter.required} hint={hint}>
         <Textarea
           className={styles.control}
           value={stringValue}
@@ -255,7 +255,7 @@ export default function ParameterField({
 
   return (
     <>
-      <Field label={label} hint={hint}>
+      <Field label={label} required={parameter.required} hint={hint}>
         <Input
           className={styles.control}
           value={stringValue}

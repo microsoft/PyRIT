@@ -16,11 +16,11 @@ The returned attack is a plain ``SequentialAttack`` with
 (which technique ran, with what outcome, in what order) is not stamped onto
 the envelope — every child ``AttackResult`` in
 ``SequentialAttackResult.child_attack_results`` already carries its own
-``outcome`` and its own ``atomic_attack_identifier.eval_hash``. Callers that
-want a human-readable technique label per child read it directly from the
-child via ``child.get_attack_strategy_identifier().unique_name`` (the
-executor auto-stamps ``class_name`` and ``unique_name`` on every persisted
-row), so there is no separate ``{eval_hash: name}`` map to consult.
+``outcome`` and its own ``atomic_attack_identifier.eval_hash``. Each child also
+records the registered name of its technique (for example, ``crescendo``) in
+its metadata, read via ``child.technique_name``, so reports can label it
+without consulting a separate ``{eval_hash: name}`` map. The attack class
+remains available via ``child.get_attack_strategy_identifier()``.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from pyrit.executor.attack.compound.sequential_attack import (
     SequentialAttack,
     SequentialChildAttack,
 )
-from pyrit.models import AtomicAttackIdentifier
+from pyrit.models import AtomicAttackIdentifier, AttackResult
 from pyrit.scenario.core.technique_requirements import (
     IncompatibleTechniqueError,
     IncompatibleTechniquePolicy,
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyrit.executor.attack.core.attack_strategy import AttackStrategy
-    from pyrit.models import AttackResult, AttackSeedGroup, AttackTechniqueSeedGroup, ComponentIdentifier
+    from pyrit.models import AttackSeedGroup, AttackTechniqueSeedGroup, ComponentIdentifier
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.scenarios.adaptive.selectors import TechniqueSelector
     from pyrit.score import TrueFalseScorer
@@ -64,18 +64,12 @@ class TechniqueBundle:
     Carries the inner attack strategy alongside the factory-supplied
     ``seed_technique`` (if any) and ``adversarial_chat`` (required when the
     seed_technique contains a simulated-conversation config). ``name`` is the
-    factory-registration key; the dispatcher does not consume it, but it is
-    convenient for diagnostics and is preserved here so callers/tests can
-    cross-check which factory each bundle came from.
+    factory-registration key; when set, the dispatcher records it on each
+    child's result metadata so reports can label the child with it (read via
+    ``child.technique_name``).
 
     Adaptation-permitting bundles require a technique identifier so their
     persisted child results use the same behavioral identity as selection.
-
-    Notebook/report code that wants a human-readable label for a persisted
-    child ``AttackResult`` should read it from the child itself via
-    ``child.get_attack_strategy_identifier()`` — the executor already stamps
-    ``class_name`` and ``unique_name`` on every row, so there is no need to
-    publish a separate ``{eval_hash: name}`` map.
     """
 
     attack: AttackStrategy[Any, AttackResult]
@@ -231,10 +225,9 @@ class AdaptiveTechniqueDispatcher:
         Returns:
             SequentialAttack: The ready-to-run attack. Each child's
                 identity is captured by its own
-                ``atomic_attack_identifier.eval_hash`` after execution;
-                callers wanting the friendly technique name read it
-                directly from the child via
-                ``child.get_attack_strategy_identifier().unique_name``.
+                ``atomic_attack_identifier.eval_hash`` after execution,
+                and each child records its bundle's registered technique
+                name, read via ``child.technique_name``.
 
         Raises:
             ValueError: If ``seed_group.objective`` is not initialized,
@@ -292,6 +285,8 @@ class AdaptiveTechniqueDispatcher:
                 else None
             )
             metadata: dict[str, Any] = {}
+            if bundle.name:
+                metadata[AttackResult.TECHNIQUE_NAME_METADATA_KEY] = bundle.name
             if prepared.adaptation is not None:
                 self._selected_adaptations[chosen] = prepared.adaptation
                 metadata["seed_group_adaptation"] = {

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
+import math
 from typing import Any, Literal
 
 from pyrit.common import forward_init_parameters
@@ -20,6 +21,10 @@ logger = logging.getLogger(__name__)
 TTSModel = Literal["tts-1", "tts-1-hd"]
 TTSVoice = Literal["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
 TTSResponseFormat = Literal["flac", "mp3", "mp4", "mpeg", "mpga", "m4a", "ogg", "wav", "webm"]
+
+# Range documented for the OpenAI speech API.
+_MIN_SPEED = 0.25
+_MAX_SPEED = 4.0
 
 
 class OpenAITTSTarget(OpenAITarget):
@@ -67,7 +72,18 @@ class OpenAITTSTarget(OpenAITarget):
             httpx_client_kwargs (dict, Optional): Additional ``AsyncOpenAI`` constructor options.
                 For example, ``{"timeout": 180}`` sets a three-minute timeout. Custom ``http_client``
                 instances use HTTPX on SDK 2, or HTTPX2 / legacy HTTPX on SDK 3.
+
+        Raises:
+            ValueError: If ``speed`` is given and is not a finite number from 0.25 to 4.0.
         """
+        if speed is not None and (
+            not isinstance(speed, (int, float))
+            or isinstance(speed, bool)
+            or not _MIN_SPEED <= speed <= _MAX_SPEED
+            or not math.isfinite(speed)
+        ):
+            raise ValueError(f"speed must be a finite number from {_MIN_SPEED} to {_MAX_SPEED}, got {speed!r}")
+
         super().__init__(custom_configuration=custom_configuration, **kwargs)
 
         self._voice = voice
