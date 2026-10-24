@@ -217,14 +217,20 @@ class TextJailBreak:
             list[str]: List of jailbreak template file names.
 
         Raises:
+            ValueError: If ``num_templates`` is not None and not an integer of at least 1.
             ValueError: If no jailbreak templates are found in the jailbreak directory.
             ValueError: If n is larger than the number of templates that exist.
         """
+        if num_templates is not None and (
+            isinstance(num_templates, bool) or not isinstance(num_templates, int) or num_templates < 1
+        ):
+            raise ValueError(f"num_templates must be an integer of at least 1 or None, got {num_templates!r}")
+
         jailbreak_template_names = sorted(cls._get_template_cache().keys())
         if not jailbreak_template_names:
             raise ValueError("No jailbreak templates found in the jailbreak directory")
 
-        if num_templates:
+        if num_templates is not None:
             if num_templates > len(jailbreak_template_names):
                 raise ValueError(
                     f"Attempted to pull {num_templates} jailbreaks from a dataset"
