@@ -205,8 +205,9 @@ class TargetConfiguration:
         Project a ``TargetCapabilities`` instance into a deterministic dict
         suitable for inclusion in a ``ComponentIdentifier``.
 
-        Fields are discovered dynamically via the pydantic model fields so new
-        capability fields are picked up automatically. Set-valued fields (e.g.,
+        Fields are discovered dynamically via the pydantic model fields. The additive
+        request-temperature availability flag is excluded to preserve existing hashes;
+        configured defaults remain identity-bearing target parameters. Set-valued fields (e.g.,
         the modality frozensets) are detected by type and normalized to sorted
         lists of sorted lists; all other fields are passed through as-is.
 
@@ -218,6 +219,10 @@ class TargetConfiguration:
         """
         params: dict[str, Any] = {}
         for field_name in type(capabilities).model_fields:
+            # Request-option availability does not change configured generation behavior.
+            # Excluding this additive flag preserves existing target and nested scorer hashes.
+            if field_name == "supports_temperature":
+                continue
             value = getattr(capabilities, field_name)
             # Normalize set-valued fields (e.g., modality frozensets) to a
             # deterministic representation. Handles both frozenset[frozenset[...]]

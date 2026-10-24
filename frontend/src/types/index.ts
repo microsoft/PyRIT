@@ -184,6 +184,8 @@ export interface Message {
   originalContent?: string
   /** Original media attachments before conversion (when different from converted). */
   originalAttachments?: MessageAttachment[]
+  /** Saved provider parameter evidence, not a new request option. */
+  temperatureDescription?: string
 }
 
 export interface MessageError {
@@ -282,6 +284,7 @@ export interface TargetCapabilities {
   supports_editable_history?: boolean
   supports_system_prompt: boolean
   supports_streaming_audio?: boolean
+  supports_temperature?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
 }

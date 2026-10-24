@@ -2,7 +2,9 @@
 # Licensed under the MIT license.
 
 import logging
+import re
 from collections.abc import MutableSequence, Sequence
+from copy import deepcopy
 from typing import Any
 
 from openai.types.chat import ChatCompletion
@@ -17,6 +19,8 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    RequestGenerationConfig,
+    TemperatureRequestInfo,
 )
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
@@ -177,6 +181,38 @@ class OpenAIChatTarget(OpenAITarget):
             extra_body_parameters = {**audio_params, **extra_body_parameters} if extra_body_parameters else audio_params
 
         self._extra_body_parameters = extra_body_parameters
+        temperature_enabled = (
+            custom_configuration is None
+            or "supports_temperature" not in custom_configuration.capabilities.model_fields_set
+            or custom_configuration.capabilities.supports_temperature
+        )
+        self.apply_capabilities(
+            capabilities=self.capabilities.model_copy(
+                update={"supports_temperature": temperature_enabled and self._supports_runtime_temperature()}
+            )
+        )
+
+    def _supports_runtime_temperature(self) -> bool:
+        # Start with the verified GPT-4o text/vision models, not arbitrary OpenAI-compatible
+        # deployments or reasoning/audio modes. Azure aliases can supply underlying_model.
+        parameters = self._extra_body_parameters or {}
+        nested = parameters.get("extra_body") or {}
+        model = nested.get("model", parameters.get("model", self._underlying_model or self._model_name))
+        return (
+            isinstance(model, str)
+            and re.fullmatch(r"gpt-4o(?:-mini)?(?:-\d{4}-\d{2}-\d{2})?", model) is not None
+            and "reasoning_effort" not in parameters
+            and "reasoning_effort" not in nested
+            and self._audio_response_config is None
+            and "audio" not in (nested.get("modalities", parameters.get("modalities")) or [])
+            and not nested.get("stream", parameters.get("stream", False))
+        )
+
+    def _validate_request_temperature(self, temperature: float) -> None:
+        if not self._supports_runtime_temperature():
+            raise ValueError("Runtime temperature is not supported for this OpenAI Chat model configuration.")
+        if not 0 <= temperature <= 2:
+            raise ValueError("OpenAI Chat request temperature must be between 0 and 2 inclusive.")
 
     def validate_tool_history(self, messages: Sequence[Message]) -> None:
         """Check stored tool history and Chat Completions tool-message constraints."""
@@ -226,8 +262,6 @@ class OpenAIChatTarget(OpenAITarget):
             "generativelanguage.googleapis.com": "https://generativelanguage.googleapis.com/v1beta/openai",
         }
 
-    @pyrit_target_retry
-    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously sends a message and handles the response within a managed conversation context.
@@ -241,13 +275,48 @@ class OpenAIChatTarget(OpenAITarget):
             list[Message]: A list containing the response from the prompt target.
         """
         message = normalized_conversation[-1]
+        generation_config = self.validate_request_generation_config(message)
         message_piece: MessagePiece = message.message_pieces[0]
         json_config = self._get_json_response_config(message_piece=message_piece)
 
         logger.info(f"Sending the following prompt to the prompt target: {message}")
 
         body = await self._construct_request_body_async(conversation=normalized_conversation, json_config=json_config)
+        temperature_info = self._resolve_request_temperature(body=body, config=generation_config)
+        responses: list[Message] = await self._send_request_async(
+            body=body, message=message, temperature_info=temperature_info
+        )
+        return responses
 
+    def _resolve_request_temperature(
+        self, *, body: dict[str, Any], config: RequestGenerationConfig
+    ) -> TemperatureRequestInfo:
+        nested = body.get("extra_body") or {}
+        if config.temperature is not None:
+            body["temperature"] = config.temperature
+            # The SDK merges extra_body after its named arguments.
+            if "temperature" in nested:
+                nested["temperature"] = config.temperature
+        resolved = nested.get("temperature", body.get("temperature"))
+        return TemperatureRequestInfo(
+            requested_temperature=config.temperature,
+            resolved_temperature=resolved,
+            source=(
+                "request"
+                if config.temperature is not None
+                else "target_default"
+                if resolved is not None
+                else "provider_default"
+            ),
+        )
+
+    @pyrit_target_retry
+    @limit_requests_per_minute
+    async def _send_request_async(
+        self, *, body: dict[str, Any], message: Message, temperature_info: TemperatureRequestInfo
+    ) -> list[Message]:
+        # Record only after preparation succeeds and the transport is about to be invoked.
+        message.get_piece().prompt_metadata.update(temperature_info.to_metadata())
         # Use unified error handling - automatically detects ChatCompletion and validates
         response = await self._handle_openai_request_async(
             api_call=lambda: self._client.chat.completions.create(**body),
@@ -442,7 +511,7 @@ class OpenAIChatTarget(OpenAITarget):
         }
 
         if self._extra_body_parameters:
-            body_parameters.update(self._extra_body_parameters)
+            body_parameters.update(deepcopy(self._extra_body_parameters))
 
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}

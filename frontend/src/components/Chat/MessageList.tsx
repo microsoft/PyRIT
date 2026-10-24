@@ -722,6 +722,9 @@ export default function MessageList({
                 <Text className={styles.timestamp}>{timestamp}</Text>
                 <div className={styles.footerDetails}>
                   <Text className={styles.role}>{message.role}</Text>
+                  {message.temperatureDescription && (
+                    <Text size={100}>{message.temperatureDescription}</Text>
+                  )}
                 </div>
               </div>
             </div>

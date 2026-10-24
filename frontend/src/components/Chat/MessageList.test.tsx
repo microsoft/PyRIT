@@ -59,6 +59,26 @@ describe("MessageList", () => {
     ).toBeInTheDocument();
   });
 
+  it.each([
+    [0, "request", "Temperature: 0 (request override)"],
+    [0.8, "target_default", "Temperature: 0.8 (target default)"],
+    [null, "provider_default", "Temperature: provider default (unknown)"],
+    [undefined, undefined, "Temperature: not recorded"],
+  ])("renders persisted temperature %s from %s", (value, source, expected) => {
+    const backendMessage: BackendMessage = {
+      turn_number: 0, role: "user", created_at: "2026-02-15T00:00:00Z",
+      message_pieces: [{
+        id: "request-piece", original_value_data_type: "text", converted_value_data_type: "text",
+        original_value: "hello", converted_value: "hello", scores: [],
+        prompt_metadata: source === undefined ? {} : {
+          _pyrit_temperature: { resolved_temperature: value, source },
+        },
+      }],
+    };
+    render(<TestWrapper><MessageList messages={[backendMessageToFrontend(backendMessage)]} /></TestWrapper>);
+    expect(screen.getByText(expected)).toBeInTheDocument();
+  });
+
   it.each(["Copy to next message", "Branch conversation", "Branch attack"])("copies through one menu to %s", async (destination: string) => {
     const user = userEvent.setup();
     const onCopyToInput = jest.fn();

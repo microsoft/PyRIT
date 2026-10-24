@@ -19,8 +19,10 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    RequestGenerationConfig,
     RequestTraceContext,
     TargetIdentifier,
+    TemperatureRequestInfo,
 )
 from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.prompt_target.common.target_capabilities import (
@@ -285,8 +287,10 @@ class PromptTarget(Identifiable):
         """
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            piece.prompt_metadata.pop(TemperatureRequestInfo.METADATA_KEY, None)
             piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
         message.validate()
+        generation_config = self.validate_request_generation_config(message)
         conversation_id = message.get_piece().conversation_id or ""
         if send_context and send_context.conversation_id != conversation_id:
             raise ValueError("Target send context conversation_id does not match the current request conversation_id.")
@@ -302,13 +306,31 @@ class PromptTarget(Identifiable):
             )
             if not normalized_conversation:
                 raise ValueError("Normalization pipeline returned an empty conversation. Cannot send an empty request.")
+            # Normalizers can merge history or discard piece metadata. Only the original
+            # outbound message selects this send's options, never normalized history.
+            normalized_request = normalized_conversation[-1]
+            for piece in normalized_request.message_pieces:
+                piece.prompt_metadata.pop(RequestGenerationConfig.METADATA_KEY, None)
+                piece.prompt_metadata.pop(TemperatureRequestInfo.METADATA_KEY, None)
+            normalized_request.get_piece().prompt_metadata.update(generation_config.to_metadata())
             self._validate_request(normalized_conversation=normalized_conversation)
             with target_trace_context(
                 config=self._trace_config, request=message, normalized_request=normalized_conversation[-1]
             ):
                 if send_context:
                     send_context.mark_target_invoked()
-                response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+                try:
+                    response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+                finally:
+                    temperature_info = TemperatureRequestInfo.from_metadata(
+                        metadata=normalized_request.get_piece().prompt_metadata
+                    )
+                    if temperature_info is not None:
+                        temperature_info = temperature_info.model_copy(
+                            update={"request_piece_ids": tuple(str(piece.id) for piece in message.message_pieces)}
+                        )
+                        for piece in message.message_pieces:
+                            piece.prompt_metadata.update(temperature_info.to_metadata())
             for response_message in response:
                 for piece in response_message.message_pieces:
                     piece.prompt_metadata = {
@@ -316,11 +338,39 @@ class PromptTarget(Identifiable):
                         for key, value in piece.prompt_metadata.items()
                         if key not in (RequestTraceContext.METADATA_KEY, RequestTraceContext.REQUEST_METADATA_KEY)
                     }
+                    piece.prompt_metadata.pop(RequestGenerationConfig.METADATA_KEY, None)
+                    piece.prompt_metadata.pop(TemperatureRequestInfo.METADATA_KEY, None)
+                    if temperature_info is not None:
+                        piece.prompt_metadata.update(temperature_info.to_metadata())
             send_succeeded = True
             return response
         finally:
             if send_context:
                 send_context.finish_send(succeeded=send_succeeded)
+
+    def validate_request_generation_config(self, message: Message) -> RequestGenerationConfig:
+        """
+        Validate current-message options without loading history or performing provider I/O.
+
+        Returns:
+            RequestGenerationConfig: The validated request options.
+
+        Raises:
+            ValueError: The override is invalid or unsupported.
+        """
+        config = RequestGenerationConfig.from_message(message)
+        if config.temperature is not None and not self.capabilities.supports_temperature:
+            raise ValueError(
+                f"{type(self).__name__} does not support runtime temperature for this model configuration."
+            )
+        if config.temperature is not None:
+            self._validate_request_temperature(config.temperature)
+        return config
+
+    def _validate_request_temperature(self, temperature: float) -> None:
+        # A custom capability declaration alone must not make an unimplemented adapter
+        # silently discard explicit request options.
+        raise ValueError(f"{type(self).__name__} does not implement runtime temperature.")
 
     @abc.abstractmethod
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:

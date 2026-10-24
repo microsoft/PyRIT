@@ -57,6 +57,73 @@ Target-side rate limiting remains independent and continues to use `limit_reques
 `_send_prompt_to_target_async(*, normalized_conversation: list[Message]) -> list[Message]` instead of
 overriding `send_prompt_async`.
 
+## Runtime temperature (initial implementation)
+
+A target's constructor temperature remains its default and part of its configuration identity.
+For an individual send, attach `RequestGenerationConfig` to the current message:
+
+```python
+from pyrit.models import Message, MessagePiece, RequestGenerationConfig
+from pyrit.prompt_normalizer import PromptNormalizer
+
+message = Message(message_pieces=[
+    MessagePiece(
+        role="user",
+        original_value="Describe this scene.",
+        prompt_metadata=RequestGenerationConfig(temperature=0).to_metadata(),
+    )
+])
+response = await PromptNormalizer().send_prompt_async(
+    message=message, target=target, conversation_id=conversation_id,
+)
+```
+
+Check `target.capabilities.supports_temperature` before offering this control.
+The initial adapter supports `OpenAIChatTarget` with `gpt-4o` / `gpt-4o-mini`
+text/vision models and their dated versions. For an Azure deployment alias, set
+`underlying_model` to the model name. Other adapters and reasoning/audio modes do
+not advertise runtime support yet. Unsupported overrides fail before generation I/O.
+
+The canonical input key is `request_temperature`. Zero is valid. Missing or null
+uses the target's configured settings. Values must be finite numbers (not booleans
+or numeric strings); this adapter accepts the range 0 through 2. Put the value on
+one current message piece or the same value on several pieces; conflicting values
+are rejected before normalization. History never selects the next temperature.
+An explicit override wins over top-level and nested `extra_body` temperature settings,
+without mutating those settings. Transport retries reuse the resolved payload.
+
+`TemperatureRequestInfo` reads the framework-authored `_pyrit_temperature` metadata
+on the saved request and responses. It records the requested override, resolved
+parameter, source (`request`, `target_default`, or `provider_default`), and originating
+request-piece IDs. Configured passthrough values count as target defaults. When no
+temperature is specified, the provider's numeric default stays unknown. Old messages
+without evidence remain readable and show **not recorded**, not a guessed value.
+Use `PromptNormalizer` for persistence; direct target sends return evidence but do
+not themselves write messages to memory.
+
+In Chat, the top temperature control applies to future sends; clearing it restores
+the target default. It does not build a temporary target or change an attack's target
+binding. Existing saved temporary variants also accept overrides: their bound
+temperature remains the default. Switching attacks/targets or refreshing resets the
+control; the initial lazy creation of an attack does not. History editing disables
+the future-send control, and copying text/media does not carry old temperature
+options or evidence into a new send.
+
+This is a draft vertical slice, **not completion of the runtime-temperature story**.
+Still to decide/implement:
+
+- Approve the public model/key names and extend the tested provider/model/mode matrix.
+- Add Responses tool-continuation, LiteLLM, HuggingFace, other provider, composite/wrapper,
+  and streaming support before advertising their capability.
+- Define attack-owned fixed/adaptive temperature configuration, including objective versus
+  adversarial roles and fallback defaults. Keep policy identity stable during execution.
+- Update effective-value evaluation grouping, resume checks, and replay compatibility together;
+  equivalent fixed defaults/overrides must group consistently without relabeling adaptive paths.
+- Agree on richer history-editor/copy/replay UX and whether to persist composer preferences.
+- Extend scorer-isolation and cross-provider regression coverage and confirm the release split
+  with the story owners. Existing target hashes are preserved by excluding the additive
+  runtime-support flag from configuration identity; no historical identifiers are rewritten.
+
 ## Chat-style targets vs general targets
 
 A `PromptTarget` is a generic place to send a prompt. With PyRIT, the idea is that it will eventually be consumed by an AI application, but that doesn't have to be immediate. For example, you could have a SharePoint target. Everything you send a prompt to is a `PromptTarget`. Many attacks work generically with any `PromptTarget` including `RedTeamingAttack` and `PromptSendingAttack`.
@@ -244,6 +311,7 @@ A `TargetConfiguration` composes three concerns:
 | `supports_system_prompt`         | The target natively supports a system-role message.                                                                                      |
 | `supports_json_output`           | The target supports a "json" response format that guarantees valid JSON output.                                                          |
 | `supports_json_schema`           | The target supports constraining output to a caller-provided JSON schema.                                                                |
+| `supports_temperature`           | The adapter and configured model mode support per-request temperature overrides. This does not change the target's default or identity. |
 | `input_modalities`               | The set of input modality combinations the target accepts (e.g. `{text}`, `{text, image_path}`).                                         |
 | `output_modalities`              | The set of output modality combinations the target produces.                                                                             |
 

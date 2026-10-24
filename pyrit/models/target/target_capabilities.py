@@ -49,6 +49,7 @@ class CapabilityName(str, Enum):
     EDITABLE_HISTORY = "supports_editable_history"
     SYSTEM_PROMPT = "supports_system_prompt"
     STREAMING_AUDIO = "supports_streaming_audio"
+    TEMPERATURE = "supports_temperature"
 
 
 class TargetCapabilities(BaseModel):
@@ -105,6 +106,9 @@ class TargetCapabilities(BaseModel):
     #: items in place, and drives manual ``response.create`` turns. Required by
     #: ``BargeInAttack``.
     supports_streaming_audio: bool = False
+
+    #: Whether this adapter and model mode support request-local temperature overrides.
+    supports_temperature: bool = False
 
     #: The input modalities supported by the target, as combinations of data types
     #: (e.g., ``{{"text"}, {"image_path", "text"}}``). Serialized as a sorted list of

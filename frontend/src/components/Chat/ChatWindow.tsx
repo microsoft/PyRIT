@@ -51,7 +51,7 @@ import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
 import { useRuntime } from '@/hooks/useRuntime'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
-import { buildTemperatureTarget } from '@/services/targetRegistry'
+import { withRequestTemperature } from '@/utils/requestGeneration'
 import {
   basenameFromValue,
   applyConvertedValues,
@@ -132,6 +132,7 @@ interface RecoverableSendDraft {
 }
 
 interface PendingSend {
+  readonly temperature: string
   readonly submissionId: string
   readonly controller: AbortController
   readonly draftRevision: number | undefined
@@ -368,11 +369,13 @@ export default function ChatWindow({
   const outcomeButtonRef = useRef<HTMLButtonElement>(null)
   const [pendingObjective, setPendingObjective] = useState('')
   const [temperature, setTemperature] = useState('')
-  const [temperatureExplanationAttackId, setTemperatureExplanationAttackId] = useState<string | null>(null)
   const [temperatureAttackId, setTemperatureAttackId] = useState(attackResultId)
+  const [createdTemperatureAttackId, setCreatedTemperatureAttackId] = useState<string | null>(null)
   if (temperatureAttackId !== attackResultId) {
     setTemperatureAttackId(attackResultId)
-    setTemperature('')
+    // Creating the first attack is not navigation; retain the next-send setting.
+    if (attackResultId !== createdTemperatureAttackId) setTemperature('')
+    setCreatedTemperatureAttackId(null)
   }
   const currentObjective = attackResultId ? objective : pendingObjective
   const runtime = useRuntime()
@@ -1015,6 +1018,7 @@ export default function ChatWindow({
     const converterMode = options?.requestConverterMode ?? 'shared'
     const pipelines = count > 1 ? { ...converters.pipelines } : undefined
     const operation: PendingSend = {
+      temperature,
       submissionId: generateClientId(),
       controller: new AbortController(),
       draftRevision: inputBoxRef.current?.getDraftRevision(),
@@ -1092,11 +1096,14 @@ export default function ChatWindow({
       if (textConversion && !originalValue.trim()) {
         originalPieces.unshift({ data_type: 'text', original_value: originalValue })
       }
-      const pieces = applyConvertedValues(
+      const pieces = withRequestTemperature(applyConvertedValues(
         originalPieces,
         pieceIds,
         conversions,
-      )
+      ), operation.temperature)
+      if (operation.temperature.trim() && !activeTarget.capabilities?.supports_temperature) {
+        throw new Error('This target does not support runtime temperature.')
+      }
       const requestConfigurations = count > 1 && converterMode === 'per_branch' ? buildRequestConverterConfigurations(
         buildConverterInputs(originalValue, attachments), pieceIds, pipelines ?? {}, conversions,
       ) : []
@@ -1108,11 +1115,7 @@ export default function ChatWindow({
       let currentActiveConversationId = activeConversationId
       if (!currentAttackResultId) {
         checkSendPreparation(operation, true)
-        let selectedTarget = activeTarget
-        if (temperature.trim()) {
-          selectedTarget = await buildTemperatureTarget(activeTarget, Number(temperature))
-          if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
-        }
+        const selectedTarget = activeTarget
         checkSendPreparation(operation, true)
         const createRequest: CreateAttackRequest = {
           target_registry_name: activeTarget.target_registry_name,
@@ -1127,6 +1130,7 @@ export default function ChatWindow({
         const createResponse = await attacksApi.createAttack(createRequest)
         if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
         currentAttackResultId = createResponse.attack_result_id
+        setCreatedTemperatureAttackId(createResponse.attack_result_id)
         currentConversationId = createResponse.conversation_id
         currentActiveConversationId = currentConversationId
         // Mark new ID in synchronous ref *before* triggering the state
@@ -1180,11 +1184,6 @@ export default function ChatWindow({
           request_converter_mode: converterMode,
         } : {}),
         ...(requestConfigurations.length ? { request_converter_configurations: requestConfigurations } : {}),
-      }
-      if (targetResolutionStatus === 'unbound' && temperature.trim()) {
-        const selectedTarget = await buildTemperatureTarget(activeTarget, Number(temperature))
-        if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
-        addMessageRequest.target_binding = selectedTarget.binding
       }
       checkSendPreparation(operation, false)
       submissionAttempted = true
@@ -1734,7 +1733,6 @@ export default function ChatWindow({
     : undefined
   const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
   const temperatureTarget = editDraft !== null ? editorTarget : activeTarget
-  const temperatureReadOnly = editDraft === null && Boolean(attackResultId) && targetResolutionStatus !== 'unbound'
   const unboundHistoryError = targetResolutionStatus === 'unbound' && activeTarget
     ? historyReplayDisabledReason(activeTarget, messages) : undefined
   const repeatDisabledReason = converters.repeatDisabledReason
@@ -1916,34 +1914,16 @@ export default function ChatWindow({
         </div>
         {temperatureTarget && (
           <Field label="Temperature:" orientation="horizontal" size="small" className={styles.temperatureField}
-            hint={temperatureReadOnly ? undefined
-              : temperatureTarget.supports_temperature_override
-                ? editDraft !== null ? 'Changes apply only to a new attack.' : undefined
-                : temperatureTarget.reconstruction_error ?? 'This target does not support a separate temperature setting.'}>
-            <Tooltip content="Temperature can only be modified in a new attack" relationship="description"
-              visible={temperatureReadOnly && temperatureExplanationAttackId === attackResultId}
-              onVisibleChange={(_, data) => {
-                setTemperatureExplanationAttackId(temperatureReadOnly && data.visible ? attackResultId : null)
-              }}>
-              <span
-                tabIndex={temperatureReadOnly && (isSending || isSavingEditor || !temperatureTarget.supports_temperature_override) ? 0 : undefined}
-                onPointerDownCapture={() => {
-                  if (temperatureReadOnly) setTemperatureExplanationAttackId(attackResultId)
-                }}>
-                <Input type="number" min={0} max={2} step={0.1} size="small" className={styles.temperatureInput}
-                  aria-label="Temperature"
-                  value={temperatureReadOnly
-                    ? String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? '')
-                    : editDraft !== null ? editDraft.temperature : temperature}
-                  placeholder={String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? 'Default')}
-                  readOnly={temperatureReadOnly}
-                  disabled={isSending || isSavingEditor || !temperatureTarget.supports_temperature_override}
-                  onChange={(_, data) => {
-                    if (editDraft !== null) editor.changeTemperature(data.value)
-                    else setTemperature(data.value)
-                  }} />
-              </span>
-            </Tooltip>
+            hint={editDraft !== null ? 'Finish editing history to set the next request temperature.'
+              : temperatureTarget.capabilities?.supports_temperature
+                ? 'Applies to future sends. Empty uses the target default.'
+                : 'This target does not support runtime temperature.'}>
+            <Input type="number" min={0} max={2} step={0.1} size="small" className={styles.temperatureInput}
+              aria-label="Temperature"
+              value={temperature}
+              placeholder={String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? 'Default')}
+              disabled={isSending || isSavingEditor || editDraft !== null || !temperatureTarget.capabilities?.supports_temperature}
+              onChange={(_, data) => setTemperature(data.value)} />
           </Field>
         )}
         <div className={styles.editActions}>
