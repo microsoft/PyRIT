@@ -115,6 +115,7 @@ class MessageToolCallScorer(TrueFalseScorer):
     with ``OtelToolCallScorer`` under an OR aggregator when trace evidence is also available.
     """
 
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable,)
     CONDITION_TYPE = ToolsCalled
 
     def _build_identifier(self) -> ComponentIdentifier:

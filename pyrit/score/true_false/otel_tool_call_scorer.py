@@ -52,6 +52,7 @@ def match_tools_called(
 class OtelToolCallScorer(TrueFalseScorer):
     """Score actual tool invocations, not requested calls or response claims."""
 
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable, TraceScorable)
     CONDITION_TYPE = ToolsCalled
 
     def __init__(self, *, source: ObservationSource[TraceScorable]) -> None:

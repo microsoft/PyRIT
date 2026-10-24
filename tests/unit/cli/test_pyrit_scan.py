@@ -8,6 +8,7 @@ Unit tests for the pyrit_scan CLI module (thin REST client).
 import logging
 from argparse import Namespace
 from datetime import UTC
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -1691,6 +1692,20 @@ class TestScenarioResults:
         out = capsys.readouterr().out
         assert "give me data" in out
         assert "Conversations" in out
+
+    def test_handle_results_rejects_unknown_view_without_falling_back_to_conversations(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID"])
+        unknown_view: Any = "future_view"
+        parsed.view = unknown_view
+        with patch("pyrit.cli._output.print_conversations_async", new_callable=AsyncMock) as mock_conversations:
+            rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 1
+        assert "future_view" in capsys.readouterr().out
+        mock_conversations.assert_not_awaited()
 
     def test_handle_results_full_prints_overview_then_transcripts(self, capsys):
         import asyncio

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -10,6 +11,7 @@ from pyrit.common.random_context import configure_random_seed
 from pyrit.converter import ImagePromptStyleConverter
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.registry import ConverterRegistry
 
 
 @pytest.fixture
@@ -69,6 +71,81 @@ def test_init_filter_path_custom_yaml(mock_target, tmp_path) -> None:
     )
     assert converter._filter_name == "custom_filter"
     assert "my_variation" in converter._variation_map
+
+
+def test_identifier_distinguishes_custom_filters_with_the_same_file_name(mock_target, tmp_path) -> None:
+    contents = {
+        "charcoal": "style_instructions: charcoal sketch\nvariations:\n  close_up: tight framing\n",
+        "neon": "style_instructions: neon cyberpunk\nvariations:\n  close_up: tight framing\n",
+        "charcoal_copy": "style_instructions: charcoal sketch\nvariations:\n  close_up: tight framing\n",
+    }
+    converters = {}
+    for folder, content in contents.items():
+        (tmp_path / folder).mkdir()
+        filter_file = tmp_path / folder / "gritty_documentary.yaml"
+        filter_file.write_text(content)
+        converters[folder] = ImagePromptStyleConverter(converter_target=mock_target, filter_path=filter_file)
+    built_in = ImagePromptStyleConverter(converter_target=mock_target, filter_name="gritty_documentary")
+
+    hashes = {name: converter.get_identifier().hash for name, converter in converters.items()}
+    assert hashes["charcoal"] != hashes["neon"]
+    assert hashes["charcoal"] == hashes["charcoal_copy"]
+    assert hashes["charcoal"] != built_in.get_identifier().hash
+    assert converters["charcoal"].get_identifier().params["filter_name"] == "gritty_documentary"
+    assert built_in.get_identifier().params.get("filter_hash") is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("variation_names", "variation"),
+    [
+        (("close_up", "CLOSE_UP"), "close_up"),
+        (("close_up", " close_up "), "close_up"),
+        (("close_up", "wide_shot"), None),
+    ],
+)
+async def test_identifier_distinguishes_variation_order_async(
+    mock_target: MagicMock,
+    tmp_path: Path,
+    variation_names: tuple[str, str],
+    variation: str | None,
+) -> None:
+    entries = [
+        f'  "{name}": {description}\n'
+        for name, description in zip(variation_names, ("tight framing", "wide framing"), strict=True)
+    ]
+    converters = []
+    for index, ordered_entries in enumerate((entries, list(reversed(entries)))):
+        folder = tmp_path / str(index)
+        folder.mkdir()
+        filter_file = folder / "custom_filter.yaml"
+        filter_file.write_text(
+            "style_instructions: charcoal sketch\nvariations:\n" + "".join(ordered_entries),
+            encoding="utf-8",
+        )
+        converters.append(
+            ImagePromptStyleConverter(
+                converter_target=mock_target,
+                filter_path=filter_file,
+                variation=variation,
+            )
+        )
+
+    system_prompts = []
+    try:
+        configure_random_seed(seed=42)
+        for converter in converters:
+            await converter.convert_async(prompt="person in a park")
+            system_prompts.append(mock_target.set_system_prompt_async.call_args.kwargs["system_prompt"])
+    finally:
+        configure_random_seed(seed=None)
+
+    assert system_prompts[0] != system_prompts[1]
+    assert converters[0].get_identifier().hash != converters[1].get_identifier().hash
+    registry = ConverterRegistry()
+    for converter in converters:
+        registry.instances.register(converter)
+    assert len(registry.instances.get_names()) == 2
 
 
 def test_init_filter_path_nonexistent_raises(mock_target) -> None:
