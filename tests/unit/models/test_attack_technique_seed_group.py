@@ -4,6 +4,7 @@
 """Tests for is_general_technique property and AttackTechniqueSeedGroup class."""
 
 from typing import assert_type
+from unittest.mock import patch
 
 import pytest
 
@@ -15,6 +16,140 @@ from pyrit.models.seeds import (
     SeedPrompt,
     SeedSimulatedConversation,
 )
+from pyrit.models.technique_edit import SimulationChanges
+
+
+@pytest.mark.parametrize(
+    "trailing",
+    [
+        SeedPrompt(value="Assistant turn", role="assistant", data_type="text", sequence=4, is_general_technique=True),
+        SeedPrompt(value="System turn", role="system", data_type="text", sequence=4, is_general_technique=True),
+        SeedPrompt(value="image.png", role="user", data_type="image_path", sequence=4, is_general_technique=True),
+    ],
+)
+def test_simulation_resize_preserves_unrelated_trailing_seed(trailing: SeedPrompt) -> None:
+    group = AttackTechniqueSeedGroup(
+        seeds=[
+            SeedSimulatedConversation(
+                num_turns=2, adversarial_chat_system_prompt=SeedPrompt(value="Simulate", data_type="text")
+            ),
+            trailing,
+        ]
+    )
+    before = group.model_dump()
+    assert group.fixed_final_user_prompt is None
+    reduced = group.with_simulation_changes(SimulationChanges(num_turns=1))
+    assert reduced.prompts[0].model_dump() == trailing.model_dump()
+    with pytest.raises(ValueError, match="overlaps"):
+        group.with_simulation_changes(SimulationChanges(num_turns=3))
+    with pytest.raises(ValueError, match="no editable fixed final user message"):
+        group.with_simulation_changes(SimulationChanges(final_user_message="Replacement"))
+    assert group.model_dump() == before
+
+
+@pytest.mark.parametrize("generated", [False, True])
+def test_simulation_resize_moves_only_unambiguous_fixed_final_text(generated: bool) -> None:
+    group = AttackTechniqueSeedGroup(
+        seeds=[
+            SeedSimulatedConversation(
+                sequence=2,
+                num_turns=2,
+                adversarial_chat_system_prompt=SeedPrompt(value="Simulate", data_type="text"),
+                next_message_system_prompt=SeedPrompt(value="Generate next", data_type="text") if generated else None,
+            ),
+            SeedPrompt(
+                value="Continue {{ objective }}",
+                role="user",
+                data_type="text",
+                sequence=7 if generated else 6,
+                parameters=["objective"],
+                metadata={"preserve": "final prompt"},
+                is_general_technique=True,
+            ),
+            SeedPrompt(value="Later", role="assistant", data_type="text", sequence=12, is_general_technique=True),
+        ]
+    )
+    before = group.model_dump()
+    assert group.fixed_final_user_prompt is (None if generated else group.prompts[0])
+    resized = group.with_simulation_changes(SimulationChanges(num_turns=1))
+    assert resized.prompts[0].sequence == (7 if generated else 4)
+    assert resized.prompts[0].value == group.prompts[0].value
+    assert resized.prompts[0].metadata == group.prompts[0].metadata
+    assert resized.prompts[0].parameters == ["objective"]
+    assert resized.prompts[1].model_dump() == group.prompts[1].model_dump()
+    assert group.model_dump() == before
+
+
+def test_simulation_resize_rejects_overlap_with_multipart_final_turn() -> None:
+    group = AttackTechniqueSeedGroup(
+        seeds=[
+            SeedSimulatedConversation(
+                num_turns=2, adversarial_chat_system_prompt=SeedPrompt(value="Simulate", data_type="text")
+            ),
+            SeedPrompt(value="First", role="user", data_type="text", sequence=4, is_general_technique=True),
+            SeedPrompt(value="Second", role="user", data_type="text", sequence=4, is_general_technique=True),
+        ]
+    )
+    resized = group.with_simulation_changes(SimulationChanges(num_turns=1))
+    assert [prompt.sequence for prompt in resized.prompts] == [4, 4]
+    with pytest.raises(ValueError, match="overlaps"):
+        group.with_simulation_changes(SimulationChanges(num_turns=3))
+    with pytest.raises(ValueError, match="no editable fixed final user message"):
+        group.with_simulation_changes(SimulationChanges(final_user_message="Replacement"))
+
+
+@pytest.mark.parametrize("fixed_final", [False, True])
+def test_invalid_final_message_is_rejected_before_simulation_rebuild(fixed_final: bool) -> None:
+    group = AttackTechniqueSeedGroup(
+        seeds=[
+            SeedSimulatedConversation(
+                num_turns=2, adversarial_chat_system_prompt=SeedPrompt(value="Simulate", data_type="text")
+            ),
+            *(
+                [SeedPrompt(value="continue", role="user", data_type="text", sequence=4, is_general_technique=True)]
+                if fixed_final
+                else []
+            ),
+        ]
+    )
+    before = group.model_dump()
+    message = "cannot be cleared" if fixed_final else "no editable fixed final user message"
+    with (
+        patch.object(SeedSimulatedConversation, "with_settings", side_effect=AssertionError("Rebuilt invalid edit")),
+        pytest.raises(ValueError, match=message),
+    ):
+        group.with_simulation_changes(SimulationChanges(num_turns=3, final_user_message=None))
+    assert group.model_dump() == before
+
+
+def test_final_message_text_and_sequence_are_copied_without_changing_source() -> None:
+    group = AttackTechniqueSeedGroup(
+        seeds=[
+            SeedSimulatedConversation(
+                num_turns=2, adversarial_chat_system_prompt=SeedPrompt(value="Simulate", data_type="text")
+            ),
+            SeedPrompt(
+                value="Original {{ objective }}",
+                role="user",
+                data_type="text",
+                sequence=4,
+                parameters=["objective"],
+                is_jinja_template=True,
+                is_general_technique=True,
+                metadata={"preserve": "final prompt"},
+            ),
+        ]
+    )
+    before = group.model_dump()
+    copied = group.with_simulation_changes(SimulationChanges(num_turns=3, final_user_message="Edited {{ objective }}"))
+    assert copied.fixed_final_user_prompt is not None
+    assert copied.fixed_final_user_prompt.value == "Edited {{ objective }}"
+    assert copied.fixed_final_user_prompt.sequence == 6
+    assert copied.fixed_final_user_prompt.parameters == ["objective"]
+    assert copied.fixed_final_user_prompt.is_jinja_template
+    assert copied.fixed_final_user_prompt.metadata == {"preserve": "final prompt"}
+    assert group.model_dump() == before
+
 
 # =============================================================================
 # is_general_technique on Seed / SeedPrompt

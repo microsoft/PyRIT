@@ -21,6 +21,9 @@ import type {
   TechniqueInstance,
   TechniqueListResponse,
   TechniqueTypeResponse,
+  TechniqueConfiguration,
+  TechniqueOverride,
+  TechniqueEditResponse,
   CreateTargetRequest,
   InitializerSettingsResponse,
   ListRegisteredInitializersResponse,
@@ -390,6 +393,10 @@ export const techniquesApi = {
     (await apiClient.get('/techniques/types')).data,
   createTechnique: async (request: CreateTechniqueRequest): Promise<TechniqueInstance> =>
     (await apiClient.post('/techniques', request)).data,
+  getConfiguration: async (name: string): Promise<TechniqueConfiguration> =>
+    (await apiClient.get(`/techniques/${encodeURIComponent(name)}/configuration`)).data,
+  validateEdit: async (request: TechniqueOverride): Promise<TechniqueEditResponse> =>
+    (await apiClient.post(`/techniques/${encodeURIComponent(request.source_name)}/edit`, request)).data,
 }
 
 export const convertersApi = {

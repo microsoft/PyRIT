@@ -2,8 +2,8 @@
 # Licensed under the MIT license.
 """Run documentation JavaScript tests with one Node startup per suite.
 
-The Node tests use fresh, time-limited VMs for behavior checks. The process
-deadline allows for slow CI startup, not slow JavaScript execution.
+The Node tests use fresh, time-limited VMs for behavior checks. The shared
+correctness watchdog allows for slow CI startup, not slow JavaScript execution.
 Local environments without Node skip these tests.
 """
 
@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -22,7 +23,7 @@ def test_docs_javascript(suite: str) -> None:
         ["node", "--test-reporter=tap", str(Path(__file__).with_name(suite))],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=TEST_WATCHDOG_SECONDS,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     summary = dict(re.findall(r"^# (tests|pass) (\d+)$", result.stdout, re.MULTILINE))

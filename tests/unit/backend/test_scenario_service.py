@@ -380,7 +380,10 @@ class TestAdversarialEstimateScope:
             assert result.estimated_attack_count == 0
             assert get_default_adversarial_target() is outer
 
-    async def test_concurrent_estimates_scope_introspection_and_preserve_default_cache_async(self) -> None:
+    @pytest.mark.parametrize("leading_request", ["first", "second"])
+    async def test_concurrent_estimates_scope_introspection_and_preserve_default_cache_async(
+        self, leading_request: str, estimate_watchdog_seconds: float
+    ) -> None:
         first, second, fallback = (MockPromptTarget() for _ in range(3))
         targets = {"first": first, "second": second, "adversarial_chat": fallback}
         target_registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
@@ -390,8 +393,10 @@ class TestAdversarialEstimateScope:
         registry.get_registered_class_metadata.return_value = metadata
         introspected: list[PromptTarget] = []
         estimated: list[PromptTarget] = []
+        entered: dict[str, PromptTarget] = {}
         default_estimate = ScenarioRunSizeEstimate(total_attack_count=0)
         arrived = asyncio.Event()
+        leading_finished = asyncio.Event()
 
         def construct() -> MagicMock:
             introspected.append(get_default_adversarial_target())
@@ -402,12 +407,19 @@ class TestAdversarialEstimateScope:
 
         async def estimate_async(**kwargs: object) -> ScenarioRunSizeEstimate:
             target = get_default_adversarial_target()
-            estimated.append(target)
-            if len(estimated) == 2:
+            name = next(name for name in ("first", "second") if targets[name] is target)
+            assert name not in entered
+            entered[name] = target
+            if len(entered) == 2:
                 arrived.set()
-            await asyncio.wait_for(arrived.wait(), timeout=5)
+            await asyncio.wait_for(arrived.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            if name != leading_request:
+                await asyncio.wait_for(leading_finished.wait(), timeout=TEST_WATCHDOG_SECONDS)
             assert get_default_adversarial_target() is target
-            return ScenarioRunSizeEstimate.unavailable(note="request-specific")
+            estimated.append(target)
+            if name == leading_request:
+                leading_finished.set()
+            return ScenarioRunSizeEstimate.unavailable(note=name)
 
         default_scenario = MagicMock(spec=Scenario)
         default_scenario.get_default_run_size_estimate_async = AsyncMock(return_value=default_estimate)
@@ -422,7 +434,7 @@ class TestAdversarialEstimateScope:
             service._estimate_semaphore = asyncio.Semaphore(2)
             before = await service.get_scenario_async(scenario_name=metadata.registry_name)
             cache_before = dict(service._estimate_cache)
-            await asyncio.gather(
+            results = await asyncio.gather(
                 *(
                     service.estimate_scenario_run_size_async(
                         scenario_name=metadata.registry_name,
@@ -432,7 +444,9 @@ class TestAdversarialEstimateScope:
                 )
             )
             assert introspected == []
-            assert estimated == [first, second]
+            assert entered == {"first": first, "second": second}
+            assert estimated == ([first, second] if leading_request == "first" else [second, first])
+            assert [result.note for result in results] == ["first", "second"]
             assert get_default_adversarial_target() is fallback
             assert dict(service._estimate_cache) == cache_before
             assert await service.get_scenario_async(scenario_name=metadata.registry_name) == before

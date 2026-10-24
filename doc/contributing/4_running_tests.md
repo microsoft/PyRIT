@@ -58,14 +58,30 @@ cancellation when a matrix job has already failed. The CodeQL job needs
 Fork PRs use native CodeQL publishing and GitHub's read-only fork token policy.
 
 Run the deterministic, offline regression coverage with Node.js installed.
-The pytest entry point runs the Node scenario tests and checks workflow wiring:
+The pytest entry point runs the Node scenario tests and checks workflow wiring.
+It runs `node:test` in a single Node process, with the shared 300-second correctness
+watchdog to allow for startup and filesystem delays on busy Windows runners.
+The watchdog is a hang backstop, not a performance requirement; API calls and
+polling delays remain mocked.
 
 ```bash
 uv run --frozen pytest tests/unit/build_scripts/test_codeql_merge_group.py -q
 ```
 
 The helper's scenarios can also run directly with
-`node --test tests/unit/build_scripts/test_codeql_merge_group.cjs`.
+`node --test-reporter=tap tests/unit/build_scripts/test_codeql_merge_group.cjs`.
+
+The documentation JavaScript suites in `test_docs_javascript.py` also use one
+Node process per suite and the shared correctness watchdog. Their per-VM
+execution limits remain unchanged.
+
+The Bash deployment helper in `test_code_deployment.py` uses the same shared
+watchdog for subprocess completion. Readiness and rollback tests retain their
+simulated operation deadlines, polling assertions, and signal exit-code checks.
+
+The seeded-converter worker-thread test also uses the shared watchdog for its
+two-worker barrier. It still requires distinct random generators and identical
+seeded draws; worker startup speed is not part of that contract.
 
 ## Running a subset while iterating
 
@@ -84,6 +100,10 @@ release any test-controlled waits and join their tasks before removing mocks or
 disposing fixtures, including when a watchdog expires. When waiting for a task to
 signal readiness, also watch for that task finishing so an early exception is not
 hidden by the readiness timeout.
+The analytics quick-lane capacity test observes request admission and completion
+with these shared watchdogs, then releases its reader gate and drains all requests
+before restoring mocks. Its 503/Retry-After and independent-execution assertions
+remain unchanged.
 Use `wait_for_event_async` to observe readiness and `wait_for_completion_async` to
 observe the outcome, including failures after readiness. Observation timeouts do
 not cancel owned work. Release gates before calling `settle_tasks_async` in `finally`.
@@ -93,6 +113,14 @@ shared `TEST_WATCHDOG_SECONDS` backstop in `tests/unit/async_utils.py`. Discover
 timeout coverage expires the real cancellation path only after the request starts.
 Event-controlled analytics expiry tests freeze both deadline clocks so floating-point
 rounding cannot turn a valid query budget into a failed assertion.
+
+Backend manual-send completion and first-request analytics correctness tests also
+use the shared watchdog. Manual sends are polled until a terminal snapshot, including
+finalization. Expiring the test's wait does not cancel the send; its lifecycle owner
+still drains pending work before mocks and memory close. Explicit zero-timeout tests
+check this ownership without requiring the send to finish quickly.
+The async and repeated manual-send test classes use 600-second whole-test backstops
+so the 300-second completion watchdog can expire and allow cleanup before pytest stops the test.
 
 The target-type route test starts target metadata discovery, waits for a signal
 that it has started, and keeps it paused while checking that `/api/health`
