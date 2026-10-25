@@ -274,6 +274,11 @@ Conversation-selection helpers check the toggle's `aria-expanded` state, not
 drawer visibility during an animation. Use accessible row clicks and wait for
 the destination URL and transcript before asserting its contents.
 
+Converter Registry viewport checks use **End** to reach the last converter, then
+select it with a click. They check user actions, not pixel positions in each
+animation frame. Do not use programmatic scrolling that can conflict with the
+dropdown's keyboard focus.
+
 ```bash
 # Seeded integration (no credentials needed)
 npx playwright test --project seeded
