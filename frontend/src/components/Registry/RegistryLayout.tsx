@@ -6,6 +6,7 @@ import { useRegistryLayoutStyles } from './Registry.styles'
 const REGISTRY_TABS = [
   'targets',
   'converters',
+  'scorers',
   'techniques',
   'scenario-presets',
   'scenario-suites',
@@ -39,6 +40,7 @@ export default function RegistryLayout() {
       >
         <Tab value="targets">Targets</Tab>
         <Tab value="converters">Converters</Tab>
+        <Tab value="scorers">Scorers</Tab>
         <Tab value="techniques">Techniques</Tab>
         <Tab value="scenario-presets">Scenario presets</Tab>
         <Tab value="scenario-suites">Suites</Tab>

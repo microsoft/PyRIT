@@ -6,6 +6,7 @@ import pathlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import wait_for_completion_async
 from unit.mocks import MockPromptTarget, get_mock_scorer_identifier
 
 from pyrit.common.path import DATASETS_PATH
@@ -161,13 +162,18 @@ async def test_execute_async_preserves_score_attribution_and_query_limit_async(
             return_value=ConverterResult(output_text="{{ prompt }}", output_type="text"),
         ) as convert,
     ):
-        result = await asyncio.wait_for(
+        running = asyncio.create_task(
             generator.execute_async(
                 prompts=list(values_by_prompt), prompt_templates=["{{ prompt }}"], max_query_limit=max_queries
-            ),
-            # Keep the real-time watchdog budget unchanged by the simulated acquisition delay.
-            timeout=10 + acquisition_clock_jump,
+            )
         )
+        try:
+            result = await wait_for_completion_async(future=running)
+        finally:
+            scorer._second_scored.set()
+            if not running.done():
+                running.cancel()
+            await wait_for_completion_async(future=asyncio.gather(running, return_exceptions=True))
 
     assert send.await_count == result.total_queries == max_queries
     assert convert.await_count == 2

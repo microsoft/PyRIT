@@ -14,6 +14,7 @@ from pyrit.scenario.core.technique_tokens import resolve_technique_tokens
 if TYPE_CHECKING:
     from pyrit.converter import Converter
     from pyrit.models.scenario_dataset import ScenarioDatasetRequest
+    from pyrit.models.technique_edit import TechniqueOverride
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario import Scenario
 
@@ -89,6 +90,7 @@ class ScenarioConfigurationResolver:
         scenario_class: type[Scenario],
         objective_target: Any | None = None,
         techniques: list[str] | None = None,
+        technique_override: TechniqueOverride | None = None,
         datasets: ScenarioDatasetRequest | None = None,
         include_baseline: bool | None = None,
         max_concurrency: int | None = None,
@@ -120,7 +122,7 @@ class ScenarioConfigurationResolver:
 
         if datasets is not None:
             resolved["dataset_overrides"] = datasets
-        if not techniques:
+        if not techniques and technique_override is None:
             return resolved
 
         try:
@@ -140,6 +142,20 @@ class ScenarioConfigurationResolver:
             resolved["scenario_techniques"] = technique_enums
             if technique_converters:
                 resolved["technique_converters"] = technique_converters
+
+        if technique_override is not None:
+            from pyrit.backend.services.technique_edit_service import TechniqueEditService
+
+            if scenario_class.MAX_CONCRETE_TECHNIQUES != 1 or "local_technique_factory" not in {
+                parameter.name for parameter in scenario_class.supported_parameters()
+            }:
+                raise ValueError("This scenario does not support run-local technique editing")
+            selected = introspection_instance._technique_class.resolve(
+                resolved.get("scenario_techniques"), default=introspection_instance._technique_class.default()
+            )
+            if len(selected) != 1 or selected[0].value != technique_override.source_name:
+                raise ValueError("A technique edit requires exactly its one selected concrete source technique")
+            resolved["local_technique_factory"] = TechniqueEditService.resolve(technique_override)
 
         return resolved
 

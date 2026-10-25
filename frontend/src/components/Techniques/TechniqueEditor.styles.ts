@@ -2,7 +2,7 @@ import { makeStyles, tokens } from '@fluentui/react-components'
 
 import { mobileTouchTargetHeight, NARROW_VIEWPORT_QUERY } from '@/styles/touchTargets'
 
-export const useCreateTechniqueDialogStyles = makeStyles({
+export const useTechniqueEditorStyles = makeStyles({
   surface: {
     width: '100%', minWidth: 0, maxWidth: '37.5rem', maxHeight: '90vh',
     [NARROW_VIEWPORT_QUERY]: {
@@ -15,5 +15,7 @@ export const useCreateTechniqueDialogStyles = makeStyles({
     maxWidth: '100%', gap: tokens.spacingVerticalL,
   },
   select: { width: '100%', minWidth: 0, '& select': { width: '100%', minWidth: 0 } },
+  section: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
+  prompt: { minHeight: '7rem' },
   action: { ...mobileTouchTargetHeight },
 })

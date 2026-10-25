@@ -18,7 +18,7 @@ import math
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, assert_never, cast, get_args, get_origin
 from uuid import UUID
 
 import aiofiles
@@ -928,7 +928,7 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
                 attack_result_ids=parsed_args.attack_result_ids,
                 limit=limit,
             )
-        else:
+        elif view is ScenarioResultView.CONVERSATIONS:
             await _output.print_conversations_async(
                 result=result,
                 client=client,
@@ -938,6 +938,8 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
                 attack_result_ids=parsed_args.attack_result_ids,
                 limit=limit,
             )
+        else:
+            assert_never(view)
     except Exception as exc:
         _print_cli_exception(exc=exc)
         return 1

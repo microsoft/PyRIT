@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args, get_o
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, TypeAdapter, model_validator
 
+from pyrit.models.code_execution import (  # noqa: TC001 (runtime-required by Pydantic)
+    _ProgramInvocation,
+    _RuntimeProfileName,
+)
 from pyrit.models.score._trace_validation import ToolName  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.score.surface import SurfaceMatch  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.score.text_matcher import TextMatcher  # noqa: TC001 (runtime-required by Pydantic)
@@ -240,6 +244,65 @@ class ContentWritten(Condition):
     require_content_change: bool = False
 
 
+class ProgramResult(BaseModel):
+    """
+    The expected result of one invocation.
+
+    ``exit_code`` defaults to 0; ``None`` accepts any exit code from a program that exited on
+    its own. A stream with no matcher is not checked.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    exit_code: int | None = 0
+    stdout: TextMatcher | None = None
+    stderr: TextMatcher | None = None
+
+
+class ProgramCase(BaseModel):
+    """One invocation and the result it is expected to produce."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    invocation: _ProgramInvocation = Field(default_factory=_ProgramInvocation)
+    expected: ProgramResult = Field(default_factory=ProgramResult)
+
+
+class ProgramBehaves(Condition):
+    """
+    The program produces the expected result for every case.
+
+    The condition carries test stimuli and assertions together, because both vary by dataset
+    row. A scorer splits them before acquisition: the runtime profile and each invocation go to
+    the source, and each expected result stays with the scorer's matcher. A run that times out
+    or exceeds a resource limit fails its case.
+    """
+
+    condition_type: Literal["program_behaves"] = "program_behaves"
+    runtime_profile_name: _RuntimeProfileName
+    cases: tuple[ProgramCase, ...]
+
+    @model_validator(mode="after")
+    def _validate_cases(self) -> ProgramBehaves:
+        """
+        Require at least one case.
+
+        Returns:
+            ProgramBehaves: The validated condition.
+
+        Raises:
+            ValueError: If there are no cases.
+        """
+        if not self.cases:
+            raise ValueError("ProgramBehaves requires at least one case.")
+        return self
+
+    @property
+    def invocations(self) -> tuple[_ProgramInvocation, ...]:
+        """The stimuli of every case, in case order, without their expected results."""
+        return tuple(case.invocation for case in self.cases)
+
+
 def _parse_conditions(value: Any) -> Any:
     """
     Rebuild discriminator-tagged conditions without losing subclass fields.
@@ -263,8 +326,11 @@ class _ConditionTupleSchema:
     def __get_pydantic_json_schema__(self, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
         """Return the tuple schema with a discriminated union of concrete conditions."""
         schema = handler(core_schema)
+        # A condition that uses one nested model in several fields is emitted as a reference to its
+        # definition; resolve it so every entry describes its fields inline.
         condition_schemas = [
-            handler(TypeAdapter(condition_class).core_schema) for _, condition_class in sorted(_CONDITION_TYPES.items())
+            handler.resolve_ref_schema(handler(TypeAdapter(condition_class).core_schema))
+            for _, condition_class in sorted(_CONDITION_TYPES.items())
         ]
         for condition_schema in condition_schemas:
             required_fields = condition_schema.setdefault("required", [])
