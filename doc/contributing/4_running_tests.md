@@ -78,9 +78,6 @@ execution limits remain unchanged.
 The Bash deployment helper in `test_code_deployment.py` uses the same shared
 watchdog for subprocess completion. Readiness and rollback tests retain their
 simulated operation deadlines, polling assertions, and signal exit-code checks.
-The two cancellation rollback tests run on Linux and macOS but skip Windows.
-They require POSIX signal handling, which is not reliable in Git Bash on Windows.
-The other deployment tests still run on Windows.
 
 The seeded-converter worker-thread test also uses the shared watchdog for its
 two-worker barrier. It still requires distinct random generators and identical
