@@ -158,7 +158,7 @@ in place when evaluation rules evolve: add a new versioned column, backfill,
 and explicit selection policy instead of silently changing historical groups.
 
 v1 had one pre-release correction before it shipped in a release. Targets
-without a model name (HTTP, Gandalf and other non-LLM targets) carry no
+without a model name (HTTP and other non-LLM targets) carry no
 behavioral settings, so the original rules merged every such target of a
 class into one group. v1 now keys a target with no nonempty
 `underlying_model_name` or `model_name` by its content hash, after unwrapping

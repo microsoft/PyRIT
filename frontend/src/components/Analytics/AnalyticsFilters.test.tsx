@@ -4,16 +4,23 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { analyticsApi } from '@/services/api'
-import { ANALYTICS_OPERATION_FILTER, makeAnalyticsFacets } from '@/test-utils/analyticsFixtures'
-import type { AttackAnalyticsFacets, AttackAnalyticsFilters } from '@/types'
+import { analyticsApi, operationsApi } from '@/services/api'
+import {
+  ANALYTICS_NIGHTLY_ID, ANALYTICS_OPERATION_FILTER, ANALYTICS_OPERATIONS, makeAnalyticsFacets,
+} from '@/test-utils/analyticsFixtures'
+import type { AttackAnalyticsFacets, AttackAnalyticsFilters, OperationListResponse } from '@/types'
 
 import AnalyticsFilters from './AnalyticsFilters'
 
 jest.mock('@/services/api', () => ({
   analyticsApi: { facets: jest.fn() },
+  operationsApi: { list: jest.fn() },
 }))
 const mockFacets = jest.mocked(analyticsApi.facets)
+const mockList = jest.mocked(operationsApi.list)
+
+const OTHER_OPERATION_ID = '0b6f2d8e-8a0e-4b8c-9a51-3f3d2b7c9e10'
+const LEGACY_HINT = /Activity saved with only an Operation name is listed separately as \(legacy name\)\./
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
@@ -37,6 +44,7 @@ describe('AnalyticsFilters', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockFacets.mockReset().mockResolvedValue(makeAnalyticsFacets())
+    mockList.mockReset().mockResolvedValue(ANALYTICS_OPERATIONS)
   })
   afterEach(() => { jest.useRealTimers() })
 
@@ -63,7 +71,7 @@ describe('AnalyticsFilters', () => {
     render(<TestWrapper><FiltersHarness /></TestWrapper>)
     await user.click(screen.getByRole('button', { name: 'Operation' }))
     await act(async () => { await jest.advanceTimersByTimeAsync(250) })
-    await user.click(screen.getByRole('checkbox', { name: 'Unknown' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Unknown (legacy name)' }))
     await user.click(screen.getByRole('checkbox', { name: 'Unknown (missing metadata)' }))
     mockFacets.mockResolvedValue(makeAnalyticsFacets({ items: [] }))
     await user.type(screen.getByLabelText('Search values'), 'does-not-match')
@@ -72,11 +80,11 @@ describe('AnalyticsFilters', () => {
     expect(mockFacets).toHaveBeenCalledTimes(2)
     expect(mockFacets).toHaveBeenLastCalledWith(expect.objectContaining({ search: 'does-not-match', offset: 0 }), expect.any(AbortSignal))
     const selected = screen.getByRole('group', { name: 'Selected filter values' })
-    expect(within(selected).getByRole('checkbox', { name: 'Unknown' })).toBeChecked()
+    expect(within(selected).getByRole('checkbox', { name: 'Unknown (legacy name)' })).toBeChecked()
     expect(within(selected).getByRole('checkbox', { name: 'Unknown (missing metadata)' })).toBeChecked()
     await user.click(screen.getByRole('button', { name: 'Apply filter' }))
     expect(screen.getByLabelText('Applied filters')).toHaveTextContent('"kind":"missing","value":null')
-    expect(screen.getByLabelText('Applied filters')).toHaveTextContent('"kind":"value","value":"Unknown"')
+    expect(screen.getByLabelText('Applied filters')).toHaveTextContent('"kind":"legacy_operation_name","value":"Unknown"')
   })
 
   it('should show a fresh read when returning to an earlier facet search', async () => {
@@ -146,14 +154,14 @@ describe('AnalyticsFilters', () => {
     const filters: AttackAnalyticsFilters = {
       dimensions: [
         ANALYTICS_OPERATION_FILTER,
-        { ...ANALYTICS_OPERATION_FILTER, values: [{ kind: 'value', value: 'Other operation' }] },
+        { ...ANALYTICS_OPERATION_FILTER, values: [{ kind: 'value', value: OTHER_OPERATION_ID }] },
       ],
       outcomes: ['failure'],
       updated_after: '2026-01-01T00:00:00Z',
     }
     render(<TestWrapper><FiltersHarness initialFilters={filters} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: 'Operation (ANY): Nightly' }))
-    await user.click(await screen.findByRole('checkbox', { name: 'Unknown' }))
+    await user.click(await screen.findByRole('button', { name: 'Operation (ANY): Nightly' }))
+    await user.click(await screen.findByRole('checkbox', { name: 'Unknown (legacy name)' }))
     expect(mockFacets).toHaveBeenCalledWith(
       expect.objectContaining({ dimension: { name: 'operation' }, filters }),
       expect.any(AbortSignal),
@@ -162,7 +170,7 @@ describe('AnalyticsFilters', () => {
     expect(screen.getByLabelText('Applied filters')).toHaveTextContent(JSON.stringify({
       ...filters,
       dimensions: [
-        { ...ANALYTICS_OPERATION_FILTER, values: [...ANALYTICS_OPERATION_FILTER.values, { kind: 'value', value: 'Unknown' }] },
+        { ...ANALYTICS_OPERATION_FILTER, values: [...ANALYTICS_OPERATION_FILTER.values, { kind: 'legacy_operation_name', value: 'Unknown' }] },
         filters.dimensions[1],
       ],
     }))
@@ -217,5 +225,77 @@ describe('AnalyticsFilters', () => {
     expect(signal?.aborted).toBe(true)
     await act(async () => { resolveFirst?.(makeAnalyticsFacets()) })
     expect(screen.queryByRole('checkbox', { name: 'Nightly' })).not.toBeInTheDocument()
+  })
+
+  it('should label a restored Operation ID chip with its name', async () => {
+    const user = userEvent.setup()
+    const filters: AttackAnalyticsFilters = { dimensions: [ANALYTICS_OPERATION_FILTER], outcomes: [] }
+    const { rerender } = render(<TestWrapper><FiltersHarness key="found" initialFilters={filters} /></TestWrapper>)
+    await user.click(await screen.findByRole('button', { name: 'Operation (ANY): Nightly' }))
+    expect(within(screen.getByRole('group', { name: 'Selected filter values' })).getByRole('checkbox', { name: 'Nightly' })).toBeChecked()
+    expect(mockList).toHaveBeenCalledTimes(1)
+
+    mockList.mockRejectedValueOnce(new Error('Operations unavailable'))
+    rerender(<TestWrapper><FiltersHarness key="failed" initialFilters={filters} /></TestWrapper>)
+    await waitFor(() => { expect(mockList).toHaveBeenCalledTimes(2) })
+    await act(async () => { await new Promise((resolve: (value: unknown) => void) => { setTimeout(resolve, 0) }) })
+    expect(screen.getByRole('button', { name: `Operation (ANY): ${ANALYTICS_NIGHTLY_ID}` })).toBeInTheDocument()
+    expect(screen.getByLabelText('Applied filters')).toHaveTextContent(JSON.stringify(filters))
+  })
+
+  it('should name a restored Operation ID chip applied before its lookup resolves', async () => {
+    const user = userEvent.setup()
+    let resolveList: ((value: OperationListResponse) => void) | undefined
+    mockList.mockReturnValueOnce(new Promise<OperationListResponse>((resolve: (value: OperationListResponse) => void) => {
+      resolveList = resolve
+    }))
+    render(<TestWrapper><FiltersHarness initialFilters={{ dimensions: [ANALYTICS_OPERATION_FILTER], outcomes: [] }} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: `Operation (ANY): ${ANALYTICS_NIGHTLY_ID}` }))
+    expect(within(screen.getByRole('group', { name: 'Selected filter values' }))
+      .getByRole('checkbox', { name: ANALYTICS_NIGHTLY_ID })).toBeChecked()
+    await screen.findByRole('checkbox', { name: 'Unknown (legacy name)' })
+    await user.click(screen.getByRole('button', { name: 'Apply filter' }))
+    expect(screen.getByRole('button', { name: `Operation (ANY): ${ANALYTICS_NIGHTLY_ID}` })).toBeInTheDocument()
+    await act(async () => { resolveList?.(ANALYTICS_OPERATIONS) })
+    expect(await screen.findByRole('button', { name: 'Operation (ANY): Nightly' })).toBeInTheDocument()
+    expect(mockList).toHaveBeenCalledTimes(1)
+  })
+
+  it('should explain legacy names only in the Operation editor', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><FiltersHarness /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Operation' }))
+    expect(screen.getByText(LEGACY_HINT)).toBeInTheDocument()
+    await screen.findByRole('checkbox', { name: 'Nightly' })
+    await user.click(screen.getByRole('button', { name: 'Operator' }))
+    expect(screen.getByText(/Selected values are alternatives within this filter/)).toBeInTheDocument()
+    expect(screen.queryByText(LEGACY_HINT)).not.toBeInTheDocument()
+    await screen.findByRole('checkbox', { name: 'Nightly' })
+  })
+
+  it('should label and apply a legacy Operation name once', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><FiltersHarness initialFilters={{
+      dimensions: [{
+        dimension: { name: 'operation' },
+        values: [{ kind: 'legacy_operation_name', value: 'Retired' }, { kind: 'legacy_operation_name', value: '  ' }],
+        match_mode: 'any',
+      }],
+      outcomes: [],
+    }} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Operation (ANY): Retired (legacy name), (Blank) (legacy name)' }))
+    const selected = screen.getByRole('group', { name: 'Selected filter values' })
+    expect(within(selected).getByRole('checkbox', { name: 'Retired (legacy name)' })).toBeChecked()
+    expect(within(selected).getByRole('checkbox', { name: '(Blank) (legacy name)' })).toBeChecked()
+    await user.click(await screen.findByRole('checkbox', { name: 'Unknown (legacy name)' }))
+    expect(screen.getAllByText('Unknown (legacy name)')).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'Apply filter' }))
+    expect(screen.getByLabelText('Applied filters')).toHaveTextContent('"kind":"legacy_operation_name","value":"Unknown"')
+    expect(screen.getByLabelText('Applied filters'))
+      .toHaveTextContent('"kind":"legacy_operation_name","value":"  "', { normalizeWhitespace: false })
+    expect(screen.getByRole('button', {
+      name: 'Operation (ANY): Retired (legacy name), (Blank) (legacy name), Unknown (legacy name)',
+    })).toBeInTheDocument()
+    expect(mockList).not.toHaveBeenCalled()
   })
 })

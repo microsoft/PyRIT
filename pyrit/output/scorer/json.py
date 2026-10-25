@@ -55,7 +55,7 @@ class JsonScorerPrinter(ScorerPrinterBase):
             metrics = self._get_harm_metrics(scorer_identifier=scorer_identifier, harm_category=harm_category)
         else:
             metrics = self._get_objective_metrics(scorer_identifier=scorer_identifier)
-        info["metrics"] = _metrics_to_dict(metrics)
+        info["metrics"] = scorer_metrics_to_dict(metrics)
         return info
 
     async def render_async(self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None) -> str:
@@ -138,7 +138,7 @@ class JsonScorerMemoryPrinter(JsonScorerPrinter):
         return find_harm_metrics_by_eval_hash(eval_hash=eval_hash, harm_category=harm_category)
 
 
-def _metrics_to_dict(metrics: Any | None) -> dict[str, Any] | None:
+def scorer_metrics_to_dict(metrics: Any | None) -> dict[str, Any] | None:
     """
     Convert a scorer metrics dataclass to a JSON-safe dict.
 
@@ -154,10 +154,26 @@ def _metrics_to_dict(metrics: Any | None) -> dict[str, Any] | None:
     """
     if metrics is None:
         return None
-    data = dataclasses.asdict(metrics)
-    data.pop("trial_scores", None)
+    data = {
+        field.name: getattr(metrics, field.name)
+        for field in dataclasses.fields(metrics)
+        if field.name != "trial_scores" and not field.name.startswith("_")
+    }
     # NaN / Infinity aren't valid JSON, so map non-finite floats to null for strict parsers.
     for key, value in data.items():
         if isinstance(value, float) and not math.isfinite(value):
             data[key] = None
     return data
+
+
+def format_scorer_type(scorer_identifier: ComponentIdentifier) -> str:
+    """
+    Render scorer wrappers without including unrelated target or source children.
+
+    Returns:
+        The class name with its ordered, recursively nested sub-scorer types.
+    """
+    children = scorer_identifier.get_child_list("sub_scorers")
+    if not children:
+        return scorer_identifier.class_name
+    return f"{scorer_identifier.class_name}({', '.join(format_scorer_type(child) for child in children)})"

@@ -6,7 +6,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
-from unit.mocks import make_scenario_result
+from unit.mocks import make_scenario_result, make_sequential_attack_results
 
 from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioResult
 from pyrit.output.scenario_result.json import (
@@ -163,6 +163,22 @@ async def test_attacks_empty(printer):
     assert payload["shown"] == 0
 
 
+async def test_attacks_leave_out_orchestration_envelope_and_label_children_by_technique(printer):
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="adaptive_text_airt_leakage::abc",
+        envelope_outcome=AttackOutcome.SUCCESS,
+        child_outcomes=[AttackOutcome.FAILURE, AttackOutcome.SUCCESS],
+        child_technique_names=["crescendo", "role_play"],
+    )
+    result = _scenario_result(attack_results={"adaptive_text_airt_leakage::abc": [*children, envelope]})
+
+    payload = json.loads(await printer.render_async(result, view="attacks"))
+
+    assert payload["total"] == 2
+    assert [entry["id"] for entry in payload["attacks"]] == [child.attack_result_id for child in children]
+    assert [entry["technique"] for entry in payload["attacks"]] == ["crescendo", "role_play"]
+
+
 # --- conversations assembly ---
 
 
@@ -204,6 +220,19 @@ def test_build_conversations_empty_entries():
     result = _scenario_result()
     payload = json.loads(build_scenario_conversations_document(result=result, entries=[]))
     assert payload["conversations"] == []
+
+
+def test_build_conversations_labels_attack_by_recorded_technique_name():
+    attack = AttackResult(
+        conversation_id=str(uuid.uuid4()),
+        objective="obj-1",
+        metadata={AttackResult.TECHNIQUE_NAME_METADATA_KEY: "crescendo"},
+    )
+    result = _scenario_result(attack_results={"adaptive::abc": [attack]})
+
+    payload = json.loads(build_scenario_conversations_document(result=result, entries=[("adaptive::abc", attack, [])]))
+
+    assert payload["conversations"][0]["technique"] == "crescendo"
 
 
 # --- memory leaf ---

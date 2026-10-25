@@ -66,6 +66,10 @@ async function mockDatasetCatalog(page: Page): Promise<void> {
       await route.fulfill(body({ items: [] }));
       return;
     }
+    if (apiPath === "/scorers") {
+      await route.fulfill(body({ items: [], pagination: { has_more: false } }));
+      return;
+    }
     if (apiPath === "/labels") {
       await route.fulfill(body({ source: "attacks", labels: {} }));
       return;
@@ -332,6 +336,10 @@ async function mockDatasetExamples(
       return;
     }
 
+    if (apiPath === "/scorers") {
+      await route.fulfill(body({ items: [], pagination: { has_more: false } }));
+      return;
+    }
     throw new Error(`Unhandled dataset example request: ${route.request().method()} ${apiPath}`);
   });
   return seedRequests;

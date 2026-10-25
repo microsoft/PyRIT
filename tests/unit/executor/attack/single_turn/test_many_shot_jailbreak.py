@@ -188,6 +188,27 @@ class TestManyShotJailbreakAttackInitialization:
         with pytest.raises(ValueError, match="Many shot examples must be provided"):
             ManyShotJailbreakAttack(objective_target=mock_objective_target, many_shot_examples=[])
 
+    @pytest.mark.parametrize("example_count", [0, -1, -3, True, 2.5, "5", None])
+    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.SeedPrompt.from_yaml_file")
+    def test_init_rejects_example_count_that_is_not_a_positive_integer(
+        self, mock_from_yaml, mock_objective_target, mock_template, sample_many_shot_examples, example_count
+    ):
+        """A negative count would slice examples off the end instead of selecting from the start."""
+        mock_from_yaml.return_value = mock_template
+
+        with pytest.raises(ValueError, match="example_count must be a positive integer"):
+            ManyShotJailbreakAttack(
+                objective_target=mock_objective_target,
+                example_count=example_count,
+                many_shot_examples=sample_many_shot_examples,
+            )
+
+    @pytest.mark.parametrize("example_count", [0, -1, True, "5"])
+    def test_validate_constructor_parameters_rejects_invalid_example_count(self, example_count):
+        """Deferred construction (e.g. the REST technique API) must reject the same counts."""
+        with pytest.raises(ValueError, match="example_count must be a positive integer"):
+            ManyShotJailbreakAttack.validate_constructor_parameters({"example_count": example_count})
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestManyShotJailbreakAttackParamsType:

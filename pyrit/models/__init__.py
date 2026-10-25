@@ -62,8 +62,11 @@ if TYPE_CHECKING:
         ScenarioRunSizeEstimateRequest,
         ScenarioRunSizeEstimateStatus,
         ScenarioRunSizeFactor,
+        ScenarioSuite,
+        ScenarioSuiteEntry,
         ScenarioTechniqueSummary,
         StoredPreset,
+        StoredScenarioSuite,
     )
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
@@ -449,6 +452,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDatasetSummary": "pyrit.models.catalog",
     "ScenarioDefaultRunSizeEstimate": "pyrit.models.catalog",
     "ScenarioPreset": "pyrit.models.catalog",
+    "ScenarioSuite": "pyrit.models.catalog",
+    "ScenarioSuiteEntry": "pyrit.models.catalog",
     "ScenarioProducerCategoryCounts": "pyrit.models.catalog",
     "ScenarioProducerCounts": "pyrit.models.catalog",
     "ScenarioRunListItem": "pyrit.models.catalog",
@@ -512,6 +517,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "snake_case_to_class_name": "pyrit.models.identifiers",
     "sort_message_pieces": "pyrit.models.messages.message_piece",
     "StoredPreset": "pyrit.models.catalog",
+    "StoredScenarioSuite": "pyrit.models.catalog",
     "StrategyResult": "pyrit.models.results.strategy_result",
     "StrategyResultT": "pyrit.models.results.strategy_result",
     "StructuredParameterValue": "pyrit.models.parameter",

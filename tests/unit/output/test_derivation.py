@@ -4,7 +4,7 @@
 import uuid
 from types import SimpleNamespace
 
-from unit.mocks import make_scenario_result
+from unit.mocks import make_scenario_result, make_sequential_attack_results
 
 from pyrit.analytics import compute_outcome_statistics
 from pyrit.common.utils import to_sha256
@@ -25,6 +25,7 @@ from pyrit.models import (
 from pyrit.output._derivation import (
     GroupStatistics,
     attack_score_display,
+    attack_technique_label,
     resolve_scorer_name,
     resolve_target_info,
     scenario_overview,
@@ -197,6 +198,52 @@ def test_select_attacks_filters_by_id():
     result = make_scenario_result(attack_results={"tech": [a1, a2]})
     selected = select_attacks(result, attack_result_ids=[a2.attack_result_id])
     assert selected == [("tech", a2)]
+
+
+def test_select_attacks_leaves_out_orchestration_envelopes():
+    first_envelope, first_children = make_sequential_attack_results(
+        atomic_attack_name="adaptive",
+        envelope_outcome=AttackOutcome.SUCCESS,
+        child_outcomes=[AttackOutcome.FAILURE, AttackOutcome.SUCCESS],
+        objective="o1",
+    )
+    second_envelope, second_children = make_sequential_attack_results(
+        atomic_attack_name="adaptive",
+        envelope_outcome=AttackOutcome.FAILURE,
+        child_outcomes=[AttackOutcome.FAILURE],
+        objective="o2",
+    )
+    result = make_scenario_result(
+        attack_results={"adaptive": [*first_children, first_envelope, *second_children, second_envelope]}
+    )
+
+    selected = select_attacks(result)
+
+    assert selected == [("adaptive", child) for child in [*first_children, *second_children]]
+    assert len(selected) == scenario_overview(result).attempts
+
+
+def test_select_attacks_returns_an_envelope_requested_by_id():
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="adaptive", envelope_outcome=AttackOutcome.SUCCESS, child_outcomes=[AttackOutcome.SUCCESS]
+    )
+    result = make_scenario_result(attack_results={"adaptive": [*children, envelope]})
+
+    assert select_attacks(result, attack_result_ids=[envelope.attack_result_id]) == [("adaptive", envelope)]
+
+
+# --- attack_technique_label ---
+
+
+def test_attack_technique_label_prefers_recorded_technique_name():
+    attack = AttackResult(
+        conversation_id="c", objective="obj", metadata={AttackResult.TECHNIQUE_NAME_METADATA_KEY: "crescendo"}
+    )
+    assert attack_technique_label(atomic_attack_name="adaptive_text_airt_leakage::abc", attack=attack) == "crescendo"
+
+
+def test_attack_technique_label_falls_back_to_atomic_attack_name():
+    assert attack_technique_label(atomic_attack_name="base64", attack=_attack()) == "base64"
 
 
 # --- resolve_scorer_name ---

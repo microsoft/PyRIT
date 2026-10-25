@@ -25,6 +25,7 @@ router = APIRouter(prefix="/attacks", tags=["attacks"])
     status_code=status.HTTP_202_ACCEPTED,
     responses={
         400: {"model": ProblemDetail, "description": "Invalid send request"},
+        403: {"model": ProblemDetail, "description": "Automated results require a manual continuation"},
         404: {"model": ProblemDetail, "description": "Attack or target not found"},
         409: {"model": ProblemDetail, "description": "Conversation busy or submission identity reused"},
         429: {"model": ProblemDetail, "description": "Manual-message admission unavailable"},
@@ -36,6 +37,8 @@ async def submit_message_send_async(
     """Return a transient handle after validation and admission, before preparation or target I/O."""
     try:
         return await get_attack_service().submit_message_send_async(attack_result_id=attack_result_id, request=request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except (ManualSendConflictError, AttackStateConflictError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ManualSendQueueFullError as exc:

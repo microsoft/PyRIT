@@ -336,7 +336,7 @@ async def test_write_async_renders_compact_projected_component_tree(mock_find, m
     assert "          • Component 2: SubScorer2\n" in output
     assert "gpt-4" in output
     assert (
-        "      • Scorer Type: CompositeScorer\n"
+        "      • Scorer Type: CompositeScorer(SubScorer1, SubScorer2)\n"
         "        Configuration:\n"
         "          score_aggregator=mean\n"
         "          scorer_type=likert\n"
