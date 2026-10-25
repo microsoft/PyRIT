@@ -121,6 +121,35 @@ async def _save_history_async(
 
 @pytest.mark.usefixtures("patch_central_database", "catalog")
 class TestExecute:
+    @pytest.mark.parametrize("adapt_history", [False, True])
+    async def test_factory_receives_the_prepared_inline_group_without_dataset_reads_async(
+        self, *, scorer: MagicMock, adapt_history: bool
+    ) -> None:
+        memory = CentralMemory.get_memory_instance()
+        history_id = await _save_history_async(memory=memory, roles=["user", "assistant"])
+        factory = AttackTechniqueFactory(
+            name="inline_group",
+            attack_class=PromptSendingAttack,
+            requirements=TechniqueRequirements(
+                seed_group=SeedGroupRequirements(objective_only=adapt_history, try_adapt=adapt_history)
+            ),
+        )
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        scenario = _scenario(scorer=scorer, scenario_techniques=["inline_group"], prepended_conversation_id=history_id)
+        with (
+            patch.object(factory, "create", wraps=factory.create) as create,
+            patch.object(memory, "get_seeds_async", side_effect=AssertionError("Execute read a dataset.")),
+        ):
+            await scenario.initialize_async()
+
+        create.assert_called_once()
+        prepared = create.call_args.kwargs["seed_group"]
+        source = scenario._atomic_attacks[0].seed_groups[0]
+        assert prepared.objective.value == scenario.params["objective"]
+        assert len(prepared.seeds) == (1 if adapt_history else 3)
+        assert len(source.seeds) == 3
+        assert prepared is not source
+
     @pytest.mark.parametrize("retries", [0, 1])
     @pytest.mark.parametrize("baked", [False, True])
     @pytest.mark.parametrize("convert_history", [None, False, True])

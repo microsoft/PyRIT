@@ -181,7 +181,9 @@ class TestAudioTrueFalseScorer:
             assert len(scores) == 1
             assert scores[0].score_type == "true_false"
             assert scores[0].score_value == "true"
-            assert "Audio transcript scored:" in scores[0].score_rationale
+            assert scores[0].score_rationale == (
+                "Audio transcript scored: Test rationale for transcript: Hello, this is a test transcript."
+            )
 
     async def test_score_piece_empty_transcript(self, audio_message_piece):
         """Test scoring audio with empty transcript returns empty list"""
@@ -253,7 +255,9 @@ class TestAudioFloatScaleScorer:
             assert len(scores) == 1
             assert scores[0].score_type == "float_scale"
             assert float(scores[0].score_value) == 0.75
-            assert "Audio transcript scored:" in scores[0].score_rationale
+            assert scores[0].score_rationale == (
+                "Audio transcript scored: Test rationale for transcript: Hello, this is a test transcript."
+            )
 
     async def test_score_piece_empty_transcript(self, audio_message_piece):
         """Test scoring audio with empty transcript returns empty list"""

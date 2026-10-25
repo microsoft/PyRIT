@@ -201,7 +201,7 @@ class PromptShieldTarget(PromptTarget):
     @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
-        Parse the text in message to separate the userPrompt and documents contents,
+        Parse the converted text in message to separate the userPrompt and documents contents,
         then send an HTTP request to the endpoint and obtain a response in JSON. For more info, visit
         https://learn.microsoft.com/en-us/azure/ai-services/content-safety/quickstart-jailbreak.
 
@@ -223,7 +223,9 @@ class PromptShieldTarget(PromptTarget):
             "api-version": self._api_version,
         }
 
-        parsed_prompt: dict[str, Any] = self._input_parser(request.original_value)
+        # Send what the converters produced, like every other target. The original value is
+        # the prompt from before conversion.
+        parsed_prompt: dict[str, Any] = self._input_parser(request.converted_value)
 
         body = {"userPrompt": parsed_prompt["userPrompt"], "documents": parsed_prompt["documents"]}
 
