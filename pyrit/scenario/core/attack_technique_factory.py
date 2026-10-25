@@ -58,13 +58,14 @@ from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemProm
 from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
-from pyrit.scenario.core.technique_requirements import TechniqueRequirements
+from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, TechniqueRequirements
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from pyrit.converter import Converter
     from pyrit.executor.attack import AttackStrategy
+    from pyrit.models import AttackSeedGroup
     from pyrit.models.technique_edit import SimulationChanges
     from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
@@ -1043,11 +1044,37 @@ class AttackTechniqueFactory(Identifiable):
             )
         return new_factory
 
+    def validate_group_adversarial_prompts(self, seed_group: AttackSeedGroup) -> None:
+        """
+        Check named group inputs without constructing an attack or resolving targets.
+
+        Args:
+            seed_group (AttackSeedGroup): The group prepared for this technique.
+
+        Raises:
+            IncompatibleTechniqueError: If the technique cannot use the named prompts.
+        """
+        prompts = seed_group.adversarial_prompts
+        if prompts is None:
+            return
+        if not self._uses_adversarial or "attack_adversarial_config" not in self._compatibility_helper.accepted_params:
+            raise IncompatibleTechniqueError(f"Factory '{self._name}' does not accept group adversarial prompts.")
+        if self._has_custom_adversarial_prompt:
+            raise IncompatibleTechniqueError(f"Factory '{self._name}' already has a custom adversarial prompt.")
+        requirements = self._attack_class.ADVERSARIAL_PROMPT_REQUIREMENTS
+        if requirements is None:
+            raise IncompatibleTechniqueError(f"Factory '{self._name}' does not declare named prompt support.")
+        try:
+            requirements.validate_prompts(prompts=prompts, system_prompt_prefix=self._adversarial_system_prompt_prefix)
+        except ValueError as exc:
+            raise IncompatibleTechniqueError(f"Factory '{self._name}': {exc}") from exc
+
     def create(
         self,
         *,
         objective_target: PromptTarget,
         attack_scoring_config: AttackScoringConfig,
+        seed_group: AttackSeedGroup | None = None,
         adversarial_chat: PromptTarget | None = None,
         adversarial_system_prompt: str | SeedPrompt | None = None,
         adversarial_seed_prompt: SeedPrompt | str | None = None,
@@ -1082,6 +1109,8 @@ class AttackTechniqueFactory(Identifiable):
             attack_scoring_config: The scoring config to use for the attack. This is important
                 for attacks like TAP that may need a more specific scorer than the
                 scorer the scenario provides.
+            seed_group: Optional group whose named adversarial prompts configure this
+                attack instance. Target messages remain execution inputs.
             adversarial_chat: Optional adversarial chat target to use for this
                 attack. Only valid when the factory did not bake one. Only
                 forwarded if the attack class constructor accepts
@@ -1110,6 +1139,8 @@ class AttackTechniqueFactory(Identifiable):
             A fresh AttackTechnique with a newly-constructed attack technique.
 
         Raises:
+            IncompatibleTechniqueError: If group prompts conflict with the technique or
+                lack required template parameters.
             ValueError: If a create-time adversarial chat is supplied while the
                 factory already baked one, if ``scorer_override_policy`` is RAISE
                 and the scenario scorer is incompatible with the attack's type annotation,
@@ -1118,6 +1149,18 @@ class AttackTechniqueFactory(Identifiable):
                 accept ``attack_converter_config``.
         """
         create_time_target: PromptTarget | None = adversarial_chat
+        if seed_group is not None:
+            self.validate_group_adversarial_prompts(seed_group)
+        if seed_group is not None and seed_group.adversarial_prompts is not None:
+            if any(
+                prompt is not None
+                for prompt in (adversarial_system_prompt, adversarial_seed_prompt, adversarial_prompt_template)
+            ):
+                raise ValueError("Supply group adversarial prompts or explicit create-time prompts, not both.")
+            prompts = seed_group.adversarial_prompts.model_copy(deep=True)
+            adversarial_system_prompt = prompts.system_prompt
+            adversarial_seed_prompt = prompts.first_message
+            adversarial_prompt_template = prompts.feedback_template
 
         if extra_request_converters and "attack_converter_config" not in self._compatibility_helper.accepted_params:
             # These come from the caller's technique_converters, so dropping them would run a different setup.
@@ -1189,7 +1232,12 @@ class AttackTechniqueFactory(Identifiable):
                 kwargs["attack_converter_config"] = converter_config
 
         attack = self._attack_class(**kwargs)
-        return AttackTechnique(attack=attack, seed_technique=self._seed_technique, requirements=self._requirements)
+        return AttackTechnique(
+            attack=attack,
+            seed_technique=self._seed_technique,
+            requirements=self._requirements,
+            adversarial_prompts=(seed_group.adversarial_prompts if seed_group is not None else None),
+        )
 
     def _apply_score_feedback_override(self, *, attack_scoring_config: AttackScoringConfig) -> AttackScoringConfig:
         """

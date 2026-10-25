@@ -97,6 +97,8 @@ await output_attack_async(result)
 # multi-turn, and editable-history capabilities. `supports_prefill` means the adapter can send the full
 # conversation, including the objective and exact assistant prefix. It does not promise that the model
 # will continue the prefix as intended or that the attack will succeed; scorers measure those outcomes.
+# For local Hugging Face models, [chat-template continuation](https://huggingface.co/docs/transformers/chat_templating#continue_final_message)
+# keeps the final assistant message open and disables a new generation prompt.
 #
 # `HuggingFaceChatTarget`, `OpenAIChatTarget`, `OpenAIResponseTarget`, `LiteLLMChatTarget`, and
 # `AzureMLChatTarget` enable this request shape by default. For a deployment that rejects it, pass a
