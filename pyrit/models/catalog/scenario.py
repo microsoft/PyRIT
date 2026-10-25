@@ -84,10 +84,14 @@ def _validate_dataset_filter_mapping(
     return value
 
 
-class ScenarioLaunchConfiguration(BaseModel):
-    """Target and execution fields shared by scenario, preset, and suite launches."""
+class _ScenarioLaunchOptions(BaseModel):
+    """
+    Launch fields shared by scenario, preset, and suite launches.
 
-    target_name: _RequestName = Field(..., min_length=1, description="Registered objective target name")
+    The objective target is declared by each request because a direct scenario
+    run may omit it, while a preset or suite launch must supply it.
+    """
+
     adversarial_target_name: _RequestName | None = Field(
         None,
         min_length=1,
@@ -112,6 +116,12 @@ class ScenarioLaunchConfiguration(BaseModel):
     )
     operation_id: UUID | None = Field(None, description="Saved Operation reference, or unassigned")
     labels: _RequestLabels | None = Field(None, description="Labels to attach to memory entries")
+
+
+class ScenarioLaunchConfiguration(_ScenarioLaunchOptions):
+    """Target and execution fields a preset or suite launch supplies."""
+
+    target_name: _RequestName = Field(..., min_length=1, description="Registered objective target name")
 
 
 class ScenarioRunSizeEstimateStatus(str, Enum):
@@ -501,7 +511,7 @@ class ScenarioRunSizeEstimateRequest(_DatasetRequestModel):
     )
 
 
-class RunScenarioRequest(_DatasetRequestModel, ScenarioLaunchConfiguration):
+class RunScenarioRequest(_DatasetRequestModel, _ScenarioLaunchOptions):
     """Request body for starting a scenario run."""
 
     scenario_name: _RequestName = Field(..., description="Scenario name (e.g., 'foundry.red_team_agent')")
