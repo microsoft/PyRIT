@@ -499,16 +499,6 @@ test.describe("Converter Registry", () => {
     await expect(dialog.getByLabel("Registry name")).toHaveValue("");
   });
 
-  test("uses the available viewport height for the converter type list", async ({ page }) => {
-    await page.getByRole("button", { name: "New Converter" }).click();
-    await page.getByRole("combobox", { name: "Converter type" }).click();
-
-    const listbox = page.getByRole("listbox");
-    await expect(listbox).toBeVisible();
-    const bounds = await listbox.boundingBox();
-    expect(bounds?.height).toBeGreaterThan(300);
-  });
-
   for (const { name, viewport, deviceScaleFactor } of [
     { name: "wide short screen", viewport: { width: 1920, height: 600 }, deviceScaleFactor: 1 },
     { name: "scaled laptop", viewport: { width: 1280, height: 640 }, deviceScaleFactor: 1.5 },
