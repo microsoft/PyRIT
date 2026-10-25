@@ -367,7 +367,7 @@ class ScenarioRunSizeEstimate(BaseModel):
         note: str = "Default-run size estimate is unavailable.",
         dataset_size: ScenarioDatasetSizeEstimate | None = None,
         dataset_limit: DatasetLimitInput | None = None,
-    ) -> "ScenarioRunSizeEstimate":
+    ) -> Self:
         """
         Build an unavailable estimate without presenting a guessed total.
 
