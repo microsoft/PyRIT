@@ -7,7 +7,7 @@ import inspect
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
 import jupytext
 import pytest
@@ -16,6 +16,7 @@ from unit.assert_mocks import (
     make_assert_config,
     make_assert_generation_target,
 )
+from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 
 from pyrit.datasets import AssertProvider
 from pyrit.exceptions import InvalidJsonException
@@ -49,7 +50,10 @@ class TestAssertGenerator:
         target = make_assert_generation_target()
         config = make_assert_config(dimensions=[{"name": "channel", "description": "Where the user asks."}])
         generator = AssertGenerator(target=target)
-        with patch.object(target, "_send_prompt_to_target_async", side_effect=assert_generation_response_async) as send:
+        with (
+            patch.object(target, "_send_prompt_to_target_async", side_effect=assert_generation_response_async) as send,
+            patch.object(target, "reset_conversation_async", wraps=target.reset_conversation_async) as reset,
+        ):
             result = await generator.execute_async(config=config)
         assert len(result.seed_groups) == 6
         assert all(
@@ -63,6 +67,9 @@ class TestAssertGenerator:
             "research": target.get_identifier().model_dump(mode="json"),
         }
         assert send.call_count == len(result.generation_conversation_ids)
+        assert reset.await_args_list == [
+            call(conversation_id=conversation_id) for conversation_id in result.generation_conversation_ids
+        ]
         for conversation_id in result.generation_conversation_ids:
             pieces = await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)
             assert any(piece.role == "assistant" for piece in pieces)
@@ -395,10 +402,18 @@ class TestAssertGenerator:
             return responses
 
         config = make_assert_config(dimensions=[{"name": "channel", "description": "Where the user asks."}])
-        with patch.object(target, "_send_prompt_to_target_async", side_effect=invalid_async):
+        with (
+            patch.object(target, "_send_prompt_to_target_async", side_effect=invalid_async) as send,
+            patch.object(target, "reset_conversation_async", wraps=target.reset_conversation_async) as reset,
+        ):
             with pytest.raises(RuntimeError, match=f"ASSERT {stage} validation failed"):
                 await AssertGenerator(target=target).execute_async(config=config)
         assert attempts == 2
+        conversation_ids = dict.fromkeys(
+            send_call.kwargs["normalized_conversation"][-1].get_piece().conversation_id
+            for send_call in send.call_args_list
+        )
+        assert reset.await_args_list == [call(conversation_id=conversation_id) for conversation_id in conversation_ids]
 
     async def test_partial_generation_does_not_store_successful_batches_async(
         self, sqlite_instance: MemoryInterface
@@ -466,6 +481,10 @@ class TestAssertGenerator:
             patch.object(
                 research, "_send_prompt_to_target_async", side_effect=assert_generation_response_async
             ) as search,
+            patch.object(target, "reset_conversation_async", wraps=target.reset_conversation_async) as reset_target,
+            patch.object(
+                research, "reset_conversation_async", wraps=research.reset_conversation_async
+            ) as reset_research,
         ):
             await AssertGenerator(target=target, research_target=research).execute_async(config=config)
         research_stages = {
@@ -478,12 +497,17 @@ class TestAssertGenerator:
         }
         assert research_stages == {"systematization", "dimensions"}
         assert generation_stages == {"taxonomy", "seed_groups"}
-        for call in search.call_args_list:
-            request = call.kwargs["normalized_conversation"][-1].get_piece()
+        for send_call in search.call_args_list:
+            request = send_call.kwargs["normalized_conversation"][-1].get_piece()
             assert WebSearchConfig.from_metadata(metadata=request.prompt_metadata).mode == WebSearchMode.REQUIRED
-        for call in send.call_args_list:
-            request = call.kwargs["normalized_conversation"][-1].get_piece()
+        for send_call in send.call_args_list:
+            request = send_call.kwargs["normalized_conversation"][-1].get_piece()
             assert WebSearchConfig.from_metadata(metadata=request.prompt_metadata).mode == WebSearchMode.DISABLED
+        for transport, reset in ((send, reset_target), (search, reset_research)):
+            assert reset.await_args_list == [
+                call(conversation_id=send_call.kwargs["normalized_conversation"][-1].get_piece().conversation_id)
+                for send_call in transport.call_args_list
+            ]
 
     async def test_blocked_json_is_not_accepted_or_retried_as_malformed_json_async(self) -> None:
         target = make_assert_generation_target()
@@ -546,26 +570,58 @@ class TestAssertGenerator:
             == 40
         )
 
-    async def test_cancellation_releases_target_conversation_async(self) -> None:
+    @pytest.mark.parametrize(
+        "stage, expected_sends",
+        [("setup", 0), ("systematization", 1), ("taxonomy", 2), ("dimensions", 3), ("seed_groups", 4)],
+    )
+    async def test_cancellation_releases_target_conversation_async(self, *, stage: str, expected_sends: int) -> None:
         target = make_assert_generation_target()
         generator = AssertGenerator(target=target)
         started = asyncio.Event()
+        cancelled = asyncio.Event()
+        conversation_ids: list[str] = []
+        set_system_prompt_async = target.set_system_prompt_async
 
-        async def block_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        async def block_async() -> None:
             started.set()
-            await asyncio.Event().wait()
-            return []
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        async def setup_async(*, system_prompt: str, conversation_id: str) -> None:
+            conversation_ids.append(conversation_id)
+            if stage == "setup":
+                await block_async()
+            await set_system_prompt_async(system_prompt=system_prompt, conversation_id=conversation_id)
+
+        async def respond_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            if normalized_conversation[-1].get_piece().prompt_metadata["assert_stage"] == stage:
+                await block_async()
+            return await assert_generation_response_async(normalized_conversation=normalized_conversation)
 
         with (
-            patch.object(target, "_send_prompt_to_target_async", side_effect=block_async),
+            patch.object(target, "set_system_prompt_async", side_effect=setup_async),
+            patch.object(target, "_send_prompt_to_target_async", side_effect=respond_async) as send,
             patch.object(target, "reset_conversation_async", new_callable=AsyncMock) as reset,
         ):
-            task = asyncio.create_task(generator.execute_async(config=make_assert_config()))
-            await asyncio.wait_for(started.wait(), timeout=5)
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-        reset.assert_called_once()
+            config = make_assert_config(dimensions=[{"name": "channel", "description": "Where the user asks."}])
+            task = asyncio.create_task(generator.execute_async(config=config))
+            try:
+                await wait_for_event_async(event=started, tasks=[task])
+                reset.assert_not_awaited()
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await wait_for_completion_async(future=task)
+            finally:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+                await settle_tasks_async(task)
+        assert task.cancelled()
+        assert cancelled.is_set()
+        assert send.await_count == expected_sends
+        assert len(conversation_ids) == max(1, expected_sends)
+        assert reset.await_args_list == [call(conversation_id=conversation_id) for conversation_id in conversation_ids]
 
     async def test_target_timeout_propagates_without_a_generation_retry_async(self) -> None:
         target = make_assert_generation_target()
@@ -577,7 +633,9 @@ class TestAssertGenerator:
             with pytest.raises(RuntimeError, match="Error sending prompt") as error:
                 await AssertGenerator(target=target).execute_async(config=make_assert_config())
         send.assert_called_once()
-        reset.assert_called_once()
+        reset.assert_awaited_once()
+        request = send.call_args.kwargs["normalized_conversation"][-1].get_piece()
+        assert reset.await_args.kwargs["conversation_id"] == request.conversation_id
         cause = error.value
         while cause.__cause__ is not None:
             cause = cause.__cause__
