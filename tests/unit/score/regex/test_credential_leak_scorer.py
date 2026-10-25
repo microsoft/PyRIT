@@ -3,6 +3,7 @@
 
 import inspect
 import json
+from itertools import permutations
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -302,6 +303,50 @@ async def test_azure_and_databricks_credentials_exclusion_with_garak_patterns(pa
     assert (await scorer.score_text_async(_AZURE_SERVICE_BUS_CONN))[0].get_value() is False
     assert (await scorer.score_text_async(_DATABRICKS_TOKEN))[0].get_value() is False
     assert (await scorer.score_text_async(_DATABRICKS_SHARD_TOKEN))[0].get_value() is True
+
+
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize(
+    "token",
+    [
+        "&".join(parameters)
+        for parameters in permutations(
+            ("sp=r", "sv=2022-11-02", "sig=" + "aB1cDef2GhI" * 4 + "%3D", "se=2026-12-31T23:59:59Z")
+        )
+    ],
+)
+async def test_azure_sas_parameter_order_and_exact_exclusion_async(
+    *, token: str, use_garak: bool, patch_central_database: MagicMock
+) -> None:
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    text = f"https://acct.blob.core.windows.net/c/b?{token}"
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is True
+    assert "Azure SAS Token" in score.score_rationale
+
+    excluded_scorer = CredentialLeakScorer.from_excluded_values([token], patterns=scorer._patterns)
+    assert (await excluded_scorer.score_text_async(text))[0].get_value() is False
+    changed_token = token.replace("sp=r", "sp=rw")
+    assert (await excluded_scorer.score_text_async(changed_token))[0].get_value() is True
+    assert (await excluded_scorer.score_text_async(f"{text} '{changed_token}'"))[0].get_value() is True
+
+
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize(
+    "token",
+    [
+        "sig=" + "A" * 44 + "&sp=r",
+        "sig=" + "A" * 44 + "&sv=2022-11-02invalid",
+        "sig=" + "A" * 101 + "&sv=2022-11-02",
+        "sig=short&sv=2022-11-02",
+        "sp=r&sv=2022-11-02",
+    ],
+)
+async def test_azure_sas_invalid_parameters_not_detected_async(
+    *, token: str, use_garak: bool, patch_central_database: MagicMock
+) -> None:
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    assert (await scorer.score_text_async(token))[0].get_value() is False
 
 
 async def test_credential_scorer_custom_patterns(patch_central_database):
