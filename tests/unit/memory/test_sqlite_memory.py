@@ -1,16 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import gc
 import io
 import logging
 import os
+import sqlite3
 import tempfile
 import threading
 import uuid
 from collections.abc import Callable, Sequence
 from contextlib import closing
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -24,7 +27,7 @@ from pyrit.common.singleton import Singleton
 from pyrit.converter.base64_converter import Base64Converter
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
 from pyrit.memory.memory_embedding import MemoryEmbedding
-from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
+from pyrit.memory.memory_models import Base, EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.migration import run_schema_migrations
 from pyrit.memory.sqlite_memory import SQLiteMemory
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
@@ -35,11 +38,14 @@ from pyrit.models import (
     EmbeddingUsageInformation,
     Message,
     MessagePiece,
+    ScenarioRunState,
     SeedPrompt,
+    TargetIdentifier,
     flatten_to_message_pieces,
 )
 from pyrit.prompt_target.text_target import TextTarget
-from unit.mocks import get_sample_conversation_entries
+from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
+from unit.mocks import get_sample_conversation_entries, make_scenario_result
 
 
 @pytest.fixture
@@ -1219,6 +1225,84 @@ async def test_file_backed_database_is_not_serialized_async(isolated_memory_fact
         assert memory._connection_lock is None
         # Windows cannot remove the temp directory while the engine still holds the file open.
         await memory.dispose_engine_async()
+
+
+async def test_file_backed_sessions_use_30_second_busy_timeout_async(
+    isolated_memory_factory: Callable[..., SQLiteMemory], tmp_path: Path
+) -> None:
+    memory = isolated_memory_factory(db_path=tmp_path / "busy-timeout.db", skip_schema_migration=True)
+
+    with closing(memory._get_sync_session()) as session:
+        assert session.execute(text("PRAGMA busy_timeout")).scalar_one() == 30_000
+    async with await memory.get_session_async() as session:
+        assert (await session.execute(text("PRAGMA busy_timeout"))).scalar_one() == 30_000
+
+
+async def test_file_backed_scenario_writes_wait_for_another_connections_lock_async(
+    isolated_memory_factory: Callable[..., SQLiteMemory], tmp_path: Path
+) -> None:
+    """Concurrent scenario writes wait in SQLite's busy handler rather than failing with ``database is locked``."""
+    database = tmp_path / "contention.db"
+    memory = isolated_memory_factory(db_path=database, skip_schema_migration=True)
+    Base.metadata.create_all(memory.engine)
+    scenario_target = TargetIdentifier(class_name="ScenarioTarget", class_module="tests.unit.memory")
+    existing = make_scenario_result(objective_target_identifier=scenario_target, attack_results={})
+    await memory.add_scenario_results_to_memory_async(scenario_results=[existing])
+    inserted = make_scenario_result(objective_target_identifier=scenario_target, attack_results={})
+    conversation = Conversation(
+        conversation_id=str(uuid.uuid4()),
+        target_identifier=TargetIdentifier(class_name="ContendedTarget", class_module="tests.unit.memory"),
+    )
+    loop = asyncio.get_running_loop()
+    writing_connections: set[int] = set()
+    all_writers_waiting = asyncio.Event()
+
+    def record_write(connection_key: int) -> None:
+        writing_connections.add(connection_key)
+        if len(writing_connections) == 3:
+            all_writers_waiting.set()
+
+    def install_trace(*, dbapi_connection: Any, connection_record: Any, **kwargs: Any) -> None:
+        connection_key = id(connection_record)
+
+        def trace_statement(statement: str) -> None:
+            if statement.startswith(("INSERT", "UPDATE")):
+                loop.call_soon_threadsafe(record_write, connection_key)
+
+        dbapi_connection.run_async(lambda driver: driver.set_trace_callback(trace_statement))
+
+    engine = memory._get_async_engine().sync_engine
+    writers: list[asyncio.Task[None]] = []
+    with closing(sqlite3.connect(database, isolation_level=None)) as holder:
+        holder.execute("BEGIN IMMEDIATE")
+        event.listen(engine, "checkout", install_trace, named=True)
+        try:
+            writers = [
+                asyncio.create_task(memory.add_scenario_results_to_memory_async(scenario_results=[inserted])),
+                asyncio.create_task(memory.add_conversation_to_memory_async(conversation=conversation)),
+                asyncio.create_task(
+                    memory.update_scenario_run_state_async(
+                        scenario_result_id=str(existing.id), scenario_run_state=ScenarioRunState.COMPLETED
+                    )
+                ),
+            ]
+            await wait_for_event_async(event=all_writers_waiting, tasks=writers)
+            assert not any(writer.done() for writer in writers)
+            holder.execute("ROLLBACK")
+            await wait_for_completion_async(future=asyncio.gather(*writers))
+        finally:
+            event.remove(engine, "checkout", install_trace)
+            if holder.in_transaction:
+                holder.execute("ROLLBACK")
+            await settle_tasks_async(*writers)
+
+    [updated] = await memory.get_scenario_results_async(scenario_result_ids=[str(existing.id)])
+    assert updated.scenario_run_state == ScenarioRunState.COMPLETED
+    stored_results = await memory.get_scenario_results_async(scenario_result_ids=[str(inserted.id)])
+    assert [result.id for result in stored_results] == [inserted.id]
+    stored_conversation = await memory.get_conversation_metadata_async(conversation_id=conversation.conversation_id)
+    assert stored_conversation is not None
+    assert stored_conversation.target_identifier == conversation.target_identifier
 
 
 async def test_seed_list_substring_filters_after_reopening_database_async(

@@ -30,6 +30,88 @@ class _Unsupported:
     """Stand-in for an arbitrary (non-scalar, non-registry) constructor type."""
 
 
+@pytest.mark.parametrize(
+    ("annotation", "value", "expected"),
+    [
+        (str, "", ""),
+        (int, 0, 0),
+        (float, 0.5, 0.5),
+        (bool, False, False),
+        (list[str], ["a", "a"], ["a", "a"]),
+        (list[int], [0, 2], [0, 2]),
+        (int | None, None, None),
+        (_Speed, "FAST", _Speed.FAST),
+        (list[_Speed], ["slow", "FAST"], [_Speed.SLOW, _Speed.FAST]),
+        (Literal["a", "b"], "a", "a"),
+    ],
+)
+def test_strict_json_input_preserves_supported_values(annotation: Any, value: Any, expected: Any) -> None:
+    parameter = Parameter(name="setting", description="", param_type=annotation)
+    assert parameter.is_json_input
+    assert parameter.validate_json_value(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("annotation", "value"),
+    [
+        (int, "1"),
+        (int, True),
+        (int, 1.5),
+        (int, None),
+        (bool, "false"),
+        (bool, 0),
+        (str, 1),
+        (str, {}),
+        (list[int], ["1"]),
+        (list[str], [None]),
+        (list[str], "a"),
+    ],
+)
+def test_strict_json_input_rejects_coercible_wrong_types(annotation: Any, value: Any) -> None:
+    parameter = Parameter(name="setting", description="", param_type=annotation)
+    with pytest.raises(ValidationError):
+        parameter.validate_json_value(value)
+
+
+@pytest.mark.parametrize("annotation", [Path, object, dict[str, str], Sequence[str], str | Callable[[], str]])
+def test_strict_json_input_does_not_widen_the_technique_rest_contract(annotation: Any) -> None:
+    parameter = Parameter(name="setting", description="", param_type=annotation, default=None)
+    assert not parameter.is_json_input
+    with pytest.raises(ValueError, match="requires a Python value"):
+        parameter.validate_json_value("value")
+
+
+def test_strict_json_reference_shape_and_nullable_names() -> None:
+    parameter = Parameter(
+        name="targets",
+        description="",
+        reference=RegistryReference(component_type=ComponentType.TARGET, annotation=list[object] | None),
+    )
+    assert parameter.validate_json_value(None) is None
+    assert parameter.validate_json_value(["one", "one"]) == ["one", "one"]
+    with pytest.raises(ValidationError):
+        parameter.validate_json_value([object()])
+
+
+def test_scalar_projection_keeps_enum_values_but_does_not_coerce_source_types() -> None:
+    parameter = Parameter(name="speeds", description="", param_type=list[_Speed])
+    assert parameter.project_json_value([_Speed.SLOW, _Speed.FAST]) == ["slow", "fast"]
+    with pytest.raises(ValueError):
+        Parameter(name="opaque", description="", param_type=object).project_json_value(object())
+
+
+def test_supplied_value_validation_does_not_apply_the_strict_external_support_policy() -> None:
+    path = Path("local.txt")
+    parameter = Parameter(name="path", description="", param_type=Path)
+    parameter.validate_value(path)
+    with pytest.raises(ValueError, match="requires a Python value"):
+        parameter.validate_json_value(path)
+    enum = Parameter(name="speed", description="", param_type=_Speed)
+    with pytest.raises(ValueError, match="expects"):
+        enum.validate_value("FAST")
+    assert enum.validate_json_value("FAST") is _Speed.FAST
+
+
 class TestParameter:
     """Tests for the five-field pyrit.common.Parameter."""
 

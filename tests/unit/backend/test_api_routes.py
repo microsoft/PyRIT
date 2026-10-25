@@ -642,11 +642,12 @@ class TestAttackRoutes:
         [
             (ManualSendConflictError("Conversation is busy"), status.HTTP_409_CONFLICT),
             (ManualSendQueueFullError("Manual-send queue is full"), status.HTTP_429_TOO_MANY_REQUESTS),
+            (PermissionError("Automated results are read-only. Choose Continue manually."), status.HTTP_403_FORBIDDEN),
         ],
     )
     @pytest.mark.parametrize("send", [False, True])
     def test_add_message_admission_errors(
-        self, *, client: TestClient, error: ValueError, status_code: int, send: bool
+        self, *, client: TestClient, error: Exception, status_code: int, send: bool
     ) -> None:
         with patch("pyrit.backend.routes.attacks.get_attack_service") as service:
             service.return_value.add_message_async = AsyncMock(side_effect=error)

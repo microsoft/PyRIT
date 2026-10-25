@@ -279,18 +279,37 @@ def resolve_attack_result_attempt(
     )
 
 
+def _is_orchestration_envelope(attempt: _CountableAttempt) -> bool:
+    """
+    Return whether an attempt only coordinates other attempts.
+
+    Rows persisted before roles were recorded have no role, so an unrecognized role with
+    linked child results, which only ``SequentialAttack`` envelopes record, also marks one.
+
+    Returns:
+        bool: True for a recorded or inferred orchestration envelope.
+    """
+    if attempt.result_role == AttackResultRole.ORCHESTRATION:
+        return True
+    return attempt.result_role in (None, AttackResultRole.UNKNOWN) and bool(attempt.child_attack_result_ids)
+
+
 def select_execution_attempts(attempts: Sequence[_AttemptT]) -> Sequence[_AttemptT]:
     """
     Select actual attempts without counting their orchestration envelope again.
 
+    An envelope is selected only for an ERROR outcome that none of its linked children in
+    ``attempts`` record.
+
     Returns:
-        Sequence[_AttemptT]: Target-facing or legacy attempts, or orchestration-only evidence.
+        Sequence[_AttemptT]: The non-envelope attempts and independently errored envelopes,
+        or every attempt when that selection is empty.
     """
     by_id = {attempt.attack_result_id: attempt for attempt in attempts}
     execution_attempts = [
         attempt
         for attempt in attempts
-        if attempt.result_role != AttackResultRole.ORCHESTRATION
+        if not _is_orchestration_envelope(attempt)
         or (
             attempt.outcome == AttackOutcome.ERROR
             and not any(
@@ -300,6 +319,48 @@ def select_execution_attempts(attempts: Sequence[_AttemptT]) -> Sequence[_Attemp
         )
     ]
     return execution_attempts if execution_attempts else attempts
+
+
+def select_execution_attack_result_ids(
+    scenario_result: ScenarioResult,
+    *,
+    plan: ScenarioRunPlan | None = None,
+    use_saved_plan: bool = True,
+) -> set[str]:
+    """
+    Select the IDs of the attack results that count as execution attempts.
+
+    Applies ``select_execution_attempts`` to each execution unit, so the selection matches
+    ``ScenarioExecutionStatistics.attempts``: an orchestration envelope is left out when its
+    child attempts are present, unless it has an ERROR outcome that none of its linked children
+    record.
+
+    Args:
+        scenario_result (ScenarioResult): The scenario result with its hydrated attack results.
+        plan (ScenarioRunPlan | None): An explicit run plan. Defaults to None.
+        use_saved_plan (bool): When ``plan`` is None, whether to use the plan saved in the result's
+            metadata. Pass False to resolve the result as a legacy run. Defaults to True.
+
+    Returns:
+        set[str]: The selected attack result IDs.
+    """
+    if plan is None and use_saved_plan:
+        plan = load_scenario_run_plan(scenario_result)
+    plan_lookup = ScenarioPlanLookup.from_plan(plan=plan)
+    attempts_by_unit: dict[ScenarioExecutionUnit, list[ScenarioAttempt]] = {}
+    for atomic_attack_name, results in scenario_result.attack_results.items():
+        for attack_result in results:
+            attempt = resolve_attack_result_attempt(
+                atomic_attack_name=atomic_attack_name,
+                attack_result=attack_result,
+                plan_lookup=plan_lookup,
+            )
+            attempts_by_unit.setdefault(attempt.unit, []).append(attempt)
+    return {
+        attempt.attempt_id
+        for unit_attempts in attempts_by_unit.values()
+        for attempt in select_execution_attempts(unit_attempts)
+    }
 
 
 def retry_pressure(*, attempts_per_unit: Iterable[int], persisted_retries: Iterable[int]) -> int:

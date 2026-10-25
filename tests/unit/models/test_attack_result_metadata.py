@@ -6,7 +6,16 @@ from typing import Any
 
 import pytest
 
-from pyrit.models import AttackResultMetadata, AttackResultRole
+from pyrit.models import (
+    AttackResult,
+    AttackResultMetadata,
+    AttackResultRole,
+    ScoringExpectation,
+    ToolCallRequirement,
+    ToolsCalled,
+)
+from pyrit.models.component_spec import RegisteredComponentReference
+from pyrit.models.results.attack_result import AttackScoringInputs
 
 
 @pytest.mark.parametrize("result_role", list(AttackResultRole))
@@ -59,3 +68,35 @@ def test_metadata_fragment_keeps_parent_linkage_separate() -> None:
 
     assert value == AttackResultMetadata(result_role=AttackResultRole.ORCHESTRATION, attempt_index=2)
     assert stored == {**parent, "result_role": "orchestration", "attempt_index": 2}
+
+
+@pytest.mark.parametrize(
+    "inputs",
+    [
+        None,
+        AttackScoringInputs(revision="off"),
+        AttackScoringInputs(
+            scorer=RegisteredComponentReference(registry_name="judge", identifier_hash="full-configuration"),
+            revision="selected",
+            inherited=True,
+            expectation=ScoringExpectation(
+                objective="Goal",
+                conditions=(
+                    ToolsCalled(
+                        tools=(ToolCallRequirement(name="lookup"),),
+                    ),
+                ),
+            ),
+        ),
+    ],
+)
+def test_future_scoring_inputs_round_trip_without_a_success_result_record(inputs: AttackScoringInputs | None) -> None:
+    attack = AttackResult(
+        conversation_id="conversation",
+        objective="Goal",
+        metadata=inputs.to_metadata() if inputs else {},
+    )
+    restored = AttackResult.model_validate_json(attack.model_dump_json())
+    assert restored.scoring_inputs == inputs
+    assert restored.automated_score is None
+    assert "chat_scoring_result" not in restored.metadata
