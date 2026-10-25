@@ -1,12 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 import random
 import tempfile
 import uuid
 from pathlib import Path
 
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece, MessageScorable, Score, ScoringExpectation
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
@@ -167,7 +169,7 @@ class VideoHelper:
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
         # Extract frames from video
-        frames = self._extract_frames(video_path)
+        frames = await asyncio.to_thread(self._extract_frames, video_path)
         if not frames:
             raise ValueError("No frames extracted from video for scoring.")
 
@@ -258,6 +260,30 @@ class VideoHelper:
 
         return frame_paths
 
+    async def _extract_video_audio_async(self, video_path: str) -> str | None:
+        """
+        Extract audio off-loop and clean up its result before propagating cancellation.
+
+        Returns:
+            str | None: Extracted audio path, or None if extraction fails.
+
+        Raises:
+            asyncio.CancelledError: After extraction and temporary file cleanup finish.
+        """
+        audio_path: str | None = None
+
+        def extract_audio() -> str | None:
+            nonlocal audio_path
+            audio_path = AudioTranscriptHelper.extract_audio_from_video(video_path)
+            return audio_path
+
+        try:
+            return await run_legacy_sync_async(extract_audio)
+        except asyncio.CancelledError:
+            if audio_path and audio_path != video_path:
+                await run_legacy_sync_async(Path(audio_path).unlink, missing_ok=True)
+            raise
+
     async def _score_video_audio_async(
         self, *, message_piece: MessagePiece, expectation: ScoringExpectation | None, audio_scorer: Scorer | None = None
     ) -> list[Score]:
@@ -283,7 +309,7 @@ class VideoHelper:
 
         # Use BaseAudioTranscriptScorer's static method to extract audio
 
-        audio_path = AudioTranscriptHelper.extract_audio_from_video(video_path)
+        audio_path = await self._extract_video_audio_async(video_path)
         if not audio_path:
             logger.warning("Video does not have any audio! Skipping audio scoring.")
             return []

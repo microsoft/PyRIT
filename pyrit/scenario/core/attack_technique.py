@@ -12,11 +12,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyrit.models import AttackTechniqueIdentifier, ComponentIdentifier, Identifiable, SeedIdentifier
-from pyrit.scenario.core.technique_requirements import TechniqueRequirements
+from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, TechniqueRequirements
 
 if TYPE_CHECKING:
     from pyrit.executor.attack import AttackStrategy
-    from pyrit.models import AttackTechniqueSeedGroup
+    from pyrit.models import AdversarialPrompts, AttackSeedGroup, AttackTechniqueSeedGroup
 
 
 class AttackTechnique(Identifiable):
@@ -35,11 +35,15 @@ class AttackTechnique(Identifiable):
         attack: AttackStrategy[Any, Any],
         seed_technique: AttackTechniqueSeedGroup | None = None,
         requirements: TechniqueRequirements | None = None,
+        adversarial_prompts: AdversarialPrompts | None = None,
     ) -> None:
         """Initialize an AttackTechnique."""
         self._attack = attack
         self._seed_technique = seed_technique
         self._requirements = requirements or TechniqueRequirements()
+        self._adversarial_prompts = (
+            adversarial_prompts.model_copy(deep=True) if adversarial_prompts is not None else None
+        )
 
     @property
     def attack(self) -> AttackStrategy[Any, Any]:
@@ -55,6 +59,22 @@ class AttackTechnique(Identifiable):
     def requirements(self) -> TechniqueRequirements:
         """The technique's declared target and dataset input requirements."""
         return self._requirements
+
+    def validate_group_adversarial_prompts(self, seed_group: AttackSeedGroup) -> None:
+        """
+        Require the technique's bound prompts to match the group's named inputs.
+
+        Raises:
+            IncompatibleTechniqueError: If group prompts were not bound to this technique.
+        """
+        prompts = seed_group.adversarial_prompts
+        if prompts is not None and (
+            self._adversarial_prompts is None or prompts.identity != self._adversarial_prompts.identity
+        ):
+            raise IncompatibleTechniqueError(
+                "Group adversarial prompts are not bound to this attack technique. "
+                "Construct it with AttackTechniqueFactory.create(seed_group=...) or bind the inputs explicitly."
+            )
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -79,6 +99,12 @@ class AttackTechnique(Identifiable):
             identifier_params = {
                 **(identifier_params or {}),
                 "seed_group_adaptation": self._requirements.adaptation,
+            }
+        # Compound bindings are already represented by their configured child identities.
+        if self._adversarial_prompts is not None and self._attack.get_attack_adversarial_config() is not None:
+            identifier_params = {
+                **(identifier_params or {}),
+                "adversarial_prompts": self._adversarial_prompts.identity,
             }
 
         return AttackTechniqueIdentifier.of(

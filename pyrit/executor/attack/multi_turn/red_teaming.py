@@ -19,7 +19,12 @@ from pyrit.executor.attack.component import (
     get_adversarial_chat_messages,
 )
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
-from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_config import (
+    AdversarialPromptRequirements,
+    AttackAdversarialConfig,
+    AttackConverterConfig,
+    AttackScoringConfig,
+)
 from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
     AttackPreparationFailureKind,
@@ -89,6 +94,12 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
     The strategy supports customization through system prompts, seed prompts, and converters,
     allowing for various attack techniques and scenarios.
     """
+
+    ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
+        default_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
+        system_prompt_parameters=("objective",),
+        accepts_user_messages=True,
+    )
 
     @apply_defaults
     def __init__(
@@ -170,12 +181,13 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # The manager owns adversarial-prompt resolution: it resolves the system prompt, coerces the
         # first / next-message templates (applying the canonical defaults when unset), and fails fast
         # when a response schema is declared on both the system prompt and the first message.
+        requirements = self.get_adversarial_prompt_requirements()
         self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
             config=attack_adversarial_config,
-            default_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
-            system_prompt_required_parameters=["objective"],
+            default_system_prompt_path=requirements.default_system_prompt_path,
+            system_prompt_required_parameters=list(requirements.system_prompt_parameters),
             system_prompt_error_message="Adversarial seed prompt must have an objective",
-            resolve_user_messages=True,
+            resolve_user_messages=requirements.accepts_user_messages,
         )
         self._adversarial_chat_system_prompt_template = self._resolved_adversarial.system_prompt
         self._adversarial_chat_first_message = self._resolved_adversarial.first_message
