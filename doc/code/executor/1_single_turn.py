@@ -93,10 +93,21 @@ await output_attack_async(result)
 #
 # The registered `prefill` technique (in the opt-in `extra` group) uses an
 # `AttackTechniqueFactory` to configure a `PromptSendingAttack`. Its assistant prefix is sent as the
-# trailing message, after the user objective, for the target to continue. The technique requires native
-# `supports_prefill`, multi-turn, and editable-history capabilities. Here we use a local
-# `HuggingFaceChatTarget` rather than the hosted target used above. It downloads the model on first use
-# and reads a Hugging Face access token from `HUGGINGFACE_TOKEN`.
+# trailing message, after the user objective. The technique requires native `supports_prefill`,
+# multi-turn, and editable-history capabilities. `supports_prefill` means the adapter can send the full
+# conversation, including the objective and exact assistant prefix. It does not promise that the model
+# will continue the prefix as intended or that the attack will succeed; scorers measure those outcomes.
+#
+# `HuggingFaceChatTarget`, `OpenAIChatTarget`, `OpenAIResponseTarget`, `LiteLLMChatTarget`, and
+# `AzureMLChatTarget` enable this request shape by default. For a deployment that rejects it, pass a
+# `custom_configuration` with `supports_prefill=False`. Known-model profiles preserve the adapter default.
+# `RoundRobinTarget` requires identical configurations across its children, so all must enable prefill.
+# HTTP and Playwright integrations keep it disabled by default because support depends on the integration.
+# `OpenAICompletionTarget` also keeps it disabled: its adapter sends only the final message's text and
+# would lose the user objective.
+#
+# This example uses a local `HuggingFaceChatTarget`. It downloads the model on first use and reads a
+# Hugging Face access token from `HUGGINGFACE_TOKEN`.
 #
 # Like other techniques, prefill runs through an `AtomicAttack` with a separate objective seed group.
 # See [Attack Techniques](../scenarios/0_attack_techniques.ipynb) for the general factory workflow.

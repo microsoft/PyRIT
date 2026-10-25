@@ -3,10 +3,15 @@
 
 """The prefill technique must preserve the shared attack execution contract."""
 
+from contextlib import ExitStack
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from openai.types.chat import ChatCompletion
+from openai.types.responses import Response
 from pydantic import ValidationError
+from unit.mocks import openai_chat_response_json_dict, openai_response_json_dict
 
 from pyrit.converter import Base64Converter, QRCodeConverter
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
@@ -25,8 +30,12 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import (
+    AzureMLChatTarget,
     CapabilityName,
     HuggingFaceChatTarget,
+    LiteLLMChatTarget,
+    OpenAIChatTarget,
+    OpenAIResponseTarget,
     PromptTarget,
     TargetCapabilities,
     TargetConfiguration,
@@ -215,6 +224,73 @@ async def test_public_atomic_path_records_exact_prefix_and_continuation() -> Non
         ("simulated_assistant", PREFIX),
         ("assistant", "continuation"),
     ]
+
+
+@pytest.mark.parametrize("adapter", ["chat", "responses", "litellm", "azureml"])
+async def test_chat_adapter_sends_prefill_to_provider_without_requiring_suffix(adapter: str) -> None:
+    answer = "A complete answer, rather than the requested suffix."
+    chat_data = openai_chat_response_json_dict()
+    chat_data["created"] = 0
+    chat_data["choices"][0]["message"]["content"] = answer
+    completion = ChatCompletion.model_validate(chat_data)
+    provider = AsyncMock(return_value=completion)
+    with ExitStack() as stack:
+        if adapter == "litellm":
+            stack.enter_context(
+                patch.object(LiteLLMChatTarget, "_import_litellm", return_value=SimpleNamespace(acompletion=provider))
+            )
+            target = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key="test-key")
+        elif adapter == "azureml":
+            target = AzureMLChatTarget(endpoint="https://mock.example.com/score", api_key="test-key")
+            provider.return_value = SimpleNamespace(json=lambda: {"output": answer})
+            stack.enter_context(
+                patch(
+                    "pyrit.prompt_target.azure_ml_chat_target.net_utility.make_request_and_raise_if_error_async",
+                    provider,
+                )
+            )
+        elif adapter == "responses":
+            target = OpenAIResponseTarget(
+                model_name="gpt-4.1", endpoint="https://mock.example.com/", api_key="test-key"
+            )
+            response_data = openai_response_json_dict()
+            response_data.update(
+                created_at=0, object="response", parallel_tool_calls=True, tool_choice="auto", tools=[]
+            )
+            response_data["output"][0]["status"] = "completed"
+            response_data["output"][0]["content"][0].update(text=answer, annotations=[])
+            provider.return_value = Response.model_validate(response_data)
+            stack.enter_context(patch.object(target._client.responses, "create", provider))
+        else:
+            target = OpenAIChatTarget(model_name="gpt-5.4", endpoint="https://mock.example.com/", api_key="test-key")
+            stack.enter_context(patch.object(target._client.chat.completions, "create", provider))
+
+        technique = _prefill_factory().create(
+            objective_target=target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=SubStringScorer(substring="desired suffix")),
+        )
+        atomic = AtomicAttack(
+            atomic_attack_name="provider_prefill",
+            attack_technique=technique,
+            seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value=OBJECTIVE)])],
+        )
+        result = (await atomic.run_async(return_partial_on_failure=False)).completed_results[0]
+
+    provider.assert_awaited_once()
+    payload = provider.await_args.kwargs
+    if adapter == "azureml":
+        messages = payload["request_body"]["input_data"]["input_string"]
+    else:
+        messages = payload["input" if adapter == "responses" else "messages"]
+    sent = [
+        (message["role"], message["content"] if isinstance(message["content"], str) else message["content"][0]["text"])
+        for message in messages
+    ]
+    assert sent == [("user", OBJECTIVE), ("assistant", PREFIX)]
+    assert result.last_response.original_value == answer
+    assert result.outcome == AttackOutcome.FAILURE
+    assert result.automated_score is not None
+    assert result.automated_score.message_piece_id == result.last_response.id
 
 
 async def test_request_conversion_affects_objective_only() -> None:

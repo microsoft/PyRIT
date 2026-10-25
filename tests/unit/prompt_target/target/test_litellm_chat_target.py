@@ -306,6 +306,27 @@ def test_custom_configuration_overrides_derivation(patch_central_database, litel
     supported = {ty for combo in t.capabilities.input_modalities for ty in combo}
     assert supported == {"text"}
     assert t.capabilities.supports_json_output is False
+    assert t.capabilities.supports_prefill is False
+
+
+@pytest.mark.parametrize("underlying_model", [None, "gpt-4o", "unknown-model"])
+def test_prefill_survives_capability_derivation(patch_central_database, litellm_stub, underlying_model):
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o", underlying_model=underlying_model)
+    assert target.capabilities.supports_prefill is True
+
+
+@pytest.mark.parametrize("underlying_model", [None, "gpt-4o"])
+def test_custom_prefill_opt_out_wins_over_model_metadata(patch_central_database, litellm_stub, underlying_model):
+    custom = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True, supports_editable_history=True, supports_prefill=False
+        )
+    )
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o", underlying_model=underlying_model, custom_configuration=custom
+    )
+    assert target.configuration is custom
+    assert target.capabilities.supports_prefill is False
 
 
 # ---------------------------------------------------------------------------

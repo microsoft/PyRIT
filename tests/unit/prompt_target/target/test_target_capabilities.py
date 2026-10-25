@@ -195,23 +195,50 @@ class TestDefaultConfigurationDefined:
 
 
 class TestSupportsPrefillDefaults:
-    """Verify which targets declare supports_prefill via _DEFAULT_CONFIGURATION."""
+    """Prefill describes the adapter's request shape, independently of model behavior."""
 
-    def test_local_hugging_face_target_supports_prefill(self):
-        from pyrit.prompt_target import HuggingFaceChatTarget
+    @pytest.mark.parametrize("underlying_model", [None, "gpt-4o", "unknown-model"])
+    @pytest.mark.parametrize(
+        "target_name",
+        ["HuggingFaceChatTarget", "OpenAIChatTarget", "OpenAIResponseTarget", "LiteLLMChatTarget", "AzureMLChatTarget"],
+    )
+    def test_chat_defaults_preserve_prefill_with_model_profiles(self, target_name, underlying_model):
+        from pyrit import prompt_target
 
-        assert HuggingFaceChatTarget._DEFAULT_CONFIGURATION.capabilities.supports_prefill is True
+        target_class = getattr(prompt_target, target_name)
+        assert target_class.get_default_configuration(underlying_model).capabilities.supports_prefill is True
 
-    def test_completion_target_does_not_support_prefill(self):
-        # The completion target sends only the last message's text, so a prefill would drop the user turn.
-        from pyrit.prompt_target import OpenAICompletionTarget
+    @pytest.mark.parametrize("underlying_model", [None, "gpt-4o"])
+    @pytest.mark.parametrize(
+        "target_name",
+        ["HTTPTarget", "HTTPXAPITarget", "PlaywrightTarget", "PlaywrightCopilotTarget", "OpenAICompletionTarget"],
+    )
+    def test_integration_and_completion_targets_default_off(self, target_name, underlying_model):
+        from pyrit import prompt_target
 
-        assert OpenAICompletionTarget._DEFAULT_CONFIGURATION.capabilities.supports_prefill is False
+        target_class = getattr(prompt_target, target_name)
+        assert target_class.get_default_configuration(underlying_model).capabilities.supports_prefill is False
 
-    def test_hosted_chat_target_does_not_support_prefill(self):
-        from pyrit.prompt_target import OpenAIChatTarget
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("target_name", ["OpenAIChatTarget", "OpenAIResponseTarget", "AzureMLChatTarget"])
+    @pytest.mark.parametrize("underlying_model", [None, "gpt-4o"])
+    def test_explicit_custom_opt_out_wins(self, target_name, underlying_model):
+        from pyrit import prompt_target
 
-        assert OpenAIChatTarget._DEFAULT_CONFIGURATION.capabilities.supports_prefill is False
+        target_class = getattr(prompt_target, target_name)
+        default = target_class.get_default_configuration(underlying_model)
+        opted_out = TargetConfiguration(
+            capabilities=default.capabilities.model_copy(update={"supports_prefill": False})
+        )
+        target = target_class(
+            model_name="test-deployment",
+            endpoint="https://mock.example.com/",
+            api_key="test-key",
+            custom_configuration=opted_out,
+            **({"underlying_model": underlying_model} if target_name != "AzureMLChatTarget" else {}),
+        )
+        assert target.configuration is opted_out
+        assert target.capabilities.supports_prefill is False
 
 
 @pytest.mark.usefixtures("patch_central_database")

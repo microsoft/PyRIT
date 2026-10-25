@@ -209,6 +209,7 @@ class LiteLLMChatTarget(PromptTarget):
             supports_multi_turn=True,
             supports_multi_message_pieces=True,
             supports_editable_history=True,
+            supports_prefill=True,
             supports_system_prompt=True,
             input_modalities=_TEXT_INPUT,
         )
@@ -359,6 +360,7 @@ class LiteLLMChatTarget(PromptTarget):
             supports_multi_turn=True,
             supports_multi_message_pieces=True,
             supports_editable_history=True,
+            supports_prefill=self._DEFAULT_CONFIGURATION.capabilities.supports_prefill,
             supports_system_prompt=True,
             supports_json_output=supports_json_output,
             supports_json_schema=supports_json_schema,

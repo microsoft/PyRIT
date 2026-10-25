@@ -100,10 +100,10 @@ class TargetCapabilities(BaseModel):
     #: Whether the target natively supports system prompts.
     supports_system_prompt: bool = False
 
-    #: Whether the target sends the full conversation and continues a trailing assistant message
-    #: instead of ignoring or rejecting it. Locally hosted chat models can; most hosted chat APIs
-    #: cannot, and completion-style targets that forward only the last message's text do not qualify.
-    #: Techniques that prime the model by prefilling the start of its reply require this.
+    #: Whether the adapter can send the full conversation, including the objective and a
+    #: caller-supplied trailing assistant prefix. This describes request support, not a
+    #: guarantee that the model continues the prefix as intended or that an attack succeeds.
+    #: Deployments that reject this request shape can disable it through custom configuration.
     supports_prefill: bool = False
 
     #: Whether the target supports the streaming audio API: opening a long-lived

@@ -731,6 +731,7 @@ class PromptTarget(Identifiable):
         """
         Return the configuration for the given underlying model, falling back to
         the class-level ``_DEFAULT_CONFIGURATION`` when the model is not recognized.
+        Prefill request support always follows the adapter's class default.
 
         Args:
             underlying_model (str | None): The underlying model name (e.g., "gpt-4o"),
@@ -746,12 +747,13 @@ class PromptTarget(Identifiable):
                 return TargetConfiguration(
                     capabilities=known.model_copy(
                         update={
+                            "supports_prefill": cls._DEFAULT_CONFIGURATION.capabilities.supports_prefill,
                             "input_modalities": frozenset(
                                 combo
                                 for combo in known.input_modalities
                                 if cls._SUPPORTS_TOOL_CALL_HISTORY
                                 or not combo & {"function_call", "function_call_output"}
-                            )
+                            ),
                         }
                     )
                 )
