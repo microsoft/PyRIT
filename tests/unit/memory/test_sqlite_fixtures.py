@@ -3,7 +3,9 @@
 
 import asyncio
 import gc
+import re
 import sqlite3
+import time
 import weakref
 from collections.abc import Generator
 from contextlib import asynccontextmanager, closing, contextmanager
@@ -12,6 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import Engine, create_engine, event, func, inspect, select, text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 
 from pyrit.common.singleton import Singleton
@@ -289,3 +293,51 @@ async def test_sqlite_instance_keeps_real_async_sessions_async(sqlite_instance: 
     await asyncio.gather(*(write_rows_async(worker) for worker in range(4)))
     async with await sqlite_instance.get_session_async() as session:
         assert (await session.execute(text("SELECT COUNT(DISTINCT value) FROM fixture_threads"))).scalar_one() == 40
+
+
+async def test_file_sqlite_connections_skip_fsync_async(tmp_path: Path) -> None:
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    with patch.object(memory, "cleanup"):
+        memory.__init__(db_path=tmp_path / "fsync.db", skip_schema_migration=True)
+    try:
+        with memory.engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA synchronous").scalar_one() == 0
+        async with await memory.get_session_async() as session:
+            assert (await session.execute(text("PRAGMA synchronous"))).scalar_one() == 0
+    finally:
+        await memory.dispose_engine_async()
+
+
+def test_file_sqlite_connect_does_not_wait_for_an_exclusive_lock(tmp_path: Path) -> None:
+    database = tmp_path / "exclusive.db"
+    engine = create_engine(f"sqlite:///{database}", connect_args={"timeout": 30})
+    try:
+        with closing(sqlite3.connect(database, isolation_level=None)) as holder:
+            holder.execute("CREATE TABLE lock_probe (id INTEGER)")
+            holder.execute("BEGIN EXCLUSIVE")
+            started = time.monotonic()
+            with engine.connect() as connection:
+                assert time.monotonic() - started < 15
+                holder.execute("ROLLBACK")
+                assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 30_000
+                assert connection.exec_driver_sql("PRAGMA synchronous").scalar_one() == 2
+    finally:
+        engine.dispose()
+
+
+async def test_sqlite_busy_error_reports_lock_wait_async(tmp_path: Path) -> None:
+    database = tmp_path / "busy.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database}", connect_args={"timeout": 0.05})
+    try:
+        with closing(sqlite3.connect(database, isolation_level=None)) as holder:
+            holder.execute("CREATE TABLE lock_probe (id INTEGER)")
+            holder.execute("BEGIN IMMEDIATE")
+            async with engine.connect() as connection:
+                with pytest.raises(OperationalError, match="database is locked") as locked:
+                    await connection.exec_driver_sql("INSERT INTO lock_probe VALUES (1)")
+        [note] = locked.value.__notes__
+        waited = re.match(r"SQLite returned SQLITE_BUSY after (\d+\.\d\d) s\.", note)
+        assert waited is not None
+        assert float(waited.group(1)) >= 0.05
+    finally:
+        await engine.dispose()

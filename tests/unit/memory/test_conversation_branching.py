@@ -385,7 +385,7 @@ class TestAtomicConversationBranching:
         start = asyncio.Barrier(10)
 
         async def register_async(*, conversation: Conversation) -> bool:
-            await asyncio.wait_for(start.wait(), timeout=10)
+            await start.wait()
             return await file_memory.add_conversation_branches_to_attack_async(
                 attack_result_id=attack.attack_result_id,
                 source_conversation=source,
@@ -394,17 +394,16 @@ class TestAtomicConversationBranching:
             )
 
         async def promote_async(*, conversation_id: str) -> bool:
-            await asyncio.wait_for(start.wait(), timeout=10)
+            await start.wait()
             return await file_memory.promote_attack_conversation_async(
                 attack_result_id=attack.attack_result_id, conversation_id=conversation_id
             )
 
-        results = await asyncio.wait_for(
-            asyncio.gather(
+        results = await wait_for_completion_async(
+            future=asyncio.gather(
                 *(register_async(conversation=branch) for branch in branches),
                 *(promote_async(conversation_id=branch.conversation_id) for branch in initial),
-            ),
-            timeout=60,
+            )
         )
         assert all(results)
         current = (await file_memory.get_attack_results_async(attack_result_ids=[attack.attack_result_id]))[0]
