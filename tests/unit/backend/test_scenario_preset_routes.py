@@ -20,7 +20,11 @@ from pyrit.backend.models.scenario_presets import (
 from pyrit.backend.services.scenario_preset_service import ScenarioPresetService
 from pyrit.models.catalog import ScenarioPreset, ScenarioRunSizeEstimate
 from pyrit.models.catalog.scenario import ScenarioRunSizeComponent
-from pyrit.registry import ScenarioPresetConflictError, ScenarioPresetNameRegisteredError
+from pyrit.registry import (
+    ScenarioPresetConflictError,
+    ScenarioPresetNameRegisteredError,
+    resolve_scenario_preset_run_request,
+)
 
 PRESET_NAME = "quick_scan"
 SCENARIO_NAME = "foundry.red_team_agent"
@@ -465,8 +469,9 @@ class TestResolvePreset:
         """
         resolved = preset if preset is not None else _preset()
         return AsyncMock(
-            side_effect=lambda *, name, launch: ScenarioPresetService.resolve_run_request(
-                preset=resolved, launch=launch
+            side_effect=lambda *, name, launch: resolve_scenario_preset_run_request(
+                preset=resolved,
+                launch=launch,
             )
         )
 

@@ -12,22 +12,24 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pyrit.backend.middleware.auth import current_user_name, require_admin
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.scenario_suites import (
-    LaunchScenarioSuiteRequest,
-    ScenarioSuiteExecutionSummary,
     ScenarioSuiteListResponse,
     ScenarioSuiteResponse,
     UpdateScenarioSuiteRequest,
 )
 from pyrit.backend.services.scenario_suite_execution_service import (
     ScenarioSuiteExecutionCapacityError,
-    ScenarioSuiteExecutionNotFoundError,
-    ScenarioSuiteLaunchConflictError,
-    ScenarioSuiteNotRunnableError,
     get_scenario_suite_execution_service,
 )
 from pyrit.backend.services.scenario_suite_service import get_scenario_suite_service
+from pyrit.models import LaunchScenarioSuiteRequest, ScenarioSuiteExecutionSummary
 from pyrit.models.catalog import ScenarioSuite
-from pyrit.registry import ScenarioSuiteConflictError, ScenarioSuiteNameRegisteredError
+from pyrit.registry import (
+    ScenarioSuiteConflictError,
+    ScenarioSuiteExecutionNotFoundError,
+    ScenarioSuiteLaunchConflictError,
+    ScenarioSuiteNameRegisteredError,
+    ScenarioSuiteNotRunnableError,
+)
 
 router = APIRouter(prefix="/scenario-suites", tags=["scenario-suites"])
 

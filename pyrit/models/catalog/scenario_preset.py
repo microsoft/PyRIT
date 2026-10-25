@@ -21,6 +21,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from pyrit.models.catalog.scenario import (
+    ScenarioLaunchConfiguration,
     _RequestName,
     _RequestParams,
     _RequestTechniques,
@@ -142,6 +143,21 @@ class ScenarioPreset(BaseModel, Identifiable):
             ComponentIdentifier: Identity derived from the current field values.
         """
         return self._build_identifier()
+
+
+class ResolveScenarioPresetRequest(ScenarioLaunchConfiguration):
+    """
+    Launch-owned fields a preset deliberately omits.
+
+    ``expected_version`` is a precondition rather than launch configuration. A
+    caller that previewed a stored preset supplies that opaque version so an edit
+    landing before launch is reported instead of silently changing the run.
+    """
+
+    expected_version: str | None = Field(
+        None,
+        description="Version the caller resolved against; omit to resolve the current definition",
+    )
 
 
 class StoredPreset(BaseModel):

@@ -25,13 +25,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pyrit.backend.middleware.auth import current_user_name, require_admin
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.scenario_presets import (
-    ResolveScenarioPresetRequest,
     ScenarioPresetListResponse,
     ScenarioPresetResponse,
     UpdateScenarioPresetRequest,
 )
 from pyrit.backend.services.scenario_preset_service import get_scenario_preset_service
-from pyrit.models.catalog import RunScenarioRequest, ScenarioPreset
+from pyrit.models.catalog import ResolveScenarioPresetRequest, RunScenarioRequest, ScenarioPreset
 from pyrit.registry import ScenarioPresetConflictError, ScenarioPresetNameRegisteredError
 
 router = APIRouter(prefix="/scenario-presets", tags=["scenario-presets"])

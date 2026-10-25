@@ -14,20 +14,19 @@ from uuid import UUID
 import pytest
 
 import pyrit.backend.services.scenario_suite_execution_service as _execution_mod
-from pyrit.backend.models.scenario_suites import (
-    LaunchScenarioSuiteRequest,
-    ScenarioSuiteExecutionEntryState,
-    ScenarioSuiteExecutionStatus,
-    ScenarioSuiteLaunchEntrySnapshot,
-)
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
 from pyrit.backend.services.scenario_suite_execution_service import (
     ScenarioSuiteExecutionCapacityError,
     ScenarioSuiteExecutionService,
-    ScenarioSuiteLaunchConflictError,
-    ScenarioSuiteNotRunnableError,
 )
-from pyrit.models import SCENARIO_SUITE_EXECUTION_METADATA_KEY, ScenarioRunState
+from pyrit.models import (
+    SCENARIO_SUITE_EXECUTION_METADATA_KEY,
+    LaunchScenarioSuiteRequest,
+    ScenarioRunState,
+    ScenarioSuiteExecutionStatus,
+    ScenarioSuiteLaunchEntrySnapshot,
+    ScenarioSuiteSubmissionState,
+)
 from pyrit.models.catalog import (
     PresetEntry,
     PresetIssue,
@@ -37,7 +36,13 @@ from pyrit.models.catalog import (
     ScenarioSuite,
     ScenarioSuiteEntry,
 )
-from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry, ScenarioSuiteStorage
+from pyrit.registry import (
+    ScenarioPresetRegistry,
+    ScenarioSuiteLaunchConflictError,
+    ScenarioSuiteNotRunnableError,
+    ScenarioSuiteRegistry,
+    ScenarioSuiteStorage,
+)
 
 ENTRY_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ENTRY_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -413,8 +418,8 @@ async def test_submission_failure_does_not_prevent_later_entries_from_queueing(
     assert summary is not None
     assert summary.status == ScenarioSuiteExecutionStatus.FAILED
     assert [entry.state for entry in summary.entries] == [
-        ScenarioSuiteExecutionEntryState.SUBMISSION_FAILED,
-        ScenarioSuiteExecutionEntryState.COMPLETED,
+        ScenarioSuiteSubmissionState.SUBMISSION_FAILED,
+        ScenarioRunState.COMPLETED,
     ]
     assert summary.entries[0].error == service.SUBMISSION_FAILURE_MESSAGE
     assert summary.entries[0].error_type == "ValueError"
@@ -460,7 +465,7 @@ async def test_child_status_failure_is_nonterminal_and_recovers(
 
     assert unavailable is not None
     assert unavailable.status == ScenarioSuiteExecutionStatus.IN_PROGRESS
-    assert unavailable.entries[0].state == ScenarioSuiteExecutionEntryState.QUEUED
+    assert unavailable.entries[0].state == ScenarioRunState.QUEUED
     assert unavailable.entries[0].error == service.CHILD_STATUS_FAILURE_MESSAGE
     assert unavailable.entries[0].error_type == "RuntimeError"
     assert "secret_column" not in unavailable.model_dump_json()
@@ -512,8 +517,8 @@ async def test_child_status_failure_does_not_suppress_cancellation(
     assert recovered is not None
     assert recovered.status == ScenarioSuiteExecutionStatus.CANCELLED
     assert [entry.state for entry in recovered.entries] == [
-        ScenarioSuiteExecutionEntryState.CANCELLED,
-        ScenarioSuiteExecutionEntryState.CANCELLED,
+        ScenarioRunState.CANCELLED,
+        ScenarioRunState.CANCELLED,
     ]
 
 
@@ -563,8 +568,8 @@ async def test_cancel_recovers_and_cancels_child_admitted_before_response(
         assert cancelling is not None
         assert cancelling.status == ScenarioSuiteExecutionStatus.QUEUING
         assert [entry.state for entry in cancelling.entries] == [
-            ScenarioSuiteExecutionEntryState.SUBMITTING,
-            ScenarioSuiteExecutionEntryState.CANCELLED,
+            ScenarioSuiteSubmissionState.SUBMITTING,
+            ScenarioRunState.CANCELLED,
         ]
         run_service.cancel_run_async.assert_not_awaited()
 
@@ -577,8 +582,8 @@ async def test_cancel_recovers_and_cancels_child_admitted_before_response(
     assert summary is not None
     assert summary.status == ScenarioSuiteExecutionStatus.CANCELLED
     assert [entry.state for entry in summary.entries] == [
-        ScenarioSuiteExecutionEntryState.CANCELLED,
-        ScenarioSuiteExecutionEntryState.CANCELLED,
+        ScenarioRunState.CANCELLED,
+        ScenarioRunState.CANCELLED,
     ]
     run_service.cancel_run_async.assert_awaited_once_with(scenario_result_id="run-1")
     assert len(calls) == 1

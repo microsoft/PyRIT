@@ -18,26 +18,28 @@ from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import current_user_name, require_admin
 from pyrit.backend.models.scenario_suites import (
     ScenarioSuiteEntryStatus,
-    ScenarioSuiteExecutionEntryState,
-    ScenarioSuiteExecutionEntrySummary,
-    ScenarioSuiteExecutionStatus,
-    ScenarioSuiteExecutionSummary,
     ScenarioSuiteListResponse,
     ScenarioSuiteResponse,
 )
 from pyrit.backend.services.scenario_suite_execution_service import (
     ScenarioSuiteExecutionCapacityError,
-    ScenarioSuiteExecutionNotFoundError,
     ScenarioSuiteExecutionService,
-    ScenarioSuiteLaunchConflictError,
-    ScenarioSuiteNotRunnableError,
 )
 from pyrit.backend.services.scenario_suite_service import ScenarioSuiteService
+from pyrit.models import (
+    ScenarioSuiteExecutionEntrySummary,
+    ScenarioSuiteExecutionStatus,
+    ScenarioSuiteExecutionSummary,
+    ScenarioSuiteSubmissionState,
+)
 from pyrit.models.catalog import PresetIssue, ScenarioSuite, ScenarioSuiteEntry, ScenarioSuiteRegistryEntry
 from pyrit.registry import (
     ScenarioPresetRegistry,
     ScenarioSuiteConflictError,
+    ScenarioSuiteExecutionNotFoundError,
+    ScenarioSuiteLaunchConflictError,
     ScenarioSuiteNameRegisteredError,
+    ScenarioSuiteNotRunnableError,
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
 )
@@ -102,7 +104,7 @@ def _execution_summary(
                 preset_name="nightly",
                 preset_origin="stored",
                 preset_version="preset-v1",
-                state=ScenarioSuiteExecutionEntryState.PENDING,
+                state=ScenarioSuiteSubmissionState.PENDING,
             )
         ],
     )

@@ -10,24 +10,28 @@ import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from pyrit.backend.models.scenario_presets import ResolveScenarioPresetRequest
-from pyrit.backend.models.scenario_suites import (
+from pyrit.backend.services.scenario_run_service import ScenarioRunService, get_scenario_run_service
+from pyrit.models import (
     LaunchScenarioSuiteRequest,
+    ScenarioRunState,
     ScenarioSuiteExecutionEntryState,
     ScenarioSuiteExecutionEntrySummary,
     ScenarioSuiteExecutionStatus,
     ScenarioSuiteExecutionSummary,
+    ScenarioSuiteSubmissionState,
 )
-from pyrit.backend.services.scenario_preset_service import ScenarioPresetService
-from pyrit.backend.services.scenario_run_service import ScenarioRunService, get_scenario_run_service
-from pyrit.models import ScenarioSuiteExecutionMetadata
-from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
+from pyrit.registry import (
+    ResolvedScenarioSuiteEntry,
+    ScenarioPresetRegistry,
+    ScenarioSuiteLaunchResolver,
+    ScenarioSuiteRegistry,
+)
 
 if TYPE_CHECKING:
-    from pyrit.models.catalog import RunScenarioRequest, ScenarioRunSummary, ScenarioSuiteRegistryEntry
+    from pyrit.models.catalog import ScenarioRunSummary, ScenarioSuiteRegistryEntry
 
 logger = logging.getLogger(__name__)
 
@@ -44,52 +48,16 @@ _TERMINAL_EXECUTION_STATUSES = frozenset(
 )
 
 
-class ScenarioSuiteExecutionNotFoundError(LookupError):
-    """A requested suite definition or transient execution does not exist."""
-
-
 class ScenarioSuiteExecutionCapacityError(RuntimeError):
     """Active suite executions fill the transient coordinator capacity."""
-
-
-class ScenarioSuiteLaunchConflictError(ValueError):
-    """A suite or referenced preset changed after the operator reviewed it."""
-
-
-class ScenarioSuiteNotRunnableError(ValueError):
-    """A suite cannot launch because one or more entries are unresolved."""
-
-
-@dataclass(frozen=True)
-class _ResolvedLaunchEntry:
-    """One preflighted suite entry ready for scenario submission."""
-
-    entry_id: UUID
-    entry_position: int
-    preset_name: str
-    preset_origin: Literal["stored", "registered"]
-    preset_version: str | None
-    request: RunScenarioRequest
-
-    def metadata(self, *, suite_execution_id: UUID, suite: ScenarioSuiteRegistryEntry) -> dict[str, Any]:
-        """Return the scenario metadata fields for this child run."""
-        return ScenarioSuiteExecutionMetadata(
-            suite_execution_id=suite_execution_id,
-            suite_name=suite.suite.name,
-            suite_version=suite.version,
-            suite_entry_id=self.entry_id,
-            entry_position=self.entry_position,
-            preset_name=self.preset_name,
-            preset_version=self.preset_version,
-        ).to_metadata_fields()
 
 
 @dataclass
 class _ExecutionEntryState:
     """Mutable process-local submission state for one resolved entry."""
 
-    resolved: _ResolvedLaunchEntry
-    state: ScenarioSuiteExecutionEntryState = ScenarioSuiteExecutionEntryState.PENDING
+    resolved: ResolvedScenarioSuiteEntry
+    state: ScenarioSuiteExecutionEntryState = ScenarioSuiteSubmissionState.PENDING
     scenario_result_id: str | None = None
     error: str | None = None
     error_type: str | None = None
@@ -114,7 +82,7 @@ class _ExecutionState:
 class _ExecutionEntrySnapshot:
     """Detached entry state used while querying child runs."""
 
-    resolved: _ResolvedLaunchEntry
+    resolved: ResolvedScenarioSuiteEntry
     state: ScenarioSuiteExecutionEntryState
     scenario_result_id: str | None
     error: str | None
@@ -134,11 +102,11 @@ class _ExecutionSnapshot:
 
 class ScenarioSuiteExecutionService:
     """
-    Preflight suites and coordinate ordinary scenario runs without a persisted parent.
+    Coordinate ordinary scenario runs for a preflighted suite.
 
-    Definitions remain owned by the suite and preset registries. This service owns only
-    the transient identity and submission progress for one launch; each successful child
-    remains an ordinary persisted ``ScenarioResult`` managed by ``ScenarioRunService``.
+    Definitions and child-request resolution remain owned by the registry layer.
+    This service owns only transient admission, submission, cancellation, and
+    grouped process-local progress.
     """
 
     SUBMISSION_FAILURE_MESSAGE = "The scenario run could not be created. Check server logs before retrying."
@@ -152,8 +120,10 @@ class ScenarioSuiteExecutionService:
         run_service: ScenarioRunService | None = None,
     ) -> None:
         """Initialize the coordinator with injectable registries and run service."""
-        self._suite_registry = suite_registry
-        self._preset_registry = preset_registry
+        self._resolver = ScenarioSuiteLaunchResolver(
+            suite_registry=suite_registry,
+            preset_registry=preset_registry,
+        )
         self._run_service = run_service
         self._executions: OrderedDict[UUID, _ExecutionState] = OrderedDict()
         self._tasks: set[asyncio.Task[None]] = set()
@@ -184,8 +154,8 @@ class ScenarioSuiteExecutionService:
         if self._stopping:
             raise RuntimeError("Scenario suite launch scheduling is stopping.")
 
-        suite, resolved_entries = await asyncio.to_thread(
-            self._resolve_launch,
+        resolved_launch = await asyncio.to_thread(
+            self._resolver.resolve,
             name=name,
             request=request,
         )
@@ -200,8 +170,8 @@ class ScenarioSuiteExecutionService:
             now = datetime.now(UTC)
             state = _ExecutionState(
                 execution_id=uuid4(),
-                suite=suite,
-                entries=[_ExecutionEntryState(resolved=entry) for entry in resolved_entries],
+                suite=resolved_launch.suite,
+                entries=[_ExecutionEntryState(resolved=entry) for entry in resolved_launch.entries],
                 created_at=now,
                 updated_at=now,
             )
@@ -258,91 +228,6 @@ class ScenarioSuiteExecutionService:
         if self.has_active_work():
             raise RuntimeError("Scenario suite execution work has not drained.")
 
-    def _resolve_launch(
-        self,
-        *,
-        name: str,
-        request: LaunchScenarioSuiteRequest,
-    ) -> tuple[ScenarioSuiteRegistryEntry, list[_ResolvedLaunchEntry]]:
-        """
-        Resolve and validate the complete launch before any scenario is submitted.
-
-        Returns:
-            tuple[ScenarioSuiteRegistryEntry, list[_ResolvedLaunchEntry]]: The
-                exact suite and ordered, runnable child requests.
-        """
-        suite = self._get_suite_registry().resolve_suite(name=name, expected_version=request.expected_version)
-        if suite is None:
-            raise ScenarioSuiteExecutionNotFoundError(f"Scenario suite '{name}' not found.")
-        if suite.origin == "stored" and request.expected_version is None:
-            raise ScenarioSuiteLaunchConflictError(
-                f"Scenario suite '{name}' must be refreshed before launch because no reviewed version was supplied."
-            )
-        if len(suite.suite.entries) != len(request.entries):
-            raise ScenarioSuiteLaunchConflictError(
-                f"Scenario suite '{name}' changed after it was reviewed; refresh it before launching."
-            )
-
-        preset_registry = self._get_preset_registry()
-        launch_fields = ResolveScenarioPresetRequest(
-            expected_version=None,
-            target_name=request.target_name,
-            adversarial_target_name=request.adversarial_target_name,
-            initializers=request.initializers,
-            initializer_args=request.initializer_args,
-            max_concurrency=request.max_concurrency,
-            max_retries=request.max_retries,
-            operation_id=request.operation_id,
-            labels=request.labels,
-        )
-        presets = {
-            preset_name: preset_registry.get_preset(name=preset_name)
-            for preset_name in dict.fromkeys(entry.preset_name for entry in suite.suite.entries)
-        }
-
-        resolved: list[_ResolvedLaunchEntry] = []
-        for position, (suite_entry, reviewed) in enumerate(
-            zip(suite.suite.entries, request.entries, strict=True),
-            start=1,
-        ):
-            if suite_entry.entry_id != reviewed.entry_id or suite_entry.preset_name != reviewed.preset_name:
-                raise ScenarioSuiteLaunchConflictError(
-                    f"Scenario suite '{name}' changed after it was reviewed; refresh it before launching."
-                )
-
-            preset = presets[suite_entry.preset_name]
-            if preset is None:
-                raise ScenarioSuiteNotRunnableError(
-                    f"Entry {position} references unavailable scenario preset '{suite_entry.preset_name}'."
-                )
-            if preset.origin != reviewed.origin or preset.version != reviewed.preset_version:
-                raise ScenarioSuiteLaunchConflictError(
-                    f"Scenario preset '{suite_entry.preset_name}' changed after the suite was reviewed; "
-                    "refresh the suite before launching."
-                )
-
-            issues = preset_registry.check_preset(preset=preset.preset)
-            if issues:
-                details = "; ".join(issue.message for issue in issues)
-                raise ScenarioSuiteNotRunnableError(
-                    f"Entry {position} scenario preset '{suite_entry.preset_name}' is not runnable: {details}"
-                )
-
-            resolved.append(
-                _ResolvedLaunchEntry(
-                    entry_id=suite_entry.entry_id,
-                    entry_position=position,
-                    preset_name=suite_entry.preset_name,
-                    preset_origin=preset.origin,
-                    preset_version=preset.version,
-                    request=ScenarioPresetService.resolve_run_request(
-                        preset=preset.preset,
-                        launch=launch_fields,
-                    ),
-                )
-            )
-        return suite, resolved
-
     async def _submit_entries_async(self, *, state: _ExecutionState) -> None:
         """Submit every resolved entry in declared order through the FIFO run service."""
         try:
@@ -352,7 +237,7 @@ class ScenarioSuiteExecutionService:
                         self._mark_unstarted_entries_cancelled(state=state)
                         state.updated_at = datetime.now(UTC)
                         return
-                    entry.state = ScenarioSuiteExecutionEntryState.SUBMITTING
+                    entry.state = ScenarioSuiteSubmissionState.SUBMITTING
                     task = asyncio.create_task(
                         self._get_run_service().start_run_async(
                             request=entry.resolved.request,
@@ -375,7 +260,7 @@ class ScenarioSuiteExecutionService:
                         exc_info=True,
                     )
                     async with state.lock:
-                        entry.state = ScenarioSuiteExecutionEntryState.SUBMISSION_FAILED
+                        entry.state = ScenarioSuiteSubmissionState.SUBMISSION_FAILED
                         entry.error = self.SUBMISSION_FAILURE_MESSAGE
                         entry.error_type = type(exc).__name__
                         state.updated_at = datetime.now(UTC)
@@ -389,7 +274,7 @@ class ScenarioSuiteExecutionService:
                 in_flight = [
                     (entry, entry.submission_task)
                     for entry in state.entries
-                    if entry.state == ScenarioSuiteExecutionEntryState.SUBMITTING
+                    if entry.state == ScenarioSuiteSubmissionState.SUBMITTING
                     and entry.submission_task is not None
                     and entry.scenario_result_id is None
                 ]
@@ -400,11 +285,11 @@ class ScenarioSuiteExecutionService:
                 except asyncio.CancelledError:
                     async with state.lock:
                         if entry.scenario_result_id is None:
-                            entry.state = ScenarioSuiteExecutionEntryState.CANCELLED
+                            entry.state = ScenarioRunState.CANCELLED
                             state.updated_at = datetime.now(UTC)
                 except Exception as exc:
                     async with state.lock:
-                        entry.state = ScenarioSuiteExecutionEntryState.SUBMISSION_FAILED
+                        entry.state = ScenarioSuiteSubmissionState.SUBMISSION_FAILED
                         entry.error = self.SUBMISSION_FAILURE_MESSAGE
                         entry.error_type = type(exc).__name__
                         state.updated_at = datetime.now(UTC)
@@ -481,10 +366,10 @@ class ScenarioSuiteExecutionService:
                 error_type = type(run_or_error).__name__
             elif run_or_error is not None:
                 run = run_or_error
-                entry_state = ScenarioSuiteExecutionEntryState(run.status.value)
+                entry_state = run.status
                 updated_at = max(updated_at, run.updated_at)
             elif has_run:
-                entry_state = ScenarioSuiteExecutionEntryState.FAILED
+                entry_state = ScenarioRunState.FAILED
                 error = "The submitted child scenario run is no longer available."
                 error_type = "ScenarioRunNotFoundError"
 
@@ -544,7 +429,7 @@ class ScenarioSuiteExecutionService:
         """Record an admitted child and honor cancellation requested during admission."""
         async with state.lock:
             entry.scenario_result_id = result.scenario_result_id
-            entry.state = ScenarioSuiteExecutionEntryState(result.status.value)
+            entry.state = result.status
             entry.error = result.error
             entry.error_type = result.error_type
             should_cancel = state.cancel_requested
@@ -579,7 +464,7 @@ class ScenarioSuiteExecutionService:
             return
 
         async with state.lock:
-            entry.state = ScenarioSuiteExecutionEntryState(result.status.value)
+            entry.state = result.status
             entry.error = result.error
             entry.error_type = result.error_type
             state.updated_at = datetime.now(UTC)
@@ -588,8 +473,8 @@ class ScenarioSuiteExecutionService:
     def _mark_unstarted_entries_cancelled(*, state: _ExecutionState) -> None:
         """Mark entries that have not begun admission as cancelled."""
         for entry in state.entries:
-            if entry.state == ScenarioSuiteExecutionEntryState.PENDING:
-                entry.state = ScenarioSuiteExecutionEntryState.CANCELLED
+            if entry.state == ScenarioSuiteSubmissionState.PENDING:
+                entry.state = ScenarioRunState.CANCELLED
 
     async def _ensure_execution_capacity_async(self) -> None:
         """Evict only terminal executions or reject admission when active work fills capacity."""
@@ -622,25 +507,25 @@ class ScenarioSuiteExecutionService:
         states = {entry.state for entry in entries}
         if states.intersection(
             {
-                ScenarioSuiteExecutionEntryState.PENDING,
-                ScenarioSuiteExecutionEntryState.SUBMITTING,
+                ScenarioSuiteSubmissionState.PENDING,
+                ScenarioSuiteSubmissionState.SUBMITTING,
             }
         ):
             return ScenarioSuiteExecutionStatus.QUEUING
         if states.intersection(
             {
-                ScenarioSuiteExecutionEntryState.CREATED,
-                ScenarioSuiteExecutionEntryState.QUEUED,
-                ScenarioSuiteExecutionEntryState.IN_PROGRESS,
+                ScenarioRunState.CREATED,
+                ScenarioRunState.QUEUED,
+                ScenarioRunState.IN_PROGRESS,
             }
         ):
             return ScenarioSuiteExecutionStatus.IN_PROGRESS
-        if ScenarioSuiteExecutionEntryState.CANCELLED in states:
+        if ScenarioRunState.CANCELLED in states:
             return ScenarioSuiteExecutionStatus.CANCELLED
         if states.intersection(
             {
-                ScenarioSuiteExecutionEntryState.SUBMISSION_FAILED,
-                ScenarioSuiteExecutionEntryState.FAILED,
+                ScenarioSuiteSubmissionState.SUBMISSION_FAILED,
+                ScenarioRunState.FAILED,
             }
         ):
             return ScenarioSuiteExecutionStatus.FAILED
@@ -657,20 +542,6 @@ class ScenarioSuiteExecutionService:
                 "Scenario suite submission coordinator failed.",
                 exc_info=(type(error), error, error.__traceback__),
             )
-
-    def _get_suite_registry(self) -> ScenarioSuiteRegistry:
-        """Return the injected suite registry or process singleton."""
-        return (
-            self._suite_registry if self._suite_registry is not None else ScenarioSuiteRegistry.get_registry_singleton()
-        )
-
-    def _get_preset_registry(self) -> ScenarioPresetRegistry:
-        """Return the injected preset registry or process singleton."""
-        return (
-            self._preset_registry
-            if self._preset_registry is not None
-            else ScenarioPresetRegistry.get_registry_singleton()
-        )
 
     def _get_run_service(self) -> ScenarioRunService:
         """Return the injected run service or process singleton."""

@@ -37,6 +37,7 @@ from pyrit.memory import (
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
+    SCENARIO_SUITE_EXECUTION_METADATA_KEY,
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
@@ -330,11 +331,11 @@ async def test_prepare_persists_internal_initial_metadata_with_run_service_field
     ):
         await service._prepare_run_async(
             request=RunScenarioRequest(scenario_name="test.support", target_name="my_target"),
-            initial_metadata={"scenario_suite_execution_v1": suite_metadata},
+            initial_metadata={SCENARIO_SUITE_EXECUTION_METADATA_KEY: suite_metadata},
         )
 
     metadata = registry.create_and_initialize_async.call_args.kwargs["initial_metadata"]
-    assert metadata["scenario_suite_execution_v1"] == suite_metadata
+    assert metadata[SCENARIO_SUITE_EXECUTION_METADATA_KEY] == suite_metadata
     assert metadata[_svc_mod._SCHEDULER_METADATA_KEY] == _svc_mod._SCHEDULER_METADATA_VALUE
     assert _svc_mod._LAUNCH_REQUEST_METADATA_KEY in metadata
     await service.close_async()
