@@ -276,7 +276,8 @@ class AzureBlobStorageTarget(PromptTarget):
                 "path, e.g. https://<account>.blob.core.windows.net/<container>."
             )
         container_name = path_parts[1]
-        blob_prefix = "/".join(path_parts[2:])
+        # Strip slashes so a trailing "/" on the URL does not add an empty segment to the blob path.
+        blob_prefix = "/".join(path_parts[2:]).strip("/")
         container_url = f"https://{parsed_url.netloc}/{container_name}"
         return container_url, blob_prefix
 
@@ -303,7 +304,8 @@ class AzureBlobStorageTarget(PromptTarget):
             file_name = self._sanitize_file_name(str(request.prompt_metadata["file_name"]))
 
         data = str.encode(request.converted_value)
-        blob_url = self._container_url + "/" + file_name
+        # Drop a trailing "/" on the configured URL so the returned URL has no "//" before the file name.
+        blob_url = self._container_url.rstrip("/") + "/" + file_name
 
         await self._upload_blob_async(file_name=file_name, data=data, content_type=self._blob_content_type)
 
