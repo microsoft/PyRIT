@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "./_fixtures";
+import type { OperationSelection } from "../src/types";
 import { mockVersion } from "./_compatibility";
-import { READY_RUNTIME } from "./_runtime";
+import { READY_RUNTIME, waitForAppReady } from "./_runtime";
 
 // ---------------------------------------------------------------------------
 // The operation picker's size and placement are decided by Fluent's floating
@@ -21,6 +22,15 @@ function operations(count: number): string[] {
 
 function operationId(index: number): string {
   return `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+}
+
+async function waitForSavedOperation(
+  page: Page,
+  operation: OperationSelection | null,
+): Promise<void> {
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem("pyrit.userPreferences.v1.local") ?? "{}").operation,
+  )).toEqual(operation);
 }
 
 async function rememberOperation(page: Page, id: string): Promise<void> {
@@ -346,6 +356,7 @@ test.describe("operation picker placement", () => {
     });
     await setupMocks(page, operations(600));
     await page.goto("/");
+    await waitForAppReady(page);
 
     await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_chosen_elsewhere");
     await expect(page.getByTestId("edit-label-operation")).toHaveAccessibleDescription("Not registered");
@@ -353,7 +364,9 @@ test.describe("operation picker placement", () => {
     await expect(page.getByRole("button", { name: "Choose existing", exact: true })).toHaveCount(0);
     await page.getByRole("region", { name: "Default Labels" }).getByRole("button", { name: "Clear", exact: true }).click();
     await expect(page.getByTestId("edit-label-operation")).toHaveValue("");
+    await waitForSavedOperation(page, null);
     await page.reload();
+    await waitForAppReady(page);
     await expect(page.getByTestId("edit-label-operation")).toHaveValue("");
     await expect(page.getByText("Not registered", { exact: true })).toHaveCount(0);
   });
@@ -382,11 +395,14 @@ test.describe("operation picker persistence", () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await setupMocks(page, ["op_alpha", "op_beta"]);
     await openOperationPicker(page);
+    await waitForAppReady(page);
 
     await page.getByRole("option", { name: "op_beta", exact: true }).click();
     await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_beta");
+    await waitForSavedOperation(page, { id: operationId(1) });
 
     await page.reload();
+    await waitForAppReady(page);
 
     await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_beta");
   });
@@ -466,9 +482,11 @@ test.describe("operation picker persistence", () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await setupMocks(page, ["op_alpha", "op_beta"]);
     await openOperationPicker(page);
+    await waitForAppReady(page);
 
     await page.getByRole("option", { name: "op_beta", exact: true }).click();
     await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_beta");
+    await waitForSavedOperation(page, { id: operationId(1) });
 
     // A later visit, once the deployment configures an operator.
     await page.unrouteAll({ behavior: "ignoreErrors" });
@@ -476,6 +494,7 @@ test.describe("operation picker persistence", () => {
       defaultLabels: { operator: "configured_user" },
     });
     await page.reload();
+    await waitForAppReady(page);
 
     await expect(page.getByTestId("edit-label-operator")).toHaveValue(
       "configured_user",
@@ -493,17 +512,20 @@ test.describe("operation picker persistence", () => {
       defaultLabels: { operator: "configured_day1" },
     });
     await openOperationPicker(page);
+    await waitForAppReady(page);
 
     await page.getByRole("option", { name: "op_beta", exact: true }).click();
     await expect(page.getByTestId("edit-label-operator")).toHaveValue(
       "configured_day1",
     );
+    await waitForSavedOperation(page, { id: operationId(1) });
 
     await page.unrouteAll({ behavior: "ignoreErrors" });
     await setupMocks(page, ["op_alpha", "op_beta"], {
       defaultLabels: { operator: "configured_day2" },
     });
     await page.reload();
+    await waitForAppReady(page);
 
     await expect(page.getByTestId("edit-label-operator")).toHaveValue(
       "configured_day2",

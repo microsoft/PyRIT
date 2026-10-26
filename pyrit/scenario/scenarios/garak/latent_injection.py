@@ -413,7 +413,7 @@ class LatentInjection(Scenario):
                     objective_target=context.objective_target,
                     attack_converter_config=AttackConverterConfig(
                         request_converters=ConverterConfiguration.from_converters(
-                            converters=[*converters, *self._technique_converters.get(technique.value, [])]
+                            converters=[*converters, *context.technique_converters.get(technique.value, [])]
                         )
                     ),
                     attack_scoring_config=AttackScoringConfig(

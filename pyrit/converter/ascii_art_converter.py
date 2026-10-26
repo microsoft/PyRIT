@@ -138,7 +138,7 @@ def _display_width(text: str) -> int:
     Returns:
         int: The displayed width, or the code-point count for terminal-dependent controls.
     """
-    width = cast("int", wcswidth(text))
+    width = wcswidth(text)
     return width if width >= 0 else len(text)
 
 

@@ -367,6 +367,48 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => { expect(screen.queryByText("Attack Result Details")).not.toBeInTheDocument(); });
   });
 
+  it("keeps an automated result read-only until Continue manually creates a separate attack", async () => {
+    const user = userEvent.setup();
+    const original = makeTextResponse("Original automated response").messages;
+    mockedAttacksApi.getMessages.mockResolvedValue(original);
+    mockedAttacksApi.saveConversation.mockResolvedValue({
+      attack: {
+        attack_result_id: "manual-copy", conversation_id: "manual-conversation", attack_type: "ManualAttack",
+        objective: "Original goal", outcome: "undetermined", converters: [], labels: {},
+        related_conversation_ids: [], message_count: 1, created_at: "", updated_at: "",
+        execution_read_only: false,
+        manual_continuation: { source_attack_result_id: "automated", source_conversation_id: "original" },
+      },
+      messages: { ...original, conversation_id: "manual-conversation" },
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="automated" conversationId="original"
+      activeConversationId="original" objective="Original goal" executionReadOnly
+      lastResponseMessagePieceId="p-resp"
+      defaultChatScorer={{ registry_name: "personal", identifier_hash: "personal-hash" }} /></TestWrapper>);
+    await screen.findByText("Original automated response", { exact: true });
+    expect(screen.getByRole("button", { name: "Edit Conversation", exact: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("button", { name: "Edit objective" })).not.toBeInTheDocument();
+    expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    expect(screen.getByRole("button", { name: "Add", exact: true })).toBeEnabled();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Continue manually", exact: true }));
+    await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledTimes(1));
+    const request = mockedAttacksApi.saveConversation.mock.calls[0][0];
+    expect(request).toMatchObject({
+      destination: "new_attack", source_attack_result_id: "automated", source_conversation_id: "original",
+      objective: "Original goal", target_registry_name: mockTarget.target_registry_name,
+    });
+    expect(request).not.toHaveProperty("chat_scorer");
+    expect(request.messages[0].role).toBe("simulated_assistant");
+    await waitFor(() => expect(defaultProps.onConversationCreated).toHaveBeenCalledWith(
+      "manual-copy", "manual-conversation", "Original goal", mockTarget,
+    ));
+    expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
+    expect(mockedAttacksApi.updateAttack).not.toHaveBeenCalled();
+  });
+
   it("keeps the attachment workflow mounted across viewed conversation changes", async () => {
     mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Saved").messages);
     mockedMapper.backendMessagesToFrontend.mockReturnValue([{ role: "user", content: "Saved", timestamp: "" }]);
@@ -430,7 +472,19 @@ describe("ChatWindow Integration", () => {
       };
       accepted.set(submissionId, progress);
       mockedAttacksApi.getMessages.mockResolvedValueOnce(response.messages);
-      mockedAttacksApi.getAttack.mockResolvedValueOnce(response.attack);
+      mockedAttacksApi.getAttack.mockResolvedValueOnce(response.attack ?? {
+        attack_result_id: attackId,
+        conversation_id: request.target_conversation_id,
+        attack_type: "ManualAttack",
+        objective: "",
+        outcome: "undetermined",
+        converters: [],
+        related_conversation_ids: [],
+        message_count: response.messages.messages.length,
+        labels: {},
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:01Z",
+      });
       return { ...progress, state: "queued" };
     });
     mockedAttacksApi.getMessageSend.mockImplementation(async (_attackId, sendId) => {
@@ -941,6 +995,131 @@ describe("ChatWindow Integration", () => {
   // -----------------------------------------------------------------------
   // Basic rendering
   // -----------------------------------------------------------------------
+
+  it("should dismiss scoring error notices after ten seconds without dismissing saved error details", async () => {
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const failure = {
+      scorer: { registry_name: "judge", identifier_hash: "hash" }, objective: "Goal",
+      response_id: "p-resp", conversation_id: "score-conv",
+      error: "The objective scorer was unavailable",
+    };
+    const completed: MessageSendStatus = {
+      attack_result_id: "score-attack", conversation_id: "score-conv", send_id: "score-send",
+      request_turn_number: 0, state: "completed", error: null, failure_stage: null,
+      scoring_error: failure.error,
+    };
+    mockedAttacksApi.submitMessageSend.mockResolvedValue(completed);
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      ...makeTextResponse("Delivered response").messages, conversation_id: "score-conv", scoring_failure: failure,
+    });
+    mockedAttacksApi.getAttack.mockResolvedValue({
+      attack_result_id: "score-attack", conversation_id: "score-conv", attack_type: "ManualAttack",
+      objective: "Goal", converters: [], message_count: 2, related_conversation_ids: [],
+      labels: {}, created_at: "", updated_at: "",
+    });
+    const rendered = render(<TestWrapper><ChatWindow {...defaultProps}
+      attackResultId="score-attack" conversationId="score-conv" objective="Goal" outcome="undetermined" /></TestWrapper>);
+    try {
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "First");
+      await user.click(screen.getByRole("button", { name: "Send message" }));
+      const notice = /A scoring error occurred/;
+      expect(await screen.findByText(notice)).toBeInTheDocument();
+      act(() => { jest.advanceTimersByTime(9000); });
+      expect(screen.getByText(notice)).toBeInTheDocument();
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Second");
+      await user.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue(""));
+      act(() => { jest.advanceTimersByTime(1500); });
+      expect(screen.getByText(notice)).toBeInTheDocument();
+      act(() => { jest.advanceTimersByTime(8500); });
+      expect(screen.queryByText(notice)).not.toBeInTheDocument();
+      expect(screen.getByText("Delivered response")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+      await user.click(screen.getByRole("button", { name: /scoring error.*view details/i }));
+      expect(screen.getByText(/objective scorer was unavailable/)).toBeInTheDocument();
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(2);
+    } finally {
+      rendered.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it.each([false, true])("should apply the registry scorer when the first objective is added and preserve Off (%s)", async (turnOff: boolean) => {
+    const user = userEvent.setup();
+    const reference = { registry_name: "judge", identifier_hash: "hash" };
+    mockSendResult.mockImplementation(() => new Promise(() => {}));
+    const availableScorers = [{ scorer_registry_name: "judge", identifier: {
+        class_name: "SubStringScorer", class_module: "pyrit.score", hash: "hash", scorer_type: "true_false",
+    } }];
+    const rendered = render(<TestWrapper><ChatWindow {...defaultProps}
+      availableScorers={availableScorers} /></TestWrapper>);
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} defaultChatScorer={reference}
+      availableScorers={availableScorers} /></TestWrapper>);
+    await user.click(screen.getByRole("button", { name: "Add objective" }));
+    await user.type(screen.getByRole("textbox", { name: "Attack objective" }), "Goal");
+    await user.click(within(screen.getByTestId("objective-header")).getByRole("button", { name: "Save", exact: true }));
+    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
+    const picker = screen.getByRole("combobox", { name: "Chat scorer" });
+    expect(picker).toHaveValue("registered:judge");
+    if (turnOff) await user.selectOptions(picker, "");
+    await user.keyboard("{Escape}");
+    await user.type(screen.getByPlaceholderText("Type prompt here"), "New chat");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
+      expect.objectContaining({ chat_scorer: turnOff ? null : reference }),
+    ));
+  });
+
+  it("should not configure a default scorer before a new chat has an objective", async () => {
+    const user = userEvent.setup();
+    mockSendResult.mockImplementation(() => new Promise(() => {}));
+    render(<TestWrapper><ChatWindow {...defaultProps}
+      defaultChatScorer={{ registry_name: "judge", identifier_hash: "hash" }} /></TestWrapper>);
+    await user.type(screen.getByPlaceholderText("Type prompt here"), "Chat without a goal");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledTimes(1));
+    expect(mockedAttacksApi.createAttack.mock.calls[0][0]).not.toHaveProperty("chat_scorer");
+  });
+
+  it("should propose the current personal default when the first objective is added to a saved manual chat", async () => {
+    const user = userEvent.setup();
+    const reference = { registry_name: "judge", identifier_hash: "hash" };
+    mockedAttacksApi.updateAttack.mockResolvedValue({
+      attack_result_id: "blank", conversation_id: "blank", attack_type: "ManualAttack",
+      objective: "Goal", converters: [], message_count: 0, related_conversation_ids: [],
+      labels: {}, created_at: "", updated_at: "", chat_scorer: reference,
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="blank" conversationId="blank"
+      defaultChatScorer={reference} /></TestWrapper>);
+    await user.click(screen.getByRole("button", { name: "Add objective" }));
+    await user.type(screen.getByRole("textbox", { name: "Attack objective" }), "Goal");
+    await user.click(within(screen.getByTestId("objective-header")).getByRole("button", { name: "Save", exact: true }));
+    await waitFor(() => expect(mockedAttacksApi.updateAttack).toHaveBeenCalledWith("blank", {
+      objective: "Goal", expected_objective: "", default_chat_scorer: reference,
+    }));
+  });
+
+  it("should show the original scan scorer by exact identity rather than the personal default", async () => {
+    const user = userEvent.setup();
+    const original = { registry_name: "Original::hash", identifier_hash: "original-hash" };
+    const catalog = [
+      { scorer_registry_name: "scan-judge", identifier: { class_name: "SubStringScorer", class_module: "pyrit.score", hash: "original-hash", scorer_type: "true_false" } },
+      { scorer_registry_name: "personal", identifier: { class_name: "SubStringScorer", class_module: "pyrit.score", hash: "personal-hash", scorer_type: "true_false" } },
+    ];
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="scan" conversationId="scan"
+      objective="Goal" outcome="success" chatScorer={original} chatScorerInherited
+      defaultChatScorer={{ registry_name: "personal", identifier_hash: "personal-hash" }} availableScorers={catalog} /></TestWrapper>);
+    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
+    expect(screen.getByRole("combobox", { name: "Chat scorer" })).toHaveValue(
+      "registered:scan-judge",
+    );
+    expect(screen.queryByText(/saved scorer is unavailable/i)).not.toBeInTheDocument();
+    expect(mockedAttacksApi.updateAttack).not.toHaveBeenCalled();
+  });
 
   it("should fade informational messages after five seconds and retain save errors", async () => {
     jest.useFakeTimers();
@@ -2272,7 +2451,7 @@ describe("ChatWindow Integration", () => {
 
     await user.click(await screen.findByRole("button", { name: /objective achieved outcome: undetermined/i }));
     await user.click(screen.getByRole("radio", { name: "Success" }));
-    await user.click(screen.getByRole("button", { name: "Update" }));
+    await user.click(screen.getByRole("button", { name: "Add" }));
 
     await waitFor(() => {
       expect(mockedScoresApi.createManualScore).toHaveBeenCalledWith({
@@ -2334,7 +2513,7 @@ describe("ChatWindow Integration", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /objective achieved outcome: success/i }));
-    await user.click(screen.getByRole("button", { name: "Remove human score" }));
+    await user.click(screen.getByRole("button", { name: "Remove" }));
 
     await waitFor(() => {
       expect(mockedAttacksApi.removeHumanScore).toHaveBeenCalledWith("attack-result-id");
@@ -2707,6 +2886,35 @@ describe("ChatWindow Integration", () => {
   });
 
   it.each([
+    { interaction: "hover", reconstructionError: "The selected target cannot be recreated with its current settings." },
+    { interaction: "keyboard", reconstructionError: "The selected target cannot be recreated with its current settings." },
+    { interaction: "hover", reconstructionError: undefined },
+    { interaction: "keyboard", reconstructionError: undefined },
+  ])("explains unavailable temperature only on $interaction: $reconstructionError", async ({
+    interaction, reconstructionError,
+  }: { interaction: string; reconstructionError: string | undefined }) => {
+    const user = userEvent.setup();
+    const target = {
+      ...mockTarget,
+      supports_temperature_override: false,
+      reconstruction_error: reconstructionError,
+    };
+    const explanation = reconstructionError ?? "This target does not support a separate temperature setting.";
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target} /></TestWrapper>);
+    const input = screen.getByRole("spinbutton", { name: "Temperature" });
+    expect(input).toBeDisabled();
+    expect(screen.getByText(explanation)).not.toBeVisible();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    if (interaction === "hover") await user.hover(input);
+    else {
+      await user.click(screen.getByRole("combobox", { name: "Chat target" }));
+      await user.tab();
+    }
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(explanation);
+    expect(targetsApi.buildTarget).not.toHaveBeenCalled();
+  });
+
+  it.each([
     { interaction: "hover", supportsOverride: true },
     { interaction: "click", supportsOverride: true },
     { interaction: "hover", supportsOverride: false },
@@ -2726,7 +2934,9 @@ describe("ChatWindow Integration", () => {
     if (interaction === "hover") await user.hover(input);
     else await user.click(input);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Temperature can only be modified in a new attack"
+      supportsOverride
+        ? "Temperature can only be modified in a new attack"
+        : "This target does not support a separate temperature setting."
     );
     expect(input).toHaveAttribute("readonly");
     expect(input).toHaveValue(0.8);

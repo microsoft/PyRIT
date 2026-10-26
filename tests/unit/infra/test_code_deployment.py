@@ -12,6 +12,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from unit.async_utils import TEST_WATCHDOG_SECONDS
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PIPELINES = REPO_ROOT / "infra" / "pipelines"
 SUBSCRIPTION = "11111111-1111-1111-1111-111111111111"
@@ -246,7 +248,7 @@ class TestCodeDeployment(unittest.TestCase):
             text=True,
             check=False,
             env=environment,
-            timeout=30,
+            timeout=TEST_WATCHDOG_SECONDS,
         )
         assert "Unexpected " not in result.stderr, result.stderr
         return result

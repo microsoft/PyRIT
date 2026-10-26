@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, assert_never, overload
 
 from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.logger import logger
@@ -65,6 +65,7 @@ if TYPE_CHECKING:
         PrependedHistorySendContext,
     )
     from pyrit.executor.attack.core.attack_config import (
+        AdversarialPromptRequirements,
         AttackAdversarialConfig,
         AttackScoringConfig,
     )
@@ -599,12 +600,14 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
 
         if result.outcome == AttackOutcome.SUCCESS:
             message = f"{attack_name} achieved the objective. {reason}"
+        elif result.outcome == AttackOutcome.FAILURE:
+            message = f"{attack_name} did not achieve the objective. {reason}"
         elif result.outcome == AttackOutcome.UNDETERMINED:
             message = f"{attack_name} outcome is undetermined. {reason}"
         elif result.outcome == AttackOutcome.ERROR:
             message = f"{attack_name} failed with an error. {reason}"
         else:
-            message = f"{attack_name} did not achieve the objective. {reason}"
+            assert_never(result.outcome)
 
         self._logger.info(message)
 
@@ -712,6 +715,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
+    #: Named prompt slots, template parameters, and defaults consumed by the attack.
+    ADVERSARIAL_PROMPT_REQUIREMENTS: ClassVar[AdversarialPromptRequirements | None] = None
+
     #: Compound attacks set this when children own outcome scoring and expectation validation.
     #: No scoring configuration alone does not imply delegation.
     DELEGATES_SCORING: ClassVar[bool] = False
@@ -719,6 +725,22 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: What this strategy's persisted results represent. Compound attacks that only coordinate
     #: child attacks, and never call the objective target themselves, set ``ORCHESTRATION``.
     RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.TARGET_FACING
+
+    @classmethod
+    def get_adversarial_prompt_requirements(cls) -> AdversarialPromptRequirements:
+        """
+        Get the prompt contract declared by an adversarial attack.
+
+        Returns:
+            AdversarialPromptRequirements: The attack's shared construction and preflight contract.
+
+        Raises:
+            ValueError: If the attack does not declare named prompt support.
+        """
+        requirements = cls.ADVERSARIAL_PROMPT_REQUIREMENTS
+        if requirements is None:
+            raise ValueError(f"{cls.__name__} does not declare named adversarial prompt support.")
+        return requirements
 
     @classmethod
     def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:

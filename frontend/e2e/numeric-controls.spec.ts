@@ -94,6 +94,7 @@ async function mockNumericControlApis(page: Page): Promise<void> {
         ],
       },
       '/api/labels': { source: 'attacks', labels: {} },
+      '/api/scorers': { items: [], pagination: { has_more: false } },
       '/api/datasets': { items: datasetItems },
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}`]: SCENARIO,
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}/estimate`]: SCENARIO.default_run_size,

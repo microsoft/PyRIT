@@ -53,6 +53,11 @@ export function useConversationSave(newAttackContext?: NewAttackContext) {
         operation_id: operationId,
         labels,
         messages,
+        ...(destination === 'new_attack' && currentContext?.chatScorer !== undefined
+          && (objective || currentContext.chatScorerExplicit || currentContext.chatScorer === null)
+          ? { chat_scorer: currentContext.chatScorer } : {}),
+        ...(updatesObjective && !input.initialObjective.trim() && contextRef.current?.chatScorer
+          ? { default_chat_scorer: contextRef.current.chatScorer } : {}),
         ...(reuseUnsentConversation ? {
           reuse_unsent_conversation: true,
           expected_source_piece_ids: input.sourcePieceIds ?? [],

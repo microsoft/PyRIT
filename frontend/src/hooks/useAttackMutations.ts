@@ -1,13 +1,14 @@
 import { useCallback, useState } from 'react'
 
 import { attacksApi, scoresApi } from '@/services/api'
-import type { AttackOutcome, AttackSummary, BackendScore } from '@/types'
+import type { AttackOutcome, AttackSummary, BackendScore, RegisteredComponentReference } from '@/types'
 
 export interface UseAttackMutationsOptions {
   attackResultId: string | null
   activeConversationId: string | null
   /** The loaded attack's objective. */
   objective: string
+  defaultChatScorer?: RegisteredComponentReference | null
   lastResponseMessagePieceId?: string | null
   humanScore?: BackendScore | null
   isScoreLocked: boolean
@@ -33,6 +34,7 @@ export function useAttackMutations({
   attackResultId,
   activeConversationId,
   objective,
+  defaultChatScorer,
   lastResponseMessagePieceId,
   humanScore,
   isScoreLocked,
@@ -103,10 +105,14 @@ export function useAttackMutations({
       return
     }
 
-    const updatedAttack = await attacksApi.updateAttack(attackResultId, { objective: newObjective, expected_objective: expectedObjective })
+    const updatedAttack = await attacksApi.updateAttack(attackResultId, {
+      objective: newObjective, expected_objective: expectedObjective,
+      ...(!expectedObjective.trim() && newObjective.trim() && defaultChatScorer
+        ? { default_chat_scorer: defaultChatScorer } : {}),
+    })
     onAttackChange?.(updatedAttack)
     onObjectiveChange?.(updatedAttack.objective)
-  }, [attackResultId, onAttackChange, onObjectiveChange])
+  }, [attackResultId, onAttackChange, onObjectiveChange, defaultChatScorer])
 
   return {
     pendingObjective,

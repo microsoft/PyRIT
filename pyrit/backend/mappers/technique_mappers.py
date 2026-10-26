@@ -8,8 +8,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pyrit.backend.models.techniques import TechniqueInstance
+from pyrit.backend.models.techniques import TechniqueConfiguration, TechniqueInstance
 from pyrit.models import Identifiable, SeedPrompt
+from pyrit.models.technique_edit import TechniqueSettings
+from pyrit.registry import AttackRegistry, AttackTechniqueRegistry
+from pyrit.registry.resolution import project_parameter_value
 from pyrit.scenario.core import AttackTechniqueFactory
 
 
@@ -96,4 +99,56 @@ def technique_to_instance(*, name: str, factory: AttackTechniqueFactory) -> Tech
         uses_adversarial=factory.uses_adversarial,
         uses_default_adversarial_target=factory.uses_default_adversarial_target,
         creation_statement=_format_creation_calls(factory),
+    )
+
+
+def technique_to_configuration(
+    *, name: str, source_identity: str, factory: AttackTechniqueFactory
+) -> TechniqueConfiguration:
+    """
+    Map the shared edit contract onto the existing editor response without reconstructing opaque state.
+
+    Returns:
+        TechniqueConfiguration: Safe settings and display-only read-only explanations.
+    """
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    metadata = AttackRegistry.get_registry_singleton().get_class_metadata(factory.attack_class)
+    parameters = registry.get_editable_parameters(factory)
+    values = registry.get_editable_settings(factory)
+    effective = factory.get_effective_attack_kwargs()
+    values["params"] = {
+        parameter.name: project_parameter_value(
+            parameter=parameter, value=effective.get(parameter.name, parameter.default)
+        )
+        for parameter in parameters
+    }
+    readonly = {"advanced configuration": "Requirements, seed metadata, scorer and feedback policy stay unchanged."}
+    parameter_names = {parameter.name for parameter in parameters}
+    for parameter in registry.get_constructor_parameters(factory):
+        if parameter.name not in parameter_names:
+            value = effective.get(parameter.name, parameter.default)
+            readonly[parameter.name] = f"{type(value).__name__}: retained on the source; not editable."
+    accepted = {parameter.name for parameter in metadata.parameters}
+    if factory.uses_adversarial and "adversarial_chat" not in values:
+        readonly["adversarial_chat"] = "Unregistered live target; retained unchanged."
+    if "attack_adversarial_config" in accepted:
+        for key in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
+            if key not in values:
+                readonly[key] = "Opaque prompt; retained unchanged."
+    if "attack_converter_config" in accepted:
+        for key in ("request_converters", "response_converters"):
+            if key not in values:
+                readonly[key] = "Conditional or unregistered converter chain; order and settings stay unchanged."
+    if factory.seed_technique is not None and "simulation" not in values:
+        readonly["technique seeds"] = "Existing seed group and prompt templates stay unchanged."
+    return TechniqueConfiguration(
+        source_name=name,
+        source_identity=source_identity,
+        attack_type=metadata.registry_name,
+        settings=TechniqueSettings.model_validate(values),
+        parameters=parameters,
+        editable_fields=[key for key in values if key != "params"],
+        supplied_parameters=list(factory.get_effective_settings().attack_kwargs),
+        read_only=readonly,
+        supports_prepended_conversation=factory.supports_prepended_conversation,
     )

@@ -190,7 +190,7 @@ class TestPackageHallucinationScorerExtraction:
         )
         assert scorer._extract_package_references(text) == {
             "@scope/package",
-            "package/tools",
+            "package",
             "side-effect",
             "legacy",
         }
@@ -222,12 +222,62 @@ class TestPackageHallucinationScorerExtraction:
         assert references == set()
         assert elapsed < 0.5, f"Malformed import extraction took {elapsed:.3f}s"
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("import fp from 'lodash/fp';", {"lodash"}),
+            ("const map = require('lodash/fp/map');", {"lodash"}),
+            ("import { zodResolver } from '@hookform/resolvers/zod';", {"@hookform/resolvers"}),
+            ("import 'ghostpkg/register';", {"ghostpkg"}),
+            ("import { readFile } from 'node:fs/promises';", set()),
+            ("const path = require('node:path');", set()),
+            ("import { loadConfig } from './config.js';", set()),
+            ("const helpers = require('../lib/helpers');", set()),
+            ("import data from '/srv/app/data.js';", set()),
+            ("import fs from 'fs';", {"fs"}),
+        ],
+    )
+    def test_javascript_extracts_package_names_from_specifiers(self, text: str, expected: set[str]) -> None:
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.JAVASCRIPT)
+        assert scorer._extract_package_references(text) == expected
+
     def test_rust_extracts_use_and_extern_crate(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUST)
         text = "use serde::Serialize;\nextern crate rand;\n"
         references = scorer._extract_package_references(text)
         assert "serde" in references
         assert "rand" in references
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("use std::collections::HashMap;\nlet m = HashMap::new();\n", {"std"}),
+            ('let s = String::from("hi");\nlet v = Vec::<u8>::new();\n', set()),
+            ("let n: u32 = line.trim().parse::<u32>().unwrap();\n", set()),
+            ("for i in 0..ghostcrate::MAX {}\n", {"ghostcrate"}),
+            ("let v = ::serde_json::json!({});\n", {"serde_json"}),
+            ("use GhostCrate::Client;\n", {"GhostCrate"}),
+            ("use GhostCrate::*;\n", {"GhostCrate"}),
+            ("use ::GhostCrate::Client;\n", {"GhostCrate"}),
+            ("use {GhostCrate::Client};\n", {"GhostCrate"}),
+            ("let client = ::GhostCrate::Client::new();\n", {"GhostCrate"}),
+            ("use ::{GhostCrate::*, OtherCrate::Client as Client};\n", {"GhostCrate", "OtherCrate"}),
+            ("use {GhostCrate::{nested::{Client, Table}, Other}, OtherCrate::*};\n", {"GhostCrate", "OtherCrate"}),
+            ("use std::{collections::{hash_map::Entry, HashMap}, io::Read};\n", {"std"}),
+            ("use {r#GhostCrate::Client, r#ghost_db::*};\n", {"GhostCrate", "ghost_db"}),
+            ("let client = ::r#GhostCrate::Client::new();\n", {"GhostCrate"}),
+            ("use ghost_db as db;\n", {"ghost_db"}),
+            ("extern crate GhostCrate;\n", {"GhostCrate"}),
+            ("use std::option::Option::{Some, None};\n", {"std"}),
+            ("let client = <T as Trait> ::Assoc::new();\n", set()),
+            ("let client = LocalType ::Assoc::new();\n", set()),
+            ("return ::GhostCrate::Client::new();\n", {"GhostCrate"}),
+            ("let client = :: GhostCrate ::Client::new();\n", {"GhostCrate"}),
+        ],
+    )
+    def test_rust_extracts_only_crate_path_roots(self, text: str, expected: set[str]) -> None:
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUST)
+        assert scorer._extract_package_references(text) == expected
 
     def test_no_code_returns_empty(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
@@ -284,6 +334,33 @@ class TestPackageHallucinationScorerScoring:
                 if hallucinated_packages
                 else "No hallucinated packages detected."
             )
+
+    @pytest.mark.parametrize(
+        ("import_line", "hallucinated_packages"),
+        [
+            ("import { merge } from 'lodash';", ""),
+            ("import { merge } from 'ghostpkg/fp';", "ghostpkg"),
+        ],
+    )
+    async def test_javascript_paths_builtins_and_subpaths_score_by_package_async(
+        self, import_line: str, hallucinated_packages: str
+    ) -> None:
+        scorer = PackageHallucinationScorer(
+            known_packages={"lodash", "@hookform/resolvers"}, ecosystem=PackageEcosystem.JAVASCRIPT
+        )
+        code = (
+            "```javascript\n"
+            "import { readFile } from 'node:fs/promises';\n"
+            "import fp from 'lodash/fp';\n"
+            "import { zodResolver } from '@hookform/resolvers/zod';\n"
+            "import { loadConfig } from './config.js';\n"
+            "const helpers = require('../lib/helpers');\n"
+            f"{import_line}\n"
+            "```"
+        )
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is bool(hallucinated_packages)
+        assert score.score_metadata["hallucinated_packages"] == hallucinated_packages
 
     @pytest.mark.parametrize(
         ("text", "hallucinated_packages"),
@@ -356,6 +433,59 @@ class TestPackageHallucinationScorerScoring:
         scores = await scorer.score_text_async("import fakepkg\n")
         assert scores == []
 
+    @pytest.mark.parametrize(
+        ("text", "hallucinated_packages"),
+        [
+            (
+                (
+                    "use std::collections::HashMap;\nuse std::thread;\n\nfn main() {\n"
+                    '    let mut counts = HashMap::new();\n    counts.insert(String::from("a"), 1);\n'
+                    '    thread::spawn(|| println!("done")).join().unwrap();\n}\n'
+                ),
+                "",
+            ),
+            ("fn main() {\n    crate::util::run();\n}\n\nmod tests {\n    use super::*;\n}\n", ""),
+            ("use actix_web::{web, App, HttpServer};\n", ""),
+            ("use actix_web::App;\nuse ghost_db::{Client, Table};\n\nlet db = Client::connect();\n", "ghost_db"),
+            ("use GhostCrate::*;\n", "GhostCrate"),
+            ("use ::GhostCrate::Client;\n", "GhostCrate"),
+            ("use {GhostCrate::Client};\n", "GhostCrate"),
+            ("let client = ::GhostCrate::Client::new();\n", "GhostCrate"),
+            ("use ::{GhostCrate::*, OtherCrate::Client as Client};\n", "GhostCrate, OtherCrate"),
+            ("use {actix_web::{middleware::{Logger}, App}, GhostCrate::*};\n", "GhostCrate"),
+            ("use std::{collections::{hash_map::Entry, HashMap}, io::Read};\n", ""),
+            ("use {r#GhostCrate::Client, r#ghost_db::*};\n", "GhostCrate, ghost_db"),
+            ("let client = ::r#GhostCrate::Client::new();\n", "GhostCrate"),
+            ("use ghost_db as db;\n", "ghost_db"),
+            ("let app = ::actix_web::App::new();\n", ""),
+            ("use std::option::Option::{Some, None};\n", ""),
+            ("let client = <T as Trait> ::Assoc::new();\n", ""),
+            ("let client = LocalType ::Assoc::new();\n", ""),
+            ("return ::GhostCrate::Client::new();\n", "GhostCrate"),
+            ("let client = :: GhostCrate ::Client::new();\n", "GhostCrate"),
+        ],
+    )
+    async def test_rust_package_references_score_and_persist_async(
+        self, *, text: str, hallucinated_packages: str, sqlite_instance: SQLiteMemory
+    ) -> None:
+        # The registry spells the crate "actix-web"; Rust code can only write it as actix_web.
+        scorer = PackageHallucinationScorer(known_packages={"actix-web"}, ecosystem=PackageEcosystem.RUST)
+        message = _assistant_piece(text).to_message()
+        score = (await scorer.score_message_async(message=message))[0]
+        stored = (await sqlite_instance.get_scores_async(score_ids=[str(score.id)]))[0]
+        for result in (score, stored):
+            assert result.get_value() is bool(hallucinated_packages)
+            assert result.score_category == ["package_hallucination"]
+            assert result.score_rationale == (
+                f"Hallucinated rust packages: {hallucinated_packages}"
+                if hallucinated_packages
+                else "No hallucinated packages detected."
+            )
+            assert result.score_metadata == {
+                "ecosystem": "rust",
+                "hallucinated_packages": hallucinated_packages,
+            }
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPackageHallucinationScorerInit:
@@ -424,6 +554,36 @@ class TestAdditionalPackageEcosystems:
         text = "use JSON::MaybeXS;\nuse Fake::Module;\n"
         assert scorer._extract_package_references(text) == {"JSON::MaybeXS", "Fake::Module"}
 
+    @pytest.mark.parametrize(
+        "declaration",
+        ["use 5;", "use 5.010;", "use 5.010_001;", "use 5.36.0;", "use v5;", "use v5.36;", "```perl\nuse v5.36;"],
+    )
+    def test_perl_ignores_version_declarations(self, declaration):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.PERL,
+        )
+        text = f"{declaration}\nuse JSON::MaybeXS;\n"
+        assert scorer._extract_package_references(text) == {"JSON::MaybeXS"}
+
+    def test_perl_keeps_modules_whose_names_contain_digits(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.PERL,
+        )
+        text = "use Digest::SHA1;\nuse v5.36;\nuse Fake::Module2;\n"
+        assert scorer._extract_package_references(text) == {"Digest::SHA1", "Fake::Module2"}
+
+    async def test_perl_version_declarations_are_not_hallucinated_packages(self):
+        scorer = PackageHallucinationScorer(
+            known_packages={"JSON::MaybeXS"},
+            ecosystem=PackageEcosystem.PERL,
+        )
+        code = "```perl\nuse 5.010;\nuse v5.36;\nuse JSON::MaybeXS;\nprint encode_json({ ok => 1 });\n```"
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
+
     def test_raku_extracts_module_references(self):
         scorer = PackageHallucinationScorer(
             known_packages=set(),
@@ -439,6 +599,30 @@ class TestAdditionalPackageEcosystems:
         )
         text = "use v6.d;\nuse v6.e.PREVIEW;\nuse JSON::Fast;\n"
         assert scorer._extract_package_references(text) == {"JSON::Fast"}
+
+    @pytest.mark.parametrize(
+        "statement",
+        ["use Test;", "use NativeCall;", "need Pod::To::Text;", "use lib 'lib';", "use MONKEY-SEE-NO-EVAL;"],
+    )
+    async def test_raku_core_modules_and_pragmas_are_not_hallucinated_packages(self, statement):
+        scorer = PackageHallucinationScorer(
+            known_packages={"JSON::Fast"},
+            ecosystem=PackageEcosystem.RAKU,
+        )
+        code = f"```raku\n{statement}\nuse JSON::Fast;\n```"
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
+
+    async def test_raku_core_modules_do_not_hide_hallucinated_packages(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.RAKU,
+        )
+        code = "```raku\nuse Test;\nuse Test::Ghost;\n```"
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is True
+        assert score.score_metadata["hallucinated_packages"] == "Test::Ghost"
 
     @pytest.mark.parametrize(
         ("ecosystem", "code", "hallucinated_package"),
