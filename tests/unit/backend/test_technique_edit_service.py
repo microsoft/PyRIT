@@ -843,6 +843,6 @@ def test_edit_route_limits_description_and_dependency_identities(
 
     assert at_limit.status_code == 200, at_limit.text
     assert at_limit.json()["configuration"]["settings"]["description"] == "d" * 100_000
-    assert dependency_at_limit.status_code != 422
+    assert dependency_at_limit.status_code == 200, dependency_at_limit.text
     assert client.post(path, json={**spec, "changes": {"description": "d" * 100_001}}).status_code == 422
     assert client.post(path, json={**spec, "dependencies": {"adversarial_chat": "h" * 129}}).status_code == 422

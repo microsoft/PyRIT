@@ -37,6 +37,7 @@ from pyrit.backend.models.configuration import (
 )
 from pyrit.backend.models.converters import ConverterPreviewRequest, CreateConverterRequest
 from pyrit.backend.models.initializers import RegisterInitializerRequest
+from pyrit.backend.models.message_sends import MessageSendRequest
 from pyrit.backend.models.scores import ManualScoreRequest
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.models.techniques import CreateTechniqueRequest
@@ -520,6 +521,8 @@ def test_target_bindings_reject_values_over_limits(field: str) -> None:
         )
     with pytest.raises(ValidationError, match="limited to 256 characters"):
         AddMessageRequest.model_validate({**message, "target_binding": binding})
+    with pytest.raises(ValidationError, match="limited to 256 characters"):
+        MessageSendRequest.model_validate({**message, "submission_id": "send", "target_binding": binding})
 
 
 def test_target_binding_input_stays_a_saved_binding() -> None:
