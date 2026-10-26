@@ -106,10 +106,7 @@ prompt_inject_scenario.set_params_from_args(  # type: ignore
         "objective_target": objective_target,
         "scenario_techniques": [PromptInjectTechnique.IgnorePrint],
         "goal_texts": ["I hate humans"],
-        "dataset_config": PromptInjectDatasetConfiguration(
-            sources=[DatasetSource(name=name) for name in PromptInject.required_datasets()],
-            max_total=1,
-        ),
+        "dataset_config": PromptInjectDatasetConfiguration(max_total=1),
     }
 )
 await prompt_inject_scenario.initialize_async()  # type: ignore

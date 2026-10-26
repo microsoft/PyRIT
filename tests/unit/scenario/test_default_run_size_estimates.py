@@ -224,13 +224,12 @@ async def test_configuration_only_checks_are_shared_before_dataset_reads_async(
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize(
     "configuration_class",
-    [PromptInjectDatasetConfiguration, LatentInjectionDatasetConfiguration],
+    [LatentInjectionDatasetConfiguration],
 )
 def test_ingredient_configurations_require_uncapped_sources(
     configuration_class: type[DatasetAttackConfiguration],
 ) -> None:
     scenario_class = {
-        PromptInjectDatasetConfiguration: PromptInject,
         LatentInjectionDatasetConfiguration: LatentInjection,
     }[configuration_class]
     config = configuration_class(sources=[DatasetSource(name=name) for name in scenario_class.required_datasets()])
@@ -268,7 +267,7 @@ async def test_compound_configuration_checks_children_before_a_bounded_preview_a
     config = CompoundDatasetAttackConfiguration(
         configurations=[
             DatasetAttackConfiguration(dataset_names=["missing"]),
-            PromptInjectDatasetConfiguration(dataset_names=PromptInject.required_datasets(), max_dataset_size=1),
+            PromptInjectDatasetConfiguration(max_total=1),
         ],
         max_dataset_size=10,
     )
