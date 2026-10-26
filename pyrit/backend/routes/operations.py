@@ -153,7 +153,7 @@ async def list_operation_findings_async(
     operation_id: UUID,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
-    title: str | None = None,
+    title: str | None = Query(None, max_length=1000),
 ) -> FindingListResponse:
     """
     List one page of an operation's findings, by severity and then newest first.

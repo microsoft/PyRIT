@@ -104,6 +104,14 @@ def test_finding_text_is_limited(compatibility_headers: dict[str, str], field: s
     assert client.get(path).json()["items"][0][field] == "y" * 100_000
 
 
+def test_finding_title_search_is_limited(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    path = f"/api/operations/{client.post('/api/operations', json={'name': 'Search'}).json()['id']}/findings"
+
+    assert client.get(path, params={"title": "_" * 1000}).status_code == 200
+    assert client.get(path, params={"title": "_" * 1001}).status_code == 422
+
+
 async def test_saved_text_over_the_limit_still_loads_async(
     sqlite_instance: SQLiteMemory, compatibility_headers: dict[str, str]
 ) -> None:
