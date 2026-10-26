@@ -246,6 +246,34 @@ def test_create_over_existing_name_is_conflict(client: TestClient, service: Magi
     assert response.status_code == 409
 
 
+@pytest.mark.parametrize(("field", "limit"), [("description", 100_000), ("author", 256)])
+def test_create_limits_the_description_and_author(
+    *, client: TestClient, service: MagicMock, field: str, limit: int
+) -> None:
+    service.save_suite_async = AsyncMock(return_value=_response())
+    payload = _suite().model_dump(mode="json")
+
+    at_limit = client.post("/api/scenario-suites", json={**payload, field: "x" * limit})
+    over_limit = client.post("/api/scenario-suites", json={**payload, field: "x" * (limit + 1)})
+
+    assert at_limit.status_code == 201
+    assert over_limit.status_code == 422
+    service.save_suite_async.assert_awaited_once()
+
+
+def test_update_limits_the_expected_version(client: TestClient, service: MagicMock) -> None:
+    service.save_suite_async = AsyncMock(return_value=_response(version="suite-v2"))
+    path = f"/api/scenario-suites/{SUITE_NAME}"
+    suite = _suite().model_dump(mode="json")
+
+    at_limit = client.put(path, json={"suite": suite, "expected_version": "v" * 256})
+    over_limit = client.put(path, json={"suite": suite, "expected_version": "v" * 257})
+
+    assert at_limit.status_code == 200
+    assert over_limit.status_code == 422
+    service.save_suite_async.assert_awaited_once()
+
+
 def test_update_passes_expected_version(client: TestClient, service: MagicMock) -> None:
     """Test optimistic concurrency on update."""
     service.save_suite_async = AsyncMock(return_value=_response(version="suite-v2"))

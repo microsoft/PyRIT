@@ -27,6 +27,7 @@ from pyrit.models.catalog.scenario import (
 )
 from pyrit.models.identifiers.class_name_utils import validate_registry_name
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier, Identifiable
+from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_TEXT_LENGTH
 from pyrit.models.scenario_dataset import ScenarioDatasetRequest
 
 PRESET_SCHEMA_VERSION = 1
@@ -63,9 +64,12 @@ class ScenarioPreset(BaseModel, Identifiable):
     # still hold the oldest content, so a migration would skip exactly the documents needing it.
     schema_version: int = Field(1, ge=1, description="Shape of this document")
     scenario_name: _RequestName = Field(..., min_length=1, description="Registered scenario this preset configures")
-    description: str | None = Field(None, description="Human-readable summary of what this preset tests")
+    description: str | None = Field(
+        None, max_length=MAX_TEXT_LENGTH, description="Human-readable summary of what this preset tests"
+    )
     author: str | None = Field(
         None,
+        max_length=MAX_IDENTIFIER_LENGTH,
         description="Who created this preset; descriptive only, never used to authorize a read or a write",
     )
     techniques: _RequestTechniques | None = Field(None, description="Technique names; None uses the scenario default")

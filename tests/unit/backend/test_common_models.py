@@ -40,6 +40,7 @@ from pyrit.backend.models.initializers import RegisterInitializerRequest
 from pyrit.backend.models.scores import ManualScoreRequest
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.models.techniques import CreateTechniqueRequest
+from pyrit.models.component_spec import TargetBinding
 
 
 class TestPaginationInfo:
@@ -463,6 +464,82 @@ def test_message_piece_content_is_not_length_limited() -> None:
     piece = MessagePieceRequest(original_value="x" * (MAX_TEXT_LENGTH + 1))
 
     assert len(piece.original_value) == MAX_TEXT_LENGTH + 1
+
+
+_SOURCE = {"source_name": "source", "source_hash": "hash"}
+_BINDING = {"source_name": "target", "source_hash": "hash", "temperature": 0.5, "effective_hash": "effective"}
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"source_name": "s" * (MAX_IDENTIFIER_LENGTH + 1)},
+        {"source_hash": "h" * (MAX_IDENTIFIER_LENGTH + 1)},
+        {"effective_hash": "e" * (MAX_IDENTIFIER_LENGTH + 1)},
+        {"params": {"p" * (MAX_IDENTIFIER_LENGTH + 1): 1}},
+        {"params": {f"p{i}": 1 for i in range(MAX_ITEMS + 1)}},
+    ],
+)
+def test_source_specs_reject_values_over_limits(overrides: dict[str, object]) -> None:
+    source = {**_SOURCE, **overrides}
+
+    with pytest.raises(ValidationError):
+        CreateTargetRequest.model_validate({"type": "T", "register": False, "source": source})
+    with pytest.raises(ValidationError):
+        CreateConverterRequest.model_validate({"type": "T", "register": False, "source": source})
+    with pytest.raises(ValidationError):
+        ConverterPreviewRequest.model_validate(
+            {"original_value": "x", "converter_ids": ["c"], "converter_specs": [source]}
+        )
+
+
+def test_source_specs_accept_values_at_limits() -> None:
+    source = {
+        "source_name": "s" * MAX_IDENTIFIER_LENGTH,
+        "source_hash": "h" * MAX_IDENTIFIER_LENGTH,
+        "effective_hash": "e" * MAX_IDENTIFIER_LENGTH,
+        "params": {f"{i:0{MAX_IDENTIFIER_LENGTH}d}": i for i in range(MAX_ITEMS)},
+    }
+
+    request = CreateConverterRequest.model_validate({"type": "T", "register": False, "source": source})
+
+    assert request.source is not None
+    assert len(request.source.params) == MAX_ITEMS
+
+
+@pytest.mark.parametrize("field", ["source_name", "source_hash", "effective_hash"])
+def test_target_bindings_reject_values_over_limits(field: str) -> None:
+    binding = {**_BINDING, field: "x" * (MAX_IDENTIFIER_LENGTH + 1)}
+    message = {"pieces": [{"original_value": "text"}], "target_conversation_id": "conversation"}
+
+    with pytest.raises(ValidationError, match="limited to 256 characters"):
+        CreateAttackRequest.model_validate({"target_registry_name": "target", "target_binding": binding})
+    with pytest.raises(ValidationError, match="limited to 256 characters"):
+        SaveConversationRequest.model_validate(
+            {"save_id": str(uuid.uuid4()), "destination": "new_attack", "target_binding": binding}
+        )
+    with pytest.raises(ValidationError, match="limited to 256 characters"):
+        AddMessageRequest.model_validate({**message, "target_binding": binding})
+
+
+def test_target_binding_input_stays_a_saved_binding() -> None:
+    saved = TargetBinding(**{**_BINDING, "source_name": "s" * MAX_IDENTIFIER_LENGTH})
+
+    request = CreateAttackRequest.model_validate(
+        {"target_registry_name": "target", "target_binding": saved.model_dump(mode="json")}
+    )
+
+    assert type(request.target_binding) is TargetBinding
+    assert request.target_binding == saved
+
+
+def test_saved_target_binding_over_the_limit_still_loads() -> None:
+    name = "s" * (MAX_IDENTIFIER_LENGTH + 1)
+
+    binding = TargetBinding.from_metadata({"target_binding": {**_BINDING, "source_name": name}})
+
+    assert binding is not None
+    assert binding.source_name == name
 
 
 @pytest.mark.parametrize(

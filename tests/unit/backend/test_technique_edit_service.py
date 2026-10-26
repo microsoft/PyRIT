@@ -829,3 +829,20 @@ def test_edit_routes_and_invalid_selection(
             techniques=["plain"],
             technique_override=TechniqueOverride.model_validate(response.json()["override"]),
         )
+
+
+def test_edit_route_limits_description_and_dependency_identities(
+    edit_catalog: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    path = "/api/techniques/role_play_movie_script/edit"
+    spec = _specification().model_dump(mode="json", exclude_unset=True)
+
+    at_limit = client.post(path, json={**spec, "changes": {"description": "d" * 100_000}})
+    dependency_at_limit = client.post(path, json={**spec, "dependencies": {"adversarial_chat": "h" * 128}})
+
+    assert at_limit.status_code == 200, at_limit.text
+    assert at_limit.json()["configuration"]["settings"]["description"] == "d" * 100_000
+    assert dependency_at_limit.status_code != 422
+    assert client.post(path, json={**spec, "changes": {"description": "d" * 100_001}}).status_code == 422
+    assert client.post(path, json={**spec, "dependencies": {"adversarial_chat": "h" * 129}}).status_code == 422

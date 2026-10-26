@@ -7,7 +7,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, SerializerFunctionWrapHandler, model_serializer
 
-from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
+from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_TEXT_LENGTH
 
 _Name = Annotated[str, Field(min_length=1, max_length=MAX_IDENTIFIER_LENGTH)]
 
@@ -45,7 +45,7 @@ class _TechniqueFields(_ChangesModel):
 
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
 
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=MAX_TEXT_LENGTH)
     params: dict[_Name, JsonValue] = Field(default_factory=dict, max_length=MAX_ITEMS)
     request_converters: list[_Name] | None = Field(default=None, max_length=MAX_ITEMS)
     response_converters: list[_Name] | None = Field(default=None, max_length=MAX_ITEMS)
@@ -75,5 +75,5 @@ class TechniqueOverride(BaseModel):
     source_name: _Name
     source_identity: str = Field(min_length=1, max_length=128)
     changes: TechniqueChanges = Field(default_factory=TechniqueChanges)
-    dependencies: dict[_Name, str] = Field(default_factory=dict, max_length=MAX_ITEMS)
+    dependencies: dict[_Name, Annotated[str, Field(max_length=128)]] = Field(default_factory=dict, max_length=MAX_ITEMS)
     effective_identity: str | None = Field(default=None, max_length=128)

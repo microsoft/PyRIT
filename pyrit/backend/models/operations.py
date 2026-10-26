@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models.common import TextStr
 from pyrit.models import (
     AttackOutcome,
     Finding,
@@ -14,6 +15,7 @@ from pyrit.models import (
     FindingEvidence,
     FindingSeverity,
     Operation,
+    OperationCreate,
     OperationUsage,
 )
 from pyrit.models.harm_category import HarmCategory
@@ -44,13 +46,19 @@ class OperationDetail(Operation):
     usage: OperationUsage
 
 
+class OperationCreateRequest(OperationCreate):
+    """An operation to create."""
+
+    description: TextStr = ""
+
+
 class OperationUpdateRequest(BaseModel):
     """The editable fields of an operation. Omitted fields are unchanged."""
 
     model_config = ConfigDict(extra="forbid")
 
     name: OperationName | None = None
-    description: str | None = None
+    description: TextStr | None = None
 
 
 class FindingListItem(Finding):
@@ -67,7 +75,16 @@ class FindingListResponse(BaseModel):
     next_offset: int | None
 
 
-class FindingCreateRequest(FindingCreate):
+class FindingUpdateRequest(FindingCreate):
+    """A finding's editable fields."""
+
+    title: TextStr
+    description: TextStr = ""
+    severity_other: TextStr | None = None
+    harm_type_other: TextStr | None = None
+
+
+class FindingCreateRequest(FindingUpdateRequest):
     """
     A finding to record, optionally with one saved attack result as evidence.
 

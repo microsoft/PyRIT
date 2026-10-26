@@ -244,6 +244,19 @@ class TestCreatePreset:
 
         assert response.status_code == 422
 
+    @pytest.mark.parametrize(("field", "limit"), [("description", 100_000), ("author", 256)])
+    def test_create_limits_the_description_and_author(
+        self, *, client: TestClient, service: MagicMock, field: str, limit: int
+    ) -> None:
+        service.save_preset_async = AsyncMock(return_value=_response())
+
+        at_limit = client.post("/api/scenario-presets", json={**_preset().model_dump(), field: "x" * limit})
+        over_limit = client.post("/api/scenario-presets", json={**_preset().model_dump(), field: "x" * (limit + 1)})
+
+        assert at_limit.status_code == 201
+        assert over_limit.status_code == 422
+        service.save_preset_async.assert_awaited_once()
+
     @pytest.mark.usefixtures("signed_in_user")
     def test_the_signed_in_user_is_recorded_as_the_author(self, client: TestClient, service: MagicMock) -> None:
         service.save_preset_async = AsyncMock(return_value=_response())
@@ -285,6 +298,17 @@ class TestUpdatePreset:
 
         assert response.status_code == 200
         assert service.save_preset_async.call_args.kwargs["expected_version"] == "v1"
+
+    def test_update_limits_the_expected_version(self, client: TestClient, service: MagicMock) -> None:
+        service.save_preset_async = AsyncMock(return_value=_response(version="v2"))
+        path = f"/api/scenario-presets/{PRESET_NAME}"
+
+        at_limit = client.put(path, json={"preset": _preset().model_dump(), "expected_version": "v" * 256})
+        over_limit = client.put(path, json={"preset": _preset().model_dump(), "expected_version": "v" * 257})
+
+        assert at_limit.status_code == 200
+        assert over_limit.status_code == 422
+        service.save_preset_async.assert_awaited_once()
 
     @pytest.mark.parametrize("explicit_null", [False, True])
     @pytest.mark.usefixtures("signed_in_user")
@@ -510,6 +534,17 @@ class TestResolvePreset:
 
         assert response.status_code == 200
         assert service.resolve_run_request_async.call_args.kwargs["launch"].expected_version == "v1"
+
+    def test_resolve_limits_the_expected_version(self, client: TestClient, service: MagicMock) -> None:
+        service.resolve_run_request_async = self._resolving()
+        path = f"/api/scenario-presets/{PRESET_NAME}/resolve"
+
+        at_limit = client.post(path, json={"target_name": "gpt4", "expected_version": "v" * 256})
+        over_limit = client.post(path, json={"target_name": "gpt4", "expected_version": "v" * 257})
+
+        assert at_limit.status_code == 200
+        assert over_limit.status_code == 422
+        service.resolve_run_request_async.assert_awaited_once()
 
     def test_a_preset_edited_after_it_was_read_is_a_conflict(self, client: TestClient, service: MagicMock) -> None:
         service.resolve_run_request_async = AsyncMock(

@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pyrit.models.identifiers.class_name_utils import validate_registry_name
-from pyrit.models.request_limits import MAX_ITEMS
+from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_TEXT_LENGTH
 
 SUITE_SCHEMA_VERSION = 1
 
@@ -50,9 +50,10 @@ class ScenarioSuite(BaseModel):
 
     name: str = Field(..., description="Unique suite name, used as the storage key")
     schema_version: int = Field(1, ge=1, description="Shape of this document")
-    description: str | None = Field(None, description="Human-readable summary of the suite")
+    description: str | None = Field(None, max_length=MAX_TEXT_LENGTH, description="Human-readable summary of the suite")
     author: str | None = Field(
         None,
+        max_length=MAX_IDENTIFIER_LENGTH,
         description="Who created this suite; descriptive only, never used to authorize a read or a write",
     )
     entries: list[ScenarioSuiteEntry] = Field(

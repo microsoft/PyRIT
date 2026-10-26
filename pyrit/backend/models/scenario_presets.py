@@ -18,6 +18,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from pyrit.backend.models.common import IdentifierStr
 from pyrit.models.catalog.scenario import ScenarioRunSizeEstimate
 from pyrit.models.catalog.scenario_preset import PresetIssue, ScenarioPreset
 
@@ -81,7 +82,7 @@ class UpdateScenarioPresetRequest(BaseModel):
     """
 
     preset: ScenarioPreset = Field(..., description="The replacement preset")
-    expected_version: str = Field(..., description="Version returned when the preset being edited was read")
+    expected_version: IdentifierStr = Field(..., description="Version returned when the preset being edited was read")
 
 
 class ResolveScenarioPresetRequest(BaseModel):
@@ -97,7 +98,7 @@ class ResolveScenarioPresetRequest(BaseModel):
     launching a configuration the operator never saw.
     """
 
-    expected_version: str | None = Field(
+    expected_version: IdentifierStr | None = Field(
         None, description="Version the caller resolved against; omit to resolve whatever is stored now"
     )
     target_name: str = Field(..., description="Name of a registered target from the TargetRegistry")
