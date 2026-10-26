@@ -324,9 +324,12 @@ def test_lsb_converter_registry_accepts_carrier_image_path(tmp_path: Path, *, us
     assert parameter.is_external_input
     assert parameter.is_path_or_str
 
+    params = {"carrier_image_path": carrier_path if use_path else str(carrier_path)}
+    with pytest.raises(ValueError, match="names a server file"):
+        registry.create_instance_from_external_input("LSBImageStegoConverter", params=params)
+
     converter = registry.create_instance_from_external_input(
-        "LSBImageStegoConverter",
-        params={"carrier_image_path": carrier_path if use_path else str(carrier_path)},
+        "LSBImageStegoConverter", params=params, allowed_path_params={"carrier_image_path"}
     )
     assert isinstance(converter, LSBImageStegoConverter)
     assert converter.get_identifier().params["carrier_image_path"] == str(carrier_path)

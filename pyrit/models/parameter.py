@@ -246,6 +246,11 @@ class Parameter(BaseModel):
         """Whether this parameter accepts paths or strings without URL normalization."""
         return self.reference is None and _is_path_or_str(self.param_type)
 
+    @property
+    def mentions_path(self) -> bool:
+        """Whether a value of this parameter can name a file or folder on the server."""
+        return self.reference is None and _mentions_path(self.param_type)
+
     @computed_field
     @property
     def reference_type(self) -> str | None:

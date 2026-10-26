@@ -22,7 +22,9 @@ responsibilities:
   ``Parameter.coerce_value`` and resolving registry-reference parameters by name
   from the owning domain's registry. Defaults are left to the constructor.
   Callers building from external input (REST, CLI) select the external path,
-  which accepts only parameters with ``Parameter.is_external_input``.
+  which accepts only parameters with ``Parameter.is_external_input`` and rejects
+  parameters that can name a server file or folder unless the caller has made
+  them safe.
 - **Resolve from a declared list** (``resolve_declared_params``): the sibling for
   a component that declares an explicit ``list[Parameter]`` (e.g. a scenario's
   ``supported_parameters()``). It has no references, coerces every supplied
@@ -621,6 +623,7 @@ def resolve_constructor_args(
     external_input: bool = False,
     strict_json: bool = False,
     seam_base_type: type | None = None,
+    allowed_path_params: Collection[str] = frozenset(),
 ) -> dict[str, Any]:
     """
     Resolve a flat argument dict into constructor-ready keyword arguments.
@@ -648,6 +651,9 @@ def resolve_constructor_args(
             contracts; ordinary CLI and Python resolution remain unchanged.
         seam_base_type (type | None): The domain base type whose non-required
             declared references are construction seams (see ``derive_parameters``).
+        allowed_path_params (Collection[str]): External-input parameters that can name a
+            server file or folder but that the caller has made safe, such as an uploaded
+            file the backend stored itself. Defaults to none.
 
     Returns:
         dict[str, Any]: Arguments ready to pass to ``cls(**resolved)``.
@@ -655,14 +661,20 @@ def resolve_constructor_args(
     Raises:
         ValueError: If an argument is not a declared parameter, a registry
             reference cannot be resolved, a simple value cannot be coerced, or
-            external input sets a parameter that is not an external input.
+            external input sets a parameter that is not an external input or that
+            names a server file or folder without being allowed.
     """
     by_name = {
         param.name: param
         for param in derive_parameters(cls=cls, identifier_type=identifier_type, seam_base_type=seam_base_type)
     }
     if external_input:
-        reject_non_external_params(params=raw_args, declared=list(by_name.values()), owner=cls.__name__)
+        reject_non_external_params(
+            params=raw_args,
+            declared=list(by_name.values()),
+            owner=cls.__name__,
+            allowed_path_params=allowed_path_params,
+        )
 
     resolved: dict[str, Any] = {}
     for name, value in raw_args.items():
@@ -711,33 +723,51 @@ def resolve_constructor_args(
     return resolved
 
 
-def reject_non_external_params(*, params: Mapping[str, Any], declared: Sequence[Parameter], owner: str) -> None:
+def reject_non_external_params(
+    *,
+    params: Mapping[str, Any],
+    declared: Sequence[Parameter],
+    owner: str,
+    allowed_path_params: Collection[str] = frozenset(),
+) -> None:
     """
     Reject external input that is not an explicitly supported external input.
 
     Every name must be declared and have ``Parameter.is_external_input``, and registry
-    references must be given by name. Values are otherwise left to the component.
+    references must be given by name. A parameter that can name a server file or
+    folder is rejected unless it is in ``allowed_path_params``. Values are otherwise
+    left to the component.
 
     Args:
         params (Mapping[str, Any]): The parameter values supplied by an external caller.
         declared (Sequence[Parameter]): The parameters the component declares.
         owner (str): The owning class or scenario name, for error messages.
+        allowed_path_params (Collection[str]): Parameters that can name a server file or
+            folder but that the caller has made safe. Defaults to none.
 
     Raises:
-        ValueError: If ``params`` sets an undeclared parameter or one that is not an external
-            input, or gives a registry reference as anything but a name.
+        ValueError: If ``params`` sets an undeclared parameter, one that is not an external
+            input, or one that names a server file or folder without being allowed, or
+            gives a registry reference as anything but a name.
     """
     declared_by_name = {parameter.name: parameter for parameter in declared}
+    settable_names = {
+        name
+        for name, parameter in declared_by_name.items()
+        if parameter.is_external_input and (not parameter.mentions_path or name in allowed_path_params)
+    }
     for name, value in params.items():
         parameter = declared_by_name.get(name)
         if parameter is None:
-            external_names = sorted(
-                known for known, candidate in declared_by_name.items() if candidate.is_external_input
-            )
-            raise ValueError(f"Unknown parameter '{name}' for '{owner}'. Valid parameters: {external_names}")
+            raise ValueError(f"Unknown parameter '{name}' for '{owner}'. Valid parameters: {sorted(settable_names)}")
         if not parameter.is_external_input:
             raise ValueError(
                 f"Parameter '{name}' of '{owner}' cannot be set through the API; pass it from Python instead."
+            )
+        if name not in settable_names:
+            raise ValueError(
+                f"Parameter '{name}' of '{owner}' names a server file or folder and cannot be set through the API; "
+                "pass it from Python or an initializer instead."
             )
         if parameter.reference is not None:
             _require_reference_names(value=value, owner=owner, name=name)

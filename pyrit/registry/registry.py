@@ -40,7 +40,7 @@ from pyrit.registry.resolution import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Collection, Iterator, Mapping
     from types import ModuleType
     from typing import Self
 
@@ -763,18 +763,24 @@ class Registry(ABC, Generic[T, MetadataT]):
         )
         return cls(**resolved)
 
-    def create_instance_from_external_input(self, name: str, *, params: Mapping[str, object]) -> T:
+    def create_instance_from_external_input(
+        self, name: str, *, params: Mapping[str, object], allowed_path_params: Collection[str] = frozenset()
+    ) -> T:
         """
         Build a configured instance from external input such as a REST or CLI request.
 
         Unlike ``create_instance``, which serves in-process callers that may pass any
         Python object, this accepts only parameters with ``Parameter.is_external_input``
-        and registry references given by name. Anything else is rejected before
-        construction; the constructor still validates the values it receives.
+        and registry references given by name. A parameter that can name a server file
+        or folder is accepted only when the caller lists it in ``allowed_path_params``
+        after making it safe. Anything else is rejected before construction; the
+        constructor still validates the values it receives.
 
         Args:
             name (str): The catalog name to build.
             params (Mapping[str, object]): Constructor arguments from the external caller.
+            allowed_path_params (Collection[str]): Parameters that can name a server file
+                or folder but that the caller has made safe. Defaults to none.
 
         Returns:
             T: The constructed instance.
@@ -782,8 +788,8 @@ class Registry(ABC, Generic[T, MetadataT]):
         Raises:
             KeyError: If the name is not registered.
             ValueError: If an argument is not a valid constructor parameter or not an
-                external input, a registry reference cannot be resolved, or a value
-                cannot be coerced.
+                external input, names a server file or folder without being allowed, a
+                registry reference cannot be resolved, or a value cannot be coerced.
         """
         cls = self.get_class(name)
         resolved = resolve_constructor_args(
@@ -792,6 +798,7 @@ class Registry(ABC, Generic[T, MetadataT]):
             identifier_type=self._identifier_type(),
             external_input=True,
             seam_base_type=self._seam_base_type(),
+            allowed_path_params=allowed_path_params,
         )
         return cls(**resolved)
 
@@ -870,6 +877,7 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
         params: Mapping[str, object] | None = None,
         registry_metadata: dict[str, Any] | None = None,
         external_input: bool = False,
+        allowed_path_params: Collection[str] = frozenset(),
     ) -> InstanceT:
         """
         Build and store a configured instance under an explicit name.
@@ -883,6 +891,8 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
             external_input (bool): Whether ``params`` come from an external caller, in which
                 case the instance is built with ``create_instance_from_external_input``.
                 Defaults to False.
+            allowed_path_params (Collection[str]): External parameters that can name a
+                server file or folder but that the caller has made safe. Defaults to none.
 
         Returns:
             InstanceT: The constructed and registered instance.
@@ -890,7 +900,7 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
         self.instances.validate_name_available(name)
         args = dict(params) if params is not None else {}
         instance = (
-            self.create_instance_from_external_input(type_name, params=args)
+            self.create_instance_from_external_input(type_name, params=args, allowed_path_params=allowed_path_params)
             if external_input
             else self.create_instance(type_name, **args)
         )
@@ -952,10 +962,23 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
         }
 
     def recreate_instance(
-        self, *, source: InstanceT, params: Mapping[str, object], external_input: bool = False
+        self,
+        *,
+        source: InstanceT,
+        params: Mapping[str, object],
+        external_input: bool = False,
+        allowed_path_params: Collection[str] = frozenset(),
     ) -> InstanceT:
         """
         Build an independent component; never change or register the source.
+
+        Args:
+            source (InstanceT): The registered component to copy.
+            params (Mapping[str, object]): Constructor overrides.
+            external_input (bool): Whether ``params`` come from an external caller.
+                Defaults to False.
+            allowed_path_params (Collection[str]): External overrides that can name a
+                server file or folder but that the caller has made safe. Defaults to none.
 
         Returns:
             InstanceT: The new component, owned by the caller.
@@ -988,6 +1011,7 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
                 identifier_type=self._identifier_type(),
                 external_input=True,
                 seam_base_type=self._seam_base_type(),
+                allowed_path_params=allowed_path_params,
             )
         with self._catalog_lock:
             self._ensure_discovered()

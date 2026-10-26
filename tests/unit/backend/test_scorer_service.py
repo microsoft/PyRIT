@@ -466,3 +466,15 @@ async def test_decision_scorer_builds_through_the_api_with_its_bundled_question(
 
     assert created.scorer_registry_name == "decision"
     assert ScorerRegistry.get_registry_singleton().instances.get("decision") is not None
+
+
+async def test_decision_scorer_unknown_parameter_does_not_list_its_question_path(chat_target: str) -> None:
+    with pytest.raises(ValueError, match="Unknown parameter 'nope' for 'DecisionScorer'") as error:
+        await ScorerService().create_scorer_async(
+            request=CreateScorerRequest(
+                name="decision", type="DecisionScorer", params={"chat_target": chat_target, "nope": 1}
+            )
+        )
+
+    assert "'chat_target'" in str(error.value)
+    assert "decision_question_path" not in str(error.value)

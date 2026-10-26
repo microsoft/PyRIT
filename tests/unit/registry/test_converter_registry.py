@@ -228,6 +228,37 @@ class TestConverterRegistryRegisterInstance:
         )
         assert registry.instances.get("caesar") is converter
 
+    def test_create_named_instance_rejects_path_parameters_unless_allowed(self, registry: ConverterRegistry):
+        params = {"base_image": "input.png"}
+        with pytest.raises(ValueError, match="'base_image' of 'ImageOverlayConverter' names a server file"):
+            registry.create_named_instance(
+                name="overlay", type_name="ImageOverlayConverter", params=params, external_input=True
+            )
+        assert registry.instances.get("overlay") is None
+
+        converter = registry.create_named_instance(
+            name="overlay",
+            type_name="ImageOverlayConverter",
+            params=params,
+            external_input=True,
+            allowed_path_params={"base_image"},
+        )
+        assert registry.instances.get("overlay") is converter
+
+    def test_recreate_instance_rejects_path_overrides_unless_allowed(self, registry: ConverterRegistry):
+        source = registry.create_named_instance(
+            name="overlay", type_name="ImageOverlayConverter", params={"base_image": "input.png"}
+        )
+        params = {"base_image": "other.png"}
+        with pytest.raises(ValueError, match="'base_image' of 'ImageOverlayConverter' names a server file"):
+            registry.recreate_instance(source=source, params=params, external_input=True)
+
+        variant = registry.recreate_instance(
+            source=source, params=params, external_input=True, allowed_path_params={"base_image"}
+        )
+        assert variant.get_identifier().params["base_image"] == "other.png"
+        assert source.get_identifier().params["base_image"] == "input.png"
+
     @pytest.mark.parametrize("name", ["preview", "types"])
     def test_create_named_instance_rejects_reserved_name(self, registry: ConverterRegistry, name: str):
         with pytest.raises(ValueError, match="reserved"):
