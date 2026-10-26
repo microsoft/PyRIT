@@ -499,3 +499,24 @@ class TestApiKey:
             (name, DatasetFetchPolicy.ALWAYS if name == DATASET_PARTIAL_KEYS else DatasetFetchPolicy.IF_MISSING)
             for name in ApiKey.required_datasets()
         ]
+
+    @pytest.mark.parametrize(
+        ("category", "error"), [("cyber", None), ("violence", "none match the configured filters")]
+    )
+    async def test_dataset_filters_reach_the_corpus_async(
+        self, *, category: str, error: str | None, mock_objective_target: PromptTarget
+    ) -> None:
+        scenario = ApiKey()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_overrides": {"filters": {"harm_categories": [category]}},
+            }
+        )
+
+        if error:
+            with pytest.raises(DatasetConstraintError, match=error):
+                await scenario.initialize_async()
+            return
+        await scenario.initialize_async()
+        assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == 20

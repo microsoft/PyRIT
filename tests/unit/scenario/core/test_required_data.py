@@ -139,6 +139,29 @@ async def test_refresh_that_fails_validation_keeps_stored_data_async(*, sqlite_i
     assert len(await sqlite_instance.get_seeds_async(dataset_name="a")) == 3
 
 
+@pytest.mark.usefixtures("patch_central_database")
+async def test_filters_narrow_the_rows_that_are_read_async(*, sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            SeedObjective(value="kept", dataset_name="a", harm_categories=["cyber"]),
+            SeedObjective(value="dropped", dataset_name="a", harm_categories=["violence"]),
+        ],
+        added_by="test",
+    )
+    required = ScenarioRequiredData(sources=[DatasetSource(name="a")], filters={"harm_categories": ["cyber"]})
+
+    assert [seed.value for seed in (await required.load_async())["a"]] == ["kept"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_filters_that_match_nothing_fail_clearly_async(*, sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[_dataset("a")], added_by="test")
+    required = ScenarioRequiredData(sources=[DatasetSource(name="a")], filters={"harm_categories": ["missing"]})
+
+    with pytest.raises(DatasetConstraintError, match="none match the configured filters"):
+        await required.load_async()
+
+
 def test_projection_lists_every_source_uncapped() -> None:
     provider = _provider(_dataset("b"))
     required = ScenarioRequiredData(
@@ -172,6 +195,18 @@ class TestApplyOverrides:
 
         assert required.fetch is DatasetFetchPolicy.ALWAYS
         assert remaining == request
+
+    @pytest.mark.parametrize("with_sources", [False, True])
+    def test_filters_apply_to_required_data_and_stay_for_the_population(self, *, with_sources: bool) -> None:
+        sources = [{"name": "a"}, {"name": "b"}] if with_sources else None
+        request = ScenarioDatasetRequest.model_validate({"sources": sources, "filters": {"harm_categories": ["cyber"]}})
+
+        required, remaining = self._required().apply_overrides(
+            request=request, options=self._FIXED, population_names=[]
+        )
+
+        assert required.filters == {"harm_categories": ["cyber"]}
+        assert remaining.filters == {"harm_categories": ["cyber"]}
 
     def test_empty_request_keeps_the_declaration(self) -> None:
         original = self._required()

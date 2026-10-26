@@ -964,8 +964,8 @@ class Scenario(ABC):
 
         Before a scenario declared required data, its configuration listed those datasets as
         sources. When a configuration of the default's class lists exactly the required datasets,
-        their fetch settings and providers move to the required data and the configuration keeps
-        only its limits. Size limits move too, so they still fail as before. Any other selection
+        their fetch settings, providers, and filters move to the required data and the
+        configuration keeps only its limits. Size limits move too, so they still fail as before. Any other selection
         is left for the scenario's own validation to reject.
         """
         required = self._required_data
@@ -992,6 +992,7 @@ class Scenario(ABC):
                 for source in config.sources
             ],
             fetch=config.fetch,
+            filters=config.filters,
         )
         self._dataset_config = config.with_overrides(sources=[])
 

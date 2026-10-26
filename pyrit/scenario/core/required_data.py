@@ -65,9 +65,9 @@ class ScenarioRequiredData:
     The datasets a scenario reads in full to build its attack population.
 
     Each source keeps its provider and fetch policy, so preparation and refresh behave
-    exactly like a ``dataset_config`` source. Required datasets can't be capped, sampled,
-    filtered, or deselected; limit the assembled attack groups through the scenario's
-    ``dataset_config`` instead.
+    exactly like a ``dataset_config`` source. Dataset filters narrow the rows that are read,
+    as they do for any source. Required datasets can't be capped, sampled, or deselected;
+    limit the assembled attack groups through the scenario's ``dataset_config`` instead.
     """
 
     def __init__(
@@ -76,6 +76,7 @@ class ScenarioRequiredData:
         sources: Sequence[DatasetSource],
         fetch: DatasetFetchPolicy = DatasetFetchPolicy.IF_MISSING,
         validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
+        filters: dict[str, list[str]] | None = None,
     ) -> None:
         """
         Declare the required datasets.
@@ -85,6 +86,8 @@ class ScenarioRequiredData:
             fetch (DatasetFetchPolicy): The default preparation policy for sources without their own.
             validators (Sequence[Callable[[ResolvedDataset], None]] | None): Checks run on the full
                 required data, both on normal reads and on refresh candidates before they're stored.
+            filters (dict[str, list[str]] | None): ``get_seeds`` filters applied when reading, before
+                the validators run.
 
         Raises:
             DatasetConstraintError: If no source is given or a source sets a size limit.
@@ -101,6 +104,7 @@ class ScenarioRequiredData:
             max_total="all",
             fetch=fetch,
             validators=self._validators,
+            filters=filters,
         )
 
     @property
@@ -117,6 +121,11 @@ class ScenarioRequiredData:
     def fetch(self) -> DatasetFetchPolicy:
         """The default preparation policy."""
         return self._configuration.fetch
+
+    @property
+    def filters(self) -> dict[str, list[str]]:
+        """The ``get_seeds`` filters applied when reading."""
+        return self._configuration.filters
 
     async def prepare_async(self, *, fetch: DatasetFetchPolicy | None = None) -> None:
         """
@@ -144,7 +153,9 @@ class ScenarioRequiredData:
         population_names: Sequence[str],
     ) -> tuple[ScenarioRequiredData, ScenarioDatasetRequest]:
         """
-        Take the fetch edits that belong to required data out of a dataset request.
+        Take the fetch edits and filters that apply to required data from a dataset request.
+
+        Filters apply to every dataset a run reads, so they stay on the returned request too.
 
         Args:
             request (ScenarioDatasetRequest): The requested dataset edits.
@@ -161,7 +172,7 @@ class ScenarioRequiredData:
         if not options.supports_overrides and request != ScenarioDatasetRequest():
             raise DatasetConstraintError("This scenario does not support dataset overrides.")
         if request.sources is None:
-            return self._with_fetch(fetch=request.fetch, source_fetch={}), request
+            return self._with_edits(fetch=request.fetch, source_fetch={}, filters=request.filters), request
         names = self.dataset_names
         requested = [source.name for source in request.sources]
         fixed = [*names, *population_names]
@@ -175,9 +186,10 @@ class ScenarioRequiredData:
         if capped:
             raise DatasetConstraintError(f"Required datasets are read in full and can't be capped: {capped}.")
         remaining = [source for source in request.sources if source.name not in names]
-        edited = self._with_fetch(
+        edited = self._with_edits(
             fetch=request.fetch,
             source_fetch={source.name: source.fetch for source in required_inputs if source.fetch is not None},
+            filters=request.filters,
         )
         return edited, request.model_copy(update={"sources": remaining or None})
 
@@ -198,26 +210,38 @@ class ScenarioRequiredData:
             for source in self.sources
         ]
 
-    def with_sources(self, *, sources: Sequence[DatasetSource], fetch: DatasetFetchPolicy) -> ScenarioRequiredData:
+    def with_sources(
+        self,
+        *,
+        sources: Sequence[DatasetSource],
+        fetch: DatasetFetchPolicy,
+        filters: dict[str, list[str]] | None = None,
+    ) -> ScenarioRequiredData:
         """
         Copy the declaration with replacement sources, keeping its validators.
 
         Args:
             sources (Sequence[DatasetSource]): The replacement sources.
             fetch (DatasetFetchPolicy): The default preparation policy.
+            filters (dict[str, list[str]] | None): Filters merged over the current ones, as overrides do.
 
         Returns:
             ScenarioRequiredData: The new declaration.
         """
-        return ScenarioRequiredData(sources=sources, fetch=fetch, validators=self._validators)
+        merged = {**self.filters, **{key: list(values) for key, values in (filters or {}).items()}}
+        return ScenarioRequiredData(sources=sources, fetch=fetch, validators=self._validators, filters=merged)
 
-    def _with_fetch(
-        self, *, fetch: DatasetFetchPolicy | None, source_fetch: dict[str, DatasetFetchPolicy]
+    def _with_edits(
+        self,
+        *,
+        fetch: DatasetFetchPolicy | None,
+        source_fetch: dict[str, DatasetFetchPolicy],
+        filters: dict[str, list[str]] | None,
     ) -> ScenarioRequiredData:
-        if fetch is None and not source_fetch:
+        if fetch is None and not source_fetch and not filters:
             return self
         sources = [
             replace(source, fetch=source_fetch[source.name]) if source.name in source_fetch else source
             for source in self.sources
         ]
-        return self.with_sources(sources=sources, fetch=fetch or self.fetch)
+        return self.with_sources(sources=sources, fetch=fetch or self.fetch, filters=filters)
