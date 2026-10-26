@@ -1951,7 +1951,7 @@ describe('ScenarioDetail', () => {
     expect(within(preview).getByRole('alert')).toHaveTextContent('prevent older runs from resuming')
     await user.click(within(preview).getByRole('button', { name: 'Cancel' }))
     expect(mockStartRun).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    await user.click(await screen.findByRole('button', { name: 'Launch scan' }))
     const confirmed = await screen.findByRole('dialog', { name: 'Run preview' })
     await user.click(within(confirmed).getByRole('button', { name: 'Launch scan' }))
     expect(mockStartRun).toHaveBeenCalledTimes(1)
