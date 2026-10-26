@@ -417,11 +417,7 @@ latent_injection_scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
         "scenario_techniques": [LatentInjectionTechnique.Bare],
-        "dataset_config": LatentInjectionDatasetConfiguration(
-            sources=[DatasetSource(name=name) for name in LatentInjection.required_datasets()],
-            families=["whois"],
-            max_total=1,
-        ),
+        "dataset_config": LatentInjectionDatasetConfiguration(families=["whois"], max_total=1),
     }
 )
 await latent_injection_scenario.initialize_async()  # type: ignore
