@@ -7,12 +7,13 @@ import sys
 import tempfile
 from collections.abc import AsyncGenerator, Generator
 from contextlib import closing, contextmanager
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import Engine, create_engine
 
 from pyrit.common.path import DATASETS_PATH
+from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, SQLiteMemory, migration
 from pyrit.models import SeedDataset
 from test_support.fixtures import use_sqlite_memory
@@ -22,6 +23,26 @@ os.environ["CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS"] = "5"
 os.environ["RETRY_MAX_NUM_ATTEMPTS"] = "2"
 os.environ["RETRY_WAIT_MIN_SECONDS"] = "0"
 os.environ["RETRY_WAIT_MAX_SECONDS"] = "1"
+
+
+@pytest.fixture
+def block_dataset_provider_lookup() -> Generator[AsyncMock, None, None]:
+    """Block live dataset lookup and discovery unless a test explicitly supplies fake providers."""
+    message = (
+        "Unit tests must not resolve live dataset providers. "
+        "Use inline seeds, mock prepare_async, or patch lookup with fake providers in preparation tests."
+    )
+    with (
+        patch.object(
+            SeedDatasetProvider,
+            "get_providers_by_name_async",
+            new_callable=AsyncMock,
+            side_effect=AssertionError(message),
+        ) as lookup,
+        patch.object(SeedDatasetProvider, "_materialize_builtin_providers", side_effect=AssertionError(message)),
+    ):
+        yield lookup
+
 
 if sys.platform == "win32":
     from asyncio import AbstractEventLoop

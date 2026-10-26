@@ -15,6 +15,7 @@ from pyrit.models import (
     MessagePiece,
     MessageScorable,
     Observation,
+    ProgramExecutionObservationPayload,
     Scorable,
     ScorableUnion,
     Score,
@@ -38,7 +39,11 @@ if TYPE_CHECKING:
 
 
 _ObservationEvidence: TypeAlias = (
-    Message | ToolEventsObservationPayload | SurfaceObservationPayload | tuple[MessagePiece, ...]
+    Message
+    | ToolEventsObservationPayload
+    | SurfaceObservationPayload
+    | ProgramExecutionObservationPayload
+    | tuple[MessagePiece, ...]
 )
 
 
@@ -315,7 +320,9 @@ class _ObservationEvidenceResolver:
             NonReplayableObservationError: If referenced evidence is missing, modified, or unsupported.
         """
         payload = observation.payload
-        if isinstance(payload, (ToolEventsObservationPayload, SurfaceObservationPayload)):
+        if isinstance(
+            payload, (ToolEventsObservationPayload, SurfaceObservationPayload, ProgramExecutionObservationPayload)
+        ):
             return payload
         pieces = await self._memory.get_message_pieces_async(prompt_ids=list(observation.evidence_message_piece_ids))
         pieces_by_id = {piece.id: piece for piece in pieces}

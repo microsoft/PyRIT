@@ -44,6 +44,8 @@ from pyrit.score import SubStringScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 from unit.mocks import MockPromptTarget
 
+pytestmark = pytest.mark.usefixtures("block_dataset_provider_lookup")
+
 
 class _Mode(Enum):
     ENABLED = "enabled"
@@ -466,6 +468,7 @@ async def test_launch_survives_registration_between_resolution_and_construction_
             patch.object(Scenario, "_get_default_objective_scorer", return_value=scorer),
             patch.object(scenarios, "_discover"),
             patch.object(service, "_initialize_scenario_async", side_effect=register_then_initialize_async),
+            patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock),
             patch.object(
                 DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
@@ -545,6 +548,9 @@ async def test_rest_create_and_initialize_numeric_boundary_async(registry: Attac
         args={
             "objective_target": target,
             "scenario_techniques": [scenario._technique_class("zero_attempts")],
+            "dataset_config": DatasetAttackConfiguration(
+                seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="local objective")])]
+            ),
             "include_baseline": False,
         }
     )
@@ -636,6 +642,9 @@ async def test_warm_catalog_estimates_and_summaries_refresh_without_changing_sna
                 args={
                     "objective_target": target,
                     "scenario_techniques": [current._technique_class("runtime_new")],
+                    "dataset_config": DatasetAttackConfiguration(
+                        seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="local objective")])]
+                    ),
                     "include_baseline": False,
                 }
             )

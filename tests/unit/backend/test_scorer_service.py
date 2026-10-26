@@ -6,6 +6,7 @@
 import asyncio
 import threading
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,7 +25,8 @@ from pyrit.models import (
     TargetIdentifier,
 )
 from pyrit.models.component_spec import RegisteredComponentReference
-from pyrit.registry import ScorerRegistry
+from pyrit.prompt_target import TextTarget
+from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.registry.instance_registry import DefaultInstanceRegistry
 from pyrit.score import (
     ManualScorer,
@@ -67,6 +69,25 @@ class _ObjectConfiguredScorer(_ServiceScorer):
     def __init__(self, *, label: str = "service", tokenizer: Callable[[str], list[str]] | None = None) -> None:
         super().__init__(label=label)
         self.tokenizer = tokenizer
+
+
+class _FileConfiguredScorer(_ServiceScorer):
+    """A scorer with one plain external parameter and two that name files on the server."""
+
+    def __init__(
+        self, *, label: str = "service", data_file: Path | None = None, question_path: str | Path | None = None
+    ) -> None:
+        super().__init__(label=label)
+        self.data_file = data_file
+        self.question_path = question_path
+
+
+class _FileRequiredScorer(_ServiceScorer):
+    """A scorer that cannot be built without a file on the server."""
+
+    def __init__(self, *, data_file: Path) -> None:
+        super().__init__()
+        self.data_file = data_file
 
 
 @pytest.fixture(autouse=True)
@@ -351,3 +372,97 @@ async def test_types_describe_sequences_as_lists() -> None:
     assert next(parameter for parameter in metadata.parameters if parameter.name == "fields").type_name == (
         "collections.abc.Sequence[str]"
     )
+
+
+@pytest.fixture
+def chat_target() -> Iterator[str]:
+    TargetRegistry.reset_registry_singleton()
+    TargetRegistry.get_registry_singleton().instances.register(TextTarget(), name="chat")
+    yield "chat"
+    TargetRegistry.reset_registry_singleton()
+
+
+async def test_types_leave_out_server_file_parameters() -> None:
+    ScorerRegistry.get_registry_singleton().register_class(_FileConfiguredScorer)
+
+    types = await ScorerService().list_scorer_types_async()
+
+    entry = next(item for item in types.items if item.scorer_type == "_FileConfiguredScorer")
+    assert [parameter.name for parameter in entry.parameters] == ["label"]
+
+
+async def test_types_leave_out_scorers_that_require_a_server_file() -> None:
+    registry = ScorerRegistry.get_registry_singleton()
+    registry.register_class(_FileConfiguredScorer)
+    registry.register_class(_FileRequiredScorer)
+
+    types = await ScorerService().list_scorer_types_async()
+
+    scorer_types = {item.scorer_type for item in types.items}
+    assert "_FileConfiguredScorer" in scorer_types
+    assert "_FileRequiredScorer" not in scorer_types
+
+
+@pytest.mark.parametrize("register", [True, False])
+@pytest.mark.parametrize("parameter_name", ["data_file", "question_path"])
+async def test_create_scorer_rejects_server_file_parameters_before_construction(
+    parameter_name: str, register: bool
+) -> None:
+    ScorerRegistry.get_registry_singleton().register_class(_FileConfiguredScorer)
+    _FileConfiguredScorer.constructions = 0
+    service = ScorerService()
+
+    with pytest.raises(ValueError, match=f"'{parameter_name}' of '_FileConfiguredScorer' names a server file"):
+        await service.create_scorer_async(
+            request=CreateScorerRequest(
+                name="file" if register else None,
+                register=register,
+                type="_FileConfiguredScorer",
+                params={parameter_name: "/etc/hosts"},
+            )
+        )
+    created = await service.create_scorer_async(
+        request=CreateScorerRequest(name="labeled", type="_FileConfiguredScorer", params={"label": "custom"})
+    )
+
+    assert _FileConfiguredScorer.constructions == 1
+    assert created.scorer_registry_name == "labeled"
+    assert ScorerRegistry.get_registry_singleton().instances.get("file") is None
+
+
+@pytest.mark.parametrize("register", [True, False])
+async def test_decision_scorer_question_path_is_not_read_through_the_api(
+    chat_target: str, tmp_path: Path, register: bool
+) -> None:
+    settings_file = tmp_path / "settings.yaml"
+    settings_file.write_text("api_secret: not-for-callers\n", encoding="utf-8")
+    service = ScorerService()
+
+    types = await service.list_scorer_types_async()
+    with (
+        patch("pyrit.common.yaml_loadable.YamlLoadable.from_yaml_file") as read_yaml,
+        pytest.raises(ValueError, match="'decision_question_path' of 'DecisionScorer' names a server file") as error,
+    ):
+        await service.create_scorer_async(
+            request=CreateScorerRequest(
+                name="decision" if register else None,
+                register=register,
+                type="DecisionScorer",
+                params={"chat_target": chat_target, "decision_question_path": str(settings_file)},
+            )
+        )
+
+    entry = next(item for item in types.items if item.scorer_type == "DecisionScorer")
+    assert "decision_question_path" not in [parameter.name for parameter in entry.parameters]
+    read_yaml.assert_not_called()
+    assert "not-for-callers" not in str(error.value)
+    assert ScorerRegistry.get_registry_singleton().instances.get("decision") is None
+
+
+async def test_decision_scorer_builds_through_the_api_with_its_bundled_question(chat_target: str) -> None:
+    created = await ScorerService().create_scorer_async(
+        request=CreateScorerRequest(name="decision", type="DecisionScorer", params={"chat_target": chat_target})
+    )
+
+    assert created.scorer_registry_name == "decision"
+    assert ScorerRegistry.get_registry_singleton().instances.get("decision") is not None
