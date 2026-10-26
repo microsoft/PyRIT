@@ -208,6 +208,13 @@ class TestJailbreakInitialization:
         with pytest.raises(ValueError, match="num_jailbreak_attempts must be at least 1"):
             scenario.set_params_from_args(args={"num_jailbreak_attempts": num_attempts})
 
+    @pytest.mark.parametrize("num_jailbreaks", [0, -1])
+    def test_rejects_non_positive_num_jailbreaks(self, mock_objective_scorer, num_jailbreaks: int) -> None:
+        scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+
+        with pytest.raises(ValueError, match="num_jailbreaks must be at least 1"):
+            scenario.set_params_from_args(args={"num_jailbreaks": num_jailbreaks})
+
     async def test_default_draws_random_template_sample(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):

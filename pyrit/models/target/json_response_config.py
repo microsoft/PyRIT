@@ -85,22 +85,35 @@ class JsonResponseConfig(BaseModel):
 
         schema_val = metadata.get(cls._METADATAKEYS["JSON_SCHEMA"])
         if schema_val is not None:
-            if isinstance(schema_val, str):
-                try:
-                    schema = json.loads(schema_val) if schema_val else None
-                except json.JSONDecodeError as e:
-                    raise ValueError(f"Invalid JSON schema provided: {schema_val}") from e
-            else:
-                schema = schema_val
-
             return cls(
                 enabled=True,
-                json_schema=schema,
+                json_schema=cls.parse_schema(schema_val),
                 schema_name=metadata.get(cls._METADATAKEYS["JSON_SCHEMA_NAME"], "CustomSchema"),
                 strict=metadata.get(cls._METADATAKEYS["JSON_SCHEMA_STRICT"], True),
             )
 
         return cls(enabled=True)
+
+    @staticmethod
+    def parse_schema(schema_val: dict[str, Any] | str) -> dict[str, Any] | None:
+        """
+        Read a schema stored under ``JSON_SCHEMA_METADATA_KEY``, which may be a dict or a JSON string.
+
+        Args:
+            schema_val (dict[str, Any] | str): The stored schema. An empty string means no schema.
+
+        Returns:
+            dict[str, Any] | None: The parsed schema, or ``None`` for an empty string.
+
+        Raises:
+            ValueError: If a schema string is not valid JSON.
+        """
+        if not isinstance(schema_val, str):
+            return schema_val
+        try:
+            return json.loads(schema_val) if schema_val else None
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON schema provided: {schema_val}") from e
 
     def to_metadata(self) -> dict[str, Any]:
         """
