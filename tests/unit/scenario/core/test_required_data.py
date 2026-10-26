@@ -186,27 +186,39 @@ class TestApplyOverrides:
     def _required(self) -> ScenarioRequiredData:
         return ScenarioRequiredData(sources=[DatasetSource(name="a"), DatasetSource(name="b")])
 
-    def test_global_fetch_applies_and_stays_for_the_population(self) -> None:
+    def test_global_fetch_stays_for_the_population(self) -> None:
+        original = self._required()
         request = ScenarioDatasetRequest(fetch=DatasetFetchPolicy.ALWAYS, max_total=3)
 
-        required, remaining = self._required().apply_overrides(
-            request=request, options=self._FIXED, population_names=[]
-        )
+        required, remaining = original.apply_overrides(request=request, options=self._FIXED, population_names=[])
 
-        assert required.fetch is DatasetFetchPolicy.ALWAYS
+        assert required is original
         assert remaining == request
 
     @pytest.mark.parametrize("with_sources", [False, True])
-    def test_filters_apply_to_required_data_and_stay_for_the_population(self, *, with_sources: bool) -> None:
+    def test_filters_stay_on_the_request_for_the_population(self, *, with_sources: bool) -> None:
         sources = [{"name": "a"}, {"name": "b"}] if with_sources else None
         request = ScenarioDatasetRequest.model_validate({"sources": sources, "filters": {"harm_categories": ["cyber"]}})
 
-        required, remaining = self._required().apply_overrides(
-            request=request, options=self._FIXED, population_names=[]
+        _, remaining = self._required().apply_overrides(request=request, options=self._FIXED, population_names=[])
+
+        assert remaining.filters == {"harm_categories": ["cyber"]}
+
+    def test_with_sources_merges_filters_and_keeps_validators(self) -> None:
+        def validator(_: ResolvedDataset) -> None:
+            pass
+
+        original = ScenarioRequiredData(
+            sources=[DatasetSource(name="a")], validators=[validator], filters={"data_types": ["text"]}
         )
 
-        assert required.filters == {"harm_categories": ["cyber"]}
-        assert remaining.filters == {"harm_categories": ["cyber"]}
+        copied = original.with_sources(
+            sources=original.sources, fetch=DatasetFetchPolicy.NEVER, filters={"harm_categories": ["cyber"]}
+        )
+
+        assert copied.filters == {"data_types": ["text"], "harm_categories": ["cyber"]}
+        assert copied.fetch is DatasetFetchPolicy.NEVER
+        assert copied._validators == [validator]
 
     def test_empty_request_keeps_the_declaration(self) -> None:
         original = self._required()
