@@ -34,6 +34,7 @@ const API_RESPONSES: Record<string, unknown> = {
   '/api/health': { status: 'healthy' },
   '/api/runtime': READY_RUNTIME,
   '/api/targets': EMPTY_PAGE,
+  '/api/scorers': EMPTY_PAGE,
   '/api/targets/catalog': { items: [] },
   '/api/attacks': EMPTY_PAGE,
   '/api/attacks/attack-options': { attack_types: [] },

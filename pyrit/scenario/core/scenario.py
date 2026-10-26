@@ -661,7 +661,13 @@ class Scenario(ABC):
         Returns:
             ScenarioRunSizeEstimate: Structured default-run estimate.
         """
-        self.set_params_from_args(args={})
+        self.params = resolve_declared_params(
+            declared=list(self.supported_parameters()),
+            raw_args={},
+            owner=f"Scenario '{type(self).__name__}'",
+            allow_missing_required=True,
+        )
+        self._params_resolved = True
         return await self.get_run_size_estimate_async(target_is_configured=False)
 
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = True

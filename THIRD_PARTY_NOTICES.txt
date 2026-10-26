@@ -1,5 +1,68 @@
 ---------------------------------------------------------
 
+ASSERT source portions - MIT
+https://github.com/responsibleai/ASSERT
+
+Copyright (c) Microsoft Corporation.
+
+PyRIT includes adapted assignment-sampling algorithms, generation schemas, and
+prompt templates from ASSERT v0.3.0, revision
+04b713fe73879208369750b3bd5ad53544f3eecc (2026-09-04). Microsoft Corporation adapted these
+portions to native PyRIT targets, generation strategies, and typed
+seed datasets. ASSERT is not a runtime dependency.
+
+The provenance inventory in third_party/assert-provenance.json identifies the
+source files and the corresponding PyRIT files.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+ASSERT credits Bloom's evaluation-pipeline design. Its upstream notice is at:
+https://github.com/responsibleai/ASSERT/blob/04b713fe73879208369750b3bd5ad53544f3eecc/THIRD_PARTY_NOTICES.md
+The credited design is at https://github.com/safety-research/bloom.
+Bloom's MIT notice is retained below.
+
+MIT License
+
+Copyright (c) 2025 Safety Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---------------------------------------------------------
+
 garak source portions - Apache-2.0
 https://github.com/NVIDIA/garak
 
@@ -77,5 +140,22 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---------------------------------------------------------
+
+ComicJailbreak comic template image - MIT
+https://github.com/Social-AI-Studio/ComicJailbreak
+
+Copyright (c) 2026 Social AI Studio
+
+PyRIT bundles the ``article`` comic template image from ComicJailbreak
+(pyrit/datasets/converters/comic_panel/article.png) as the carrier for the
+``comic_panel`` image-rendering technique. The image is redistributed unmodified.
+
+The ComicJailbreak-derived asset is licensed under the MIT License.
+A copy of the license is provided in LICENSES/ComicJailbreak-MIT.txt.
+
+Reference: Tan, Hu, and Lee, "Structured Visual Narratives Undermine Safety
+Alignment in Multimodal Large Language Models", arXiv:2603.21697.
 
 ---------------------------------------------------------

@@ -46,6 +46,7 @@ from pyrit.models import (
     Operation,
     RetryEvent,
     ScenarioAttackResultDelta,
+    ScenarioObjectiveScorerMetrics,
     ScenarioProgressResult,
     ScenarioProgressScore,
     ScenarioResult,
@@ -71,12 +72,12 @@ from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
 from pyrit.scenario.scenarios.airt.scam import Scam
-from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
 from unit.async_utils import wait_for_completion_async
 from unit.mocks import (
     MockPromptTarget,
     get_mock_target_identifier,
     make_scenario_result,
+    make_sequential_attack_results,
     make_technique_class,
 )
 
@@ -132,6 +133,36 @@ async def test_missing_operation_rejected_before_initializers_async(sqlite_insta
             assert await sqlite_instance.get_scenario_results_async() == []
         finally:
             await service.close_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("invalid_field", ["scenario_identifier", "scenario_run_state"])
+async def test_invalid_persisted_header_blocks_execution_async(
+    *, sqlite_instance: SQLiteMemory, invalid_field: str
+) -> None:
+    stored = make_scenario_result(objective_target_identifier=get_mock_target_identifier(), attack_results={})
+    entry = ScenarioResultEntry(entry=stored)
+    if invalid_field == "scenario_identifier":
+        entry.scenario_identifier = {"class_name": 123}
+    else:
+        entry.scenario_run_state = "invalid-state"
+    with sqlite_instance._get_session() as session:
+        session.add(entry)
+        session.commit()
+    scenario = MagicMock(spec=Scenario)
+    scenario._scenario_result_id = str(stored.id)
+    service = ScenarioRunService()
+    try:
+        with (
+            patch.object(service, "_prepare_run_async", return_value=_svc_mod._PreparedRun(scenario=scenario)),
+            patch.object(service, "_enqueue_run_async", new_callable=AsyncMock) as enqueue,
+            pytest.raises(ValueError),
+        ):
+            await service.start_run_async(request=_make_request())
+        enqueue.assert_not_awaited()
+        scenario.run_async.assert_not_awaited()
+    finally:
+        await service.close_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -468,6 +499,7 @@ def mock_memory():
     """Patch CentralMemory.get_memory_instance to return a mock."""
     mock = MagicMock(spec=SQLiteMemory)
     mock.get_scenario_results_async = AsyncMock(return_value=[])
+    mock.get_scenario_result_header_async = AsyncMock(return_value=None)
     mock.get_scenario_run_history_page_async = AsyncMock(return_value=([], {}, False))
     mock.get_scenario_history_aggregates_async = AsyncMock(return_value={})
     # Default: no error AttackResults linked to any scenario. Tests that exercise
@@ -508,6 +540,7 @@ def mock_all_registries(mock_memory):
     # By default, return a matching DB result for async run reads.
     db_result = _make_db_scenario_result()
     mock_memory.get_scenario_results_async = AsyncMock(return_value=[db_result])
+    mock_memory.get_scenario_result_header_async = AsyncMock(return_value=db_result)
 
     with (
         patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
@@ -607,6 +640,9 @@ class TestAdversarialRunScope:
         mock_all_registries["scenario_registry"].create_and_initialize_async.side_effect = initialize_async
         memory = mock_all_registries["memory"]
         memory.get_scenario_results_async = AsyncMock(side_effect=get_results)
+        memory.get_scenario_result_header_async = AsyncMock(
+            side_effect=lambda *, scenario_result_id: records.get(scenario_result_id)
+        )
         memory.update_scenario_run_state_async = AsyncMock(side_effect=update_state)
         memory.try_update_scenario_run_state_async = AsyncMock(side_effect=update_state)
         memory.update_scenario_run_state_and_metadata_fields_async = AsyncMock(side_effect=update_state)
@@ -960,6 +996,9 @@ class TestScenarioRunServiceStartRun:
 
         mock_sr.create_and_initialize_async = AsyncMock(side_effect=_create_scenario)
         mock_memory.get_scenario_results_async = AsyncMock(side_effect=_get_results)
+        mock_memory.get_scenario_result_header_async = AsyncMock(
+            side_effect=lambda *, scenario_result_id: records.get(scenario_result_id)
+        )
         mock_memory.update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
         mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
         mock_memory.update_scenario_run_state_and_metadata_fields_async = AsyncMock(side_effect=_update_state)
@@ -1286,14 +1325,16 @@ class TestScenarioRunServiceStartRun:
         async def _get_results_async(*, scenario_result_ids: list[str] | None = None) -> list[MagicMock]:
             if scenario_result_ids is None:
                 return list(records.values())
-            if fail_once["handoff_read"] and scenario_result_ids == ["run-2"]:
+            return [records[run_id] for run_id in scenario_result_ids if run_id in records]
+
+        async def _get_header_async(*, scenario_result_id: str) -> MagicMock | None:
+            if fail_once["handoff_read"] and scenario_result_id == "run-2":
                 fail_once["handoff_read"] = False
                 raise RuntimeError("temporary storage failure")
-            if len(scenario_result_ids) == 1 and scenario_result_ids[0] in blocked_handoffs:
-                run_id = scenario_result_ids[0]
-                handoff_read_started[run_id].set()
-                await release_handoff[run_id].wait()
-            return [records[run_id] for run_id in scenario_result_ids if run_id in records]
+            if scenario_result_id in blocked_handoffs:
+                handoff_read_started[scenario_result_id].set()
+                await release_handoff[scenario_result_id].wait()
+            return records.get(scenario_result_id)
 
         def _update_state(*, scenario_result_id: str, scenario_run_state: ScenarioRunState, **_: object) -> None:
             if (
@@ -1328,6 +1369,7 @@ class TestScenarioRunServiceStartRun:
 
         mock_sr.create_and_initialize_async = AsyncMock(side_effect=_create_scenario_async)
         mock_memory.get_scenario_results_async = AsyncMock(side_effect=_get_results_async)
+        mock_memory.get_scenario_result_header_async = AsyncMock(side_effect=_get_header_async)
         mock_memory.update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
         mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
         mock_memory.update_scenario_run_state_and_metadata_fields_async = AsyncMock(side_effect=_update_state)
@@ -1571,7 +1613,7 @@ class TestScenarioRunServiceStartRun:
             ScenarioRunState.QUEUED,
         }
 
-    @pytest.mark.parametrize("phase", ["persisted-read", "summary-read", "active-write", "queued-write"])
+    @pytest.mark.parametrize("phase", ["persisted-read", "active-write", "queued-write"])
     async def test_cancellation_before_admission_retains_cleanup_async(
         self, mock_all_registries: dict[str, Any], phase: str
     ) -> None:
@@ -1580,26 +1622,20 @@ class TestScenarioRunServiceStartRun:
         scenario = mock_all_registries["scenario_instance"]
         run_id = scenario._scenario_result_id
         record = mock_all_registries["db_result"]
+        assert isinstance(record, MagicMock)
         record.scenario_run_state = ScenarioRunState.FAILED
         memory.get_scenario_result_header_async.return_value = record
         entered, release, cleanup_entered, cleanup_release = (asyncio.Event() for _ in range(4))
-        original_response = service._build_response_async
 
         async def prepare_async(*, request: RunScenarioRequest) -> _svc_mod._PreparedRun:
             record.scenario_run_state = ScenarioRunState.CREATED
             return _svc_mod._PreparedRun(scenario=scenario)
 
-        async def get_results_async(**_: object) -> list[ScenarioResult]:
-            if phase == "persisted-read":
+        async def get_header_async(**_: object) -> MagicMock:
+            if phase == "persisted-read" and record.scenario_run_state == ScenarioRunState.CREATED:
                 entered.set()
                 await release.wait()
-            return [record]
-
-        async def build_response_async(**kwargs: Any) -> Any:
-            if phase == "summary-read":
-                entered.set()
-                await release.wait()
-            return await original_response(**kwargs)
+            return record
 
         async def update_state_async(*, scenario_run_state: ScenarioRunState, **_: object) -> None:
             record.scenario_run_state = scenario_run_state
@@ -1618,8 +1654,7 @@ class TestScenarioRunServiceStartRun:
             service._active_scenario_result_id = "other-run"
         with (
             patch.object(service, "_prepare_run_async", side_effect=prepare_async),
-            patch.object(memory, "get_scenario_results_async", side_effect=get_results_async),
-            patch.object(service, "_build_response_async", side_effect=build_response_async),
+            patch.object(memory, "get_scenario_result_header_async", side_effect=get_header_async),
             patch.object(memory, "update_scenario_run_state_and_metadata_fields_async", side_effect=update_state_async),
             patch.object(memory, "try_update_scenario_run_state_async", side_effect=cleanup_async),
         ):
@@ -1699,6 +1734,7 @@ class TestScenarioRunServiceStartRun:
 
         cancelled = _make_db_scenario_result(result_id="cancelled-during-init", run_state=ScenarioRunState.CANCELLED)
         mock_all_registries["memory"].get_scenario_results_async = AsyncMock(return_value=[cancelled])
+        mock_all_registries["memory"].get_scenario_result_header_async = AsyncMock(return_value=cancelled)
         with patch.object(service, "_prepare_run_async", _prepare_async):
             with patch.object(service, "_execute_run_async") as execute:
                 response = await service.start_run_async(request=_make_request())
@@ -1739,6 +1775,7 @@ class TestScenarioRunServiceStartRun:
         scenario_instance._scenario_result_id = "cancelled-mid-init"
 
         async def _prepare_async(*, request: Any) -> Any:
+            mock_all_registries["memory"].get_scenario_result_header_async.return_value = cancelled
             return _svc_mod._PreparedRun(scenario=scenario_instance)
 
         cancelled = _make_db_scenario_result(result_id="cancelled-mid-init", run_state=ScenarioRunState.CANCELLED)
@@ -1754,8 +1791,9 @@ class TestScenarioRunServiceStartRun:
         assert response.status == ScenarioRunState.CANCELLED
         execute.assert_not_called()
 
-    async def test_start_run_does_not_read_a_header_for_a_fresh_run(self, mock_all_registries) -> None:
-        """A fresh run has no stored state, so it must not pay for an extra query."""
+    async def test_start_run_reads_one_header_and_one_returned_summary_for_a_fresh_run(
+        self, mock_all_registries: dict[str, Any]
+    ) -> None:
         service = ScenarioRunService()
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._scenario_result_id = "fresh-id"
@@ -1767,7 +1805,9 @@ class TestScenarioRunServiceStartRun:
             with patch.object(service, "_execute_run_async"):
                 await service.start_run_async(request=_make_request())
 
-        mock_all_registries["memory"].get_scenario_result_header_async.assert_not_called()
+        memory = mock_all_registries["memory"]
+        memory.get_scenario_result_header_async.assert_awaited_once_with(scenario_result_id="fresh-id")
+        memory.get_scenario_results_async.assert_awaited_once_with(scenario_result_ids=["fresh-id"])
 
     async def test_start_run_failure_does_not_report_a_cancellation(self, mock_all_registries, caplog) -> None:
         service = ScenarioRunService()
@@ -2150,20 +2190,53 @@ class TestScenarioRunServiceStartRun:
 
     async def test_start_run_rejects_unpersisted_initialized_scenario(self, mock_all_registries) -> None:
         service = ScenarioRunService()
-        mock_all_registries["memory"].get_scenario_results_async = AsyncMock(return_value=[])
+        mock_all_registries["memory"].get_scenario_result_header_async.return_value = None
 
-        with pytest.raises(RuntimeError, match="was not persisted during initialization"):
+        with (
+            patch.object(service, "_enqueue_run_async", new_callable=AsyncMock) as enqueue,
+            pytest.raises(RuntimeError, match="was not persisted during initialization"),
+        ):
             await service.start_run_async(request=_make_request())
 
-    async def test_start_run_cleans_up_when_response_lookup_fails(self, mock_all_registries) -> None:
-        """A response failure must not leave an active-task entry."""
+        enqueue.assert_not_awaited()
+        mock_all_registries["scenario_instance"].run_async.assert_not_awaited()
+        mock_all_registries["memory"].get_scenario_results_async.assert_not_awaited()
+
+    async def test_start_run_rejects_changed_resume_id_before_execution_async(
+        self, mock_all_registries: dict[str, Any]
+    ) -> None:
         service = ScenarioRunService()
+        memory = mock_all_registries["memory"]
+        memory.get_scenario_result_header_async.return_value = _make_db_scenario_result(
+            result_id="saved-id", run_state=ScenarioRunState.FAILED
+        )
+        with (
+            patch.object(service, "_enqueue_run_async", new_callable=AsyncMock) as enqueue,
+            pytest.raises(ValueError, match="changed the saved result ID"),
+        ):
+            await service.start_run_async(request=_make_request(scenario_result_id="saved-id"))
 
-        with patch.object(service, "_build_response_async", return_value=None):
-            with pytest.raises(RuntimeError, match="not found in the database"):
-                await service.start_run_async(request=_make_request())
+        enqueue.assert_not_awaited()
+        mock_all_registries["scenario_instance"].run_async.assert_not_awaited()
+        memory.get_scenario_results_async.assert_not_awaited()
 
-        assert service._active_tasks == {}
+    async def test_start_run_rejects_invalid_header_before_execution_async(
+        self, mock_all_registries: dict[str, Any]
+    ) -> None:
+        service = ScenarioRunService()
+        mock_all_registries["memory"].get_scenario_result_header_async.side_effect = ValueError(
+            "Invalid persisted scenario identity"
+        )
+
+        with (
+            patch.object(service, "_enqueue_run_async", new_callable=AsyncMock) as enqueue,
+            pytest.raises(ValueError, match="Invalid persisted scenario identity"),
+        ):
+            await service.start_run_async(request=_make_request())
+
+        enqueue.assert_not_awaited()
+        mock_all_registries["scenario_instance"].run_async.assert_not_awaited()
+        mock_all_registries["memory"].get_scenario_results_async.assert_not_awaited()
 
     async def test_start_run_executes_successfully(self, mock_all_registries) -> None:
         """The scheduler starts an initialized scenario."""
@@ -2178,6 +2251,44 @@ class TestScenarioRunServiceStartRun:
         await service.start_run_async(request=_make_request())
         await asyncio.wait_for(released.wait(), timeout=5)
         await asyncio.sleep(0)
+
+    @pytest.mark.parametrize("queued", [False, True])
+    async def test_resume_reads_attacks_only_for_returned_summary_async(
+        self, *, mock_all_registries: dict[str, Any], queued: bool
+    ) -> None:
+        attack = AttackResult(
+            conversation_id="failed-conversation",
+            objective="test objective",
+            outcome=AttackOutcome.ERROR,
+            error_message="429 Too Many Requests",
+            error_type="RateLimitError",
+            total_retries=1,
+            retry_events=[RetryEvent(attempt_number=1, exception_type="RateLimitError", exception_message="429")],
+        )
+        stored = make_scenario_result(
+            scenario_run_state=ScenarioRunState.FAILED,
+            attack_results={"direct": [attack]},
+        )
+        run_id = str(stored.id)
+        memory = mock_all_registries["memory"]
+        memory.get_scenario_result_header_async.return_value = stored.model_copy(update={"attack_results": {}})
+        memory.get_scenario_results_async.return_value = [stored]
+        mock_all_registries["scenario_instance"]._scenario_result_id = run_id
+        service = ScenarioRunService()
+        if queued:
+            service._active_scenario_result_id = "other-run"
+        try:
+            with patch.object(service, "_execute_run_async", new_callable=AsyncMock):
+                response = await service.start_run_async(request=_make_request(scenario_result_id=run_id))
+
+            memory.get_scenario_results_async.assert_awaited_once_with(scenario_result_ids=[run_id])
+            assert response.failed_attacks[0].error_message == "429 Too Many Requests"
+            assert response.total_retries == 1
+            assert response.attack_retries[0].retries == attack.retry_events
+            assert response.queue_position == (1 if queued else None)
+        finally:
+            service._active_scenario_result_id = None
+            await service.shutdown_async()
 
 
 class TestScenarioRunServiceGetRun:
@@ -2898,12 +3009,65 @@ async def test_legacy_plan_techniques_agree_across_projections(
 class TestScenarioRunServiceCancelRun:
     """Tests for ScenarioRunService.cancel_run_async."""
 
+    @pytest.mark.parametrize("latest_state", [ScenarioRunState.COMPLETED, ScenarioRunState.FAILED])
+    async def test_cancel_rechecks_terminal_state_with_headers_async(
+        self, *, mock_memory: MagicMock, latest_state: ScenarioRunState
+    ) -> None:
+        initial = _make_db_scenario_result(run_state=ScenarioRunState.IN_PROGRESS)
+        latest = _make_db_scenario_result(run_state=latest_state)
+        mock_memory.get_scenario_result_header_async.side_effect = [initial, latest]
+        service = ScenarioRunService()
+
+        with pytest.raises(ValueError, match="Cannot cancel run"):
+            await service.cancel_run_async(scenario_result_id="sr-uuid-1")
+
+        assert mock_memory.get_scenario_result_header_async.await_count == 2
+        mock_memory.get_scenario_results_async.assert_not_awaited()
+        mock_memory.try_update_scenario_run_state_async.assert_not_awaited()
+
+    async def test_cancel_unscheduled_run_reads_details_only_for_response_async(self, mock_memory: MagicMock) -> None:
+        initial = _make_db_scenario_result(run_state=ScenarioRunState.CREATED)
+        cancelled = _make_db_scenario_result(run_state=ScenarioRunState.CANCELLED)
+        mock_memory.get_scenario_result_header_async.return_value = initial
+        mock_memory.get_scenario_results_async.return_value = [cancelled]
+
+        result = await ScenarioRunService().cancel_run_async(scenario_result_id="sr-uuid-1")
+
+        assert result is not None
+        assert result.status == ScenarioRunState.CANCELLED
+        assert mock_memory.get_scenario_result_header_async.await_count == 2
+        mock_memory.get_scenario_results_async.assert_awaited_once()
+
+    @pytest.mark.parametrize("skipped_state", [None, ScenarioRunState.CANCELLED, ScenarioRunState.COMPLETED])
+    async def test_handoff_uses_headers_to_skip_invalid_queue_entries_async(
+        self, *, mock_memory: MagicMock, skipped_state: ScenarioRunState | None
+    ) -> None:
+        service = ScenarioRunService()
+        service._active_scenario_result_id = "finished-run"
+        skipped = _svc_mod._ActiveTask(scenario_result_id="skipped-run")
+        next_run = _svc_mod._ActiveTask(scenario_result_id="next-run")
+        service._queued_runs.extend([skipped, next_run])
+        mock_memory.get_scenario_result_header_async.side_effect = [
+            _make_db_scenario_result(run_state=skipped_state) if skipped_state is not None else None,
+            _make_db_scenario_result(run_state=ScenarioRunState.QUEUED),
+        ]
+        with patch.object(service, "_start_scheduled_run_locked_async", new_callable=AsyncMock) as start:
+            await service._handoff_scheduler_async(scenario_result_id="finished-run")
+
+        start.assert_awaited_once_with(scheduled=next_run)
+        assert not service._queued_runs
+        assert [
+            call.kwargs["scenario_result_id"] for call in mock_memory.get_scenario_result_header_async.await_args_list
+        ] == ["skipped-run", "next-run"]
+        mock_memory.get_scenario_results_async.assert_not_awaited()
+
     async def test_cancel_run_returns_none_for_unknown_id(self, mock_memory) -> None:
         """Test that cancel returns None for non-existent run."""
-        mock_memory.get_scenario_results_async = AsyncMock(return_value=[])
         service = ScenarioRunService()
         result = await service.cancel_run_async(scenario_result_id="nonexistent-id")
         assert result is None
+        mock_memory.get_scenario_result_header_async.assert_awaited_once_with(scenario_result_id="nonexistent-id")
+        mock_memory.get_scenario_results_async.assert_not_awaited()
 
     async def test_cancel_run_sets_cancelled_status(self, mock_all_registries) -> None:
         """Test that cancelling a running scenario persists CANCELLED to DB."""
@@ -2920,12 +3084,12 @@ class TestScenarioRunServiceCancelRun:
         await asyncio.wait_for(run_started.wait(), timeout=5)
 
         # After update_scenario_run_state, the next DB query should return CANCELLED
-        running_result = mock_all_registries["db_result"]
         cancelled_result = _make_db_scenario_result(
             result_id=response.scenario_result_id,
             run_state=ScenarioRunState.CANCELLED,
         )
-        mock_memory.get_scenario_results_async = AsyncMock(side_effect=[[running_result], [cancelled_result]])
+        mock_memory.get_scenario_results_async = AsyncMock(return_value=[cancelled_result])
+        mock_memory.get_scenario_result_header_async.reset_mock()
 
         result = await service.cancel_run_async(scenario_result_id=response.scenario_result_id)
 
@@ -2938,6 +3102,8 @@ class TestScenarioRunServiceCancelRun:
         )
         assert result is not None
         assert result.status == ScenarioRunState.CANCELLED
+        mock_memory.get_scenario_result_header_async.assert_awaited_once()
+        mock_memory.get_scenario_results_async.assert_awaited_once()
 
 
 class TestScenarioRunServiceRecovery:
@@ -3061,6 +3227,9 @@ class TestScenarioRunServiceRecovery:
 
         mock_scenario_registry.create_and_initialize_async = AsyncMock(side_effect=_create_scenario)
         mock_memory.get_scenario_results_async = AsyncMock(side_effect=_get_results)
+        mock_memory.get_scenario_result_header_async = AsyncMock(
+            side_effect=lambda *, scenario_result_id: records.get(scenario_result_id)
+        )
         mock_memory.update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
         mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
         mock_memory.update_scenario_run_state_and_metadata_fields_async = AsyncMock(side_effect=_update_state)
@@ -3145,6 +3314,9 @@ class TestScenarioRunServiceRecovery:
             await service.shutdown_async()
 
         mock_memory.get_scenario_results_async = AsyncMock(side_effect=_get_results)
+        mock_memory.get_scenario_result_header_async = AsyncMock(
+            side_effect=lambda *, scenario_result_id: records.get(scenario_result_id)
+        )
         mock_memory.update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
         mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=_try_update_state)
         mock_memory.update_scenario_run_state_and_metadata_fields_async = AsyncMock(side_effect=_update_state)
@@ -3258,13 +3430,12 @@ class TestScenarioRunServiceRecovery:
         response = await service.start_run_async(request=_make_request())
         await asyncio.sleep(0)
 
-        running_result = mock_all_registries["db_result"]
         cancelled_result = _make_db_scenario_result(
             result_id=response.scenario_result_id,
             run_state=ScenarioRunState.CANCELLED,
         )
         cancelled_result.metadata = {}
-        mock_memory.get_scenario_results_async = AsyncMock(side_effect=[[running_result], [cancelled_result]])
+        mock_memory.get_scenario_results_async = AsyncMock(return_value=[cancelled_result])
 
         await service.cancel_run_async(scenario_result_id=response.scenario_result_id)
         mock_memory.get_scenario_result_header_async = AsyncMock(return_value=cancelled_result)
@@ -3297,20 +3468,12 @@ class TestScenarioRunServiceRecovery:
         # Narrowly scoped internal invariant: the live run stays tracked until readback.
         assert rid in service._active_tasks
 
-        running_result = mock_all_registries["db_result"]
         cancelled_result = _make_db_scenario_result(
             result_id=rid,
             run_state=ScenarioRunState.CANCELLED,
         )
         cancelled_result.metadata = {}
-        mock_memory.get_scenario_results_async = AsyncMock(
-            side_effect=[
-                [running_result],
-                [cancelled_result],
-                [cancelled_result],
-                [cancelled_result],
-            ]
-        )
+        mock_memory.get_scenario_results_async = AsyncMock(return_value=[cancelled_result])
 
         await service.cancel_run_async(scenario_result_id=rid)
         fetched = await service.get_run_async(scenario_result_id=rid)
@@ -3325,20 +3488,22 @@ class TestScenarioRunServiceRecovery:
     async def test_cancel_completed_run_raises_value_error(self, mock_memory) -> None:
         """Test that cancelling a completed run raises ValueError."""
         db_result = _make_db_scenario_result(result_id="sr-done", run_state=ScenarioRunState.COMPLETED)
-        mock_memory.get_scenario_results_async = AsyncMock(return_value=[db_result])
+        mock_memory.get_scenario_result_header_async.return_value = db_result
 
         service = ScenarioRunService()
         with pytest.raises(ValueError, match="Cannot cancel run"):
             await service.cancel_run_async(scenario_result_id="sr-done")
+        mock_memory.get_scenario_results_async.assert_not_awaited()
 
     async def test_cancel_already_cancelled_run_raises_value_error(self, mock_memory) -> None:
         """Test that cancelling an already-cancelled run raises ValueError."""
         db_result = _make_db_scenario_result(result_id="sr-cancelled", run_state=ScenarioRunState.CANCELLED)
-        mock_memory.get_scenario_results_async = AsyncMock(return_value=[db_result])
+        mock_memory.get_scenario_result_header_async.return_value = db_result
 
         service = ScenarioRunService()
         with pytest.raises(ValueError, match="Cannot cancel run"):
             await service.cancel_run_async(scenario_result_id="sr-cancelled")
+        mock_memory.get_scenario_results_async.assert_not_awaited()
 
 
 class TestScenarioRunServiceExecution:
@@ -3728,6 +3893,48 @@ class TestScenarioRunServiceFailedAttackReporting:
         assert summary.atomic_attack_name == "baseline_airt_hate"
         assert summary.retries[0].endpoint == "https://ep/"
         assert summary.retries[0].component_role == "objective_scorer"
+
+    @pytest.mark.parametrize(
+        ("child_outcomes", "expected_error_messages"),
+        [
+            ([AttackOutcome.FAILURE, AttackOutcome.ERROR], [None]),
+            ([AttackOutcome.FAILURE], ["sequence error"]),
+        ],
+        ids=["child-error", "sequence-only-error"],
+    )
+    async def test_failed_attacks_report_a_sequence_envelope_only_for_its_own_error(
+        self, mock_memory: MagicMock, child_outcomes: list[AttackOutcome], expected_error_messages: list[str | None]
+    ) -> None:
+        envelope, children = make_sequential_attack_results(
+            atomic_attack_name="attack",
+            envelope_outcome=AttackOutcome.ERROR,
+            child_outcomes=child_outcomes,
+            objective="a",
+        )
+        envelope.error_message = "sequence error"
+        plan = ScenarioRunPlan(
+            atomic_groups=[
+                ScenarioRunPlanAtomicGroup(
+                    id="group",
+                    atomic_attack_name="attack",
+                    display_group="Attack",
+                    technique_name="attack",
+                    technique_eval_hash="eval",
+                    seed_group_ids=["seed-a"],
+                )
+            ],
+            seed_groups=[ScenarioRunPlanSeedGroup(id="seed-a", objective_sha256=to_sha256("a"), objective="a")],
+        )
+        db_result = make_scenario_result(
+            attack_results={"attack": [*children, envelope]},
+            metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")},
+        )
+        mock_memory.get_scenario_results_async.return_value = [db_result]
+
+        fetched = await ScenarioRunService().get_run_async(scenario_result_id=str(db_result.id))
+
+        assert fetched is not None
+        assert [failed.error_message for failed in fetched.failed_attacks] == expected_error_messages
 
 
 class TestResolveTechniquesAndConverters:
@@ -4183,6 +4390,124 @@ async def test_get_progress_maps_persisted_failure_details(mock_memory) -> None:
     assert progress is not None
     assert progress.run.error == "Scenario initialization failed."
     assert progress.run.error_type == "ValueError"
+
+
+@pytest.mark.parametrize(
+    ("cursor_id", "result_ids", "expected_ids", "has_more"),
+    [
+        pytest.param(None, [2, 4, 6, 8], [2, 4], True, id="first-page"),
+        pytest.param(1, [2, 4, 6, 8], [2, 4], True, id="before-first-result"),
+        pytest.param(4, [2, 4, 6, 8], [6, 8], False, id="exact-last-page"),
+        pytest.param(5, [2, 4, 6, 8], [6, 8], False, id="bookmark-between-results"),
+        pytest.param(6, [2, 4, 6, 8], [8], False, id="partial-last-page"),
+        pytest.param(8, [2, 4, 6, 8], [], False, id="at-last-result"),
+        pytest.param(9, [2, 4, 6, 8], [], False, id="after-last-result"),
+        pytest.param(None, [], [], False, id="empty-run"),
+    ],
+)
+async def test_progress_page_starts_after_bookmark_when_results_share_timestamp(
+    *,
+    mock_memory: MagicMock,
+    cursor_id: int | None,
+    result_ids: list[int],
+    expected_ids: list[int],
+    has_more: bool,
+) -> None:
+    header = make_scenario_result(attack_results={})
+    run_id = str(header.id)
+    timestamp = datetime(2025, 1, 1, tzinfo=UTC)
+
+    def make_delta(result_id: int) -> ScenarioAttackResultDelta:
+        return ScenarioAttackResultDelta(
+            attack_result_id=str(uuid.UUID(int=result_id)),
+            conversation_id=f"conversation-{result_id}",
+            objective=f"objective-{result_id}",
+            outcome=AttackOutcome.SUCCESS,
+            execution_time_ms=0,
+            timestamp=timestamp,
+        )
+
+    # Gaps in IDs let us test bookmarks that no longer match a cached result.
+    deltas = [make_delta(result_id) for result_id in result_ids]
+    mock_memory.get_scenario_result_header_async = AsyncMock(return_value=header)
+    mock_memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=(deltas, False))
+    service = ScenarioRunService()
+    since = (
+        service._encode_progress_cursor(scenario_result_id=run_id, delta=make_delta(cursor_id))
+        if cursor_id is not None
+        else None
+    )
+    page_size = 2
+
+    progress = await service.get_run_progress_async(scenario_result_id=run_id, since=since, limit=page_size)
+
+    assert progress is not None
+    assert [result.attack_result_id for result in progress.results] == [
+        str(uuid.UUID(int=result_id)) for result_id in expected_ids
+    ]
+    assert progress.has_more is has_more
+    assert (progress.plan is not None) is (since is None)
+    assert progress.summary.overall.completed == len(deltas)
+    if expected_ids:
+        assert progress.next_cursor == service._encode_progress_cursor(
+            scenario_result_id=run_id, delta=make_delta(expected_ids[-1])
+        )
+    else:
+        assert progress.next_cursor == since
+
+
+async def test_progress_page_finds_bookmark_without_scanning_all_results(mock_memory: MagicMock) -> None:
+    header = make_scenario_result(attack_results={})
+    run_id = str(header.id)
+    result_count = 128
+    page_size = 2
+    deltas = [
+        ScenarioAttackResultDelta(
+            attack_result_id=str(uuid.UUID(int=index + 1)),
+            conversation_id=f"conversation-{index}",
+            objective=f"objective-{index}",
+            outcome=AttackOutcome.SUCCESS,
+            execution_time_ms=0,
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC) + timedelta(seconds=index),
+        )
+        for index in range(result_count)
+    ]
+    mock_memory.get_scenario_result_header_async = AsyncMock(return_value=header)
+    mock_memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=(deltas, False))
+    service = ScenarioRunService()
+    snapshot = await service._progress_read_model.get_snapshot_async(
+        scenario_result_id=run_id,
+        plan=None,
+        plan_complete=False,
+        active_group_ids=(),
+        terminal=False,
+        objective_scorer_identifier=None,
+    )
+    bookmark_index = result_count // 2
+    since = service._encode_progress_cursor(scenario_result_id=run_id, delta=deltas[bookmark_index])
+    tracked_deltas = MagicMock(spec=tuple)
+    tracked_deltas.__len__.return_value = len(snapshot.deltas)
+    tracked_deltas.__iter__.side_effect = lambda: iter(snapshot.deltas)
+    tracked_deltas.__getitem__.side_effect = snapshot.deltas.__getitem__
+    tracked_results = MagicMock(spec=tuple)
+    tracked_results.__len__.return_value = len(snapshot.results)
+    tracked_results.__getitem__.side_effect = snapshot.results.__getitem__
+    tracked_snapshot = replace(snapshot, deltas=tracked_deltas, results=tracked_results)
+
+    with patch.object(service._progress_read_model, "get_snapshot_async", return_value=tracked_snapshot):
+        progress = await service.get_run_progress_async(scenario_result_id=run_id, since=since, limit=page_size)
+
+    assert progress is not None
+    start = bookmark_index + 1
+    end = start + page_size
+    assert progress.results == list(snapshot.results[start:end])
+    assert progress.has_more
+    tracked_results.__iter__.assert_not_called()
+    tracked_results.__getitem__.assert_called_once_with(slice(start, end))
+    # Binary search halves the range each step; allow one extra access for the final page slice.
+    assert tracked_deltas.__getitem__.call_count <= result_count.bit_length() + 1
+    # Retry-event reporting still reads all deltas, but page selection must not add another scan.
+    assert tracked_deltas.__iter__.call_count == 1
 
 
 async def test_get_progress_cache_only_maps_new_storage_rows(mock_memory) -> None:
@@ -4912,9 +5237,7 @@ def test_progress_summary_uses_latest_attempt_for_backend_owned_counts() -> None
             "sub_scorers": [sub_scorer_identifier],
         },
     )
-    metrics = ObjectiveScorerMetrics(
-        num_responses=100,
-        num_human_raters=3,
+    metrics = ScenarioObjectiveScorerMetrics(
         accuracy=0.95,
         accuracy_standard_error=0.01,
         f1_score=0.94,
@@ -4922,16 +5245,16 @@ def test_progress_summary_uses_latest_attempt_for_backend_owned_counts() -> None
         recall=0.92,
         average_score_time_seconds=0.25,
     )
-    with patch.object(_progress_mod, "find_objective_metrics_by_eval_hash", return_value=metrics):
-        summary = ScenarioProgressReadModel._build_progress_summary(
-            plan=plan,
-            plan_complete=True,
-            results=results,
-            active_group_ids=["group"],
-            terminal=False,
-            objective_scorer_identifier=scorer_identifier,
-            technique_details_by_group={},
-        )
+    summary = ScenarioProgressReadModel._build_progress_summary(
+        plan=plan,
+        plan_complete=True,
+        results=results,
+        active_group_ids=["group"],
+        terminal=False,
+        objective_scorer_identifier=scorer_identifier,
+        technique_details_by_group={},
+        scorer_metrics=metrics,
+    )
 
     assert summary.overall.completed == 2
     assert summary.overall.succeeded == 0

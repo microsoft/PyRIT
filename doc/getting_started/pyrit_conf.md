@@ -164,6 +164,10 @@ custom_initializers_source: https://account.blob.core.windows.net/pyrit-storage/
 
 With this configuration, PyRIT reads and writes scripts directly under the `custom-initializers/` prefix in the `pyrit-storage` container. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/custom_initializers`.
 
+```{warning}
+When `allow_custom_initializers: true`, the backend imports every script in this source at startup and during live reinitialization, under the backend's identity. PyRIT does not sign or verify these scripts, so write access to this source is code-execution authority on the backend. The same applies to write access to `.pyrit_conf`, which selects this source and `initialization_scripts`. Grant write access only to principals you already trust as backend administrators, and use a dedicated directory or blob prefix that less-trusted users and services cannot write to.
+```
+
 ### `scenario_presets_source`
 
 Stores scenario presets in a local directory or Azure Blob container. An Azure URI may include a blob-name prefix, which behaves like a folder:
@@ -175,6 +179,16 @@ scenario_presets_source: https://account.blob.core.windows.net/pyrit-storage/sce
 Point several deployments at the same container to share presets between them. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/scenario_presets`.
 
 In a local directory, PyRIT writes a small hidden `.<name>.json.lock` file beside each preset to serialize concurrent writers. These files remain after a preset is deleted, and are safe to remove when no PyRIT process is running.
+
+### `scenario_suites_source`
+
+Stores ScenarioSuite definitions in a local directory or Azure Blob container. An Azure URI may include a blob-name prefix:
+
+```yaml
+scenario_suites_source: https://account.blob.core.windows.net/pyrit-storage/scenario-suites
+```
+
+Suites store ordered references to scenario presets and resolve each preset's current status when read. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/scenario_suites`. Local writes use the same hidden lock-file and atomic replacement behavior as scenario presets.
 
 ### `initialization_scripts`
 

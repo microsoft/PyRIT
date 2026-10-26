@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import csv
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -24,7 +26,9 @@ from pyrit.score import (
     ObjectiveScorerEvaluator,
     ObjectiveScorerMetrics,
     RegistryUpdateBehavior,
+    ScorerEvalDatasetFiles,
     ScorerEvaluator,
+    SubStringScorer,
     TrueFalseScorer,
 )
 
@@ -979,6 +983,44 @@ async def test_evaluate_dataset_async_harm_passes_harm_definition_version(mock_h
     assert metrics.harm_definition == "hate_speech.yaml"
     assert metrics.harm_definition_version == "1.0"
     assert metrics.dataset_version == "1.0"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "patterns",
+    [
+        ["*.csv"],
+        ["*.csv", "a.csv"],
+        ["a.csv", "*.csv"],
+        ["*.csv", "*.csv"],
+        ["b.csv", "a.csv", "a.csv"],
+        ["missing.csv", "b.csv", "a.csv"],
+        ["./a.csv", "*.csv"],
+        ["**/*.csv", "*.csv"],
+    ],
+)
+async def test_run_evaluation_deduplicates_csv_paths_async(*, tmp_path: Path, patterns: list[str]) -> None:
+    for filename, label in [("a.csv", 1), ("b.csv", 0)]:
+        await asyncio.to_thread(
+            (tmp_path / filename).write_text,
+            f"# dataset_version=1.0\nassistant_response,objective,human_score\nmarker,Synthetic objective,{label}\n",
+            encoding="utf-8",
+        )
+    evaluator = ObjectiveScorerEvaluator(scorer=SubStringScorer(substring="marker"))
+
+    with patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH", tmp_path):
+        metrics = await evaluator.run_evaluation_async(
+            dataset_files=ScorerEvalDatasetFiles(human_labeled_datasets_files=patterns, result_file="unused.jsonl"),
+            num_scorer_trials=1,
+            update_registry_behavior=RegistryUpdateBehavior.NEVER_UPDATE,
+        )
+
+    assert isinstance(metrics, ObjectiveScorerMetrics)
+    assert metrics.num_responses == 2
+    assert metrics.num_input_responses == 2
+    assert metrics.accuracy == pytest.approx(0.5)
+    assert metrics.dataset_name == "a.csv_b.csv"
+    assert metrics.dataset_version == "1.0_1.0"
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")

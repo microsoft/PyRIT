@@ -303,6 +303,8 @@ MyCustomScenario()
 # pyrit_scan scenario-results <scenario_result_id> --view full --format html --output reports/html_report.html
 # ```
 #
+# Each per-attack view lists the attempts counted in the overview, and adaptive attempts are labeled with the technique they used (for example, `crescendo`).
+#
 # `--view` picks *how much* detail per attack; `--attack-result-ids` picks *which* attacks (ids come from the `attacks` view); the two combine. Use `--limit` to cap how many attacks are shown; the `conversations` and `full` views default to 5 when you scope neither. (`--limit` is not applicable to `--format html` report.)
 #
 # ```shell

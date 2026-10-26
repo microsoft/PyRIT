@@ -121,6 +121,35 @@ async def _save_history_async(
 
 @pytest.mark.usefixtures("patch_central_database", "catalog")
 class TestExecute:
+    @pytest.mark.parametrize("adapt_history", [False, True])
+    async def test_factory_receives_the_prepared_inline_group_without_dataset_reads_async(
+        self, *, scorer: MagicMock, adapt_history: bool
+    ) -> None:
+        memory = CentralMemory.get_memory_instance()
+        history_id = await _save_history_async(memory=memory, roles=["user", "assistant"])
+        factory = AttackTechniqueFactory(
+            name="inline_group",
+            attack_class=PromptSendingAttack,
+            requirements=TechniqueRequirements(
+                seed_group=SeedGroupRequirements(objective_only=adapt_history, try_adapt=adapt_history)
+            ),
+        )
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        scenario = _scenario(scorer=scorer, scenario_techniques=["inline_group"], prepended_conversation_id=history_id)
+        with (
+            patch.object(factory, "create", wraps=factory.create) as create,
+            patch.object(memory, "get_seeds_async", side_effect=AssertionError("Execute read a dataset.")),
+        ):
+            await scenario.initialize_async()
+
+        create.assert_called_once()
+        prepared = create.call_args.kwargs["seed_group"]
+        source = scenario._atomic_attacks[0].seed_groups[0]
+        assert prepared.objective.value == scenario.params["objective"]
+        assert len(prepared.seeds) == (1 if adapt_history else 3)
+        assert len(source.seeds) == 3
+        assert prepared is not source
+
     @pytest.mark.parametrize("retries", [0, 1])
     @pytest.mark.parametrize("baked", [False, True])
     @pytest.mark.parametrize("convert_history", [None, False, True])
@@ -437,9 +466,11 @@ class TestExecute:
         parameters = {parameter.name: parameter for parameter in scenario.supported_parameters()}
         assert "dataset_config" not in parameters
         assert parameters["objective"].multiline
+        assert parameters["objective"].required
+        assert next(parameter for parameter in metadata.supported_parameters if parameter.name == "objective").required
         assert {"harm_categories", "retries_on_objective_failure", "prepended_conversation_id"} <= parameters.keys()
         with pytest.raises(ValueError, match="unknown parameter.*dataset_config"):
-            scenario.set_params_from_args(args={"dataset_config": DatasetAttackConfiguration()})
+            scenario.set_params_from_args(args={"objective": "Test", "dataset_config": DatasetAttackConfiguration()})
 
     @pytest.mark.parametrize("selection", [None, [], ["red_teaming"], ["DEFAULT"]])
     def test_one_default_technique(self, scorer: MagicMock, selection: Any) -> None:
@@ -485,11 +516,15 @@ class TestExecute:
                 with pytest.raises(ValueError, match="at most 1 concrete technique"):
                     await service.estimate_scenario_run_size_async(
                         scenario_name="technique.execute",
-                        request=ScenarioRunSizeEstimateRequest(techniques=["red_teaming", "crescendo"]),
+                        request=ScenarioRunSizeEstimateRequest(
+                            techniques=["red_teaming", "crescendo"], scenario_params={"objective": "Test"}
+                        ),
                     )
                 estimate = await service.estimate_scenario_run_size_async(
                     scenario_name="technique.execute",
-                    request=ScenarioRunSizeEstimateRequest(techniques=["default"], include_baseline=True),
+                    request=ScenarioRunSizeEstimateRequest(
+                        techniques=["default"], include_baseline=True, scenario_params={"objective": "Test"}
+                    ),
                 )
                 assert estimate.total_attack_count == 2
             finally:
@@ -522,8 +557,12 @@ class TestExecute:
             "a_first"
         ]
 
-    @pytest.mark.parametrize("objective", [None, "", " \n\t"])
-    async def test_objective_required_only_at_initialize_async(self, scorer: MagicMock, objective: str | None) -> None:
+    def test_missing_objective_rejected_when_configuring(self, scorer: MagicMock) -> None:
+        with pytest.raises(ValueError, match="required.*objective"):
+            _scenario(scorer=scorer, objective=None)
+
+    @pytest.mark.parametrize("objective", ["", " \n\t"])
+    async def test_blank_objective_rejected_at_initialize_async(self, scorer: MagicMock, objective: str) -> None:
         scenario = _scenario(scorer=scorer, objective=objective)
         assert (await scenario.get_run_size_estimate_async()).estimated_attack_count == 1
         with pytest.raises(ValueError, match="non-blank objective"):
@@ -558,6 +597,8 @@ class TestExecute:
     async def test_default_preview_without_objective_async(self, scorer: MagicMock) -> None:
         scenario = Execute(objective_scorer=scorer)
         assert (await scenario.get_default_run_size_estimate_async()).estimated_attack_count == 1
+        with pytest.raises(ValueError, match="required.*objective"):
+            scenario.set_params_from_args(args={})
 
     async def test_negative_retry_count_rejected_in_preview_async(self, scorer: MagicMock) -> None:
         scenario = _scenario(scorer=scorer, retries_on_objective_failure=-1)

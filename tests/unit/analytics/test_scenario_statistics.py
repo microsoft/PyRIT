@@ -12,6 +12,7 @@ from pyrit.analytics.scenario_statistics import (
     combine_execution_counts,
     compute_scenario_statistics,
     resolve_execution_unit,
+    select_execution_attack_result_ids,
 )
 from pyrit.common.utils import to_sha256
 from pyrit.models import (
@@ -24,7 +25,7 @@ from pyrit.models import (
     ScenarioRunPlanSeedGroup,
     config_hash,
 )
-from unit.mocks import make_scenario_result
+from unit.mocks import make_scenario_result, make_sequential_attack_results
 
 _T0 = datetime(2026, 9, 1, tzinfo=UTC)
 
@@ -256,3 +257,82 @@ def test_resolve_execution_unit_precedence() -> None:
     assert resolve(technique_eval_hash="other").atomic_group_id == config_hash(
         {"atomic_attack_name": "attack", "technique_eval_hash": "other"}
     )
+
+
+@pytest.mark.parametrize("with_result_roles", [True, False], ids=["recorded-roles", "pre-role-rows"])
+@pytest.mark.parametrize("saved_plan", [None, _plan()], ids=["legacy", "saved-plan"])
+@pytest.mark.parametrize(
+    ("envelope_outcome", "child_outcomes", "envelope_selected"),
+    [
+        (AttackOutcome.SUCCESS, [AttackOutcome.FAILURE, AttackOutcome.SUCCESS], False),
+        (AttackOutcome.ERROR, [AttackOutcome.FAILURE, AttackOutcome.ERROR], False),
+        (AttackOutcome.ERROR, [AttackOutcome.FAILURE], True),
+    ],
+)
+def test_execution_attack_result_ids_select_an_envelope_only_for_its_own_error(
+    envelope_outcome: AttackOutcome,
+    child_outcomes: list[AttackOutcome],
+    envelope_selected: bool,
+    saved_plan: ScenarioRunPlan | None,
+    with_result_roles: bool,
+) -> None:
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="attack",
+        envelope_outcome=envelope_outcome,
+        child_outcomes=child_outcomes,
+        objective="a",
+        with_result_roles=with_result_roles,
+    )
+    result = make_scenario_result(
+        attack_results={"attack": [*children, envelope]},
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: saved_plan.model_dump(mode="json")} if saved_plan else {},
+    )
+
+    selected = select_execution_attack_result_ids(result)
+
+    expected = {child.attack_result_id for child in children}
+    if envelope_selected:
+        expected.add(envelope.attack_result_id)
+    assert selected == expected
+    assert len(selected) == compute_scenario_statistics(result).attempts
+
+
+@pytest.mark.parametrize(
+    ("plan", "use_saved_plan", "envelope_selected"),
+    [(None, True, False), (None, False, True), (_plan(), False, False)],
+    ids=["saved-plan", "legacy", "explicit-plan"],
+)
+def test_execution_attack_result_ids_resolve_units_with_the_requested_plan(
+    plan: ScenarioRunPlan | None, use_saved_plan: bool, envelope_selected: bool
+) -> None:
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="attack",
+        envelope_outcome=AttackOutcome.SUCCESS,
+        child_outcomes=[AttackOutcome.SUCCESS],
+        objective="a",
+    )
+    # Without its eval hash, the envelope joins its children's unit only through the plan's unique-name match.
+    envelope.attribution_data = {
+        key: value for key, value in (envelope.attribution_data or {}).items() if key != "parent_eval_hash"
+    }
+    result = make_scenario_result(
+        attack_results={"attack": [*children, envelope]},
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: _plan().model_dump(mode="json")},
+    )
+
+    selected = select_execution_attack_result_ids(result, plan=plan, use_saved_plan=use_saved_plan)
+
+    expected = {child.attack_result_id for child in children}
+    if envelope_selected:
+        expected.add(envelope.attack_result_id)
+    assert selected == expected
+    assert len(selected) == compute_scenario_statistics(result, plan=plan, use_saved_plan=use_saved_plan).attempts
+
+
+def test_execution_attack_result_ids_keep_an_envelope_without_its_children() -> None:
+    envelope, _ = make_sequential_attack_results(
+        atomic_attack_name="attack", envelope_outcome=AttackOutcome.SUCCESS, child_outcomes=[AttackOutcome.SUCCESS]
+    )
+    result = make_scenario_result(attack_results={"attack": [envelope]})
+
+    assert select_execution_attack_result_ids(result) == {envelope.attack_result_id}

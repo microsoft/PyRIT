@@ -186,6 +186,26 @@ class SeedPrompt(Seed[PromptDataType | None]):
                                 If needed, update metadata manually."
                 )
 
+    def with_value(self, value: str, *, sequence: int | None = None) -> SeedPrompt:
+        """
+        Rebuild resolved prompt text and optional sequence without rendering literal template syntax.
+
+        Args:
+            value (str): The resolved prompt text.
+            sequence (int | None): A replacement sequence, or None to keep the current sequence.
+
+        Returns:
+            SeedPrompt: A validated prompt retaining all other template metadata.
+        """
+        data = self.model_dump(exclude={"id", "value_sha256"})
+        data.update(value=value, is_jinja_template=False)
+        if sequence is not None:
+            data["sequence"] = sequence
+        prompt = type(self).model_validate(data)
+        # The text is already resolved. Keep its provenance flag without rendering it again.
+        prompt.is_jinja_template = self.is_jinja_template
+        return prompt
+
     @classmethod
     def from_yaml_with_required_parameters(
         cls,
