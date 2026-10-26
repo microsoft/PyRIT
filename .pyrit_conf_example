@@ -141,6 +141,11 @@ allow_custom_initializers: false
 # directory or an Azure Blob container URI with an optional blob prefix.
 # Container URIs may include a SAS; otherwise DefaultAzureCredential is used. Defaults to
 # ~/.pyrit/custom_initializers.
+#
+# ⚠️  WARNING: When allow_custom_initializers is true, the backend runs every script
+# in this source at startup and live reinitialization. Anyone who can write to this
+# source, or to this configuration file, can run code as the backend. Restrict write
+# access to trusted administrators.
 # custom_initializers_source: https://account.blob.core.windows.net/container/custom_initializers
 
 # Optional storage for scenario presets, the saved scenario configurations the
@@ -148,6 +153,11 @@ allow_custom_initializers: false
 # container URI with an optional blob prefix. Container URIs may include a SAS;
 # otherwise DefaultAzureCredential is used. Defaults to ~/.pyrit/scenario_presets.
 # scenario_presets_source: https://account.blob.core.windows.net/container/scenario_presets
+
+# Optional storage for ScenarioSuite definitions, which contain ordered references
+# to scenario presets. This supports the same local directory and Azure Blob
+# sources as scenario_presets_source. Defaults to ~/.pyrit/scenario_suites.
+# scenario_suites_source: https://account.blob.core.windows.net/container/scenario_suites
 
 # Upload Folder for API-Created Targets
 # -------------------------------------

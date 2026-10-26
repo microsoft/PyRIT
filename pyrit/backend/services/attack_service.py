@@ -54,6 +54,7 @@ from pyrit.backend.models.attacks import (
 )
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendStatus
+from pyrit.backend.services.chat_scoring_service import get_chat_scoring_service
 from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.backend.services.history_replay import validate_history_replay
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
@@ -92,8 +93,9 @@ from pyrit.models import (
     TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
 )
-from pyrit.models.component_spec import TargetBinding
+from pyrit.models.component_spec import RegisteredComponentReference, TargetBinding
 from pyrit.models.messages.tool_content import validate_tool_conversation
+from pyrit.models.results.attack_result import AttackScoringInputs
 from pyrit.models.target.request_trace_context import RequestTraceContext
 from pyrit.prompt_target import PromptTarget
 
@@ -311,7 +313,11 @@ class AttackService:
 
             page.append(
                 await attack_result_to_summary_async(
-                    ar, stats=merged, operation_name=operation_names.get(ar.operation_id) if ar.operation_id else None
+                    ar,
+                    stats=merged,
+                    operation_name=operation_names.get(ar.operation_id) if ar.operation_id else None,
+                    scoring_inputs=get_chat_scoring_service().inputs(ar),
+                    execution_read_only=get_chat_scoring_service().execution_read_only(ar),
                 )
             )
 
@@ -362,7 +368,11 @@ class AttackService:
         stats = stats_map.get(ar.conversation_id, ConversationStats(message_count=0))
         operation_names = await self._get_operation_names_async(results=[ar])
         return await attack_result_to_summary_async(
-            ar, stats=stats, operation_name=operation_names.get(ar.operation_id) if ar.operation_id else None
+            ar,
+            stats=stats,
+            operation_name=operation_names.get(ar.operation_id) if ar.operation_id else None,
+            scoring_inputs=get_chat_scoring_service().inputs(ar),
+            execution_read_only=get_chat_scoring_service().execution_read_only(ar),
         )
 
     async def _get_operation_names_async(self, *, results: Sequence[AttackResult]) -> dict[uuid.UUID, str]:
@@ -413,11 +423,21 @@ class AttackService:
             list(pyrit_messages),
             objective_score_id=ar.last_score.id if ar.last_score else None,
         )
+        scoring_result = ar.get_scoring_failure(conversation_id)
+        latest_response = next(
+            (message for message in reversed(pyrit_messages) if message.api_role == "assistant"), None
+        )
+        if scoring_result is not None and (
+            latest_response is None
+            or scoring_result.response_id not in {str(piece.id) for piece in latest_response.message_pieces}
+        ):
+            scoring_result = None
 
         return ConversationMessagesResponse(
             conversation_id=conversation_id,
             messages=backend_messages,
             target_response_status=_get_latest_target_response_status(backend_messages),
+            scoring_failure=scoring_result,
         )
 
     async def get_saved_conversation_async(self, *, conversation_id: str) -> AddMessageResponse | None:
@@ -488,6 +508,23 @@ class AttackService:
             objective=request.name or "",
             attack_name=request.name or "ManualAttack",
         )
+        if request.source_conversation_id is not None:
+            source_conversation = await self._memory.get_conversation_metadata_async(
+                conversation_id=str(request.source_conversation_id)
+            )
+            source = (
+                await self._memory.get_attack_results_async(attack_result_ids=[source_conversation.attack_result_id])
+                if source_conversation and source_conversation.attack_result_id
+                else []
+            )
+            if source:
+                get_chat_scoring_service().continue_manually(
+                    source=source[0],
+                    destination=attack_result,
+                    source_conversation_id=str(request.source_conversation_id),
+                    retained_pieces=copied,
+                    explicit_selection="chat_scorer" in request.model_fields_set,
+                )
         prepended = list(request.prepended_conversation or [])
         if request.system_prompt:
             prepended.insert(
@@ -585,6 +622,11 @@ class AttackService:
                 "target_unbound": conversation.target_identifier is None,
                 **({"target_registry_name": request.target_registry_name} if request.target_registry_name else {}),
                 **(request.target_binding.to_metadata() if request.target_binding else {}),
+                **(
+                    AttackScoringInputs(scorer=request.chat_scorer, revision=str(uuid.uuid4())).to_metadata()
+                    if "chat_scorer" in request.model_fields_set
+                    else {}
+                ),
             },
         )
 
@@ -601,7 +643,10 @@ class AttackService:
         if not results:
             return None
 
+        if request.objective is not None or "chat_scorer" in request.model_fields_set:
+            get_chat_scoring_service().require_manual(results[0])
         update_fields: dict[str, Any] = {"timestamp": datetime.now(UTC)}
+        expected_fields: dict[str, Any] = {"objective": results[0].objective}
         if request.outcome is not None:
             outcome_map = {
                 "undetermined": AttackOutcome.UNDETERMINED,
@@ -614,10 +659,31 @@ class AttackService:
             existing_objective = results[0].objective
             if request.expected_objective is not None and existing_objective != request.expected_objective:
                 raise AttackObjectiveConflictError("The objective changed. Reload before saving.")
-            if existing_objective == request.objective and request.outcome is None:
+            if (
+                existing_objective == request.objective
+                and request.outcome is None
+                and "chat_scorer" not in request.model_fields_set
+            ):
                 return await self.get_attack_async(attack_result_id=attack_result_id)
-            update_fields.update(self._objective_update_fields(old=existing_objective, new=request.objective))
-        if request.objective is None:
+            update_fields.update(
+                self._objective_update_fields(
+                    attack=results[0],
+                    new=request.objective,
+                    default_scorer=request.default_chat_scorer
+                    if "chat_scorer" not in request.model_fields_set
+                    else None,
+                )
+            )
+        if "chat_scorer" in request.model_fields_set:
+            if request.chat_scorer is not None:
+                get_chat_scoring_service().resolve(request.chat_scorer)
+            update_fields["attack_metadata"] = {
+                **update_fields.get("attack_metadata", {}),
+                **AttackScoringInputs(scorer=request.chat_scorer, revision=str(uuid.uuid4())).to_metadata(),
+            }
+        if "attack_metadata" in update_fields:
+            expected_fields["attack_metadata"] = results[0].metadata
+        if request.objective is None and "chat_scorer" not in request.model_fields_set:
             await self._memory.update_attack_result_by_id_async(
                 attack_result_id=attack_result_id,
                 update_fields=update_fields,
@@ -626,7 +692,7 @@ class AttackService:
         try:
             await self._memory.update_attack_result_conditionally_async(
                 attack_result_id=attack_result_id,
-                expected_fields={"objective": results[0].objective},
+                expected_fields=expected_fields,
                 update_fields=update_fields,
             )
         except AttackStateConflictError as exc:
@@ -664,7 +730,12 @@ class AttackService:
                     "operation": request.operation if request.operation_id is None else None,
                 }
             )
-        fingerprint = to_sha256(json.dumps(request.model_dump(mode="json"), sort_keys=True))
+        fingerprint_values = request.model_dump(mode="json", exclude={"default_chat_scorer"})
+        if request.default_chat_scorer is not None:
+            fingerprint_values["default_chat_scorer"] = request.default_chat_scorer.model_dump(mode="json")
+        if "chat_scorer" in request.model_fields_set and request.chat_scorer is None:
+            fingerprint_values["chat_scorer_explicitly_off"] = True
+        fingerprint = to_sha256(json.dumps(fingerprint_values, sort_keys=True))
         conversation_id = str(request.save_id)
         attack_result_id = (
             str(request.attack_result_id)
@@ -717,6 +788,7 @@ class AttackService:
             if not results:
                 raise ValueError("The destination attack does not exist")
             attack = results[0]
+            get_chat_scoring_service().require_manual(attack)
             if request.operation_id is not None and request.operation_id != attack.operation_id:
                 raise ValueError("Operation attribution is immutable on continuation")
             original_registry_name = attack.metadata.get("target_registry_name")
@@ -747,7 +819,10 @@ class AttackService:
                 expected_fields["objective"] = (
                     request.expected_objective if request.expected_objective is not None else attack.objective
                 )
-                update_fields = self._objective_update_fields(old=attack.objective, new=request.objective)
+                update_fields = self._objective_update_fields(
+                    attack=attack, new=request.objective, default_scorer=request.default_chat_scorer
+                )
+                expected_fields["attack_metadata"] = attack.metadata
         else:
             attack_result_id = str(uuid.uuid5(request.save_id, "attack"))
             target_identifier = await self._get_save_target_async(
@@ -759,6 +834,23 @@ class AttackService:
                 conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier),
                 objective=request.objective or "",
             )
+            if request.source_attack_result_id is not None:
+                [source] = await self._memory.get_attack_results_async(
+                    attack_result_ids=[str(request.source_attack_result_id)]
+                )
+                retained_ids = {
+                    piece.source_piece_id
+                    for message in request.messages
+                    for piece in message.pieces
+                    if piece.source_piece_id is not None
+                }
+                get_chat_scoring_service().continue_manually(
+                    source=source,
+                    destination=new_attack,
+                    source_conversation_id=str(request.source_conversation_id),
+                    retained_pieces=[piece for piece in source_pieces.values() if piece.id in retained_ids],
+                    explicit_selection="chat_scorer" in request.model_fields_set,
+                )
         target = await self._validate_editor_target_async(
             target_identifier=target_identifier,
             registry_name=replay_registry_name,
@@ -1022,15 +1114,18 @@ class AttackService:
         return target_object
 
     @staticmethod
-    def _objective_update_fields(*, old: str, new: str) -> dict[str, Any]:
+    def _objective_update_fields(
+        *, attack: AttackResult, new: str, default_scorer: RegisteredComponentReference | None = None
+    ) -> dict[str, Any]:
         """
         Prepare objective changes without deleting historical scores.
 
         Returns:
             Fields to update, or an empty mapping when the objective is unchanged.
         """
-        if old == new:
+        if attack.objective == new:
             return {}
+        settings = get_chat_scoring_service().objective_settings(attack=attack, objective=new, scorer=default_scorer)
         return {
             "objective": new,
             "objective_sha256": to_sha256(new),
@@ -1038,6 +1133,7 @@ class AttackService:
             "outcome_reason": None,
             "automated_score_id": None,
             "human_score_id": None,
+            "attack_metadata": {AttackResult.SCORING_ERRORS_KEY: {}, **(settings or {})},
         }
 
     async def remove_human_score_async(self, *, attack_result_id: str) -> AttackSummary | None:
@@ -1050,31 +1146,35 @@ class AttackService:
         Returns:
             Updated AttackSummary if found, None otherwise.
         """
-        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
-        if not results:
-            return None
-
-        automated_score = results[0].automated_score
-        # Follow the attack-side contract of attack_outcome_from_score (#3181): read the
-        # typed score value instead of comparing the raw string, and treat an undetermined
-        # score as neither achievement nor refutation.
-        outcome = AttackOutcome.UNDETERMINED if automated_score is None else attack_outcome_from_score(automated_score)
-        if outcome is AttackOutcome.UNDETERMINED or automated_score is None:
-            outcome_reason = None
-        else:
-            outcome_reason = automated_score.score_rationale
-
-        await self._memory.update_attack_result_by_id_async(
-            attack_result_id=attack_result_id,
-            update_fields={
-                "human_score_id": None,
-                "outcome": outcome.value,
-                "outcome_reason": outcome_reason,
-                "timestamp": datetime.now(UTC),
-            },
-        )
-
-        return await self.get_attack_async(attack_result_id=attack_result_id)
+        for _ in range(5):
+            results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
+            if not results:
+                return None
+            attack = results[0]
+            automated_score = attack.automated_score
+            outcome = (
+                AttackOutcome.UNDETERMINED if automated_score is None else attack_outcome_from_score(automated_score)
+            )
+            try:
+                await self._memory.update_attack_result_conditionally_async(
+                    attack_result_id=attack_result_id,
+                    expected_fields={
+                        "automated_score_id": automated_score.id if automated_score else None,
+                        "human_score_id": attack.human_score.id if attack.human_score else None,
+                    },
+                    update_fields={
+                        "human_score_id": None,
+                        "outcome": outcome.value,
+                        "outcome_reason": automated_score.score_rationale
+                        if automated_score and outcome is not AttackOutcome.UNDETERMINED
+                        else None,
+                        "timestamp": datetime.now(UTC),
+                    },
+                )
+            except AttackStateConflictError:
+                continue
+            return await self.get_attack_async(attack_result_id=attack_result_id)
+        raise AttackObjectiveConflictError("Scores kept changing. Refresh before removing the human override.")
 
     async def get_conversations_async(self, *, attack_result_id: str) -> AttackConversationsResponse | None:
         """
@@ -1150,6 +1250,7 @@ class AttackService:
 
         ar = results[0]
         now = datetime.now(UTC)
+        get_chat_scoring_service().require_manual(ar)
 
         # Validate that both or neither branching fields are provided
         if (request.source_conversation_id is None) != (request.cutoff_index is None):
@@ -1234,6 +1335,7 @@ class AttackService:
 
         ar = results[0]
         target_conv_id = request.conversation_id
+        get_chat_scoring_service().require_manual(ar)
 
         # Only user-visible conversations can become the main conversation.
         if target_conv_id not in ar.get_active_conversation_ids():
@@ -1309,6 +1411,7 @@ class AttackService:
         Returns:
             The reloaded, target-bound attack.
         """
+        get_chat_scoring_service().require_manual(attack)
         if not registry_name:
             raise ValueError("Select a target before sending")
         target = await self._get_save_target_async(registry_name=registry_name, binding=binding)

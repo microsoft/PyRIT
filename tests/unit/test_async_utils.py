@@ -81,6 +81,111 @@ async def test_wait_for_completion_timeout_does_not_cancel_task_async() -> None:
         await task
 
 
+async def test_wait_for_event_observes_checkpoint_before_completion_async() -> None:
+    reached = asyncio.Event()
+    release = asyncio.Event()
+
+    async def operation_async() -> None:
+        reached.set()
+        await release.wait()
+
+    task = asyncio.create_task(operation_async())
+    before = asyncio.all_tasks()
+    try:
+        await wait_for_event_async(event=reached, tasks=[task])
+        assert not task.done()
+        assert task.cancelling() == 0
+        assert asyncio.all_tasks() == before
+    finally:
+        release.set()
+        await wait_for_completion_async(future=task)
+
+
+async def test_wait_for_event_observes_already_reached_checkpoint_with_zero_timeout_async() -> None:
+    event = asyncio.Event()
+    event.set()
+    future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+    await wait_for_event_async(event=event, tasks=[future], timeout=0)
+    assert not future.done()
+    future.set_result(None)
+
+
+async def test_wait_for_event_accepts_completion_after_checkpoint_async() -> None:
+    event = asyncio.Event()
+
+    async def operation_async() -> None:
+        event.set()
+
+    task = asyncio.create_task(operation_async())
+    await wait_for_event_async(event=event, tasks=[task])
+    await task
+
+
+@pytest.mark.parametrize("cancel_operation", [False, True], ids=["error", "cancellation"])
+async def test_wait_for_event_leaves_failure_at_checkpoint_for_caller_async(cancel_operation: bool) -> None:
+    event = asyncio.Event()
+    event.set()
+    future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    if cancel_operation:
+        future.cancel("operation failed")
+        expected_error = asyncio.CancelledError
+    else:
+        future.set_exception(RuntimeError("operation failed"))
+        expected_error = RuntimeError
+
+    await wait_for_event_async(event=event, tasks=[future])
+    with pytest.raises(expected_error, match="operation failed"):
+        await wait_for_completion_async(future=future)
+
+
+@pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
+async def test_wait_for_event_reports_early_completion_async(outcome: str) -> None:
+    event = asyncio.Event()
+    future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    if outcome == "success":
+        future.set_result(None)
+        expected_error = AssertionError
+        message = "without signalling readiness"
+    elif outcome == "error":
+        future.set_exception(RuntimeError("startup failed"))
+        expected_error = RuntimeError
+        message = "startup failed"
+    else:
+        future.cancel("operation cancelled")
+        expected_error = asyncio.CancelledError
+        message = "operation cancelled"
+
+    before = asyncio.all_tasks()
+    with pytest.raises(expected_error, match=message):
+        await wait_for_event_async(event=event, tasks=[future])
+    assert asyncio.all_tasks() == before
+    assert not event.is_set()
+
+
+@pytest.mark.parametrize("cancel_observer", [False, True], ids=["expired-watchdog", "cancelled-observer"])
+async def test_wait_for_event_does_not_cancel_operation_async(cancel_observer: bool) -> None:
+    event = asyncio.Event()
+    release = asyncio.Event()
+    operation = asyncio.create_task(release.wait())
+    before = asyncio.all_tasks()
+    try:
+        if cancel_observer:
+            observer = asyncio.create_task(wait_for_event_async(event=event, tasks=[operation]))
+            asyncio.get_running_loop().call_soon(observer.cancel, "observer cancelled")
+            with pytest.raises(asyncio.CancelledError, match="observer cancelled"):
+                await observer
+        else:
+            with pytest.raises(TimeoutError, match="test watchdog expired"):
+                await wait_for_event_async(event=event, tasks=[operation], timeout=0)
+        assert not operation.done()
+        assert operation.cancelling() == 0
+        assert asyncio.all_tasks() == before
+    finally:
+        release.set()
+        await wait_for_completion_async(future=operation)
+
+
 async def test_settle_tasks_joins_peers_after_failure_async() -> None:
     release = asyncio.Event()
     finished = asyncio.Event()
@@ -140,14 +245,6 @@ async def test_wait_for_event_reports_readiness_async() -> None:
     await wait_for_event_async(event=event, tasks=[])
 
 
-async def test_wait_for_event_preserves_failure_before_readiness_async() -> None:
-    event = asyncio.Event()
-    future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-    future.set_exception(RuntimeError("early failure"))
-    with pytest.raises(RuntimeError, match="early failure"):
-        await wait_for_event_async(event=event, tasks=[future])
-
-
 @pytest.mark.parametrize("complete_before_wait", [False, True])
 async def test_wait_for_event_readiness_leaves_completed_failure_for_caller_async(
     *, complete_before_wait: bool
@@ -169,23 +266,4 @@ async def test_wait_for_event_readiness_leaves_completed_failure_for_caller_asyn
             await wait_for_completion_async(future=task)
         assert error.value is failure
     finally:
-        await settle_tasks_async(task)
-
-
-async def test_wait_for_event_rejects_completion_without_readiness_async() -> None:
-    future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-    future.set_result(None)
-    with pytest.raises(AssertionError, match="without signalling readiness"):
-        await wait_for_event_async(event=asyncio.Event(), tasks=[future])
-
-
-async def test_wait_for_event_timeout_does_not_cancel_operation_async() -> None:
-    task = asyncio.create_task(asyncio.Event().wait())
-    try:
-        with pytest.raises(TimeoutError, match="test watchdog expired"):
-            await wait_for_event_async(event=asyncio.Event(), tasks=[task], timeout=0)
-        assert not task.done()
-        assert not task.cancelling()
-    finally:
-        task.cancel()
         await settle_tasks_async(task)

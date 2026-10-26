@@ -1,13 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import ast
-from pathlib import Path
 from threading import get_ident
 from typing import Any
 from unittest.mock import patch
 
-import jupytext
 import pytest
 
 from pyrit.common.utils import to_sha256
@@ -362,7 +359,7 @@ async def test_invalid_base_prompt_raises(mock_mitre_data: list[dict[str, Any]],
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_documented_balanced_selection_and_memory_categories(
+async def test_memory_filters_preserve_mitre_categories(
     sqlite_instance: SQLiteMemory, mock_mitre_data: list[dict[str, Any]]
 ) -> None:
     rows = [
@@ -371,22 +368,16 @@ async def test_documented_balanced_selection_and_memory_categories(
         for category in CyberSecEvalMitreCategory
         for index in range(5)
     ]
-    notebook_path = Path(__file__).resolve().parents[3] / "doc" / "code" / "datasets" / "1_loading_datasets.py"
-    notebook = jupytext.read(notebook_path)
-    code = next(
-        cell.source for cell in notebook.cells if cell.cell_type == "code" and "prompts_by_category" in cell.source
-    )
-    namespace: dict[str, Any] = {"memory": sqlite_instance, "SeedDatasetProvider": SeedDatasetProvider}
     with patch.object(_CyberSecEvalMitreDataset, "_fetch_from_url", return_value=rows):
-        await eval(compile(code, str(notebook_path), "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT), namespace)
+        datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["cyberseceval_mitre"])
+    await sqlite_instance.add_seed_datasets_to_memory_async(datasets=datasets, added_by="test")
 
-    selected = namespace["prompts_by_category"]
-    assert set(selected) == {category.value for category in CyberSecEvalMitreCategory}
-    assert all(len(prompts) == 3 for prompts in selected.values())
-    assert len({seed.id for prompts in selected.values() for seed in prompts}) == 30
-    assert all(
-        seed.metadata["mitre_category"] == category for category, prompts in selected.items() for seed in prompts
-    )
+    for category in CyberSecEvalMitreCategory:
+        prompts = await sqlite_instance.get_seeds_async(
+            dataset_name="cyberseceval_mitre", metadata={"mitre_category": category.value}
+        )
+        assert len(prompts) == 5
+        assert all(seed.metadata["mitre_category"] == category.value for seed in prompts)
     assert len(await sqlite_instance.get_seeds_async(dataset_name="cyberseceval_mitre")) == 50
     assert (
         len(

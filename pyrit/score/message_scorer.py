@@ -23,6 +23,7 @@ from pyrit.models import (
     Acquisition,
     ChatMessageRole,
     Condition,
+    ContentEntryScorable,
     ContentScorable,
     MatchesObjective,
     Message,
@@ -301,6 +302,11 @@ class MessageScorer(Scorer):
     """
 
     # True when scoring needs other stored turns from the source conversation.
+    SUPPORTED_SCORABLE_TYPES: ClassVar[tuple[type[Scorable], ...]] = (
+        MessageScorable,
+        ContentScorable,
+        ContentEntryScorable,
+    )
     _REQUIRES_CONVERSATION_HISTORY: ClassVar[bool] = False
 
     #: When False, a blocked response from the scorer's own LLM produces an undetermined
