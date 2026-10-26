@@ -81,12 +81,11 @@ class OpenAICompletionTarget(OpenAITarget):
                 instances use HTTPX on SDK 2, or HTTPX2 / legacy HTTPX on SDK 3.
 
         Raises:
-            PyritException: If temperature is not between 0 and 2 (inclusive), or top_p is not
-                between 0 and 1 (inclusive).
+            PyritException: If a generation parameter is out of bounds or a penalty is non-finite.
         """
         super().__init__(custom_configuration=custom_configuration, **kwargs)
 
-        # Validate temperature and top_p
+        # Validate generation parameters.
         validate_temperature(temperature)
         validate_top_p(top_p)
         validate_presence_penalty(presence_penalty)

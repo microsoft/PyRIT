@@ -150,9 +150,7 @@ class OpenAIChatTarget(OpenAITarget):
                 instances use HTTPX on SDK 2, or HTTPX2 / legacy HTTPX on SDK 3.
 
         Raises:
-            PyritException: If the temperature or top_p values are out of bounds.
-            ValueError: If the temperature is not between 0 and 2 (inclusive).
-            ValueError: If the top_p is not between 0 and 1 (inclusive).
+            PyritException: If a generation parameter is out of bounds or a penalty is non-finite.
             RateLimitException: If the target is rate-limited.
             httpx.HTTPStatusError: If the request fails with a 400 Bad Request or 429 Too Many Requests error.
             json.JSONDecodeError: If the response from the target is not valid JSON.
@@ -160,7 +158,7 @@ class OpenAIChatTarget(OpenAITarget):
         """
         super().__init__(custom_configuration=custom_configuration, **kwargs)
 
-        # Validate temperature and top_p
+        # Validate generation parameters.
         validate_temperature(temperature)
         validate_top_p(top_p)
         validate_presence_penalty(presence_penalty)

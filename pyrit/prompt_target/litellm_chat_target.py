@@ -174,8 +174,8 @@ class LiteLLMChatTarget(PromptTarget):
             LiteLLM normalizes it to the parameter each model/provider expects (for example, it
             maps to ``max_completion_tokens`` for OpenAI reasoning and gpt-5 models). To send a
             provider-specific token parameter directly instead, use ``extra_body_parameters``.
-        frequency_penalty: Penalize frequently generated tokens.
-        presence_penalty: Penalize tokens already present in the conversation.
+        frequency_penalty: Penalize frequently generated tokens; a finite value in [-2, 2], or None.
+        presence_penalty: Penalize tokens already present in the conversation; a finite value in [-2, 2], or None.
         seed: Best-effort deterministic sampling seed.
         n: Number of completions to generate.
         stop: Stop sequence(s).
@@ -243,6 +243,7 @@ class LiteLLMChatTarget(PromptTarget):
 
         Raises:
             ValueError: If model_name is not provided and LITELLM_MODEL env var is not set.
+            PyritException: If a generation parameter is out of bounds or a penalty is non-finite.
         """
         resolved_model = model_name or os.environ.get("LITELLM_MODEL", "")
         if not resolved_model:

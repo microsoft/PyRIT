@@ -65,13 +65,13 @@ def validate_top_p(top_p: float | None) -> None:
 
 def validate_presence_penalty(presence_penalty: float | None) -> None:
     """
-    Validate that presence_penalty parameter is within valid range.
+    Validate an optional presence penalty is finite and within [-2, 2].
 
     Args:
-        presence_penalty: The presence_penalty value to validate (-2 to 2 inclusive).
+        presence_penalty (float | None): The presence penalty to validate, or None to leave it unset.
 
     Raises:
-        PyritException: If presence_penalty is not between -2 and 2 (inclusive).
+        PyritException: If the value is non-finite or outside [-2, 2].
     """
     if presence_penalty is not None and not -2 <= presence_penalty <= 2:
         raise PyritException(message="presence_penalty must be between -2 and 2 (inclusive).")
@@ -79,13 +79,13 @@ def validate_presence_penalty(presence_penalty: float | None) -> None:
 
 def validate_frequency_penalty(frequency_penalty: float | None) -> None:
     """
-    Validate that frequency_penalty parameter is within valid range.
+    Validate an optional frequency penalty is finite and within [-2, 2].
 
     Args:
-        frequency_penalty: The frequency_penalty value to validate (-2 to 2 inclusive).
+        frequency_penalty (float | None): The frequency penalty to validate, or None to leave it unset.
 
     Raises:
-        PyritException: If frequency_penalty is not between -2 and 2 (inclusive).
+        PyritException: If the value is non-finite or outside [-2, 2].
     """
     if frequency_penalty is not None and not -2 <= frequency_penalty <= 2:
         raise PyritException(message="frequency_penalty must be between -2 and 2 (inclusive).")

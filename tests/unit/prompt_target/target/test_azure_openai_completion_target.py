@@ -222,8 +222,9 @@ def test_invalid_temperature_raises(patch_central_database):
         )
 
 
+@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("presence_penalty", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
-def test_invalid_presence_penalty_raises(patch_central_database, presence_penalty: float):
+def test_invalid_presence_penalty_raises(presence_penalty: float) -> None:
     with pytest.raises(PyritException, match="presence_penalty must be between -2 and 2"):
         OpenAICompletionTarget(
             model_name="gpt-35-turbo",
@@ -233,8 +234,9 @@ def test_invalid_presence_penalty_raises(patch_central_database, presence_penalt
         )
 
 
+@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("frequency_penalty", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
-def test_invalid_frequency_penalty_raises(patch_central_database, frequency_penalty: float):
+def test_invalid_frequency_penalty_raises(frequency_penalty: float) -> None:
     with pytest.raises(PyritException, match="frequency_penalty must be between -2 and 2"):
         OpenAICompletionTarget(
             model_name="gpt-35-turbo",
@@ -242,6 +244,21 @@ def test_invalid_frequency_penalty_raises(patch_central_database, frequency_pena
             api_key="mock-api-key",
             frequency_penalty=frequency_penalty,
         )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("parameter", ["presence_penalty", "frequency_penalty"])
+@pytest.mark.parametrize("value", [None, -2.0, 0.0, 2.0])
+def test_valid_generation_penalties_preserve_identifier(*, parameter: str, value: float | None) -> None:
+    target = OpenAICompletionTarget(
+        model_name="gpt-35-turbo",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        presence_penalty=value if parameter == "presence_penalty" else None,
+        frequency_penalty=value if parameter == "frequency_penalty" else None,
+    )
+
+    assert target.get_identifier().params.get(parameter) == value
 
 
 def test_invalid_top_p_raises(patch_central_database):
