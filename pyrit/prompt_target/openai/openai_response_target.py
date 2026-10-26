@@ -1043,19 +1043,20 @@ class OpenAIResponseTarget(OpenAITarget):
             )
         await self._initialize_tools_async()
         configured_tool = next((tool for tool in self._tools if tool.name == name), None)
+        custom_function = self._custom_functions.get(name)
+        if (configured_tool is not None or custom_function is not None) and not isinstance(args, dict):
+            if self._fail_on_missing_function:
+                raise ValueError(f"Arguments for function '{name}' must be a JSON object")
+            return _ToolDispatchResult(
+                output={"error": "malformed_arguments", "function": name, "raw_arguments": args_json},
+                invoked=False,
+            )
+
         if configured_tool is not None:
-            if not isinstance(args, dict):
-                if self._fail_on_missing_function:
-                    raise ValueError(f"Arguments for function '{name}' must be a JSON object")
-                return _ToolDispatchResult(
-                    output={"error": "malformed_arguments", "function": name, "raw_arguments": args_json},
-                    invoked=False,
-                )
             return _ToolDispatchResult(output=await configured_tool.execute_async(arguments=args), invoked=True)
 
-        custom_function = self._custom_functions.get(name)
         if custom_function is not None:
-            return _ToolDispatchResult(output=await custom_function(cast("dict[str, Any]", args)), invoked=True)
+            return _ToolDispatchResult(output=await custom_function(args), invoked=True)
 
         if self._fail_on_missing_function:
             raise KeyError(f"Function '{name}' is not registered")
