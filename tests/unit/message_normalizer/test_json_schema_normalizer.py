@@ -58,6 +58,32 @@ class TestJsonSchemaNormalizer:
         # reason about its structure.
         assert json.dumps(schema, indent=2) in out_piece.converted_value
 
+    async def test_schema_stored_as_json_string_renders_like_dict(self, normalizer: JsonSchemaNormalizer) -> None:
+        schema = {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}
+        as_dict = _text_piece(value="Answer.", metadata={JSON_SCHEMA_METADATA_KEY: schema})
+        as_string = _text_piece(value="Answer.", metadata={JSON_SCHEMA_METADATA_KEY: json.dumps(schema)})
+
+        result = await normalizer.normalize_async(
+            [Message(message_pieces=[as_dict]), Message(message_pieces=[as_string])]
+        )
+
+        assert result[1].message_pieces[0].converted_value == result[0].message_pieces[0].converted_value
+
+    async def test_invalid_json_string_schema_raises(self, normalizer: JsonSchemaNormalizer) -> None:
+        piece = _text_piece(value="Answer.", metadata={JSON_SCHEMA_METADATA_KEY: "{not json"})
+
+        with pytest.raises(ValueError, match="Invalid JSON schema provided"):
+            await normalizer.normalize_async([Message(message_pieces=[piece])])
+
+    async def test_empty_string_schema_is_stripped_without_instructions(self, normalizer: JsonSchemaNormalizer) -> None:
+        piece = _text_piece(value="Answer.", metadata={JSON_SCHEMA_METADATA_KEY: "", "response_format": "json"})
+
+        result = await normalizer.normalize_async([Message(message_pieces=[piece])])
+        out_piece = result[0].message_pieces[0]
+
+        assert out_piece.converted_value == "Answer."
+        assert out_piece.prompt_metadata == {"response_format": "json"}
+
     async def test_text_piece_preserves_other_metadata(self, normalizer: JsonSchemaNormalizer) -> None:
         piece = _text_piece(
             metadata={

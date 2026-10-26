@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
+    BadRequestException,
     EmptyResponseException,
     PyritException,
     pyrit_target_retry,
@@ -34,6 +35,8 @@ from pyrit.models import (
     PromptDataType,
     PromptResponseError,
     ToolExecutionMetadata,
+    WebSearchConfig,
+    WebSearchMode,
 )
 from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -100,6 +103,7 @@ class _ResponseToolCallContent(BaseModel):
     query: str | None = None
     name: str | None = None
     arguments: str | None = None
+    status: str | None = None
 
 
 class OpenAIResponseTarget(OpenAITarget):
@@ -113,6 +117,7 @@ class OpenAIResponseTarget(OpenAITarget):
     """
 
     _SUPPORTS_TOOL_CALL_HISTORY = True
+    _WEB_SEARCH_TOOL_TYPES = frozenset({"web_search", "web_search_preview"})
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -223,6 +228,15 @@ class OpenAIResponseTarget(OpenAITarget):
         self._reasoning_summary = reasoning_summary
 
         self._extra_body_parameters = extra_body_parameters
+        if (
+            custom_configuration is None
+            and (extra_body_parameters or {}).get("tool_choice") != "none"
+            and any(
+                tool.get("type") in {"web_search", "web_search_preview"}
+                for tool in (extra_body_parameters or {}).get("tools", [])
+            )
+        ):
+            self.apply_capabilities(capabilities=self.capabilities.model_copy(update={"supports_web_search": True}))
 
         self._custom_functions: dict[str, ToolExecutor] = custom_functions or {}
         self._direct_tools = tuple(tools or ())
@@ -259,6 +273,21 @@ class OpenAIResponseTarget(OpenAITarget):
                     self._serialize_function_call(piece)
                 elif piece.converted_value_data_type == "function_call_output":
                     self._serialize_function_call_output(piece)
+
+    def validate_web_search_config(self, config: WebSearchConfig) -> None:
+        """
+        Check required search against both declared support and configured hosted tools.
+
+        Raises:
+            ValueError: If the target lacks a configured, declared search tool.
+        """
+        if config.mode != WebSearchMode.REQUIRED:
+            return
+        tools = (self._extra_body_parameters or {}).get("tools", [])
+        if not self.capabilities.supports_web_search or not any(
+            tool.get("type") in self._WEB_SEARCH_TOOL_TYPES for tool in tools
+        ):
+            raise ValueError("Required web search needs a configured tool and supports_web_search=True.")
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -446,7 +475,11 @@ class OpenAIResponseTarget(OpenAITarget):
         return input_items
 
     async def _construct_request_body_async(
-        self, *, conversation: MutableSequence[Message], json_config: JsonResponseConfig
+        self,
+        *,
+        conversation: MutableSequence[Message],
+        json_config: JsonResponseConfig,
+        web_search_config: WebSearchConfig | None = None,
     ) -> dict[str, Any]:
         """
         Construct the request body to send to the Responses API.
@@ -457,6 +490,8 @@ class OpenAIResponseTarget(OpenAITarget):
         Args:
             conversation: The full conversation history.
             json_config: Specification for JSON formatting.
+            web_search_config: Explicit policy retained across tool continuations.
+                Defaults to the current request's metadata.
 
         Returns:
             dict: The request body to send to the Responses API.
@@ -489,8 +524,29 @@ class OpenAIResponseTarget(OpenAITarget):
             advertised_tools = [self._to_openai_function_tool(tool=tool) for tool in self._tools]
             body_parameters["tools"] = [*body_parameters.get("tools", []), *advertised_tools]
 
+        search_config = web_search_config or self._get_web_search_config(conversation[-1])
+        self._apply_web_search_config(body=body_parameters, config=search_config)
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}
+
+    def _apply_web_search_config(self, *, body: dict[str, Any], config: WebSearchConfig) -> None:
+        if config.mode == WebSearchMode.DEFAULT:
+            return
+        self.validate_web_search_config(config)
+        tools = body.get("tools", [])
+        if config.mode == WebSearchMode.REQUIRED:
+            search_tool = next(tool for tool in tools if tool.get("type") in self._WEB_SEARCH_TOOL_TYPES)
+            body["tool_choice"] = {"type": search_tool["type"]}
+            return
+        body["tools"] = [tool for tool in tools if tool.get("type") not in self._WEB_SEARCH_TOOL_TYPES]
+        choice = body.get("tool_choice")
+        if isinstance(choice, dict) and choice.get("type") in self._WEB_SEARCH_TOOL_TYPES:
+            body["tool_choice"] = "auto" if body["tools"] else "none"
+        elif isinstance(choice, dict) and choice.get("type") == "allowed_tools":
+            allowed = [tool for tool in choice.get("tools", []) if tool.get("type") not in self._WEB_SEARCH_TOOL_TYPES]
+            body["tool_choice"] = {**choice, "tools": allowed} if allowed else "none"
+        elif choice == "required" and not body["tools"]:
+            body["tool_choice"] = "none"
 
     async def _initialize_tools_async(self) -> None:
         async with self._tool_initialization_lock:
@@ -663,13 +719,34 @@ class OpenAIResponseTarget(OpenAITarget):
             for provider in () if self._suppress_tools else self._tool_providers:
                 if isinstance(provider, _ScopedToolProvider):
                     await provider_stack.enter_async_context(provider.execution_scope_async())
-            return await self._run_tool_call_loop_async(normalized_conversation=normalized_conversation)
+            responses = await self._run_tool_call_loop_async(normalized_conversation=normalized_conversation)
+            self._validate_web_search_response(
+                config=self._get_web_search_config(normalized_conversation[-1]), responses=responses
+            )
+            return responses
+
+    @staticmethod
+    def _validate_web_search_response(*, config: WebSearchConfig, responses: Sequence[Message]) -> None:
+        if config.mode == WebSearchMode.DEFAULT:
+            return
+        search_calls = [
+            _ResponseToolCallContent.model_validate_json(piece.converted_value)
+            for response in responses
+            for piece in response.message_pieces
+            if piece.converted_value_data_type == "tool_call"
+        ]
+        search_calls = [call for call in search_calls if call.type == "web_search_call"]
+        if config.mode == WebSearchMode.DISABLED and search_calls:
+            raise BadRequestException(message="The provider returned a web search call although search was disabled.")
+        if config.mode == WebSearchMode.REQUIRED and not any(call.status == "completed" for call in search_calls):
+            raise BadRequestException(message="The provider returned no completed required web search call.")
 
     async def _run_tool_call_loop_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         message = normalized_conversation[-1]
         message_piece: MessagePiece = message.message_pieces[0]
         last_piece = message.message_pieces[-1]
         json_config = self._get_json_response_config(message_piece=last_piece)
+        web_search_config = self._get_web_search_config(message)
 
         working_conversation: MutableSequence[Message] = list(normalized_conversation)
 
@@ -679,7 +756,9 @@ class OpenAIResponseTarget(OpenAITarget):
         while True:
             logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
 
-            body = await self._construct_request_body_async(conversation=working_conversation, json_config=json_config)
+            body = await self._construct_request_body_async(
+                conversation=working_conversation, json_config=json_config, web_search_config=web_search_config
+            )
 
             result = await self._send_model_request_async(body=body, request=message)
             if not self._execute_tools:
@@ -963,19 +1042,20 @@ class OpenAIResponseTarget(OpenAITarget):
             )
         await self._initialize_tools_async()
         configured_tool = next((tool for tool in self._tools if tool.name == name), None)
+        custom_function = self._custom_functions.get(name)
+        if (configured_tool is not None or custom_function is not None) and not isinstance(args, dict):
+            if self._fail_on_missing_function:
+                raise ValueError(f"Arguments for function '{name}' must be a JSON object")
+            return _ToolDispatchResult(
+                output={"error": "malformed_arguments", "function": name, "raw_arguments": args_json},
+                invoked=False,
+            )
+
         if configured_tool is not None:
-            if not isinstance(args, dict):
-                if self._fail_on_missing_function:
-                    raise ValueError(f"Arguments for function '{name}' must be a JSON object")
-                return _ToolDispatchResult(
-                    output={"error": "malformed_arguments", "function": name, "raw_arguments": args_json},
-                    invoked=False,
-                )
             return _ToolDispatchResult(output=await configured_tool.execute_async(arguments=args), invoked=True)
 
-        custom_function = self._custom_functions.get(name)
         if custom_function is not None:
-            return _ToolDispatchResult(output=await custom_function(cast("dict[str, Any]", args)), invoked=True)
+            return _ToolDispatchResult(output=await custom_function(args), invoked=True)
 
         if self._fail_on_missing_function:
             raise KeyError(f"Function '{name}' is not registered")

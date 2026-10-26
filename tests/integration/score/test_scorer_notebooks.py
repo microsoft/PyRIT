@@ -17,9 +17,16 @@ skipped_files: list[str] = []
 
 @pytest.mark.parametrize(
     "file_name",
-    [file for file in os.listdir(nb_directory_path) if file.endswith(".ipynb") and file not in skipped_files],
+    [
+        pytest.param(
+            file,
+            marks=pytest.mark.run_only_if_all_tests if file == "7_program_execution_scorer.ipynb" else (),
+        )
+        for file in os.listdir(nb_directory_path)
+        if file.endswith(".ipynb") and file not in skipped_files
+    ],
 )
-def test_execute_notebooks(file_name):
+def test_execute_notebooks(file_name: str) -> None:
     nb_path = pathlib.Path(nb_directory_path, file_name).resolve()
     with open(nb_path, encoding="utf-8") as f:
         nb = nbformat.read(f, as_version=4)

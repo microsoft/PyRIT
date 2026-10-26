@@ -204,6 +204,67 @@ pieces, system prompts, and converter preview input) and free-form values (promp
 metadata, scenario and initializer arguments, and target and converter parameter values)
 are limited only by the body size, so long prompts and base64 media keep working.
 
+### Input Validation and Trust Boundary
+
+The backend can accept requests from other machines, so it checks request values before it
+uses them:
+
+- Request bodies, URLs, and fields have the limits above.
+- Targets, converters, and scorers accept only the parameters their type catalogs list
+  (`GET /api/targets/types`, `GET /api/converters/types`, `GET /api/scorers/types`), and a
+  parameter that refers to another component takes the name of a registered one. Values are
+  passed to the component, which is responsible for checking them; a `ValueError` from its
+  constructor returns **400**.
+- File values (`image_path`, `audio_path`, `video_path`, and `binary_path`) in messages,
+  previews, and saved or prepended conversations must be uploaded content, a URL, or a file in
+  this server's media folders (`prompt-memory-entries` and `seed-prompt-entries` under the
+  memory results path), the folders `GET /api/media` serves. Converter file parameters must be
+  uploaded content, or an Azure Blob URL where the parameter accepts one.
+- When results are stored in Azure Blob Storage, URLs in those file values and converter file
+  parameters must name a file in those folders of the results container, and the server signs
+  only those URLs for display.
+- The configuration routes (`/api/config`), which read, change, and apply the server
+  configuration and environment files, require an administrator.
+- Through the API, only an administrator can create `HuggingFaceChatTarget` with
+  `trust_remote_code` enabled, which runs model repository code on the server, or
+  `AzureBlobStorageTarget` in identity mode or without a `sas_token`, which writes with this
+  server's credentials to a container the caller can choose.
+- `HTTPXAPITarget`, which uploads local files, can be created through the API only when
+  `target_upload_directory` is set in `.pyrit_conf`; it then uploads files only from that
+  folder, and callers cannot supply their own.
+
+Targets that need a setting the API does not allow can be registered in Python or with an
+initializer.
+
+In Entra mode (`PYRIT_AUTH_MODE=entra`), API callers are members of the `ENTRA_ALLOWED_GROUP_IDS`
+or `ENTRA_ADMIN_GROUP_ID` groups, and members of `ENTRA_ADMIN_GROUP_ID` are administrators. In
+local mode (`PYRIT_AUTH_MODE=local`), meant for loopback-only development, requests are not
+authenticated: anyone who can reach the server is an API caller, and callers are administrators
+only when the server sets `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Other API callers receive
+**403** for administrator-only operations.
+
+API callers are trusted operators, so these are intentional exceptions:
+
+- Callers choose target endpoints, headers, raw HTTP requests, and redirects, and converters
+  that accept `url` values download them. The backend has no network destination policy (no
+  host allow-list, private-network blocking, or DNS pinning); limit outbound network access in
+  the deployment instead.
+- Some targets use this server's credentials when the caller gives no key: an API key from the
+  server's environment, sent even to an endpoint the caller chose, or a token for the server's
+  Azure identity, sent to the Azure endpoint or container the caller chose.
+- Registered targets, converters, and scorers are shared: any API caller can use them, whoever
+  created them.
+- Prompt content is not filtered; it is adversarial test data by design.
+- Any file type can be stored as a payload. `GET /api/media` renders only allow-listed image,
+  audio, and video file extensions inline; everything else downloads as a file.
+- `GET /api/media` does not require authentication, so the browser can load media. It serves
+  only files from the media folders above.
+- Initializers and custom initializer scripts are trusted Python. Uploading scripts requires
+  an administrator and `allow_custom_initializers: true`.
+- `GitHubCopilotTarget.working_directory`, `HuggingFaceChatTarget.model_path`, and
+  `LocalRefusalClassifierScorer.model_id` may name local folders; callers set them like any
+  other operator setting.
+
 ## Strict Lockstep Compatibility
 
 The backend, CLI, and frontend bundle use one stamped identity:
