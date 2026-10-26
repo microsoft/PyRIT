@@ -135,10 +135,10 @@ function setHookResult(
 function renderPage() {
   return render(
     <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={['/registry/scenario-suites/executions/execution-1']}>
+      <MemoryRouter initialEntries={['/scanner/suites/executions/execution-1']}>
         <Routes>
           <Route
-            path="/registry/scenario-suites/executions/:executionId"
+            path="/scanner/suites/executions/:executionId"
             element={<ScenarioSuiteExecutionPage />}
           />
         </Routes>
@@ -170,6 +170,7 @@ describe('ScenarioSuiteExecutionPage', () => {
       .toHaveAttribute('href', '/scanner-history/run-1')
     expect(within(rows[1]).getByText('second_preset')).toBeInTheDocument()
     expect(within(rows[1]).getAllByText('Queued')).toHaveLength(2)
+    expect(screen.getByRole('link', { name: 'Back to scanners' })).toHaveAttribute('href', '/scanner')
   })
 
   it('shows safe entry failures without rendering backend exception details', () => {
@@ -261,5 +262,6 @@ describe('ScenarioSuiteExecutionPage', () => {
 
     expect(screen.getByRole('heading', { name: 'Suite execution not found' })).toBeInTheDocument()
     expect(screen.getByText(/successfully created scenario runs remain/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Back to scanners' })).toHaveAttribute('href', '/scanner')
   })
 })

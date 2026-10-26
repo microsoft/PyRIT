@@ -25,29 +25,21 @@ import {
   ArrowSyncRegular,
   DeleteRegular,
   EditRegular,
-  PlayRegular,
 } from '@fluentui/react-icons'
 import { Link, useNavigate } from 'react-router'
 
 import { scenarioSuitesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ScenarioSuiteResponse, TargetInstance } from '@/types'
+import type { ScenarioSuiteResponse } from '@/types'
 
-import LaunchSuiteDialog from './LaunchSuiteDialog'
 import { useScenarioSuiteLibraryStyles } from './ScenarioSuiteLibrary.styles'
 import { NEW_SUITE_ROUTE, suiteEditorRoutePath } from './suiteRoutes'
 
 const DEFINED_IN_CODE_HINT = 'Defined in code, so it cannot be edited or deleted here.'
 
 interface ScenarioSuiteLibraryProps {
-  targets: TargetInstance[]
-  defaultObjectiveTarget: TargetInstance | null
-  defaultAdversarialTarget: TargetInstance | null
-  labels: Record<string, string>
-  /** The saved Operation that new runs join, or null for none. */
-  operationId: string | null
-  /** False while server defaults or the global Operation selection are unresolved. */
-  defaultsReady: boolean
+  /** Changes when presets change elsewhere on the page, so entry statuses are re-read. */
+  presetsRevision: number
 }
 
 function issueCount(item: ScenarioSuiteResponse): number {
@@ -57,14 +49,8 @@ function issueCount(item: ScenarioSuiteResponse): number {
   )
 }
 
-export default function ScenarioSuiteLibrary({
-  targets,
-  defaultObjectiveTarget,
-  defaultAdversarialTarget,
-  labels,
-  operationId,
-  defaultsReady,
-}: ScenarioSuiteLibraryProps) {
+/** Lists the saved scenario suites. Suites launch from the Scanner, not from here. */
+export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteLibraryProps) {
   const styles = useScenarioSuiteLibraryStyles()
   const navigate = useNavigate()
   const [items, setItems] = useState<ScenarioSuiteResponse[]>([])
@@ -72,7 +58,6 @@ export default function ScenarioSuiteLibrary({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [launching, setLaunching] = useState<ScenarioSuiteResponse | null>(null)
   const [pendingDelete, setPendingDelete] = useState<ScenarioSuiteResponse | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [generation, setGeneration] = useState(0)
@@ -103,7 +88,7 @@ export default function ScenarioSuiteLibrary({
       cancelled = true
       controller.abort()
     }
-  }, [generation])
+  }, [generation, presetsRevision])
 
   const refresh = useCallback((): void => {
     setLoading(true)
@@ -136,8 +121,8 @@ export default function ScenarioSuiteLibrary({
     >
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text id="scenario-suite-library-title" as="h1" size={600} weight="semibold">
-            Suites
+          <Text id="scenario-suite-library-title" as="h2" size={500} weight="semibold">
+            Scenario suites
           </Text>
           <Text size={300} className={styles.subtitle}>
             Ordered collections of reusable scenario preset definitions.
@@ -159,6 +144,7 @@ export default function ScenarioSuiteLibrary({
             icon={<ArrowSyncRegular />}
             onClick={refresh}
             disabled={loading}
+            aria-label="Refresh suites"
           >
             Refresh
           </Button>
@@ -216,7 +202,6 @@ export default function ScenarioSuiteLibrary({
             <TableBody>
               {items.map((item) => {
                 const issues = issueCount(item)
-                const runnable = item.suite.entries.length > 0 && issues === 0
                 const editable = item.origin === 'stored'
                 return (
                   <TableRow key={item.suite.name} data-testid={`suite-row-${item.suite.name}`}>
@@ -281,16 +266,6 @@ export default function ScenarioSuiteLibrary({
                       <div className={styles.actions}>
                         <Button
                           className={styles.touchTarget}
-                          appearance="primary"
-                          icon={<PlayRegular />}
-                          disabled={!runnable || !defaultsReady}
-                          onClick={() => setLaunching(item)}
-                          data-testid={`launch-suite-${item.suite.name}`}
-                        >
-                          Launch
-                        </Button>
-                        <Button
-                          className={styles.touchTarget}
                           appearance="subtle"
                           icon={<EditRegular />}
                           onClick={() => navigate(suiteEditorRoutePath(item.suite.name))}
@@ -320,28 +295,6 @@ export default function ScenarioSuiteLibrary({
             </TableBody>
           </Table>
         </div>
-      )}
-
-      {launching && (
-        <LaunchSuiteDialog
-          suite={launching}
-          targets={targets}
-          defaultObjectiveTarget={defaultObjectiveTarget}
-          defaultAdversarialTarget={defaultAdversarialTarget}
-          labels={labels}
-          operationId={operationId}
-          defaultsReady={defaultsReady}
-          onDismiss={() => setLaunching(null)}
-          onSuiteChanged={() => {
-            const changedName = launching.suite.name
-            setLaunching(null)
-            refresh()
-            setActionError(
-              `Suite '${changedName}' or one of its presets changed while you were launching it. `
-              + 'Review it and launch again.',
-            )
-          }}
-        />
       )}
 
       {pendingDelete && (

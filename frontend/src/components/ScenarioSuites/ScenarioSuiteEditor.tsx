@@ -43,7 +43,7 @@ import { validateRegistryName } from '@/utils/registryName'
 import { routerPathParamValue } from '@/utils/routeParams'
 
 import { useScenarioSuiteEditorStyles } from './ScenarioSuiteEditor.styles'
-import { SUITES_ROUTE } from './suiteRoutes'
+import { SUITE_LIBRARY_ROUTE } from './suiteRoutes'
 
 type LoadStatus = 'loading' | 'ready' | 'not-found' | 'error'
 
@@ -286,7 +286,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
         await scenarioSuitesApi.update(loaded.suite.name, suite, loaded.version)
       }
       allowNavigation.current = true
-      navigate(SUITES_ROUTE)
+      navigate(SUITE_LIBRARY_ROUTE)
     } catch (err: unknown) {
       setSaveError(toApiError(err).detail)
       setSaving(false)
@@ -324,7 +324,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
               {status === 'not-found' ? `No suite named "${decodedName}".` : loadError}
             </MessageBarBody>
           </MessageBar>
-          <Button appearance="primary" onClick={() => navigate(SUITES_ROUTE)}>
+          <Button appearance="primary" onClick={() => navigate(SUITE_LIBRARY_ROUTE)}>
             Back to suites
           </Button>
         </div>
@@ -570,7 +570,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
             appearance="secondary"
             type="button"
             disabled={saving}
-            onClick={() => navigate(SUITES_ROUTE)}
+            onClick={() => navigate(SUITE_LIBRARY_ROUTE)}
           >
             {readOnly ? 'Back to suites' : 'Cancel'}
           </Button>

@@ -163,7 +163,7 @@ describe('LaunchSuiteDialog', () => {
       labels: { team: 'purple' },
     }))
     expect(mockNavigate).toHaveBeenCalledWith(
-      '/registry/scenario-suites/executions/execution-1',
+      '/scanner/suites/executions/execution-1',
     )
   })
 

@@ -1350,8 +1350,8 @@ export interface ListRegisteredScenariosResponse {
  *
  * Every optional field is tri-state: absent means "use the scenario's own default",
  * so a preset only pins what the author deliberately chose. It carries no target,
- * Operation attribution, concurrency, retries or labels — those are launch-time
- * decisions supplied by `ResolveScenarioPresetRequest`.
+ * Operation attribution, concurrency, retries or labels — those are decided when the
+ * preset is launched.
  */
 export interface ScenarioPreset {
   name: string
@@ -1359,6 +1359,11 @@ export interface ScenarioPreset {
   description?: string | null
   /** Who created the preset. Descriptive only; never used to authorize a read or a write. */
   author?: string | null
+  /**
+   * Whether the Scanner lists this preset as an entry of its own. Absent means listed.
+   * A hidden preset still runs through the suites that reference it.
+   */
+  show_in_scanner?: boolean
   techniques?: string[] | null
   /** Dataset sources, limits, fetch policy, and filters. Omit to use the scenario defaults. */
   datasets?: ScenarioDatasetRequest | null
@@ -1514,19 +1519,6 @@ export interface ScenarioSuiteExecutionSummary {
   created_at: string
   updated_at: string
   entries: ScenarioSuiteExecutionEntrySummary[]
-}
-
-/** The launch-owned fields a preset deliberately omits. */
-export interface ResolveScenarioPresetRequest {
-  expected_version?: string | null
-  target_name: string
-  adversarial_target_name?: string | null
-  initializers?: string[] | null
-  initializer_args?: Record<string, Record<string, unknown>> | null
-  max_concurrency?: number | null
-  max_retries?: number | null
-  operation_id?: string | null
-  labels?: Record<string, string> | null
 }
 
 export interface RunScenarioRequest {

@@ -46,7 +46,6 @@ import type {
 import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
 
 import { useScenarioSuiteExecutionPageStyles } from './ScenarioSuiteExecutionPage.styles'
-import { SUITES_ROUTE } from './suiteRoutes'
 
 const EXECUTION_BADGE_COLORS: Record<
   ScenarioSuiteExecutionStatus,
@@ -123,8 +122,8 @@ function ScenarioSuiteExecutionPageContent({
     return (
       <main className={styles.root} data-testid="scenario-suite-execution-page">
         <div className={styles.content}>
-          <Link to={SUITES_ROUTE} className={styles.backLink}>
-            <ArrowLeftRegular /> Back to suites
+          <Link to="/scanner" className={styles.backLink}>
+            <ArrowLeftRegular /> Back to scanners
           </Link>
           <div className={styles.centeredState} aria-label="Loading suite execution">
             <Spinner label="Loading suite execution..." />
@@ -138,8 +137,8 @@ function ScenarioSuiteExecutionPageContent({
     return (
       <main className={styles.root} data-testid="scenario-suite-execution-page">
         <div className={styles.content}>
-          <Link to={SUITES_ROUTE} className={styles.backLink}>
-            <ArrowLeftRegular /> Back to suites
+          <Link to="/scanner" className={styles.backLink}>
+            <ArrowLeftRegular /> Back to scanners
           </Link>
           <div className={styles.centeredState}>
             <ErrorCircleRegular fontSize={32} />
@@ -166,8 +165,8 @@ function ScenarioSuiteExecutionPageContent({
     return (
       <main className={styles.root} data-testid="scenario-suite-execution-page">
         <div className={styles.content}>
-          <Link to={SUITES_ROUTE} className={styles.backLink}>
-            <ArrowLeftRegular /> Back to suites
+          <Link to="/scanner" className={styles.backLink}>
+            <ArrowLeftRegular /> Back to scanners
           </Link>
           <div className={styles.centeredState}>
             <ErrorCircleRegular fontSize={32} />
@@ -203,8 +202,8 @@ function ScenarioSuiteExecutionPageContent({
   return (
     <main className={styles.root} data-testid="scenario-suite-execution-page">
       <div className={styles.content}>
-        <Link to={SUITES_ROUTE} className={styles.backLink}>
-          <ArrowLeftRegular /> Back to suites
+        <Link to="/scanner" className={styles.backLink}>
+          <ArrowLeftRegular /> Back to scanners
         </Link>
 
         <header className={styles.header}>

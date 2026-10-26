@@ -1299,7 +1299,7 @@ describe('ScenarioRunPage', () => {
 
     expect(screen.getByRole('link', { name: 'Back to nightly_suite' })).toHaveAttribute(
       'href',
-      '/registry/scenario-suites/executions/execution-1',
+      '/scanner/suites/executions/execution-1',
     )
   })
 

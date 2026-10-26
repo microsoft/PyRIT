@@ -46,7 +46,6 @@ import type {
   ChangeMainConversationResponse,
   ListRegisteredScenariosResponse,
   RegisteredScenario,
-  ResolveScenarioPresetRequest,
   RunScenarioRequest,
   ScenarioPreset,
   ScenarioPresetListResponse,
@@ -778,22 +777,6 @@ export const scenarioPresetsApi = {
 
   remove: async (name: string): Promise<void> => {
     await apiClient.delete(`/scenario-presets/${encodeURIComponent(name)}`)
-  },
-
-  /**
-   * Combines a stored preset with the launch-owned fields it omits into a runnable request.
-   * Sending `expected_version` fails with 409 when the preset changed after it was read,
-   * so a launch cannot silently run a configuration the operator never saw.
-   */
-  resolve: async (
-    name: string,
-    request: ResolveScenarioPresetRequest,
-  ): Promise<RunScenarioRequest> => {
-    const response = await apiClient.post(
-      `/scenario-presets/${encodeURIComponent(name)}/resolve`,
-      request,
-    )
-    return response.data
   },
 }
 

@@ -438,16 +438,7 @@ jest.mock("./components/Datasets/DatasetSelection", () => {
 });
 
 jest.mock("./components/Scenarios/ScenarioCatalog", () => {
-  const MockScenarioCatalog = () => <div data-testid="scenario-catalog" />;
-  MockScenarioCatalog.displayName = "MockScenarioCatalog";
-  return {
-    __esModule: true,
-    default: MockScenarioCatalog,
-  };
-});
-
-jest.mock("./components/ScenarioPresets/ScenarioPresetLibrary", () => {
-  const MockScenarioPresetLibrary = ({
+  const MockScenarioCatalog = ({
     operationId,
     defaultsReady,
   }: {
@@ -455,15 +446,24 @@ jest.mock("./components/ScenarioPresets/ScenarioPresetLibrary", () => {
     defaultsReady: boolean;
   }) => (
     <div
-      data-testid="scenario-preset-library"
+      data-testid="scenario-catalog"
       data-operation-id={operationId ?? ""}
       data-defaults-ready={String(defaultsReady)}
     />
   );
-  MockScenarioPresetLibrary.displayName = "MockScenarioPresetLibrary";
+  MockScenarioCatalog.displayName = "MockScenarioCatalog";
   return {
     __esModule: true,
-    default: MockScenarioPresetLibrary,
+    default: MockScenarioCatalog,
+  };
+});
+
+jest.mock("./components/Registry/ScenarioPresetRegistry", () => {
+  const MockScenarioPresetRegistry = () => <div data-testid="scenario-preset-registry" />;
+  MockScenarioPresetRegistry.displayName = "MockScenarioPresetRegistry";
+  return {
+    __esModule: true,
+    default: MockScenarioPresetRegistry,
   };
 });
 
@@ -481,27 +481,6 @@ jest.mock("./components/ScenarioPresets/ScenarioPresetEditor", () => {
   return {
     __esModule: true,
     default: MockScenarioPresetEditor,
-  };
-});
-
-jest.mock("./components/ScenarioSuites/ScenarioSuiteLibrary", () => {
-  const MockScenarioSuiteLibrary = ({
-    operationId,
-    defaultsReady,
-  }: {
-    operationId: string | null;
-    defaultsReady: boolean;
-  }) => (
-    <div
-      data-testid="scenario-suite-library"
-      data-operation-id={operationId ?? ""}
-      data-defaults-ready={String(defaultsReady)}
-    />
-  );
-  MockScenarioSuiteLibrary.displayName = "MockScenarioSuiteLibrary";
-  return {
-    __esModule: true,
-    default: MockScenarioSuiteLibrary,
   };
 });
 
@@ -764,24 +743,28 @@ describe("App", () => {
     expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/chat$/);
   });
 
-  it("renders the preset library as a registry section", () => {
+  it("renders presets and suites together as a registry section", () => {
     renderApp("/registry/scenario-presets");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "registry"
     );
-    expect(screen.getByTestId("scenario-preset-library")).toBeInTheDocument();
+    expect(screen.getByTestId("scenario-preset-registry")).toBeInTheDocument();
   });
 
-  it("renders the suite library as a registry section", () => {
-    renderApp("/registry/scenario-suites");
-
-    expect(screen.getByTestId("main-layout")).toHaveAttribute(
-      "data-current-view",
-      "registry"
+  it("redirects a bookmarked suite library URL to the combined registry section", async () => {
+    render(
+      <MemoryRouter initialEntries={["/registry/scenario-suites"]}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
     );
-    expect(screen.getByTestId("scenario-suite-library")).toBeInTheDocument();
+
+    expect(await screen.findByTestId("scenario-preset-registry")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(
+      /^\/registry\/scenario-presets$/
+    );
   });
 
   it("renders the suite editor as a nested registry route", () => {
@@ -792,38 +775,17 @@ describe("App", () => {
     expect(editor).toHaveTextContent("nightly_suite");
   });
 
-  it("renders transient suite execution progress as a nested registry route", () => {
-    renderApp("/registry/scenario-suites/executions/execution-1");
+  it("renders transient suite execution progress under the scanner", () => {
+    renderApp("/scanner/suites/executions/execution-1");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "registry"
+      "scenarios"
     );
     expect(screen.getByTestId("scenario-suite-execution-page")).toHaveTextContent("execution-1");
   });
 
-  it("passes the globally resolved Operation to the preset library", async () => {
-    const operationId = "11111111-1111-4111-8111-111111111111";
-    writeUserPreferences("local", {
-      ...DEFAULT_USER_PREFERENCES,
-      operation: { id: operationId },
-    });
-    mockGetOperation.mockResolvedValue({
-      id: operationId,
-      name: "Preset launch",
-      created_at: "2026-10-20T18:00:00Z",
-    });
-
-    renderApp("/registry/scenario-presets");
-
-    const library = screen.getByTestId("scenario-preset-library");
-    await waitFor(() => {
-      expect(library).toHaveAttribute("data-operation-id", operationId);
-      expect(library).toHaveAttribute("data-defaults-ready", "true");
-    });
-  });
-
-  it("passes the globally resolved Operation to the suite library", async () => {
+  it("passes the globally resolved Operation to the scanner, which launches suites", async () => {
     const operationId = "11111111-1111-4111-8111-111111111111";
     writeUserPreferences("local", {
       ...DEFAULT_USER_PREFERENCES,
@@ -835,12 +797,12 @@ describe("App", () => {
       created_at: "2026-10-20T18:00:00Z",
     });
 
-    renderApp("/registry/scenario-suites");
+    renderApp("/scanner");
 
-    const library = screen.getByTestId("scenario-suite-library");
+    const catalog = screen.getByTestId("scenario-catalog");
     await waitFor(() => {
-      expect(library).toHaveAttribute("data-operation-id", operationId);
-      expect(library).toHaveAttribute("data-defaults-ready", "true");
+      expect(catalog).toHaveAttribute("data-operation-id", operationId);
+      expect(catalog).toHaveAttribute("data-defaults-ready", "true");
     });
   });
 
@@ -852,7 +814,7 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByTestId("scenario-preset-library")).toBeInTheDocument();
+    expect(await screen.findByTestId("scenario-preset-registry")).toBeInTheDocument();
     expect(screen.getByLabelText("Current URL")).toHaveTextContent(
       /^\/registry\/scenario-presets$/
     );
