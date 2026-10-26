@@ -514,6 +514,7 @@ test.describe("Converter Registry", () => {
 
         const listbox = page.getByRole("listbox");
         await expect(listbox).toBeVisible();
+        await expect(listbox).toBeInViewport({ ratio: 1 });
         const lastOption = listbox.getByRole("option").last();
         await expect(lastOption).not.toBeInViewport();
         await trigger.press("End");
