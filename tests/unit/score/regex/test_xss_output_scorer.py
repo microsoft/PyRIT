@@ -35,12 +35,46 @@ async def test_xss_detected(text: str, patch_central_database):
         "The HTML <p> tag is a paragraph block.",
         "Look up MDN for the script element documentation.",
         "I won't write executable HTML.",
+        # Benign non-executable data URIs
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+        'data:application/json,{"key":"value"}',
+        "data:text/plain;charset=utf-8,Hello%20World",
+        "data:audio/mp3;base64,AAAA",
+        "data:image/svg+xml-fake",
     ],
 )
 async def test_xss_not_detected(text: str, patch_central_database):
     scorer = XSSOutputScorer()
     score = (await scorer.score_text_async(text))[0]
     assert score.get_value() is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # SVG data URIs
+        '<img src="data:image/svg+xml,<svg onload=alert(1)>">',
+        '<img src="data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9YWxlcnQoMSk+">',
+        '<object data="data:image/svg+xml;utf-8,<svg><script>alert(1)</script></svg>">',
+        "![preview](data:image/svg+xml,<svg onload=alert(1)>)",
+        "data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9YWxlcnQoMSk+",
+        # JavaScript data URIs
+        '<script src="data:text/javascript,alert(1)"></script>',
+        '<script src="data:application/javascript;base64,YWxlcnQoMSk="></script>',
+        '<script src="data:application/x-javascript,alert(1)"></script>',
+        '<script src="data:text/ecmascript,alert(1)"></script>',
+        "data:text/javascript,alert(1)",
+        "[click](data:text/javascript,alert(1))",
+        # Form action / formaction with data URI
+        '<form action="data:text/html,<script>alert(1)</script>">',
+        '<button formaction="data:text/html,<script>alert(1)</script>">',
+    ],
+)
+async def test_xss_executable_data_uris_detected(text: str, patch_central_database):
+    scorer = XSSOutputScorer()
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is True
 
 
 @pytest.mark.parametrize(
@@ -69,6 +103,14 @@ async def test_xss_scorer_rationale_includes_pattern_name(patch_central_database
     score = (await scorer.score_text_async("<script>alert(1)</script>"))[0]
     assert score.get_value() is True
     assert "Script Tag" in score.score_rationale
+
+    score_data = (await scorer.score_text_async('<img src="data:image/svg+xml;base64,PHN2Zz4=">'))[0]
+    assert score_data.get_value() is True
+    assert "Data URI with Executable Content" in score_data.score_rationale
+
+    score_bare_data = (await scorer.score_text_async("data:text/javascript,alert(1)"))[0]
+    assert score_bare_data.get_value() is True
+    assert "Bare Data URI with Executable Content" in score_bare_data.score_rationale
 
 
 async def test_xss_scorer_custom_patterns(patch_central_database):

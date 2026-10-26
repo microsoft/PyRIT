@@ -10,7 +10,7 @@ import runpy
 import stat
 import subprocess
 import sys
-import time
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
@@ -23,6 +23,7 @@ from pyrit.models import Acquisition, Contains, ContentWritten, Observation, Sur
 from pyrit.score import LocalFileSurfaceSource
 from pyrit.score.observation import local_file_surface_source as source_module
 from pyrit.score.true_false.file_write_scorer import match_content_written
+from tests.unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -69,13 +70,11 @@ def _link(*, link: Path, target: Path) -> None:
 
 
 @contextmanager
-def _count_reads(*, delay: float = 0.0) -> Generator[list[int], None, None]:
+def _count_reads() -> Generator[list[int], None, None]:
     sizes: list[int] = []
     real_read = source_module._read_chunk
 
     def read(*, fd: int, size: int) -> bytes:
-        if delay:
-            time.sleep(delay)
         chunk = real_read(fd=fd, size=size)
         sizes.append(len(chunk))
         return chunk
@@ -327,22 +326,56 @@ async def test_file_limit_stops_collecting_candidates_async(tmp_path: Path) -> N
     assert "file_limit_exceeded" in observation.payload.coverage.reasons
 
 
-async def test_cancellation_stops_worker_async(tmp_path: Path) -> None:
-    _write(root=tmp_path, relative="data/big.txt", data="x" * (1 << 22))
-    source = LocalFileSurfaceSource(root=tmp_path, max_read_bytes=1 << 22)
+@pytest.mark.parametrize("in_flight_read", [1, 2])
+async def test_cancellation_stops_worker_async(*, tmp_path: Path, in_flight_read: int) -> None:
+    source = LocalFileSurfaceSource(root=tmp_path)
+    chunk_size = source._READ_CHUNK_BYTES
+    _write(root=tmp_path, relative="data/big.txt", data="x" * (3 * chunk_size))
+    loop = asyncio.get_running_loop()
+    read_started: asyncio.Future[None] = loop.create_future()
+    worker_finished: asyncio.Future[None] = loop.create_future()
+    release_read = threading.Event()
+    completed_reads: list[int] = []
+    real_read = source_module._read_chunk
+    real_acquire = source._acquire
 
-    with _count_reads(delay=0.01) as reads:
+    def read(*, fd: int, size: int) -> bytes:
+        if read_chunk.call_count == in_flight_read:
+            loop.call_soon_threadsafe(read_started.set_result, None)
+            if not release_read.wait(TEST_WATCHDOG_SECONDS):
+                raise TimeoutError("The test did not release the in-flight read.")
+        chunk = real_read(fd=fd, size=size)
+        completed_reads.append(len(chunk))
+        return chunk
+
+    def acquire(**kwargs: Any) -> Observation:
+        try:
+            return real_acquire(**kwargs)
+        finally:
+            loop.call_soon_threadsafe(worker_finished.set_result, None)
+
+    with (
+        patch.object(source_module, "_read_chunk", side_effect=read) as read_chunk,
+        patch.object(source, "_acquire", side_effect=acquire),
+    ):
         task = asyncio.create_task(source.acquire_async(scorable=SurfaceScorable(uri="/data/big.txt")))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        await asyncio.sleep(0.1)
-        settled = len(reads)
-        await asyncio.sleep(0.2)
+        try:
+            await wait_for_completion_async(future=read_started)
+            assert completed_reads == [chunk_size] * (in_flight_read - 1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await wait_for_completion_async(future=task)
+            assert not worker_finished.done()
+            assert read_chunk.call_count == in_flight_read
+            assert completed_reads == [chunk_size] * (in_flight_read - 1)
+        finally:
+            release_read.set()
+            task.cancel()
+            await wait_for_completion_async(future=asyncio.gather(task, return_exceptions=True))
+            await wait_for_completion_async(future=worker_finished)
 
-    assert len(reads) == settled
-    assert settled < (1 << 22) // (1 << 16)
+        assert read_chunk.call_count == in_flight_read
+        assert completed_reads == [chunk_size] * in_flight_read
 
 
 def test_source_rejects_non_positive_limits(tmp_path: Path) -> None:

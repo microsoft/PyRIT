@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.models.seeds.adversarial_prompts import AdversarialPrompts
     from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
     from pyrit.models.seeds.attack_technique_seed_group import AttackTechniqueSeedGroup
     from pyrit.models.seeds.seed import Seed
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
     )
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "AdversarialPrompts": "pyrit.models.seeds.adversarial_prompts",
     "load_seed_dataset_from_yaml": "pyrit.models.seeds.yaml_seed_loader",
     "load_seed_from_yaml": "pyrit.models.seeds.yaml_seed_loader",
     "load_seed_prompt_from_yaml_with_required_parameters": "pyrit.models.seeds.yaml_seed_loader",
