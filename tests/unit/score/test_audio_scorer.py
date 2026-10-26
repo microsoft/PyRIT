@@ -8,13 +8,11 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from unit.mocks import MockPromptTarget, get_mock_scorer_identifier
+from unit.mocks import get_mock_scorer_identifier
 
 from pyrit.models import AnswerMatches, ComponentIdentifier, MessagePiece, Score, ScoringExpectation
-from pyrit.prompt_target import GandalfLevel
 from pyrit.score import (
     DecodingScorer,
-    GandalfScorer,
     MessageScorer,
     QuestionAnswerScorer,
     SystemPromptExtractionScorer,
@@ -122,7 +120,7 @@ class TestAudioTrueFalseScorer:
 
         assert audio_scorer._audio_helper.text_scorer is text_scorer
 
-    @pytest.mark.parametrize("history_scorer", ["decoding", "conversation", "system_prompt", "gandalf"])
+    @pytest.mark.parametrize("history_scorer", ["decoding", "conversation", "system_prompt"])
     @pytest.mark.parametrize("nested", [False, True])
     def test_rejects_history_dependent_transcript_scorers(self, *, history_scorer: str, nested: bool) -> None:
         scorer: Scorer
@@ -130,10 +128,8 @@ class TestAudioTrueFalseScorer:
             scorer = DecodingScorer()
         elif history_scorer == "conversation":
             scorer = create_conversation_scorer(scorer=MockTextTrueFalseScorer())
-        elif history_scorer == "system_prompt":
-            scorer = SystemPromptExtractionScorer()
         else:
-            scorer = GandalfScorer(level=GandalfLevel.LEVEL_1, chat_target=MockPromptTarget())
+            scorer = SystemPromptExtractionScorer()
 
         assert isinstance(scorer, MessageScorer)
         wrapper = MockTextTrueFalseScorer()
@@ -185,7 +181,9 @@ class TestAudioTrueFalseScorer:
             assert len(scores) == 1
             assert scores[0].score_type == "true_false"
             assert scores[0].score_value == "true"
-            assert "Audio transcript scored:" in scores[0].score_rationale
+            assert scores[0].score_rationale == (
+                "Audio transcript scored: Test rationale for transcript: Hello, this is a test transcript."
+            )
 
     async def test_score_piece_empty_transcript(self, audio_message_piece):
         """Test scoring audio with empty transcript returns empty list"""
@@ -257,7 +255,9 @@ class TestAudioFloatScaleScorer:
             assert len(scores) == 1
             assert scores[0].score_type == "float_scale"
             assert float(scores[0].score_value) == 0.75
-            assert "Audio transcript scored:" in scores[0].score_rationale
+            assert scores[0].score_rationale == (
+                "Audio transcript scored: Test rationale for transcript: Hello, this is a test transcript."
+            )
 
     async def test_score_piece_empty_transcript(self, audio_message_piece):
         """Test scoring audio with empty transcript returns empty list"""

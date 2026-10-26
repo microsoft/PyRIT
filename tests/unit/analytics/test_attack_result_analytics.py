@@ -4,7 +4,12 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
+from textwrap import dedent
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -28,6 +33,7 @@ from pyrit.models import (
     AttackAnalyticsQuery,
     AttackAnalyticsResultsQuery,
     AttackAnalyticsValue,
+    AttackAnalyticsValueKind,
     AttackIdentifier,
     AttackOutcome,
     AttackResultMetadata,
@@ -327,6 +333,7 @@ async def test_matrix_empty_cells_and_additional_predicates_are_exact(
         ("value", " \t", None, "label", "(Blank)"),
         ("value", "Unknown", "Unknown", "operation", "Unknown"),
         ("value", "Not recorded", "Not recorded", "operation", "Not recorded"),
+        ("legacy_operation_name", "Legacy", "Legacy", "operation", "Legacy (legacy name)"),
         ("value", "content-independent-eval-hash", "model", "objective_target", "model (val-hash)"),
         ("value", "scenario-12345678", "run", "scenario", "run (12345678)"),
         ("value", "scenario-12345678", None, "scenario", "scenario-12345678"),
@@ -342,6 +349,71 @@ def test_display_labels_do_not_change_typed_keys(
     )
     assert option.label == label
     assert option.key == raw.key
+
+
+@pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
+def test_option_dispatch_type_exhaustiveness(tmp_path: Path, extend_enum: bool) -> None:
+    enum_source = inspect.getsource(AttackAnalyticsValueKind)
+    if extend_enum:
+        enum_source += '\n    FUTURE_KIND = "future_kind"\n'
+    probe = tmp_path / "dispatch.py"
+    probe.write_text(
+        "\n".join(
+            [
+                "from dataclasses import dataclass",
+                "from enum import Enum",
+                "from typing import assert_never",
+                "from pyrit.models import AttackAnalyticsDimension, AttackAnalyticsDimensionName",
+                enum_source,
+                dedent(
+                    """
+                    @dataclass
+                    class AttackAnalyticsValue:
+                        kind: AttackAnalyticsValueKind
+                        value: str | None
+
+                    @dataclass
+                    class RawAnalyticsOption:
+                        key: AttackAnalyticsValue
+                        label: str | None
+
+                    @dataclass
+                    class AttackAnalyticsOption:
+                        key: AttackAnalyticsValue
+                        label: str
+                    """
+                ),
+                "class AttackResultAnalytics:",
+                inspect.getsource(AttackResultAnalytics._option),
+                inspect.getsource(AttackResultAnalytics._value_label),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ty",
+            "check",
+            "--project",
+            str(Path(__file__).resolve().parents[3]),
+            "--python-version",
+            "3.11",
+            str(probe),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == (1 if extend_enum else 0), output
+    if extend_enum:
+        assert output.count("error[") == 1, output
+        assert "type-assertion-failure" in output, output
+        assert "assert_never(raw.key.kind)" in output, output
+        assert "FUTURE_KIND" in output, output
 
 
 async def test_operation_option_labels(analytics: AttackResultAnalytics, sqlite_instance: SQLiteMemory) -> None:

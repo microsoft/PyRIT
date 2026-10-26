@@ -235,6 +235,11 @@ export const useScenarioDetailStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalXXS,
   },
+  techniquePreview: {
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+    maxWidth: '100%',
+  },
   previewBadges: {
     display: 'flex',
     flexWrap: 'wrap',

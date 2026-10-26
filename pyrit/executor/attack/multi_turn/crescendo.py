@@ -15,6 +15,7 @@ from pyrit.executor.attack.component import ConversationManager, PrependedConver
 from pyrit.executor.attack.component.adversarial_conversation_manager import _AdversarialConversationManager
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_config import AdversarialPromptRequirements
 from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
@@ -140,6 +141,10 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
     DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH: Path = (
         Path(EXECUTOR_SEED_PROMPT_PATH) / "crescendo" / "crescendo_variant_1.yaml"
     )
+    ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
+        default_system_prompt_path=DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH,
+        system_prompt_parameters=("objective", "max_turns"),
+    )
 
     @apply_defaults
     def __init__(
@@ -242,11 +247,13 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         # The manager owns adversarial-prompt resolution. Crescendo is override mode: it builds each
         # adversarial prompt itself and passes the text explicitly, so only the system prompt is
         # resolved here (no first / next-message templates).
+        requirements = self.get_adversarial_prompt_requirements()
         self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
             config=attack_adversarial_config,
-            default_system_prompt_path=CrescendoAttack.DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH,
-            system_prompt_required_parameters=["objective", "max_turns"],
+            default_system_prompt_path=requirements.default_system_prompt_path,
+            system_prompt_required_parameters=list(requirements.system_prompt_parameters),
             system_prompt_error_message="Crescendo system prompt must have 'objective' and 'max_turns' parameters",
+            resolve_user_messages=requirements.accepts_user_messages,
         )
         self._adversarial_chat_system_prompt_template = self._resolved_adversarial.system_prompt
 

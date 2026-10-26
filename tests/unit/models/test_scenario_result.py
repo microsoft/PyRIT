@@ -95,7 +95,20 @@ class TestScenarioResult:
             objective_scorer_identifier=ComponentIdentifier.model_validate({}),
         )
         objectives = result.get_objectives()
-        assert sorted(objectives) == ["obj1", "obj2"]
+        assert objectives == ["obj1", "obj2"]
+
+    def test_get_objectives_preserves_insertion_order(self):
+        ar1 = _make_attack_result(objective="gamma")
+        ar2 = _make_attack_result(objective="alpha")
+        ar3 = _make_attack_result(objective="gamma")
+        ar4 = _make_attack_result(objective="beta")
+        result = make_scenario_result(
+            scenario_name="TestScenario",
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
+            attack_results={"s1": [ar1, ar2, ar3], "s2": [ar4]},
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
+        )
+        assert result.get_objectives() == ["gamma", "alpha", "beta"]
 
     def test_get_objectives_by_attack_name(self):
         ar1 = _make_attack_result(objective="obj1")

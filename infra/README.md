@@ -665,6 +665,8 @@ Open the public URL and verify unauthenticated users are redirected to Entra and
 
 The backend can load `.pyrit_conf` directly from Azure Blob Storage. Set `pyritConfigFileUri` to a credential-free blob HTTPS URI; the backend uses the Container App UAMI to read and update it. Leave it empty to generate configuration from `sqlServerFqdn` and `pyritInitializer`. Grant `Storage Blob Data Contributor` on the storage account or blob container. When using `deploy_instance.py`, pass that resource ID through `--pyrit-config-rbac-scope` so the helper grants access before starting the app.
 
+Write access to the configuration blob, and to any `custom_initializers_source` it names while `allow_custom_initializers` is enabled, lets a principal change code that the backend runs as its UAMI. Limit data-plane write roles on those scopes to the backend identity and principals trusted as configuration administrators.
+
 ### .pyrit_conf fields → Bicep params
 
 | .pyrit_conf field | Bicep param | Env var | Notes |

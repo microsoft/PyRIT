@@ -1317,6 +1317,32 @@ async def test_execute_call_section_malformed_arguments_tolerant_mode(target: Op
     assert result.output == {"error": "malformed_arguments", "function": "echo", "raw_arguments": "{not-json"}
 
 
+@pytest.mark.parametrize("arguments", ["null", "[1, 2]", '"text"'])
+async def test_execute_call_section_non_object_arguments_skip_custom_function_async(
+    target: OpenAIResponseTarget, arguments: str
+) -> None:
+    callback = AsyncMock(return_value={"ok": True})
+    target._custom_functions["lookup"] = callback
+
+    result = await target._execute_call_section_async({"name": "lookup", "arguments": arguments})
+
+    callback.assert_not_awaited()
+    assert result.invoked is False
+    assert result.output == {"error": "malformed_arguments", "function": "lookup", "raw_arguments": arguments}
+
+
+async def test_execute_call_section_non_object_arguments_strict_mode_raises_async(
+    target: OpenAIResponseTarget,
+) -> None:
+    callback = AsyncMock(return_value={"ok": True})
+    target._custom_functions["lookup"] = callback
+    target._fail_on_missing_function = True
+
+    with pytest.raises(ValueError, match="Arguments for function 'lookup' must be a JSON object"):
+        await target._execute_call_section_async({"name": "lookup", "arguments": "null"})
+    callback.assert_not_awaited()
+
+
 async def test_execute_call_section_missing_name_records_no_invocation_async(target: OpenAIResponseTarget) -> None:
     section = {"type": "function_call", "arguments": "{}"}
     result = await target._execute_call_section_async(section)

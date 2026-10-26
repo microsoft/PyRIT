@@ -164,6 +164,10 @@ custom_initializers_source: https://account.blob.core.windows.net/pyrit-storage/
 
 With this configuration, PyRIT reads and writes scripts directly under the `custom-initializers/` prefix in the `pyrit-storage` container. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/custom_initializers`.
 
+```{warning}
+When `allow_custom_initializers: true`, the backend imports every script in this source at startup and during live reinitialization, under the backend's identity. PyRIT does not sign or verify these scripts, so write access to this source is code-execution authority on the backend. The same applies to write access to `.pyrit_conf`, which selects this source and `initialization_scripts`. Grant write access only to principals you already trust as backend administrators, and use a dedicated directory or blob prefix that less-trusted users and services cannot write to.
+```
+
 ### `scenario_presets_source`
 
 Stores scenario presets in a local directory or Azure Blob container. An Azure URI may include a blob-name prefix, which behaves like a folder:

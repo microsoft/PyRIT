@@ -20,7 +20,8 @@ jobs:
   displayName: ${{ parameters.jobDisplayName }}
   timeoutInMinutes: 360
   pool:
-    vmImage: ubuntu-latest
+    # Pin to an ODBC Driver 18-supported release; ubuntu-latest can advance ahead of driver support.
+    vmImage: ubuntu-24.04
   steps:
   - checkout: self
     fetchDepth: 1

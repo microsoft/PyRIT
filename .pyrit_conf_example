@@ -141,6 +141,11 @@ allow_custom_initializers: false
 # directory or an Azure Blob container URI with an optional blob prefix.
 # Container URIs may include a SAS; otherwise DefaultAzureCredential is used. Defaults to
 # ~/.pyrit/custom_initializers.
+#
+# ⚠️  WARNING: When allow_custom_initializers is true, the backend runs every script
+# in this source at startup and live reinitialization. Anyone who can write to this
+# source, or to this configuration file, can run code as the backend. Restrict write
+# access to trusted administrators.
 # custom_initializers_source: https://account.blob.core.windows.net/container/custom_initializers
 
 # Optional storage for scenario presets, the saved scenario configurations the

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CODEQL_PIN = "24c54180a607b1449ed407dd24f251e4e9147c8d"
@@ -42,15 +44,19 @@ def steps() -> dict[str, Any]:
 def test_codeql_merge_group_scenarios(steps: dict[str, Any]) -> None:
     script = steps["Publish merge-group CodeQL results"]["with"]["script"]
     with patch.dict("os.environ", {"CODEQL_TEST_SCRIPT": script}):
+        # Run node:test in-process, without --test's extra child process on busy Windows runners.
         result = subprocess.run(
-            ["node", "--test", "--test-reporter=tap", str(Path(__file__).with_suffix(".cjs"))],
+            ["node", "--test-reporter=tap", str(Path(__file__).with_suffix(".cjs"))],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
             check=False,
-            timeout=60,
+            timeout=TEST_WATCHDOG_SECONDS,
         )
     assert result.returncode == 0, result.stdout + result.stderr
+    summary = dict(re.findall(r"^# (tests|pass) (\d+)$", result.stdout, re.MULTILINE))
+    assert int(summary.get("tests", "0")) > 0, result.stdout
+    assert summary.get("pass") == summary["tests"], result.stdout
     assert "# fail 0" in result.stdout and "# skipped 0" in result.stdout
 
 

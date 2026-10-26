@@ -341,3 +341,40 @@ async def test_send_prompt_async_rejects_traversal_file_name(
             await azure_blob_storage_target.send_prompt_async(message=request)
 
     mock_upload.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "container_url, expected_blob_path, expected_blob_url",
+    [
+        ("https://test.blob.core.windows.net/xpia", "doc.txt", "https://test.blob.core.windows.net/xpia/doc.txt"),
+        ("https://test.blob.core.windows.net/xpia/", "doc.txt", "https://test.blob.core.windows.net/xpia/doc.txt"),
+        (
+            "https://test.blob.core.windows.net/xpia/folder",
+            "folder/doc.txt",
+            "https://test.blob.core.windows.net/xpia/folder/doc.txt",
+        ),
+        (
+            "https://test.blob.core.windows.net/xpia/folder/",
+            "folder/doc.txt",
+            "https://test.blob.core.windows.net/xpia/folder/doc.txt",
+        ),
+    ],
+)
+async def test_send_prompt_async_returns_url_of_uploaded_blob(
+    patch_central_database, container_url: str, expected_blob_path: str, expected_blob_url: str
+):
+    target = AzureBlobStorageTarget(container_url=container_url, sas_token="valid_sas_token")
+    mock_blob_client = AsyncMock()
+    mock_blob_client.exists.return_value = False
+    mock_client = AsyncMock()
+    mock_client.get_blob_client = MagicMock(return_value=mock_blob_client)
+    message_piece = MessagePiece(role="user", original_value="payload", prompt_metadata={"file_name": "doc.txt"})
+
+    with patch.object(AsyncContainerClient, "from_container_url", return_value=mock_client) as mock_from_container_url:
+        response = await target.send_prompt_async(message=Message(message_pieces=[message_piece]))
+
+    mock_from_container_url.assert_called_once_with(
+        container_url="https://test.blob.core.windows.net/xpia", credential="valid_sas_token"
+    )
+    mock_client.get_blob_client.assert_called_once_with(blob=expected_blob_path)
+    assert response[0].get_value() == expected_blob_url

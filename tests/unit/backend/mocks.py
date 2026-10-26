@@ -14,12 +14,13 @@ from pyrit.backend.services.message_send_service import MessageSendService
 from pyrit.memory import MemoryInterface
 from pyrit.models import AtomicAttackIdentifier, AttackOutcome, AttackResult, ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 
 async def _settle_send_async(
-    *, service: MessageSendService, status: MessageSendStatus, timeout_seconds: float = 10
+    *, service: MessageSendService, status: MessageSendStatus, timeout_seconds: float = TEST_WATCHDOG_SECONDS
 ) -> MessageSendStatus:
-    """Wait for a terminal snapshot without cancelling the send on timeout."""
+    """Wait for a terminal snapshot with a deadlock backstop, without cancelling the send."""
     async with asyncio.timeout(timeout_seconds):
         while status.state not in (MessageSendState.COMPLETED, MessageSendState.FAILED, MessageSendState.INTERRUPTED):
             status = await service.get_status_async(
