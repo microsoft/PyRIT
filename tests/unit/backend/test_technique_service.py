@@ -43,7 +43,14 @@ from pyrit.scenario.scenarios.airt.leakage import Leakage
 from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
 from pyrit.score import SubStringScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
-from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async, wait_for_worker_ready_async
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    drain_tasks_async,
+    get_defined_tasks,
+    wait_for_completion_async,
+    wait_for_event_async,
+    wait_for_worker_ready_async,
+)
 from unit.mocks import MockPromptTarget
 
 
@@ -427,8 +434,81 @@ async def test_candidate_pool_is_not_visible_to_concurrent_catalog_reads_async(
         assert "preview_only" not in {item.value for item in build_technique().get_all_techniques()}
     finally:
         finish.set()
-        await wait_for_completion_async(future=validation)
+        await drain_tasks_async(validation, timeout=TEST_WATCHDOG_SECONDS)
+    validation.result()
     assert "preview_only" not in {item.value for item in build_technique().get_all_techniques()}
+
+
+@pytest.mark.usefixtures("worker_executor_async")
+async def test_candidate_validation_cleanup_defers_cancellation_until_worker_finishes_async(
+    registry: AttackTechniqueRegistry,
+) -> None:
+    loop = asyncio.get_running_loop()
+    started, finishing, torn_down = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    finish, complete, finished = threading.Event(), threading.Event(), threading.Event()
+    preview = registry.create_factory(name="preview_only", attack_type="PromptSendingAttack")
+    validation: asyncio.Task[None] | None = None
+    original_builder = registry.build_technique_class_from_factories
+
+    @AttackTechniqueRegistry.cache_scenario_technique_class
+    def build_technique() -> type[ScenarioTechnique]:
+        factories = registry.get_factories()
+        if "preview_only" in factories:
+            loop.call_soon_threadsafe(started.set)
+            try:
+                assert finish.wait(timeout=TEST_WATCHDOG_SECONDS), "Validation was not released"
+                loop.call_soon_threadsafe(finishing.set)
+                assert complete.wait(timeout=TEST_WATCHDOG_SECONDS), "Validation completion was not released"
+                assert registry.build_technique_class_from_factories != original_builder
+                return registry.build_technique_class_from_factories(
+                    class_name="CleanupTechnique", factories=list(factories.values())
+                )
+            finally:
+                finished.set()
+        return original_builder(class_name="CleanupTechnique", factories=list(factories.values()))
+
+    async def owner_async() -> None:
+        nonlocal validation
+        try:
+            with patch.object(registry, "build_technique_class_from_factories", wraps=original_builder):
+                validation = asyncio.create_task(
+                    asyncio.to_thread(
+                        registry.validate_scenario_pools, {**registry.get_factories(), preview.name: preview}
+                    )
+                )
+                try:
+                    await wait_for_worker_ready_async(started=started, operation=validation)
+                finally:
+                    finish.set()
+                    await drain_tasks_async(validation, timeout=TEST_WATCHDOG_SECONDS)
+        finally:
+            torn_down.set()
+
+    owner = asyncio.create_task(owner_async())
+    try:
+        await wait_for_event_async(event=finishing, tasks=[owner])
+        assert validation is not None
+        owner.cancel("cleanup cancellation")
+        await asyncio.sleep(0)
+        owner.cancel("repeated cleanup cancellation")
+        await asyncio.sleep(0)
+        assert not owner.done()
+        assert not validation.done()
+        assert validation.cancelling() == 0
+        assert not finished.is_set()
+        assert not torn_down.is_set()
+        complete.set()
+        with pytest.raises(asyncio.CancelledError, match="^cleanup cancellation$"):
+            await wait_for_completion_async(future=owner)
+        assert validation.done()
+        assert validation.result() is None
+        assert finished.is_set()
+        assert torn_down.is_set()
+        assert registry.build_technique_class_from_factories == original_builder
+    finally:
+        finish.set()
+        complete.set()
+        await drain_tasks_async(*get_defined_tasks(owner, validation), timeout=TEST_WATCHDOG_SECONDS)
 
 
 def test_imported_selection_rebinds_only_unchanged_same_catalog_factories(

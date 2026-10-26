@@ -23,8 +23,8 @@ from pyrit.memory import AzureSQLMemory, MemoryInterface, SQLiteMemory
 from pyrit.models import Conversation, Message, MessagePiece, SeedPrompt
 from unit.async_utils import (
     TEST_WATCHDOG_SECONDS,
+    drain_tasks_async,
     get_defined_tasks,
-    wait_for_completion_async,
     wait_for_worker_ready_async,
 )
 
@@ -226,7 +226,8 @@ async def test_concurrent_initialization_is_rejected_without_disposing_first_att
                 dispose.assert_not_awaited()
             finally:
                 release.set()
-                await wait_for_completion_async(future=task)
+                await drain_tasks_async(task)
+                task.result()
     finally:
         await memory.dispose_engine_async()
 
@@ -280,7 +281,8 @@ async def test_async_database_wait_does_not_block_loop(sqlite_instance: SQLiteMe
             await asyncio.sleep(0)
         finally:
             release.set()
-            result = await wait_for_completion_async(future=task)
+            await drain_tasks_async(task)
+            result = task.result()
         assert result.scalar_one() == 1
 
 
@@ -305,7 +307,8 @@ async def test_azure_auth_wait_is_async_and_credential_is_closed() -> None:
             assert not task.done()
         finally:
             release.set()
-            assert await task is token
+            await drain_tasks_async(task)
+            assert task.result() is token
             await auth.close_async()
     credential.close.assert_awaited_once()
 
@@ -405,7 +408,7 @@ async def test_cancelled_legacy_call_finishes_before_returning(cancellations: in
             assert not task.done()
     finally:
         release.set()
-        await wait_for_completion_async(future=asyncio.gather(task, return_exceptions=True))
+        await drain_tasks_async(task)
     with pytest.raises(asyncio.CancelledError):
         task.result()
     assert finished.is_set()
@@ -429,7 +432,7 @@ async def test_cancelled_legacy_failure_preserves_cancellation() -> None:
         await asyncio.sleep(0)
     finally:
         release.set()
-        await wait_for_completion_async(future=asyncio.gather(task, return_exceptions=True))
+        await drain_tasks_async(task)
     with pytest.raises(asyncio.CancelledError) as error:
         task.result()
     assert isinstance(error.value.__cause__, ValueError)
@@ -495,7 +498,8 @@ async def test_sync_read_rejects_same_loop_async_overlap(sqlite_instance: SQLite
             assert not read.done()
         finally:
             release.set()
-            await wait_for_completion_async(future=read)
+            await drain_tasks_async(read)
+            read.result()
     assert await sqlite_instance.get_message_pieces_async() == []
     with pytest.warns(DeprecationWarning):
         assert sqlite_instance.get_message_pieces() == []
@@ -512,10 +516,19 @@ async def test_async_session_rejects_same_thread_sync_overlap(sqlite_instance: S
 @pytest.mark.usefixtures("worker_executor_async")
 async def test_in_memory_transactions_are_serialized_across_loops(sqlite_instance: SQLiteMemory, reader: str) -> None:
     loop = asyncio.get_running_loop()
-    started = asyncio.Event()
+    blocked = asyncio.Event()
+    transaction_lock = sqlite_instance._transaction_lock
+    assert transaction_lock is not None
+
+    def acquire(*, blocking: bool = True) -> bool:
+        acquired = transaction_lock.acquire(blocking=False)
+        if not acquired:
+            loop.call_soon_threadsafe(blocked.set)
+            if blocking:
+                return transaction_lock.acquire()
+        return acquired
 
     async def read_and_write_async() -> int:
-        loop.call_soon_threadsafe(started.set)
         try:
             async with await sqlite_instance.get_session_async() as session:
                 count = await session.scalar(text("SELECT COUNT(*) FROM LockProbe"))
@@ -529,7 +542,6 @@ async def test_in_memory_transactions_are_serialized_across_loops(sqlite_instanc
     def read_and_write() -> int:
         if reader == "async":
             return asyncio.run(read_and_write_async())
-        loop.call_soon_threadsafe(started.set)
         with sqlite_instance._get_sync_session() as session:
             count = session.scalar(text("SELECT COUNT(*) FROM LockProbe"))
             assert isinstance(count, int)
@@ -538,21 +550,23 @@ async def test_in_memory_transactions_are_serialized_across_loops(sqlite_instanc
             return count
 
     task = None
-    try:
-        async with await sqlite_instance.get_session_async() as session:
-            await session.execute(text("CREATE TABLE LockProbe (value INTEGER)"))
-            await session.commit()
-            await session.execute(text("INSERT INTO LockProbe VALUES (1)"))
-            task = asyncio.create_task(asyncio.to_thread(read_and_write))
-            try:
-                await wait_for_worker_ready_async(started=started, operation=task)
-                await asyncio.sleep(0.05)
-                assert not task.done()
-            finally:
+    with patch.object(
+        sqlite_instance, "_transaction_lock", spec=transaction_lock, wraps=transaction_lock
+    ) as observed_lock:
+        observed_lock.acquire.side_effect = acquire
+        try:
+            async with await sqlite_instance.get_session_async() as session:
+                await session.execute(text("CREATE TABLE LockProbe (value INTEGER)"))
                 await session.commit()
-    finally:
-        for owned_task in get_defined_tasks(task):
-            await wait_for_completion_async(future=owned_task)
+                await session.execute(text("INSERT INTO LockProbe VALUES (1)"))
+                task = asyncio.create_task(asyncio.to_thread(read_and_write))
+                try:
+                    await wait_for_worker_ready_async(started=blocked, operation=task)
+                    assert not task.done()
+                finally:
+                    await session.commit()
+        finally:
+            await drain_tasks_async(*get_defined_tasks(task))
     assert task.result() == 1
     async with await sqlite_instance.get_session_async() as session:
         assert await session.scalar(text("SELECT COUNT(*) FROM LockProbe")) == 2
@@ -588,10 +602,13 @@ async def test_cancelled_transaction_rolls_back_and_pool_remains_usable(sqlite_i
             await session.commit()
 
     task = asyncio.create_task(write_async())
-    await asyncio.wait_for(inserted.wait(), timeout=5)
-    task.cancel()
+    try:
+        await wait_for_worker_ready_async(started=inserted, operation=task)
+    finally:
+        task.cancel()
+        await drain_tasks_async(task)
     with pytest.raises(asyncio.CancelledError):
-        await task
+        task.result()
     async with await sqlite_instance.get_session_async() as session:
         assert await session.scalar(text("SELECT COUNT(*) FROM CancellationProbe")) == 0
         await session.execute(text("INSERT INTO CancellationProbe VALUES (2)"))

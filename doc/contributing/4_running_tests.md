@@ -101,8 +101,10 @@ assertions. It builds on `wait_for_event_async` but also rejects completion afte
 the readiness signal, propagating worker failure/cancellation immediately.
 
 Cancelling a task wrapping `asyncio.to_thread` does not join its thread. Prefer
-releasing the worker and awaiting the operation with `wait_for_completion_async`;
-if cancellation itself is under test, also observe actual worker completion.
+releasing the worker and joining the owned operation with `drain_tasks_async`,
+which defers caller cancellation until the owned tasks finish. Inspect task results
+separately to assert operation outcomes. If the operation can finish on cancellation
+before its thread exits, also observe actual worker completion.
 Gate timeouts should raise on the shared `TEST_WATCHDOG_SECONDS` deadlock backstop,
 not silently release workers after a short elapsed time. Exercise these patterns
 with constrained executors, including a single worker, and failure/cancellation
