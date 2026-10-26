@@ -72,6 +72,7 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetSource,
+    DatasetSourceKind,
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage
@@ -933,7 +934,23 @@ class Scenario(ABC):
                 request=request,
                 options=options,
             )
+        self._load_required_data_like_dataset_config()
         self._validate_runtime_configuration()
+
+    def _load_required_data_like_dataset_config(self) -> None:
+        """
+        Read the required data with the population configuration's fetch policy and filters.
+
+        A configuration without sources of its own only limits assembled groups, so its fetch
+        policy and filters describe how the required data is loaded. Required sources keep their
+        own fetch settings.
+        """
+        config = self._dataset_config
+        if self._required_data is None or config.sources or config.source_kind is DatasetSourceKind.INLINE:
+            return
+        self._required_data = self._required_data.with_sources(
+            sources=self._required_data.sources, fetch=config.fetch, filters=config.filters
+        )
 
     def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
         """

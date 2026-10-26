@@ -520,3 +520,23 @@ class TestApiKey:
             return
         await scenario.initialize_async()
         assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == 20
+
+    async def test_configuration_fetch_and_filters_reach_the_corpus_async(
+        self, *, mock_objective_target: PromptTarget
+    ) -> None:
+        scenario = ApiKey()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": ApiKeyDatasetConfiguration(
+                    fetch=DatasetFetchPolicy.NEVER, filters={"harm_categories": ["cyber"]}
+                ),
+            }
+        )
+        await scenario.get_run_size_estimate_async(target_is_configured=True)
+
+        assert scenario._required_data is not None
+        assert scenario._required_data.fetch is DatasetFetchPolicy.NEVER
+        assert scenario._required_data.filters == {"harm_categories": ["cyber"]}
+        with pytest.raises(DatasetConstraintError, match="fetch is 'never'"):
+            await scenario.initialize_async()

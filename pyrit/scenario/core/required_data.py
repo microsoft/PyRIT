@@ -153,9 +153,10 @@ class ScenarioRequiredData:
         population_names: Sequence[str],
     ) -> tuple[ScenarioRequiredData, ScenarioDatasetRequest]:
         """
-        Take the fetch edits and filters that apply to required data from a dataset request.
+        Take the fetch edits for required sources out of a dataset request.
 
-        Filters apply to every dataset a run reads, so they stay on the returned request too.
+        The request's global fetch policy and filters stay on the returned request; the scenario
+        applies the resulting population settings to the required data.
 
         Args:
             request (ScenarioDatasetRequest): The requested dataset edits.
@@ -172,7 +173,7 @@ class ScenarioRequiredData:
         if not options.supports_overrides and request != ScenarioDatasetRequest():
             raise DatasetConstraintError("This scenario does not support dataset overrides.")
         if request.sources is None:
-            return self._with_edits(fetch=request.fetch, source_fetch={}, filters=request.filters), request
+            return self, request
         names = self.dataset_names
         requested = [source.name for source in request.sources]
         fixed = [*names, *population_names]
@@ -186,10 +187,8 @@ class ScenarioRequiredData:
         if capped:
             raise DatasetConstraintError(f"Required datasets are read in full and can't be capped: {capped}.")
         remaining = [source for source in request.sources if source.name not in names]
-        edited = self._with_edits(
-            fetch=request.fetch,
-            source_fetch={source.name: source.fetch for source in required_inputs if source.fetch is not None},
-            filters=request.filters,
+        edited = self._with_source_fetch(
+            {source.name: source.fetch for source in required_inputs if source.fetch is not None}
         )
         return edited, request.model_copy(update={"sources": remaining or None})
 
@@ -231,17 +230,11 @@ class ScenarioRequiredData:
         merged = {**self.filters, **{key: list(values) for key, values in (filters or {}).items()}}
         return ScenarioRequiredData(sources=sources, fetch=fetch, validators=self._validators, filters=merged)
 
-    def _with_edits(
-        self,
-        *,
-        fetch: DatasetFetchPolicy | None,
-        source_fetch: dict[str, DatasetFetchPolicy],
-        filters: dict[str, list[str]] | None,
-    ) -> ScenarioRequiredData:
-        if fetch is None and not source_fetch and not filters:
+    def _with_source_fetch(self, source_fetch: dict[str, DatasetFetchPolicy]) -> ScenarioRequiredData:
+        if not source_fetch:
             return self
         sources = [
             replace(source, fetch=source_fetch[source.name]) if source.name in source_fetch else source
             for source in self.sources
         ]
-        return self.with_sources(sources=sources, fetch=fetch or self.fetch, filters=filters)
+        return self.with_sources(sources=sources, fetch=self.fetch)
