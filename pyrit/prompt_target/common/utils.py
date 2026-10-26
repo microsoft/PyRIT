@@ -63,6 +63,34 @@ def validate_top_p(top_p: float | None) -> None:
         raise PyritException(message="top_p must be between 0 and 1 (inclusive).")
 
 
+def validate_presence_penalty(presence_penalty: float | None) -> None:
+    """
+    Validate that presence_penalty parameter is within valid range.
+
+    Args:
+        presence_penalty: The presence_penalty value to validate (-2 to 2 inclusive).
+
+    Raises:
+        PyritException: If presence_penalty is not between -2 and 2 (inclusive).
+    """
+    if presence_penalty is not None and not -2 <= presence_penalty <= 2:
+        raise PyritException(message="presence_penalty must be between -2 and 2 (inclusive).")
+
+
+def validate_frequency_penalty(frequency_penalty: float | None) -> None:
+    """
+    Validate that frequency_penalty parameter is within valid range.
+
+    Args:
+        frequency_penalty: The frequency_penalty value to validate (-2 to 2 inclusive).
+
+    Raises:
+        PyritException: If frequency_penalty is not between -2 and 2 (inclusive).
+    """
+    if frequency_penalty is not None and not -2 <= frequency_penalty <= 2:
+        raise PyritException(message="frequency_penalty must be between -2 and 2 (inclusive).")
+
+
 def limit_requests_per_minute(
     func: Callable[_P, Awaitable[_T]],
 ) -> Callable[_P, Coroutine[Any, Any, _T]]:

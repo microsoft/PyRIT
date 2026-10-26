@@ -259,6 +259,18 @@ def test_init_rejects_out_of_range_temperature(patch_central_database, litellm_s
         LiteLLMChatTarget(model_name="openai/gpt-4o", temperature=5)
 
 
+@pytest.mark.parametrize("presence_penalty", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_init_rejects_out_of_range_presence_penalty(patch_central_database, litellm_stub, presence_penalty):
+    with pytest.raises(PyritException):
+        LiteLLMChatTarget(model_name="openai/gpt-4o", presence_penalty=presence_penalty)
+
+
+@pytest.mark.parametrize("frequency_penalty", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_init_rejects_out_of_range_frequency_penalty(patch_central_database, litellm_stub, frequency_penalty):
+    with pytest.raises(PyritException):
+        LiteLLMChatTarget(model_name="openai/gpt-4o", frequency_penalty=frequency_penalty)
+
+
 # ---------------------------------------------------------------------------
 # Capability derivation
 # ---------------------------------------------------------------------------

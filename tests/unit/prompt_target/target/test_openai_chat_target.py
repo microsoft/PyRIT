@@ -983,6 +983,30 @@ def test_invalid_temperature_raises(patch_central_database):
         )
 
 
+@pytest.mark.parametrize("presence_penalty", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_invalid_presence_penalty_raises(patch_central_database, presence_penalty: float):
+    """Test that invalid presence_penalty values raise PyritException."""
+    with pytest.raises(PyritException, match="presence_penalty must be between -2 and 2"):
+        OpenAIChatTarget(
+            model_name="gpt-4",
+            endpoint="https://test.com",
+            api_key="test",
+            presence_penalty=presence_penalty,
+        )
+
+
+@pytest.mark.parametrize("frequency_penalty", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_invalid_frequency_penalty_raises(patch_central_database, frequency_penalty: float):
+    """Test that invalid frequency_penalty values raise PyritException."""
+    with pytest.raises(PyritException, match="frequency_penalty must be between -2 and 2"):
+        OpenAIChatTarget(
+            model_name="gpt-4",
+            endpoint="https://test.com",
+            api_key="test",
+            frequency_penalty=frequency_penalty,
+        )
+
+
 def test_invalid_top_p_raises(patch_central_database):
     """Test that invalid top_p values raise PyritException."""
     with pytest.raises(PyritException, match="top_p must be between 0 and 1"):
