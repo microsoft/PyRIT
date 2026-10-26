@@ -8,23 +8,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets import SeedDatasetProvider
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 
 
 @pytest.fixture(autouse=True)
-def block_dataset_provider_lookup() -> Generator[AsyncMock, None, None]:
-    """Require inline seeds, mocked preparation, or an explicit fake-provider lookup."""
-    with patch.object(
-        SeedDatasetProvider,
-        "get_providers_by_name_async",
-        new_callable=AsyncMock,
-        side_effect=AssertionError(
-            "Scenario unit tests must not resolve live dataset providers. "
-            "Use inline seeds, mock prepare_async, or patch lookup with fake providers in preparation tests."
-        ),
-    ) as lookup:
-        yield lookup
+def enforce_dataset_isolation(block_dataset_provider_lookup: AsyncMock) -> None:
+    """Apply the shared provider guard to every scenario unit test."""
 
 
 @pytest.fixture

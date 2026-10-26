@@ -7,8 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, SeedDataset
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
     DATASET_DRH_SYSTEM_PROMPTS,
@@ -208,11 +209,12 @@ class TestSystemPromptExtractionAtomicAttacks:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestSystemPromptExtractionTemplateDataset:
-    async def test_extraction_templates_dataset_loads_with_technique_metadata(self):
-        from pyrit.datasets import SeedDatasetProvider
-
-        datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=[DATASET_EXTRACTION_TEMPLATES])
-        seeds = datasets[0].seeds
+    def test_extraction_templates_dataset_loads_with_technique_metadata(self) -> None:
+        dataset = SeedDataset.from_yaml_file(
+            DATASETS_PATH / "seed_datasets" / "local" / "garak" / "system_prompt_extraction.prompt"
+        )
+        assert dataset.dataset_name == DATASET_EXTRACTION_TEMPLATES
+        seeds = dataset.seeds
 
         assert len(seeds) == 28
         techniques = {(seed.metadata or {}).get("technique") for seed in seeds}
