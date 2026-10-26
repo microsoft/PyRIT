@@ -523,13 +523,16 @@ class TestExternalInput:
             cls=_Files,
             raw_args={"label": "x", "data_file": "/uploads/data.bin"},
             external_input=True,
-            allowed_path_params={"data_file"},
+            allowed_path_params=frozenset({"data_file"}),
         )
 
         assert resolved == {"label": "x", "data_file": Path("/uploads/data.bin")}
         with pytest.raises(ValueError, match="'source' of '_Files' names a server file"):
             resolve_constructor_args(
-                cls=_Files, raw_args={"source": "/etc/hosts"}, external_input=True, allowed_path_params={"data_file"}
+                cls=_Files,
+                raw_args={"source": "/etc/hosts"},
+                external_input=True,
+                allowed_path_params=frozenset({"data_file"}),
             )
 
     def test_unknown_parameter_lists_only_parameters_callers_may_set(self) -> None:
@@ -537,13 +540,13 @@ class TestExternalInput:
             resolve_constructor_args(cls=_Files, raw_args={"nope": 1}, external_input=True)
         with pytest.raises(ValueError, match=re.escape("Valid parameters: ['data_file', 'label']")):
             resolve_constructor_args(
-                cls=_Files, raw_args={"nope": 1}, external_input=True, allowed_path_params={"data_file"}
+                cls=_Files, raw_args={"nope": 1}, external_input=True, allowed_path_params=frozenset({"data_file"})
             )
 
     def test_allowing_a_path_does_not_allow_python_objects(self) -> None:
         with pytest.raises(ValueError, match="'handle' of '_Mixed' cannot be set through the API"):
             resolve_constructor_args(
-                cls=_Mixed, raw_args={"handle": None}, external_input=True, allowed_path_params={"handle"}
+                cls=_Mixed, raw_args={"handle": None}, external_input=True, allowed_path_params=frozenset({"handle"})
             )
 
     def test_in_process_callers_keep_passing_paths(self) -> None:

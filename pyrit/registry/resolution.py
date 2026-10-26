@@ -623,7 +623,7 @@ def resolve_constructor_args(
     external_input: bool = False,
     strict_json: bool = False,
     seam_base_type: type | None = None,
-    allowed_path_params: Collection[str] = frozenset(),
+    allowed_path_params: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """
     Resolve a flat argument dict into constructor-ready keyword arguments.
@@ -651,7 +651,7 @@ def resolve_constructor_args(
             contracts; ordinary CLI and Python resolution remain unchanged.
         seam_base_type (type | None): The domain base type whose non-required
             declared references are construction seams (see ``derive_parameters``).
-        allowed_path_params (Collection[str]): External-input parameters that can name a
+        allowed_path_params (frozenset[str]): External-input parameters that can name a
             server file or folder but that the caller has made safe, such as an uploaded
             file the backend stored itself. Defaults to none.
 
@@ -728,7 +728,7 @@ def reject_non_external_params(
     params: Mapping[str, Any],
     declared: Sequence[Parameter],
     owner: str,
-    allowed_path_params: Collection[str] = frozenset(),
+    allowed_path_params: frozenset[str] = frozenset(),
 ) -> None:
     """
     Reject external input that is not an explicitly supported external input.
@@ -742,7 +742,7 @@ def reject_non_external_params(
         params (Mapping[str, Any]): The parameter values supplied by an external caller.
         declared (Sequence[Parameter]): The parameters the component declares.
         owner (str): The owning class or scenario name, for error messages.
-        allowed_path_params (Collection[str]): Parameters that can name a server file or
+        allowed_path_params (frozenset[str]): Parameters that can name a server file or
             folder but that the caller has made safe. Defaults to none.
 
     Raises:

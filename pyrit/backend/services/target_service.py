@@ -230,9 +230,9 @@ class TargetService:
         Returns every target that external callers can build, with the
         constructor parameters they may supply, each described in the form callers
         send it, and the auth modes it supports, all projected from the registry's
-        ``TargetMetadata``; targets that need a Python object for a required
-        parameter are left out, and so are targets that upload local files when the
-        server has no upload folder. Deciding which entries to surface to a
+        ``TargetMetadata``; targets that need a Python object or a path callers may not
+        set for a required parameter are left out, and so are targets that upload local
+        files when the server has no upload folder. Deciding which entries to surface to a
         user is a presentation concern owned by the caller (e.g. the frontend),
         not this service.
 
@@ -259,7 +259,7 @@ class TargetService:
                 description=metadata.class_description or None,
             )
             for metadata in metadata_items
-            if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
+            if self._has_required_params(target_type=metadata.class_name, parameters=metadata.parameters)
             and self._has_upload_directory(target_type=metadata.class_name, upload_directory=upload_directory)
         ]
         return TargetTypeResponse(items=items)
@@ -286,6 +286,24 @@ class TargetService:
             PromptTarget: The caller-owned target.
         """
         return await self.build_from_source_async(binding.to_spec())
+
+    def _has_required_params(self, *, target_type: str, parameters: tuple[Parameter, ...]) -> bool:
+        """
+        Return whether a target type can receive every required parameter when built from API input.
+
+        Args:
+            target_type (str): Registered target class name.
+            parameters (tuple[Parameter, ...]): Constructor parameters derived by the registry.
+
+        Returns:
+            bool: False when a required parameter needs a Python object or a path callers may not set.
+        """
+        path_names = self._allowed_path_params(target_cls=self._registry.get_class(target_type))
+        return all(
+            parameter.is_external_input and (not parameter.mentions_path or parameter.name in path_names)
+            for parameter in parameters
+            if parameter.required
+        )
 
     def _has_upload_directory(self, *, target_type: str, upload_directory: str | None) -> bool:
         """

@@ -40,7 +40,7 @@ from pyrit.registry.resolution import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterator, Mapping
+    from collections.abc import Iterator, Mapping
     from types import ModuleType
     from typing import Self
 
@@ -764,7 +764,7 @@ class Registry(ABC, Generic[T, MetadataT]):
         return cls(**resolved)
 
     def create_instance_from_external_input(
-        self, name: str, *, params: Mapping[str, object], allowed_path_params: Collection[str] = frozenset()
+        self, name: str, *, params: Mapping[str, object], allowed_path_params: frozenset[str] = frozenset()
     ) -> T:
         """
         Build a configured instance from external input such as a REST or CLI request.
@@ -779,7 +779,7 @@ class Registry(ABC, Generic[T, MetadataT]):
         Args:
             name (str): The catalog name to build.
             params (Mapping[str, object]): Constructor arguments from the external caller.
-            allowed_path_params (Collection[str]): Parameters that can name a server file
+            allowed_path_params (frozenset[str]): Parameters that can name a server file
                 or folder but that the caller has made safe. Defaults to none.
 
         Returns:
@@ -877,7 +877,7 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
         params: Mapping[str, object] | None = None,
         registry_metadata: dict[str, Any] | None = None,
         external_input: bool = False,
-        allowed_path_params: Collection[str] = frozenset(),
+        allowed_path_params: frozenset[str] = frozenset(),
     ) -> InstanceT:
         """
         Build and store a configured instance under an explicit name.
@@ -891,7 +891,7 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
             external_input (bool): Whether ``params`` come from an external caller, in which
                 case the instance is built with ``create_instance_from_external_input``.
                 Defaults to False.
-            allowed_path_params (Collection[str]): External parameters that can name a
+            allowed_path_params (frozenset[str]): External parameters that can name a
                 server file or folder but that the caller has made safe. Defaults to none.
 
         Returns:
@@ -967,7 +967,7 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
         source: InstanceT,
         params: Mapping[str, object],
         external_input: bool = False,
-        allowed_path_params: Collection[str] = frozenset(),
+        allowed_path_params: frozenset[str] = frozenset(),
     ) -> InstanceT:
         """
         Build an independent component; never change or register the source.
@@ -977,7 +977,7 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
             params (Mapping[str, object]): Constructor overrides.
             external_input (bool): Whether ``params`` come from an external caller.
                 Defaults to False.
-            allowed_path_params (Collection[str]): External overrides that can name a
+            allowed_path_params (frozenset[str]): External overrides that can name a
                 server file or folder but that the caller has made safe. Defaults to none.
 
         Returns:

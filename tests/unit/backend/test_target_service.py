@@ -552,10 +552,19 @@ class _FileTarget(MockPromptTarget):
         self.data_file = data_file
 
 
+class _RequiredFileTarget(MockPromptTarget):
+    """A target that cannot be built without a file on the server."""
+
+    def __init__(self, *, data_file: Path) -> None:
+        super().__init__()
+        self.data_file = data_file
+
+
 @pytest.mark.usefixtures("patch_central_database")
 async def test_target_path_parameters_are_left_out_and_rejected() -> None:
     service = TargetService()
     service._registry.register_class(_FileTarget)
+    service._registry.register_class(_RequiredFileTarget)
 
     types = await service.list_target_types_async()
     with pytest.raises(ValueError, match="'data_file' of '_FileTarget' names a server file"):
@@ -563,8 +572,9 @@ async def test_target_path_parameters_are_left_out_and_rejected() -> None:
             request=CreateTargetRequest(name="files", type="_FileTarget", params={"data_file": "/etc/hosts"})
         )
 
-    entry = next(item for item in types.items if item.target_type == "_FileTarget")
-    assert "data_file" not in [parameter.name for parameter in entry.parameters]
+    entries = {item.target_type: item for item in types.items}
+    assert "data_file" not in [parameter.name for parameter in entries["_FileTarget"].parameters]
+    assert "_RequiredFileTarget" not in entries
     assert service.get_target_object(target_registry_name="files") is None
 
 

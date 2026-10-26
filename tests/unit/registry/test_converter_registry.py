@@ -241,7 +241,7 @@ class TestConverterRegistryRegisterInstance:
             type_name="ImageOverlayConverter",
             params=params,
             external_input=True,
-            allowed_path_params={"base_image"},
+            allowed_path_params=frozenset({"base_image"}),
         )
         assert registry.instances.get("overlay") is converter
 
@@ -254,7 +254,7 @@ class TestConverterRegistryRegisterInstance:
             registry.recreate_instance(source=source, params=params, external_input=True)
 
         variant = registry.recreate_instance(
-            source=source, params=params, external_input=True, allowed_path_params={"base_image"}
+            source=source, params=params, external_input=True, allowed_path_params=frozenset({"base_image"})
         )
         assert variant.get_identifier().params["base_image"] == "other.png"
         assert source.get_identifier().params["base_image"] == "input.png"
