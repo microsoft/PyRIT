@@ -10,6 +10,7 @@ Harm definitions provide the scale descriptions used for evaluating harm categor
 import logging
 import re
 from pathlib import Path
+from typing import Self
 
 import yaml
 from pydantic import BaseModel, Field
@@ -101,7 +102,7 @@ class HarmDefinition(BaseModel):
         return True
 
     @classmethod
-    def from_yaml(cls, harm_definition_path: str | Path) -> "HarmDefinition":
+    def from_yaml(cls, harm_definition_path: str | Path) -> Self:
         """
         Load and validate a harm definition from a YAML file.
 
@@ -115,7 +116,7 @@ class HarmDefinition(BaseModel):
                 relative to the standard harm_definition directory, or a full path.
 
         Returns:
-            HarmDefinition: The loaded harm definition.
+            Self: The loaded harm definition, as an instance of the class it was called on.
 
         Raises:
             FileNotFoundError: If the harm definition file does not exist.

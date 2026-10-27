@@ -152,13 +152,12 @@ export function useConversationMessages({
       markConversationLoaded(convId)
     } catch (cause: unknown) {
       if (!isCurrentLoad() || viewedConvRef.current !== convId) { return }
-      if (findingEvidenceId) {
-        const error = toApiError(cause)
-        setConversationLoadIssue({
-          conversationId: convId, unavailable: error.status === 404,
-          detail: error.status === 404 ? 'Evidence unavailable' : `Could not load conversation: ${error.detail}`,
-        })
-      }
+      const error = toApiError(cause)
+      setConversationLoadIssue({
+        conversationId: convId, unavailable: error.status === 404,
+        detail: error.status === 404 && findingEvidenceId
+          ? 'Evidence unavailable' : `Could not load conversation: ${error.detail}`,
+      })
       // Initial-load failures must not show another conversation's transcript.
       // Refresh failures keep the already-loaded transcript and recovery aligned.
       if (loadedConversationIdRef.current !== convId) {

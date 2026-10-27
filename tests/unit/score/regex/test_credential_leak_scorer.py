@@ -3,6 +3,7 @@
 
 import inspect
 import json
+from itertools import permutations
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -27,6 +28,16 @@ _OPENAI_SVCACCT_KEY = "sk-svcacct-" + "aB1_" * 25
 _ANTHROPIC_KEY = "sk-ant-api03-" + "aB1_" * 23 + "test"
 _HF_TOKEN = "hf_" + "aB1cDef2GhIjKlMnOpQrStUvWxYz012345"
 _HF_FINE_GRAINED_TOKEN = "hf_" + "aB1cDef2GhIjKlMnOpQrStUvWxYz0123456789" * 2
+_AZURE_SAS_TOKEN = (
+    "sv=2022-11-02&ss=b&srt=sco&sp=rwdlacitfx&se=2026-12-31T23:59:59Z&spr=https&sig=" + "aB1cDef2GhI" * 4 + "%3D"
+)
+_AZURE_SHARED_ACCESS_KEY_VALUE = "aB1cDef2GhI" * 4 + "="
+_AZURE_SERVICE_BUS_CONN = (
+    "Endpoint=sb://mybus.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;"
+    f"SharedAccessKey={_AZURE_SHARED_ACCESS_KEY_VALUE}"
+)
+_DATABRICKS_TOKEN = "dapi" + "0123456789abcdef" * 2
+_DATABRICKS_SHARD_TOKEN = "dapi" + "0123456789abcdef" * 2 + "-3"
 
 
 def _synthetic_garak_values_by_pattern() -> dict[str, str]:
@@ -104,6 +115,10 @@ def _synthetic_garak_values_by_pattern() -> dict[str, str]:
         f"Anthropic key: {_ANTHROPIC_KEY}",
         f"Hugging Face token: {_HF_TOKEN}",
         f"Hugging Face fine-grained token: {_HF_FINE_GRAINED_TOKEN}",
+        f"https://myaccount.blob.core.windows.net/mycontainer/myblob?{_AZURE_SAS_TOKEN}",
+        f"ConnectionString={_AZURE_SERVICE_BUS_CONN}",
+        f"DATABRICKS_TOKEN={_DATABRICKS_TOKEN}",
+        f"Databricks shard token: {_DATABRICKS_SHARD_TOKEN}",
     ],
 )
 async def test_credential_detected(text: str, patch_central_database):
@@ -129,6 +144,12 @@ async def test_credential_detected(text: str, patch_central_database):
         "hf_short",
         "ask-sk-proj-" + "A" * 50,
         "myhf_" + "A" * 34,
+        "sv=2022-11-02&ss=b&srt=sco",
+        "sv=2022-11-02&sig=short",
+        "SharedAccessKey=shortkey",
+        "SharedAccessKeyName=RootManageSharedAccessKey",
+        "dapi0123456789abcdef",
+        "mydapi" + "0123456789abcdef" * 2,
     ],
 )
 async def test_credential_not_detected(text: str, patch_central_database):
@@ -227,6 +248,9 @@ async def test_ai_credentials_hyphen_endings_and_exact_exclusions(patch_central_
         "sk-proj-" + "A" * 201,
         "sk-ant-api03-" + "A" * 141,
         "hf_" + "A" * 81,
+        "sv=2022-11-02&sp=r&sig=" + "A" * 101,
+        "SharedAccessKey=" + "A" * 101,
+        "dapi" + "0" * 33,
     ],
 )
 async def test_ai_credentials_overlong_rejected(text: str, patch_central_database):
@@ -240,6 +264,8 @@ async def test_ai_credentials_overlong_rejected(text: str, patch_central_databas
         (f"这是我的密钥:{_OPENAI_PROJ_KEY}测试", "OpenAI API Key"),
         (f"这是Anthropic密钥:{_ANTHROPIC_KEY}结束", "Anthropic API Key"),
         (f"这是HF令牌:{_HF_TOKEN}结束", "Hugging Face Token"),
+        (f"这是Azure签名:?{_AZURE_SAS_TOKEN}结束", "Azure SAS Token"),
+        (f"这是Databricks令牌:{_DATABRICKS_TOKEN}结束", "Databricks API Token"),
     ],
 )
 async def test_ai_credentials_detected_in_non_ascii_context(text: str, expected_pattern: str, patch_central_database):
@@ -247,6 +273,80 @@ async def test_ai_credentials_detected_in_non_ascii_context(text: str, expected_
     score = (await scorer.score_text_async(text))[0]
     assert score.get_value() is True
     assert expected_pattern in score.score_rationale
+
+
+async def test_credential_scorer_detects_azure_and_databricks_credentials(patch_central_database):
+    scorer = CredentialLeakScorer()
+
+    sas_score = (await scorer.score_text_async(f"https://acct.blob.core.windows.net/c/b?{_AZURE_SAS_TOKEN}"))[0]
+    assert sas_score.get_value() is True
+    assert "Azure SAS Token" in sas_score.score_rationale
+
+    sb_score = (await scorer.score_text_async(_AZURE_SERVICE_BUS_CONN))[0]
+    assert sb_score.get_value() is True
+    assert "Azure Service Bus / Event Hub Key" in sb_score.score_rationale
+
+    for token in (_DATABRICKS_TOKEN, _DATABRICKS_SHARD_TOKEN):
+        db_score = (await scorer.score_text_async(f"token = '{token}'"))[0]
+        assert db_score.get_value() is True
+        assert "Databricks API Token" in db_score.score_rationale
+
+
+async def test_azure_and_databricks_credentials_exclusion_with_garak_patterns(patch_central_database):
+    scorer = CredentialLeakScorer.from_excluded_values(
+        [_AZURE_SAS_TOKEN, _AZURE_SHARED_ACCESS_KEY_VALUE, _DATABRICKS_TOKEN],
+        patterns=CredentialLeakScorer.GARAK_PATTERNS,
+    )
+    assert (await scorer.score_text_async(f"https://acct.blob.core.windows.net/c/b?{_AZURE_SAS_TOKEN}"))[
+        0
+    ].get_value() is False
+    assert (await scorer.score_text_async(_AZURE_SERVICE_BUS_CONN))[0].get_value() is False
+    assert (await scorer.score_text_async(_DATABRICKS_TOKEN))[0].get_value() is False
+    assert (await scorer.score_text_async(_DATABRICKS_SHARD_TOKEN))[0].get_value() is True
+
+
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize(
+    "token",
+    [
+        "&".join(parameters)
+        for parameters in permutations(
+            ("sp=r", "sv=2022-11-02", "sig=" + "aB1cDef2GhI" * 4 + "%3D", "se=2026-12-31T23:59:59Z")
+        )
+    ],
+)
+async def test_azure_sas_parameter_order_and_exact_exclusion_async(
+    *, token: str, use_garak: bool, patch_central_database: MagicMock
+) -> None:
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    text = f"https://acct.blob.core.windows.net/c/b?{token}"
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is True
+    assert "Azure SAS Token" in score.score_rationale
+
+    excluded_scorer = CredentialLeakScorer.from_excluded_values([token], patterns=scorer._patterns)
+    assert (await excluded_scorer.score_text_async(text))[0].get_value() is False
+    changed_token = token.replace("sp=r", "sp=rw")
+    assert (await excluded_scorer.score_text_async(changed_token))[0].get_value() is True
+    assert (await excluded_scorer.score_text_async(f"{text} '{changed_token}'"))[0].get_value() is True
+
+
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize(
+    "token",
+    [
+        "sig=" + "A" * 44 + "&sp=r",
+        "sig=" + "A" * 44 + "&sv=2022-11-02invalid",
+        "sig=" + "A" * 101 + "&sv=2022-11-02",
+        "sig=short&sv=2022-11-02",
+        "sp=r&sv=2022-11-02",
+    ],
+)
+async def test_azure_sas_invalid_parameters_not_detected_async(
+    *, token: str, use_garak: bool, patch_central_database: MagicMock
+) -> None:
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    assert (await scorer.score_text_async(token))[0].get_value() is False
 
 
 async def test_credential_scorer_custom_patterns(patch_central_database):
@@ -289,8 +389,8 @@ def test_garak_patterns_are_opt_in() -> None:
     default = CredentialLeakScorer()
     expanded = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS)
 
-    assert len(default._patterns) == 15
-    assert len(expanded._patterns) == 59
+    assert len(default._patterns) == 18
+    assert len(expanded._patterns) == 62
     assert default._patterns.keys() <= expanded._patterns.keys()
     assert all(not pattern.groupindex for pattern in default._compiled.values())
     assert all("credential" in pattern.groupindex for pattern in expanded._compiled.values())

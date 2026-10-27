@@ -10,7 +10,7 @@ import weakref
 from collections.abc import AsyncGenerator, Generator
 from contextlib import closing, contextmanager
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 import pytest
@@ -19,6 +19,7 @@ from sqlalchemy.engine import ExceptionContext, ExecutionContext
 from sqlalchemy.pool import ConnectionPoolEntry, Pool
 
 from pyrit.common.path import DATASETS_PATH
+from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, SQLiteMemory, migration
 from pyrit.models import SeedDataset
 from test_support.fixtures import use_sqlite_memory
@@ -77,6 +78,24 @@ def _note_sqlite_busy_wait(context: ExceptionContext) -> None:
             f"SQLite returned SQLITE_BUSY after {time.monotonic() - started:.2f} s. A wait near the busy "
             "timeout means that another connection kept the lock. A wait near 0 s means that SQLite did not wait."
         )
+
+@pytest.fixture
+def block_dataset_provider_lookup() -> Generator[AsyncMock, None, None]:
+    """Block live dataset lookup and discovery unless a test explicitly supplies fake providers."""
+    message = (
+        "Unit tests must not resolve live dataset providers. "
+        "Use inline seeds, mock prepare_async, or patch lookup with fake providers in preparation tests."
+    )
+    with (
+        patch.object(
+            SeedDatasetProvider,
+            "get_providers_by_name_async",
+            new_callable=AsyncMock,
+            side_effect=AssertionError(message),
+        ) as lookup,
+        patch.object(SeedDatasetProvider, "_materialize_builtin_providers", side_effect=AssertionError(message)),
+    ):
+        yield lookup
 
 
 if sys.platform == "win32":

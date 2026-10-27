@@ -38,6 +38,11 @@ def corpus() -> list[Seed[Any]]:
     return list(SeedDataset.from_yaml_file(path).seeds)
 
 
+@pytest.fixture
+def garak_dataset_names() -> list[str]:
+    return ["garak_divergence"]
+
+
 def _groups(scenario: Divergence) -> list[AttackSeedGroup]:
     return [group for attack in scenario._atomic_attacks for group in attack.seed_groups]
 
@@ -57,11 +62,14 @@ async def _initialize_async(
             "scenario_techniques": techniques,
         }
     )
-    with patch.object(
-        DivergenceDatasetConfiguration,
-        "_collect_named_seeds_async",
-        new_callable=AsyncMock,
-        return_value={"garak_divergence": corpus},
+    with (
+        patch.object(DivergenceDatasetConfiguration, "prepare_async", new_callable=AsyncMock),
+        patch.object(
+            DivergenceDatasetConfiguration,
+            "_collect_named_seeds_async",
+            new_callable=AsyncMock,
+            return_value={"garak_divergence": corpus},
+        ),
     ):
         await scenario.initialize_async()
 
@@ -149,6 +157,7 @@ class TestDivergence:
             assert attack.attack_technique.attack._objective_scorer is scenario._objective_scorer
 
     @pytest.mark.parametrize("size", [None, 1, 7, 36, "all"])
+    @pytest.mark.usefixtures("mock_dataset_preparation")
     async def test_runtime_budget_matches_estimate(
         self, corpus: list[Seed[Any]], size: int | Literal["all"] | None
     ) -> None:
@@ -257,6 +266,7 @@ class TestDivergence:
         with pytest.raises(ValueError, match="unsupported techniques"):
             await scenario.initialize_async()
 
+    @pytest.mark.usefixtures("mock_garak_dataset_fetch")
     async def test_real_local_dataset_loads(self) -> None:
         scenario = Divergence()
         scenario.set_params_from_args(args={"objective_target": MockPromptTarget()})
