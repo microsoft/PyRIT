@@ -50,7 +50,7 @@ from pyrit.converter import (
     TranslationConverter,
 )
 from pyrit.memory import SQLiteMemory
-from pyrit.models import JSONValue, Operation, PromptDataType, RequestGenerationConfig, TemperatureRequestInfo
+from pyrit.models import JSONValue, Operation, PromptDataType, RequestGenerationConfig, RequestGenerationInfo
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import HuggingFaceChatTarget, OpenAIChatTarget
 from pyrit.prompt_target.common.utils import _get_rate_limit_lock
@@ -640,8 +640,9 @@ class TestTemporaryComponents:
         finally:
             await source.cleanup_target_async()
 
+    @pytest.mark.parametrize("legacy", [False, True])
     async def test_runtime_temperature_preserves_saved_variant_binding_async(
-        self, sqlite_instance: SQLiteMemory
+        self, sqlite_instance: SQLiteMemory, legacy: bool
     ) -> None:
         source = OpenAIChatTarget(
             model_name="gpt-4o", endpoint="https://example.test/v1", api_key="test-only-key", temperature=0.2
@@ -677,7 +678,11 @@ class TestTemporaryComponents:
                             pieces=[
                                 MessagePieceRequest(
                                     original_value="hello",
-                                    prompt_metadata=RequestGenerationConfig(temperature=temperature).to_metadata(),
+                                    prompt_metadata=(
+                                        {"request_temperature": temperature}
+                                        if legacy
+                                        else RequestGenerationConfig(temperature=temperature).to_metadata()
+                                    ),
                                 )
                             ],
                         ),
@@ -689,9 +694,11 @@ class TestTemporaryComponents:
             assert TargetBinding.from_metadata(saved.metadata) == binding
             messages = await sqlite_instance.get_conversation_messages_async(conversation_id=created.conversation_id)
             for message, expected in zip(messages, (0, 0, 0.8, 0.8), strict=True):
-                info = TemperatureRequestInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+                assert "_pyrit_temperature" not in message.get_piece().prompt_metadata
+                assert "request_temperature" not in message.get_piece().prompt_metadata
+                info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
                 assert info is not None
-                assert info.resolved_temperature == expected
+                assert info.temperature.resolved == expected
             assert source.get_identifier().hash == binding.source_hash
             assert source._temperature == 0.2
         finally:

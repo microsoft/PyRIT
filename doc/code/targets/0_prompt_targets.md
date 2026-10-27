@@ -116,8 +116,10 @@ unsupported in this implementation. Nested settings take precedence over top-lev
 settings. Omitted effort relies on the profile or deployment declaration covering
 the model's default mode. Unsupported overrides fail before generation I/O.
 
-The canonical input key is `request_temperature`. Zero is valid. Missing or null
-uses the target's configured settings. Values must be finite numbers (not booleans
+The canonical input is `{"request_generation_config": {"temperature": 0}}`.
+`RequestGenerationConfig` owns this envelope and currently accepts only temperature.
+Zero is valid. Missing or null temperature uses the target's configured settings.
+Values must be finite numbers (not booleans
 or numeric strings); this adapter accepts the range 0 through 2. Put the value on
 one current message piece or the same value on several pieces; conflicting values
 are rejected before normalization. History never selects the next temperature.
@@ -128,14 +130,43 @@ Transport retries reuse the first attempt's recorded temperature resolution, eve
 if request options or configured defaults change before a retry. A later logical
 send resolves afresh; the public send boundary clears copied or stale evidence.
 
-`TemperatureRequestInfo` reads the framework-authored `_pyrit_temperature` metadata
-on the saved request and responses. It records the requested override, resolved
-parameter, source (`request`, `target_default`, or `provider_default`), and originating
-request-piece IDs. Configured passthrough values count as target defaults. When no
-temperature is specified, the provider's numeric default stays unknown. Old messages
+`RequestGenerationInfo` reads the framework-authored `_pyrit_generation` metadata
+on the saved request and responses. Its `temperature` field is a `TemperatureResolution`
+containing `requested`, `resolved`, and `source` (`request`, `target_default`, or
+`provider_default`). The originating `request_piece_ids` belong to the outer record:
+
+```json
+{
+  "_pyrit_generation": {
+    "temperature": {"requested": 0, "resolved": 0, "source": "request"},
+    "request_piece_ids": ["originating-piece-id"]
+  }
+}
+```
+
+This records submitted parameters, not provider success or internal sampling behavior.
+Configured passthrough values count as target defaults. When no temperature is
+specified, `requested` and `resolved` are null with source `provider_default` if
+the target also has no default. The provider's numeric default stays unknown. Old messages
 without evidence remain readable and show **not recorded**, not a guessed value.
 Use `PromptNormalizer` for persistence; direct target sends return evidence but do
 not themselves write messages to memory.
+
+Readers also accept the earlier draft's flat `request_temperature` input and
+`_pyrit_temperature` evidence. Missing/null temperatures remain non-overrides;
+explicit old and new input values must agree, including across pieces. If both
+evidence formats are present, their values and request associations must agree.
+Malformed or contradictory metadata is rejected rather than silently selecting
+one format. New sends write the canonical envelopes; reading history does not
+rewrite stored messages. Copied evidence in either format is cleared before a send.
+SDK consumers of the earlier draft should replace `TemperatureRequestInfo` with
+`RequestGenerationInfo` and access `info.temperature.requested`, `.resolved`, and `.source`.
+
+Future supported generation parameters can add explicit typed fields to
+`RequestGenerationConfig` and their own resolution records to `RequestGenerationInfo`.
+Each parameter needs its own source, provider/mode validation, conflict checks, and
+retry behavior. This is not an arbitrary provider-options dictionary; JSON response
+and web-search policies remain separate contracts. Only temperature is implemented.
 
 In Chat, the top temperature control applies to future sends; clearing it restores
 the target default. It does not build a temporary target or change an attack's target
@@ -156,6 +187,9 @@ Still to decide/implement:
 - Update effective-value evaluation grouping, resume checks, and replay compatibility together;
   equivalent fixed defaults/overrides must group consistently without relabeling adaptive paths.
 - Agree on richer history-editor/copy/replay UX and whether to persist composer preferences.
+  The editor's legacy `buildTemperatureTarget` save path still exists; this draft disables
+  its temperature control rather than removing all temporary-target construction.
+  Saved-binding reconstruction and generic registry construction remain supported.
 - Extend scorer-isolation and cross-provider regression coverage and confirm the release split
   with the story owners. Existing target hashes are preserved by excluding the additive
   runtime-support flag from configuration identity; no historical identifiers are rewritten.

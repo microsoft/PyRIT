@@ -2821,7 +2821,7 @@ describe("ChatWindow Integration", () => {
     expect(targetsApi.buildTarget).not.toHaveBeenCalled();
     expect(mockedAttacksApi.createAttack.mock.calls[0][0].target_binding).toBeUndefined();
     expect(mockedAttacksApi.submitMessageSend.mock.calls[0][1].pieces[0].prompt_metadata)
-      .toEqual({ request_temperature: 0.8 });
+      .toEqual({ request_generation_config: { temperature: 0.8 } });
     expect(onConversationCreated.mock.calls[0][3]).toBeUndefined();
     expect(source.identifier.hash).not.toBe("private-hash");
     rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
@@ -2958,7 +2958,9 @@ describe("ChatWindow Integration", () => {
       await user.click(screen.getByRole("button", { name: "Send message" }));
       await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(index + 1));
       const sent = mockedAttacksApi.submitMessageSend.mock.calls[index][1];
-      expect(sent.pieces[0].prompt_metadata?.request_temperature).toBe(value ? Number(value) : undefined);
+      expect(sent.pieces[0].prompt_metadata).toEqual(
+        value ? { request_generation_config: { temperature: Number(value) } } : undefined,
+      );
       expect(sent.target_binding).toBeUndefined();
     }
     expect(target.binding).toEqual(binding);

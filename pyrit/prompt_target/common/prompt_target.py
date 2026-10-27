@@ -20,9 +20,9 @@ from pyrit.models import (
     Message,
     MessagePiece,
     RequestGenerationConfig,
+    RequestGenerationInfo,
     RequestTraceContext,
     TargetIdentifier,
-    TemperatureRequestInfo,
     WebSearchConfig,
     WebSearchMode,
 )
@@ -311,10 +311,14 @@ class PromptTarget(Identifiable):
         """
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
-            piece.prompt_metadata.pop(TemperatureRequestInfo.METADATA_KEY, None)
+            RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
             piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
         message.validate()
         generation_config = self.validate_request_generation_config(message)
+        for piece in message.message_pieces:
+            piece_config = RequestGenerationConfig.from_metadata(metadata=piece.prompt_metadata)
+            RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
+            piece.prompt_metadata.update(piece_config.to_metadata())
         web_search_config = self._get_web_search_config(message)
         self.validate_web_search_config(web_search_config)
         conversation_id = message.get_piece().conversation_id or ""
@@ -336,8 +340,8 @@ class PromptTarget(Identifiable):
             # outbound message selects this send's options, never normalized history.
             normalized_request = normalized_conversation[-1]
             for piece in normalized_request.message_pieces:
-                piece.prompt_metadata.pop(RequestGenerationConfig.METADATA_KEY, None)
-                piece.prompt_metadata.pop(TemperatureRequestInfo.METADATA_KEY, None)
+                RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
+                RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
             normalized_request.get_piece().prompt_metadata.update(generation_config.to_metadata())
             if self._get_web_search_config(normalized_request) != web_search_config:
                 raise ValueError("Normalization changed the request's web search policy.")
@@ -350,15 +354,15 @@ class PromptTarget(Identifiable):
                 try:
                     response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
                 finally:
-                    temperature_info = TemperatureRequestInfo.from_metadata(
+                    generation_info = RequestGenerationInfo.from_metadata(
                         metadata=normalized_request.get_piece().prompt_metadata
                     )
-                    if temperature_info is not None:
-                        temperature_info = temperature_info.model_copy(
+                    if generation_info is not None:
+                        generation_info = generation_info.model_copy(
                             update={"request_piece_ids": tuple(str(piece.id) for piece in message.message_pieces)}
                         )
                         for piece in message.message_pieces:
-                            piece.prompt_metadata.update(temperature_info.to_metadata())
+                            piece.prompt_metadata.update(generation_info.to_metadata())
             for response_message in response:
                 for piece in response_message.message_pieces:
                     piece.prompt_metadata = {
@@ -366,10 +370,10 @@ class PromptTarget(Identifiable):
                         for key, value in piece.prompt_metadata.items()
                         if key not in (RequestTraceContext.METADATA_KEY, RequestTraceContext.REQUEST_METADATA_KEY)
                     }
-                    piece.prompt_metadata.pop(RequestGenerationConfig.METADATA_KEY, None)
-                    piece.prompt_metadata.pop(TemperatureRequestInfo.METADATA_KEY, None)
-                    if temperature_info is not None:
-                        piece.prompt_metadata.update(temperature_info.to_metadata())
+                    RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
+                    RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
+                    if generation_info is not None:
+                        piece.prompt_metadata.update(generation_info.to_metadata())
             send_succeeded = True
             return response
         finally:

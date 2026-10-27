@@ -19,7 +19,8 @@ from pyrit.models import (
     Message,
     MessagePiece,
     RequestGenerationConfig,
-    TemperatureRequestInfo,
+    RequestGenerationInfo,
+    TemperatureResolution,
 )
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
@@ -281,19 +282,21 @@ class OpenAIChatTarget(OpenAITarget):
         message_piece: MessagePiece = message.message_pieces[0]
         # The public send boundary clears incoming evidence. Only this logical send's
         # first provider attempt can have populated it; retries retain its resolution.
-        temperature_info = TemperatureRequestInfo.from_metadata(metadata=message_piece.prompt_metadata)
+        generation_info = RequestGenerationInfo.from_metadata(metadata=message_piece.prompt_metadata)
         json_config = self._get_json_response_config(message_piece=message_piece)
 
         logger.info(f"Sending the following prompt to the prompt target: {message}")
 
         body = await self._construct_request_body_async(conversation=normalized_conversation, json_config=json_config)
-        if temperature_info is None:
+        if generation_info is None:
             generation_config = self.validate_request_generation_config(message)
-            temperature_info = self._resolve_request_temperature(body=body, config=generation_config)
+            generation_info = RequestGenerationInfo(
+                temperature=self._resolve_request_temperature(body=body, config=generation_config)
+            )
         else:
-            self._apply_request_temperature(body=body, temperature=temperature_info.resolved_temperature)
+            self._apply_request_temperature(body=body, temperature=generation_info.temperature.resolved)
         # Record only after preparation succeeds and the transport is about to be invoked.
-        message_piece.prompt_metadata.update(temperature_info.to_metadata())
+        message_piece.prompt_metadata.update(generation_info.to_metadata())
         response = await self._handle_openai_request_async(
             api_call=lambda: self._client.chat.completions.create(**body),
             request=message,
@@ -314,14 +317,14 @@ class OpenAIChatTarget(OpenAITarget):
 
     def _resolve_request_temperature(
         self, *, body: dict[str, Any], config: RequestGenerationConfig
-    ) -> TemperatureRequestInfo:
+    ) -> TemperatureResolution:
         nested = body.get("extra_body") or {}
         if config.temperature is not None:
             self._apply_request_temperature(body=body, temperature=config.temperature)
         resolved = nested.get("temperature", body.get("temperature"))
-        return TemperatureRequestInfo(
-            requested_temperature=config.temperature,
-            resolved_temperature=resolved,
+        return TemperatureResolution(
+            requested=config.temperature,
+            resolved=resolved,
             source=(
                 "request"
                 if config.temperature is not None

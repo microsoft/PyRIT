@@ -59,24 +59,36 @@ describe("MessageList", () => {
     ).toBeInTheDocument();
   });
 
-  it.each([
-    [0, "request", "Temperature: 0 (request override)"],
-    [0.8, "target_default", "Temperature: 0.8 (target default)"],
-    [null, "provider_default", "Temperature: provider default (unknown)"],
-    [undefined, undefined, "Temperature: not recorded"],
-  ])("renders persisted temperature %s from %s", (value, source, expected) => {
-    const backendMessage: BackendMessage = {
-      turn_number: 0, role: "user", created_at: "2026-02-15T00:00:00Z",
-      message_pieces: [{
-        id: "request-piece", original_value_data_type: "text", converted_value_data_type: "text",
-        original_value: "hello", converted_value: "hello", scores: [],
-        prompt_metadata: source === undefined ? {} : {
-          _pyrit_temperature: { resolved_temperature: value, source },
-        },
-      }],
-    };
-    render(<TestWrapper><MessageList messages={[backendMessageToFrontend(backendMessage)]} /></TestWrapper>);
-    expect(screen.getByText(expected)).toBeInTheDocument();
+  describe.each([false, true])("generation evidence (legacy: %s)", (legacy: boolean) => {
+    it.each([
+      [0, "request", "Temperature: 0 (request override)"],
+      [0.8, "target_default", "Temperature: 0.8 (target default)"],
+      [null, "provider_default", "Temperature: provider default (unknown)"],
+      [undefined, undefined, "Temperature: not recorded"],
+    ])("renders persisted temperature %s from %s", (
+      value: number | null | undefined, source: string | undefined, expected: string,
+    ) => {
+      const backendMessage: BackendMessage = {
+        turn_number: 0, role: "user", created_at: "2026-02-15T00:00:00Z",
+        message_pieces: [{
+          id: "request-piece", original_value_data_type: "text", converted_value_data_type: "text",
+          original_value: "hello", converted_value: "hello", scores: [],
+          prompt_metadata: source === undefined ? {} : legacy ? {
+            _pyrit_temperature: {
+              requested_temperature: source === "request" ? value : null, resolved_temperature: value, source,
+              request_piece_ids: ["request-piece"],
+            },
+          } : {
+            _pyrit_generation: {
+              temperature: { requested: source === "request" ? value : null, resolved: value, source },
+              request_piece_ids: ["request-piece"],
+            },
+          },
+        }],
+      };
+      render(<TestWrapper><MessageList messages={[backendMessageToFrontend(backendMessage)]} /></TestWrapper>);
+      expect(screen.getByText(expected)).toBeInTheDocument();
+    });
   });
 
   it.each(["Copy to next message", "Branch conversation", "Branch attack"])("copies through one menu to %s", async (destination: string) => {

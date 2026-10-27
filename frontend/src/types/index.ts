@@ -159,6 +159,23 @@ export interface MessageMediaDisplayPiece {
 
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
 
+/** Provider-neutral options for one outbound send, not target defaults. */
+export interface RequestGenerationConfig {
+  readonly temperature?: number | null
+}
+
+export interface TemperatureResolution {
+  readonly requested: number | null
+  readonly resolved: number | null
+  readonly source: 'request' | 'target_default' | 'provider_default'
+}
+
+/** Framework-authored parameter evidence associated with the originating request. */
+export interface RequestGenerationInfo {
+  readonly temperature: TemperatureResolution
+  readonly request_piece_ids: readonly string[]
+}
+
 export interface Message {
   role: 'user' | 'assistant' | 'simulated_assistant' | 'tool' | 'simulated_tool' | 'system' | 'developer'
   content: string

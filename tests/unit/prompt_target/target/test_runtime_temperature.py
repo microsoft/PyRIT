@@ -20,9 +20,9 @@ from pyrit.models import (
     MessagePiece,
     MessageScorable,
     RequestGenerationConfig,
+    RequestGenerationInfo,
     ScoringExpectation,
     TargetCapabilities,
-    TemperatureRequestInfo,
     WebSearchConfig,
     WebSearchMode,
 )
@@ -58,12 +58,15 @@ def completion() -> ChatCompletion:
 
 
 @pytest.mark.parametrize("temperature", [None, 0, 0.9, 2])
+@pytest.mark.parametrize("legacy", [False, True])
 async def test_send_records_effective_temperature_without_changing_identity_async(
-    target: OpenAIChatTarget, sqlite_instance: SQLiteMemory, temperature: float | None
+    target: OpenAIChatTarget, sqlite_instance: SQLiteMemory, temperature: float | None, legacy: bool
 ) -> None:
     identifier = target.get_identifier()
     response = completion()
     message = request(temperature)
+    if legacy:
+        message.get_piece().prompt_metadata = {"request_temperature": temperature}
     with patch.object(target._client.chat.completions, "create", new_callable=AsyncMock, return_value=response) as send:
         result = await PromptNormalizer().send_prompt_async(
             message=message, target=target, conversation_id=message.get_piece().conversation_id
@@ -75,24 +78,32 @@ async def test_send_records_effective_temperature_without_changing_identity_asyn
     saved = await sqlite_instance.get_conversation_messages_async(conversation_id=result.get_piece().conversation_id)
     assert len(saved) == 2
     for stored in saved:
-        info = TemperatureRequestInfo.from_metadata(metadata=stored.get_piece().prompt_metadata)
+        assert "_pyrit_temperature" not in stored.get_piece().prompt_metadata
+        assert "request_temperature" not in stored.get_piece().prompt_metadata
+        info = RequestGenerationInfo.from_metadata(metadata=stored.get_piece().prompt_metadata)
         assert info is not None
-        assert info.requested_temperature == temperature
-        assert info.resolved_temperature == expected
-        assert info.source == ("target_default" if temperature is None else "request")
+        assert info.temperature.requested == temperature
+        assert info.temperature.resolved == expected
+        assert info.temperature.source == ("target_default" if temperature is None else "request")
         assert info.request_piece_ids == (str(saved[0].get_piece().id),)
+    assert (
+        RequestGenerationConfig.from_metadata(metadata=saved[0].get_piece().prompt_metadata).temperature == temperature
+    )
     assert RequestGenerationConfig.METADATA_KEY not in result.get_piece().prompt_metadata
 
 
+@pytest.mark.parametrize("legacy", [False, True])
 @pytest.mark.parametrize("value", [True, "0.3", float("nan"), float("inf"), -0.1, 2.1])
-async def test_invalid_override_fails_before_io_async(target: OpenAIChatTarget, value: Any) -> None:
+async def test_invalid_override_fails_before_io_async(target: OpenAIChatTarget, value: Any, legacy: bool) -> None:
     message = request()
-    message.get_piece().prompt_metadata["request_temperature"] = value
+    message.get_piece().prompt_metadata.update(
+        {"request_temperature": value} if legacy else {"request_generation_config": {"temperature": value}}
+    )
     with patch.object(target._client.chat.completions, "create", new_callable=AsyncMock) as send:
         with pytest.raises(ValueError):
             await target.send_prompt_async(message=message)
     send.assert_not_called()
-    assert TemperatureRequestInfo.METADATA_KEY not in message.get_piece().prompt_metadata
+    assert RequestGenerationInfo.METADATA_KEY not in message.get_piece().prompt_metadata
 
 
 @pytest.mark.parametrize("mode", [WebSearchMode.DEFAULT, WebSearchMode.DISABLED])
@@ -112,10 +123,10 @@ async def test_runtime_temperature_preserves_web_search_policy_async(
     stored = await sqlite_instance.get_conversation_messages_async(conversation_id=response.get_piece().conversation_id)
     metadata = stored[0].get_piece().prompt_metadata
     assert WebSearchConfig.from_metadata(metadata=metadata) == policy
-    info = TemperatureRequestInfo.from_metadata(metadata=metadata)
+    info = RequestGenerationInfo.from_metadata(metadata=metadata)
     assert info is not None
-    assert info.resolved_temperature == 0
-    assert info.source == "request"
+    assert info.temperature.resolved == 0
+    assert info.temperature.source == "request"
 
 
 async def test_runtime_temperature_does_not_bypass_required_web_search_async(target: OpenAIChatTarget) -> None:
@@ -125,7 +136,7 @@ async def test_runtime_temperature_does_not_bypass_required_web_search_async(tar
         with pytest.raises(ValueError, match="cannot enforce web search"):
             await target.send_prompt_async(message=message)
     send.assert_not_called()
-    assert TemperatureRequestInfo.METADATA_KEY not in message.get_piece().prompt_metadata
+    assert RequestGenerationInfo.METADATA_KEY not in message.get_piece().prompt_metadata
 
 
 async def test_temperature_normalization_retains_web_search_policy_guard_async(target: OpenAIChatTarget) -> None:
@@ -276,9 +287,9 @@ async def test_nested_passthrough_precedence_at_http_boundary_async(patch_centra
         for temperature in (None, 0):
             message = request(temperature)
             await target.send_prompt_async(message=message)
-            info = TemperatureRequestInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+            info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
             assert info is not None
-            assert info.resolved_temperature == bodies[-1]["temperature"]
+            assert info.temperature.resolved == bodies[-1]["temperature"]
     assert [body["temperature"] for body in bodies] == [1.7, 0]
     assert all(body["metadata"] == {"custom": "preserved"} for body in bodies)
     assert extras == original
@@ -295,10 +306,10 @@ async def test_unknown_provider_default_is_omitted_and_recorded_async(target: Op
     ) as send:
         await target.send_prompt_async(message=message)
     assert "temperature" not in send.call_args.kwargs
-    info = TemperatureRequestInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+    info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
     assert info is not None
-    assert info.source == "provider_default"
-    assert info.resolved_temperature is None
+    assert info.temperature.source == "provider_default"
+    assert info.temperature.resolved is None
 
 
 async def test_current_piece_option_survives_normalization_without_history_leak_async(target: OpenAIChatTarget) -> None:
@@ -312,6 +323,7 @@ async def test_current_piece_option_survives_normalization_without_history_leak_
         )
     )
     normalized = request(1.9)
+    normalized.get_piece().prompt_metadata["request_temperature"] = 1.8
     response = completion()
     with (
         patch.object(target, "_get_normalized_conversation_async", new_callable=AsyncMock, return_value=[normalized]),
@@ -322,9 +334,9 @@ async def test_current_piece_option_survives_normalization_without_history_leak_
         await target.send_prompt_async(message=request())
         assert send.call_args.kwargs["temperature"] == 0.2
     for piece in current.message_pieces:
-        info = TemperatureRequestInfo.from_metadata(metadata=piece.prompt_metadata)
+        info = RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)
         assert info is not None
-        assert info.resolved_temperature == 0
+        assert info.temperature.resolved == 0
 
 
 async def test_concurrent_sends_are_isolated_async(target: OpenAIChatTarget) -> None:
@@ -339,6 +351,7 @@ async def test_concurrent_sends_are_isolated_async(target: OpenAIChatTarget) -> 
 async def test_caller_cannot_supply_temperature_evidence_async(target: OpenAIChatTarget) -> None:
     message = request()
     message.get_piece().prompt_metadata["_pyrit_temperature"] = {"resolved_temperature": 99}
+    message.get_piece().prompt_metadata["_pyrit_generation"] = {"temperature": {"resolved": 98}}
     with patch.object(
         target._client.chat.completions,
         "create",
@@ -346,9 +359,10 @@ async def test_caller_cannot_supply_temperature_evidence_async(target: OpenAICha
         return_value=completion(),
     ):
         await target.send_prompt_async(message=message)
-    info = TemperatureRequestInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+    info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
     assert info is not None
-    assert info.resolved_temperature == 0.2
+    assert info.temperature.resolved == 0.2
+    assert "_pyrit_temperature" not in message.get_piece().prompt_metadata
 
 
 def test_new_capability_does_not_change_existing_identifier_projection() -> None:
@@ -386,7 +400,7 @@ async def test_transport_retry_retains_resolved_value_and_paces_each_attempt_asy
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            message.get_piece().prompt_metadata["request_temperature"] = 1.9
+            message.get_piece().prompt_metadata.update(RequestGenerationConfig(temperature=1.9).to_metadata())
             target._temperature = 1.8
             target._extra_body_parameters = {"extra_body": {"temperature": 1.6}}
             raise EmptyResponseException(message="Retry this empty response")
@@ -410,12 +424,12 @@ async def test_transport_retry_retains_resolved_value_and_paces_each_attempt_asy
     resolve.assert_called_once()
     assert pace.await_count == 2
     assert all(call.args == (1,) for call in pace.await_args_list)
-    info = TemperatureRequestInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+    info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
     assert info is not None
-    assert info.requested_temperature == requested
-    assert info.resolved_temperature == expected
+    assert info.temperature.requested == requested
+    assert info.temperature.resolved == expected
     if expected is None:
-        assert info.source == "provider_default"
+        assert info.temperature.source == "provider_default"
         assert all("temperature" not in call.kwargs for call in send.call_args_list)
 
 
@@ -470,6 +484,15 @@ async def test_conflicting_current_pieces_fail_before_normalization_async(target
             prompt_metadata=RequestGenerationConfig(temperature=1).to_metadata(),
         )
     )
+    with patch.object(target, "_get_normalized_conversation_async", new_callable=AsyncMock) as normalize:
+        with pytest.raises(ValueError, match="Conflicting"):
+            await target.send_prompt_async(message=message)
+    normalize.assert_not_called()
+
+
+async def test_conflicting_legacy_and_current_options_fail_before_normalization_async(target: OpenAIChatTarget) -> None:
+    message = request(0)
+    message.get_piece().prompt_metadata["request_temperature"] = 1
     with patch.object(target, "_get_normalized_conversation_async", new_callable=AsyncMock) as normalize:
         with pytest.raises(ValueError, match="Conflicting"):
             await target.send_prompt_async(message=message)

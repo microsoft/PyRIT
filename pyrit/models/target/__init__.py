@@ -33,7 +33,11 @@ if TYPE_CHECKING:
         register_common_json_schema,
         unregister_common_json_schema,
     )
-    from pyrit.models.target.request_generation_config import RequestGenerationConfig, TemperatureRequestInfo
+    from pyrit.models.target.request_generation_config import (
+        RequestGenerationConfig,
+        RequestGenerationInfo,
+        TemperatureResolution,
+    )
     from pyrit.models.target.target_capabilities import CapabilityName, TargetCapabilities
     from pyrit.models.target.token_usage import (
         TOKEN_USAGE_METADATA_PREFIX,
@@ -50,10 +54,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "JsonResponseConfig": "pyrit.models.target.json_response_config",
     "JsonSchemaDefinition": "pyrit.models.target.json_schema_definition",
     "RequestGenerationConfig": "pyrit.models.target.request_generation_config",
+    "RequestGenerationInfo": "pyrit.models.target.request_generation_config",
     "SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY": "pyrit.models.target.json_schema_definition",
     "TOKEN_USAGE_METADATA_PREFIX": "pyrit.models.target.token_usage",
     "TargetCapabilities": "pyrit.models.target.target_capabilities",
-    "TemperatureRequestInfo": "pyrit.models.target.request_generation_config",
+    "TemperatureResolution": "pyrit.models.target.request_generation_config",
     "TokenUsage": "pyrit.models.target.token_usage",
     "WebSearchConfig": "pyrit.models.target.web_search_config",
     "WebSearchMode": "pyrit.models.target.web_search_config",

@@ -250,10 +250,14 @@ produce **provider default (unknown)** rather than a guessed number.
 
 An unsupported target should disable the control with an explanation. An
 out-of-range value such as `2.1` must not reach the target. To inspect transport,
-use browser developer tools: a send with `0` has `request_temperature: 0` in one
+use browser developer tools: a send with `0` has
+`request_generation_config: {"temperature": 0}` in one
 piece's `prompt_metadata`, and changing the control makes no temperature-only
 target-construction request. Response wording alone is not evidence of which
 temperature was sent.
+
+The message footers read the new `_pyrit_generation` evidence and the earlier
+draft's `_pyrit_temperature` records. Existing saved messages do not need rewriting.
 
 #### Repeating a Message
 
