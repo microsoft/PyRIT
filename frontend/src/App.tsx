@@ -67,6 +67,7 @@ import {
 } from './utils/targetIdentity'
 import { attacksApi, authApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
+import { getOperationWarning } from '@/utils/operationWarnings'
 import { useTour } from './hooks/useTour'
 import { ChatDraftProvider, useChatDraftHandoff } from './hooks/useChatDraftHandoff'
 import {
@@ -297,7 +298,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const operationId = operation.state.status === 'resolved' ? operation.state.operation.id : null
   const newActivityReady = defaultsReady && operationReady
   const operationBlockedReason = defaultsReady && !operationReady && operation.state.status !== 'loading'
-    ? 'Choose a saved Operation, register, or clear this one to start new attacks and scans.'
+    ? getOperationWarning(operation.state)
     : undefined
   const { remember: rememberOperation } = operation
   const handleOperationChange = useCallback((selected: Operation | null) => {
@@ -844,11 +845,6 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                     </Button>
                   )}
                 </MessageBarBody>
-              </MessageBar>
-            )}
-            {operationBlockedReason && (
-              <MessageBar intent="warning">
-                <MessageBarBody>{operationBlockedReason}</MessageBarBody>
               </MessageBar>
             )}
             {preferenceError && (

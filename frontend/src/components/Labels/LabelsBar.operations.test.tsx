@@ -161,7 +161,10 @@ describe('saved operation workflow', () => {
   ] as OperationSelectionState[])('chooses an existing operation or clears from %j', async (initial: OperationSelectionState) => {
     const user = userEvent.setup()
     renderBar(initial)
-    if (initial.status === 'missing') expect(screen.getByText('Saved operation not found')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Show warnings' }))
+    expect(screen.getByText(initial.status === 'missing'
+      ? /The saved operation was not found/ : /Choose a saved Operation/)).toBeInTheDocument()
+    await user.keyboard('{Escape}')
     await user.click(screen.getByRole('combobox', { name: 'Operation' }))
     await user.click(await screen.findByRole('option', { name: SAVED.name }))
     expect(onSelect).toHaveBeenLastCalledWith(SAVED)
@@ -174,7 +177,9 @@ describe('saved operation workflow', () => {
   it('keeps the selection and offers retry when the selected operation cannot be loaded', async () => {
     const user = userEvent.setup()
     renderBar({ status: 'error', error: 'Storage unavailable' })
+    await user.click(screen.getByRole('button', { name: 'Show warnings' }))
     expect(screen.getByText(/Could not load the selected operation: Storage unavailable/)).toBeInTheDocument()
+    await user.keyboard('{Escape}')
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     expect(onRetry).toHaveBeenCalledTimes(1)
     expect(onSelect).not.toHaveBeenCalled()
