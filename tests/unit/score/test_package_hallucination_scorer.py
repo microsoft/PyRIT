@@ -190,7 +190,7 @@ class TestPackageHallucinationScorerExtraction:
         )
         assert scorer._extract_package_references(text) == {
             "@scope/package",
-            "package/tools",
+            "package",
             "side-effect",
             "legacy",
         }
@@ -221,6 +221,25 @@ class TestPackageHallucinationScorerExtraction:
         elapsed = perf_counter() - start
         assert references == set()
         assert elapsed < 0.5, f"Malformed import extraction took {elapsed:.3f}s"
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("import fp from 'lodash/fp';", {"lodash"}),
+            ("const map = require('lodash/fp/map');", {"lodash"}),
+            ("import { zodResolver } from '@hookform/resolvers/zod';", {"@hookform/resolvers"}),
+            ("import 'ghostpkg/register';", {"ghostpkg"}),
+            ("import { readFile } from 'node:fs/promises';", set()),
+            ("const path = require('node:path');", set()),
+            ("import { loadConfig } from './config.js';", set()),
+            ("const helpers = require('../lib/helpers');", set()),
+            ("import data from '/srv/app/data.js';", set()),
+            ("import fs from 'fs';", {"fs"}),
+        ],
+    )
+    def test_javascript_extracts_package_names_from_specifiers(self, text: str, expected: set[str]) -> None:
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.JAVASCRIPT)
+        assert scorer._extract_package_references(text) == expected
 
     def test_rust_extracts_use_and_extern_crate(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUST)
@@ -315,6 +334,33 @@ class TestPackageHallucinationScorerScoring:
                 if hallucinated_packages
                 else "No hallucinated packages detected."
             )
+
+    @pytest.mark.parametrize(
+        ("import_line", "hallucinated_packages"),
+        [
+            ("import { merge } from 'lodash';", ""),
+            ("import { merge } from 'ghostpkg/fp';", "ghostpkg"),
+        ],
+    )
+    async def test_javascript_paths_builtins_and_subpaths_score_by_package_async(
+        self, import_line: str, hallucinated_packages: str
+    ) -> None:
+        scorer = PackageHallucinationScorer(
+            known_packages={"lodash", "@hookform/resolvers"}, ecosystem=PackageEcosystem.JAVASCRIPT
+        )
+        code = (
+            "```javascript\n"
+            "import { readFile } from 'node:fs/promises';\n"
+            "import fp from 'lodash/fp';\n"
+            "import { zodResolver } from '@hookform/resolvers/zod';\n"
+            "import { loadConfig } from './config.js';\n"
+            "const helpers = require('../lib/helpers');\n"
+            f"{import_line}\n"
+            "```"
+        )
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is bool(hallucinated_packages)
+        assert score.score_metadata["hallucinated_packages"] == hallucinated_packages
 
     @pytest.mark.parametrize(
         ("text", "hallucinated_packages"),
@@ -553,6 +599,30 @@ class TestAdditionalPackageEcosystems:
         )
         text = "use v6.d;\nuse v6.e.PREVIEW;\nuse JSON::Fast;\n"
         assert scorer._extract_package_references(text) == {"JSON::Fast"}
+
+    @pytest.mark.parametrize(
+        "statement",
+        ["use Test;", "use NativeCall;", "need Pod::To::Text;", "use lib 'lib';", "use MONKEY-SEE-NO-EVAL;"],
+    )
+    async def test_raku_core_modules_and_pragmas_are_not_hallucinated_packages(self, statement):
+        scorer = PackageHallucinationScorer(
+            known_packages={"JSON::Fast"},
+            ecosystem=PackageEcosystem.RAKU,
+        )
+        code = f"```raku\n{statement}\nuse JSON::Fast;\n```"
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
+
+    async def test_raku_core_modules_do_not_hide_hallucinated_packages(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.RAKU,
+        )
+        code = "```raku\nuse Test;\nuse Test::Ghost;\n```"
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is True
+        assert score.score_metadata["hallucinated_packages"] == "Test::Ghost"
 
     @pytest.mark.parametrize(
         ("ecosystem", "code", "hallucinated_package"),

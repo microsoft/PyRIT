@@ -445,6 +445,8 @@ Files excluded from coverage: `main.tsx`, `vite-env.d.ts`, `services/api.ts` (th
 
 - E2E tests live in `frontend/e2e/`.
 - They test full user flows against a running backend.
+- Check user-visible failures: missing or clipped content, unreachable controls, broken actions, scrolling, and focus.
+- Do not lock tests to exact coordinates, animation frames, or cosmetic sizes. Keep size checks for explicit usability requirements, such as minimum touch targets.
 - Do NOT mock APIs in E2E tests — they exercise the real stack.
 - Run with `npm run test:e2e` (headless) or `npm run test:e2e:headed`.
 

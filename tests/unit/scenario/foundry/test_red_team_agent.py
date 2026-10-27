@@ -291,6 +291,7 @@ class TestFoundryCompatibilityPolicy:
                 "objective_target": target,
                 "scenario_techniques": [incompatible, FoundryTechnique.ROT13],
                 "incompatible_technique_policy": policy,
+                "dataset_config": DatasetAttackConfiguration(seed_groups=mock_memory_seed_groups),
             }
         )
         with patch.object(
@@ -322,7 +323,11 @@ class TestFoundryCompatibilityPolicy:
             attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
         )
         scenario.set_params_from_args(
-            args={"objective_target": target, "scenario_techniques": [FoundryTechnique.Crescendo]}
+            args={
+                "objective_target": target,
+                "scenario_techniques": [FoundryTechnique.Crescendo],
+                "dataset_config": DatasetAttackConfiguration(seed_groups=mock_memory_seed_groups),
+            }
         )
         with patch.object(
             scenario,
@@ -351,6 +356,7 @@ class TestFoundryCompatibilityPolicy:
                 "objective_target": MockPromptTarget(),
                 "scenario_techniques": [FoundryTechnique.Base64],
                 "incompatible_technique_policy": "skip",
+                "dataset_config": DatasetAttackConfiguration(seed_groups=mock_memory_seed_groups),
             }
         )
         with (

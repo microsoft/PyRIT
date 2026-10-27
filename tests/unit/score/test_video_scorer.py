@@ -1,13 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import os
+import threading
 import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS, settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import get_mock_scorer_identifier
 
 from pyrit.models import AnswerMatches, ComponentIdentifier, MessagePiece, Score, ScoreStatus, ScoringExpectation
@@ -548,6 +551,36 @@ async def test_video_true_false_scorer_with_audio_scorer(video_converter_sample_
 
 
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
+async def test_video_scorer_decodes_frames_and_audio_off_the_event_loop(video_converter_sample_video):
+    event_loop_thread = threading.get_ident()
+    decode_threads: dict[str, int] = {}
+    scorer = VideoTrueFalseScorer(
+        image_capable_scorer=MockTrueFalseScorer(return_value=True),
+        audio_scorer=MockAudioTrueFalseScorer(return_value=True),
+        num_sampled_frames=3,
+    )
+    extract_frames = scorer._video_helper._extract_frames
+
+    def record_frames(video_path: str) -> list[str]:
+        decode_threads["frames"] = threading.get_ident()
+        return extract_frames(video_path)
+
+    def record_audio(video_path: str) -> str | None:
+        decode_threads["audio"] = threading.get_ident()
+        return None
+
+    with (
+        patch.object(scorer._video_helper, "_extract_frames", side_effect=record_frames),
+        patch.object(AudioTranscriptHelper, "extract_audio_from_video", side_effect=record_audio),
+    ):
+        scores = await scorer._score_piece_with_expectation_async(video_converter_sample_video, expectation=None)
+
+    assert scores[0].score_value == "true"
+    assert decode_threads["frames"] != event_loop_thread
+    assert decode_threads["audio"] != event_loop_thread
+
+
+@pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
 async def test_video_audio_scorer_cleans_up_extracted_audio(tmp_path, video_converter_sample_video):
     """_score_video_audio_async unlinks the temp audio file after successful scoring."""
     image_scorer = MockTrueFalseScorer(return_value=True)
@@ -567,6 +600,61 @@ async def test_video_audio_scorer_cleans_up_extracted_audio(tmp_path, video_conv
         await scorer._score_piece_with_expectation_async(video_converter_sample_video, expectation=None)
 
     assert not extracted_audio.exists()
+
+
+@pytest.mark.parametrize("extraction_result", ["temporary", "source", "none"])
+@pytest.mark.parametrize("cancel_twice", [False, True])
+async def test_video_audio_scorer_cancellation_during_extraction_async(
+    tmp_path: Path, video_converter_sample_video: MessagePiece, extraction_result: str, cancel_twice: bool
+) -> None:
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    release = threading.Event()
+    source_path = Path(video_converter_sample_video.converted_value)
+    source_path.touch(exist_ok=True)
+    extracted_audio = tmp_path / "cancelled_audio.wav"
+    audio_scorer = MockAudioTrueFalseScorer()
+    scorer = VideoTrueFalseScorer(image_capable_scorer=MockTrueFalseScorer(), audio_scorer=audio_scorer)
+
+    def extract_audio(video_path: str) -> str | None:
+        loop.call_soon_threadsafe(started.set)
+        if not release.wait(TEST_WATCHDOG_SECONDS):
+            raise TimeoutError("The test did not release audio extraction.")
+        if extraction_result == "source":
+            return video_path
+        if extraction_result == "none":
+            return None
+        extracted_audio.write_bytes(b"audio")
+        return str(extracted_audio)
+
+    with (
+        patch.object(AudioTranscriptHelper, "extract_audio_from_video", side_effect=extract_audio),
+        patch.object(audio_scorer, "_score_batch_nested_async", new_callable=AsyncMock) as score_audio,
+    ):
+        task = asyncio.create_task(
+            scorer._video_helper._score_video_audio_async(
+                message_piece=video_converter_sample_video, expectation=None, audio_scorer=audio_scorer
+            )
+        )
+        try:
+            await wait_for_event_async(event=started, tasks=[task])
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            if cancel_twice:
+                task.cancel()
+                await asyncio.sleep(0)
+                assert not task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await wait_for_completion_async(future=task)
+        finally:
+            release.set()
+            await settle_tasks_async(task)
+
+    assert not extracted_audio.exists()
+    assert source_path.exists()
+    score_audio.assert_not_awaited()
 
 
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")

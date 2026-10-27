@@ -27,6 +27,7 @@ from pyrit.prompt_target.openai._openai_realtime_event_router import (
     _OpenAIRealtimeEventRouter,
 )
 from pyrit.prompt_target.openai.openai_realtime_target import _RealtimeReceiveState
+from tests.unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 _CLEAN_UNDERLYING_MODEL_ENV = {
@@ -1470,25 +1471,26 @@ async def test_route_event_speech_started_without_responding_is_noop():
     assert state.interrupted is False
 
 
-async def test_route_event_committed_event_fires_user_audio_callback():
+async def test_route_event_committed_event_fires_user_audio_callback_async() -> None:
     """input_audio_buffer.committed must fire the registered on_user_audio_committed callback."""
     connection = AsyncMock()
-    received: list[Any] = []
+    received: list[CommittedEvent] = []
+    delivered: asyncio.Future[None] = asyncio.get_running_loop().create_future()
 
-    async def on_committed(event):
+    async def on_committed_async(event: CommittedEvent) -> None:
         received.append(event)
+        delivered.set_result(None)
 
-    dispatcher = _OpenAIRealtimeDispatcher(connection=connection, on_user_audio_committed=on_committed)
+    dispatcher = _OpenAIRealtimeDispatcher(connection=connection, on_user_audio_committed=on_committed_async)
 
-    await dispatcher._route_event_async(
-        event=_scripted_event("input_audio_buffer.committed", item_id="raw_item_42", audio_start_ms=1234),
-        state=None,
-    )
-    # Background callback task may not have run yet; yield until it does.
-    for _ in range(20):
-        if received:
-            break
-        await asyncio.sleep(0.01)
+    try:
+        await dispatcher._route_event_async(
+            event=_scripted_event("input_audio_buffer.committed", item_id="raw_item_42", audio_start_ms=1234),
+            state=None,
+        )
+        await wait_for_completion_async(future=delivered)
+    finally:
+        await dispatcher.stop_async()
 
     assert len(received) == 1
     assert received[0].item_id == "raw_item_42"
@@ -1524,7 +1526,7 @@ async def test_route_event_committed_without_item_id_is_ignored():
     assert received == []
 
 
-async def test_route_event_speech_started_audio_start_propagates_to_commit():
+async def test_route_event_speech_started_audio_start_propagates_to_commit_async() -> None:
     """speech_started's audio_start_ms is captured and attached to the next CommittedEvent.
 
     The OpenAI Realtime server omits audio_start_ms from the input_audio_buffer.committed
@@ -1532,59 +1534,64 @@ async def test_route_event_speech_started_audio_start_propagates_to_commit():
     receive the value reliably.
     """
     received: list[CommittedEvent] = []
+    delivered: asyncio.Future[None] = asyncio.get_running_loop().create_future()
 
-    async def on_committed(event: CommittedEvent) -> None:
+    async def on_committed_async(event: CommittedEvent) -> None:
         received.append(event)
+        delivered.set_result(None)
 
     connection = AsyncMock()
-    dispatcher = _OpenAIRealtimeDispatcher(connection=connection, on_user_audio_committed=on_committed)
+    dispatcher = _OpenAIRealtimeDispatcher(connection=connection, on_user_audio_committed=on_committed_async)
 
-    await dispatcher._route_event_async(
-        event=_scripted_event("input_audio_buffer.speech_started", audio_start_ms=8536),
-        state=None,
-    )
-    await dispatcher._route_event_async(
-        event=_scripted_event("input_audio_buffer.committed", item_id="raw_99", audio_start_ms=None),
-        state=None,
-    )
-    for _ in range(20):
-        if received:
-            break
-        await asyncio.sleep(0.01)
+    try:
+        await dispatcher._route_event_async(
+            event=_scripted_event("input_audio_buffer.speech_started", audio_start_ms=8536),
+            state=None,
+        )
+        await dispatcher._route_event_async(
+            event=_scripted_event("input_audio_buffer.committed", item_id="raw_99", audio_start_ms=None),
+            state=None,
+        )
+        await wait_for_completion_async(future=delivered)
+    finally:
+        await dispatcher.stop_async()
 
     assert len(received) == 1
     assert received[0].item_id == "raw_99"
     assert received[0].audio_start_ms == 8536
 
 
-async def test_route_event_pending_speech_start_resets_after_commit():
+async def test_route_event_pending_speech_start_resets_after_commit_async() -> None:
     """After commit fires, the dispatcher clears its captured speech_start so a later
     commit (e.g. for a turn whose speech_started never fired) doesn't see stale data."""
     received: list[CommittedEvent] = []
+    delivered: asyncio.Future[None] = asyncio.get_running_loop().create_future()
 
-    async def on_committed(event: CommittedEvent) -> None:
+    async def on_committed_async(event: CommittedEvent) -> None:
         received.append(event)
+        if len(received) == 2:
+            delivered.set_result(None)
 
     connection = AsyncMock()
-    dispatcher = _OpenAIRealtimeDispatcher(connection=connection, on_user_audio_committed=on_committed)
+    dispatcher = _OpenAIRealtimeDispatcher(connection=connection, on_user_audio_committed=on_committed_async)
 
-    await dispatcher._route_event_async(
-        event=_scripted_event("input_audio_buffer.speech_started", audio_start_ms=500),
-        state=None,
-    )
-    await dispatcher._route_event_async(
-        event=_scripted_event("input_audio_buffer.committed", item_id="i1", audio_start_ms=None),
-        state=None,
-    )
-    # Second commit without a prior speech_started: must NOT reuse the 500 captured above.
-    await dispatcher._route_event_async(
-        event=_scripted_event("input_audio_buffer.committed", item_id="i2", audio_start_ms=None),
-        state=None,
-    )
-    for _ in range(20):
-        if len(received) >= 2:
-            break
-        await asyncio.sleep(0.01)
+    try:
+        await dispatcher._route_event_async(
+            event=_scripted_event("input_audio_buffer.speech_started", audio_start_ms=500),
+            state=None,
+        )
+        await dispatcher._route_event_async(
+            event=_scripted_event("input_audio_buffer.committed", item_id="i1", audio_start_ms=None),
+            state=None,
+        )
+        # Second commit without a prior speech_started: must NOT reuse the 500 captured above.
+        await dispatcher._route_event_async(
+            event=_scripted_event("input_audio_buffer.committed", item_id="i2", audio_start_ms=None),
+            state=None,
+        )
+        await wait_for_completion_async(future=delivered)
+    finally:
+        await dispatcher.stop_async()
 
     assert len(received) == 2
     assert received[0].audio_start_ms == 500
@@ -1694,7 +1701,7 @@ async def test_reset_conversation_async_swallows_close_error(target):
     assert "conv" not in target._existing_conversation
 
 
-async def test_reset_conversation_async_finishes_close_before_propagating_cancellation(target):
+async def test_reset_conversation_finishes_close_before_propagating_cancellation_async(target: RealtimeTarget) -> None:
     close_started = asyncio.Event()
     close_release = asyncio.Event()
     close_finished = asyncio.Event()
@@ -1709,14 +1716,18 @@ async def test_reset_conversation_async_finishes_close_before_propagating_cancel
     target._existing_conversation["conv"] = mock_connection
 
     cleanup_task = asyncio.create_task(target.reset_conversation_async(conversation_id="conv"))
-    await close_started.wait()
-    cleanup_task.cancel()
-    await asyncio.sleep(0)
+    try:
+        await wait_for_event_async(event=close_started, tasks=[cleanup_task])
+        cleanup_task.cancel()
+        await asyncio.sleep(0)
 
-    assert not cleanup_task.done()
-    close_release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await cleanup_task
+        assert not cleanup_task.done()
+        close_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await wait_for_completion_async(future=cleanup_task)
+    finally:
+        close_release.set()
+        await settle_tasks_async(cleanup_task)
 
     assert close_finished.is_set()
     assert "conv" not in target._existing_conversation

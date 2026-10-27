@@ -264,6 +264,7 @@ class TestEncodingTechniqueDefault:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("mock_dataset_preparation")
 class TestEncodingAtomicNameUniqueness:
     """Tests that atomic-attack names are unique per converter variant (collision fix)."""
 

@@ -98,6 +98,68 @@ export interface ChatConverterSnapshot {
   applied: Record<string, PieceConversion>
 }
 
+export interface ChatDraftContent {
+  text: string
+  attachments: MessageAttachment[]
+  systemPrompt?: string
+  target?: TargetReference | null
+  converters?: ChatConverterSnapshot
+  textMetadata?: Record<string, unknown>
+}
+
+export interface ChatDraftContextState {
+  originatingAttackId: string | null
+  originatingConversationId: string | null
+  originatingPath: string
+  originatingState?: unknown
+  draft: ChatDraftContent
+  savedAt: number
+  sequence: number
+}
+
+export type ImportDestinationType = 'new_attack' | 'current_conversation' | 'new_conversation' | 'any'
+
+export interface PendingImportPayload {
+  id: string
+  sequence: number
+  destinationType: ImportDestinationType
+  targetAttackId?: string | null
+  targetConversationId?: string | null
+  content: {
+    text: string
+    attachments?: MessageAttachment[]
+    textMetadata?: Record<string, unknown>
+  }
+  replaceDirty?: boolean
+  focus?: boolean
+  stagedAt: number
+}
+
+export interface ChatDraftHandoffContextValue {
+  preservedDraft: ChatDraftContextState | null
+  pendingImport: PendingImportPayload | null
+  activeSequence: number
+  preserveDraft: (state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>) => void
+  clearPreservedDraft: (expectedSequence?: number) => void
+  /** Pass the sequence captured before preparing an import to reject stale async results. */
+  stagePendingImport: (
+    payload: Omit<PendingImportPayload, 'id' | 'sequence' | 'stagedAt'>,
+    expectedSequence?: number,
+  ) => PendingImportPayload | null
+  consumePendingImport: (
+    id?: string,
+    currentAttackId?: string | null,
+    currentConversationId?: string | null,
+  ) => PendingImportPayload | null
+  dismissPendingImport: (id?: string) => void
+  consumePreservedDraft: (
+    currentAttackId: string | null,
+    currentConversationId?: string | null,
+    expectedSequence?: number,
+  ) => ChatDraftContent | null
+  isDraftDirty: (draft?: Partial<ChatDraftContent> | null) => boolean
+}
+
 export interface UndoLastSendAction {
   readonly disabledReason?: string
   readonly isUndoing: boolean
