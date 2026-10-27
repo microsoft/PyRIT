@@ -107,6 +107,7 @@ _LAUNCH_REQUEST_FIELDS = (
     "adversarial_target_name",
     "techniques",
     "technique_override",
+    "objective_scorer",
     "datasets",
     "dataset_names",
     "max_dataset_size",
@@ -116,7 +117,9 @@ _LAUNCH_REQUEST_FIELDS = (
     "include_baseline",
 )
 # Fields added after the first saved launch records; older records omit them.
-_OPTIONAL_LAUNCH_FIELDS = frozenset({"adversarial_target_name", "datasets", "max_dataset_size", "technique_override"})
+_OPTIONAL_LAUNCH_FIELDS = frozenset(
+    {"adversarial_target_name", "datasets", "max_dataset_size", "technique_override", "objective_scorer"}
+)
 
 _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
     {
@@ -1322,6 +1325,9 @@ class ScenarioRunService:
             request.scenario_name,
             scenario_params=request.scenario_params or {},
             scenario_result_id=request.scenario_result_id or None,
+            constructor_kwargs=self._configuration_resolver.resolve_constructor_kwargs(
+                scenario_class=scenario_class, objective_scorer=request.objective_scorer
+            ),
             initial_metadata={
                 _SCHEDULER_METADATA_KEY: _SCHEDULER_METADATA_VALUE,
                 _LAUNCH_REQUEST_METADATA_KEY: launch_request,

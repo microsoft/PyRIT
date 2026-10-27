@@ -925,6 +925,7 @@ class TestScenarioRunServiceStartRun:
             "airt.jailbreak",
             scenario_params=scenario_params,
             scenario_result_id=None,
+            constructor_kwargs={},
             initial_metadata={
                 _svc_mod._SCHEDULER_METADATA_KEY: _svc_mod._SCHEDULER_METADATA_VALUE,
                 _svc_mod._LAUNCH_REQUEST_METADATA_KEY: ANY,

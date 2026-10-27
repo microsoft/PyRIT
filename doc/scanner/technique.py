@@ -27,6 +27,8 @@
 # To send text that differs from the scoring objective, set `prompt`. Converters rewrite
 # that message; the objective remains the scoring goal. For tool role play, enable the
 # `tools` initializer and select `role_play_tool_calls`.
+# The Objective scorer picker uses the scenario default unless you select a registered
+# scorer. It is available for scenarios that accept a custom objective scorer.
 #
 # The catalog declares `max_concrete_techniques=1`. CoPyRIT uses a single-selection
 # technique picker. The backend enforces this limit after aggregate expansion and

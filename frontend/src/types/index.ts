@@ -1429,6 +1429,7 @@ export interface ScenarioDatasetLoadResponse {
 }
 
 export interface RegisteredScenario {
+  supports_objective_scorer?: boolean
   /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
   max_concrete_techniques?: number | null
   scenario_name: string
@@ -1578,6 +1579,7 @@ export interface ResolveScenarioPresetRequest {
 }
 
 export interface RunScenarioRequest {
+  objective_scorer?: RegisteredComponentReference | null
   scenario_name: string
   target_name?: string | null
   adversarial_target_name?: string | null
@@ -1647,6 +1649,7 @@ export interface ScenarioRunSizeEstimateResponse {
 }
 
 export interface ScenarioRunSizeEstimateRequest {
+  objective_scorer?: RegisteredComponentReference | null
   target_name?: string | null
   adversarial_target_name?: string | null
   techniques?: string[] | null

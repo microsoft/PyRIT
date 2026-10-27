@@ -28,6 +28,7 @@ from pydantic import (
     model_validator,
 )
 
+from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.parameter import Parameter
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_LABEL_KEY_LENGTH, MAX_LABEL_VALUE_LENGTH
 from pyrit.models.results.scenario_result import ScenarioRunState
@@ -391,6 +392,7 @@ class RegisteredScenario(BaseModel):
     scenario_name: str = Field(..., description="Scenario name  (e.g., 'foundry.red_team_agent')")
     scenario_type: str = Field(..., description="Scenario type identifier (e.g., 'RedTeamAgentScenario')")
     scenario_version: int = Field(1, ge=1, description="Scenario definition version used for default metadata")
+    supports_objective_scorer: bool = False
     description: str = Field(..., description="Human-readable description of the scenario")
     description_markdown: str = Field(
         "",
@@ -449,6 +451,7 @@ class ScenarioRunSizeEstimateRequest(_DatasetRequestModel):
     """Request-specific scenario run-size configuration."""
 
     technique_override: TechniqueOverride | None = None
+    objective_scorer: RegisteredComponentReference | None = None
 
     adversarial_target_name: _RequestName | None = Field(
         None,
@@ -476,6 +479,7 @@ class RunScenarioRequest(_DatasetRequestModel):
     """Request body for starting a scenario run."""
 
     technique_override: TechniqueOverride | None = None
+    objective_scorer: RegisteredComponentReference | None = None
 
     scenario_name: _RequestName = Field(..., description="Scenario name (e.g., 'foundry.red_team_agent')")
     target_name: _RequestName | None = Field(

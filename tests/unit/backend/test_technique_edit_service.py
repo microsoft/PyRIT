@@ -49,7 +49,7 @@ from pyrit.models import (
     load_next_message_prompt,
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioRunSizeEstimateRequest
-from pyrit.models.component_spec import SourceInstanceSpec
+from pyrit.models.component_spec import RegisteredComponentReference, SourceInstanceSpec
 from pyrit.models.technique_edit import (
     SimulationChanges,
     SimulationSettings,
@@ -59,7 +59,7 @@ from pyrit.models.technique_edit import (
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, Registry, TargetRegistry
+from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, Registry, ScorerRegistry, TargetRegistry
 from pyrit.scenario.core import AttackTechniqueFactory
 from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 from pyrit.scenario.scenarios.technique.execute import Execute
@@ -841,6 +841,11 @@ def test_python_factory_construction_keeps_default_history_roles(edit_catalog: A
 
 
 async def test_isolated_run_overrides_estimate_and_resume_async(edit_catalog: AttackTechniqueRegistry) -> None:
+    scorer = SubStringScorer(substring="selected")
+    ScorerRegistry.get_registry_singleton().instances.register(scorer, name="selected")
+    scorer_reference = RegisteredComponentReference(
+        registry_name="selected", identifier_hash=scorer.get_identifier().hash
+    )
     first, second = [
         TechniqueEditService.validate(
             _specification(changes=TechniqueChanges(simulation=SimulationChanges(num_turns=turns)))
@@ -865,12 +870,16 @@ async def test_isolated_run_overrides_estimate_and_resume_async(edit_catalog: At
         estimate = await ScenarioService().estimate_scenario_run_size_async(
             scenario_name="technique.execute",
             request=ScenarioRunSizeEstimateRequest(
-                techniques=["role_play_movie_script"], technique_override=first, scenario_params={"objective": "write"}
+                objective_scorer=scorer_reference,
+                techniques=["role_play_movie_script"],
+                technique_override=first,
+                scenario_params={"objective": "write"},
             ),
         )
         assert estimate.total_attack_count == 1
         service = ScenarioRunService()
         request = RunScenarioRequest(
+            objective_scorer=scorer_reference,
             scenario_name="technique.execute",
             target_name="objective",
             techniques=["role_play_movie_script"],
@@ -879,12 +888,15 @@ async def test_isolated_run_overrides_estimate_and_resume_async(edit_catalog: At
         )
         with patch.object(service, "_run_initializers_async", return_value=None):
             prepared = await service._prepare_run_async(request=request)
+            assert prepared.scenario._objective_scorer is scorer
             stored = await CentralMemory.get_memory_instance().get_scenario_result_header_async(
                 scenario_result_id=prepared.scenario._scenario_result_id
             )
             restored = service._restore_launch_request(stored=stored)
             assert restored.technique_override == first
+            assert restored.objective_scorer == scorer_reference
             resumed = await service._prepare_run_async(request=restored)
+            assert resumed.scenario._objective_scorer is scorer
             assert resumed.scenario._scenario_result_id == prepared.scenario._scenario_result_id
             targets = TargetRegistry.get_registry_singleton().instances
             assert all(not entry.instance.prompt_sent for entry in targets.get_all_instances())

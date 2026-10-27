@@ -950,6 +950,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                       </MessageBarBody>
                     </MessageBar>
                   ) : <ScenarioDetail
+                    scorers={scorerRegistry.scorers}
+                    scorersLoading={scorerRegistry.loading}
+                    scorersError={scorerRegistry.error}
                     targets={registry.targets}
                     defaultObjectiveTarget={targetDefaults.objectiveTarget}
                     defaultAdversarialTarget={targetDefaults.adversarialTarget}

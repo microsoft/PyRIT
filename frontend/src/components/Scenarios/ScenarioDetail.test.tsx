@@ -244,6 +244,34 @@ function renderDetail(
 }
 
 describe('ScenarioDetail', () => {
+  it('uses the shared scorer picker for estimates and launch without changing the scenario default', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: true }))
+    const scorer = { scorer_registry_name: 'custom', identifier: {
+      class_name: 'SubStringScorer', hash: 'custom-hash', scorer_type: 'true_false',
+    } }
+    renderDetail('/scanner/foundry.red_team_agent', { scorers: [scorer] })
+    const picker = await screen.findByRole('combobox', { name: 'Objective scorer' })
+    expect(picker).toHaveValue('')
+    expect(screen.getByRole('option', { name: 'Use scenario default' })).toBeInTheDocument()
+    await user.selectOptions(picker, 'registered:custom')
+    const reference = { registry_name: 'custom', identifier_hash: 'custom-hash' }
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
+      'foundry.red_team_agent', expect.objectContaining({ objective_scorer: reference }), expect.any(AbortSignal),
+    ))
+    await user.selectOptions(picker, '')
+    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('objective_scorer'))
+    await user.selectOptions(picker, 'registered:custom')
+    await confirmRunPreview(user)
+    expect(mockStartRun.mock.calls[0][0].objective_scorer).toEqual(reference)
+  })
+
+  it('does not show a scorer override for fixed-scoring scenarios', async () => {
+    renderDetail('/scanner/foundry.red_team_agent')
+    await screen.findByTestId('scenario-target-select')
+    expect(screen.queryByRole('combobox', { name: 'Objective scorer' })).not.toBeInTheDocument()
+  })
+
   beforeEach(() => {
     jest.clearAllMocks()
     mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'first' })
@@ -1187,11 +1215,11 @@ describe('ScenarioDetail', () => {
     await user.type(within(editor).getByRole('spinbutton', { name: 'Turn count' }), '4')
     expect(within(editor).queryByRole('button', { name: 'Apply to run' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
-    await screen.findByText('Edited for this run')
-    expect(mockTechniques.validateEdit).toHaveBeenCalledWith({
+    await screen.findByRole('button', { name: 'Edited - click to reset' })
+    await waitFor(() => expect(mockTechniques.validateEdit).toHaveBeenCalledWith({
       source_name: 'default_technique', source_identity: 'default_technique-identity',
       changes: { simulation: { num_turns: 4 } }, dependencies: {},
-    })
+    }))
     expect(mockTechniques.createTechnique).not.toHaveBeenCalled()
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledWith(
       'foundry.red_team_agent', expect.objectContaining({
@@ -1212,17 +1240,17 @@ describe('ScenarioDetail', () => {
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
     renderDetail('/scanner/technique.execute')
     await user.type(await screen.findByLabelText('Simulated user system prompt'), ' edited')
-    await screen.findByText('Edited for this run')
+    await screen.findByRole('button', { name: 'Edited - click to reset' })
     expect(await screen.findByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }} edited')
     await user.click(await screen.findByRole('radio', { name: 'crescendo' }))
     expect(await screen.findByText('Discard technique edits?')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(await screen.findByRole('radio', { name: 'default_technique' })).toBeChecked()
-    expect(screen.getByText('Edited for this run')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edited - click to reset' })).toBeInTheDocument()
     await user.click(screen.getByRole('checkbox', { name: 'baseline' }))
-    expect(screen.getByText('Edited for this run')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Reset to original' }))
-    expect(screen.queryByText('Edited for this run')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edited - click to reset' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Edited - click to reset' }))
+    expect(screen.queryByRole('button', { name: 'Edited - click to reset' })).not.toBeInTheDocument()
     expect(await screen.findByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }}')
     await user.click(screen.getByRole('radio', { name: 'crescendo' }))
     expect(screen.getByRole('radio', { name: 'crescendo' })).toBeChecked()
@@ -1323,7 +1351,7 @@ describe('ScenarioDetail', () => {
     expect(turns).toHaveValue(4)
     expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
     expect(mockStartRun).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Reset to original' }))
+    await user.click(screen.getByRole('button', { name: 'Edited - click to reset' }))
     expect(await screen.findByRole('spinbutton', { name: 'Turn count' })).toHaveValue(2)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
   })
