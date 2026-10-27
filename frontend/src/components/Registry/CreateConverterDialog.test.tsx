@@ -424,7 +424,7 @@ describe('CreateConverterDialog', () => {
       type: 'CaesarConverter',
       params: { caesar_offset: 5 },
     })
-    expect(onCreated).toHaveBeenCalledWith('caesar-custom')
+    expect(onCreated).toHaveBeenCalledWith('caesar-custom', true)
   })
 
   it.each([
@@ -948,7 +948,7 @@ describe('CreateConverterDialog', () => {
     })
 
     // The list still refreshes, but the opening in front of the user is untouched.
-    expect(onCreated).toHaveBeenCalledWith('first-converter')
+    expect(onCreated).toHaveBeenCalledWith('first-converter', false)
     expect(screen.getByLabelText(/registry name/i)).toHaveValue('my-second-converter')
     expect(screen.getByLabelText(/caesar_offset/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Add Converter' })).toBeInTheDocument()

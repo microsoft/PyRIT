@@ -589,8 +589,8 @@ export default function ConverterPanel({
       <CreateConverterDialog
         open={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
-        onCreated={(converterId: string) => {
-          setCreateDialogOpen(false)
+        onCreated={(converterId: string, isCurrentOpening: boolean) => {
+          if (isCurrentOpening) setCreateDialogOpen(false)
           void loadConverters(converterId, effectiveActiveTab)
         }}
       />

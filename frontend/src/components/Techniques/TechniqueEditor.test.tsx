@@ -130,6 +130,40 @@ describe('TechniqueEditor', () => {
     expect(converter.identifier.caesar_offset).toBe(1)
   })
 
+  it('should keep newer chain edits and dialogs when an earlier creation finishes late', async () => {
+    const user = userEvent.setup()
+    let finish: (value: Awaited<ReturnType<typeof convertersApi.createConverter>>) => void = () => {
+      throw new Error('Creation has not started')
+    }
+    jest.mocked(convertersApi.listConverterTypes).mockResolvedValue({ items: [{
+      converter_type: 'Base64Converter', supported_input_types: ['text'], supported_output_types: ['text'],
+      is_llm_based: false, parameters: [],
+    }] })
+    jest.mocked(convertersApi.createConverter).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    render(tree())
+    await user.click(await screen.findByRole('combobox', { name: 'Request converters' }))
+    await user.click(screen.getByRole('option', { name: /^New converter/ }))
+    await user.click(await screen.findByRole('combobox', { name: /Converter Type/i }))
+    await user.click(screen.getByRole('option', { name: /Base64Converter/ }))
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    await waitFor(() => expect(convertersApi.createConverter).toHaveBeenCalledTimes(1))
+    await user.click(within(screen.getByRole('dialog', { name: 'Add Converter' })).getByRole('button', { name: 'Cancel' }))
+    await user.click(await screen.findByRole('button', { name: 'Remove converter base64, Request converters stage 1' }))
+    await user.click(screen.getByRole('combobox', { name: 'Request converters' }))
+    await user.click(screen.getByRole('option', { name: /^New converter/ }))
+    await screen.findByRole('dialog', { name: 'Add Converter' })
+    const created = { converter_id: 'late_base64', identifier: { class_name: 'Base64Converter', hash: 'late' } }
+    finish(created)
+    await screen.findByText('late_base64')
+    expect(screen.getByRole('dialog', { name: 'Add Converter' })).toBeInTheDocument()
+    await user.click(within(screen.getByRole('dialog', { name: 'Add Converter' })).getByRole('button', { name: 'Cancel' }))
+    expect(await screen.findByRole('button', { name: 'Remove converter rot13, Request converters stage 1' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Remove converter base64,/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
+    expect(techniques.validateEdit.mock.calls[0][0].changes.request_converters).toEqual(['rot13', 'late_base64'])
+  })
+
   it('should reset temporary settings without changing the registered converter', async () => {
     const user = userEvent.setup()
     const original = configuration()

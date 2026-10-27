@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 
 import { MessageBar, MessageBarBody, Text } from '@fluentui/react-components'
 
@@ -29,7 +29,7 @@ export default function ConverterChainField({
   const styles = useConverterChainFieldStyles()
   const id = useId()
   const [entryIds, setEntryIds] = useState<string[]>([])
-  const [nextId, setNextId] = useState(0)
+  const nextId = useRef(0)
   const dragged = useRef<number | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [settings, setSettings] = useState<{
@@ -42,11 +42,19 @@ export default function ConverterChainField({
     return () => { active.current = false }
   }, [])
   const ids = value.map((_, index) => entryIds[index] ?? `${id}-initial-${index}`)
+  const latest = useRef({ value, ids, onChange })
+  useLayoutEffect(() => { latest.current = { value, ids, onChange } })
 
   const add = (name: string): void => {
-    setEntryIds([...ids, `${id}-added-${nextId}`])
-    setNextId(nextId + 1)
-    onChange([...value, name])
+    const current = latest.current
+    const next = {
+      value: [...current.value, name],
+      ids: [...current.ids, `${id}-added-${nextId.current++}`],
+      onChange: current.onChange,
+    }
+    latest.current = next
+    setEntryIds(next.ids)
+    next.onChange(next.value)
   }
   const move = (index: number, delta: number): void => {
     if (index + delta < 0 || index + delta >= value.length) return
@@ -97,9 +105,9 @@ export default function ConverterChainField({
       />
     })}
     {createOpen && <CreateConverterDialog open onClose={() => setCreateOpen(false)}
-      onCreated={(name: string) => {
+      onCreated={(name: string, isCurrentOpening: boolean) => {
         if (!active.current) return
-        setCreateOpen(false)
+        if (isCurrentOpening) setCreateOpen(false)
         add(name)
         void convertersApi.listConverters().then((response) => {
           if (!active.current) return

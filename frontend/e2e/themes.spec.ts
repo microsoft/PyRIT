@@ -43,6 +43,8 @@ const API_RESPONSES: Record<string, unknown> = {
   '/api/operations': { items: [] },
   '/api/converters': { items: [] },
   '/api/converters/catalog': { items: [] },
+  '/api/scenario-presets': { source: 'theme-preview', items: [] },
+  '/api/scenario-suites': { source: 'theme-preview', items: [] },
   '/api/scenarios/catalog': EMPTY_PAGE,
   '/api/scenarios/runs': EMPTY_PAGE,
   '/api/scenarios/runs/queue': {

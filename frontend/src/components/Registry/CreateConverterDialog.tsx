@@ -70,7 +70,7 @@ interface DialogError {
 interface CreateConverterDialogProps {
   open: boolean
   onClose: () => void
-  onCreated: (converterId: string) => void
+  onCreated: (converterId: string, isCurrentOpening: boolean) => void
   editing?: { converter: ConverterInstance; spec?: SourceInstanceSpec }
   onTemporary?: (spec: SourceInstanceSpec, identifier: ConverterIdentifier) => void
   allowUploads?: boolean
@@ -531,7 +531,7 @@ export default function CreateConverterDialog({
       if (openEpochRef.current === epoch) {
         reset()
       }
-      onCreated(response.converter_id)
+      onCreated(response.converter_id, openEpochRef.current === epoch)
     } catch (err) {
       // A failure from an opening the user has already left stays out of the
       // one in front of them, and out of its focus.

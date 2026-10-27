@@ -16,7 +16,13 @@ from unit.mocks import MockPromptTarget
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.converter import Base64Converter
 from pyrit.exceptions import ScenarioPartialFailureException
-from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
+from pyrit.executor.attack import (
+    AttackConverterConfig,
+    AttackScoringConfig,
+    ChunkedRequestAttack,
+    PromptSendingAttack,
+    RedTeamingAttack,
+)
 from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
 from pyrit.executor.attack.compound import SequenceCompletionPolicy, SequentialAttack, SequentialAttackResult
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -121,6 +127,19 @@ async def _save_history_async(
 
 @pytest.mark.usefixtures("patch_central_database", "catalog")
 class TestExecute:
+    async def test_fixed_attack_parameter_contract_rejects_separate_prompt_async(self, scorer: MagicMock) -> None:
+        factory = AttackTechniqueFactory(name="chunked", attack_class=ChunkedRequestAttack)
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        target = MockPromptTarget()
+        assert not factory.supports_prompt
+        assert factory.supports_prepended_conversation
+        attack = ChunkedRequestAttack(objective_target=target)
+        assert attack.params_type is ChunkedRequestAttack.FIXED_PARAMS_TYPE
+        scenario = _scenario(scorer=scorer, target=target, scenario_techniques=["chunked"], prompt="Keep this text.")
+        with pytest.raises(IncompatibleTechniqueError, match="cannot send a separate prompt"):
+            await scenario.initialize_async()
+        assert target.prompt_sent == []
+
     @pytest.mark.parametrize("name", ["many_shot", "skeleton_key", "role_play_movie_script"])
     async def test_incompatible_separate_prompt_is_rejected_before_preparation_async(
         self, scorer: MagicMock, name: str
