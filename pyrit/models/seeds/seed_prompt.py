@@ -20,7 +20,7 @@ from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydanti
     ChatMessageRole,
     PromptDataType,
 )
-from pyrit.models.seeds.seed import Seed
+from pyrit.models.seeds.seed import Seed, TemplateParameter, merge_template_parameter_values
 from pyrit.models.target.json_schema_definition import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     JsonSchemaDefinition,
     get_common_json_schema,
@@ -33,6 +33,33 @@ if TYPE_CHECKING:
     from pyrit.models import Message
 
 logger = logging.getLogger(__name__)
+
+
+def _parameter_name_and_spec(item: Any) -> tuple[str, Any]:
+    """
+    Return a parameter name and the spec to store for one YAML or constructor item.
+
+    Args:
+        item: A parameter name, spec mapping, or ``TemplateParameter``.
+
+    Returns:
+        tuple[str, Any]: The parameter name and the spec value.
+
+    Raises:
+        ValueError: If the item is not a name or a spec with a non-empty name.
+    """
+    if isinstance(item, str):
+        if not item:
+            raise ValueError("A template parameter name must not be empty.")
+        return item, {"name": item}
+    if isinstance(item, TemplateParameter):
+        return item.name, item
+    if isinstance(item, dict):
+        name = item.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("Each template parameter spec must include a non-empty name.")
+        return name, item
+    raise ValueError("A template parameter must be a name or a spec with a name.")
 
 
 class SeedPrompt(Seed[PromptDataType | None]):
@@ -59,6 +86,61 @@ class SeedPrompt(Seed[PromptDataType | None]):
 
     # Parameters that can be used in the prompt template
     parameters: list[str] | None = Field(default_factory=list)
+
+    # Specs for template parameters. Names stay in ``parameters``.
+    # The parameters database column stores names only, so specs do not round-trip through memory.
+    parameter_specs: list[TemplateParameter] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_template_parameter_specs(cls, data: Any) -> Any:
+        """
+        Accept parameter names or parameter specs.
+
+        A list of names stays a list of names. A spec stores its name in
+        ``parameters`` and the spec in ``parameter_specs``.
+
+        Args:
+            data: Raw input passed to the model constructor.
+
+        Returns:
+            The input, with parameter specs normalized when present.
+
+        Raises:
+            ValueError: If a spec has no name, a name is empty, or a name is repeated.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        raw = data.get("parameters")
+        if not isinstance(raw, list) or not raw or all(isinstance(item, str) for item in raw):
+            return data
+
+        names: list[str] = []
+        specs: list[Any] = []
+        for item in raw:
+            name, spec = _parameter_name_and_spec(item)
+            if name in names:
+                raise ValueError(f"Template parameter {name!r} is declared more than once.")
+            names.append(name)
+            specs.append(spec)
+
+        data["parameters"] = names
+        if not data.get("parameter_specs"):
+            data["parameter_specs"] = specs
+        return data
+
+    def merged_template_values(self, template_values: dict[str, Any] | None = None) -> dict[str, Any]:
+        """
+        Merge supplied template values over this prompt's parameter defaults.
+
+        Args:
+            template_values (dict[str, Any] | None): Values supplied by the caller.
+
+        Returns:
+            dict[str, Any]: Names mapped to the value used at render time.
+        """
+        return merge_template_parameter_values(parameter_specs=self.parameter_specs, template_values=template_values)
 
     @model_validator(mode="before")
     @classmethod

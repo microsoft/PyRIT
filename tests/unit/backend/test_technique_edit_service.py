@@ -23,7 +23,7 @@ from pyrit.backend.services.technique_edit_service import TechniqueEditService
 from pyrit.backend.services.technique_service import TechniqueService
 from pyrit.common.apply_defaults import GlobalDefaultValues
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH, EXECUTOR_SIMULATED_TARGET_PATH
-from pyrit.converter import Base64Converter, ROT13Converter
+from pyrit.converter import Base64Converter, CaesarConverter, ROT13Converter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackExecutor,
@@ -49,6 +49,7 @@ from pyrit.models import (
     load_next_message_prompt,
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioRunSizeEstimateRequest
+from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.models.technique_edit import (
     SimulationChanges,
     SimulationSettings,
@@ -121,6 +122,72 @@ def _specification(*, changes: TechniqueChanges | None = None) -> TechniqueOverr
     return TechniqueOverride(
         source_name=config.source_name, source_identity=config.source_identity, changes=changes or TechniqueChanges()
     )
+
+
+def test_temporary_converter_settings_survive_replay_without_registration(
+    edit_catalog: AttackTechniqueRegistry,
+) -> None:
+    registry = ConverterRegistry.get_registry_singleton()
+    converter = CaesarConverter(caesar_offset=1)
+    registry.instances.register(converter, name="caesar")
+    spec = SourceInstanceSpec(
+        source_name="caesar", source_hash=converter.get_identifier().hash, params={"caesar_offset": 7}
+    )
+    changes = TechniqueChanges(request_converters=[spec, "base64", "caesar"], response_converters=[spec])
+    admitted = TechniqueEditService.validate(_specification(changes=changes))
+    assert admitted.configuration.settings.request_converters == changes.request_converters
+    assert "request_converters" in admitted.configuration.editable_fields
+    assert "response_converters" in admitted.configuration.editable_fields
+    assert "request_converters" not in admitted.configuration.read_only
+    replay = TechniqueOverride.model_validate_json(admitted.override.model_dump_json())
+    copied = TechniqueEditService.resolve(replay)
+    chain = copied.get_converter_config().request_converters
+    assert chain[0].converters[0].get_identifier().params["caesar_offset"] == 7
+    assert chain[2].converters[0] is converter
+    assert registry.instances.get_names() == ["base64", "caesar", "rot13"]
+    assert converter.get_identifier().params["caesar_offset"] == 1
+    assert edit_catalog.get_factories()["role_play_movie_script"].get_converter_config().request_converters == []
+    registry.instances.register(CaesarConverter(caesar_offset=2), name="caesar", replace=True)
+    with pytest.raises(ValueError):
+        TechniqueEditService.resolve(replay)
+
+
+def test_temporary_converter_effective_hash_is_checked(edit_catalog: AttackTechniqueRegistry) -> None:
+    converter = CaesarConverter(caesar_offset=1)
+    ConverterRegistry.get_registry_singleton().instances.register(converter, name="caesar")
+    spec = SourceInstanceSpec(
+        source_name="caesar",
+        source_hash=converter.get_identifier().hash,
+        params={"caesar_offset": 3},
+        effective_hash="stale",
+    )
+    with pytest.raises(ValueError, match="Temporary converter configuration has changed"):
+        TechniqueEditService.validate(_specification(changes=TechniqueChanges(request_converters=[spec])))
+
+
+async def test_temporary_converter_is_used_by_the_attack_async(edit_catalog: AttackTechniqueRegistry) -> None:
+    source = CaesarConverter(caesar_offset=1)
+    ConverterRegistry.get_registry_singleton().instances.register(source, name="caesar")
+    config = TechniqueEditService.configuration("plain")
+    admitted = TechniqueEditService.validate(
+        TechniqueOverride(
+            source_name=config.source_name,
+            source_identity=config.source_identity,
+            changes=TechniqueChanges(
+                request_converters=[
+                    SourceInstanceSpec(
+                        source_name="caesar", source_hash=source.get_identifier().hash, params={"caesar_offset": 3}
+                    ),
+                ]
+            ),
+        )
+    )
+    factory = TechniqueEditService.resolve(admitted.override)
+    target = MockPromptTarget()
+    technique = factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
+    await technique.attack.execute_async(objective="abc")
+    assert target.prompt_sent == ["def"]
+    assert source.get_identifier().params["caesar_offset"] == 1
 
 
 @pytest.mark.parametrize("value", [0, 2, -1, True, "2", 1.5, None, [], {}])

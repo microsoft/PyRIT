@@ -446,6 +446,8 @@ export interface SourceInstanceSpec {
   effective_hash?: string
 }
 
+export type ConverterSelection = string | SourceInstanceSpec
+
 export interface TargetBinding {
   version: 1
   source_name: string
@@ -518,8 +520,8 @@ export type SimulationChanges = Partial<SimulationSettings>
 interface TechniqueSettingFields {
   description?: string | null
   params?: Record<string, unknown>
-  request_converters?: string[] | null
-  response_converters?: string[] | null
+  request_converters?: ConverterSelection[] | null
+  response_converters?: ConverterSelection[] | null
   adversarial_chat?: string | null
   adversarial_system_prompt?: string | null
   adversarial_seed_prompt?: string | null

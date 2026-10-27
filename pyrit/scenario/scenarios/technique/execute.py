@@ -61,16 +61,14 @@ if TYPE_CHECKING:
 @AttackTechniqueRegistry.cache_scenario_technique_class
 def _build_execute_technique() -> type[ScenarioTechnique]:
     """
-    Build a catalog with one deterministic default and all registered techniques.
+    Build a catalog with all registered techniques and no automatic selection.
 
     Returns:
         type[ScenarioTechnique]: The current catalog enum.
     """
     factories = list(AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise().values())
-    names = {factory.name for factory in factories}
-    default_name = "red_teaming" if "red_teaming" in names else sorted(names)[0]
     return AttackTechniqueRegistry.build_technique_class_from_factories(
-        class_name="ExecuteTechnique", factories=factories, default_names={default_name}
+        class_name="ExecuteTechnique", factories=factories, default_names=set()
     )
 
 
@@ -83,7 +81,7 @@ class Execute(Scenario):
     stops on success. Max Retries handles execution errors separately.
     """
 
-    VERSION: int = 1
+    VERSION: int = 2
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Disabled
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
     MAX_CONCRETE_TECHNIQUES: ClassVar[int | None] = 1
@@ -174,6 +172,8 @@ class Execute(Scenario):
 
     def _validate_runtime_configuration(self) -> None:
         super()._validate_runtime_configuration()
+        if not self._scenario_techniques:
+            raise ValueError("technique.execute requires an explicit technique selection")
         if self.params["retries_on_objective_failure"] < 0:
             raise ValueError("retries_on_objective_failure must be nonnegative")
         conversation_id = self.params.get("prepended_conversation_id")

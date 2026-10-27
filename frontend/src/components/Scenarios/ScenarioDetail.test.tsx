@@ -1368,6 +1368,24 @@ describe('ScenarioDetail', () => {
     expect(screen.getByRole('checkbox', { name: 'baseline' })).toBeChecked()
   })
 
+  it('requires an explicit choice when a single-technique scenario has no defaults', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      max_concrete_techniques: 1, default_technique: 'default', default_techniques: [],
+      include_baseline_by_default: false,
+    }))
+    renderDetail('/scanner/technique.execute')
+    const first = await screen.findByRole('radio', { name: 'default_technique' })
+    expect(first).not.toBeChecked()
+    expect(screen.getByRole('radio', { name: 'crescendo' })).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    expect(mockEstimateRun).not.toHaveBeenCalled()
+    expect(mockTechniques.getConfiguration).not.toHaveBeenCalled()
+    await user.click(first)
+    expect(first).toBeChecked()
+    await waitFor(() => expect(mockTechniques.getConfiguration).toHaveBeenCalledWith('default_technique'))
+  })
+
   it('blocks estimates and launch for an over-limit selection until the user selects one technique', async () => {
     jest.useFakeTimers()
     const timedUser = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })

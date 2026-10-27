@@ -17,7 +17,7 @@ from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from types import ModuleType
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Self, cast
 
-from jinja2 import StrictUndefined, Undefined, meta
+from jinja2 import StrictUndefined, TemplateSyntaxError, Undefined, meta
 from jinja2.sandbox import SandboxedEnvironment
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
 from typing_extensions import TypeVar
@@ -54,6 +54,46 @@ def _ensure_aware_utc(value: Any) -> Any:
 
 # Timezone-aware datetime that interprets naive inputs as UTC instead of rejecting them.
 AwareDatetimeUTC = Annotated[AwareDatetime, BeforeValidator(_ensure_aware_utc)]
+
+
+class TemplateParameter(BaseModel):
+    """A named template parameter with optional help text, default, and examples."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    description: str = ""
+    default: str | None = None
+    examples: list[str] = Field(default_factory=list)
+
+
+def merge_template_parameter_values(
+    *,
+    parameter_specs: list[TemplateParameter] | None,
+    template_values: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Merge supplied template values over parameter defaults.
+
+    An empty string or None does not replace a default. A supplied value replaces
+    the default. Examples are not selected.
+
+    Args:
+        parameter_specs (list[TemplateParameter] | None): Declared parameter specs.
+        template_values (dict[str, Any] | None): Values supplied by the caller.
+
+    Returns:
+        dict[str, Any]: Names mapped to the value used at render time.
+    """
+    merged: dict[str, Any] = {}
+    for spec in parameter_specs or []:
+        if spec.default not in (None, ""):
+            merged[spec.name] = spec.default
+    for name, value in (template_values or {}).items():
+        if value in (None, ""):
+            continue
+        merged[name] = value
+    return merged
 
 
 class PartialUndefined(Undefined):
@@ -349,6 +389,21 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
         if declared is not None:
             updates["parameters"] = [name for name in declared if name not in parameters]
         return self.model_copy(update=updates, deep=True)
+
+    def get_template_parameter_names(self) -> list[str]:
+        """
+        Get the variable names used by this template.
+
+        Returns:
+            list[str]: Sorted template parameter names.
+
+        Raises:
+            ValueError: If the template syntax is invalid.
+        """
+        try:
+            return sorted(meta.find_undeclared_variables(_template_environment(StrictUndefined).parse(self.value)))
+        except TemplateSyntaxError as exc:
+            raise ValueError(f"Invalid prompt template: {exc}") from exc
 
     def render_template_value(self, **kwargs: Any) -> str:
         """

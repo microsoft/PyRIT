@@ -57,6 +57,7 @@ class LLMGenericTextConverter(Converter):
         retry_exceptions: tuple[type[BaseException], ...] | None = None,
         max_retry_attempts: int | None = None,
         retry_wait_max_seconds: int | None = None,
+        template_values: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -68,6 +69,7 @@ class LLMGenericTextConverter(Converter):
                 via normalization-pipeline adaptation). Can be omitted if a default has been configured
                 via PyRIT initialization.
             system_prompt_template (SeedPrompt | None): The prompt template to set as the system prompt.
+                The input prompt is available as ``objective`` when rendering.
             user_prompt_template_with_objective (SeedPrompt | None): The prompt template to wrap the
                 user input with. Must include an ``objective`` parameter; the raw user prompt is rendered
                 as ``objective``. Additional ``**kwargs`` are also forwarded to the renderer, so subclasses
@@ -80,8 +82,11 @@ class LLMGenericTextConverter(Converter):
             retry_wait_max_seconds (int | None): Upper bound (in seconds) for exponential backoff
                 between retry attempts. If ``None``, no wait is applied between attempts (matches
                 ``pyrit_json_retry``).
+            template_values (dict[str, str] | None): Values merged over the template's parameter
+                defaults before rendering. An empty string keeps the default. The incoming prompt
+                is still rendered as ``objective`` and wins over a template value of that name.
             kwargs: Additional parameters forwarded to both the system prompt and user prompt templates
-                during rendering.
+                during rendering. These replace template values of the same name, except ``objective``.
 
         Raises:
             ValueError: If converter_target is not provided and no default has been configured.
@@ -91,6 +96,7 @@ class LLMGenericTextConverter(Converter):
         super().__init__(converter_target=converter_target)
         self._converter_target = converter_target
         self._system_prompt_template = system_prompt_template
+        self._template_values = template_values
         self._prompt_kwargs = kwargs
         self._retry_exceptions = retry_exceptions if retry_exceptions is not None else self.RETRY_EXCEPTIONS
         self._max_retry_attempts = max_retry_attempts
@@ -124,11 +130,14 @@ class LLMGenericTextConverter(Converter):
                 str(self._user_prompt_template_with_objective.value).encode("utf-8")
             ).hexdigest()[:16]
 
+        params: dict[str, Any] = {
+            "system_prompt_template_hash": system_prompt_hash,
+            "user_prompt_template_hash": user_prompt_hash,
+        }
+        if self._template_values:
+            params["template_values"] = self._template_values
         return self._create_identifier(
-            params={
-                "system_prompt_template_hash": system_prompt_hash,
-                "user_prompt_template_hash": user_prompt_hash,
-            },
+            params=params,
             converter_target=self._converter_target.get_identifier(),
         )
 
@@ -150,10 +159,11 @@ class LLMGenericTextConverter(Converter):
             raise ValueError("Input type not supported")
 
         conversation_id = str(uuid.uuid4())
-        kwargs = self._prompt_kwargs.copy()
 
         if self._system_prompt_template:
-            system_prompt = self._system_prompt_template.render_template_value(**kwargs)
+            system_prompt = self._system_prompt_template.render_template_value(
+                **self._render_values(template=self._system_prompt_template, objective=prompt)
+            )
             (
                 await self._converter_target.set_system_prompt_async(
                     system_prompt=system_prompt, conversation_id=conversation_id
@@ -162,9 +172,8 @@ class LLMGenericTextConverter(Converter):
 
         converted_prompt = prompt
         if self._user_prompt_template_with_objective:
-            template_kwargs = {k: v for k, v in kwargs.items() if k != "objective"}
             converted_prompt = self._user_prompt_template_with_objective.render_template_value(
-                objective=prompt, **template_kwargs
+                **self._render_values(template=self._user_prompt_template_with_objective, objective=prompt)
             )
 
         request = Message(
@@ -184,6 +193,31 @@ class LLMGenericTextConverter(Converter):
 
         response_text = await self._send_with_retries_async(request)
         return ConverterResult(output_text=response_text, output_type="text")
+
+    def _render_values(self, *, template: SeedPrompt, objective: str | None) -> dict[str, Any]:
+        """
+        Merge defaults, template values, and constructor kwargs for one template.
+
+        An empty constructor value does not replace a default. The incoming prompt
+        wins over every ``objective`` value when ``objective`` is not None.
+
+        Args:
+            template (SeedPrompt): The template to render.
+            objective (str | None): The incoming prompt, when it should fill ``objective``.
+
+        Returns:
+            dict[str, Any]: Render values for the template.
+        """
+        values = template.merged_template_values(self._template_values)
+        for name, value in self._prompt_kwargs.items():
+            if objective is not None and name == "objective":
+                continue
+            if value in (None, "") and name in values:
+                continue
+            values[name] = value
+        if objective is not None:
+            values["objective"] = objective
+        return values
 
     async def _send_with_retries_async(self, request: Message) -> str:
         """

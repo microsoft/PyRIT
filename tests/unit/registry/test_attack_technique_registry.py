@@ -726,6 +726,16 @@ class TestBuildTechniqueClassFromFactories:
         assert "default" not in cls.get_aggregate_tags()
         assert cls.default() == cls["ALL"]
 
+    def test_explicit_empty_default_names_does_not_select_any_technique(self) -> None:
+        cls = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="ExplicitSelectionTechnique", factories=_make_pool(), default_names=set()
+        )
+        assert cls.expand({cls.default()}) == []
+        assert cls.resolve(None, default=cls.default()) == []
+        assert cls.resolve([], default=cls.default()) == []
+        assert cls.resolve([cls("gamma")], default=cls.default()) == [cls("gamma")]
+        assert len(cls.get_all_techniques()) == len(_make_pool())
+
     def test_default_selection_matching_nothing_falls_back_to_all(self):
         """A default set that matches no pool technique builds no DEFAULT and falls back to ALL."""
         cls = AttackTechniqueRegistry.build_technique_class_from_factories(

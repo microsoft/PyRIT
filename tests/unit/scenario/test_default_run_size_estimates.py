@@ -370,7 +370,7 @@ async def test_unlimited_estimate_does_not_load_data_or_invent_a_count_async() -
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_all_builtin_default_size_contracts_are_bounded_async() -> None:
+async def test_all_builtin_defaults_are_bounded_or_require_explicit_selection_async() -> None:
     TargetRegistry.reset_registry_singleton()
     AttackTechniqueRegistry.reset_registry_singleton()
     ScenarioRegistry.reset_registry_singleton()
@@ -388,6 +388,10 @@ async def test_all_builtin_default_size_contracts_are_bounded_async() -> None:
                 if not scenario_class.__module__.startswith("pyrit.scenario.scenarios."):
                     continue
                 scenario = registry.create_instance(name)
+                if not scenario._technique_class.expand({scenario._default_technique}):
+                    with pytest.raises(ValueError, match="requires an explicit technique selection"):
+                        await scenario.get_default_run_size_estimate_async()
+                    continue
                 estimate = await scenario.get_default_run_size_estimate_async()
                 assert isinstance(estimate.dataset_size, BoundedDatasetSize), name
                 assert estimate.status is not ScenarioRunSizeEstimateStatus.Unavailable, name

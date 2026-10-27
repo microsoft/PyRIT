@@ -1,5 +1,5 @@
 import type { TargetInstance, TargetPreferences, TargetReference } from '@/types'
-import { resolveTargetReference, targetReference } from '@/utils/targetIdentity'
+import { resolveDefaultAdversarialTarget, resolveTargetReference, targetReference } from '@/utils/targetIdentity'
 
 import { useUserPreferences } from './useUserPreferences'
 
@@ -16,11 +16,7 @@ export function useTargetPreferences(targets: TargetInstance[]) {
   }
 
   const objectiveTarget = resolveTargetReference(preferences.objective, targets)
-  const resolvedAdversarial = preferences.adversarial
-    ? resolveTargetReference(preferences.adversarial, targets)
-    : targets.find((target: TargetInstance) => target.target_registry_name === 'adversarial_chat')
-  const adversarialTarget = resolvedAdversarial?.capabilities?.supports_multi_turn === true
-    ? resolvedAdversarial : null
+  const adversarialTarget = resolveDefaultAdversarialTarget(preferences, targets)
 
   return {
     preferences,

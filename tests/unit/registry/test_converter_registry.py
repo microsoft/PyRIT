@@ -466,6 +466,16 @@ class TestClassMetadata:
         # catalog_visible is a presentation concern owned by the backend/frontend.
         assert not hasattr(self._metadata_for(registry, "Base64Converter"), "catalog_visible")
 
+    def test_multiline_parameters_come_from_converter(self, registry: ConverterRegistry) -> None:
+        meta = self._metadata_for(registry, "RolePlayToolCallConverter")
+        assert {p.name for p in meta.parameters if p.multiline} == {
+            "valid_call",
+            "action_desired",
+            "message_format",
+            "system_prompt",
+        }
+        assert all(p.model_dump()["multiline"] for p in meta.parameters if p.multiline)
+
     def test_is_llm_based_flag(self, registry: ConverterRegistry):
         llm_based = (
             LLMGenericTextConverter,
