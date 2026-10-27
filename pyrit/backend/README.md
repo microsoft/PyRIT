@@ -197,10 +197,10 @@ Stop these test-owned servers after the run.
 ### Request Limits
 
 The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
-API requests with URLs over 8 KiB receive **414**. Identifiers, names, labels, filters,
-cursors, configuration files, and initializer scripts also have length or item limits,
-listed in the OpenAPI schema; values over a limit receive **422**. Prompt content (message
-pieces, system prompts, and converter preview input) and free-form values (prompt
+API requests with URLs over 8 KiB receive **414**. Identifiers, names, titles, descriptions,
+labels, filters, cursors, configuration files, and initializer scripts also have length or
+item limits, listed in the OpenAPI schema; values over a limit receive **422**. Prompt content
+(message pieces, system prompts, and converter preview input) and free-form values (prompt
 metadata, scenario and initializer arguments, and target and converter parameter values)
 are limited only by the body size, so long prompts and base64 media keep working.
 

@@ -16,6 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from pyrit.backend.models.common import IdentifierStr
 from pyrit.models.catalog.scenario import ScenarioRunSizeEstimate
 from pyrit.models.catalog.scenario_preset import PresetIssue, ScenarioPreset
 
@@ -78,4 +79,4 @@ class UpdateScenarioPresetRequest(BaseModel):
     """
 
     preset: ScenarioPreset = Field(..., description="The replacement preset")
-    expected_version: str = Field(..., description="Version returned when the preset being edited was read")
+    expected_version: IdentifierStr = Field(..., description="Version returned when the preset being edited was read")

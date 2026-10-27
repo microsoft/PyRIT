@@ -12,7 +12,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
-from pydantic import BaseModel, Field, computed_field, field_serializer, model_validator
+from pydantic import AfterValidator, BaseModel, Field, computed_field, field_serializer, model_validator
 
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.common import (
@@ -493,6 +493,26 @@ class _AttackAttributionInput(BaseModel):
         return normalized
 
 
+def _limit_target_binding(binding: TargetBinding) -> TargetBinding:
+    """
+    Apply the identifier limit to a binding a caller sends.
+
+    Saved bindings are read without this limit, so attacks saved before it keep loading.
+
+    Returns:
+        TargetBinding: The unchanged binding.
+
+    Raises:
+        ValueError: If a name or hash is longer than the identifier limit.
+    """
+    if max(len(binding.source_name), len(binding.source_hash), len(binding.effective_hash)) > MAX_IDENTIFIER_LENGTH:
+        raise ValueError(f"Target binding names and hashes are limited to {MAX_IDENTIFIER_LENGTH} characters.")
+    return binding
+
+
+TargetBindingInput = Annotated[TargetBinding, AfterValidator(_limit_target_binding)]
+
+
 # ============================================================================
 # Create Attack
 # ============================================================================
@@ -510,7 +530,7 @@ class CreateAttackRequest(_AttackAttributionInput):
     """
 
     name: TextStr | None = Field(None, description="Attack name/label")
-    target_binding: TargetBinding | None = None
+    target_binding: TargetBindingInput | None = None
     chat_scorer: RegisteredComponentReference | None = None
     target_registry_name: IdentifierStr | None = Field(
         None, description="Target registry name, or None for a saved unbound attack"
@@ -636,7 +656,7 @@ class SaveConversationRequest(_AttackAttributionInput):
     expected_objective: str | None = None
     objective: str | None = Field(None, description="Omit to keep the destination's objective unchanged")
     target_registry_name: IdentifierStr | None = None
-    target_binding: TargetBinding | None = None
+    target_binding: TargetBindingInput | None = None
     messages: list[MessageRequest] = Field(default_factory=list)
     reuse_unsent_conversation: bool = False
     expected_source_piece_ids: list[uuid.UUID] | None = None
@@ -728,7 +748,7 @@ class AddMessageRequest(MessageRequest):
         None,
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
-    target_binding: TargetBinding | None = None
+    target_binding: TargetBindingInput | None = None
     converter_ids: list[IdentifierStr] | None = Field(
         None,
         max_length=MAX_ITEMS,

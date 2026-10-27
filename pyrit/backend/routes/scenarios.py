@@ -18,7 +18,14 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.concurrency import run_in_threadpool
 
 from pyrit.analytics import PairedOutcomeStatistics, compute_paired_outcome_statistics
-from pyrit.backend.models.common import MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr, ProblemDetail
+from pyrit.backend.models.common import (
+    MAX_IDENTIFIER_LENGTH,
+    MAX_ITEMS,
+    CursorStr,
+    IdentifierStr,
+    LabelFilterStr,
+    ProblemDetail,
+)
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.models.scenarios import (
     ListRegisteredScenariosResponse,
@@ -453,8 +460,8 @@ async def get_scenario_run_results(scenario_result_id: IdentifierStr) -> Scenari
 async def get_paired_outcomes_async(
     *,
     scenario_result_id: IdentifierStr,
-    baseline_group_id: IdentifierStr = Query(..., description="Saved baseline atomic group ID"),
-    attack_group_id: IdentifierStr = Query(..., description="Saved attack atomic group ID"),
+    baseline_group_id: str = Query(..., max_length=MAX_IDENTIFIER_LENGTH, description="Saved baseline atomic group ID"),
+    attack_group_id: str = Query(..., max_length=MAX_IDENTIFIER_LENGTH, description="Saved attack atomic group ID"),
 ) -> PairedOutcomeStatistics:
     """
     Compare explicitly selected groups using the SDK's effective outcome semantics.

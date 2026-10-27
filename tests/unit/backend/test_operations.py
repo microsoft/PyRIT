@@ -66,6 +66,66 @@ def test_operation_description_is_set_on_create_and_edited(compatibility_headers
     assert client.get("/api/operations").json()["items"][0]["description"] == ""
 
 
+def test_operation_description_is_limited(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+
+    created = client.post("/api/operations", json={"name": "Long", "description": "d" * 100_000})
+    path = f"/api/operations/{created.json()['id']}"
+
+    assert created.status_code == 201
+    assert client.post("/api/operations", json={"name": "Too long", "description": "d" * 100_001}).status_code == 422
+    assert client.patch(path, json={"description": "d" * 100_001}).status_code == 422
+    assert client.patch(path, json={"description": "e" * 100_000}).status_code == 200
+    assert [item["name"] for item in client.get("/api/operations").json()["items"]] == ["Long"]
+
+
+@pytest.mark.parametrize(
+    ("field", "body"),
+    [
+        ("title", {"severity": "low"}),
+        ("description", {"title": "Limits", "severity": "low"}),
+        ("severity_other", {"title": "Limits", "severity": "other"}),
+        ("harm_type_other", {"title": "Limits", "severity": "low", "harm_type": "Other"}),
+    ],
+)
+def test_finding_text_is_limited(compatibility_headers: dict[str, str], field: str, body: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    path = f"/api/operations/{client.post('/api/operations', json={'name': 'Limits'}).json()['id']}/findings"
+
+    created = client.post(path, json={**body, field: "x" * 100_000})
+    finding_path = f"{path}/{created.json()['id']}"
+    updated = client.put(finding_path, json={**body, field: "y" * 100_000})
+
+    assert created.status_code == 201
+    assert updated.status_code == 200
+    assert updated.json()[field] == "y" * 100_000
+    assert client.post(path, json={**body, field: "x" * 100_001}).status_code == 422
+    assert client.put(finding_path, json={**body, field: "x" * 100_001}).status_code == 422
+    assert client.get(path).json()["items"][0][field] == "y" * 100_000
+
+
+def test_finding_title_search_is_limited(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    path = f"/api/operations/{client.post('/api/operations', json={'name': 'Search'}).json()['id']}/findings"
+
+    assert client.get(path, params={"title": "_" * 1000}).status_code == 200
+    assert client.get(path, params={"title": "_" * 1001}).status_code == 422
+
+
+async def test_saved_text_over_the_limit_still_loads_async(
+    sqlite_instance: SQLiteMemory, compatibility_headers: dict[str, str]
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Legacy", description="d" * 100_001))
+    await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="t" * 100_001, severity="low")
+    )
+    client = TestClient(app, headers=compatibility_headers)
+
+    assert client.get(f"/api/operations/{operation.id}").json()["description"] == "d" * 100_001
+    assert [item["name"] for item in client.get("/api/operations").json()["items"]] == ["Legacy"]
+    assert client.get(f"/api/operations/{operation.id}/findings").json()["items"][0]["title"] == "t" * 100_001
+
+
 def test_operation_rename_keeps_identity_and_rejects_taken_or_invalid_names(
     compatibility_headers: dict[str, str],
 ) -> None:

@@ -248,6 +248,29 @@ class TestCreatePreset:
 
         assert response.status_code == 422
 
+    @pytest.mark.parametrize(("field", "limit"), [("description", 100_000), ("author", 256)])
+    def test_create_limits_the_description_and_author(
+        self, *, client: TestClient, service: MagicMock, field: str, limit: int
+    ) -> None:
+        service.save_preset_async = AsyncMock(return_value=_response())
+
+        at_limit = client.post("/api/scenario-presets", json={**_preset().model_dump(), field: "x" * limit})
+        over_limit = client.post("/api/scenario-presets", json={**_preset().model_dump(), field: "x" * (limit + 1)})
+
+        assert at_limit.status_code == 201
+        assert over_limit.status_code == 422
+        service.save_preset_async.assert_awaited_once()
+
+    def test_create_limits_the_name_without_echoing_it(self, client: TestClient, service: MagicMock) -> None:
+        service.save_preset_async = AsyncMock(return_value=_response())
+        name = "x" * 257
+
+        response = client.post("/api/scenario-presets", json={**_preset().model_dump(), "name": name})
+
+        assert response.status_code == 422
+        assert name not in response.text
+        service.save_preset_async.assert_not_called()
+
     @pytest.mark.usefixtures("signed_in_user")
     def test_the_signed_in_user_is_recorded_as_the_author(self, client: TestClient, service: MagicMock) -> None:
         service.save_preset_async = AsyncMock(return_value=_response())
@@ -307,6 +330,17 @@ class TestUpdatePreset:
         assert response.status_code == 200
         assert service.save_preset_async.call_args.kwargs["preset"].show_in_scanner is show_in_scanner
         assert response.json()["preset"]["show_in_scanner"] is show_in_scanner
+
+    def test_update_limits_the_expected_version(self, client: TestClient, service: MagicMock) -> None:
+        service.save_preset_async = AsyncMock(return_value=_response(version="v2"))
+        path = f"/api/scenario-presets/{PRESET_NAME}"
+
+        at_limit = client.put(path, json={"preset": _preset().model_dump(), "expected_version": "v" * 256})
+        over_limit = client.put(path, json={"preset": _preset().model_dump(), "expected_version": "v" * 257})
+
+        assert at_limit.status_code == 200
+        assert over_limit.status_code == 422
+        service.save_preset_async.assert_awaited_once()
 
     @pytest.mark.parametrize("explicit_null", [False, True])
     @pytest.mark.usefixtures("signed_in_user")
@@ -534,6 +568,17 @@ class TestResolvePreset:
         assert response.status_code == 200
         assert service.resolve_run_request_async.call_args.kwargs["launch"].expected_version == "v1"
 
+    def test_resolve_limits_the_expected_version(self, client: TestClient, service: MagicMock) -> None:
+        service.resolve_run_request_async = self._resolving()
+        path = f"/api/scenario-presets/{PRESET_NAME}/resolve"
+
+        at_limit = client.post(path, json={"target_name": "gpt4", "expected_version": "v" * 256})
+        over_limit = client.post(path, json={"target_name": "gpt4", "expected_version": "v" * 257})
+
+        assert at_limit.status_code == 200
+        assert over_limit.status_code == 422
+        service.resolve_run_request_async.assert_awaited_once()
+
     def test_a_preset_edited_after_it_was_read_is_a_conflict(self, client: TestClient, service: MagicMock) -> None:
         service.resolve_run_request_async = AsyncMock(
             side_effect=ScenarioPresetConflictError(name=PRESET_NAME, expected_version="v1", actual_version="v2")
@@ -554,3 +599,21 @@ class TestResolvePreset:
 
         assert response.status_code == 200
         assert service.resolve_run_request_async.call_args.kwargs["launch"].expected_version is None
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix", "body"),
+    [
+        ("GET", "", None),
+        ("PUT", "", {"preset": _preset().model_dump(), "expected_version": "v1"}),
+        ("DELETE", "", None),
+        ("POST", "/resolve", {"target_name": "gpt4"}),
+    ],
+    ids=["get", "update", "delete", "resolve"],
+)
+@pytest.mark.usefixtures("service")
+def test_path_name_is_limited(*, client: TestClient, method: str, suffix: str, body: dict[str, object] | None) -> None:
+    response = client.request(method, f"/api/scenario-presets/{'x' * 257}{suffix}", json=body)
+
+    assert response.status_code == 422
+    assert [error["field"] for error in response.json()["errors"]] == ["path.name"]
