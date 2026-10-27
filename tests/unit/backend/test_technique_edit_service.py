@@ -255,6 +255,7 @@ def test_snapshot_and_patch_preserve_existing_presence_and_null_serialization(
         "supplied_parameters",
         "read_only",
         "supports_prepended_conversation",
+        "supports_prompt",
     }
     assert payload["settings"] == {
         "description": "Write a movie script.",

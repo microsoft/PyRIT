@@ -251,6 +251,7 @@ interface BuildEstimateRequestInput {
   techniqueOverride?: TechniqueOverride
   techniqueEditError?: string
   supportsPrependedConversation?: boolean
+  supportsPrompt?: boolean
 }
 
 interface BuildRunRequestInput extends BuildEstimateRequestInput {
@@ -311,6 +312,7 @@ function buildEstimateRequest({
   techniqueOverride,
   techniqueEditError,
   supportsPrependedConversation = true,
+  supportsPrompt = true,
 }: BuildEstimateRequestInput): BuildEstimateRequestResult {
   if (techniqueEditError) return { ok: false, error: techniqueEditError }
   if (supportsParameter(scenario, 'scenario_techniques') && techniques.length === 0) {
@@ -324,11 +326,17 @@ function buildEstimateRequest({
   let scenarioParams: Record<string, unknown> | null = null
   if (dynamicParameters.length > 0) {
     const history = scenarioParamValues.prepended_conversation_id
+    const prompt = scenarioParamValues.prompt
+    if (!supportsPrompt && typeof prompt === 'string' && prompt.trim()) {
+      return { ok: false, error: 'This technique cannot send a separate prompt. Clear the prompt or select a compatible technique.' }
+    }
     if (!supportsPrependedConversation && typeof history === 'string' && history.trim()) {
       return { ok: false, error: 'This technique does not support a prepended conversation. Clear the saved conversation before launch.' }
     }
     const result = buildParametersFromForm(
-      dynamicParameters.filter((parameter) => supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(parameter.name)),
+      dynamicParameters.filter((parameter) =>
+        (supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(parameter.name))
+        && (supportsPrompt || parameter.name !== 'prompt')),
       scenarioParamValues,
     )
     if (!result.ok) {
@@ -639,7 +647,8 @@ function ScenarioLaunchForm({
     }
     return ''
   })
-  const [selectedTechniques, setSelectedTechniques] = useState<string[]>(() => defaultTechniques)
+  const [selectedTechniques, setSelectedTechniques] = useState<string[]>(() =>
+    scenario.scenario_name === 'technique.execute' ? [] : defaultTechniques)
   const techniqueEditor = useRunTechniqueEditor(
     singleTechnique && supportsTechniques && selectedTechniques.length === 1 ? selectedTechniques[0] : undefined,
     runtime.generation, runtime.ready,
@@ -653,8 +662,10 @@ function ScenarioLaunchForm({
   const objectiveParameters = dynamicParameters.filter((parameter) => OBJECTIVE_PARAMETER_NAMES.has(parameter.name))
   const historyParameters = dynamicParameters.filter((parameter) => CONVERSATION_PARAMETER_NAMES.has(parameter.name)
     && parameter.name !== conversationConvertersParameter?.name)
+  const supportsPrompt = !singleTechnique || techniqueEditor.configuration?.supports_prompt === true
   const generalParameters = dynamicParameters.filter((parameter) =>
-    !OBJECTIVE_PARAMETER_NAMES.has(parameter.name) && !CONVERSATION_PARAMETER_NAMES.has(parameter.name))
+    !OBJECTIVE_PARAMETER_NAMES.has(parameter.name) && !CONVERSATION_PARAMETER_NAMES.has(parameter.name)
+    && (parameter.name !== 'prompt' || supportsPrompt))
   const unavailableSelection = (
     supportsObjectiveTarget && targetName !== ''
     && !targets.some((target) => target.target_registry_name === targetName)
@@ -792,6 +803,7 @@ function ScenarioLaunchForm({
       techniqueOverride: techniqueEditor.override,
       techniqueEditError,
       supportsPrependedConversation,
+      supportsPrompt,
       dynamicParameters,
       scenarioParamValues,
       datasetEdits,
@@ -812,6 +824,7 @@ function ScenarioLaunchForm({
       techniqueEditor.override,
       techniqueEditError,
       supportsPrependedConversation,
+      supportsPrompt,
     ],
   )
   const requestResult = useMemo(
@@ -823,6 +836,7 @@ function ScenarioLaunchForm({
       techniqueOverride: techniqueEditor.override,
       techniqueEditError,
       supportsPrependedConversation,
+      supportsPrompt,
       dynamicParameters,
       scenarioParamValues,
       datasetEdits,
@@ -851,6 +865,7 @@ function ScenarioLaunchForm({
       techniqueEditor.override,
       techniqueEditError,
       supportsPrependedConversation,
+      supportsPrompt,
     ],
   )
   const estimateRequest = useMemo(

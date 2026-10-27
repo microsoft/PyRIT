@@ -1357,6 +1357,27 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun.mock.calls[0][0].scenario_params ?? {}).not.toHaveProperty('apply_converters_to_prepended_history')
   })
 
+  it('hides unsupported separate prompts and blocks launch without discarding entered text', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      max_concrete_techniques: 1,
+      supported_parameters: [{ name: 'prompt', type_name: 'str', required: false, multiline: true }],
+    }))
+    mockTechniques.getConfiguration.mockImplementation(async (name: string) => ({
+      ...techniqueConfiguration(name), supports_prompt: name === 'default_technique',
+    }))
+    renderDetail('/scanner/technique.execute')
+    const prompt = await screen.findByRole('textbox', { name: 'prompt' })
+    await user.type(prompt, 'Product specification: Atlas.')
+    await user.click(screen.getByRole('radio', { name: 'crescendo' }))
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'prompt' })).not.toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('cannot send a separate prompt')
+    expect(mockStartRun).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('radio', { name: 'default_technique' }))
+    expect(await screen.findByRole('textbox', { name: 'prompt' })).toHaveValue('Product specification: Atlas.')
+  })
+
   it('allows keyboard changes to a single technique without changing baseline', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
@@ -1368,10 +1389,11 @@ describe('ScenarioDetail', () => {
     expect(screen.getByRole('checkbox', { name: 'baseline' })).toBeChecked()
   })
 
-  it('requires an explicit choice when a single-technique scenario has no defaults', async () => {
+  it('requires an explicit GUI choice even when technique.execute has a backend default', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({
-      max_concrete_techniques: 1, default_technique: 'default', default_techniques: [],
+      scenario_name: 'technique.execute', max_concrete_techniques: 1,
+      default_technique: 'default', default_techniques: ['default_technique'],
       include_baseline_by_default: false,
     }))
     renderDetail('/scanner/technique.execute')

@@ -800,10 +800,19 @@ class AttackTechniqueFactory(Identifiable):
     @property
     def supports_prepended_conversation(self) -> bool:
         """Whether the declared attack and seed contracts permit caller-supplied history."""
-        allowed = (
+        return (
             "prepended_conversation_config" in self._compatibility_helper.accepted_params
-            and not self._requirements.seed_group.objective_only
-            and not (self._seed_technique is not None and self._seed_technique.has_simulated_conversation)
+            and self._supports_seed_input("prepended_conversation")
+        )
+
+    @property
+    def supports_prompt(self) -> bool:
+        """Whether the technique accepts a caller-supplied next message."""
+        return self._supports_seed_input("next_message")
+
+    def _supports_seed_input(self, name: str) -> bool:
+        allowed = not self._requirements.seed_group.objective_only and not (
+            self._seed_technique is not None and self._seed_technique.has_simulated_conversation
         )
         if not allowed:
             return False
@@ -818,7 +827,7 @@ class AttackTechniqueFactory(Identifiable):
             params_type = default if found else parameter.default
         if not isinstance(params_type, type) or not is_dataclass(params_type):
             return False
-        return any(field.name == "prepended_conversation" for field in fields(params_type))
+        return any(field.name == name for field in fields(params_type))
 
     @_capture_creation
     def with_settings(

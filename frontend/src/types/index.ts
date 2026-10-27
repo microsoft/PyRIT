@@ -617,6 +617,7 @@ export interface TechniqueConfiguration {
   supplied_parameters: string[]
   read_only: Record<string, string>
   supports_prepended_conversation: boolean
+  supports_prompt?: boolean
 }
 
 export interface TechniqueEditResponse {

@@ -22,7 +22,8 @@
 # `prepended_conversation_id`, and `retries_on_objective_failure` in the parameter form.
 # Use the existing adversarial target picker to select the attacker model.
 #
-# There is no default technique. Select one before starting a run.
+# The GUI requires a technique selection. SDK calls default to `red_teaming`, or the
+# first registered technique in name order when `red_teaming` is not registered.
 # To send text that differs from the scoring objective, set `prompt`. Converters rewrite
 # that message; the objective remains the scoring goal. For tool role play, enable the
 # `tools` initializer and select `role_play_tool_calls`.

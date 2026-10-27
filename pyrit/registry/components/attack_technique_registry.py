@@ -630,8 +630,8 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
 
         Creates an enum class with:
         - An ``ALL`` aggregate member (always included).
-        - A ``DEFAULT`` aggregate member when a default selection matches the pool,
-            or an empty ``default_names`` set explicitly selects nothing.
+        - A ``DEFAULT`` aggregate member when a default selection is provided and at
+            least one pool technique matches it.
         - An aggregate member for every catalog tag present in the pool, so tags and
             aggregates are synonymous: selecting a tag (e.g. ``core`` or a custom
             ``airt_internal``) expands to every technique carrying it.
@@ -644,7 +644,6 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         no pool technique (e.g. a custom initializer registers no ``light``-tagged
         factory), the default falls back to ``ALL``. The default is chosen per-scenario,
         so the same technique can be the default for one scenario and not another.
-        An explicitly empty ``default_names`` set disables automatic selection.
 
         Args:
             class_name (str): Name for the generated enum class.
@@ -657,8 +656,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             default_names (set[str] | None): Exact technique names that form the
                 scenario's ``DEFAULT`` aggregate. Names not present in the pool are
                 ignored, so a scenario can list its intended default set even when some of
-                those techniques are filtered out. An empty set selects nothing.
-                Mutually exclusive with ``default_tags``.
+                those techniques are filtered out. Mutually exclusive with ``default_tags``.
 
         Returns:
             type[ScenarioTechnique]: A ``ScenarioTechnique`` subclass with the generated members.
@@ -669,7 +667,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         """
         from pyrit.scenario import ScenarioTechnique
 
-        if default_tags is not None and default_names is not None:
+        if default_tags and default_names:
             raise ValueError("Provide at most one of default_tags or default_names, not both.")
 
         pool = list(factories)
@@ -678,15 +676,14 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
 
         # default: the pool techniques that form the DEFAULT aggregate, from either an
         # explicit set of names or the union over a set of tags. Limited to the pool, so
-        # DEFAULT is always a subset of ALL. An explicitly empty name set disables selection;
-        # unmatched nonempty selectors retain the existing ALL fallback.
+        # DEFAULT is always a subset of ALL. When it is empty (nothing matched) no DEFAULT
+        # aggregate is built and the catalog default falls back to ALL.
         if default_names:
             default_member_names = {f.name for f in pool if f.name in default_names}
         elif default_tags:
             default_member_names = {f.name for f in pool if set(f.technique_tags) & default_tags}
         else:
             default_member_names = set()
-        has_default = bool(default_member_names) or (default_names is not None and not default_names)
 
         # Auto-promote every catalog tag present in the pool into a selectable aggregate,
         # so tags and aggregates are synonymous: selecting a tag expands to every technique
@@ -702,14 +699,14 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         )
 
         all_aggregate_tag_names = {"all"} | auto_aggregate_tags
-        if has_default:
+        if default_member_names:
             all_aggregate_tag_names.add("default")
 
         members: dict[str, tuple[str, set[str], str | None]] = {}
 
         # Aggregate members first (ALL is always present)
         members["ALL"] = ("all", {"all"}, None)
-        if has_default:
+        if default_member_names:
             members["DEFAULT"] = ("default", {"default"}, None)
         for agg_name in sorted(auto_aggregate_tags):
             members[agg_name.upper()] = (agg_name, {agg_name}, None)
@@ -735,7 +732,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         # Record the catalog's default only when a DEFAULT aggregate was actually built.
         # When it wasn't, the attribute is left unset and ScenarioTechnique.default() owns
         # the single ALL fallback — so the "no default -> ALL" rule lives in one place.
-        if has_default:
+        if default_member_names:
             technique_cls._default_technique_value = "default"  # type: ignore[ty:unresolved-attribute]
 
         return technique_cls

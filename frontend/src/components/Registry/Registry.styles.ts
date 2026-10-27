@@ -112,8 +112,8 @@ export const useConverterRegistryStyles = makeStyles({
 
 export const useCreateConverterDialogStyles = makeStyles({
   surface: {
-    width: '560px',
-    maxWidth: '50vw',
+    width: 'min(560px, calc(100vw - 32px))',
+    maxWidth: '560px',
     maxHeight: 'calc(100vh - 32px)',
   },
   content: {

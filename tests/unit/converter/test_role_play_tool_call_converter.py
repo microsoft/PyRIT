@@ -37,11 +37,16 @@ def _mock_target() -> MagicMock:
 
 def _sent_text(target: MagicMock) -> str:
     message = target.send_prompt_async.call_args.kwargs["message"]
-    return message.message_pieces[0].converted_value
+    assert isinstance(message, Message)
+    value = message.message_pieces[0].converted_value
+    assert isinstance(value, str)
+    return value
 
 
 def _system_text(target: MagicMock) -> str:
-    return target.set_system_prompt_async.call_args.kwargs["system_prompt"]
+    value = target.set_system_prompt_async.call_args.kwargs["system_prompt"]
+    assert isinstance(value, str)
+    return value
 
 
 def test_identifier_includes_resolved_target_and_inputs() -> None:

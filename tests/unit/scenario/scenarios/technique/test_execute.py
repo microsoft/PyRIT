@@ -121,6 +121,16 @@ async def _save_history_async(
 
 @pytest.mark.usefixtures("patch_central_database", "catalog")
 class TestExecute:
+    @pytest.mark.parametrize("name", ["many_shot", "skeleton_key", "role_play_movie_script"])
+    async def test_incompatible_separate_prompt_is_rejected_before_preparation_async(
+        self, scorer: MagicMock, name: str
+    ) -> None:
+        scenario = _scenario(scorer=scorer, scenario_techniques=[name], prompt="Product specification: Atlas.")
+        factory = AttackTechniqueRegistry.get_registry_singleton().get_factories()[name]
+        assert not factory.supports_prompt
+        with pytest.raises(IncompatibleTechniqueError, match="cannot send a separate prompt"):
+            await scenario.initialize_async()
+
     async def test_message_input_is_converted_without_replacing_the_scoring_objective_async(self) -> None:
         scorer = SubStringScorer(substring="not in the response")
         target = MockPromptTarget()
@@ -489,7 +499,7 @@ class TestExecute:
         with patch.object(Execute, "_get_default_objective_scorer", return_value=scorer):
             metadata = registry.get_class_metadata(Execute)
             scenario = Execute()
-        assert metadata.default_techniques == ()
+        assert metadata.default_techniques == ("red_teaming",)
         assert metadata.max_concrete_techniques == 1
         assert not metadata.include_baseline_by_default
         assert metadata.uses_default_adversarial_target
@@ -503,23 +513,13 @@ class TestExecute:
         with pytest.raises(ValueError, match="unknown parameter.*dataset_config"):
             scenario.set_params_from_args(args={"objective": "Test", "dataset_config": DatasetAttackConfiguration()})
 
-    @pytest.mark.parametrize("selection", [None, [], ["DEFAULT"]])
-    def test_no_automatic_technique_selection(self, scorer: MagicMock, selection: Any) -> None:
+    @pytest.mark.parametrize("selection", [None, [], ["red_teaming"], ["DEFAULT"]])
+    def test_one_default_technique(self, scorer: MagicMock, selection: Any) -> None:
         scenario = Execute(objective_scorer=scorer)
         selection = [scenario._technique_class[name] for name in selection] if selection else selection
         assert [
             technique.value for technique in scenario._resolve_scenario_techniques(scenario_techniques=selection)
-        ] == []
-
-    @pytest.mark.parametrize("selection", [[], ["DEFAULT"]])
-    @pytest.mark.parametrize("preview", [True, False])
-    async def test_empty_selection_rejected_async(self, scorer: MagicMock, selection: list[str], preview: bool) -> None:
-        scenario = _scenario(scorer=scorer, scenario_techniques=selection)
-        with pytest.raises(ValueError, match="requires an explicit technique selection"):
-            if preview:
-                await scenario.get_run_size_estimate_async()
-            else:
-                await scenario.initialize_async()
+        ] == ["red_teaming"]
 
     @pytest.mark.parametrize("selection", [["red_teaming", "prompt_sending"], ["MULTI_TURN"], ["ALL"]])
     @pytest.mark.parametrize("preview", [True, False])
@@ -583,7 +583,7 @@ class TestExecute:
 
         assert Jailbreak.MAX_CONCRETE_TECHNIQUES is None
 
-    def test_custom_catalog_does_not_choose_a_fallback_default(self, scorer: MagicMock) -> None:
+    def test_fallback_default_is_single_and_deterministic(self, scorer: MagicMock) -> None:
         AttackTechniqueRegistry.reset_registry_singleton()
         registry = AttackTechniqueRegistry.get_registry_singleton()
         registry.register_from_factories(
@@ -591,8 +591,12 @@ class TestExecute:
         )
         _build_execute_technique.cache_clear()
         scenario = Execute(objective_scorer=scorer)
-        assert scenario._resolve_scenario_techniques(scenario_techniques=None) == []
-        assert scenario._technique_class.expand({scenario._default_technique}) == []
+        assert [technique.value for technique in scenario._resolve_scenario_techniques(scenario_techniques=None)] == [
+            "a_first"
+        ]
+        assert [technique.value for technique in scenario._technique_class.expand({scenario._default_technique})] == [
+            "a_first"
+        ]
 
     def test_missing_objective_rejected_when_configuring(self, scorer: MagicMock) -> None:
         with pytest.raises(ValueError, match="required.*objective"):
@@ -631,10 +635,9 @@ class TestExecute:
         assert estimate.dataset_size == BoundedDatasetSize(value=1)
         assert f"Up to {retries + 1}" in estimate.note
 
-    async def test_default_preview_requires_a_technique_async(self, scorer: MagicMock) -> None:
+    async def test_default_preview_without_objective_async(self, scorer: MagicMock) -> None:
         scenario = Execute(objective_scorer=scorer)
-        with pytest.raises(ValueError, match="requires an explicit technique selection"):
-            await scenario.get_default_run_size_estimate_async()
+        assert (await scenario.get_default_run_size_estimate_async()).estimated_attack_count == 1
         with pytest.raises(ValueError, match="required.*objective"):
             scenario.set_params_from_args(args={})
 
