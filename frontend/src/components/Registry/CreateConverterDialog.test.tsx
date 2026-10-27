@@ -591,7 +591,7 @@ describe('CreateConverterDialog', () => {
     mockConverterParameters([
       targetParameter,
       { name: 'language', type_name: 'str', required: true },
-      { name: 'system_prompt', type_name: 'str', required: false, multiline: true },
+      { name: 'prompt_template', type_name: 'str', required: false, multiline: true },
     ], 'TranslationConverter')
     const converter = {
       converter_id: 'source-translation',
@@ -599,8 +599,11 @@ describe('CreateConverterDialog', () => {
         class_name: 'TranslationConverter', class_module: 'pyrit.converter',
         pyrit_version: 'test', hash: 'source-hash', language: 'French',
         converter_target: rewriteTarget.identifier,
-        system_prompt: 'Write {{ objective }} as {{ message_format }}.',
       },
+      parameters: [{
+        name: 'prompt_template', type_name: 'str', required: false, multiline: true,
+        default: 'Translate the user message to {{ language }}.',
+      }],
     }
     const onTemporary = jest.fn()
     mockedConvertersApi.buildConverter.mockResolvedValue({ identifier: converter.identifier })
@@ -612,13 +615,26 @@ describe('CreateConverterDialog', () => {
     })
     expect(await screen.findByRole('combobox', { name: /converter_target/i })).toHaveValue('rewrite-target')
     expect(screen.getByLabelText(/language/i)).toHaveValue('Spanish')
-    expect(screen.getByLabelText(/system_prompt/i)).toHaveValue('Write {{ objective }} as {{ message_format }}.')
-    expect(screen.getByLabelText(/system_prompt/i).tagName).toBe('TEXTAREA')
+    expect(screen.getByLabelText(/prompt_template/i)).toHaveValue('Translate the user message to {{ language }}.')
     await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
     await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
     expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('TranslationConverter', {
       source_name: 'source-translation', source_hash: 'source-hash', params: { language: 'Spanish' },
     })
+  })
+
+  it('should keep technique file settings read-only and direct users to create a converter', async () => {
+    mockConverterParameters([{ name: 'img_to_add', type_name: 'Path', required: true }], 'AddImageTextConverter')
+    renderDialog({
+      allowUploads: false,
+      editing: { converter: {
+        converter_id: 'image', identifier: { class_name: 'AddImageTextConverter', hash: 'source' },
+      } },
+      onTemporary: jest.fn(),
+    })
+    expect(await screen.findByLabelText(/img_to_add/i)).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled()
+    expect(screen.getByText('To change this file, create a registered converter with the new upload.')).toBeInTheDocument()
   })
 
   it('should load a prompt default into the shared multiline editor before editing', async () => {

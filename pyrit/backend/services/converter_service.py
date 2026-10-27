@@ -92,8 +92,20 @@ class ConverterService:
         )
         if isinstance(converter_obj, Reconstructable):
             try:
-                self._registry.get_reconstruction_parameters(converter_obj)
+                inputs = self._registry.get_reconstruction_parameters(converter_obj)
                 result.reconstructable = True
+                from pyrit.registry.resolution import project_parameter_value
+
+                for parameter in metadata.parameters if metadata else []:
+                    if not parameter.is_external_input or parameter.sensitive:
+                        continue
+                    try:
+                        value = project_parameter_value(
+                            parameter=parameter, value=inputs.get(parameter.name, parameter.default)
+                        )
+                    except (ValueError, TypeError):
+                        continue
+                    result.parameters.append(parameter.for_external_catalog().model_copy(update={"default": value}))
             except ValueError as exc:
                 result.reconstruction_error = str(exc)
         return result

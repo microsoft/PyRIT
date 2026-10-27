@@ -110,7 +110,7 @@ export default function ConverterChainField({
         })
       }}
     />}
-    {settings && <CreateConverterDialog open editing={settings.editing}
+    {settings && <CreateConverterDialog open editing={settings.editing} allowUploads={false}
       onClose={() => setSettings(undefined)}
       onCreated={() => { throw new Error('Temporary settings must not register a converter.') }}
       onTemporary={(spec: SourceInstanceSpec, identifier: ConverterIdentifier) => {

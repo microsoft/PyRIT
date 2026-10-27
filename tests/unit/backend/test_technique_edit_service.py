@@ -23,7 +23,7 @@ from pyrit.backend.services.technique_edit_service import TechniqueEditService
 from pyrit.backend.services.technique_service import TechniqueService
 from pyrit.common.apply_defaults import GlobalDefaultValues
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH, EXECUTOR_SIMULATED_TARGET_PATH
-from pyrit.converter import Base64Converter, CaesarConverter, ROT13Converter
+from pyrit.converter import Base64Converter, CaesarConverter, ImageOverlayConverter, ROT13Converter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackExecutor,
@@ -162,6 +162,22 @@ def test_temporary_converter_effective_hash_is_checked(edit_catalog: AttackTechn
         effective_hash="stale",
     )
     with pytest.raises(ValueError, match="Temporary converter configuration has changed"):
+        TechniqueEditService.validate(_specification(changes=TechniqueChanges(request_converters=[spec])))
+
+
+def test_temporary_file_converter_preserves_its_file_and_rejects_replacement(
+    edit_catalog: AttackTechniqueRegistry,
+) -> None:
+    source = ImageOverlayConverter(base_image="registered-image.png")
+    ConverterRegistry.get_registry_singleton().instances.register(source, name="overlay")
+    spec = SourceInstanceSpec(source_name="overlay", source_hash=source.get_identifier().hash, params={"opacity": 0.5})
+    admitted = TechniqueEditService.validate(_specification(changes=TechniqueChanges(request_converters=[spec])))
+    factory = TechniqueEditService.resolve(admitted.override)
+    edited = factory.get_converter_config().request_converters[0].converters[0].get_identifier()
+    assert edited.params["base_image"] == "registered-image.png"
+    assert edited.params["opacity"] == 0.5
+    spec.params["base_image"] = "data:image/png;base64,AAAA"
+    with pytest.raises(ValueError, match="Create a registered converter"):
         TechniqueEditService.validate(_specification(changes=TechniqueChanges(request_converters=[spec])))
 
 

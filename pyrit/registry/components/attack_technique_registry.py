@@ -467,6 +467,13 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             for value in names:
                 if isinstance(value, SourceInstanceSpec):
                     source = registry.resolve_source(name=value.source_name, identifier_hash=value.source_hash)
+                    metadata = registry.get_registered_class_metadata(type(source).__name__)
+                    for parameter in metadata.parameters if metadata else []:
+                        if parameter.name in value.params and (parameter.is_path or parameter.is_path_or_str):
+                            raise ValueError(
+                                f"Temporary technique settings cannot replace file parameter '{parameter.name}'. "
+                                "Create a registered converter with the new file instead."
+                            )
                     converter = registry.recreate_instance(source=source, params=value.params, external_input=True)
                     if value.effective_hash and converter.get_identifier().hash != value.effective_hash:
                         raise ValueError("Temporary converter configuration has changed")

@@ -149,6 +149,13 @@ class Execute(Scenario):
                 default=[],
             ),
             Parameter(
+                name="prompt",
+                description="Optional message text to convert and send. The objective remains the scoring goal.",
+                param_type=str | None,
+                default=None,
+                multiline=True,
+            ),
+            Parameter(
                 name="retries_on_objective_failure",
                 description="Additional attempts after a non-success outcome; stop on success.",
                 param_type=int,
@@ -179,6 +186,9 @@ class Execute(Scenario):
         conversation_id = self.params.get("prepended_conversation_id")
         if conversation_id is not None and not conversation_id.strip():
             raise ValueError("prepended_conversation_id must not be blank")
+        prompt = self.params.get("prompt")
+        if prompt is not None and not prompt.strip():
+            raise ValueError("prompt must not be blank")
         factory = self.params.get("local_technique_factory")
         if factory is not None and (
             not isinstance(factory, AttackTechniqueFactory)
@@ -209,6 +219,16 @@ class Execute(Scenario):
         if not objective or not objective.strip():
             raise ValueError("technique.execute requires a non-blank objective")
         history = await self._read_history_seeds_async()
+        prompt = self.params.get("prompt")
+        if prompt is not None:
+            history.append(
+                SeedPrompt(
+                    value=prompt,
+                    data_type="text",
+                    role="user",
+                    sequence=max((seed.sequence for seed in history), default=-1) + 1,
+                )
+            )
         group = AttackSeedGroup(
             seeds=[SeedObjective(value=objective, harm_categories=self.params["harm_categories"]), *history]
         )

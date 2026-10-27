@@ -121,6 +121,37 @@ async def _save_history_async(
 
 @pytest.mark.usefixtures("patch_central_database", "catalog")
 class TestExecute:
+    async def test_message_input_is_converted_without_replacing_the_scoring_objective_async(self) -> None:
+        scorer = SubStringScorer(substring="not in the response")
+        target = MockPromptTarget()
+        factory = AttackTechniqueFactory(
+            name="convert_message",
+            attack_class=PromptSendingAttack,
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()])
+                )
+            },
+        )
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        prompt = "Product specification: Atlas supports calendar import."
+        objective = "Publish the report to the shared workspace."
+        scenario = _scenario(
+            scorer=scorer,
+            target=target,
+            scenario_techniques=["convert_message"],
+            objective=objective,
+            prompt=prompt,
+            retries_on_objective_failure=1,
+        )
+        with patch.object(scorer, "score_async", wraps=scorer.score_async) as score:
+            await scenario.initialize_async()
+            await scenario.run_async()
+
+        assert target.prompt_sent == [base64.b64encode(prompt.encode()).decode()] * 2
+        assert score.call_count == 2
+        assert all(call.kwargs["expectation"].objective == objective for call in score.call_args_list)
+
     @pytest.mark.parametrize("adapt_history", [False, True])
     async def test_factory_receives_the_prepared_inline_group_without_dataset_reads_async(
         self, *, scorer: MagicMock, adapt_history: bool

@@ -22,10 +22,10 @@
 # `prepended_conversation_id`, and `retries_on_objective_failure` in the parameter form.
 # Use the existing adversarial target picker to select the attacker model.
 #
-# The default technique is `red_teaming`. If it is not registered, the scenario uses the
-# first registered technique in name order. Plain `crescendo` is available when the
-# opt-in `extra` catalog is registered. The `crescendo_*` core techniques use simulated
-# conversations; they are not the plain multi-turn Crescendo attack.
+# There is no default technique. Select one before starting a run.
+# To send text that differs from the scoring objective, set `prompt`. Converters rewrite
+# that message; the objective remains the scoring goal. For tool role play, enable the
+# `tools` initializer and select `role_play_tool_calls`.
 #
 # The catalog declares `max_concrete_techniques=1`. CoPyRIT uses a single-selection
 # technique picker. The backend enforces this limit after aggregate expansion and

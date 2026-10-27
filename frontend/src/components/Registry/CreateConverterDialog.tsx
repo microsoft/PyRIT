@@ -73,6 +73,7 @@ interface CreateConverterDialogProps {
   onCreated: (converterId: string) => void
   editing?: { converter: ConverterInstance; spec?: SourceInstanceSpec }
   onTemporary?: (spec: SourceInstanceSpec, identifier: ConverterIdentifier) => void
+  allowUploads?: boolean
 }
 
 interface ParameterInputProps {
@@ -82,6 +83,7 @@ interface ParameterInputProps {
   showError: boolean
   onChange: (value: string) => void
   onBrowse: () => void
+  allowUploads: boolean
 }
 
 function isEditableParameter(parameter: Parameter): boolean {
@@ -159,6 +161,7 @@ function ParameterInput({
   showError,
   onChange,
   onBrowse,
+  allowUploads,
 }: ParameterInputProps) {
   const styles = useCreateConverterDialogStyles()
   const label = `${parameter.name}${parameter.required ? ' *' : ''}`
@@ -226,12 +229,15 @@ function ParameterInput({
   return (
     <Field
       label={label}
-      hint={parameter.description || parameter.type_name}
+      hint={isFile && !allowUploads
+        ? 'To change this file, create a registered converter with the new upload.'
+        : parameter.description || parameter.type_name}
       validationMessage={showError ? 'Required' : undefined}
     >
       {isFile ? (
         <div className={styles.fileRow}>
           <Input
+            disabled={!allowUploads}
             className={styles.fileInput}
             value={value}
             placeholder={parameterDefaultValue(parameter) || (
@@ -241,7 +247,7 @@ function ParameterInput({
             )}
             onChange={(_, data) => onChange(data.value)}
           />
-          <Button type="button" onClick={onBrowse}>Upload</Button>
+          <Button type="button" disabled={!allowUploads} onClick={onBrowse}>Upload</Button>
         </div>
       ) : (
         <Input
@@ -260,6 +266,7 @@ export default function CreateConverterDialog({
   onCreated,
   editing,
   onTemporary,
+  allowUploads = true,
 }: CreateConverterDialogProps) {
   const styles = useCreateConverterDialogStyles()
   const [converterTypes, setConverterTypes] = useState<ConverterTypeEntry[]>([])
@@ -312,6 +319,9 @@ export default function CreateConverterDialog({
             setSelectedType(editing.converter.identifier.class_name)
             const params: Record<string, unknown> = {
               ...editing.converter.identifier,
+              ...Object.fromEntries((editing.converter.parameters ?? []).map((parameter) => [
+                parameter.name, parameter.default,
+              ])),
               ...editing.spec?.params,
             }
             const defaultTarget = resolveDefaultAdversarialTarget(preferences, targetResponse.items)
@@ -692,6 +702,7 @@ export default function CreateConverterDialog({
                             setParameterValues((current) => ({ ...current, [parameter.name]: value }))
                           }}
                           onBrowse={() => browse(parameter.name)}
+                          allowUploads={allowUploads}
                         />}
                       </div>
                     ))}

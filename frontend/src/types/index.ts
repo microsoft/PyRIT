@@ -421,6 +421,7 @@ export interface ConverterIdentifier {
 }
 
 export interface ConverterInstance {
+  parameters?: Parameter[]
   converter_id: string
   reconstructable?: boolean
   reconstruction_error?: string | null

@@ -57,7 +57,6 @@ class LLMGenericTextConverter(Converter):
         retry_exceptions: tuple[type[BaseException], ...] | None = None,
         max_retry_attempts: int | None = None,
         retry_wait_max_seconds: int | None = None,
-        template_values: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -82,11 +81,8 @@ class LLMGenericTextConverter(Converter):
             retry_wait_max_seconds (int | None): Upper bound (in seconds) for exponential backoff
                 between retry attempts. If ``None``, no wait is applied between attempts (matches
                 ``pyrit_json_retry``).
-            template_values (dict[str, str] | None): Values merged over the template's parameter
-                defaults before rendering. An empty string keeps the default. The incoming prompt
-                is still rendered as ``objective`` and wins over a template value of that name.
             kwargs: Additional parameters forwarded to both the system prompt and user prompt templates
-                during rendering. These replace template values of the same name, except ``objective``.
+                during rendering. The incoming prompt supplies ``objective``.
 
         Raises:
             ValueError: If converter_target is not provided and no default has been configured.
@@ -96,7 +92,6 @@ class LLMGenericTextConverter(Converter):
         super().__init__(converter_target=converter_target)
         self._converter_target = converter_target
         self._system_prompt_template = system_prompt_template
-        self._template_values = template_values
         self._prompt_kwargs = kwargs
         self._retry_exceptions = retry_exceptions if retry_exceptions is not None else self.RETRY_EXCEPTIONS
         self._max_retry_attempts = max_retry_attempts
@@ -130,14 +125,11 @@ class LLMGenericTextConverter(Converter):
                 str(self._user_prompt_template_with_objective.value).encode("utf-8")
             ).hexdigest()[:16]
 
-        params: dict[str, Any] = {
-            "system_prompt_template_hash": system_prompt_hash,
-            "user_prompt_template_hash": user_prompt_hash,
-        }
-        if self._template_values:
-            params["template_values"] = self._template_values
         return self._create_identifier(
-            params=params,
+            params={
+                "system_prompt_template_hash": system_prompt_hash,
+                "user_prompt_template_hash": user_prompt_hash,
+            },
             converter_target=self._converter_target.get_identifier(),
         )
 
@@ -196,10 +188,7 @@ class LLMGenericTextConverter(Converter):
 
     def _render_values(self, *, template: SeedPrompt, objective: str | None) -> dict[str, Any]:
         """
-        Merge defaults, template values, and constructor kwargs for one template.
-
-        An empty constructor value does not replace a default. The incoming prompt
-        wins over every ``objective`` value when ``objective`` is not None.
+        Supply constructor template values and the current input prompt.
 
         Args:
             template (SeedPrompt): The template to render.
@@ -208,13 +197,7 @@ class LLMGenericTextConverter(Converter):
         Returns:
             dict[str, Any]: Render values for the template.
         """
-        values = template.merged_template_values(self._template_values)
-        for name, value in self._prompt_kwargs.items():
-            if objective is not None and name == "objective":
-                continue
-            if value in (None, "") and name in values:
-                continue
-            values[name] = value
+        values = self._prompt_kwargs.copy()
         if objective is not None:
             values["objective"] = objective
         return values

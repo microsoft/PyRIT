@@ -56,46 +56,6 @@ def _ensure_aware_utc(value: Any) -> Any:
 AwareDatetimeUTC = Annotated[AwareDatetime, BeforeValidator(_ensure_aware_utc)]
 
 
-class TemplateParameter(BaseModel):
-    """A named template parameter with optional help text, default, and examples."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1)
-    description: str = ""
-    default: str | None = None
-    examples: list[str] = Field(default_factory=list)
-
-
-def merge_template_parameter_values(
-    *,
-    parameter_specs: list[TemplateParameter] | None,
-    template_values: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """
-    Merge supplied template values over parameter defaults.
-
-    An empty string or None does not replace a default. A supplied value replaces
-    the default. Examples are not selected.
-
-    Args:
-        parameter_specs (list[TemplateParameter] | None): Declared parameter specs.
-        template_values (dict[str, Any] | None): Values supplied by the caller.
-
-    Returns:
-        dict[str, Any]: Names mapped to the value used at render time.
-    """
-    merged: dict[str, Any] = {}
-    for spec in parameter_specs or []:
-        if spec.default not in (None, ""):
-            merged[spec.name] = spec.default
-    for name, value in (template_values or {}).items():
-        if value in (None, ""):
-            continue
-        merged[name] = value
-    return merged
-
-
 class PartialUndefined(Undefined):
     """Jinja undefined value that preserves unresolved placeholders as text."""
 

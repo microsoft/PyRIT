@@ -51,8 +51,8 @@ async def test_tools_initializer_registers_configured_technique_async() -> None:
     assert factory.attack_class is PromptSendingAttack
     assert factory.technique_tags == ["single_turn", "tools"]
     assert factory.supports_additional_request_converters
-    assert factory.requirements.seed_group.objective_only
-    assert factory.requirements.seed_group.try_adapt
+    assert not factory.requirements.seed_group.objective_only
+    assert not factory.requirements.seed_group.try_adapt
     assert factory.get_effective_attack_kwargs()["max_attempts_on_failure"] == 0
     converter = factory.get_converter_config().request_converters[0].converters[0]
     assert isinstance(converter, RolePlayToolCallConverter)

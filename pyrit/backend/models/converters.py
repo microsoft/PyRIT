@@ -80,6 +80,9 @@ class ConverterInstance(BaseModel):
     description: str | None = Field(None, description="Short description of the converter type")
     reconstructable: bool = False
     reconstruction_error: str | None = None
+    parameters: list[Parameter] = Field(
+        default_factory=list, description="Editable inputs with source-specific defaults"
+    )
 
 
 class ConverterInstanceListResponse(BaseModel):
