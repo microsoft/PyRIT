@@ -195,19 +195,58 @@ When you open a saved chat, CoPyRIT automatically selects the target originally 
 
 #### Temperature
 
-Select a target, then set **Temperature** before the first send. Leave it empty
-to keep the source setting. The supported range is 0 to 2. This creates a private
-target configuration for the attack; it does not add or change a registered target.
-Temperature is read-only after the attack is bound. In the conversation editor,
-a temperature change requires **New attack**, not **Same attack**.
-Hover over or click the read-only field to see why it cannot be changed.
+Select a target, then use **Temperature** to choose the value for the next and
+subsequent sends. You can change it between turns in the same attack. Leave it
+empty to use the configured target settings. Zero is valid; the OpenAI Chat
+adapter accepts 0 through 2. Changing this control does not create a private
+target, change the saved target binding, or rewrite earlier messages.
 
-Saved attacks retain the source name, source identity, temperature, and effective
-identity, but not credentials. After a restart, the backend tries to reconstruct
-the target from a matching registered source. If reconstruction fails, sending
-is blocked rather than using the source's default temperature. OpenAI-family
-targets with a temperature parameter support this control. Externally owned HTTP
-clients and temperature set through `extra_body_parameters` are not supported.
+The control is enabled only when the configured target advertises
+`supports_temperature`. `OpenAIChatTarget` derives this from known capability
+profiles or an explicit deployment configuration, with sampling-mode checks.
+Other adapters do not support runtime overrides yet. See
+[runtime temperature](../code/targets/0_prompt_targets.md#runtime-temperature-initial-implementation)
+for capability configuration, model defaults, and unsupported modes.
+
+The field is disabled while sending or editing history. The selection resets
+when you change attacks/targets or refresh the page, but not when the first send
+creates the attack. Repeated sends capture the same selection at submission.
+Copying an old message does not copy its temperature into the next-send control.
+
+Saved request and response footers show the resolved temperature and whether it
+came from a request override or target default. If no parameter was selected,
+they show **Temperature: provider default (unknown)**. Historical messages without
+evidence show **Temperature: not recorded**.
+
+Older attacks with saved temporary target bindings still reconstruct their target
+from a matching registered source. Their bound temperature remains the default,
+and the next-send control can override it when supported. Missing or changed
+sources still block continuation; the binding and source checks are not bypassed.
+
+##### Trying the runtime-temperature flow
+
+Use a configured `OpenAIChatTarget` that advertises temperature support, with a
+known default such as `0.2` and no conflicting passthrough defaults. In the same
+chat, send a short prompt after each of these changes:
+
+| Control before sending | Expected saved footer |
+| --- | --- |
+| Empty | `Temperature: 0.2 (target default)` |
+| `0` | `Temperature: 0 (request override)` |
+| `0.9` | `Temperature: 0.9 (request override)` |
+| Cleared | `Temperature: 0.2 (target default)` |
+
+Keep the same attack and selected target throughout. Reopen the conversation
+after a refresh: its footers must remain, while the input resets to empty.
+For a target with no configured or passthrough temperature, an empty input should
+produce **provider default (unknown)** rather than a guessed number.
+
+An unsupported target should disable the control with an explanation. An
+out-of-range value such as `2.1` must not reach the target. To inspect transport,
+use browser developer tools: a send with `0` has `request_temperature: 0` in one
+piece's `prompt_metadata`, and changing the control makes no temperature-only
+target-construction request. Response wording alone is not evidence of which
+temperature was sent.
 
 #### Repeating a Message
 

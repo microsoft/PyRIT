@@ -26,6 +26,8 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget
+from pyrit.prompt_target.common import utils as target_utils
+from pyrit.prompt_target.common.target_capabilities import get_known_capabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import SelfAskTrueFalseScorer
 
@@ -107,15 +109,103 @@ async def test_unimplemented_adapter_rejects_override_async(patch_central_databa
         await target.send_prompt_async(message=request(0))
 
 
-async def test_custom_capability_cannot_enable_an_unimplemented_adapter_async(patch_central_database: Any) -> None:
+@pytest.mark.parametrize("custom", [False, True])
+async def test_profile_or_custom_capability_cannot_enable_an_unimplemented_adapter_async(
+    patch_central_database: Any, custom: bool
+) -> None:
     target = OpenAIResponseTarget(
+        model_name="gpt-4o",
+        underlying_model="gpt-4o",
+        endpoint="https://example.test/v1",
+        api_key="test-only-key",
+        custom_configuration=(
+            TargetConfiguration(capabilities=TargetCapabilities(supports_temperature=True)) if custom else None
+        ),
+    )
+    assert not target.capabilities.supports_temperature
+    with pytest.raises(ValueError, match="does not support runtime temperature"):
+        await target.send_prompt_async(message=request(0))
+
+
+@pytest.mark.parametrize("model", ["gpt-4o", "gpt-5.1"])
+def test_known_profile_enables_temperature(patch_central_database: Any, model: str) -> None:
+    target = OpenAIChatTarget(model_name=model, endpoint="https://example.test/v1", api_key="test-only-key")
+    assert target.capabilities.supports_temperature
+    assert target.validate_request_generation_config(request(0)).temperature == 0
+
+
+def test_deployment_uses_underlying_model_profile(patch_central_database: Any) -> None:
+    target = OpenAIChatTarget(
+        model_name="production-deployment",
+        underlying_model="gpt-4o",
+        endpoint="https://example.test/v1",
+        api_key="test-only-key",
+    )
+    assert target.capabilities.supports_temperature
+
+
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "gpt-4.1", "gpt-4o-2024-08-06", "private-deployment"])
+async def test_explicit_capability_enables_unlisted_models_async(patch_central_database: Any, model: str) -> None:
+    target = OpenAIChatTarget(
+        model_name=model,
+        endpoint="https://example.test/v1",
+        api_key="test-only-key",
+        custom_configuration=TargetConfiguration(
+            capabilities=OpenAIChatTarget.get_default_configuration().capabilities.model_copy(
+                update={"supports_temperature": True}
+            )
+        ),
+    )
+    assert target.capabilities.supports_temperature
+    with patch.object(
+        target._client.chat.completions, "create", new_callable=AsyncMock, return_value=completion()
+    ) as send:
+        await target.send_prompt_async(message=request(0))
+    assert send.call_args.kwargs["temperature"] == 0
+
+
+def test_temperature_support_comes_from_profile_not_model_name(patch_central_database: Any) -> None:
+    profile = get_known_capabilities("gpt-4o")
+    with patch("pyrit.prompt_target.openai.openai_chat_target.get_known_capabilities", return_value=profile):
+        target = OpenAIChatTarget(
+            model_name="new-model-in-catalog", endpoint="https://example.test/v1", api_key="test-only-key"
+        )
+    assert target.capabilities.supports_temperature
+
+
+def test_explicit_capability_disable_overrides_known_profile(patch_central_database: Any) -> None:
+    target = OpenAIChatTarget(
         model_name="gpt-4o",
         endpoint="https://example.test/v1",
         api_key="test-only-key",
-        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_temperature=True)),
+        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_temperature=False)),
     )
-    with pytest.raises(ValueError, match="does not implement runtime temperature"):
-        await target.send_prompt_async(message=request(0))
+    assert not target.capabilities.supports_temperature
+
+
+@pytest.mark.parametrize(
+    "extras",
+    [
+        {"reasoning_effort": "none"},
+        {"reasoning_effort": "high", "extra_body": {"reasoning_effort": "none"}},
+        {"model": "unknown", "extra_body": {"model": "gpt-5.1", "reasoning_effort": "none"}},
+    ],
+)
+async def test_effective_non_reasoning_mode_allows_temperature_async(
+    patch_central_database: Any, extras: dict[str, Any]
+) -> None:
+    target = OpenAIChatTarget(
+        model_name="gpt-5.1",
+        endpoint="https://example.test/v1",
+        api_key="test-only-key",
+        extra_body_parameters=extras,
+    )
+    assert target.capabilities.supports_temperature
+    with patch.object(
+        target._client.chat.completions, "create", new_callable=AsyncMock, return_value=completion()
+    ) as send:
+        await target.send_prompt_async(message=request(0.7))
+    assert send.call_args.kwargs["temperature"] == 0.7
 
 
 async def test_nested_passthrough_precedence_at_http_boundary_async(patch_central_database: Any) -> None:
@@ -228,8 +318,21 @@ async def test_no_override_preserves_request_body_async(target: OpenAIChatTarget
     assert body == original
 
 
-async def test_transport_retry_retains_resolved_value_async(target: OpenAIChatTarget) -> None:
-    message = request(0)
+@pytest.mark.parametrize(
+    ("requested", "default", "passthrough", "expected"),
+    [(0, 0.2, 1.7, 0), (None, 0.2, 1.7, 1.7), (None, 0.2, None, 0.2), (None, None, None, None)],
+)
+async def test_transport_retry_retains_resolved_value_and_paces_each_attempt_async(
+    target: OpenAIChatTarget,
+    requested: float | None,
+    default: float | None,
+    passthrough: float | None,
+    expected: float | None,
+) -> None:
+    message = request(requested)
+    target._temperature = default
+    target._extra_body_parameters = {"extra_body": {"temperature": passthrough}} if passthrough is not None else {}
+    target._max_requests_per_minute = 60
     attempts = 0
 
     async def respond_async(**kwargs: Any) -> ChatCompletion:
@@ -237,20 +340,47 @@ async def test_transport_retry_retains_resolved_value_async(target: OpenAIChatTa
         attempts += 1
         if attempts == 1:
             message.get_piece().prompt_metadata["request_temperature"] = 1.9
+            target._temperature = 1.8
+            target._extra_body_parameters = {"extra_body": {"temperature": 1.6}}
             raise EmptyResponseException(message="Retry this empty response")
         return completion()
 
     with (
+        patch.object(target, "_get_normalized_conversation_async", new_callable=AsyncMock, return_value=[message]),
+        patch.object(target, "_resolve_request_temperature", wraps=target._resolve_request_temperature) as resolve,
         patch.object(
             target._client.chat.completions, "create", new_callable=AsyncMock, side_effect=respond_async
         ) as send,
-        patch.object(target._send_request_async.retry, "sleep", new_callable=AsyncMock),
+        patch.object(target._send_prompt_to_target_async.retry, "sleep", new_callable=AsyncMock),
+        patch.object(target_utils.asyncio, "sleep", new_callable=AsyncMock) as pace,
     ):
         await target.send_prompt_async(message=message)
-    assert [call.kwargs["temperature"] for call in send.call_args_list] == [0, 0]
+    assert [
+        call.kwargs.get("extra_body", {}).get("temperature", call.kwargs.get("temperature"))
+        for call in send.call_args_list
+    ] == [expected, expected]
+    assert send.call_args.kwargs["extra_body"].get("temperature") == expected
+    resolve.assert_called_once()
+    assert pace.await_count == 2
+    assert all(call.args == (1,) for call in pace.await_args_list)
     info = TemperatureRequestInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
     assert info is not None
-    assert info.requested_temperature == info.resolved_temperature == 0
+    assert info.requested_temperature == requested
+    assert info.resolved_temperature == expected
+    if expected is None:
+        assert info.source == "provider_default"
+        assert all("temperature" not in call.kwargs for call in send.call_args_list)
+
+
+async def test_reusing_request_starts_a_new_temperature_resolution_async(target: OpenAIChatTarget) -> None:
+    message = request(0)
+    with patch.object(
+        target._client.chat.completions, "create", new_callable=AsyncMock, return_value=completion()
+    ) as send:
+        await target.send_prompt_async(message=message)
+        message.get_piece().prompt_metadata.update(RequestGenerationConfig(temperature=1.3).to_metadata())
+        await target.send_prompt_async(message=message)
+    assert [call.kwargs["temperature"] for call in send.call_args_list] == [0, 1.3]
 
 
 async def test_scorer_keeps_default_and_does_not_copy_attack_temperature_async(
@@ -303,6 +433,7 @@ async def test_conflicting_current_pieces_fail_before_normalization_async(target
     "extras",
     [
         {"reasoning_effort": "high"},
+        {"reasoning_effort": "none", "extra_body": {"reasoning_effort": "high"}},
         {"extra_body": {"model": "o3"}},
         {"extra_body": {"modalities": ["text", "audio"]}},
         {"stream": True},
@@ -315,3 +446,21 @@ def test_model_passthrough_restrictions_disable_capability(patch_central_databas
     assert not target.capabilities.supports_temperature
     with pytest.raises(ValueError, match="does not support runtime temperature"):
         target.validate_request_generation_config(request(0))
+
+
+@pytest.mark.parametrize("extras", [{"reasoning_effort": "high"}, {"extra_body": {"reasoning_effort": "high"}}])
+async def test_explicit_capability_does_not_bypass_mode_validation_async(
+    patch_central_database: Any, extras: dict[str, Any]
+) -> None:
+    target = OpenAIChatTarget(
+        model_name="private-deployment",
+        endpoint="https://example.test/v1",
+        api_key="test-only-key",
+        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_temperature=True)),
+        extra_body_parameters=extras,
+    )
+    assert not target.capabilities.supports_temperature
+    with patch.object(target._client.chat.completions, "create", new_callable=AsyncMock) as send:
+        with pytest.raises(ValueError, match="does not support runtime temperature"):
+            await target.send_prompt_async(message=request(0))
+    send.assert_not_called()

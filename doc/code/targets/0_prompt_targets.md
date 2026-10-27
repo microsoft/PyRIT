@@ -79,10 +79,42 @@ response = await PromptNormalizer().send_prompt_async(
 ```
 
 Check `target.capabilities.supports_temperature` before offering this control.
-The initial adapter supports `OpenAIChatTarget` with `gpt-4o` / `gpt-4o-mini`
-text/vision models and their dated versions. For an Azure deployment alias, set
-`underlying_model` to the model name. Other adapters and reasoning/audio modes do
-not advertise runtime support yet. Unsupported overrides fail before generation I/O.
+`OpenAIChatTarget` uses the existing known-capability profiles or an explicit
+`custom_configuration`, rather than a model-name allowlist in the adapter.
+The existing `gpt-4o` and `gpt-5.1` profiles declare temperature support. For an
+Azure alias, `underlying_model` can select a known profile. The effective model
+in top-level or nested passthrough settings takes precedence for this lookup.
+
+For deployments without a matching profile (including unlisted model versions),
+declare support explicitly when the deployed model/mode accepts temperature:
+
+```python
+from pyrit.prompt_target import OpenAIChatTarget, TargetConfiguration
+
+configuration = TargetConfiguration(
+    capabilities=OpenAIChatTarget.get_default_configuration().capabilities.model_copy(
+        update={"supports_temperature": True}
+    )
+)
+target = OpenAIChatTarget(
+    model_name="my-deployment",
+    endpoint=endpoint,
+    api_key=api_key,
+    custom_configuration=configuration,
+)
+```
+
+An explicit capability declaration is the deployment owner's assertion, not a
+provider probe. Unknown models without that declaration do not advertise support.
+Explicit `False` disables support even for a known profile. Existing profile lookup
+rules are unchanged; no new model aliases alter historical normalization or hashes.
+Other adapters do not acquire runtime support merely by using a capable model.
+
+The adapter also checks the effective sampling mode: `reasoning_effort="none"` is
+allowed, while active reasoning, audio configurations, and streaming remain
+unsupported in this implementation. Nested settings take precedence over top-level
+settings. Omitted effort relies on the profile or deployment declaration covering
+the model's default mode. Unsupported overrides fail before generation I/O.
 
 The canonical input key is `request_temperature`. Zero is valid. Missing or null
 uses the target's configured settings. Values must be finite numbers (not booleans
@@ -90,7 +122,11 @@ or numeric strings); this adapter accepts the range 0 through 2. Put the value o
 one current message piece or the same value on several pieces; conflicting values
 are rejected before normalization. History never selects the next temperature.
 An explicit override wins over top-level and nested `extra_body` temperature settings,
-without mutating those settings. Transport retries reuse the resolved payload.
+without mutating those settings. `_send_prompt_to_target_async` retains both
+`@pyrit_target_retry` and `@limit_requests_per_minute`, so each attempt is paced.
+Transport retries reuse the first attempt's recorded temperature resolution, even
+if request options or configured defaults change before a retry. A later logical
+send resolves afresh; the public send boundary clears copied or stale evidence.
 
 `TemperatureRequestInfo` reads the framework-authored `_pyrit_temperature` metadata
 on the saved request and responses. It records the requested override, resolved
@@ -123,6 +159,10 @@ Still to decide/implement:
 - Extend scorer-isolation and cross-provider regression coverage and confirm the release split
   with the story owners. Existing target hashes are preserved by excluding the additive
   runtime-support flag from configuration identity; no historical identifiers are rewritten.
+
+Custom adapter implementations must opt in with `_SUPPORTS_RUNTIME_TEMPERATURE = True`,
+implement `_validate_request_temperature`, and apply and record the resolved setting
+in their send hook. A model profile alone cannot enable an unimplemented adapter.
 
 ## Chat-style targets vs general targets
 

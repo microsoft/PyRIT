@@ -404,6 +404,14 @@ class TestTargetCapabilitiesModalities:
 class TestGetKnownCapabilities:
     """Test get_known_capabilities for every recognized model."""
 
+    @pytest.mark.parametrize(
+        ("model", "supported"), [("gpt-4o", True), ("gpt-5.1", True), ("gpt-5", False), ("gpt-5.4", False)]
+    )
+    def test_temperature_profile(self, model: str, supported: bool) -> None:
+        caps = get_known_capabilities(model)
+        assert caps is not None
+        assert caps.supports_temperature is supported
+
     def test_gpt_4o_supports_multi_turn_and_json_output(self):
         caps = get_known_capabilities("gpt-4o")
         assert caps is not None
@@ -522,11 +530,12 @@ class TestGetDefaultConfiguration:
         assert expected is not None
         assert result.capabilities == expected.model_copy(
             update={
+                "supports_temperature": False,
                 "input_modalities": frozenset(
                     combo
                     for combo in expected.input_modalities
                     if not combo & {"function_call", "function_call_output"}
-                )
+                ),
             }
         )
 

@@ -70,6 +70,7 @@ class PromptTarget(Identifiable):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
     _DEFAULT_TRACE_ENABLED: ClassVar[bool] = False
     _SUPPORTS_TOOL_CALL_HISTORY: ClassVar[bool] = False
+    _SUPPORTS_RUNTIME_TEMPERATURE: ClassVar[bool] = False
 
     # Declarative auth facts consumed by the create-target service and catalog.
     # Kept off ``TargetCapabilities`` (auth is a construction/credential axis, not
@@ -178,6 +179,8 @@ class PromptTarget(Identifiable):
             if custom_configuration is not None
             else type(self).get_default_configuration(self._underlying_model)
         )
+        if self.capabilities.supports_temperature and not self._SUPPORTS_RUNTIME_TEMPERATURE:
+            self.apply_capabilities(capabilities=self.capabilities.model_copy(update={"supports_temperature": False}))
         if custom_configuration is None and underlying_model is None and self._SUPPORTS_TOOL_CALL_HISTORY:
             known = get_known_capabilities(model_name)
             if known is not None:
@@ -773,12 +776,13 @@ class PromptTarget(Identifiable):
                 return TargetConfiguration(
                     capabilities=known.model_copy(
                         update={
+                            "supports_temperature": known.supports_temperature and cls._SUPPORTS_RUNTIME_TEMPERATURE,
                             "input_modalities": frozenset(
                                 combo
                                 for combo in known.input_modalities
                                 if cls._SUPPORTS_TOOL_CALL_HISTORY
                                 or not combo & {"function_call", "function_call_output"}
-                            )
+                            ),
                         }
                     )
                 )

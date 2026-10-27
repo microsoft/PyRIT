@@ -119,6 +119,7 @@ _GPT_4O = TargetCapabilities(
     supports_system_prompt=True,
     supports_json_output=True,
     supports_editable_history=True,
+    supports_temperature=True,
     input_modalities=_TEXT_IMAGE_INPUT | TOOL_CALL_INPUT_MODALITIES,
     output_modalities=_TEXT_OUTPUT,
 )
@@ -133,6 +134,9 @@ _GPT_5 = TargetCapabilities(
     input_modalities=_TEXT_IMAGE_INPUT | TOOL_CALL_INPUT_MODALITIES,
     output_modalities=_TEXT_OUTPUT,
 )
+
+# GPT-5.1 defaults to no reasoning; adapters still validate the effective mode.
+_GPT_5_1 = _GPT_5.model_copy(update={"supports_temperature": True})
 
 _GPT_REALTIME_1_5 = TargetCapabilities(
     supports_multi_turn=True,
@@ -172,7 +176,7 @@ _SORA_2 = TargetCapabilities(
 _KNOWN_CAPABILITIES: dict[str, TargetCapabilities] = {
     "gpt-4o": _GPT_4O,
     "gpt-5": _GPT_5,
-    "gpt-5.1": _GPT_5,
+    "gpt-5.1": _GPT_5_1,
     "gpt-5.4": _GPT_5,
     "gpt-realtime-1.5": _GPT_REALTIME_1_5,
     "tts": _TTS,
