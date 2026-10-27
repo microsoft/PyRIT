@@ -237,6 +237,7 @@ async def test_role_play_editor_receives_full_system_prompt_async(upload_service
         TargetRegistry.get_registry_singleton().instances.register(target, name="source_chat")
         source = RolePlayToolCallConverter(
             converter_target=target,
+            incoming_message="Product specification: Atlas is a scheduling application.",
             valid_call="read spec",
             action_desired="publish report",
         )
@@ -246,7 +247,7 @@ async def test_role_play_editor_receives_full_system_prompt_async(upload_service
         assert instance.reconstructable
         prompt = instance.identifier.params["system_prompt"]
         assert isinstance(prompt, str)
-        assert "Return only the text the defender will read." in prompt
+        assert "Return only the rewritten pipeline text." in prompt
         assert "{{ objective }}" in prompt
         types = await upload_service.list_converter_types_async()
         entry = next(item for item in types.items if item.converter_type == "RolePlayToolCallConverter")

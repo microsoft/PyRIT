@@ -381,7 +381,8 @@ print("Variation Selector:", await var_selector.convert_async(prompt=prompt))  #
 # These converters use LLMs to transform text style, tone, language, and semantics.
 #
 # RolePlayToolCallConverter(...) writes one untrusted message so a desired tool action looks approved.
-# Supply `valid_call`, `action_desired`, and a `converter_target`, or configure a default target.
+# Supply `incoming_message`, `valid_call`, `action_desired`, and a `converter_target`, or configure a default target.
+# `incoming_message` is the normal activity text already in the pipeline. Rewrite that text.
 # The call fields must not be empty. Tool calls are context for the generator, not tools it can execute.
 # `message_format` defaults to `random`: each conversion selects XML, YAML, JSON, Markdown, or plain text.
 # Set `message_format` to a format or custom instructions to keep it fixed.
