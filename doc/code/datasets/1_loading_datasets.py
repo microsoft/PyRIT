@@ -56,6 +56,7 @@
 # SIUO [@wang2025siuo],
 # SORRY-Bench [@xie2024sorrybench],
 # SOSBench [@jiang2025sosbench],
+# Speciesist Bias Prompts [@tuckerdavis2026speciesistbias],
 # StrongREJECT [@souly2024strongreject],
 # TDC23 [@mazeika2023tdc],
 # ToxicChat [@lin2023toxicchat],

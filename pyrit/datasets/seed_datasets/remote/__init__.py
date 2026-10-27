@@ -137,6 +137,7 @@ if TYPE_CHECKING:
     from pyrit.datasets.seed_datasets.remote.siuo_dataset import SIUOCategory, _SIUODataset
     from pyrit.datasets.seed_datasets.remote.sorry_bench_dataset import _SorryBenchDataset
     from pyrit.datasets.seed_datasets.remote.sosbench_dataset import _SOSBenchDataset
+    from pyrit.datasets.seed_datasets.remote.speciesist_bias_dataset import _SpeciesistBiasDataset
     from pyrit.datasets.seed_datasets.remote.strong_reject_dataset import _StrongRejectDataset
     from pyrit.datasets.seed_datasets.remote.tdc23_redteaming_dataset import _TDC23RedteamingDataset
     from pyrit.datasets.seed_datasets.remote.toxic_chat_dataset import _ToxicChatDataset
@@ -278,6 +279,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "_SIUODataset": "pyrit.datasets.seed_datasets.remote.siuo_dataset",
     "_SOSBenchDataset": "pyrit.datasets.seed_datasets.remote.sosbench_dataset",
     "_SorryBenchDataset": "pyrit.datasets.seed_datasets.remote.sorry_bench_dataset",
+    "_SpeciesistBiasDataset": "pyrit.datasets.seed_datasets.remote.speciesist_bias_dataset",
     "_StrongRejectDataset": "pyrit.datasets.seed_datasets.remote.strong_reject_dataset",
     "_TDC23RedteamingDataset": "pyrit.datasets.seed_datasets.remote.tdc23_redteaming_dataset",
     "_ToxicChatDataset": "pyrit.datasets.seed_datasets.remote.toxic_chat_dataset",
