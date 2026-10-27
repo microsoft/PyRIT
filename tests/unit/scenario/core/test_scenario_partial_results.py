@@ -8,7 +8,7 @@ from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
-from unit.async_utils import wait_for_completion_async
+from unit.async_utils import wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget
 
 from pyrit.exceptions import ScenarioPartialFailureException
@@ -429,7 +429,6 @@ class TestScenarioPartialAttackCompletion:
         # All 5 results should be in final scenario result
         assert len(result.attack_results["resume_attack"]) == 5
 
-    @pytest.mark.timeout(30)
     @pytest.mark.parametrize("cancel_worker", [False, True], ids=["caller-cancelled", "worker-cancelled"])
     async def test_run_async_cancellation_persists_progress_cleans_workers_and_resumes_async(
         self, *, mock_objective_target: MagicMock, cancel_worker: bool
@@ -517,18 +516,14 @@ class TestScenarioPartialAttackCompletion:
         await scenario.initialize_async()
 
         scenario_task = asyncio.create_task(scenario.run_async())
-        workers_ready = asyncio.gather(completed_persisted.wait(), in_flight_started.wait())
         try:
-            done, _ = await asyncio.wait({scenario_task, workers_ready}, return_when=asyncio.FIRST_COMPLETED)
-            if scenario_task in done:
-                await scenario_task
-                pytest.fail("Scenario finished before reaching the cancellation checkpoint")
-            await workers_ready
+            await wait_for_event_async(event=completed_persisted, tasks=[scenario_task])
+            await wait_for_event_async(event=in_flight_started, tasks=[scenario_task])
             task_to_cancel = worker_tasks[1] if cancel_worker else scenario_task
             task_to_cancel.cancel()
 
             with pytest.raises(asyncio.CancelledError):
-                await scenario_task
+                await wait_for_completion_async(future=scenario_task)
 
             assert completed_worker_exited.is_set()
             assert in_flight_worker_exited.is_set()
@@ -545,11 +540,8 @@ class TestScenarioPartialAttackCompletion:
             assert cancelled_result.number_tries == 1
             assert [result.objective for result in cancelled_result.attack_results["completed_attack"]] == ["obj1"]
 
-            await asyncio.sleep(0)
-            assert persisted_objectives == ["obj1"]
-
             scenario_task = asyncio.create_task(scenario.run_async())
-            resumed_result = await scenario_task
+            resumed_result = await wait_for_completion_async(future=scenario_task)
 
             assert resumed_result.scenario_run_state == ScenarioRunState.COMPLETED
             assert resumed_result.number_tries == 2
@@ -560,9 +552,9 @@ class TestScenarioPartialAttackCompletion:
             assert sorted(resumed_result.get_objectives()) == ["obj1", "obj2", "obj3"]
             assert all(len(results) == 1 for results in resumed_result.attack_results.values())
         finally:
-            workers_ready.cancel()
-            scenario_task.cancel()
-            await asyncio.gather(workers_ready, scenario_task, *worker_tasks, return_exceptions=True)
+            if not scenario_task.done() and not scenario_task.cancelling():
+                scenario_task.cancel()
+            await wait_for_completion_async(future=asyncio.gather(scenario_task, *worker_tasks, return_exceptions=True))
 
     @pytest.mark.parametrize("max_retries", [0, 1])
     async def test_run_async_cancellation_waits_for_worker_completion_callbacks_async(
@@ -605,7 +597,7 @@ class TestScenarioPartialAttackCompletion:
 
         parent = asyncio.create_task(scenario.run_async())
         try:
-            await asyncio.wait_for(all_started.wait(), timeout=30)
+            await wait_for_event_async(event=all_started, tasks=[parent])
             release_workers.set()
             parent.cancel("stop scenario")
             with pytest.raises(asyncio.CancelledError, match="stop scenario"):
@@ -623,9 +615,9 @@ class TestScenarioPartialAttackCompletion:
             assert all(attack.run_async.call_count == 1 for attack in attacks)
         finally:
             release_workers.set()
-            if not parent.done():
+            if not parent.done() and not parent.cancelling():
                 parent.cancel()
-            await asyncio.gather(parent, *worker_tasks, return_exceptions=True)
+            await wait_for_completion_async(future=asyncio.gather(parent, *worker_tasks, return_exceptions=True))
 
     @pytest.mark.parametrize("cancel_again", [False, True], ids=["single-cancel", "repeated-cancel"])
     async def test_caller_cancellation_stops_queue_before_ready_sibling_finishes_async(
@@ -677,10 +669,10 @@ class TestScenarioPartialAttackCompletion:
 
         parent = asyncio.create_task(scenario.run_async())
         try:
-            await asyncio.wait_for(all_started.wait(), timeout=30)
+            await wait_for_event_async(event=all_started, tasks=[parent])
             release_sibling.set()
             parent.cancel("stop scenario")
-            await asyncio.wait_for(cleanup_started.wait(), timeout=30)
+            await wait_for_event_async(event=cleanup_started, tasks=[parent])
             assert not parent.done()
             assert worker_tasks[0].cancelling() == 1
             [stored] = await scenario._memory.get_scenario_results_async(
@@ -690,7 +682,9 @@ class TestScenarioPartialAttackCompletion:
 
             if cancel_again:
                 parent.cancel("stop scenario again")
-                await asyncio.sleep(0)
+                cancellation_delivered = asyncio.Event()
+                asyncio.get_running_loop().call_soon(cancellation_delivered.set)
+                await wait_for_event_async(event=cancellation_delivered, tasks=[parent])
                 assert not parent.done()
                 assert worker_tasks[0].cancelling() == 1
 
@@ -709,9 +703,9 @@ class TestScenarioPartialAttackCompletion:
         finally:
             release_sibling.set()
             release_cleanup.set()
-            if not parent.done():
+            if not parent.done() and not parent.cancelling():
                 parent.cancel()
-            await asyncio.gather(parent, *worker_tasks, return_exceptions=True)
+            await wait_for_completion_async(future=asyncio.gather(parent, *worker_tasks, return_exceptions=True))
 
     async def test_run_async_resumes_in_a_task_with_previous_cancellation_async(
         self, *, mock_objective_target: MagicMock
@@ -747,7 +741,7 @@ class TestScenarioPartialAttackCompletion:
 
         parent = asyncio.create_task(cancel_then_resume_async())
         try:
-            await asyncio.wait_for(started.wait(), timeout=30)
+            await wait_for_event_async(event=started, tasks=[parent])
             parent.cancel("stop first run")
             result = await wait_for_completion_async(future=parent)
             assert result.scenario_run_state is ScenarioRunState.COMPLETED
@@ -756,26 +750,38 @@ class TestScenarioPartialAttackCompletion:
             assert attack.run_async.call_count == 2
             assert not scenario._active_atomic_groups
         finally:
-            if not parent.done():
+            if not parent.done() and not parent.cancelling():
                 parent.cancel()
-            await asyncio.gather(parent, return_exceptions=True)
+            await wait_for_completion_async(future=asyncio.gather(parent, return_exceptions=True))
 
-    async def test_worker_cancellation_waits_for_cleanup_despite_caller_cancellation(self, mock_objective_target):
+    @pytest.mark.parametrize("caller_cancellations", [0, 1, 2], ids=["child-only", "caller-cancel", "repeated-cancel"])
+    async def test_worker_cancellation_waits_for_cleanup_despite_caller_cancellation(
+        self, *, mock_objective_target: MagicMock, caller_cancellations: int
+    ) -> None:
         cancelled_attack = create_mock_atomic_attack("cancelled", ["obj1"])
         sibling_attack = create_mock_atomic_attack("sibling", ["obj2"])
+        queued_attack = create_mock_atomic_attack("queued", ["obj3"])
         sibling_started = asyncio.Event()
+        release_sibling = asyncio.Event()
         cleanup_started = asyncio.Event()
         allow_cleanup = asyncio.Event()
         cleanup_finished = asyncio.Event()
+        worker_tasks: list[asyncio.Task[None]] = []
 
-        async def cancelled_run_async(**_kwargs):
+        async def cancelled_run_async(**_kwargs: object) -> None:
+            worker = asyncio.current_task()
+            assert worker is not None
+            worker_tasks.append(worker)
             await sibling_started.wait()
             raise asyncio.CancelledError("child cancelled")
 
-        async def sibling_run_async(**_kwargs):
+        async def sibling_run_async(**_kwargs: object) -> None:
+            worker = asyncio.current_task()
+            assert worker is not None
+            worker_tasks.append(worker)
             sibling_started.set()
             try:
-                await asyncio.Event().wait()
+                await release_sibling.wait()
             finally:
                 cleanup_started.set()
                 await allow_cleanup.wait()
@@ -783,27 +789,52 @@ class TestScenarioPartialAttackCompletion:
 
         cancelled_attack.run_async = AsyncMock(side_effect=cancelled_run_async)
         sibling_attack.run_async = AsyncMock(side_effect=sibling_run_async)
+        queued_attack.run_async = AsyncMock()
         scenario = ConcreteScenario(
-            name="Cancellation During Cleanup", version=1, atomic_attacks_to_return=[cancelled_attack, sibling_attack]
+            name="Cancellation During Cleanup",
+            version=1,
+            atomic_attacks_to_return=[cancelled_attack, sibling_attack, queued_attack],
         )
         scenario.set_params_from_args(args={"objective_target": mock_objective_target, "max_concurrency": 2})
         await scenario.initialize_async()
+        assert scenario._scenario_result_id is not None
 
-        task = asyncio.create_task(scenario.run_async())
+        # This test owns worker draining, not run-state persistence or result hydration.
+        task = asyncio.create_task(
+            scenario._execute_atomic_attacks_parallel_async(
+                remaining_attacks=scenario._atomic_attacks,
+                scenario_result_id=scenario._scenario_result_id,
+                completed_count=0,
+            )
+        )
         try:
-            await asyncio.wait_for(cleanup_started.wait(), timeout=30)
-            task.cancel("caller cancelled during cleanup")
-            await asyncio.sleep(0)
+            await wait_for_event_async(event=cleanup_started, tasks=[task])
+            assert not task.done()
+            assert len(worker_tasks) == 2
+            assert worker_tasks[0].cancelled()
+            assert worker_tasks[1].cancelling() == 1
+            for _ in range(caller_cancellations):
+                task.cancel("caller cancelled during cleanup")
+                cancellation_delivered = asyncio.Event()
+                asyncio.get_running_loop().call_soon(cancellation_delivered.set)
+                await wait_for_event_async(event=cancellation_delivered, tasks=[task])
+                assert not task.done()
+                assert not cleanup_finished.is_set()
+                assert worker_tasks[1].cancelling() == 1
             allow_cleanup.set()
-            with pytest.raises(asyncio.CancelledError):
+            expected_message = "caller cancelled during cleanup" if caller_cancellations else "child cancelled"
+            with pytest.raises(asyncio.CancelledError, match=expected_message):
                 await wait_for_completion_async(future=task)
             assert cleanup_finished.is_set()
+            assert all(worker.done() for worker in worker_tasks)
             assert not scenario._active_atomic_groups
+            queued_attack.run_async.assert_not_called()
         finally:
+            release_sibling.set()
             allow_cleanup.set()
-            if not task.done():
+            if not task.done() and not task.cancelling():
                 task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            await wait_for_completion_async(future=asyncio.gather(task, *worker_tasks, return_exceptions=True))
 
     @pytest.mark.parametrize("cancel_again", [False, True], ids=["single-cancel", "repeated-cancel"])
     async def test_caller_cancellation_drains_real_target_reset_without_recancelling(self, cancel_again):
@@ -858,10 +889,10 @@ class TestScenarioPartialAttackCompletion:
         ):
             parent = asyncio.create_task(scenario.run_async())
             try:
-                await asyncio.wait_for(all_started.wait(), timeout=30)
+                await wait_for_event_async(event=all_started, tasks=[parent])
                 parent.cancel("stop scenario")
-                await asyncio.wait_for(cleanup_started.wait(), timeout=30)
-                await asyncio.wait_for(fast_worker_finished.wait(), timeout=30)
+                await wait_for_event_async(event=cleanup_started, tasks=[parent])
+                await wait_for_event_async(event=fast_worker_finished, tasks=[parent])
                 assert sends["slow"].cancelling() == 1
                 assert not cleanup_finished.is_set()
                 assert not parent.done()
@@ -874,7 +905,7 @@ class TestScenarioPartialAttackCompletion:
                     parent.cancel("stop scenario again")
                     cancellation_delivered = asyncio.Event()
                     asyncio.get_running_loop().call_soon(cancellation_delivered.set)
-                    await cancellation_delivered.wait()
+                    await wait_for_event_async(event=cancellation_delivered, tasks=[parent])
                     assert sends["slow"].cancelling() == 1
                     assert not parent.done()
 
@@ -892,9 +923,9 @@ class TestScenarioPartialAttackCompletion:
                 assert stored.number_tries == 1
             finally:
                 release_cleanup.set()
-                if not parent.done():
+                if not parent.done() and not parent.cancelling():
                     parent.cancel()
-                await asyncio.gather(parent, *sends.values(), return_exceptions=True)
+                await wait_for_completion_async(future=asyncio.gather(parent, *sends.values(), return_exceptions=True))
 
     async def test_run_async_cancellation_is_not_masked_by_persistence_failure(
         self, mock_objective_target: MagicMock

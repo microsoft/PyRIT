@@ -53,6 +53,7 @@ no queries, migration, repair, or database-setting changes.
 
 ```python
 from pyrit.analytics import AttackResultAnalytics
+from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackAnalyticsDimension,
     AttackAnalyticsFacetQuery,
@@ -63,6 +64,8 @@ from pyrit.models import (
     AttackAnalyticsValue,
 )
 
+operation = (await CentralMemory.get_memory_instance().get_operations_async(name="operation-a"))[0]
+
 async with AttackResultAnalytics() as analytics:
     report = await analytics.query_async(
         query=AttackAnalyticsQuery(
@@ -70,7 +73,7 @@ async with AttackResultAnalytics() as analytics:
                 dimensions=[
                     AttackAnalyticsFilter(
                         dimension=AttackAnalyticsDimension(name="operation"),
-                        values=[AttackAnalyticsValue(value="operation-a")],
+                        values=[AttackAnalyticsValue(value=str(operation.id))],
                     )
                 ]
             ),
@@ -102,6 +105,9 @@ async with AttackResultAnalytics() as analytics:
     )
 ```
 
+Activity saved with only an Operation name, not an Operation ID, uses
+`AttackAnalyticsValue(kind="legacy_operation_name", value="...")`.
+
 ### The same statistics for scenario units
 
 `compute_scenario_statistics` selects each scenario execution unit's latest
@@ -124,6 +130,88 @@ denominator and truncated 0-100 representation for compatibility. Both rates und
 separate: an error followed by a successful retry contributes one historical error
 but no latest-unit error. Never derive the decided denominator by subtracting
 historical errors from completed units.
+
+### Compare matched baseline and attack outcomes
+
+For scenarios that saved a normalized run plan with explicit baseline and attack
+groups, `compute_paired_outcome_statistics` shows what changed for the **same
+logical seed groups**. Supply the two atomic-group IDs from
+`scenario_result.metadata["run_plan"]["atomic_groups"]`; this deliberately
+avoids guessing which baseline belongs to a particular attack configuration.
+
+```python
+from pyrit.analytics import compute_paired_outcome_statistics
+from pyrit.models import ScenarioRunPlan, ScenarioRunPlanGroupKind
+
+# scenario_result is an already loaded ScenarioResult containing hydrated AttackResults.
+plan = ScenarioRunPlan.model_validate(scenario_result.metadata["run_plan"])
+baseline = next(group for group in plan.atomic_groups if group.kind == ScenarioRunPlanGroupKind.BASELINE)
+attack = next(group for group in plan.atomic_groups if group.kind == ScenarioRunPlanGroupKind.ATTACK)
+# If several groups share a kind, choose the intended pair explicitly.
+report = compute_paired_outcome_statistics(
+    scenario_result,
+    baseline_group_id=baseline.id,
+    attack_group_id=attack.id,
+)
+print(report.failure_to_success, report.success_to_failure)
+print(report.failure_to_failure, report.success_to_success)
+print(report.baseline_success_rate, report.attack_success_rate, report.paired_difference)
+print(report.decided_pairs, report.excluded_pairs)
+```
+
+The four transitions are **failure→success**, **success→failure**,
+**failure→failure**, and **success→success**. The denominator for both rates
+(`baseline_success_rate` and `attack_success_rate`) is `decided_pairs`:
+seed-group IDs scheduled in **both** selected atomic groups whose latest
+top-level baseline and attack outcomes are both success or failure. The
+`paired_difference` is attack rate minus baseline rate over that same cohort,
+in proportions (not percentage points); for example, `0.25` means 25
+percentage points. If there are no decided pairs, all three values are `None`.
+Unlike a subtraction of two overall success rates, the transition counts show
+which outcomes changed, even when the marginal rates are identical.
+For example, with four decided pairs (one of each transition), both success
+rates are `0.5` and the paired difference is `0.0`, but one previously failed
+objective succeeds and one previously successful objective fails.
+
+The function selects the effective **latest top-level result** per
+`(atomic_group_id, seed_group_id)`, ordering by timestamp then result ID as
+`compute_scenario_statistics` does. Child results and superseded retries never
+create extra pairs. `planned_pairs` covers the **intersection** of planned seed IDs;
+`decided_pairs` is the decided shared subset, and
+`excluded_pairs = planned_pairs - decided_pairs`. The
+`unmatched_baseline_seeds` and `unmatched_attack_seeds` counts cover seed IDs
+planned on one side only, and are not included in `excluded_pairs`.
+For shared IDs, `missing_both`, `missing_baseline`,
+and `missing_attack` count absent top-level completions (the latter two
+are exclusive of `missing_both`). `baseline_errors`, `attack_errors`,
+`baseline_undetermined`, and `attack_undetermined` count each side's latest
+outcomes, including when the other side is absent or undecided. These reason
+counts can overlap across sides, so do not sum them to reconstruct exclusions.
+`unattributed_attempts` counts results recorded under the selected atomic
+names that resolve to neither selected planned group.
+
+Comparisons require one valid saved plan, distinct explicitly marked baseline
+and attack groups, and overlapping logical seed-group IDs (unless both
+groups are empty). Ambiguous group configurations, duplicated result IDs,
+conflicting seed attribution, malformed attempt metadata, or incompatible
+scoring evidence raise `ValueError` rather than silently pairing observations.
+When scores are available, the comparison checks scorer identities and score
+types both within pairs and across the decided cohort. Within each pair, it
+also checks complete scoring expectations, including their conditions and any
+optional scoring context, which may legitimately differ from the attack objective.
+For compound outcomes, these checks follow all explicitly linked descendants,
+including nested compounds. Missing child results or cyclic links are rejected;
+descendants still do not add pairs or change the rate denominator.
+The groups belong to the **same** ScenarioResult and share its scenario-level
+target and scorer identity. When a run uses different per-group scorers,
+persisted per-result scorer identities can reveal incompatibility; if scorer
+identity, score type, or scoring expectation is absent, compatibility cannot be
+fully verified. Different matched seed groups may use different scoring contexts
+if each individual baseline/attack pair has the same expectation.
+Older runs without a saved run plan and separately executed runs are not
+supported. The reported difference is descriptive and does not establish that
+the attack caused an outcome to change. No confidence interval is provided,
+because small and constant paired samples need careful uncertainty treatment.
 
 ### Scenario producer accounting
 
@@ -243,6 +331,9 @@ Use typed keys, not display labels, when filtering:
 - `MISSING` is labeled `"Not recorded"` and is not a string sentinel.
 - `NO_CONVERTERS` is labeled `"No converters"` and distinguishes a known empty
   pipeline from missing converter metadata.
+- `LEGACY_OPERATION_NAME` applies only to Operation. It holds the name stored on
+  activity saved without an Operation ID and is labeled with the name followed by
+  `"(legacy name)"`.
 
 Case-insensitive categorical keys use the reader's backend semantics. In SQLite,
 the SQL function and SDK profiles both use Python `str.lower`, including Unicode.
@@ -254,14 +345,19 @@ values retain the existing Python conversion and lowercasing.
 
 Objective-target keys are persisted frozen-v1 behavioral evaluation hashes.
 Deployment changes need not split behaviorally equivalent targets. Targets
-without a model name, such as HTTP or Gandalf targets, are keyed by their
-content hash instead, so different endpoints or levels stay separate. The
+without a model name, such as HTTP targets, are keyed by their content hash
+instead, so different endpoints stay separate. The
 `target_identifier_hash` in a result row is instead its exact content hash for
 inspection. Neither key is recomputed from current registry state. Scenario keys
 identify saved runs, not potentially repeated scenario names. The SDK adds short
 identity suffixes to target/scenario display labels and forwards reader warnings.
 Whitespace-only model labels use the target class name and short identity suffix;
 SQLite and SQL Server recognize the same Unicode whitespace as Python `str.strip`.
+
+Operation keys are saved Operation IDs; labels show the Operation's current name,
+so renaming an Operation never changes its key. Operation options list
+`"Not recorded"` first, then saved Operations by name, then legacy names by name;
+groups with equal counts follow the same order.
 
 ## Freshness and projection limits
 
@@ -499,7 +595,8 @@ without discovering user dotenv files, the existing `PYTHON_DOTENV_DISABLED=1`
 setting can be used; it does not control whether the test runs.
 
 The deterministic data contains 100,000 result IDs, two per conversation, all
-outcomes and result roles, 100 skewed operations (the largest exceeds 60%), 50
+outcomes and result roles, skewed operations (one saved Operation holds 60%; the
+rest use 100 legacy Operation names), 50
 operators, 40 overlapping harm categories, 64 shared identifier configurations,
 eight models, overlapping converter pairs, known empty pipelines, supported
 legacy documents, missing identifiers, and 100,000 distinct case labels.
@@ -552,7 +649,9 @@ Environment: Windows 11 build 26200, 16 logical CPUs, AMD64 family 25/model 117;
 Python 3.14.4, SQLite 3.50.4, FastAPI 0.142.2, Starlette 1.7.0, Pydantic 2.13.5,
 SQLAlchemy 2.1.1, aiosqlite 0.22.1, and HTTPX 0.28.1. WAL applied only to the
 disposable database. The data shape and timing inclusions/exclusions are those
-described above.
+described above. These recorded numbers predate the saved Operation in that data
+shape: they were measured with every row using a legacy Operation name and with
+a facet workload filtered by Operation name.
 
 | Workload | Cold (s) | Concurrent p95 (s) | Maximum (s) | Successful / error requests |
 |---|---:|---:|---:|---:|

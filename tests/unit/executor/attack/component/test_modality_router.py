@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
+from pyrit.message_normalizer._helpers import format_message_piece_for_context
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -434,6 +435,96 @@ class TestBuildObjectiveInputMessage:
 
         assert len(msg.message_pieces) == 2
         assert msg.message_pieces[1].original_value_data_type == media_type
+
+
+# ---------------------------------------------------------------------------
+# media metadata forwarding
+# ---------------------------------------------------------------------------
+def _make_described_media_piece(*, role: str = "assistant") -> MessagePiece:
+    return MessagePiece(
+        role=role,
+        original_value="original.png",
+        original_value_data_type="image_path",
+        converted_value="resized.png",
+        converted_value_data_type="image_path",
+        prompt_metadata={
+            "context_description": "A blue square",
+            "video_id": "video_123",
+            "inner_target_identifier": "abc123",
+        },
+    )
+
+
+def _forward_response_to_adversarial(source: MessagePiece) -> Message:
+    router = _ModalityFeedbackRouter(
+        adversarial_chat=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
+        objective_target=_build_target(input_modalities=[{"text"}]),
+    )
+    return router.build_adversarial_input_message(text="feedback", last_response=Message(message_pieces=[source]))
+
+
+def _forward_seed_to_adversarial(source: MessagePiece) -> Message:
+    router = _ModalityFeedbackRouter(
+        adversarial_chat=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
+        objective_target=_build_target(input_modalities=[{"text"}]),
+    )
+    return router.build_adversarial_input_message(
+        text="feedback", last_response=None, seed_message=Message(message_pieces=[source])
+    )
+
+
+def _forward_response_to_objective(source: MessagePiece) -> Message:
+    router = _ModalityFeedbackRouter(
+        adversarial_chat=_build_target(input_modalities=[{"text"}]),
+        objective_target=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
+    )
+    return router.build_objective_input_message(
+        text="refine", last_response=Message(message_pieces=[source]), turn_index=1
+    )
+
+
+@pytest.mark.parametrize(
+    ("forward", "source_role"),
+    [
+        (_forward_response_to_adversarial, "assistant"),
+        (_forward_seed_to_adversarial, "user"),
+        (_forward_response_to_objective, "assistant"),
+    ],
+)
+def test_forwarded_media_keeps_context_description_only(forward, source_role):
+    source = _make_described_media_piece(role=source_role)
+
+    msg = forward(source)
+
+    media_copy = msg.message_pieces[1]
+    assert media_copy.original_value == "resized.png"
+    assert media_copy.prompt_metadata == {"context_description": "A blue square"}
+    assert format_message_piece_for_context(piece=media_copy) == "[Image_path - A blue square]"
+    assert media_copy.id != source.id
+    assert media_copy.conversation_id != source.conversation_id
+
+
+def test_forwarded_media_metadata_is_independent_of_source():
+    source = _make_described_media_piece()
+
+    media_copy = _forward_response_to_adversarial(source).message_pieces[1]
+    media_copy.prompt_metadata["context_description"] = "changed"
+
+    assert source.prompt_metadata == {
+        "context_description": "A blue square",
+        "video_id": "video_123",
+        "inner_target_identifier": "abc123",
+    }
+
+
+def test_forwarded_media_without_metadata_has_empty_metadata():
+    source = _make_described_media_piece()
+    source.prompt_metadata = {}
+
+    media_copy = _forward_response_to_adversarial(source).message_pieces[1]
+
+    assert media_copy.prompt_metadata == {}
+    assert format_message_piece_for_context(piece=media_copy) == "[Image_path]"
 
 
 # ---------------------------------------------------------------------------

@@ -23,6 +23,8 @@ from pyrit.models import (
     RequestTraceContext,
     TargetIdentifier,
     TemperatureRequestInfo,
+    WebSearchConfig,
+    WebSearchMode,
 )
 from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.prompt_target.common.target_capabilities import (
@@ -238,6 +240,25 @@ class PromptTarget(Identifiable):
         """
         validate_tool_conversation(messages)
 
+    def validate_web_search_config(self, config: WebSearchConfig) -> None:
+        """
+        Check whether this adapter can enforce a request's search policy.
+
+        Args:
+            config (WebSearchConfig): Requested target-hosted search policy.
+
+        Raises:
+            ValueError: If search is required, or a search-enabled adapter cannot disable it.
+        """
+        if config.mode == WebSearchMode.DEFAULT:
+            return
+        if config.mode == WebSearchMode.DISABLED and not self.capabilities.supports_web_search:
+            return
+        raise ValueError(
+            f"{type(self).__name__} cannot enforce web search mode {config.mode.value!r}. "
+            "Use an adapter that implements this policy and declares supports_web_search."
+        )
+
     def validate_history_replay(self) -> None:
         """
         Check configuration support for initializing a new conversation from stored history.
@@ -294,6 +315,8 @@ class PromptTarget(Identifiable):
             piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
         message.validate()
         generation_config = self.validate_request_generation_config(message)
+        web_search_config = self._get_web_search_config(message)
+        self.validate_web_search_config(web_search_config)
         conversation_id = message.get_piece().conversation_id or ""
         if send_context and send_context.conversation_id != conversation_id:
             raise ValueError("Target send context conversation_id does not match the current request conversation_id.")
@@ -316,6 +339,8 @@ class PromptTarget(Identifiable):
                 piece.prompt_metadata.pop(RequestGenerationConfig.METADATA_KEY, None)
                 piece.prompt_metadata.pop(TemperatureRequestInfo.METADATA_KEY, None)
             normalized_request.get_piece().prompt_metadata.update(generation_config.to_metadata())
+            if self._get_web_search_config(normalized_request) != web_search_config:
+                raise ValueError("Normalization changed the request's web search policy.")
             self._validate_request(normalized_conversation=normalized_conversation)
             with target_trace_context(
                 config=self._trace_config, request=message, normalized_request=normalized_conversation[-1]
@@ -442,6 +467,17 @@ class PromptTarget(Identifiable):
 
         if not self.configuration.includes(capability=CapabilityName.MULTI_TURN) and len(normalized_conversation) > 1:
             raise ValueError(f"This target only supports a single turn conversation. {custom_configuration_message}")
+
+    @staticmethod
+    def _get_web_search_config(message: Message) -> WebSearchConfig:
+        configs = {
+            WebSearchConfig.from_metadata(metadata=piece.prompt_metadata)
+            for piece in message.message_pieces
+            if WebSearchConfig.METADATA_KEY in piece.prompt_metadata
+        }
+        if len(configs) > 1:
+            raise ValueError("Message pieces have conflicting web search policies.")
+        return next(iter(configs), WebSearchConfig())
 
     async def _get_normalized_conversation_async(
         self,

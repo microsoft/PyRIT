@@ -3,6 +3,8 @@
 
 """Tests for the Jailbreak class."""
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -137,13 +139,18 @@ def mock_runtime_env():
 FIXTURES = ["patch_central_database", "mock_runtime_env"]
 
 
-def _patch_seed_groups(seed_groups):
-    return patch.object(
-        Jailbreak,
-        "_resolve_seed_groups_by_dataset_async",
-        new_callable=AsyncMock,
-        return_value={"harmbench": seed_groups},
-    )
+@contextmanager
+def _patch_seed_groups(seed_groups: list[AttackSeedGroup]) -> Generator[None, None, None]:
+    with (
+        patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock),
+        patch.object(
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"harmbench": seed_groups},
+        ),
+    ):
+        yield
 
 
 def _default_args(target, **extra):
@@ -190,6 +197,13 @@ class TestJailbreakInitialization:
         with pytest.raises(ValueError, match="num_jailbreak_attempts must be at least 1"):
             scenario.set_params_from_args(args={"num_jailbreak_attempts": num_attempts})
 
+    @pytest.mark.parametrize("num_jailbreaks", [0, -1])
+    def test_rejects_non_positive_num_jailbreaks(self, mock_objective_scorer, num_jailbreaks: int) -> None:
+        scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+
+        with pytest.raises(ValueError, match="num_jailbreaks must be at least 1"):
+            scenario.set_params_from_args(args={"num_jailbreaks": num_jailbreaks})
+
     async def test_default_draws_random_template_sample(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
@@ -200,6 +214,11 @@ class TestJailbreakInitialization:
             await scenario.initialize_async()
             assert len(scenario._resolved_jailbreaks) == _DEFAULT_NUM_JAILBREAKS
             assert set(scenario._resolved_jailbreaks).issubset(set(TextJailBreak.get_jailbreak_templates()))
+            assert len(scenario._atomic_attacks) == _DEFAULT_NUM_JAILBREAKS
+            for attack in scenario._atomic_attacks:
+                assert [group.objective.value for group in attack.seed_groups] == [
+                    group.objective.value for group in mock_memory_seed_groups
+                ]
 
     async def test_num_jailbreaks_samples_that_many(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups

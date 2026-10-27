@@ -82,6 +82,10 @@ jobs:
             config: playwright.analytics.config.ts
             shard: 1
             total: 1
+          - project: paired-outcomes
+            config: playwright.paired-outcomes.config.ts
+            shard: 1
+            total: 1
     outputs:
       expected-reports: ${{ strategy.job-total }}
     permissions:
@@ -107,9 +111,9 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          version: "0.9.17"
+          version-file: uv.lock
           enable-cache: true
           cache-dependency-glob: |
             **/pyproject.toml
@@ -126,8 +130,8 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Build the isolated analytics frontend
-        if: matrix.project == 'analytics'
+      - name: Build the isolated fixture frontend
+        if: matrix.project == 'analytics' || matrix.project == 'paired-outcomes'
         run: npm run build
 
       - name: Run E2E shard (no credentials needed)
@@ -136,6 +140,8 @@ jobs:
           CI: true
           # Mock specs still use the backend for auth bootstrap and some API calls.
           E2E_SEEDED_MODE: true
+          # Mock specs import /src modules that only the Vite dev server serves.
+          E2E_PRODUCTION_FRONTEND: ${{ matrix.project == 'seeded' }}
           FAIL_ON_SKIPPED_TESTS: true
 
       - name: Upload Playwright blob report

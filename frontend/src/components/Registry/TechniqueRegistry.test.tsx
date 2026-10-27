@@ -183,7 +183,7 @@ describe('TechniqueRegistry', () => {
     await user.type(screen.getByLabelText('max_attempts_on_failure'), '0')
     await user.selectOptions(screen.getByLabelText('settings'), 'basic')
     await user.selectOptions(screen.getByLabelText('enabled'), 'false')
-    await user.type(screen.getByLabelText('limit *'), '0')
+    await user.type(screen.getByRole('spinbutton', { name: 'limit' }), '0')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Request converters' }), 'b64')
     await user.click(screen.getByRole('button', { name: 'Add to Request converters' }))
     await user.click(screen.getByRole('button', { name: 'Add to Request converters' }))
@@ -195,7 +195,7 @@ describe('TechniqueRegistry', () => {
     await user.click(screen.getByRole('button', { name: 'Add technique' }))
     await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(1))
     const request = techniques.createTechnique.mock.calls[0][0]
-    expect(request).toMatchObject({ name: 'created', tags: ['mine', 'basic'], type: 'PromptSendingAttack', params: {
+    expect(request).toMatchObject({ name: 'created', description: 'Custom settings', tags: ['mine', 'basic'], type: 'PromptSendingAttack', params: {
       max_attempts_on_failure: 0, settings: { type: 'basic', parameters: { enabled: false, limit: 0 } },
     }, request_converters: ['b64', 'rot13', 'b64'], response_converters: ['rot13'] })
     expect(request.params).not.toHaveProperty('objective_target')
@@ -230,7 +230,7 @@ describe('TechniqueRegistry', () => {
     expect(dialog.getByLabelText('max_attempts_on_failure')).toBeInTheDocument()
     expect(dialog.queryByText(/Implementation of|This form shows|Runtime only|prompt_normalizer|Use Python/)).not.toBeInTheDocument()
     await user.selectOptions(dialog.getByLabelText('settings'), 'basic')
-    expect(dialog.getByLabelText('limit *')).toBeInTheDocument()
+    expect(dialog.getByRole('spinbutton', { name: 'limit' })).toBeRequired()
     expect(dialog.queryByText(/prompt_normalizer/)).not.toBeInTheDocument()
   })
 
@@ -265,11 +265,11 @@ describe('TechniqueRegistry', () => {
     const user = await openCreate()
     expect(screen.queryByRole('option', { name: 'NestedRequiredAttack' })).not.toBeInTheDocument()
     await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'MixedAttack')
-    const settings = screen.getByLabelText('settings *')
+    const settings = screen.getByRole('combobox', { name: 'settings' })
     expect(within(settings).queryByRole('option', { name: 'nested_required' })).not.toBeInTheDocument()
     await user.selectOptions(settings, 'basic')
     expect(screen.queryByLabelText('child')).not.toBeInTheDocument()
-    await user.type(screen.getByLabelText('limit *'), '0')
+    await user.type(screen.getByRole('spinbutton', { name: 'limit' }), '0')
     await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'basic_settings')
     await user.click(screen.getByRole('button', { name: 'Add technique' }))
     await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(1))

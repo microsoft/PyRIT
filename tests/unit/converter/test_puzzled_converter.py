@@ -6,6 +6,7 @@ from collections import Counter
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import regex
 from unit.mocks import MockPromptTarget
 
 from pyrit.common.random_context import configure_random_seed
@@ -95,6 +96,13 @@ def test_identifier_canonicalizes_essential_words():
 async def test_unsupported_input_type_raises():
     with pytest.raises(ValueError):
         await PuzzledConverter().convert_async(prompt=_PROMPT, input_type="image_path")
+
+
+async def test_unhandled_puzzle_type_raises_async() -> None:
+    converter = PuzzledConverter(num_to_mask=2, seed=1)
+    with patch.object(converter, "_puzzle_type", "sudoku"):
+        with pytest.raises(AssertionError, match="Expected code to be unreachable, but got: 'sudoku'"):
+            await converter.convert_async(prompt=_PROMPT)
 
 
 @pytest.mark.parametrize(
@@ -195,7 +203,7 @@ def _grid_contains(grid: list[list[str]], word: str | list[str]) -> bool:
 def _puzzle_letters(text: str) -> list[str]:
     letters: list[str] = []
     for char in unicodedata.normalize("NFC", text):
-        if letters and unicodedata.category(char).startswith("M"):
+        if letters and regex.fullmatch(r"\p{M}", char):
             letters[-1] += char
         else:
             letters.append(char)
@@ -213,6 +221,8 @@ def _puzzle_letters(text: str) -> list[str]:
         [["C", "A", "F", "É"], ["C", "R", "È", "M", "E"]],
         [["Q\u0301", "A"], ["Q\u0301", "B"]],
         [["Q\u0345", "A"], ["Q\u0345", "B"]],
+        pytest.param([["Q\u05c8", "A"], ["Q\u05c8", "B"]], id="unicode18-mark"),
+        pytest.param([["\u0558", "A"], ["\u0558", "B"]], id="unicode18-letter"),
         [["Μ", "Α", "ΐ", "Ο", "Υ"], ["Γ", "Ρ", "Ά", "Μ", "Μ", "Α"]],
         [["가", "나"], ["다", "나"]],
     ],
@@ -231,7 +241,7 @@ async def test_marked_words_use_the_clued_letter_units_async(
     if puzzle_type == "word_search":
         grid = [row.split(" ") for row in puzzle.splitlines()]
         assert all(len(row) == len(grid) for row in grid)
-        assert all(cell[0].isalpha() for row in grid for cell in row)
+        assert all(regex.fullmatch(r"\p{L}", cell[0]) for row in grid for cell in row)
         assert all(_grid_contains(grid, word) for word in words)
         assert len(grid) == max(map(len, words)) + 5
     elif puzzle_type == "anagram":

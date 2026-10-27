@@ -6,17 +6,38 @@
 import asyncio
 import threading
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pyrit.backend.models.scorers import CreateScorerRequest
+from pyrit.backend.services.chat_scoring_service import ChatScoringService
 from pyrit.backend.services.scorer_service import ScorerService, get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
-from pyrit.models import ComponentIdentifier, Scorable, Score, ScoringExpectation
-from pyrit.registry import ScorerRegistry
+from pyrit.models import (
+    ComponentIdentifier,
+    Scorable,
+    Score,
+    ScorerEvaluationIdentifier,
+    ScorerIdentifier,
+    ScoringExpectation,
+    TargetIdentifier,
+)
+from pyrit.models.component_spec import RegisteredComponentReference
+from pyrit.prompt_target import TextTarget
+from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.registry.instance_registry import DefaultInstanceRegistry
+from pyrit.score import (
+    ManualScorer,
+    MessageToolCallScorer,
+    OtelToolCallScorer,
+    SubStringScorer,
+    TrueFalseInverterScorer,
+)
+from pyrit.score.observation.observation_source import ObservationSource
 from pyrit.score.scorer import Scorer
+from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
 
 
 class _ServiceScorer(Scorer):
@@ -50,6 +71,25 @@ class _ObjectConfiguredScorer(_ServiceScorer):
         self.tokenizer = tokenizer
 
 
+class _FileConfiguredScorer(_ServiceScorer):
+    """A scorer with one plain external parameter and two that name files on the server."""
+
+    def __init__(
+        self, *, label: str = "service", data_file: Path | None = None, question_path: str | Path | None = None
+    ) -> None:
+        super().__init__(label=label)
+        self.data_file = data_file
+        self.question_path = question_path
+
+
+class _FileRequiredScorer(_ServiceScorer):
+    """A scorer that cannot be built without a file on the server."""
+
+    def __init__(self, *, data_file: Path) -> None:
+        super().__init__()
+        self.data_file = data_file
+
+
 @pytest.fixture(autouse=True)
 def reset_scorer_registry(patch_central_database: MagicMock) -> Iterator[None]:
     get_scorer_service.cache_clear()
@@ -75,6 +115,124 @@ async def test_types_are_metadata_only_and_empty_instance_list_is_valid() -> Non
     assert instances.items == []
     assert instances.pagination.has_more is False
     assert missing is None
+
+
+async def test_chat_catalog_checks_response_contract_and_full_identity() -> None:
+    registry = ScorerRegistry.get_registry_singleton()
+    scorer = SubStringScorer(substring="expected")
+    registry.instances.register(scorer, name="judge")
+    registry.instances.register(TrueFalseInverterScorer(scorer=scorer), name="wrapped-judge")
+    registry.instances.register(_ServiceScorer(), name="unsupported")
+    service = ScorerService()
+    catalog = await service.list_scorers_async()
+    entries = {entry.scorer_registry_name: entry for entry in catalog.items}
+    assert entries["judge"].chat_scoring_disabled_reason is None
+    assert entries["wrapped-judge"].chat_scoring_disabled_reason is None
+    assert entries["unsupported"].chat_scoring_disabled_reason
+    reference = RegisteredComponentReference(registry_name="judge", identifier_hash=scorer.get_identifier().hash)
+    assert ChatScoringService().resolve(reference) is scorer
+    with pytest.raises(ValueError, match="configuration changed"):
+        ChatScoringService().resolve(reference.model_copy(update={"identifier_hash": "different"}))
+    assert entries["wrapped-judge"].display_type == "TrueFalseInverterScorer(SubStringScorer)"
+    assert entries["wrapped-judge"].scorable_types == ["content", "content_entry", "message"]
+    assert entries["unsupported"].scorable_types == []
+
+
+async def test_chat_eligibility_uses_declared_message_support_not_message_family_inheritance() -> None:
+    scorer = ManualScorer(value=True, rationale="Configured criterion", user_identifier="test")
+    registry = ScorerRegistry.get_registry_singleton()
+    registry.instances.register(scorer, name="declared-message-scorer")
+    assert ChatScoringService.disabled_reason(scorer) is None
+    reference = RegisteredComponentReference(
+        registry_name="declared-message-scorer", identifier_hash=scorer.get_identifier().hash
+    )
+    assert ChatScoringService().resolve(reference) is scorer
+
+
+async def test_inherited_scorer_lookup_uses_only_existing_exact_registry_instances() -> None:
+    scorer = SubStringScorer(substring="scan configuration")
+    service = ScorerService()
+    reference = RegisteredComponentReference(
+        registry_name="a different saved alias", identifier_hash=scorer.get_identifier().hash
+    )
+    registry = ScorerRegistry.get_registry_singleton()
+    assert service.find_registered_scorer(reference.identifier_hash) is None
+    assert registry.instances.get_all_instances() == []
+    registry.instances.register(SubStringScorer(substring="different configuration"), name=reference.registry_name)
+    assert service.find_registered_scorer(reference.identifier_hash) is None
+    registry.instances.register(scorer, name="current-alias")
+    assert service.find_registered_scorer(reference.identifier_hash) is scorer
+    assert len(registry.instances.get_all_instances()) == 2
+
+
+async def test_registry_projects_evaluation_identity_and_root_metrics() -> None:
+    scorer = SubStringScorer(substring="expected")
+    identifier = ScorerIdentifier(
+        class_name="Wrapper",
+        class_module="pyrit.score",
+        sub_scorers=[
+            ScorerIdentifier(
+                class_name="Inner",
+                class_module="pyrit.score",
+                prompt_target=TargetIdentifier(
+                    class_name="OpenAIChatTarget",
+                    class_module="pyrit.prompt_target",
+                    params={
+                        "endpoint": "https://deployment.invalid",
+                        "model_name": "logical-model",
+                        "temperature": 0.7,
+                        "max_requests_per_minute": 30,
+                    },
+                ),
+            )
+        ],
+    )
+    metrics = ObjectiveScorerMetrics(
+        num_responses=12,
+        num_human_raters=2,
+        accuracy=0.9,
+        accuracy_standard_error=0.02,
+        f1_score=float("nan"),
+        precision=0.95,
+        recall=0.85,
+        average_score_time_seconds=0.25,
+    )
+    ScorerRegistry.get_registry_singleton().instances.register(scorer, name="evaluated")
+    with (
+        patch.object(scorer, "get_identifier", return_value=identifier),
+        patch.object(scorer, "get_scorer_metrics", return_value=metrics),
+    ):
+        instance = await ScorerService().get_scorer_async(scorer_registry_name="evaluated")
+    assert instance is not None and instance.evaluation_identifier is not None
+    assert instance.evaluation_identifier.eval_hash == ScorerEvaluationIdentifier(identifier).eval_hash
+    projected = instance.evaluation_identifier.get_child_list("sub_scorers")[0].get_child("prompt_target")
+    assert projected is not None and instance.metrics is not None
+    assert projected.params == {"underlying_model_name": "logical-model", "temperature": 0.7}
+    assert instance.display_type == "Wrapper(Inner)"
+    assert instance.metrics["precision"] == 0.95 and instance.metrics["recall"] == 0.85
+    assert instance.metrics["average_score_time_seconds"] == 0.25
+    assert instance.metrics["f1_score"] is None
+    assert "trial_scores" not in instance.metrics
+    assert "deployment.invalid" not in instance.evaluation_identifier.model_dump_json()
+
+
+async def test_registry_distinguishes_message_tool_calls_and_does_not_inherit_metrics() -> None:
+    scorer = SubStringScorer(substring="expected")
+    wrapper = TrueFalseInverterScorer(scorer=scorer)
+    registry = ScorerRegistry.get_registry_singleton()
+    registry.instances.register(wrapper, name="wrapper")
+    registry.instances.register(MessageToolCallScorer(), name="tools")
+    source = MagicMock(spec=ObservationSource)
+    source.get_identifier.return_value = ComponentIdentifier(class_name="ToolSource", class_module="tests")
+    registry.instances.register(OtelToolCallScorer(source=source), name="trace-tools")
+    with patch.object(scorer, "get_scorer_metrics", side_effect=AssertionError("Do not use a child's metrics")):
+        catalog = await ScorerService().list_scorers_async()
+    entries = {entry.scorer_registry_name: entry for entry in catalog.items}
+    assert entries["wrapper"].metrics is None
+    assert entries["tools"].scorable_types == ["message"]
+    assert entries["tools"].condition_types == ["ToolsCalled"]
+    assert entries["trace-tools"].scorable_types == ["message", "trace"]
+    source.acquire_async.assert_not_called()
 
 
 async def test_list_scorers_uses_sorted_names_and_cursor_pages() -> None:
@@ -214,3 +372,97 @@ async def test_types_describe_sequences_as_lists() -> None:
     assert next(parameter for parameter in metadata.parameters if parameter.name == "fields").type_name == (
         "collections.abc.Sequence[str]"
     )
+
+
+@pytest.fixture
+def chat_target() -> Iterator[str]:
+    TargetRegistry.reset_registry_singleton()
+    TargetRegistry.get_registry_singleton().instances.register(TextTarget(), name="chat")
+    yield "chat"
+    TargetRegistry.reset_registry_singleton()
+
+
+async def test_types_leave_out_server_file_parameters() -> None:
+    ScorerRegistry.get_registry_singleton().register_class(_FileConfiguredScorer)
+
+    types = await ScorerService().list_scorer_types_async()
+
+    entry = next(item for item in types.items if item.scorer_type == "_FileConfiguredScorer")
+    assert [parameter.name for parameter in entry.parameters] == ["label"]
+
+
+async def test_types_leave_out_scorers_that_require_a_server_file() -> None:
+    registry = ScorerRegistry.get_registry_singleton()
+    registry.register_class(_FileConfiguredScorer)
+    registry.register_class(_FileRequiredScorer)
+
+    types = await ScorerService().list_scorer_types_async()
+
+    scorer_types = {item.scorer_type for item in types.items}
+    assert "_FileConfiguredScorer" in scorer_types
+    assert "_FileRequiredScorer" not in scorer_types
+
+
+@pytest.mark.parametrize("register", [True, False])
+@pytest.mark.parametrize("parameter_name", ["data_file", "question_path"])
+async def test_create_scorer_rejects_server_file_parameters_before_construction(
+    parameter_name: str, register: bool
+) -> None:
+    ScorerRegistry.get_registry_singleton().register_class(_FileConfiguredScorer)
+    _FileConfiguredScorer.constructions = 0
+    service = ScorerService()
+
+    with pytest.raises(ValueError, match=f"'{parameter_name}' of '_FileConfiguredScorer' names a server file"):
+        await service.create_scorer_async(
+            request=CreateScorerRequest(
+                name="file" if register else None,
+                register=register,
+                type="_FileConfiguredScorer",
+                params={parameter_name: "/etc/hosts"},
+            )
+        )
+    created = await service.create_scorer_async(
+        request=CreateScorerRequest(name="labeled", type="_FileConfiguredScorer", params={"label": "custom"})
+    )
+
+    assert _FileConfiguredScorer.constructions == 1
+    assert created.scorer_registry_name == "labeled"
+    assert ScorerRegistry.get_registry_singleton().instances.get("file") is None
+
+
+@pytest.mark.parametrize("register", [True, False])
+async def test_decision_scorer_question_path_is_not_read_through_the_api(
+    chat_target: str, tmp_path: Path, register: bool
+) -> None:
+    settings_file = tmp_path / "settings.yaml"
+    settings_file.write_text("api_secret: not-for-callers\n", encoding="utf-8")
+    service = ScorerService()
+
+    types = await service.list_scorer_types_async()
+    with (
+        patch("pyrit.common.yaml_loadable.YamlLoadable.from_yaml_file") as read_yaml,
+        pytest.raises(ValueError, match="'decision_question_path' of 'DecisionScorer' names a server file") as error,
+    ):
+        await service.create_scorer_async(
+            request=CreateScorerRequest(
+                name="decision" if register else None,
+                register=register,
+                type="DecisionScorer",
+                params={"chat_target": chat_target, "decision_question_path": str(settings_file)},
+            )
+        )
+
+    entry = next(item for item in types.items if item.scorer_type == "DecisionScorer")
+    assert "decision_question_path" not in [parameter.name for parameter in entry.parameters]
+    read_yaml.assert_not_called()
+    assert "not-for-callers" not in str(error.value)
+    assert ScorerRegistry.get_registry_singleton().instances.get("decision") is None
+
+
+async def test_decision_scorer_builds_through_the_api_with_its_bundled_question(chat_target: str) -> None:
+    created = await ScorerService().create_scorer_async(
+        request=CreateScorerRequest(name="decision", type="DecisionScorer", params={"chat_target": chat_target})
+    )
+
+    assert created.scorer_registry_name == "decision"
+    assert ScorerRegistry.get_registry_singleton().instances.get("decision") is not None

@@ -23,6 +23,7 @@ from pyrit.models import (
     Acquisition,
     ChatMessageRole,
     Condition,
+    ContentEntryScorable,
     ContentScorable,
     MatchesObjective,
     Message,
@@ -111,7 +112,9 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
         [
             piece.original_value
             for piece in conversation
-            if piece.sequence == previous_sequence and piece.original_value_data_type == "text"
+            if piece.sequence == previous_sequence
+            and piece.original_value_data_type == "text"
+            and piece.api_role == "user"
         ]
     )
 
@@ -154,7 +157,9 @@ async def extract_objective_from_previous_turn_async(*, message: Message, memory
         [
             piece.original_value
             for piece in conversation
-            if piece.sequence == previous_sequence and piece.original_value_data_type == "text"
+            if piece.sequence == previous_sequence
+            and piece.original_value_data_type == "text"
+            and piece.api_role == "user"
         ]
     )
 
@@ -297,6 +302,11 @@ class MessageScorer(Scorer):
     """
 
     # True when scoring needs other stored turns from the source conversation.
+    SUPPORTED_SCORABLE_TYPES: ClassVar[tuple[type[Scorable], ...]] = (
+        MessageScorable,
+        ContentScorable,
+        ContentEntryScorable,
+    )
     _REQUIRES_CONVERSATION_HISTORY: ClassVar[bool] = False
 
     #: When False, a blocked response from the scorer's own LLM produces an undetermined

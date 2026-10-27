@@ -6,7 +6,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import make_scenario_result
+from unit.mocks import make_scenario_result, make_sequential_attack_results
 
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
@@ -450,6 +450,37 @@ async def test_output_scenario_conversations_async_includes_every_attack_by_defa
     conversations = json.loads(capsys.readouterr().out)["conversations"]
     assert [entry["id"] for entry in conversations] == [attack.attack_result_id for attack in attacks]
     assert all(entry["messages"] == [] for entry in conversations)
+
+
+def _adaptive_result_with_envelope() -> tuple[ScenarioResult, AttackResult, list[AttackResult]]:
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="adaptive::abc",
+        envelope_outcome=AttackOutcome.SUCCESS,
+        child_outcomes=[AttackOutcome.FAILURE, AttackOutcome.SUCCESS],
+    )
+    return make_scenario_result(attack_results={"adaptive::abc": [*children, envelope]}), envelope, children
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_output_scenario_conversations_async_leaves_out_orchestration_envelope(capsys):
+    result, _, children = _adaptive_result_with_envelope()
+
+    await output_scenario_conversations_async(result)
+
+    conversations = json.loads(capsys.readouterr().out)["conversations"]
+    assert [entry["id"] for entry in conversations] == [child.attack_result_id for child in children]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_output_scenario_conversations_async_shows_requested_orchestration_envelope_without_messages(capsys):
+    result, envelope, _ = _adaptive_result_with_envelope()
+
+    await output_scenario_conversations_async(result, attack_result_ids=[envelope.attack_result_id])
+
+    [entry] = json.loads(capsys.readouterr().out)["conversations"]
+    assert entry["id"] == envelope.attack_result_id
+    assert entry["conversation_id"] == ""
+    assert entry["messages"] == []
 
 
 async def test_output_scenario_conversations_async_scores_duplicated_conversation(

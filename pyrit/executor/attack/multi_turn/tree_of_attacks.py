@@ -36,6 +36,7 @@ from pyrit.executor.attack.component.prepended_history_send_context import (
     PrependedHistorySendContext,
 )
 from pyrit.executor.attack.core.attack_config import (
+    AdversarialPromptRequirements,
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
@@ -176,7 +177,7 @@ class TAPAttackScoringConfig(AttackScoringConfig):
         if refusal_scorer is not None and not isinstance(refusal_scorer, TrueFalseScorer):
             raise ValueError("Refusal scorer must be a TrueFalseScorer")
 
-        self.objective_scorer: FloatScaleThresholdScorer = objective_scorer
+        self.objective_scorer = objective_scorer
         self.refusal_scorer = refusal_scorer
         self.auxiliary_scorers = auxiliary_scorers or []
         self.use_score_as_feedback = use_score_as_feedback
@@ -879,11 +880,17 @@ class _TreeOfAttacksNode:
         self.objective_score = objective_scores[0]
         logger.debug(f"Node {self.node_id}: Objective score: {normalize_score_to_float(self.objective_score)}")
 
-        # Extract auxiliary scores
+        # Extract auxiliary scores. Key by class name, unless several auxiliary scorers share a
+        # class, in which case their unique names keep them from overwriting each other.
         auxiliary_scores = scoring_results["auxiliary_scores"]
-        for score in auxiliary_scores:
+        class_names = [
+            score.scorer_class_identifier.class_name if score.scorer_class_identifier else "unknown"
+            for score in auxiliary_scores
+        ]
+        for score, class_name in zip(auxiliary_scores, class_names, strict=True):
             scorer_identifier = score.scorer_class_identifier
-            scorer_name = scorer_identifier.class_name if scorer_identifier else "unknown"
+            shared = class_names.count(class_name) > 1
+            scorer_name = scorer_identifier.unique_name if shared and scorer_identifier else class_name
             self.auxiliary_scores[scorer_name] = score
             logger.debug(f"Node {self.node_id}: {scorer_name} score: {normalize_score_to_float(score)}")
 
@@ -1574,6 +1581,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
     DEFAULT_ADVERSARIAL_SEED_PROMPT_PATH: Path = (
         EXECUTOR_SEED_PROMPT_PATH / "tree_of_attacks" / "adversarial_seed_prompt.yaml"
     )
+    ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
+        default_system_prompt_path=DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
+        system_prompt_parameters=("desired_prefix",),
+    )
 
     @classmethod
     def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
@@ -1684,11 +1695,13 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         # The manager owns adversarial-prompt resolution. TAP is override mode: it builds each
         # adversarial prompt itself and passes the text explicitly, so only the system prompt is
         # resolved here (no first / next-message templates).
+        requirements = self.get_adversarial_prompt_requirements()
         self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
             config=attack_adversarial_config,
-            default_system_prompt_path=TreeOfAttacksWithPruningAttack.DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
-            system_prompt_required_parameters=["desired_prefix"],
+            default_system_prompt_path=requirements.default_system_prompt_path,
+            system_prompt_required_parameters=list(requirements.system_prompt_parameters),
             system_prompt_error_message="Adversarial seed prompt must have a desired_prefix",
+            resolve_user_messages=requirements.accepts_user_messages,
         )
         self._adversarial_chat_system_seed_prompt = self._resolved_adversarial.system_prompt
         self._load_adversarial_prompts()

@@ -17,6 +17,7 @@ const chosenPreferences: UserPreferences = {
   operation: { id: 'operation-demo' },
   theme: 'dark',
   chatMarkdown: true,
+  chatScorer: { registry_name: 'judge', identifier_hash: 'full-identity' },
 }
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -63,6 +64,7 @@ describe('useUserPreferences', () => {
         hiddenTargetRegistryNames: chosenPreferences.hiddenTargetRegistryNames,
       }))
       result.current.updatePreferences((current) => ({ ...current, chatMarkdown: true }))
+      result.current.updatePreferences((current) => ({ ...current, chatScorer: chosenPreferences.chatScorer }))
     })
     expect(readUserPreferences('tenant:alice')).toEqual({
       ...chosenPreferences,
@@ -233,6 +235,7 @@ describe('useUserPreferences', () => {
       ...chosenPreferences,
       hiddenTargetRegistryNames: [],
       operation: undefined,
+      chatScorer: undefined,
     })
   })
 
@@ -260,6 +263,7 @@ describe('useUserPreferences', () => {
       hiddenTargetRegistryNames: [],
       labels: { team: 'blue' },
       operation: { name: 'op_legacy' },
+      chatScorer: undefined,
     })
     writeUserPreferences('local', DEFAULT_USER_PREFERENCES)
     expect(readUserPreferences('local')).toEqual(DEFAULT_USER_PREFERENCES)

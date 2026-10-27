@@ -23,6 +23,8 @@ from pyrit.models import (
     ScoringExpectation,
     TargetCapabilities,
     TemperatureRequestInfo,
+    WebSearchConfig,
+    WebSearchMode,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget
@@ -91,6 +93,51 @@ async def test_invalid_override_fails_before_io_async(target: OpenAIChatTarget, 
             await target.send_prompt_async(message=message)
     send.assert_not_called()
     assert TemperatureRequestInfo.METADATA_KEY not in message.get_piece().prompt_metadata
+
+
+@pytest.mark.parametrize("mode", [WebSearchMode.DEFAULT, WebSearchMode.DISABLED])
+async def test_runtime_temperature_preserves_web_search_policy_async(
+    target: OpenAIChatTarget, sqlite_instance: SQLiteMemory, mode: WebSearchMode
+) -> None:
+    message = request(0)
+    policy = WebSearchConfig(mode=mode)
+    message.get_piece().prompt_metadata.update(policy.to_metadata())
+    with patch.object(
+        target._client.chat.completions, "create", new_callable=AsyncMock, return_value=completion()
+    ) as send:
+        response = await PromptNormalizer().send_prompt_async(
+            message=message, target=target, conversation_id=message.get_piece().conversation_id
+        )
+    assert send.call_args.kwargs["temperature"] == 0
+    stored = await sqlite_instance.get_conversation_messages_async(conversation_id=response.get_piece().conversation_id)
+    metadata = stored[0].get_piece().prompt_metadata
+    assert WebSearchConfig.from_metadata(metadata=metadata) == policy
+    info = TemperatureRequestInfo.from_metadata(metadata=metadata)
+    assert info is not None
+    assert info.resolved_temperature == 0
+    assert info.source == "request"
+
+
+async def test_runtime_temperature_does_not_bypass_required_web_search_async(target: OpenAIChatTarget) -> None:
+    message = request(0)
+    message.get_piece().prompt_metadata.update(WebSearchConfig(mode=WebSearchMode.REQUIRED).to_metadata())
+    with patch.object(target._client.chat.completions, "create", new_callable=AsyncMock) as send:
+        with pytest.raises(ValueError, match="cannot enforce web search"):
+            await target.send_prompt_async(message=message)
+    send.assert_not_called()
+    assert TemperatureRequestInfo.METADATA_KEY not in message.get_piece().prompt_metadata
+
+
+async def test_temperature_normalization_retains_web_search_policy_guard_async(target: OpenAIChatTarget) -> None:
+    message = request(0)
+    message.get_piece().prompt_metadata.update(WebSearchConfig(mode=WebSearchMode.DISABLED).to_metadata())
+    with (
+        patch.object(target, "_get_normalized_conversation_async", new_callable=AsyncMock, return_value=[request()]),
+        patch.object(target._client.chat.completions, "create", new_callable=AsyncMock) as send,
+    ):
+        with pytest.raises(ValueError, match="Normalization changed the request's web search policy"):
+            await target.send_prompt_async(message=message)
+    send.assert_not_called()
 
 
 @pytest.mark.parametrize("model", ["o1", "o3", "gpt-5", "gpt-4o-audio-preview", "unknown"])

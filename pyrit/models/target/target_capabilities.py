@@ -50,6 +50,7 @@ class CapabilityName(str, Enum):
     SYSTEM_PROMPT = "supports_system_prompt"
     STREAMING_AUDIO = "supports_streaming_audio"
     TEMPERATURE = "supports_temperature"
+    WEB_SEARCH = "supports_web_search"
 
 
 class TargetCapabilities(BaseModel):
@@ -109,6 +110,9 @@ class TargetCapabilities(BaseModel):
 
     #: Whether this adapter and model mode support request-local temperature overrides.
     supports_temperature: bool = False
+
+    #: Whether web search is configured and available to this target.
+    supports_web_search: bool = False
 
     #: The input modalities supported by the target, as combinations of data types
     #: (e.g., ``{{"text"}, {"image_path", "text"}}``). Serialized as a sorted list of

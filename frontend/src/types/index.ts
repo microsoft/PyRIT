@@ -274,6 +274,40 @@ export interface UserPreferences {
   readonly operation?: OperationSelection | null
   readonly theme: ThemeMode
   readonly chatMarkdown: boolean
+  readonly chatScorer?: RegisteredComponentReference | null
+}
+
+export interface RegisteredComponentReference {
+  readonly registry_name: string
+  readonly identifier_hash: string
+}
+
+export interface ScorerInstance {
+  scorer_registry_name: string
+  identifier: ComponentIdentifier & { scorer_type?: string | null }
+  description?: string | null
+  display_type?: string | null
+  scorable_types?: string[]
+  condition_types?: string[]
+  evaluation_identifier?: ComponentIdentifier | null
+  metrics?: ScorerEvaluationMetrics | null
+  chat_scoring_disabled_reason?: string | null
+}
+
+export type ScorerEvaluationMetrics = Record<string, number | string | null | undefined>
+
+export interface ScoringFailure {
+  scorer: RegisteredComponentReference
+  objective: string
+  response_id: string
+  conversation_id: string
+  error: string
+}
+
+export interface ManualContinuation {
+  source_attack_result_id: string
+  source_conversation_id: string
+  source_response_id?: string | null
 }
 
 export interface TargetCapabilities {
@@ -474,6 +508,60 @@ export interface CreateTechniqueRequest {
   adversarial_prompt_template?: string
 }
 
+export interface SimulationSettings {
+  num_turns?: number | null
+  adversarial_chat_system_prompt?: string | null
+  simulated_target_system_prompt?: string | null
+  next_message_system_prompt?: string | null
+  final_user_message?: string | null
+}
+
+export type SimulationChanges = Partial<SimulationSettings>
+
+interface TechniqueSettingFields {
+  description?: string | null
+  params?: Record<string, unknown>
+  request_converters?: string[] | null
+  response_converters?: string[] | null
+  adversarial_chat?: string | null
+  adversarial_system_prompt?: string | null
+  adversarial_seed_prompt?: string | null
+  adversarial_prompt_template?: string | null
+}
+
+export interface TechniqueSettings extends TechniqueSettingFields {
+  simulation?: SimulationSettings | null
+}
+
+export interface TechniqueChanges extends TechniqueSettingFields {
+  simulation?: SimulationChanges | null
+}
+
+export interface TechniqueOverride {
+  source_name: string
+  source_identity: string
+  changes: TechniqueChanges
+  dependencies: Record<string, string>
+  effective_identity?: string | null
+}
+
+export interface TechniqueConfiguration {
+  source_name: string
+  source_identity: string
+  attack_type: string
+  settings: TechniqueSettings
+  parameters: Parameter[]
+  editable_fields: string[]
+  supplied_parameters: string[]
+  read_only: Record<string, string>
+  supports_prepended_conversation: boolean
+}
+
+export interface TechniqueEditResponse {
+  configuration: TechniqueConfiguration
+  override: TechniqueOverride
+}
+
 export interface RegistryReferenceOption {
   name: string
   type: string
@@ -608,9 +696,13 @@ export type AttackAnalyticsDimension =
       readonly converter_direction?: 'request'
     }
 
-/** Absence keys cannot collide with literal values such as "Unknown" or "No converters". */
+/**
+ * Absence keys cannot collide with literal values such as "Unknown" or "No converters".
+ * Operation `value` keys are saved Operation IDs; `legacy_operation_name` keys are
+ * names stored without an Operation ID and apply only to the Operation dimension.
+ */
 export type AttackAnalyticsValue =
-  | { readonly kind: 'value'; readonly value: string }
+  | { readonly kind: 'value' | 'legacy_operation_name'; readonly value: string }
   | { readonly kind: 'missing' | 'no_converters'; readonly value: null }
 
 export interface AttackAnalyticsFilter {
@@ -694,6 +786,8 @@ export interface AttackAnalyticsResultRow {
   readonly outcome: AttackOutcome
   readonly updated_at: string
   readonly operation: string | null
+  /** Lowercase saved Operation ID. Null with a non-null `operation` marks legacy activity saved with only a name. */
+  readonly operation_id: string | null
   readonly operator: string | null
   readonly attack_type: string | null
   readonly target_model: string | null
@@ -768,6 +862,10 @@ export interface AttackSummary {
   outcome?: AttackOutcome | null
   automated_score?: BackendScore | null
   human_score?: BackendScore | null
+  chat_scorer?: RegisteredComponentReference | null
+  chat_scorer_inherited?: boolean
+  execution_read_only?: boolean
+  manual_continuation?: ManualContinuation | null
   last_score?: BackendScore | null
   last_response?: BackendMessagePiece | null
   last_message_preview?: string | null
@@ -792,6 +890,7 @@ export interface CreateAttackRequest {
   target_registry_name?: string
   target_binding?: TargetBinding
   name?: string
+  chat_scorer?: RegisteredComponentReference | null
   operator?: string
   operation_id?: string
   labels?: Record<string, string>
@@ -805,6 +904,8 @@ export interface UpdateAttackRequest {
   outcome?: 'undetermined' | 'success' | 'failure' | 'error'
   objective?: string
   expected_objective?: string
+  chat_scorer?: RegisteredComponentReference | null
+  default_chat_scorer?: RegisteredComponentReference | null
 }
 
 export type ConversationDraftRole = 'system' | 'user' | 'simulated_assistant' | 'simulated_tool' | 'developer'
@@ -832,6 +933,8 @@ export interface NewAttackContext {
   ready: boolean
   labels?: Record<string, string>
   operationId?: string | null
+  chatScorer?: RegisteredComponentReference | null
+  chatScorerExplicit?: boolean
 }
 
 export interface ConvertedFileChip {
@@ -848,6 +951,8 @@ export interface ConversationDraftMessage extends MessageRequest {
 
 export interface SaveConversationRequest {
   save_id: string
+  chat_scorer?: RegisteredComponentReference | null
+  default_chat_scorer?: RegisteredComponentReference | null
   destination: 'same_attack' | 'new_attack'
   attack_result_id?: string
   source_attack_result_id?: string
@@ -951,6 +1056,7 @@ export interface TargetResponseStatus {
 }
 
 export interface ConversationMessagesResponse {
+  scoring_failure?: ScoringFailure | null
   conversation_id: string
   messages: BackendMessage[]
   target_response_status: TargetResponseStatus | null
@@ -1032,6 +1138,8 @@ export interface MessageSendConversation {
   state: 'queued' | 'preparing' | 'sending' | 'finalizing' | 'completed' | 'failed' | 'interrupted'
   error: string | null
   failure_stage: 'preparation' | 'sending' | 'finalization' | 'interrupted' | null
+  scoring_error?: string | null
+  is_scoring?: boolean
 }
 
 export interface MessageSendStatus extends MessageSendConversation {
@@ -1294,12 +1402,125 @@ export interface ListRegisteredScenariosResponse {
   pagination: PaginationInfo
 }
 
+/**
+ * A saved, portable scenario configuration.
+ *
+ * Every optional field is tri-state: absent means "use the scenario's own default",
+ * so a preset only pins what the author deliberately chose. It carries no target,
+ * Operation attribution, concurrency, retries or labels — those are launch-time
+ * decisions supplied by `ResolveScenarioPresetRequest`.
+ */
+export interface ScenarioPreset {
+  name: string
+  scenario_name: string
+  description?: string | null
+  /** Who created the preset. Descriptive only; never used to authorize a read or a write. */
+  author?: string | null
+  techniques?: string[] | null
+  /** Dataset sources, limits, fetch policy, and filters. Omit to use the scenario defaults. */
+  datasets?: ScenarioDatasetRequest | null
+  include_baseline?: boolean | null
+  scenario_params?: Record<string, unknown> | null
+}
+
+/** One advisory problem found checking a preset against this deployment's registry. */
+export interface PresetIssue {
+  field: string
+  message: string
+}
+
+export interface ScenarioPresetResponse {
+  preset: ScenarioPreset
+  /**
+   * Whether a stored document or registering code contributed this preset. A
+   * registered preset cannot be updated or deleted through the API.
+   */
+  origin: 'stored' | 'registered'
+  /** Opaque document version; required to update the preset. Null when registered in code. */
+  version: string | null
+  /** Empty when the preset is runnable here. Never blocks a save. */
+  issues: PresetIssue[]
+  /**
+   * How much this preset runs with its own techniques, datasets, and limits.
+   * List responses fill this in only when estimates are explicitly requested
+   * (off by default); it stays null for a preset this deployment cannot resolve.
+   */
+  run_size?: ScenarioRunSizeEstimateResponse | null
+}
+
+export interface ScenarioPresetListResponse {
+  source: string
+  items: ScenarioPresetResponse[]
+}
+
+export interface UpdateScenarioPresetRequest {
+  preset: ScenarioPreset
+  expected_version: string
+}
+
+export interface ScenarioSuiteEntry {
+  entry_id: string
+  preset_name: string
+}
+
+/** A user-authored, ordered collection of scenario preset references. */
+export interface ScenarioSuite {
+  name: string
+  schema_version: number
+  description?: string | null
+  /** Who created the suite. Descriptive only; never used to authorize a read or a write. */
+  author?: string | null
+  entries: ScenarioSuiteEntry[]
+}
+
+/** Current deployment-specific status for one suite entry. */
+export interface ScenarioSuiteEntryStatus {
+  entry_id: string
+  preset_name: string
+  origin: 'stored' | 'registered' | null
+  preset_version: string | null
+  /** Advisory only. Missing or invalid preset references do not prevent saving the suite. */
+  issues: PresetIssue[]
+}
+
+export interface ScenarioSuiteResponse {
+  suite: ScenarioSuite
+  /** Opaque document version required to update the suite. */
+  version: string
+  /** Ordered exactly like `suite.entries`. */
+  entry_statuses: ScenarioSuiteEntryStatus[]
+}
+
+export interface ScenarioSuiteListResponse {
+  source: string
+  items: ScenarioSuiteResponse[]
+}
+
+export interface UpdateScenarioSuiteRequest {
+  suite: ScenarioSuite
+  expected_version: string
+}
+
+/** The launch-owned fields a preset deliberately omits. */
+export interface ResolveScenarioPresetRequest {
+  expected_version?: string | null
+  target_name: string
+  adversarial_target_name?: string | null
+  initializers?: string[] | null
+  initializer_args?: Record<string, Record<string, unknown>> | null
+  max_concurrency?: number | null
+  max_retries?: number | null
+  operation_id?: string | null
+  labels?: Record<string, string> | null
+}
+
 export interface RunScenarioRequest {
   scenario_name: string
   target_name?: string | null
   adversarial_target_name?: string | null
   initializers?: string[] | null
   techniques?: string[] | null
+  technique_override?: TechniqueOverride | null
   dataset_names?: string[] | null
   max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
@@ -1366,6 +1587,7 @@ export interface ScenarioRunSizeEstimateRequest {
   target_name?: string | null
   adversarial_target_name?: string | null
   techniques?: string[] | null
+  technique_override?: TechniqueOverride | null
   dataset_names?: string[] | null
   max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
@@ -1664,7 +1886,33 @@ export interface ScenarioRunPlanSeedPrompt {
   parameters: string[]
 }
 
+export interface PairedOutcomeStatistics {
+  baseline_group_id: string
+  attack_group_id: string
+  planned_pairs: number
+  decided_pairs: number
+  excluded_pairs: number
+  failure_to_success: number
+  success_to_failure: number
+  failure_to_failure: number
+  success_to_success: number
+  baseline_success_rate: number | null
+  attack_success_rate: number | null
+  paired_difference: number | null
+  missing_baseline: number
+  missing_attack: number
+  missing_both: number
+  baseline_errors: number
+  attack_errors: number
+  baseline_undetermined: number
+  attack_undetermined: number
+  unmatched_baseline_seeds: number
+  unmatched_attack_seeds: number
+  unattributed_attempts: number
+}
+
 export interface ScenarioRunPlanAtomicGroup {
+  kind?: 'baseline' | 'attack' | 'adaptive' | 'unknown' | null
   id: string
   atomic_attack_name: string
   display_group: string
@@ -1776,14 +2024,26 @@ export interface OperationCreate {
   description?: string
 }
 
-/** The editable fields of a saved Operation; renaming is not supported yet. */
+/** The editable fields of a saved Operation. Omitted fields are unchanged. */
 export interface OperationUpdate {
-  description: string
+  name?: string
+  description?: string
 }
 
 export interface Operation extends OperationCreate {
   id: string
   created_at: string
+}
+
+/** What refers to an Operation by ID. Only an Operation with no usage can be deleted. */
+export interface OperationUsage {
+  findings: number
+  attacks: number
+  scenario_runs: number
+}
+
+export interface OperationDetail extends Operation {
+  usage: OperationUsage
 }
 
 export interface OperationListItem extends Operation {

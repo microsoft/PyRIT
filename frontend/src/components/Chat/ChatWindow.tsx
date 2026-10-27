@@ -38,6 +38,7 @@ import TargetBadge from './TargetBadge'
 import ChatTargetPicker from './ChatTargetPicker'
 import { generateClientId } from '@/utils/clientId'
 import ObjectiveHeader from './ObjectiveHeader'
+import type { RegisteredComponentReference, ScoringFailure, ManualContinuation, ScorerInstance } from '@/types'
 import ConversationEditor from './ConversationEditor'
 import type { ConversationEditorHandle } from './ConversationEditor'
 import {
@@ -47,6 +48,8 @@ import {
 import { useConversationSave } from '@/hooks/useConversationSave'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import { useConversationMessages } from '@/hooks/useConversationMessages'
+import { useAttackMutations } from '@/hooks/useAttackMutations'
+import { useConversationExport } from '@/hooks/useConversationExport'
 import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
 import { useRuntime } from '@/hooks/useRuntime'
@@ -64,15 +67,13 @@ import {
   withDraftIdentity,
 } from './converterTypes'
 import type { ChatInputAreaHandle } from './ChatInputArea'
-import { attacksApi, scoresApi } from '../../services/api'
+import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import {
   buildMessagePieces,
   backendMessageToOriginalDraft,
   backendMessagesToFrontend,
 } from '../../utils/messageMapper'
-import { exportConversation } from '../../utils/conversationExport'
-import type { ExportFormat } from '../../utils/conversationExport'
 import type {
   AddMessageResponse,
   AttackOutcome,
@@ -317,6 +318,14 @@ interface ChatWindowProps {
   /** The loaded attack's current outcome. */
   outcome?: AttackOutcome
   automatedScore?: BackendScore | null
+  chatScorer?: RegisteredComponentReference | null
+  chatScorerInherited?: boolean
+  executionReadOnly?: boolean
+  manualContinuation?: ManualContinuation | null
+  defaultChatScorer?: RegisteredComponentReference | null
+  availableScorers?: ScorerInstance[]
+  scorersLoading?: boolean
+  scorersError?: string | null
   humanScore?: BackendScore | null
   lastResponseMessagePieceId?: string | null
   /** Validated scenario-run provenance for attacks opened from a run dashboard. */
@@ -356,6 +365,14 @@ export default function ChatWindow({
   objective = '',
   outcome,
   automatedScore,
+  chatScorer = null,
+  chatScorerInherited = false,
+  executionReadOnly = false,
+  manualContinuation,
+  defaultChatScorer = null,
+  availableScorers = [],
+  scorersLoading = false,
+  scorersError,
   humanScore,
   lastResponseMessagePieceId,
   scenarioResultId,
@@ -367,8 +384,8 @@ export default function ChatWindow({
   const navigate = useNavigate()
   const [isFindingDialogOpen, setIsFindingDialogOpen] = useState(false)
   const outcomeButtonRef = useRef<HTMLButtonElement>(null)
-  const [pendingObjective, setPendingObjective] = useState('')
   const [temperature, setTemperature] = useState('')
+  const [temperatureExplanationId, setTemperatureExplanationId] = useState<string | null>(null)
   const [temperatureAttackId, setTemperatureAttackId] = useState(attackResultId)
   const [createdTemperatureAttackId, setCreatedTemperatureAttackId] = useState<string | null>(null)
   if (temperatureAttackId !== attackResultId) {
@@ -377,10 +394,25 @@ export default function ChatWindow({
     if (attackResultId !== createdTemperatureAttackId) setTemperature('')
     setCreatedTemperatureAttackId(null)
   }
-  const currentObjective = attackResultId ? objective : pendingObjective
+  const [conversationScoringFailure, setConversationScoringFailure] = useState<ScoringFailure | null>(null)
+  const [draftScorer, setDraftScorer] = useState<RegisteredComponentReference | null | undefined>(undefined)
+  const selectedScorer = attackResultId ? chatScorer : draftScorer === undefined ? defaultChatScorer : draftScorer
+  const [scoringNotice, setScoringNotice] = useState<{ id: string; message: string; conversationId: string } | null>(null)
+  const [scoringConversations, setScoringConversations] = useState<Set<string>>(new Set())
+  const scoringNoticeId = scoringNotice?.id
+  useEffect(() => {
+    if (!scoringNoticeId) return
+    const timer = window.setTimeout(() => {
+      setScoringNotice((current) => current?.id === scoringNoticeId ? null : current)
+    }, 10000)
+    return () => { window.clearTimeout(timer) }
+  }, [scoringNoticeId])
   const runtime = useRuntime()
   const newAttackContext: NewAttackContext = {
     generation: runtime.generation, ready: runtime.ready && defaultsReady, labels, operationId,
+    chatScorer: executionReadOnly ? undefined
+      : attackResultId || draftScorer === undefined ? defaultChatScorer ?? undefined : draftScorer,
+    chatScorerExplicit: !attackResultId && draftScorer !== undefined,
   }
   const editor = useConversationDraft(newAttackContext, { pendingUserMessage: true })
   const { draft: editDraft, discard: discardEditor, changeObjective: setEditorObjective } = editor
@@ -414,8 +446,6 @@ export default function ChatWindow({
   const [sendingConversations, setSendingConversations] = useState<Set<string>>(new Set())
   const isSending = activeConversationId ? sendingConversations.has(activeConversationId) : Boolean(sendingConversations.size)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
-  const [isExporting, setIsExporting] = useState(false)
-  const isExportingRef = useRef(false)
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
   const launchStateRef = useRef({ generation: runtime.generation, ready: runtime.ready, defaultsReady })
@@ -459,6 +489,7 @@ export default function ChatWindow({
   const handleConversationLoaded = useCallback((
     convId: string, response: ConversationMessagesResponse, frontendMessages: Message[],
   ): Message[] => {
+    setConversationScoringFailure(response.scoring_failure ?? null)
     const savedUserIds = userPieceIds(response)
     loadedUserPieceIdsRef.current.set(convId, savedUserIds)
     const persistedRecovery = getPersistedProcessingRecovery(convId, response)
@@ -627,7 +658,30 @@ export default function ChatWindow({
     && !targetInfoMatchesTarget(attackTarget, activeTarget),
   )
   // Any failed invariant keeps all mutation controls and handlers read-only.
-  const isMutationLocked = isOperatorLocked || isCrossTargetLocked || isTargetResolutionLocked || isEvidenceUnavailable
+  const isMutationLocked = executionReadOnly || isOperatorLocked || isCrossTargetLocked || isTargetResolutionLocked || isEvidenceUnavailable
+  const isScoreLocked = isOperatorLocked || Boolean(isLoadingAttack) || isLoadingMessages
+    || awaitingConversationLoad || isEvidenceUnavailable
+  const {
+    pendingObjective,
+    currentObjective,
+    resetPendingObjective,
+    updateHumanScore,
+    removeHumanScore,
+    changeObjective,
+  } = useAttackMutations({
+    attackResultId,
+    activeConversationId,
+    objective,
+    defaultChatScorer,
+    lastResponseMessagePieceId,
+    humanScore,
+    isScoreLocked,
+    loadConversation,
+    getViewedConversationId,
+    onHumanScoreChange,
+    onAttackChange,
+    onObjectiveChange,
+  })
 
   // Clear internal messages when attack state is reset (e.g. New Attack).
   // Uses the "adjust state during render" pattern (see React docs:
@@ -640,7 +694,7 @@ export default function ChatWindow({
       setRecoverableSends({})
       resetConversationMessages()
       setSystemPrompt('')
-      setPendingObjective('')
+      resetPendingObjective()
     }
   }
 
@@ -651,8 +705,6 @@ export default function ChatWindow({
     setSystemPrompt('')
   }
 
-  const isScoreLocked = isOperatorLocked || Boolean(isLoadingAttack) || isLoadingMessages
-    || awaitingConversationLoad || isEvidenceUnavailable
   const isFindingActionDisabled = Boolean(editDraft !== null || !attackResultId || !activeConversationId
     || isEvidenceUnavailable || isLoadingAttack || isLoadingMessages || awaitingConversationLoad)
 
@@ -709,6 +761,12 @@ export default function ChatWindow({
       setMessages((previous) => previous.filter((message) => !message.isLoading))
     }
     sendingConvIdsRef.current.delete(operation.conversationId)
+    const finishedConversationId = operation.conversationId
+    setScoringConversations((previous) => {
+      const next = new Set(previous)
+      next.delete(finishedConversationId)
+      return next
+    })
     pendingUserMessagesRef.current.delete(operation.conversationId)
     setSendingConversations((previous) => {
       const next = new Set(previous)
@@ -775,8 +833,17 @@ export default function ChatWindow({
     if (isLatestRead && isViewingSend(operation)) {
       invalidateConversationLoads(effectiveConvId)
       setMessages(backendMessages)
+      setConversationScoringFailure(response.messages.scoring_failure ?? null)
       markConversationLoaded(effectiveConvId)
       onAttackChange?.(response.attack)
+      const scoringError = operation.progress?.scoring_error
+      const result = response.messages.scoring_failure
+      if (scoringError && result && result.conversation_id === effectiveConvId) {
+        setScoringNotice({
+          id: operation.submissionId, conversationId: effectiveConvId,
+          message: 'A scoring error occurred. Open the score above for details.',
+        })
+      }
       const lastMessage = response.messages.messages[response.messages.messages.length - 1]
       if (
         status === 'sent' && operation.progress?.state === 'completed'
@@ -886,6 +953,14 @@ export default function ChatWindow({
         }
         if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
         operation.progress = progress
+        const scoringConversationId = operation.conversationId
+        const isScoring = progress?.is_scoring === true
+        setScoringConversations((previous) => {
+          const next = new Set(previous)
+          if (isScoring) next.add(scoringConversationId)
+          else next.delete(scoringConversationId)
+          return next
+        })
       }
       operation.responseReadId = claimConversationRead(operation.conversationId)
       const [attack, conversation] = await Promise.all([
@@ -1126,6 +1201,8 @@ export default function ChatWindow({
           labels,
           operation_id: operationId ?? undefined,
           system_prompt: supportsSystemPrompt ? systemPrompt.trim() || undefined : undefined,
+          ...(draftScorer !== undefined ? { chat_scorer: draftScorer }
+            : pendingObjective.trim() && defaultChatScorer ? { chat_scorer: defaultChatScorer } : {}),
         }
         const createResponse = await attacksApi.createAttack(createRequest)
         if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
@@ -1442,75 +1519,29 @@ export default function ChatWindow({
     isMutationLocked,
   ])
 
-  const handleHumanScoreUpdate = useCallback(async (value: boolean, rationale: string): Promise<void> => {
-    if (
-      !attackResultId
-      || !lastResponseMessagePieceId
-      || !currentObjective.trim()
-      || isScoreLocked
-    ) {
-      return
-    }
-
-    const score = await scoresApi.createManualScore({
-      attack_result_id: attackResultId,
-      message_id: lastResponseMessagePieceId,
-      value,
-      rationale,
-      update_attack: true,
-    })
-    onHumanScoreChange?.(score, value ? 'success' : 'failure')
-    if (activeConversationId && getViewedConversationId() === activeConversationId) {
-      await loadConversation(attackResultId, activeConversationId)
-    }
-  }, [
-    activeConversationId,
-    attackResultId,
-    getViewedConversationId,
-    isScoreLocked,
-    lastResponseMessagePieceId,
-    loadConversation,
-    onHumanScoreChange,
-    currentObjective,
-  ])
-
-  const handleHumanScoreRemove = useCallback(async (): Promise<void> => {
-    if (!attackResultId || !humanScore || isScoreLocked) return
-
-    const attack = await attacksApi.removeHumanScore(attackResultId)
-    onHumanScoreChange?.(null, attack.outcome ?? 'undetermined')
-    if (activeConversationId && getViewedConversationId() === activeConversationId) {
-      await loadConversation(attackResultId, activeConversationId)
-    }
-  }, [
-    activeConversationId,
-    attackResultId,
-    getViewedConversationId,
-    humanScore,
-    isScoreLocked,
-    loadConversation,
-    onHumanScoreChange,
-  ])
-
   const handleAddObjective = useCallback(async (newObjective: string, expectedObjective: string): Promise<void> => {
+    if (executionReadOnly) return
     if (editDraft !== null) {
       setEditorObjective(newObjective)
       return
     }
-    if (!attackResultId) {
-      setPendingObjective(newObjective)
-      return
+    if (!attackResultId && !expectedObjective.trim() && newObjective.trim() && defaultChatScorer) {
+      setDraftScorer((current) => current === undefined ? defaultChatScorer : current)
     }
+    await changeObjective(newObjective, expectedObjective)
+  }, [attackResultId, changeObjective, editDraft, setEditorObjective, defaultChatScorer, executionReadOnly])
 
-    const updatedAttack = await attacksApi.updateAttack(attackResultId, { objective: newObjective, expected_objective: expectedObjective })
-    onAttackChange?.(updatedAttack)
-    onObjectiveChange?.(updatedAttack.objective)
-  }, [attackResultId, onAttackChange, onObjectiveChange, editDraft, setEditorObjective])
+  const handleScorerUpdate = async (reference: RegisteredComponentReference | null): Promise<void> => {
+    if (!attackResultId) { setDraftScorer(reference); return }
+    if (executionReadOnly || isScoreLocked || isSending) return
+    const updated = await attacksApi.updateAttack(attackResultId, { chat_scorer: reference })
+    onAttackChange?.(updated)
+  }
 
   const beginEdit = async (
     target: TargetInstance | null = activeTarget,
   ): Promise<void> => {
-    if (editDraft || isSending || isLoadingEdit || isLoadingMessages || isLoadingAttack || awaitingConversationLoad) return
+    if (executionReadOnly || editDraft || isSending || isLoadingEdit || isLoadingMessages || isLoadingAttack || awaitingConversationLoad) return
     const sourceId = viewedConversationId
     setIsLoadingEdit(true)
     setEditorError(null)
@@ -1675,11 +1706,12 @@ export default function ChatWindow({
         && editorTargetDisabledReason(activeTarget, draftDataTypes(copiedMessages), copiedMessages)) {
         target = null
       }
-      if (isFailedPrompt && copiedMessages.length === 0) {
+      if (isFailedPrompt && copiedMessages.length === 0 && !executionReadOnly) {
         const response = await attacksApi.createAttack({
           target_registry_name: target?.target_registry_name,
           name: objective || undefined,
           labels,
+          ...(objective.trim() && defaultChatScorer ? { chat_scorer: defaultChatScorer } : {}),
         })
         if (getViewedConversationId() !== sourceId || inputBoxRef.current?.getDraftRevision() !== draftRevision) return
         onConversationCreated(response.attack_result_id, response.conversation_id, objective, target)
@@ -1719,6 +1751,7 @@ export default function ChatWindow({
   }
 
   const sameAttackDisabledReason = !attackResultId ? 'No saved attack exists yet.'
+    : executionReadOnly ? 'Automated results are read-only. Choose Continue manually.'
     : editDraft?.temperature.trim() ? 'Choose New attack to change the temperature.'
     : attackOperator && attackOperator !== currentOperator ? 'This attack belongs to another operator.'
     : attackTarget && (!editorTarget || !targetInfoMatchesTarget(attackTarget, editorTarget))
@@ -1733,6 +1766,9 @@ export default function ChatWindow({
     : undefined
   const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
   const temperatureTarget = editDraft !== null ? editorTarget : activeTarget
+  const temperatureExplanation = temperatureTarget && !temperatureTarget.capabilities?.supports_temperature
+    ? 'This target does not support runtime temperature.' : ''
+  const temperatureExplanationContext = attackResultId ?? temperatureTarget?.identifier.hash
   const unboundHistoryError = targetResolutionStatus === 'unbound' && activeTarget
     ? historyReplayDisabledReason(activeTarget, messages) : undefined
   const repeatDisabledReason = converters.repeatDisabledReason
@@ -1837,45 +1873,34 @@ export default function ChatWindow({
   const singleTurnLimitReached = activeTarget?.capabilities?.supports_multi_turn === false && messages.some(m => m.role === 'user')
   const hasProcessingError = Boolean(recoverableSend)
   const inputDisabledReasons = [
+    ...(executionReadOnly ? ['Automated results are read-only. Choose Continue manually.'] : []),
     ...(isUndoingSend ? ['The previous send is being restored. Wait for undo to finish.'] : []),
     ...(!runtime.ready ? ['The runtime is not ready. Wait for initialization to finish.'] : []),
     ...(isSending ? ['A message is being sent. Wait for the response.'] : []),
     ...(isLoadingAttack ? ['The attack is loading. Wait for it to finish.'] : []),
+    ...(isEvidenceUnavailable ? ['This finding evidence is unavailable. Sending is disabled.'] : []),
     ...(hasProcessingError
       ? ['This conversation contains a target error. Use Copy or Branch on the failed prompt to branch into a new conversation or attack.']
       : []),
   ]
+  const sendDisabledReasons = [
+    ...(!activeTarget ? ['Select a target to send a message.'] : []),
+    ...(!attackResultId && !defaultsReady
+      ? [newActivityBlockedReason ?? 'Default labels are not ready. Wait for them to load.'] : []),
+    ...(editDraft !== null ? ['Finish editing the conversation before sending.'] : []),
+    ...(isLoadingMessages || awaitingConversationLoad ? ['The conversation is loading. Wait for it to finish.'] : []),
+    ...(sendIssue?.blocking ? [sendIssue.description] : []),
+    ...(converters.isConverting ? ['A conversion is running. Wait for it to finish.'] : []),
+    ...(unboundHistoryError ? [`${unboundHistoryError} Choose a target that can replay this saved conversation before sending.`] : []),
+  ]
 
   const handleUseAsTemplate = (): void => { void beginEdit(defaultBranchTarget ?? activeTarget) }
 
-  // Export is available whenever there is a stable, viewable conversation:
-  // not while empty, loading, or mid-send. A lone system prompt (rendered only
-  // in the banner, not the chat body) does not count as an exportable message.
-  // Read-only / operator-lock / cross-target states do not block export.
-  const canExportConversation =
-    messages.some((message) => !message.isLoading && message.role !== 'system') &&
-    !isSending &&
-    !isLoadingAttack &&
-    !isLoadingMessages &&
-    !awaitingConversationLoad
-
-  const handleExport = async (format: ExportFormat) => {
-    // A ref, not the state flag: two clicks in the same tick would both read
-    // the pre-render value and start duplicate exports.
-    if (isExportingRef.current) {
-      return
-    }
-    isExportingRef.current = true
-    setIsExporting(true)
-    try {
-      await exportConversation({ messages, conversationId: activeConversationId ?? conversationId, format })
-    } catch (err) {
-      console.error('Failed to export conversation:', err)
-    } finally {
-      isExportingRef.current = false
-      setIsExporting(false)
-    }
-  }
+  const { canExport: canExportConversation, isExporting, exportAs } = useConversationExport({
+    messages,
+    conversationId: activeConversationId ?? conversationId,
+    blocked: isSending || Boolean(isLoadingAttack) || isLoadingMessages || awaitingConversationLoad,
+  })
 
   // Chat owns these handlers and states even when the layout hosts the controls.
   const toolbar = (
@@ -1917,18 +1942,26 @@ export default function ChatWindow({
             hint={editDraft !== null ? 'Finish editing history to set the next request temperature.'
               : temperatureTarget.capabilities?.supports_temperature
                 ? 'Applies to future sends. Empty uses the target default.'
-                : 'This target does not support runtime temperature.'}>
-            <Input type="number" min={0} max={2} step={0.1} size="small" className={styles.temperatureInput}
-              aria-label="Temperature"
-              value={temperature}
-              placeholder={String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? 'Default')}
-              disabled={isSending || isSavingEditor || editDraft !== null || !temperatureTarget.capabilities?.supports_temperature}
-              onChange={(_, data) => setTemperature(data.value)} />
+                : undefined}>
+            <Tooltip content={temperatureExplanation} relationship="description"
+              visible={Boolean(temperatureExplanation) && temperatureExplanationId === temperatureExplanationContext}
+              onVisibleChange={(_, data) => {
+                setTemperatureExplanationId(data.visible ? temperatureExplanationContext ?? null : null)
+              }}>
+              <span tabIndex={!temperatureTarget.capabilities?.supports_temperature ? 0 : undefined}>
+                <Input type="number" min={0} max={2} step={0.1} size="small" className={styles.temperatureInput}
+                  aria-label="Temperature"
+                  value={temperature}
+                  placeholder={String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? 'Default')}
+                  disabled={isSending || isSavingEditor || editDraft !== null || !temperatureTarget.capabilities?.supports_temperature}
+                  onChange={(_, data) => setTemperature(data.value)} />
+              </span>
+            </Tooltip>
           </Field>
         )}
         <div className={styles.editActions}>
           <Button appearance="subtle" className={styles.ribbonAction} icon={<EditRegular />}
-            disabled={editDraft !== null || isSending || isLoadingEdit || isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
+            disabled={executionReadOnly || editDraft !== null || isSending || isLoadingEdit || isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
             onClick={() => { void beginEdit() }}
           >{isLoadingEdit ? 'Loading editor...' : 'Edit Conversation'}</Button>
           {editDraft !== null && <Button appearance="subtle" className={styles.ribbonAction} icon={<ArrowShuffleRegular />}
@@ -1961,16 +1994,16 @@ export default function ChatWindow({
           <MenuPopover>
             <MenuList>
               <MenuItem
-                onClick={() => handleExport('markdown')}
+                onClick={() => exportAs('markdown')}
                 disabled={isExporting}
                 data-testid="export-markdown-item"
               >
                 Export as Markdown (.md)
               </MenuItem>
-              <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
+              <MenuItem onClick={() => exportAs('json')} disabled={isExporting} data-testid="export-json-item">
                 Export as JSON (.json)
               </MenuItem>
-              <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
+              <MenuItem onClick={() => exportAs('html')} disabled={isExporting} data-testid="export-html-item">
                 Export as HTML (.html)
               </MenuItem>
             </MenuList>
@@ -2048,12 +2081,38 @@ export default function ChatWindow({
           </div>
         )}
         {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
+        {executionReadOnly && <MessageBar intent="info">
+          <MessageBarBody>
+            This automated result is read-only. Continue in a separate manual attack to keep the original execution unchanged.
+          </MessageBarBody>
+          <MessageBarActions><Button className={styles.ribbonAction}
+            disabled={isLoadingEdit || isLoadingAttack || isLoadingMessages || awaitingConversationLoad || Boolean(newAttackDisabledReason)}
+            onClick={() => { void copyConversation(recoverableSend?.failedRequestMessageIndex ?? messages.length - 1, 'new_attack') }}>
+            {isLoadingEdit ? 'Creating continuation...' : 'Continue manually'}
+          </Button></MessageBarActions>
+        </MessageBar>}
+        {manualContinuation && <MessageBar intent="info"><MessageBarBody>
+          Manual continuation of{' '}
+          <Link to={`/attacks/${manualContinuation.source_attack_result_id}/conversations/${manualContinuation.source_conversation_id}`}>
+            the original automated result
+          </Link>.
+        </MessageBarBody></MessageBar>}
         <ObjectiveHeader
           key={`${attackResultId ?? 'new'}-${editDraft === null ? 'saved' : 'draft'}`}
           objective={editDraft === null ? currentObjective : editorObjective}
           draftMode={editDraft !== null}
           outcome={outcome}
           automatedScore={automatedScore}
+          chatScorer={selectedScorer}
+          chatScorerInherited={Boolean(attackResultId) && chatScorerInherited}
+          scoringFailure={editDraft !== null ? null
+            : conversationScoringFailure?.conversation_id === viewedConversationId && conversationScoringFailure.objective === currentObjective
+              ? conversationScoringFailure : null}
+          scorers={availableScorers}
+          scorersLoading={scorersLoading}
+          scorersError={scorersError}
+          canUpdateScorer={!executionReadOnly && editDraft === null && !isScoreLocked && !isSending && runtime.ready}
+          onUpdateScorer={handleScorerUpdate}
           humanScore={humanScore}
           canUpdateOutcome={
             editDraft === null
@@ -2070,10 +2129,11 @@ export default function ChatWindow({
             && Boolean(humanScore)
             && !isScoreLocked
           }
-          onUpdateHumanScore={handleHumanScoreUpdate}
-          onRemoveHumanScore={handleHumanScoreRemove}
+          onUpdateHumanScore={updateHumanScore}
+          onRemoveHumanScore={removeHumanScore}
           canAdd={
-            !isSavingEditor
+            !executionReadOnly
+            && !isSavingEditor
             && !isLoadingAttack
             && !isLoadingMessages
             && !awaitingConversationLoad
@@ -2088,6 +2148,10 @@ export default function ChatWindow({
           attackResultId={isEvidenceUnavailable ? '' : attackResultId ?? ''}
           defaultOperationId={operationId} disabled={isFindingActionDisabled}
           open={isFindingDialogOpen} onOpenChange={setIsFindingDialogOpen} returnFocusRef={outcomeButtonRef} />
+        {scoringConversations.has(viewedConversationId ?? '__pending__') && <Text role="status">Scoring response…</Text>}
+        {scoringNotice && scoringNotice.conversationId === viewedConversationId && <MessageBar intent="warning" role="status">
+          <MessageBarBody>{scoringNotice.message}</MessageBarBody>
+        </MessageBar>}
         {editorError && <MessageBar intent="error"><MessageBarBody>{editorError}</MessageBarBody></MessageBar>}
         {editorNotice && <MessageBar intent="success"
           className={mergeClasses(styles.infoNotice, editorNotice.fading && styles.fadingInfoNotice)}>
@@ -2131,7 +2195,7 @@ export default function ChatWindow({
           getBranchConversationDisabledReason={branchConversationDisabledReason}
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
           globalMarkdown={globalMarkdown}
-          onEditConversation={() => { void beginEdit() }}
+          onEditConversation={executionReadOnly ? undefined : () => { void beginEdit() }}
         />}
         {repeatSends.filter((view: RepeatSendView) => view.progress.attack_result_id === attackResultId).map(
           (view: RepeatSendView) => (
@@ -2154,7 +2218,7 @@ export default function ChatWindow({
           ),
         )}
         {sendIssue && (
-          <MessageBar intent="error">
+          <MessageBar intent="error" aria-label="Message send status">
             <MessageBarBody>{sendIssue.description}</MessageBarBody>
             <MessageBarActions>
               {sendIssue.draft && (
@@ -2185,7 +2249,8 @@ export default function ChatWindow({
             onUndo: () => { void handleUndoLastSend() },
           } : undefined}
           onSend={handleSend}
-          sendDisabled={!activeTarget || (!attackResultId && !defaultsReady) || editDraft !== null || isLoadingMessages || awaitingConversationLoad || sendIssue?.blocking || converters.isConverting || isUndoingSend || Boolean(unboundHistoryError)}
+          sendDisabled={sendDisabledReasons.length > 0}
+          sendDisabledReasons={sendDisabledReasons}
           repeatDisabledReason={repeatDisabledReason}
           conversionRevisionKey={conversionRevisionKey}
           disabledReasons={inputDisabledReasons}

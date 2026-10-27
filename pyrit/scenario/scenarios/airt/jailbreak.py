@@ -220,12 +220,16 @@ class Jailbreak(Scenario):
             args (dict[str, Any]): Raw scenario run parameters.
 
         Raises:
-            ValueError: If ``num_jailbreak_attempts`` is less than one.
+            ValueError: If ``num_jailbreak_attempts`` is less than one, or if ``num_jailbreaks``
+                is provided and is less than one.
         """
         super().set_params_from_args(args=args)
         num_attempts = self.params["num_jailbreak_attempts"]
         if num_attempts < 1:
             raise ValueError("num_jailbreak_attempts must be at least 1")
+        num_jailbreaks = self.params.get("num_jailbreaks")
+        if num_jailbreaks is not None and num_jailbreaks < 1:
+            raise ValueError("num_jailbreaks must be at least 1")
 
     @apply_defaults
     def __init__(
@@ -476,11 +480,6 @@ class Jailbreak(Scenario):
                 ``jailbreak_system_prompt`` is the only selected technique but the target cannot
                 support it.
         """
-        if self._objective_target is None:
-            raise ValueError(
-                "Scenario not properly initialized. Call await scenario.initialize_async() before running."
-            )
-
         self._resolved_jailbreaks = await self._resolve_templates_async()
         return await run_legacy_sync_async(self._build_atomic_attacks, context=context)
 
@@ -540,7 +539,7 @@ class Jailbreak(Scenario):
                 technique_converters = {
                     _PROMPT_SENDING: [
                         jailbreak_converter,
-                        *self._technique_converters.get(_PROMPT_SENDING, []),
+                        *context.technique_converters.get(_PROMPT_SENDING, []),
                     ]
                 }
                 atomic_attacks.extend(

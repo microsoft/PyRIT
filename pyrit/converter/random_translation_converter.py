@@ -89,10 +89,12 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
         Returns:
             ComponentIdentifier: The converter identifier.
         """
-        base_identifier = super()._build_identifier()
+        llm_identifier = LLMGenericTextConverter._build_identifier(self)
+        word_level_identifier = WordLevelConverter._build_identifier(self)
         return self._create_identifier(
             params={
-                **base_identifier.params,
+                **llm_identifier.params,
+                **word_level_identifier.params,
                 "languages": sorted(self.languages, key=str.casefold),
             },
             converter_target=self._converter_target.get_identifier(),

@@ -48,6 +48,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql import visitors
 from sqlalchemy.sql.elements import ClauseElement
@@ -96,6 +97,7 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
+    AdversarialPrompts,
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -123,7 +125,9 @@ from pyrit.models import (
     MessageScorable,
     Observation,
     Operation,
+    OperationUsage,
     PromptDataType,
+    RequestTraceContext,
     RetryEvent,
     ScenarioAttackResultDelta,
     ScenarioIdentifier,
@@ -192,8 +196,17 @@ class AttackStateConflictError(ValueError):
     """An atomic attack write no longer matches the state read by its caller."""
 
 
-#: Canonical criteria key of a seed that carries no conditions.
-_NO_CONDITIONS_KEY = json.dumps([], separators=(",", ":"))
+class OperationInUseError(ValueError):
+    """An Operation still has findings or activity attributed to it by ID, so it cannot be deleted."""
+
+    def __init__(self, *, operation_id: uuid.UUID, usage: OperationUsage) -> None:
+        """Keep the usage so callers can say what still refers to the Operation."""
+        super().__init__(f"Operation '{operation_id}' is in use and cannot be deleted.")
+        self.usage = usage
+
+
+#: Canonical key of a seed without conditions or named adversarial prompts.
+_NO_SEED_BEHAVIOR_KEY = json.dumps({}, separators=(",", ":"))
 
 
 Model = TypeVar("Model")
@@ -254,6 +267,20 @@ def _check_operation_name_change(*, existing: AttackResultEntry | ScenarioResult
     print_deprecation_message(
         old_item="Changing the Operation name of saved activity", new_item="operation_id", removed_in="1.4.0"
     )
+
+
+def _operation_ids(items: Sequence[object]) -> set[uuid.UUID]:
+    """
+    Collect the Operation IDs that attacks or scenario runs refer to, ignoring anything else.
+
+    Returns:
+        set[uuid.UUID]: The referenced Operation IDs.
+    """
+    return {
+        item.operation_id
+        for item in items
+        if isinstance(item, (AttackResult, AttackResultEntry, ScenarioResultEntry)) and item.operation_id is not None
+    }
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -716,23 +743,98 @@ class MemoryInterface(abc.ABC):
             raise LookupError(f"Operation {operation_id} not found")
         return operations[0]
 
-    async def update_operation_async(self, *, operation_id: uuid.UUID, description: str) -> Operation:
+    async def update_operation_async(
+        self, *, operation_id: uuid.UUID, name: str | None = None, description: str | None = None
+    ) -> Operation:
         """
-        Replace an operation's description. The last save wins; the name and identity are unchanged.
+        Rename an operation or replace its description. Omitted fields are unchanged and the last save wins.
+
+        Names stay unique, ignoring case and surrounding whitespace, so a rename that only changes case is allowed.
 
         Returns:
-            Operation: The updated operation.
+            Operation: The updated operation, or the other operation that already has the name, unchanged.
 
         Raises:
             LookupError: If the Operation does not exist.
+            IntegrityError: If the update fails for a reason other than a taken name.
         """
-        async with await self.get_session_async() as session, session.begin():
-            entry = await session.get(OperationEntry, operation_id)
-            if entry is None:
-                raise LookupError(f"Operation {operation_id} not found")
-            entry.description = description
-            await session.flush()
-            return entry.get_operation()
+        changes = {key: value for key, value in {"name": name, "description": description}.items() if value is not None}
+        try:
+            async with await self.get_session_async() as session, session.begin():
+                entry = await session.get(OperationEntry, operation_id)
+                if entry is None:
+                    raise LookupError(f"Operation {operation_id} not found")
+                updated = Operation.model_validate(entry.get_operation().model_dump() | changes)
+                entry.name, entry.name_key = updated.name, operation_name_key(updated.name)
+                entry.description = updated.description
+                await session.flush()
+                return entry.get_operation()
+        except StaleDataError as exc:
+            # A concurrent delete landed between the read and the update.
+            raise LookupError(f"Operation {operation_id} not found") from exc
+        except IntegrityError:
+            existing = await self.get_operations_async(name=name) if name is not None else []
+            if not existing:
+                raise
+            return existing[0]
+
+    async def get_operation_usage_async(self, *, operation_id: uuid.UUID) -> OperationUsage:
+        """
+        Count the findings, attacks, and scenario runs that refer to an Operation by ID, in one indexed query.
+
+        Returns:
+            OperationUsage: The counts, which are all zero for an unknown ID.
+        """
+        counts = [
+            select(func.count())
+            .select_from(table)
+            .where(table.operation_id == operation_id)
+            .scalar_subquery()
+            .label(field)
+            for field, table in (
+                ("findings", FindingEntry),
+                ("attacks", AttackResultEntry),
+                ("scenario_runs", ScenarioResultEntry),
+            )
+        ]
+        async with await self.get_session_async() as session:
+            return OperationUsage.model_validate(dict((await session.execute(select(*counts))).one()._mapping))
+
+    async def delete_operation_async(self, *, operation_id: uuid.UUID) -> None:
+        """
+        Permanently remove an Operation that no findings, attacks, or scenario runs refer to by ID.
+
+        Activity attributed only by a deprecated Operation name does not prevent deletion and is unchanged.
+
+        Raises:
+            LookupError: If the Operation does not exist.
+            OperationInUseError: If findings, attacks, or scenario runs refer to the Operation by ID.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        # SQLite does not enforce foreign keys, so the delete statement itself checks for references.
+        unreferenced = [
+            ~select(table.operation_id).where(table.operation_id == operation_id).exists()
+            for table in (FindingEntry, AttackResultEntry, ScenarioResultEntry)
+        ]
+        try:
+            async with await self.get_session_async() as session, session.begin():
+                result = await session.execute(
+                    delete(OperationEntry)
+                    .where(OperationEntry.id == operation_id, *unreferenced)
+                    .execution_options(synchronize_session=False)
+                )
+                if not isinstance(result, CursorResult):
+                    raise RuntimeError("Operation deletion did not return a database cursor result.")
+                if result.rowcount > 0:
+                    return
+                if await session.get(OperationEntry, operation_id) is None:
+                    raise LookupError(f"Operation {operation_id} not found")
+        except IntegrityError as exc:
+            # SQL Server's foreign keys reject the delete when a reference commits while it runs.
+            usage = await self.get_operation_usage_async(operation_id=operation_id)
+            raise OperationInUseError(operation_id=operation_id, usage=usage) from exc
+        usage = await self.get_operation_usage_async(operation_id=operation_id)
+        raise OperationInUseError(operation_id=operation_id, usage=usage)
 
     async def resolve_operation_id_async(
         self, *, operation_id: uuid.UUID | str | None, operation_name: str | None = None
@@ -773,6 +875,7 @@ class MemoryInterface(abc.ABC):
             Finding: The saved finding, or the finding already saved with this ID.
 
         Raises:
+            LookupError: If the finding's Operation does not exist.
             IntegrityError: If the insert fails for a reason other than a taken ID.
         """
         entry = FindingEntry(finding)
@@ -780,16 +883,22 @@ class MemoryInterface(abc.ABC):
             async with await self.get_session_async() as session, session.begin():
                 session.add(entry)
                 await session.flush()
+                # Checked after the insert so the write lock is held; SQLite does not enforce the foreign key.
+                if await session.get(OperationEntry, finding.operation_id) is None:
+                    raise LookupError(f"Operation {finding.operation_id} not found")
                 if evidence is not None:
                     session.add(FindingEvidenceEntry(evidence))
                     await session.flush()
                 return entry.get_finding()
-        except IntegrityError:
+        except IntegrityError as exc:
             async with await self.get_session_async() as session:
                 existing = await session.get(FindingEntry, finding.id)
-                if existing is None:
-                    raise
-                return existing.get_finding()
+                if existing is not None:
+                    return existing.get_finding()
+                # SQL Server's foreign key rejects the insert when the Operation was deleted meanwhile.
+                if await session.get(OperationEntry, finding.operation_id) is None:
+                    raise LookupError(f"Operation {finding.operation_id} not found") from exc
+            raise
 
     async def update_finding_async(
         self, *, operation_id: uuid.UUID, finding_id: uuid.UUID, request: FindingCreate
@@ -2367,13 +2476,18 @@ class MemoryInterface(abc.ABC):
         """
         with closing(self._get_session()) as session:
             try:
+                existing = None
                 if isinstance(entry, (AttackResultEntry, ScenarioResultEntry)):
                     existing = session.get(type(entry), entry.id)
                     self._validate_activity_operation(session=session, entry=entry, existing=existing)
                 session.merge(entry)
+                if existing is None:
+                    self._recheck_activity_operations(session=session, entries=[entry])
                 session.commit()
             except SQLAlchemyError as e:
                 session.rollback()
+                if isinstance(e, IntegrityError):
+                    self._raise_if_operations_missing(session=session, operation_ids=_operation_ids([entry]), error=e)
                 logger.exception(f"Error updating entry in the table: {e}")
                 raise
 
@@ -3539,6 +3653,10 @@ class MemoryInterface(abc.ABC):
         """
         Retrieve the request that produced the given response.
 
+        Outbound request markers identify caller-supplied messages of any role, skipping
+        target-generated tool calls and outputs. Unmarked history falls back to the last
+        user message, or the preceding message when no user message exists.
+
         Args:
             response (Message): The response message object to match.
 
@@ -3563,6 +3681,12 @@ class MemoryInterface(abc.ABC):
             raise ValueError(
                 f"The provided request does not have a preceding request in conversation '{response.conversation_id}'."
             )
+        for message in reversed(preceding_messages):
+            if message.api_role == "user" or any(
+                piece.prompt_metadata.get(RequestTraceContext.REQUEST_METADATA_KEY) == 1
+                for piece in message.message_pieces
+            ):
+                return message
         return preceding_messages[-1]
 
     def _build_message_piece_identifier_conditions(
@@ -4741,9 +4865,9 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
-        Standalone seeds with the same value hash, dataset, and canonical conditions already
+        Standalone seeds with the same value hash, dataset, and behavioral inputs already
         present in storage are skipped. Multi-seed groups are compared as complete groups,
-        including roles, sequence, metadata, and criteria, so shared content cannot strip
+        including roles, sequence, metadata, and behavioral inputs, so shared content cannot strip
         members from a different conversation. Duplicates *within* ``seeds`` are all inserted,
         because the check looks at what storage held when the call started.
         When a stored seed is copied to a new group, its caller-visible ID is updated after
@@ -4762,7 +4886,7 @@ class MemoryInterface(abc.ABC):
     def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
         """Deduplicate and store seeds after their media is prepared."""
         existing_pairs, existing_hashes, existing_seeds = self._get_existing_seed_keys(seeds=seeds)
-        retained_group_ids = self._get_new_condition_group_ids(
+        retained_group_ids = self._get_new_behavior_group_ids(
             seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
         )
         retained_group_ids.update(self._get_new_seed_group_ids(seeds=seeds, existing_seeds=existing_seeds))
@@ -4788,7 +4912,7 @@ class MemoryInterface(abc.ABC):
         for prompt in seeds:
             if not prompt.value_sha256:
                 continue
-            conditions_key = self._seed_conditions_key(prompt)
+            behavior_key = self._seed_behavior_key(prompt)
             # A seed without a dataset name matches the hash in any dataset, mirroring the
             # filter that is applied when dataset_name is not supplied.
             if prompt.prompt_group_id in retained_group_ids:
@@ -4807,9 +4931,9 @@ class MemoryInterface(abc.ABC):
                 entries.append(entry)
                 continue
             if prompt.dataset_name:
-                if (prompt.value_sha256, prompt.dataset_name, conditions_key) in existing_pairs:
+                if (prompt.value_sha256, prompt.dataset_name, behavior_key) in existing_pairs:
                     continue
-            elif (prompt.value_sha256, conditions_key) in existing_hashes:
+            elif (prompt.value_sha256, behavior_key) in existing_hashes:
                 continue
             entries.append(SeedEntry(entry=prompt))
 
@@ -4826,6 +4950,10 @@ class MemoryInterface(abc.ABC):
             str: Canonical persisted member identity.
         """
         entry = SeedEntry(entry=seed)
+        metadata = dict(entry.prompt_metadata or {})
+        prompts = AdversarialPrompts.from_metadata(metadata)
+        if prompts is not None:
+            metadata[AdversarialPrompts.METADATA_KEY] = prompts.identity
         return json.dumps(
             {
                 "value_sha256": entry.value_sha256,
@@ -4833,7 +4961,7 @@ class MemoryInterface(abc.ABC):
                 "seed_type": entry.seed_type,
                 "role": entry.role,
                 "sequence": entry.sequence,
-                "metadata": entry.prompt_metadata or {},
+                "metadata": metadata,
                 "conditions": entry.conditions or [],
                 "parameters": entry.parameters or [],
                 "harm_categories": entry.harm_categories or [],
@@ -4918,19 +5046,16 @@ class MemoryInterface(abc.ABC):
         return new_group_ids
 
     @staticmethod
-    def _seed_conditions_key(seed: Seed[Any]) -> str:
+    def _seed_behavior_key(seed: Seed[Any]) -> str:
         """
-        Serialize criteria canonically, preserving condition order.
+        Serialize the behavioral inputs used by seed identifiers.
 
         Returns:
-            str: Canonical JSON used for criteria identity.
+            str: Canonical JSON, preserving condition and template-parameter order.
         """
-        conditions = seed.model_dump(mode="json", include={"conditions"}).get("conditions", [])
-        if not conditions:
-            return _NO_CONDITIONS_KEY
-        return json.dumps(conditions, sort_keys=True, separators=(",", ":"))
+        return json.dumps(SeedIdentifier.get_behavioral_parameters(seed), sort_keys=True, separators=(",", ":"))
 
-    def _get_new_condition_group_ids(
+    def _get_new_behavior_group_ids(
         self,
         *,
         seeds: Sequence[Seed[Any]],
@@ -4938,30 +5063,29 @@ class MemoryInterface(abc.ABC):
         existing_hashes: set[tuple[str, str]],
     ) -> set[uuid.UUID]:
         """
-        Identify groups whose newly authored criteria require retaining all input seeds.
+        Identify groups with new objective conditions or adversarial inputs.
 
-        Other seeds in the same group do not own conditions. Their ordinary content
-        deduplication must not strip them from a new condition-bearing group, or from a group that
-        removes previously stored criteria. Other multi-seed groups are compared by full
-        membership separately.
+        Retain their companion seeds, including when an objective removes previously stored
+        behavioral inputs. Other multi-seed groups are compared by full membership separately.
 
         Returns:
             set[uuid.UUID]: Group IDs whose complete input membership must be retained.
         """
-        conditions_by_value: dict[tuple[str, str | None], set[str]] = {}
-        for value_hash, dataset, conditions in existing_pairs:
-            conditions_by_value.setdefault((value_hash, dataset), set()).add(conditions)
-        for value_hash, conditions in existing_hashes:
-            conditions_by_value.setdefault((value_hash, None), set()).add(conditions)
+        behaviors_by_value: dict[tuple[str, str | None], set[str]] = {}
+        for value_hash, dataset, behavior in existing_pairs:
+            behaviors_by_value.setdefault((value_hash, dataset), set()).add(behavior)
+        for value_hash, behavior in existing_hashes:
+            behaviors_by_value.setdefault((value_hash, None), set()).add(behavior)
 
         group_ids: set[uuid.UUID] = set()
         for seed in seeds:
             if not isinstance(seed, SeedObjective) or seed.prompt_group_id is None or not seed.value_sha256:
                 continue
-            stored_conditions = conditions_by_value.get((seed.value_sha256, seed.dataset_name or None), set())
-            if self._seed_conditions_key(seed) in stored_conditions:
+            stored_behaviors = behaviors_by_value.get((seed.value_sha256, seed.dataset_name or None), set())
+            behavior_key = self._seed_behavior_key(seed)
+            if behavior_key in stored_behaviors:
                 continue
-            if seed.conditions or stored_conditions - {_NO_CONDITIONS_KEY}:
+            if behavior_key != _NO_SEED_BEHAVIOR_KEY or stored_behaviors - {_NO_SEED_BEHAVIOR_KEY}:
                 group_ids.add(seed.prompt_group_id)
         return group_ids
 
@@ -4969,7 +5093,7 @@ class MemoryInterface(abc.ABC):
         self, *, seeds: Sequence[Seed[Any]]
     ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]], list[tuple[str | None, Seed[Any]]]]:
         """
-        Look up which value hashes and canonical conditions are already stored.
+        Look up which value hashes and behavioral inputs are already stored.
 
         Queries in chunks rather than once per seed, which otherwise dominates the cost of
         loading a large dataset. ``get_seeds`` issues the statement directly instead of going
@@ -4987,8 +5111,8 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             tuple: The stored
-                (value_sha256, dataset_name, conditions) keys, using the requested
-                dataset name, (value_sha256, conditions) keys irrespective of dataset,
+                (value_sha256, dataset_name, behavior) keys, using the requested
+                dataset name, (value_sha256, behavior) keys irrespective of dataset,
                 and matched seeds paired with their requested dataset filter.
         """
         hashes_by_dataset: dict[str | None, set[str]] = {}
@@ -5015,14 +5139,14 @@ class MemoryInterface(abc.ABC):
                     if not existing.value_sha256:
                         continue
                     existing_seeds.append((dataset_name, existing))
-                    conditions_key = self._seed_conditions_key(existing)
+                    behavior_key = self._seed_behavior_key(existing)
                     if dataset_name:
                         # The database decided the name matched, so record the name that was
                         # asked for; the stored spelling can differ under a case-insensitive
                         # collation.
-                        existing_pairs.add((existing.value_sha256, dataset_name, conditions_key))
+                        existing_pairs.add((existing.value_sha256, dataset_name, behavior_key))
                     else:
-                        existing_hashes.add((existing.value_sha256, conditions_key))
+                        existing_hashes.add((existing.value_sha256, behavior_key))
 
         return existing_pairs, existing_hashes, existing_seeds
 
@@ -5594,11 +5718,18 @@ class MemoryInterface(abc.ABC):
         """
         with closing(self._get_session()) as session:
             try:
-                for attack_result in attack_results:
+                entries = [
                     self._add_attack_result_to_session(session=session, attack_result=attack_result)
+                    for attack_result in attack_results
+                ]
+                self._recheck_activity_operations(session=session, entries=entries)
                 session.commit()
-            except SQLAlchemyError:
+            except SQLAlchemyError as error:
                 session.rollback()
+                if isinstance(error, IntegrityError):
+                    self._raise_if_operations_missing(
+                        session=session, operation_ids=_operation_ids(attack_results), error=error
+                    )
                 raise
 
     def _add_attack_result_to_session(self, *, session: Session, attack_result: AttackResult) -> AttackResultEntry:
@@ -5646,6 +5777,37 @@ class MemoryInterface(abc.ABC):
             )
         if entry.operation_id is not None and session.get(OperationEntry, entry.operation_id) is None:
             raise LookupError(f"Operation {entry.operation_id} not found")
+
+    @staticmethod
+    def _recheck_activity_operations(*, session: Session, entries: Sequence[Base]) -> None:
+        """
+        Check new activity's Operations again after inserting it, while this transaction holds the write lock.
+
+        Raises:
+            LookupError: If an Operation was deleted after the first check.
+        """
+        # SQLite does not enforce foreign keys, so a concurrent delete would otherwise orphan the activity.
+        session.flush()
+        MemoryInterface._raise_if_operations_missing(session=session, operation_ids=_operation_ids(entries))
+
+    @staticmethod
+    def _raise_if_operations_missing(
+        *, session: Session, operation_ids: set[uuid.UUID], error: Exception | None = None
+    ) -> None:
+        """
+        Report activity whose Operation no longer exists as a missing Operation.
+
+        After a rolled-back insert, this separates a foreign-key failure from a deleted Operation, which
+        SQL Server raises before the post-insert check runs, from unrelated integrity errors.
+
+        Raises:
+            LookupError: If one of the Operations does not exist.
+        """
+        if not operation_ids:
+            return
+        saved = set(session.scalars(select(OperationEntry.id).where(OperationEntry.id.in_(operation_ids))))
+        if missing := operation_ids - saved:
+            raise LookupError(f"Operation {next(iter(missing))} not found") from error
 
     def _execute_add_conversation_branches_to_attack(
         self,
@@ -5769,8 +5931,10 @@ class MemoryInterface(abc.ABC):
                         f"{receipt_key}:{request_fingerprint}": True,
                     }
                 entry.timestamp = datetime.now(UTC)
+                if new_attack is not None:
+                    self._recheck_activity_operations(session=session, entries=[entry])
             return True
-        except IntegrityError:
+        except IntegrityError as error:
             # A concurrent retry may have committed the same new attack before our insert.
             with closing(self._get_session()) as session:
                 existing = session.get(AttackResultEntry, uuid.UUID(attack_result_id))
@@ -5783,6 +5947,9 @@ class MemoryInterface(abc.ABC):
                     )
                 ):
                     return False
+                self._raise_if_operations_missing(
+                    session=session, operation_ids=_operation_ids([new_attack]), error=error
+                )
             raise
 
     def _execute_update_attack_result_conditionally(
@@ -6652,9 +6819,14 @@ class MemoryInterface(abc.ABC):
                 for entry in entries:
                     self._validate_activity_operation(session=session, entry=entry)
                 session.add_all(entries)
+                self._recheck_activity_operations(session=session, entries=entries)
                 session.commit()
-            except SQLAlchemyError:
+            except SQLAlchemyError as error:
                 session.rollback()
+                if isinstance(error, IntegrityError):
+                    self._raise_if_operations_missing(
+                        session=session, operation_ids=_operation_ids(entries), error=error
+                    )
                 raise
 
     @classmethod
@@ -7049,16 +7221,21 @@ class MemoryInterface(abc.ABC):
         links = JsonArrayItems(parents.c.attack_metadata, literal("$.child_attack_result_ids")).table_valued(
             "key", "value", "type"
         )
-        duplicate_errors = (
-            select(parents.c.id.label("parent_id"))
+        child_links = (
+            select(
+                parents.c.id.label("parent_id"),
+                func.max(case((children.c.outcome == AttackOutcome.ERROR.value, 1), else_=0)).label(
+                    "duplicates_child_error"
+                ),
+            )
             .select_from(JsonArrayJoin(parents, links, literal(True)))
-            .join(
+            .outerjoin(
                 children,
                 func.replace(sql_cast(children.c.id, String(36)), "-", "") == func.replace(links.c.value, "-", ""),
             )
-            .where(parents.c.attribution_parent_id.in_(entry_ids), children.c.outcome == AttackOutcome.ERROR.value)
-            .distinct()
-            .subquery("history_duplicate_errors")
+            .where(parents.c.attribution_parent_id.in_(entry_ids), links.c.value.is_not(None))
+            .group_by(parents.c.id)
+            .subquery("history_child_links")
         )
         # Explicit seed attribution is authoritative, then the objective hash. Runs with attempts identified only by
         # their atomic identifier's seeds are flagged instead (see _get_scenario_history_runs_needing_sdk_statistics),
@@ -7083,12 +7260,11 @@ class MemoryInterface(abc.ABC):
                 ).label("total_retries"),
                 JsonScalar(AttackResultEntry.attribution_data, literal("$.result_role")).label("result_role"),
                 JsonScalar(AttackResultEntry.attribution_data, literal("$.attempt_index")).label("attempt_index"),
-                case((duplicate_errors.c.parent_id.is_not(None), 1), else_=0).label("duplicates_child_error"),
+                case((child_links.c.parent_id.is_not(None), 1), else_=0).label("has_child_links"),
+                func.coalesce(child_links.c.duplicates_child_error, 0).label("duplicates_child_error"),
             )
             .select_from(
-                AttackResultEntry.__table__.outerjoin(
-                    duplicate_errors, AttackResultEntry.id == duplicate_errors.c.parent_id
-                )
+                AttackResultEntry.__table__.outerjoin(child_links, AttackResultEntry.id == child_links.c.parent_id)
             )
             .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
             .subquery("history_attempts")
@@ -7098,29 +7274,14 @@ class MemoryInterface(abc.ABC):
         )
 
         unit_partition = (units.c.scenario_result_id, units.c.unit_group_id, units.c.unit_seed_id)
-        is_execution = or_(
-            units.c.result_role.is_(None),
-            not_(
-                self._get_scenario_role_match_condition(
-                    role_expression=units.c.result_role, role=AttackResultRole.ORCHESTRATION
-                )
-            ),
-        )
         units = select(
             units,
-            func.max(case((is_execution, 1), else_=0))
+            func.max(case((self._get_scenario_execution_attempt_condition(attempts=units), 1), else_=0))
             .over(partition_by=unit_partition)
             .label("has_execution_attempts"),
         ).subquery("history_classified_units")
         unit_partition = (units.c.scenario_result_id, units.c.unit_group_id, units.c.unit_seed_id)
-        is_execution = or_(
-            units.c.result_role.is_(None),
-            not_(
-                self._get_scenario_role_match_condition(
-                    role_expression=units.c.result_role, role=AttackResultRole.ORCHESTRATION
-                )
-            ),
-        )
+        is_execution = self._get_scenario_execution_attempt_condition(attempts=units)
         independent_error = and_(units.c.outcome == AttackOutcome.ERROR.value, units.c.duplicates_child_error == 0)
         pressure_attempt = case((or_(units.c.has_execution_attempts == 0, is_execution, independent_error), 1), else_=0)
         is_completion = case((units.c.attempt_index.is_(None), 1), else_=0)
@@ -7207,6 +7368,36 @@ class MemoryInterface(abc.ABC):
             .order_by(ranked.c.scenario_result_id)
         )
 
+    def _get_scenario_execution_attempt_condition(self, *, attempts: Any) -> Any:
+        """
+        Return the SQL form of ``select_execution_attempts``'s envelope test, negated.
+
+        An orchestration role marks an envelope. An unrecognized role marks one only with
+        child links, as for envelopes persisted before roles were recorded.
+
+        Args:
+            attempts (Any): A subquery with ``result_role`` and ``has_child_links`` columns.
+
+        Returns:
+            Any: A condition that is true for attempts that are not orchestration envelopes.
+        """
+        is_envelope = case(
+            (
+                self._get_scenario_role_match_condition(
+                    role_expression=attempts.c.result_role, role=AttackResultRole.ORCHESTRATION
+                ),
+                1,
+            ),
+            (
+                self._get_scenario_role_match_condition(
+                    role_expression=attempts.c.result_role, role=AttackResultRole.TARGET_FACING
+                ),
+                0,
+            ),
+            else_=attempts.c.has_child_links,
+        )
+        return is_envelope == 0
+
     def _build_scenario_history_unit_statement(self, *, attempts: Any, plan_entry_ids: Sequence[uuid.UUID]) -> Any:
         """
         Resolve every persisted attempt to the logical work unit whose counters it feeds.
@@ -7230,6 +7421,7 @@ class MemoryInterface(abc.ABC):
                 attempts.c.total_retries,
                 attempts.c.result_role,
                 attempts.c.attempt_index,
+                attempts.c.has_child_links,
                 attempts.c.duplicates_child_error,
                 unplanned_group_id.label("unit_group_id"),
                 attempts.c.seed_group_id.label("unit_seed_id"),
@@ -7312,6 +7504,7 @@ class MemoryInterface(abc.ABC):
                 attempts.c.total_retries,
                 attempts.c.result_role,
                 attempts.c.attempt_index,
+                attempts.c.has_child_links,
                 attempts.c.duplicates_child_error,
                 attempts.c.atomic_attack_name,
                 unplanned_group_id.label("unplanned_group_id"),
@@ -7340,6 +7533,7 @@ class MemoryInterface(abc.ABC):
             matched.c.total_retries,
             matched.c.result_role,
             matched.c.attempt_index,
+            matched.c.has_child_links,
             matched.c.duplicates_child_error,
             func.coalesce(matched.c.atomic_group_id, matched.c.unplanned_group_id).label("unit_group_id"),
             func.coalesce(matched.c.planned_seed_group_id, matched.c.seed_group_id).label("unit_seed_id"),
@@ -8942,6 +9136,10 @@ class MemoryInterface(abc.ABC):
     async def get_request_from_response_async(self, *, response: Message) -> Message:
         """
         Retrieve the request that produced the given response.
+
+        Returns the latest preceding outbound request of any role, skipping target-generated
+        tool messages. For unmarked history, returns the last user message or, if absent,
+        the immediately preceding message.
 
         Args:
             response (Message): The response message object to match.

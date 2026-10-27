@@ -51,7 +51,12 @@ result roles. Selecting a scenario filters this same population, including its
 retries. It does not switch to the scanner's latest-execution-unit statistics.
 
 Use **Operation**, **Operator**, **Objective target**, or **Add filter** to select
-saved metadata. Additional dimensions include model, targeted harm category,
+saved metadata. Operation filters and charts identify saved Operations by ID and
+show their current names, so saved views and links keep working after a rename.
+Activity saved with only an Operation name, such as history from before Operation
+IDs, appears separately as **(legacy name)**; select it too to include that
+activity.
+Additional dimensions include model, targeted harm category,
 attack type, request or response converters, scenario run, and arbitrary label
 keys. Targeted harms describe intended coverage, not harms detected by scorers.
 Target options use persisted behavioral identities, not current registry
@@ -131,12 +136,13 @@ Select System, Light, or Dark to return to an undecorated workspace.
 
 ### User Preferences
 
-CoPyRIT stores these six preferences in one account-scoped browser record:
+CoPyRIT stores these preferences in one account-scoped browser record:
 
 | Preference | Use |
 | --- | --- |
 | Default objective target | Initial target for new chats and scanner runs |
 | Default adversarial target | Shared adversarial target for supported scanner scenarios |
+| Default objective scorer for chats | Scores new manual chats after their first objective is added |
 | Selected Operation | Groups new attacks and scanner runs by its saved ID |
 | Custom run labels | Additional labels for new attacks and scanner runs |
 | Theme | System, Light, Dark, or a named preset |
@@ -146,7 +152,7 @@ For signed-in users, `operator` is the lowercase username before `@`. It is deri
 from the account, cannot be edited, and is not saved as a user preference. With
 authentication disabled, the local profile can save an operator label.
 
-All six preferences use `pyrit.userPreferences.v1.<tenant>:<homeAccountId>` in
+All preferences use `pyrit.userPreferences.v1.<tenant>:<homeAccountId>` in
 browser local storage. Authentication-disabled use has a separate `local` profile.
 These settings do not follow you to another browser or device. Changes to labels
 apply to future runs, not stored attacks. Backend configuration supplies initial
@@ -204,7 +210,8 @@ target, change the saved target binding, or rewrite earlier messages.
 The control is enabled only when the configured target advertises
 `supports_temperature`. `OpenAIChatTarget` derives this from known capability
 profiles or an explicit deployment configuration, with sampling-mode checks.
-Other adapters do not support runtime overrides yet. See
+Other adapters do not support runtime overrides yet. Hover over a disabled
+unsupported field or focus it with the keyboard to see the reason. See
 [runtime temperature](../code/targets/0_prompt_targets.md#runtime-temperature-initial-implementation)
 for capability configuration, model defaults, and unsupported modes.
 
@@ -610,6 +617,91 @@ CoPyRIT enforces several safety guards:
 
 Human score changes do not require a registered objective target. The original operator can update or remove a human score even when the target is unavailable. The existing operator lock still applies.
 
+### Automatic Chat Scoring
+
+Add an objective, open **Objective Achieved Outcome**, and click the value beside
+**Automated scorer**. This row shows the selected scorer's registry name and type,
+or **Not set**. Choose a **Chat scorer** to score future responses. The choice
+applies to all conversations in the same attack. Choose **Off** to stop automatic
+scoring. Selecting a scorer does not score earlier messages or relabel old scores.
+Human scores keep precedence over automated scores.
+The attack result owns the selection for future responses. Completed evaluations
+use the existing score records; no separate successful chat-scoring result is saved.
+The separate **Automated score** row expands only the saved score information
+or scoring error; it does not change the selected scorer. If a scorer is selected
+but no score exists, it says **This will be generated on the next turn**.
+A human override does not hide the automated score; a note marks it as overridden.
+
+Opening an automated result does not copy or change it. Its execution history,
+objective, and scorer selection are read-only. Human review and finding
+annotations remain available.
+
+Choose **Continue manually** to copy the viewed conversation into a separate
+manual attack. The original automated score stays with the original result;
+the continuation starts without an automated or human score. A link returns
+to the original conversation. Provenance in `manual_continuation` metadata
+records the source attack, conversation, and last copied response.
+
+The continuation keeps the original objective scorer only if that exact
+configuration is already registered. Its scoring expectation is copied into
+the continuation's attack metadata, so failed evaluations cannot erase its criteria.
+Changing the objective resets those copied criteria. No scorer is constructed
+or registered for a handoff, and a personal default never replaces the source
+scorer. In the new manual attack, select another scorer or choose **Off** as needed.
+
+The scorer controls appear only after an objective exists. Chat without an
+objective still works. A saved scorer becomes active when you add an objective.
+Removing or changing the objective keeps historical scores but resets the current
+outcome and score links.
+
+If scoring fails, the response remains available and chat can continue. A notice
+at the top disappears after about ten seconds. Open the outcome and automated
+score details to inspect the saved scoring error. Unexpected failures include the
+underlying error type and message, chained errors, a Pydantic error code when
+available, and a response reference that matches the server log. Provider failures
+also include HTTP status, error body, and request ID when available. The saved
+traceback appears in a scrollable details area. These diagnostics are intended
+for trusted operators; request headers are not added. A scoring failure never
+resends the prompt.
+
+Open **Registry > Scorers** to browse configured scorers and choose a
+**Default objective scorer for chats**. Each option shows its name and nested scorer
+type. This setting belongs to your account in this browser, like target
+defaults; it is not a server setting. An unconfigured manual chat adopts the
+current default when you add its first objective, including in the conversation
+editor. An explicit scorer selection or **Off** is kept. Related conversations
+keep their attack's scorer. The registry offers compatible
+true/false response scorers, but does not provide scorer creation or editing.
+An unavailable or changed scorer must be selected again rather than silently
+replaced.
+
+The scorer table separates the personal default from the registry rows. Expand a
+name to inspect its pretty-printed evaluation identifier JSON; deployment
+endpoints and other operational settings are not part of that view. The Type
+column shows nested scorer wrappers. The Scorable column describes their evidence,
+such as Message, Conversation, Trace, or Surface.
+
+Metrics come from recorded evaluations for that scorer configuration, not its
+children or the current chat. True/false and float-scale scorers have separate
+comparison tables. Binary scorers show precision, recall, accuracy, and F1 as
+percentages with one decimal place. Float-scale scorers show mean absolute error
+and agreement. Hover over a metric to see its definition and full recorded value.
+Click Name, a metric, or Avg time to sort a table; click again to reverse the
+order. Names start A-Z, time and MAE start lowest first, and other metrics start
+highest first. Sorting uses the full recorded values and keeps missing values at
+the bottom. Each table sorts independently. All registered scorers stay on one
+page; there are no paging controls.
+The registry and chat use the same scorer selector. It lists only compatible
+true/false scorers and hides ineligible choices instead of disabling them.
+**Avg time** is the average evaluation scoring time.
+Missing metrics and unmeasured times show **n/a**. Opening the registry does not
+run a new evaluation.
+
+In **Attack Result Details**, a divider separates automated scoring from human
+scoring. Use **Add** to save a human score or **Remove** to remove the override.
+A successful **Add** closes the panel. If the save fails, the panel and entered
+review remain open.
+
 ### Attack History
 
 The History view lists all past attacks with filtering and pagination.
@@ -685,7 +777,7 @@ In active runs and saved scenario results, **Atomic attack groups** defaults to 
 
 Until you expand or collapse the section, its default follows the current group count as progress loads. Once you choose, the section keeps your choice during progress updates for the same run, even if the count crosses 20. Opening a different run resets to that run's count-based default.
 
-### Operations and Findings
+### Operations
 
 An operation groups related red-teaming work. Inside it you record findings:
 human assessments, whether or not an attack produced them.
@@ -697,9 +789,14 @@ scope. The **Operation** dropdown in the labels bar applies the
 selected operation to new attacks and scanner runs, and **New operation…** at the
 top of that list creates one without leaving the page.
 
-On an operation's page, **Add description** or **Edit description** changes the
-description. Saving replaces it, so if two people edit at once, the last save wins.
-Operations can't be renamed or deleted from the GUI.
+Renaming doesn't update anything that stores the old name: history from before
+Operation IDs, and names set in configuration, `GLOBAL_MEMORY_LABELS`, or
+`--memory-labels`.
+
+**Delete** works only when no findings, attacks, or scanner runs are linked; the
+tooltip shows what's left. History from before Operation IDs doesn't count. SDK
+attacks still running under the operation save their results without one.
+Deleting can't be undone.
 
 #### Findings
 
@@ -901,6 +998,7 @@ Use **Reload file** to fetch the latest source content; unsaved edits require ex
 **Save** only persists a source. **Reinitialize PyRIT** separately applies saved configuration, environment sources,
 and stored initializer scripts for every user of this backend. Save or discard editor changes first.
 Custom initializer scripts execute under the backend service identity, so only trusted administrators should manage them.
+This includes anyone with write access to the configured `custom_initializers_source` or the `.pyrit_conf` source.
 
 ### Reinitializing without a process restart
 
@@ -1001,3 +1099,34 @@ CoPyRIT monitors the backend connection and shows a status banner:
 - **Disconnected (red):** Unable to reach the backend. Check that the server is running.
 - **Degraded (yellow):** Connection is unstable.
 - **Reconnected (green):** Briefly shown after a successful reconnection, then auto-dismissed.
+
+## Paired baseline and attack outcomes
+
+Open a completed run from **Scanner History** and find **Paired outcomes**.
+Choose the saved **Baseline group** and **Attack group**, then select
+**Compare outcomes**. Groups are explicitly marked by the saved execution
+plan; PyRIT does not guess a baseline from its name. If several configurations
+have the same name, the options include their group IDs to distinguish them.
+
+The comparison shows all four baseline-to-attack transitions, both success
+rates, and their difference in percentage points. Rates use the same decided
+pairs. For example, four pairs with one of each transition give 50% success
+on each side and a 0 pp difference, while still showing one failure becoming
+a success and one success becoming a failure.
+
+**Decided pairs** shows the number with success or failure on both sides,
+followed by the number planned on both sides. **Excluded pairs** counts the
+remaining shared pairs. Missing outcomes, errors, and undetermined outcomes
+are listed separately; reason counts can overlap. Seeds planned on only one
+side are unmatched and are not included in the pair denominator.
+
+The panel uses the [paired analytics SDK](../code/analytics/0_attack_results.md)
+and its latest top-level outcome rules. Children and superseded retries do
+not add observations. Empty decided populations display **Unavailable** rates.
+Legacy runs without a complete saved plan, runs without explicit group kinds,
+and runs that have not completed cannot be compared. Incompatible groups
+show the backend's explanation, and **Compare outcomes** can retry a failed
+request. Changing a group clears the comparison.
+
+Missing persisted scoring metadata limits compatibility validation. These
+observed differences do not establish causation.

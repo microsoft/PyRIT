@@ -285,6 +285,18 @@ class IndexSelectionStrategy(TextSelectionStrategy):
         self._start = start
         self._end = end
 
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the start index and the end index when one was provided.
+
+        Returns:
+            dict[str, Any]: Start index, and end index when set.
+        """
+        params: dict[str, Any] = {"start": self._start}
+        if self._end is not None:
+            params["end"] = self._end
+        return params
+
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
         Select a range based on absolute character indices.
@@ -314,6 +326,15 @@ class RegexSelectionStrategy(TextSelectionStrategy):
             pattern (str | Pattern[str]): The regex pattern to match.
         """
         self._pattern = re.compile(pattern) if isinstance(pattern, str) else pattern
+
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the regex pattern and flags.
+
+        Returns:
+            dict[str, Any]: Pattern string and compiled flags.
+        """
+        return {"pattern": self._pattern.pattern, "flags": self._pattern.flags}
 
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
@@ -353,11 +374,35 @@ class KeywordSelectionStrategy(TextSelectionStrategy):
             context_before (int): Number of characters to include before the keyword. Defaults to 0.
             context_after (int): Number of characters to include after the keyword. Defaults to 0.
             case_sensitive (bool): Whether the keyword search is case-sensitive. Defaults to True.
+
+        Raises:
+            ValueError: If ``keyword`` is not a non-empty string, or if ``context_before`` or
+                ``context_after`` is not a non-negative integer.
         """
+        if not isinstance(keyword, str) or not keyword:
+            raise ValueError(f"keyword must be a non-empty string, got {keyword!r}")
+        for name, value in (("context_before", context_before), ("context_after", context_after)):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer, got {value!r}")
+
         self._keyword = keyword
         self._context_before = context_before
         self._context_after = context_after
         self._case_sensitive = case_sensitive
+
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the keyword, the context sizes and the case-sensitivity flag.
+
+        Returns:
+            dict[str, Any]: Keyword, context sizes and case-sensitivity flag.
+        """
+        return {
+            "keyword": self._keyword,
+            "context_before": self._context_before,
+            "context_after": self._context_after,
+            "case_sensitive": self._case_sensitive,
+        }
 
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
@@ -410,6 +455,18 @@ class PositionSelectionStrategy(TextSelectionStrategy):
         self._start_proportion = start_proportion
         self._end_proportion = end_proportion
 
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the start and end proportions.
+
+        Returns:
+            dict[str, Any]: Start and end proportions.
+        """
+        return {
+            "start_proportion": self._start_proportion,
+            "end_proportion": self._end_proportion,
+        }
+
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
         Select a range based on the relative position in the text.
@@ -459,6 +516,18 @@ class ProportionSelectionStrategy(TextSelectionStrategy):
         self._proportion = proportion
         self._anchor = anchor
         self._seed = seed
+
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the proportion, the anchor and the optional seed.
+
+        Returns:
+            dict[str, Any]: Proportion, anchor, and seed when one was provided.
+        """
+        params: dict[str, Any] = {"proportion": self._proportion, "anchor": self._anchor}
+        if self._seed is not None:
+            params["seed"] = self._seed
+        return params
 
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
@@ -519,6 +588,18 @@ class RangeSelectionStrategy(TextSelectionStrategy):
 
         self._start_proportion = start_proportion
         self._end_proportion = end_proportion
+
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the start and end proportions.
+
+        Returns:
+            dict[str, Any]: Start and end proportions.
+        """
+        return {
+            "start_proportion": self._start_proportion,
+            "end_proportion": self._end_proportion,
+        }
 
     def select_range(self, *, text: str) -> tuple[int, int]:
         """

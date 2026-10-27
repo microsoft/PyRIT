@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 
 import { attacksApi } from '@/services/api'
+import { deferred } from '@/test-utils/deferred'
 import type { BackendMessage, ConversationMessagesResponse, Message } from '@/types'
 import { backendMessagesToFrontend } from '@/utils/messageMapper'
 
@@ -9,22 +10,6 @@ import type { UseConversationMessagesOptions } from './useConversationMessages'
 
 jest.mock('@/services/api', () => ({ attacksApi: { getMessages: jest.fn() } }))
 jest.mock('@/utils/messageMapper', () => ({ backendMessagesToFrontend: jest.fn() }))
-
-interface Deferred<T> {
-  promise: Promise<T>
-  resolve: (value: T) => void
-  reject: (cause: unknown) => void
-}
-
-function deferred<T>(): Deferred<T> {
-  let resolve: (value: T) => void = () => {}
-  let reject: (cause: unknown) => void = () => {}
-  const promise = new Promise<T>((onResolve, onReject) => {
-    resolve = onResolve
-    reject = onReject
-  })
-  return { promise, resolve, reject }
-}
 
 function transcript(conversationId: string, turns: number[] = [1]): ConversationMessagesResponse {
   return {

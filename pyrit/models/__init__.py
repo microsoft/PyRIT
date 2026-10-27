@@ -62,8 +62,11 @@ if TYPE_CHECKING:
         ScenarioRunSizeEstimateRequest,
         ScenarioRunSizeEstimateStatus,
         ScenarioRunSizeFactor,
+        ScenarioSuite,
+        ScenarioSuiteEntry,
         ScenarioTechniqueSummary,
         StoredPreset,
+        StoredScenarioSuite,
     )
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
@@ -128,7 +131,7 @@ if TYPE_CHECKING:
     )
     from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
     from pyrit.models.messages.conversation_retry import ConversationRetry, ConversationRetryReason
-    from pyrit.models.operation import Operation, OperationCreate
+    from pyrit.models.operation import Operation, OperationCreate, OperationUsage
     from pyrit.models.parameter import (
         ComponentType,
         Parameter,
@@ -209,6 +212,11 @@ if TYPE_CHECKING:
         Observation,
         ObservationPayload,
         OutputMatches,
+        ProgramBehaves,
+        ProgramCase,
+        ProgramExecutionObservationPayload,
+        ProgramExecutionScorable,
+        ProgramResult,
         Regex,
         Scorable,
         ScorableUnion,
@@ -240,6 +248,7 @@ if TYPE_CHECKING:
         scoring_expectation_fingerprint,
     )
     from pyrit.models.seeds import (
+        AdversarialPrompts,
         AttackSeedGroup,
         AttackTechniqueSeedGroup,
         NextMessageSystemPromptPaths,
@@ -261,6 +270,28 @@ if TYPE_CHECKING:
         resolve_prompt_source,
         warn_prompt_path_deprecated,
     )
+    from pyrit.models.seeds.assert_generation import (
+        AssertBehaviorCategory,
+        AssertBehaviorDefinition,
+        AssertConceptPattern,
+        AssertConceptSpecification,
+        AssertCoverage,
+        AssertDimension,
+        AssertDimensionLevel,
+        AssertGenerationConfig,
+        AssertGenerationProvenance,
+        AssertGroupMetadata,
+        AssertPatternRole,
+        AssertReplication,
+        AssertSamplingConfig,
+        AssertSamplingMethod,
+        AssertSlot,
+        AssertSlotValue,
+        AssertStakeholder,
+        AssertSystematization,
+        AssertTaxonomy,
+        AssertTerm,
+    )
     from pyrit.models.target import (
         COMMON_JSON_SCHEMAS,
         JSON_SCHEMA_METADATA_KEY,
@@ -273,6 +304,8 @@ if TYPE_CHECKING:
         TargetCapabilities,
         TemperatureRequestInfo,
         TokenUsage,
+        WebSearchConfig,
+        WebSearchMode,
         get_common_json_schema,
         read_usage_int,
         read_usage_value,
@@ -283,11 +316,39 @@ if TYPE_CHECKING:
     from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "AdversarialPrompts": "pyrit.models.seeds.adversarial_prompts",
+    "AssertBehaviorCategory": "pyrit.models.seeds.assert_generation",
+    "AssertBehaviorDefinition": "pyrit.models.seeds.assert_generation",
+    "AssertConceptPattern": "pyrit.models.seeds.assert_generation",
+    "AssertConceptSpecification": "pyrit.models.seeds.assert_generation",
+    "AssertCoverage": "pyrit.models.seeds.assert_generation",
+    "AssertDimension": "pyrit.models.seeds.assert_generation",
+    "AssertDimensionLevel": "pyrit.models.seeds.assert_generation",
+    "AssertGenerationConfig": "pyrit.models.seeds.assert_generation",
+    "AssertGenerationProvenance": "pyrit.models.seeds.assert_generation",
+    "AssertGroupMetadata": "pyrit.models.seeds.assert_generation",
+    "AssertPatternRole": "pyrit.models.seeds.assert_generation",
+    "AssertReplication": "pyrit.models.seeds.assert_generation",
+    "AssertSamplingConfig": "pyrit.models.seeds.assert_generation",
+    "AssertSamplingMethod": "pyrit.models.seeds.assert_generation",
+    "AssertSlot": "pyrit.models.seeds.assert_generation",
+    "AssertSlotValue": "pyrit.models.seeds.assert_generation",
+    "AssertStakeholder": "pyrit.models.seeds.assert_generation",
+    "AssertSystematization": "pyrit.models.seeds.assert_generation",
+    "AssertTaxonomy": "pyrit.models.seeds.assert_generation",
+    "AssertTerm": "pyrit.models.seeds.assert_generation",
+    "WebSearchConfig": "pyrit.models.target.web_search_config",
+    "WebSearchMode": "pyrit.models.target.web_search_config",
     "Contains": "pyrit.models.score",
     "Equals": "pyrit.models.score",
     "Regex": "pyrit.models.score",
     "TextMatcher": "pyrit.models.score",
     "OutputMatches": "pyrit.models.score",
+    "ProgramBehaves": "pyrit.models.score",
+    "ProgramCase": "pyrit.models.score",
+    "ProgramExecutionObservationPayload": "pyrit.models.score",
+    "ProgramExecutionScorable": "pyrit.models.score",
+    "ProgramResult": "pyrit.models.score",
     "ConversationScorable": "pyrit.models.score",
     "ConversationObservationPayload": "pyrit.models.score",
     "AllAvailableDatasetSize": "pyrit.models.scenario_dataset_size_estimate",
@@ -410,6 +471,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ObjectiveTargetEvaluationIdentifier": "pyrit.models.identifiers",
     "Operation": "pyrit.models.operation",
     "OperationCreate": "pyrit.models.operation",
+    "OperationUsage": "pyrit.models.operation",
     "Parameter": "pyrit.models.parameter",
     "ParameterDestination": "pyrit.models.parameter",
     "PresetEntry": "pyrit.models.catalog",
@@ -452,6 +514,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDatasetSummary": "pyrit.models.catalog",
     "ScenarioDefaultRunSizeEstimate": "pyrit.models.catalog",
     "ScenarioPreset": "pyrit.models.catalog",
+    "ScenarioSuite": "pyrit.models.catalog",
+    "ScenarioSuiteEntry": "pyrit.models.catalog",
     "ScenarioProducerCategoryCounts": "pyrit.models.catalog",
     "ScenarioProducerCounts": "pyrit.models.catalog",
     "ScenarioRunListItem": "pyrit.models.catalog",
@@ -515,6 +579,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "snake_case_to_class_name": "pyrit.models.identifiers",
     "sort_message_pieces": "pyrit.models.messages.message_piece",
     "StoredPreset": "pyrit.models.catalog",
+    "StoredScenarioSuite": "pyrit.models.catalog",
     "StrategyResult": "pyrit.models.results.strategy_result",
     "StrategyResultT": "pyrit.models.results.strategy_result",
     "StructuredParameterValue": "pyrit.models.parameter",

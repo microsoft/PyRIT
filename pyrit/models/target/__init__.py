@@ -41,6 +41,7 @@ if TYPE_CHECKING:
         read_usage_int,
         read_usage_value,
     )
+    from pyrit.models.target.web_search_config import WebSearchConfig, WebSearchMode
 
 _LAZY_EXPORTS: dict[str, str] = {
     "COMMON_JSON_SCHEMAS": "pyrit.models.target.json_schema_definition",
@@ -54,6 +55,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "TargetCapabilities": "pyrit.models.target.target_capabilities",
     "TemperatureRequestInfo": "pyrit.models.target.request_generation_config",
     "TokenUsage": "pyrit.models.target.token_usage",
+    "WebSearchConfig": "pyrit.models.target.web_search_config",
+    "WebSearchMode": "pyrit.models.target.web_search_config",
     "get_common_json_schema": "pyrit.models.target.json_schema_definition",
     "read_usage_int": "pyrit.models.target.token_usage",
     "read_usage_value": "pyrit.models.target.token_usage",
