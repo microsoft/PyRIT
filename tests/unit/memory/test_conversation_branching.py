@@ -36,7 +36,7 @@ from pyrit.models import (
     MessagePiece,
     TargetIdentifier,
 )
-from unit.async_utils import wait_for_completion_async
+from unit.async_utils import settle_tasks_async, wait_for_completion_async
 from unit.mocks import run_memory_session_async
 
 
@@ -399,12 +399,19 @@ class TestAtomicConversationBranching:
                 attack_result_id=attack.attack_result_id, conversation_id=conversation_id
             )
 
-        results = await wait_for_completion_async(
-            future=asyncio.gather(
-                *(register_async(conversation=branch) for branch in branches),
-                *(promote_async(conversation_id=branch.conversation_id) for branch in initial),
-            )
-        )
+        tasks = [
+            *(asyncio.create_task(register_async(conversation=branch)) for branch in branches),
+            *(asyncio.create_task(promote_async(conversation_id=branch.conversation_id)) for branch in initial),
+        ]
+        completion = asyncio.gather(*tasks)
+        try:
+            results = await wait_for_completion_async(future=completion)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await settle_tasks_async(*tasks)
+            if not completion.cancelled():
+                completion.exception()
         assert all(results)
         current = (await file_memory.get_attack_results_async(attack_result_ids=[attack.attack_result_id]))[0]
         assert current.get_active_conversation_ids() == {

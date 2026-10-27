@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import Engine, create_engine, event, func, inspect, select, text
+from sqlalchemy.engine import AdaptedConnection
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
@@ -21,11 +22,66 @@ from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 from pyrit.common.singleton import Singleton
 from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory, migration
 from pyrit.memory.memory_models import Base, PromptMemoryEntry
+from pyrit.memory.memory_session import MemorySession
 from pyrit.models import MessagePiece
 from unit import conftest as unit_fixtures
+from unit.async_utils import settle_tasks_async, wait_for_event_async
+from unit.memory import test_conversation_branching
+from unit.memory.memory_interface import test_interface_observations
 
 _sqlite_instance = asynccontextmanager(unit_fixtures.sqlite_instance.__wrapped__)
 _sqlite_template = contextmanager(unit_fixtures.sqlite_template.__wrapped__)
+
+
+@pytest.mark.parametrize("operation", ["branch", "delete"])
+async def test_concurrent_sqlite_tests_release_workers_after_watchdog_async(tmp_path: Path, operation: str) -> None:
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    with patch.object(memory, "cleanup"):
+        memory.__init__(db_path=tmp_path / "watchdog.db", skip_schema_migration=True)
+    started, release = asyncio.Event(), asyncio.Event()
+    before = asyncio.all_tasks()
+    module = test_conversation_branching if operation == "branch" else test_interface_observations
+
+    async def hold_write_async(driver: object) -> None:
+        started.set()
+        await release.wait()
+
+    def pause_after_flush(session: MemorySession, context: object) -> None:
+        connection = session.connection().connection.dbapi_connection
+        assert isinstance(connection, AdaptedConnection)
+        connection.run_async(hold_write_async)
+
+    async def expire_async(*, future: asyncio.Future[object]) -> None:
+        event.listen(MemorySession, "after_flush", pause_after_flush)
+        try:
+            await wait_for_event_async(event=started, tasks=[future])
+            raise TimeoutError("forced watchdog expiry")
+        finally:
+            event.remove(MemorySession, "after_flush", pause_after_flush)
+
+    try:
+        await asyncio.to_thread(Base.metadata.create_all, memory.engine)
+        with patch.object(module, "wait_for_completion_async", side_effect=expire_async):
+            with pytest.raises(TimeoutError, match="forced watchdog expiry"):
+                if operation == "branch":
+                    test = test_conversation_branching.TestAtomicConversationBranching()
+                    await test.test_concurrent_branch_creation_and_promotions_preserve_membership(file_memory=memory)
+                else:
+                    await test_interface_observations.test_concurrent_orm_score_deletions_clean_final_observation(
+                        file_memory=memory
+                    )
+        assert not [task for task in asyncio.all_tasks() - before if not task.done()]
+        async with memory._get_async_engine().connect() as connection:
+            await connection.exec_driver_sql("PRAGMA busy_timeout = 0")
+            await connection.exec_driver_sql("BEGIN IMMEDIATE")
+            await connection.rollback()
+    finally:
+        release.set()
+        remaining = asyncio.all_tasks() - before
+        for task in remaining:
+            task.cancel()
+        await settle_tasks_async(*remaining)
+        await memory.dispose_engine_async()
 
 
 @pytest.fixture

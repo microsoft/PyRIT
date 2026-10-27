@@ -79,6 +79,7 @@ def _note_sqlite_busy_wait(context: ExceptionContext) -> None:
             "timeout means that another connection kept the lock. A wait near 0 s means that SQLite did not wait."
         )
 
+
 @pytest.fixture
 def block_dataset_provider_lookup() -> Generator[AsyncMock, None, None]:
     """Block live dataset lookup and discovery unless a test explicitly supplies fake providers."""
