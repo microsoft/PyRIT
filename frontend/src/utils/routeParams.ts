@@ -142,3 +142,17 @@ function isCatalogReturnPath(value: string): boolean {
     && url.pathname === DATASETS_PATH
     && url.hash === ''
 }
+
+/** Returns true if the pathname or path belongs to the dataset catalog or dataset detail view. */
+export function isDatasetsPath(pathOrUrl: string): boolean {
+  if (!pathOrUrl) return false
+  const cleanPath = pathOrUrl.split('?')[0].split('#')[0]
+  return cleanPath === DATASETS_PATH || cleanPath === DATASET_DETAIL_PATH || cleanPath.startsWith(`${DATASETS_PATH}/`)
+}
+
+/** Returns true if the pathname or path belongs to the chat view or an attack view. */
+export function isChatPath(pathOrUrl: string): boolean {
+  if (!pathOrUrl) return false
+  const cleanPath = pathOrUrl.split('?')[0].split('#')[0]
+  return cleanPath === '/chat' || cleanPath.startsWith('/attacks/')
+}

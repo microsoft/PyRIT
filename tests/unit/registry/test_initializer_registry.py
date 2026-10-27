@@ -12,6 +12,7 @@ from pyrit.common import REQUIRED_VALUE
 from pyrit.models.parameter import Parameter
 from pyrit.registry.components.initializer_registry import PYRIT_PATH, InitializerRegistry
 from pyrit.registry.custom_initializer_storage import CustomInitializerStorage
+from pyrit.registry.discovery import discover_in_directory
 from pyrit.setup.configuration_loader import ConfigurationLoader
 from pyrit.setup.initialization import _execute_initializers_async
 from pyrit.setup.pyrit_initializer import PyRITInitializer
@@ -523,6 +524,102 @@ def test_discover_directory_registers_and_lists_metadata():
         assert "solo" in registry
         metadata = registry.get_all_registered_class_metadata()
         assert any(m.registry_name == "solo" for m in metadata)
+
+
+def test_discover_directory_does_not_evaluate_dynamic_module_attributes(caplog):
+    """Test that discovery inspects ordinary module members without invoking dynamic attributes."""
+    script = (
+        "from pyrit.setup.pyrit_initializer import PyRITInitializer\n\n"
+        "class SafeInitializer(PyRITInitializer):\n"
+        "    async def initialize_async(self) -> None:\n"
+        "        pass\n\n"
+        "def __dir__():\n"
+        "    return ['SafeInitializer', 'dynamic_attribute']\n\n"
+        "def __getattr__(name):\n"
+        "    raise RuntimeError(f'dynamic attribute evaluated: {name}')\n"
+    )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        script_path = Path(temp_dir) / "dynamic.py"
+        script_path.write_text(script)
+
+        discovered = list(discover_in_directory(directory=Path(temp_dir), base_class=PyRITInitializer))
+
+    assert [item[2] for item in discovered][0].__name__ == "SafeInitializer"
+    assert "Failed to load module" not in caplog.text
+
+
+@pytest.mark.parametrize("include_lazy_export_in_dir", [False, True])
+def test_discover_directory_registers_declared_lazy_exports(
+    tmp_path: Path, include_lazy_export_in_dir: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    script = _SOLO_SCRIPT + (
+        "\n__all__ = ['SoloInitializer', 'TargetInitializer', 'non_class']\n"
+        "def __dir__():\n"
+        f"    return ['SoloInitializer', 'unrelated'] + "
+        f"{['TargetInitializer'] if include_lazy_export_in_dir else []!r}\n"
+        "def __getattr__(name):\n"
+        "    if name == 'TargetInitializer':\n"
+        "        from pyrit.setup.initializers.targets import TargetInitializer\n"
+        "        return TargetInitializer\n"
+        "    if name == 'non_class':\n"
+        "        return 42\n"
+        "    raise RuntimeError(f'unexpected dynamic lookup: {name}')\n"
+    )
+    (tmp_path / "lazy.py").write_text(script, encoding="utf-8")
+
+    registry = InitializerRegistry(discovery_path=tmp_path)
+
+    assert set(registry.get_class_names()) == {"solo", "target"}
+    assert registry.get_class("target").__name__ == "TargetInitializer"
+    assert registry.is_builtin("target")
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("error_type", ["AttributeError", "RuntimeError"])
+def test_discover_directory_logs_failed_lazy_export_and_keeps_other_classes(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, error_type: str
+) -> None:
+    script = _SOLO_SCRIPT + (
+        "\n__all__ = ['BrokenInitializer', 'SoloInitializer', 'TargetInitializer']\n"
+        "def __getattr__(name):\n"
+        "    if name == 'TargetInitializer':\n"
+        "        from pyrit.setup.initializers.targets import TargetInitializer\n"
+        "        return TargetInitializer\n"
+        f"    raise {error_type}('export unavailable')\n"
+    )
+    (tmp_path / "lazy.py").write_text(script, encoding="utf-8")
+
+    registry = InitializerRegistry(discovery_path=tmp_path)
+
+    assert set(registry.get_class_names()) == {"solo", "target"}
+    assert "BrokenInitializer" in caplog.text
+    assert "export unavailable" in caplog.text
+    assert str(tmp_path / "lazy.py") in caplog.text
+
+
+def test_discover_directory_resolves_declared_lazy_initializer_export(caplog):
+    """Test that discovery resolves an initializer exposed through a module's __all__."""
+    script = (
+        "from pyrit.setup.pyrit_initializer import PyRITInitializer\n\n"
+        "__all__ = ['LazyInitializer']\n\n"
+        "def __getattr__(name):\n"
+        "    if name != 'LazyInitializer':\n"
+        "        raise AttributeError(name)\n\n"
+        "    class LazyInitializer(PyRITInitializer):\n"
+        "        async def initialize_async(self) -> None:\n"
+        "            pass\n\n"
+        "    return LazyInitializer\n"
+    )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        script_path = Path(temp_dir) / "lazy.py"
+        script_path.write_text(script)
+
+        discovered = list(discover_in_directory(directory=Path(temp_dir), base_class=PyRITInitializer))
+
+    assert [item[2] for item in discovered][0].__name__ == "LazyInitializer"
+    assert "Failed to load module" not in caplog.text
 
 
 def test_discover_single_file_registers_builtin():

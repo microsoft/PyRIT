@@ -14,7 +14,7 @@ from pyrit.models import AttackSeedGroup, SeedGroupRequirements
 from pyrit.prompt_target import TargetRequirements
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from pyrit.executor.attack import AttackStrategy
     from pyrit.models import AttackTechniqueSeedGroup
@@ -169,6 +169,7 @@ def filter_seed_groups(
     technique_name: str,
     dataset_name: str,
     policy: IncompatibleTechniquePolicy,
+    validate_group: Callable[[AttackSeedGroup], None] | None = None,
 ) -> list[AttackSeedGroup]:
     """
     Retain source groups that can be prepared, with one summary per combination.
@@ -180,6 +181,7 @@ def filter_seed_groups(
         technique_name (str): Technique name for diagnostics.
         dataset_name (str): Dataset name for diagnostics.
         policy (IncompatibleTechniquePolicy): Skip or raise on incompatibility.
+        validate_group (Callable | None): Additional technique input validation on the prepared group.
 
     Returns:
         list[AttackSeedGroup]: Compatible original groups, not their execution copies.
@@ -195,6 +197,8 @@ def filter_seed_groups(
             prepared = prepare_seed_group(
                 seed_group=seed_group, requirements=requirements, seed_technique=seed_technique
             )
+            if validate_group is not None:
+                validate_group(prepared.seed_group)
         except IncompatibleTechniqueError as exc:
             if policy is IncompatibleTechniquePolicy.RAISE:
                 raise IncompatibleTechniqueError(

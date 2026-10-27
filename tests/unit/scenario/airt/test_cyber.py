@@ -119,7 +119,7 @@ def _make_seed_groups(name: str) -> list[AttackSeedGroup]:
     ]
 
 
-FIXTURES = ["patch_central_database", "mock_runtime_env"]
+FIXTURES = ["patch_central_database", "mock_runtime_env", "mock_dataset_preparation"]
 
 
 # ===========================================================================
