@@ -18,8 +18,8 @@ loopback access. Administrator actions are disabled by default. For a trusted
 local development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true` to enable
 them. Never use these settings for a network-accessible deployment.
 
-For other setup options, see [Docker](../../docker/README.md) or the
-[Azure deployment guide](../../infra/README.md).
+For other setup options, see [Docker](../getting_started/install_docker.md) or the
+[Azure deployment guide](https://github.com/microsoft/PyRIT/blob/main/infra/README.md).
 
 ## Home
 
@@ -107,8 +107,10 @@ the conversations and scores. Supported failed scanner runs can be resumed.
 
 The **Attacks** tab opens individual conversations. The **Scanner** tab opens
 run-level progress and results, including runs from `technique.execute`.
-Resume retries unfinished or failed objectives when the original launch
-configuration is available.
+Resume retries unfinished objectives or objectives with execution errors when
+the original launch configuration is available. It skips completed objectives
+with non-error outcomes, including `failure`. Retrying an unsuccessful technique
+is a separate setting in `technique.execute`.
 
 ![History page with saved attacks](images/attack_history.png)
 

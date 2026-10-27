@@ -11,10 +11,12 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.assert_mocks import make_assert_config, make_assert_result
 
-from pyrit.executor.attack import AttackStrategy, PromptSendingAttack
+from pyrit.executor.attack import AttackStrategy, PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
 from pyrit.models import (
+    AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
@@ -34,6 +36,7 @@ from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.core.scenario_context import ScenarioContext
+from pyrit.scenario.core.scenario_target_defaults import override_default_adversarial_target
 from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher
 from pyrit.scenario.scenarios.adaptive.selectors import (
     EpsilonGreedyTechniqueSelector,
@@ -42,6 +45,7 @@ from pyrit.scenario.scenarios.adaptive.selectors import (
 )
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.score import SubStringScorer, TrueFalseScorer
+from pyrit.setup.initializers.techniques.core import get_technique_factories
 from tests.unit.mocks import MockPromptTarget
 
 if TYPE_CHECKING:
@@ -137,13 +141,15 @@ def _make_fake_factory(
     factory = MagicMock(spec=AttackTechniqueFactory)
     factory.attack_class = PromptSendingAttack
     factory.requirements = fake_technique.requirements
+    factory.seed_technique = seed_technique
     factory.create.return_value = fake_technique
     factory.adversarial_chat = adversarial_chat
+    factory.resolve_adversarial_chat.return_value = adversarial_chat
     factory.scoring_config_type = scoring_config_type
     return factory
 
 
-FIXTURES = ["patch_central_database", "mock_runtime_env"]
+FIXTURES = ["patch_central_database", "mock_runtime_env", "mock_dataset_preparation"]
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -274,6 +280,80 @@ class TestTextAdaptiveBasics:
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestTextAdaptiveAtomicAttacks:
+    @pytest.mark.parametrize("same_prompts", [False, True])
+    @pytest.mark.parametrize("include_baseline", [False, True])
+    async def test_group_prompts_bind_fresh_attacks_and_preserve_selection_on_resume_async(
+        self, *, same_prompts: bool, include_baseline: bool, sqlite_instance: SQLiteMemory
+    ) -> None:
+        groups = list(make_assert_result(config=make_assert_config(group_count=2), duplicate_text=True).seed_groups)
+        if same_prompts:
+            groups[1].adversarial_prompts = groups[0].adversarial_prompts.model_copy(deep=True)
+            groups[1].objective.metadata.update(groups[1].adversarial_prompts.to_metadata())
+        snapshots = [group.model_dump(mode="json") for group in groups]
+        catalog = {factory.name: factory for factory in get_technique_factories()}
+        factories = {name: catalog[name] for name in ("code_attack", "tap", "red_teaming")}
+        target = MockPromptTarget()
+        scorer = SubStringScorer(substring="default")
+        selector = MagicMock(spec=TechniqueSelector)
+        selector.select_async.side_effect = lambda **kwargs: list(kwargs["technique_identifiers"])
+
+        async def initialize_async(
+            *, selector: TechniqueSelector, scenario_result_id: str | None = None
+        ) -> TextAdaptive:
+            scenario = TextAdaptive(objective_scorer=scorer, selector=selector, scenario_result_id=scenario_result_id)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": target,
+                    "dataset_config": DatasetAttackConfiguration(seed_groups=groups),
+                    "scenario_techniques": [scenario.get_technique_class()(name) for name in factories],
+                    "include_baseline": include_baseline,
+                }
+            )
+            with patch.object(scenario, "_get_attack_technique_factories", return_value=factories):
+                await scenario.initialize_async()
+            return scenario
+
+        with override_default_adversarial_target(MockPromptTarget()):
+            original = await initialize_async(selector=selector)
+            restored_selector = MagicMock(spec=TechniqueSelector)
+            restored_selector.select_async.side_effect = AssertionError("Resume selected techniques again.")
+            restored = await initialize_async(
+                selector=restored_selector, scenario_result_id=original._scenario_result_id
+            )
+            assert len(original._atomic_attacks) == (4 if include_baseline else 2)
+            names = [atomic.atomic_attack_name for atomic in original._atomic_attacks]
+            assert len(set(names)) == len(names)
+            assert restored._build_run_plan() == original._build_run_plan()
+            restored_selector.select_async.assert_not_awaited()
+            assert selector.select_async.await_count == 2
+            children = [
+                atomic.attack_technique.attack._child_attacks[0]
+                for atomic in original._atomic_attacks
+                if atomic.group_kind is ScenarioRunPlanGroupKind.ADAPTIVE
+            ]
+            assert children[0].strategy is not children[1].strategy
+            selected = []
+            for child, group in zip(children, groups, strict=True):
+                config = child.strategy.get_attack_adversarial_config()
+                assert config.system_prompt.value == group.adversarial_prompts.system_prompt.value
+                identifier = child.atomic_attack_identifier
+                assert identifier.logical_seed_group_id == group.logical_id
+                assert (
+                    identifier.eval_hash
+                    == AtomicAttackEvaluationIdentifier(
+                        AtomicAttackIdentifier.build(technique_identifier=identifier.attack_technique)
+                    ).eval_hash
+                )
+                assert identifier.attack_technique.params["adversarial_prompts"] == group.adversarial_prompts.identity
+                selected.append(identifier.eval_hash)
+            assert len(set(selected)) == (1 if same_prompts else 2)
+            await original.run_async()
+
+        stored = await sqlite_instance.get_attack_results_async(atomic_attack_eval_hashes=selected)
+        assert len(stored) == 2
+        assert all(result.outcome is AttackOutcome.SUCCESS for result in stored)
+        assert [group.model_dump(mode="json") for group in groups] == snapshots
+
     async def test_selected_adaptation_is_recorded_without_replacing_source_groups_async(
         self, *, mock_objective_target: MagicMock, mock_objective_scorer: MagicMock
     ) -> None:
@@ -953,6 +1033,71 @@ class TestTextAdaptiveBaselinePolicy:
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestTextAdaptiveResume:
+    @pytest.mark.parametrize("include_baseline", [False, True])
+    @pytest.mark.parametrize("max_total", [1, "all"])
+    async def test_resume_restores_sampled_duplicate_names_and_occurrences_async(
+        self, *, include_baseline: bool, max_total: int | str
+    ) -> None:
+        groups = list(make_assert_result(config=make_assert_config(group_count=2), duplicate_text=True).seed_groups)
+        groups[1].adversarial_prompts = groups[0].adversarial_prompts.model_copy(deep=True)
+        groups[1].objective.metadata.update(groups[1].adversarial_prompts.to_metadata())
+        assert groups[0].logical_id == groups[1].logical_id
+        snapshots = [group.model_dump(mode="json") for group in groups]
+        target = MockPromptTarget()
+        scorer = SubStringScorer(substring="default")
+        factory = AttackTechniqueFactory(
+            name="red_teaming", attack_class=RedTeamingAttack, adversarial_chat=MockPromptTarget()
+        )
+        selector = MagicMock(spec=TechniqueSelector)
+        selector.select_async.side_effect = lambda **kwargs: list(kwargs["technique_identifiers"])
+
+        async def initialize_async(
+            *,
+            selector: TechniqueSelector,
+            scenario_result_id: str | None = None,
+            sources: list[AttackSeedGroup] | None = None,
+        ) -> TextAdaptive:
+            scenario = TextAdaptive(objective_scorer=scorer, selector=selector, scenario_result_id=scenario_result_id)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": target,
+                    "scenario_techniques": [scenario.get_technique_class()("red_teaming")],
+                    "dataset_config": DatasetAttackConfiguration(
+                        seed_groups=groups if sources is None else sources, max_total=max_total
+                    ),
+                    "include_baseline": include_baseline,
+                }
+            )
+            with patch.object(scenario, "_get_attack_technique_factories", return_value={"red_teaming": factory}):
+                await scenario.initialize_async()
+            return scenario
+
+        original = await initialize_async(selector=selector)
+        plan = original._build_run_plan()
+        restored_selector = MagicMock(spec=TechniqueSelector)
+        restored_selector.select_async.side_effect = AssertionError("Resume selected techniques again.")
+        restored = await initialize_async(selector=restored_selector, scenario_result_id=original._scenario_result_id)
+
+        count = 1 if max_total == 1 else 2
+        assert len(original._atomic_attacks) == count * (2 if include_baseline else 1)
+        assert len(restored._atomic_attacks) == len(original._atomic_attacks)
+        assert restored._build_run_plan() == plan
+        assert [atomic.atomic_attack_name for atomic in restored._atomic_attacks] == [
+            atomic.atomic_attack_name for atomic in original._atomic_attacks
+        ]
+        assert all(len(atomic.seed_groups) == 1 for atomic in restored._atomic_attacks)
+        assert selector.select_async.await_count == count
+        restored_selector.select_async.assert_not_awaited()
+        assert [group.model_dump(mode="json") for group in groups] == snapshots
+        if max_total == "all":
+            with pytest.raises(ValueError, match="planned seed-group occurrence.*missing"):
+                await initialize_async(
+                    selector=restored_selector,
+                    scenario_result_id=original._scenario_result_id,
+                    sources=groups[:1],
+                )
+            restored_selector.select_async.assert_not_awaited()
+
     @pytest.mark.parametrize("simulated", [False, True])
     async def test_resume_rejects_changed_technique_prompt_async(self, *, simulated: bool) -> None:
         target = MockPromptTarget()

@@ -54,6 +54,12 @@ the source conversation. New outgoing turns are always converted.
 
 ## Dataset catalog
 
+Chat drafts stay in memory while you visit Datasets and return. Text, attachments,
+system prompts, the selected target, and converter setup/results return to their
+original attack and conversation. A loading, missing, or read-only destination
+does not consume the draft. Starting a new attack or leaving the Chat/Datasets
+journey discards the handoff; refreshing the browser does not retain it.
+
 The **Datasets** page shows summaries of datasets already loaded into the backend's
 memory. When memory is empty, **Learn how to load datasets into memory** opens the
 [dataset-loading guide](https://microsoft.github.io/PyRIT/latest/code/datasets/loading-datasets/).

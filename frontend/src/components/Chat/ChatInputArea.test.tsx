@@ -1854,4 +1854,118 @@ describe("ChatInputArea", () => {
     ).toHaveTextContent(/selected converter produces audio output, which this target does not support/);
     expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
   });
+
+  describe("attachment blob URL lifecycle and metadata", () => {
+    let revokeSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      revokeSpy = jest.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      revokeSpy.mockRestore();
+    });
+
+    it("preserves initialAttachments blob URLs without calling URL.revokeObjectURL on mount", () => {
+      const attachment: MessageAttachment = {
+        name: "photo.png",
+        type: "image/png",
+        url: "blob:http://localhost/active-photo",
+        size: 2048,
+        draftId: "draft-photo-1",
+      };
+
+      render(
+        <TestWrapper>
+          <ChatInputArea
+            {...defaultProps}
+            initialAttachments={[attachment]}
+            initialText="restored prompt text"
+          />
+        </TestWrapper>
+      );
+
+      expect(screen.getByText(/photo\.png/)).toBeInTheDocument();
+      expect(revokeSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not revoke blob URL when restoreDraft updates attachments with identical URLs", () => {
+      const handleRef = React.createRef<ChatInputAreaHandle>();
+      const initialAttachment: MessageAttachment = {
+        name: "photo.png",
+        type: "image/png",
+        url: "blob:http://localhost/active-photo",
+        size: 2048,
+        draftId: "draft-photo-1",
+      };
+
+      render(
+        <TestWrapper>
+          <ChatInputArea
+            ref={handleRef}
+            {...defaultProps}
+            initialAttachments={[initialAttachment]}
+            initialText="prompt text"
+          />
+        </TestWrapper>
+      );
+
+      expect(revokeSpy).not.toHaveBeenCalled();
+
+      // Calling restoreDraft with the same attachment or cloned copy should NOT revoke its URL
+      act(() => {
+        handleRef.current?.restoreDraft("updated prompt", [{ ...initialAttachment }]);
+      });
+
+      expect(revokeSpy).not.toHaveBeenCalled();
+    });
+
+    it("revokes blob URL when attachment is explicitly removed", async () => {
+      const user = userEvent.setup();
+      const attachment: MessageAttachment = {
+        name: "photo.png",
+        type: "image/png",
+        url: "blob:http://localhost/remove-me",
+        size: 2048,
+        draftId: "draft-photo-2",
+      };
+
+      render(
+        <TestWrapper>
+          <ChatInputArea
+            {...defaultProps}
+            initialAttachments={[attachment]}
+            initialText="prompt text"
+          />
+        </TestWrapper>
+      );
+
+      expect(screen.getByText(/photo\.png/)).toBeInTheDocument();
+      expect(revokeSpy).not.toHaveBeenCalled();
+
+      const removeBtn = screen.getByRole("button", { name: "Remove photo.png" });
+      await user.click(removeBtn);
+
+      expect(revokeSpy).toHaveBeenCalledTimes(1);
+      expect(revokeSpy).toHaveBeenCalledWith("blob:http://localhost/remove-me");
+    });
+
+    it("retains initialTextMetadata and exposes via getTextMetadata", () => {
+      const handleRef = React.createRef<ChatInputAreaHandle>();
+      const metadata = { datasetId: "ds-123", seedIndex: 42 };
+
+      render(
+        <TestWrapper>
+          <ChatInputArea
+            ref={handleRef}
+            {...defaultProps}
+            initialText="seed prompt"
+            initialTextMetadata={metadata}
+          />
+        </TestWrapper>
+      );
+
+      expect(handleRef.current?.getTextMetadata()).toEqual(metadata);
+    });
+  });
 });
