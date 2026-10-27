@@ -57,7 +57,8 @@ class _SpeciesistBiasDataset(_RemoteDatasetLoader):
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "small"  # 50 comparative prompts and 6 split pairs (62 rows)
-    tags: frozenset[str] = frozenset({"safety", "bias"})
+    tags: frozenset[str] = frozenset({"safety", "bias", "ethics"})
+    harm_categories: list[str] = ["speciesist_bias"]
 
     _DESCRIPTION: str = (
         "Prompts naming one or two animal species, for checking whether a model treats similar "
