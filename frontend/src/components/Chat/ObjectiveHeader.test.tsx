@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
@@ -15,6 +15,73 @@ function mockOverflow(scrollWidth: number, clientWidth: number): void {
 }
 
 describe('ObjectiveHeader', () => {
+  beforeEach(() => jest.clearAllMocks())
+
+  it.each([
+    { objective: '', next: ' New goal ', draftMode: false },
+    { objective: 'Existing goal', next: 'Changed goal', draftMode: false },
+    { objective: 'Existing goal', next: '', draftMode: false },
+    { objective: 'Existing goal', next: 'Local goal', draftMode: true },
+  ])('saves objective "$next" with Enter in draft mode $draftMode', async ({ objective, next, draftMode }) => {
+    const user = userEvent.setup()
+    const onAdd = jest.fn().mockResolvedValue(undefined)
+    const onKeyDown = jest.fn()
+    render(<TestWrapper><div onKeyDown={onKeyDown}>
+      <ObjectiveHeader objective={objective} draftMode={draftMode} canAdd onAdd={onAdd} />
+    </div></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: objective ? 'Edit objective' : 'Add objective' }))
+    const input = screen.getByRole('textbox', { name: 'Attack objective' })
+    await user.clear(input)
+    if (next) await user.type(input, next)
+    onKeyDown.mockClear()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(onAdd).toHaveBeenCalledWith(next.trim(), objective))
+    expect(onAdd).toHaveBeenCalledTimes(1)
+    expect(onKeyDown).not.toHaveBeenCalled()
+    expect(screen.queryByRole('textbox', { name: 'Attack objective' })).not.toBeInTheDocument()
+  })
+
+  it('does not save an empty new objective with Enter', async () => {
+    const user = userEvent.setup()
+    const onAdd = jest.fn()
+    render(<TestWrapper><ObjectiveHeader objective="" canAdd onAdd={onAdd} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Add objective' }))
+    await user.keyboard('{Enter}')
+    expect(onAdd).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
+  it('does not save during input-method composition', async () => {
+    const user = userEvent.setup()
+    const onAdd = jest.fn()
+    render(<TestWrapper><ObjectiveHeader objective="Goal" canAdd onAdd={onAdd} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Edit objective' }))
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Attack objective' }), { key: 'Enter', isComposing: true })
+    expect(onAdd).not.toHaveBeenCalled()
+  })
+
+  it('prevents duplicate objective saves and keeps a failed draft available for retry', async () => {
+    const user = userEvent.setup()
+    let rejectSave: (error: Error) => void = () => {}
+    const onAdd = jest.fn().mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+      rejectSave = reject
+    })).mockResolvedValue(undefined)
+    render(<TestWrapper><ObjectiveHeader objective="Goal" canAdd onAdd={onAdd} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Edit objective' }))
+    const input = screen.getByRole('textbox', { name: 'Attack objective' })
+    await user.type(input, ' changed{Enter}{Enter}')
+    await user.click(screen.getByRole('button', { name: 'Saving...' }))
+    expect(onAdd).toHaveBeenCalledTimes(1)
+    expect(input).toBeDisabled()
+    await act(async () => { rejectSave(new Error('Save failed')) })
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to save the objective.')
+    expect(input).toHaveValue('Goal changed')
+    await user.click(input)
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(2))
+    expect(onAdd).toHaveBeenLastCalledWith('Goal changed', 'Goal')
+  })
+
   it.each<[string | null, string]>([
     [null, 'Not set'], ['undetermined', 'Undetermined'], ['True', 'Success'], ['False', 'Failure'],
   ])('distinguishes automated score %s as %s', async (value: string | null, label: string) => {

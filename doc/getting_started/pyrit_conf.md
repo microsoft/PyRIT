@@ -180,6 +180,8 @@ Point several deployments at the same container to share presets between them. A
 
 In a local directory, PyRIT writes a small hidden `.<name>.json.lock` file beside each preset to serialize concurrent writers. These files remain after a preset is deleted, and are safe to remove when no PyRIT process is running.
 
+A preset document may set `"show_in_scanner": false` to keep the preset out of the GUI Scanner's list of individual scanners while suites can still use it. Omitting the field shows the preset; the *Add to scanner* switch on the Scenario presets registry page edits it. PyRIT versions that predate this field cannot read a hidden preset, so upgrade every deployment that shares the source before hiding presets.
+
 ### `scenario_suites_source`
 
 Stores ScenarioSuite definitions in a local directory or Azure Blob container. An Azure URI may include a blob-name prefix:
@@ -188,7 +190,9 @@ Stores ScenarioSuite definitions in a local directory or Azure Blob container. A
 scenario_suites_source: https://account.blob.core.windows.net/pyrit-storage/scenario-suites
 ```
 
-Suites store ordered references to scenario presets and resolve each preset's current status when read. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/scenario_suites`. Local writes use the same hidden lock-file and atomic replacement behavior as scenario presets.
+Suites store ordered references to scenario presets and resolve each preset's current status when read. The `ScenarioSuiteRegistry` merges editable suites from this source with read-only suites registered by code. A stored document takes precedence when both layers use the same name, while creating or updating a document under a registered name is rejected so one name has one owner. Registered suites report no document version.
+
+A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/scenario_suites`. Local writes use the same hidden lock-file and atomic replacement behavior as scenario presets. Startup scans the configured source so malformed suite documents are reported immediately without preventing the backend from starting.
 
 ### `initialization_scripts`
 

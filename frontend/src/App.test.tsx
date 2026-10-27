@@ -3,7 +3,7 @@
  * Licensed under the MIT license.
  */
 
-import { Suspense } from "react";
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router";
@@ -182,9 +182,11 @@ jest.mock("./components/Layout/MainLayout", () => {
 
 jest.mock("./components/Chat/ChatWindow", () => {
   const { useLocation } = jest.requireActual("react-router") as typeof import("react-router");
+  const { useChatDraftHandoff } = jest.requireActual("./hooks/useChatDraftHandoff") as typeof import("./hooks/useChatDraftHandoff");
   const MockChatWindow = ({
     onNewAttack,
     activeTarget,
+    draftContext,
     attackResultId,
     conversationId,
     activeConversationId,
@@ -201,6 +203,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
   }: {
     onNewAttack: () => void;
     activeTarget: unknown;
+    draftContext?: Pick<import("./types").ChatDraftContextState, "originatingAttackId" | "originatingConversationId">;
     attackResultId: string | null;
     conversationId: string | null;
     activeConversationId: string | null;
@@ -216,11 +219,73 @@ jest.mock("./components/Chat/ChatWindow", () => {
     isLoadingAttack?: boolean;
   }) => {
     const location = useLocation();
+    const draftHandoff = useChatDraftHandoff();
+    const [composerText, setComposerText] = useState(() => draftHandoff.preservedDraft?.draft?.text ?? "none");
+    const activeTextRef = useRef(composerText);
+    useLayoutEffect(() => {
+      activeTextRef.current = composerText;
+    }, [composerText]);
+
+    const restoredRef = useRef(false);
+    useEffect(() => {
+      if (!restoredRef.current && draftHandoff.preservedDraft) {
+        restoredRef.current = true;
+        setComposerText(draftHandoff.preservedDraft.draft.text);
+        draftHandoff.consumePreservedDraft(attackResultId, activeConversationId ?? conversationId);
+      }
+    }, [draftHandoff, attackResultId, activeConversationId, conversationId]);
+
+    const preserveDraftRef = useRef(draftHandoff.preserveDraft);
+    useLayoutEffect(() => {
+      preserveDraftRef.current = draftHandoff.preserveDraft;
+    }, [draftHandoff.preserveDraft]);
+
+    const routeRef = useRef({
+      attackResultId,
+      convId: activeConversationId ?? conversationId,
+      path: `${location.pathname}${location.search}${location.hash}`,
+    });
+    useLayoutEffect(() => {
+      routeRef.current = {
+        attackResultId,
+        convId: activeConversationId ?? conversationId,
+        path: `${location.pathname}${location.search}${location.hash}`,
+      };
+    }, [attackResultId, activeConversationId, conversationId, location.pathname, location.search, location.hash]);
+
+    useEffect(() => {
+      return () => {
+        if (activeTextRef.current && activeTextRef.current !== "none") {
+          preserveDraftRef.current({
+            originatingAttackId: routeRef.current.attackResultId,
+            originatingConversationId: routeRef.current.convId,
+            originatingPath: routeRef.current.path,
+            draft: { text: activeTextRef.current, attachments: [] },
+          });
+        }
+      };
+    }, []);
+
     if (attackResultId === "ar-123" && mockCreatedAttackRender) {
       throw mockCreatedAttackRender;
     }
     return (
       <div data-testid="chat-window">
+        <span data-testid="draft-attack-id">{draftContext?.originatingAttackId ?? "none"}</span>
+        <span data-testid="draft-conversation-id">{draftContext?.originatingConversationId ?? "none"}</span>
+        <span data-testid="preserved-draft-text">{composerText}</span>
+        <button
+          onClick={() => setComposerText("preserved prompt draft")}
+          data-testid="preserve-draft"
+        >
+          Preserve Draft
+        </button>
+        <button
+          onClick={() => setComposerText("none")}
+          data-testid="clear-draft"
+        >
+          Clear Draft
+        </button>
         <span data-testid="attack-result-id">{attackResultId ?? "none"}</span>
         <span data-testid="conversation-id">{conversationId ?? "none"}</span>
         <span data-testid="active-conversation-id">{activeConversationId ?? "none"}</span>
@@ -411,7 +476,23 @@ jest.mock("./components/Home/Home", () => {
 });
 
 jest.mock("./components/Datasets/DatasetCatalog", () => {
-  const MockDatasetCatalog = () => <div data-testid="dataset-catalog" />;
+  const { useLocation, useNavigate } = jest.requireActual<typeof import("react-router")>("react-router");
+  const MockDatasetCatalog = () => {
+    const location = useLocation();
+    const navigate = useNavigate();
+    return (
+      <div data-testid="dataset-catalog">
+        <span data-testid="dataset-location">{`${location.pathname}${location.search}`}</span>
+        <span data-testid="dataset-state">{JSON.stringify(location.state)}</span>
+        <button
+          onClick={() => navigate("/datasets?filter=harmful", { state: { catalogPath: "/datasets?filter=harmful", cursors: ["cur-1"] } })}
+          data-testid="dataset-set-filter"
+        >
+          Set Dataset Filter
+        </button>
+      </div>
+    );
+  };
   MockDatasetCatalog.displayName = "MockDatasetCatalog";
   return {
     __esModule: true,
@@ -438,16 +519,7 @@ jest.mock("./components/Datasets/DatasetSelection", () => {
 });
 
 jest.mock("./components/Scenarios/ScenarioCatalog", () => {
-  const MockScenarioCatalog = () => <div data-testid="scenario-catalog" />;
-  MockScenarioCatalog.displayName = "MockScenarioCatalog";
-  return {
-    __esModule: true,
-    default: MockScenarioCatalog,
-  };
-});
-
-jest.mock("./components/ScenarioPresets/ScenarioPresetLibrary", () => {
-  const MockScenarioPresetLibrary = ({
+  const MockScenarioCatalog = ({
     operationId,
     defaultsReady,
   }: {
@@ -455,15 +527,24 @@ jest.mock("./components/ScenarioPresets/ScenarioPresetLibrary", () => {
     defaultsReady: boolean;
   }) => (
     <div
-      data-testid="scenario-preset-library"
+      data-testid="scenario-catalog"
       data-operation-id={operationId ?? ""}
       data-defaults-ready={String(defaultsReady)}
     />
   );
-  MockScenarioPresetLibrary.displayName = "MockScenarioPresetLibrary";
+  MockScenarioCatalog.displayName = "MockScenarioCatalog";
   return {
     __esModule: true,
-    default: MockScenarioPresetLibrary,
+    default: MockScenarioCatalog,
+  };
+});
+
+jest.mock("./components/Registry/ScenarioPresetRegistry", () => {
+  const MockScenarioPresetRegistry = () => <div data-testid="scenario-preset-registry" />;
+  MockScenarioPresetRegistry.displayName = "MockScenarioPresetRegistry";
+  return {
+    __esModule: true,
+    default: MockScenarioPresetRegistry,
   };
 });
 
@@ -484,12 +565,16 @@ jest.mock("./components/ScenarioPresets/ScenarioPresetEditor", () => {
   };
 });
 
-jest.mock("./components/ScenarioSuites/ScenarioSuiteLibrary", () => {
-  const MockScenarioSuiteLibrary = () => <div data-testid="scenario-suite-library" />;
-  MockScenarioSuiteLibrary.displayName = "MockScenarioSuiteLibrary";
+jest.mock("./components/ScenarioSuites/ScenarioSuiteExecutionPage", () => {
+  const { useParams } = jest.requireActual("react-router");
+  const MockScenarioSuiteExecutionPage = () => {
+    const { executionId } = useParams();
+    return <div data-testid="scenario-suite-execution-page">{executionId ?? ""}</div>;
+  };
+  MockScenarioSuiteExecutionPage.displayName = "MockScenarioSuiteExecutionPage";
   return {
     __esModule: true,
-    default: MockScenarioSuiteLibrary,
+    default: MockScenarioSuiteExecutionPage,
   };
 });
 
@@ -739,24 +824,28 @@ describe("App", () => {
     expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/chat$/);
   });
 
-  it("renders the preset library as a registry section", () => {
+  it("renders presets and suites together as a registry section", () => {
     renderApp("/registry/scenario-presets");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "registry"
     );
-    expect(screen.getByTestId("scenario-preset-library")).toBeInTheDocument();
+    expect(screen.getByTestId("scenario-preset-registry")).toBeInTheDocument();
   });
 
-  it("renders the suite library as a registry section", () => {
-    renderApp("/registry/scenario-suites");
-
-    expect(screen.getByTestId("main-layout")).toHaveAttribute(
-      "data-current-view",
-      "registry"
+  it("redirects a bookmarked suite library URL to the combined registry section", async () => {
+    render(
+      <MemoryRouter initialEntries={["/registry/scenario-suites"]}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
     );
-    expect(screen.getByTestId("scenario-suite-library")).toBeInTheDocument();
+
+    expect(await screen.findByTestId("scenario-preset-registry")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(
+      /^\/registry\/scenario-presets$/
+    );
   });
 
   it("renders the suite editor as a nested registry route", () => {
@@ -767,7 +856,17 @@ describe("App", () => {
     expect(editor).toHaveTextContent("nightly_suite");
   });
 
-  it("passes the globally resolved Operation to the preset library", async () => {
+  it("renders transient suite execution progress under the scanner", () => {
+    renderApp("/scanner/suites/executions/execution-1");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-suite-execution-page")).toHaveTextContent("execution-1");
+  });
+
+  it("passes the globally resolved Operation to the scanner, which launches suites", async () => {
     const operationId = "11111111-1111-4111-8111-111111111111";
     writeUserPreferences("local", {
       ...DEFAULT_USER_PREFERENCES,
@@ -775,16 +874,16 @@ describe("App", () => {
     });
     mockGetOperation.mockResolvedValue({
       id: operationId,
-      name: "Preset launch",
+      name: "Suite launch",
       created_at: "2026-10-20T18:00:00Z",
     });
 
-    renderApp("/registry/scenario-presets");
+    renderApp("/scanner");
 
-    const library = screen.getByTestId("scenario-preset-library");
+    const catalog = screen.getByTestId("scenario-catalog");
     await waitFor(() => {
-      expect(library).toHaveAttribute("data-operation-id", operationId);
-      expect(library).toHaveAttribute("data-defaults-ready", "true");
+      expect(catalog).toHaveAttribute("data-operation-id", operationId);
+      expect(catalog).toHaveAttribute("data-defaults-ready", "true");
     });
   });
 
@@ -796,7 +895,7 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByTestId("scenario-preset-library")).toBeInTheDocument();
+    expect(await screen.findByTestId("scenario-preset-registry")).toBeInTheDocument();
     expect(screen.getByLabelText("Current URL")).toHaveTextContent(
       /^\/registry\/scenario-presets$/
     );
@@ -1327,17 +1426,15 @@ describe("App", () => {
     fireEvent.click(screen.getByTestId("nav-history"));
     fireEvent.click(screen.getByTestId("open-attack-2"));        // ar-attack-2
 
-    // BEFORE getAttack resolves: ChatWindow must NOT see the stale conv id
-    // alongside the new attack id. While attack B loads, its data is not yet
-    // ready, so both the attack id and conversation id are withheld — which
-    // gates ChatWindow's /messages fetch and prevents the cross-attack 400.
+    // The loading shell must not use attack A's active conversation.
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "chat"
     );
     expect(screen.getByTestId("attack-result-id")).toHaveTextContent("none");
     expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("none");
-    expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
+    expect(screen.getByTestId("draft-attack-id")).toHaveTextContent("ar-attack-2");
+    expect(screen.getByTestId("draft-conversation-id")).toHaveTextContent("none");
 
     // After getAttack resolves: the conv id belonging to attack B is committed.
     resolveGetAttack({
@@ -1349,6 +1446,7 @@ describe("App", () => {
       expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("attack-conv-2")
     );
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("attack-conv-2");
+    expect(screen.getByTestId("draft-conversation-id")).toHaveTextContent("attack-conv-2");
   });
 
   it("merges default labels from backend version API", async () => {
@@ -2376,5 +2474,104 @@ describe("App", () => {
     );
     expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
     expect(mockListTargets).not.toHaveBeenCalled();
+  });
+
+  it("preserves unsaved chat draft across navigation to datasets and back", async () => {
+    const user = userEvent.setup();
+    renderApp("/chat");
+
+    await waitFor(() => expect(screen.getByTestId("chat-window")).toBeInTheDocument());
+    expect(screen.getByTestId("preserved-draft-text")).toHaveTextContent("none");
+
+    // Simulate preserving a draft in unsaved chat
+    await user.click(screen.getByTestId("preserve-draft"));
+    expect(screen.getByTestId("preserved-draft-text")).toHaveTextContent("preserved prompt draft");
+
+    // Navigate to Datasets via sidebar button
+    await user.click(screen.getByTestId("nav-datasets"));
+    await waitFor(() => expect(screen.getByTestId("dataset-catalog")).toBeInTheDocument());
+
+    // Navigate back to Chat via sidebar button
+    await user.click(screen.getByTestId("nav-chat"));
+    await waitFor(() => expect(screen.getByTestId("chat-window")).toBeInTheDocument());
+
+    // Draft and route are preserved
+    expect(screen.getByTestId("preserved-draft-text")).toHaveTextContent("preserved prompt draft");
+    expect(screen.getByTestId("attack-result-id")).toHaveTextContent("none");
+  });
+
+  it("preserves attack conversation origin and restores datasets filter location when navigating between chat and datasets", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-nav-1",
+      conversation_id: "conv-nav-1",
+      labels: {},
+      related_conversation_ids: [],
+      target: null,
+    });
+
+    const user = userEvent.setup();
+    renderApp("/attacks/ar-nav-1/conversations/conv-nav-1");
+
+    await waitFor(() => expect(screen.getByTestId("chat-window")).toBeInTheDocument());
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/attacks/ar-nav-1/conversations/conv-nav-1");
+
+    // Preserve draft from persisted attack conversation
+    await user.click(screen.getByTestId("preserve-draft"));
+    expect(screen.getByTestId("preserved-draft-text")).toHaveTextContent("preserved prompt draft");
+
+    // Navigate to Datasets
+    await user.click(screen.getByTestId("nav-datasets"));
+    await waitFor(() => expect(screen.getByTestId("dataset-catalog")).toBeInTheDocument());
+
+    // Apply a dataset filter (modifies datasets location)
+    await user.click(screen.getByTestId("dataset-set-filter"));
+    await waitFor(() =>
+      expect(screen.getByTestId("dataset-location")).toHaveTextContent("/datasets?filter=harmful")
+    );
+
+    // Navigate back to Chat - should return to originating attack conversation
+    await user.click(screen.getByTestId("nav-chat"));
+    await waitFor(() => expect(screen.getByTestId("chat-window")).toBeInTheDocument());
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/attacks/ar-nav-1/conversations/conv-nav-1");
+
+    // Navigate back to Datasets - should restore exact filtered location and state
+    await user.click(screen.getByTestId("nav-datasets"));
+    await waitFor(() => expect(screen.getByTestId("dataset-catalog")).toBeInTheDocument());
+    expect(screen.getByTestId("dataset-location")).toHaveTextContent("/datasets?filter=harmful");
+    expect(screen.getByTestId("dataset-state")).toHaveTextContent('{"catalogPath":"/datasets?filter=harmful","cursors":["cur-1"]}');
+  });
+
+  it("clearing draft text stays cleared after another round trip to datasets", async () => {
+    const user = userEvent.setup();
+    renderApp("/chat");
+
+    await waitFor(() => expect(screen.getByTestId("chat-window")).toBeInTheDocument());
+    expect(screen.getByTestId("preserved-draft-text")).toHaveTextContent("none");
+
+    // 1. User types prompt and preserves draft
+    await user.click(screen.getByTestId("preserve-draft"));
+    expect(screen.getByTestId("preserved-draft-text")).toHaveTextContent("preserved prompt draft");
+
+    // 2. User visits Datasets
+    await user.click(screen.getByTestId("nav-datasets"));
+    await waitFor(() => expect(screen.getByTestId("dataset-catalog")).toBeInTheDocument());
+
+    // 3. User returns to Chat: draft is restored and consumed
+    await user.click(screen.getByTestId("nav-chat"));
+    await waitFor(() => expect(screen.getByTestId("chat-window")).toBeInTheDocument());
+    expect(screen.getByTestId("preserved-draft-text")).toHaveTextContent("preserved prompt draft");
+
+    // 4. User clears all prompt text
+    await user.click(screen.getByTestId("clear-draft"));
+    expect(screen.getByTestId("preserved-draft-text")).toHaveTextContent("none");
+
+    // 5. User visits Datasets again
+    await user.click(screen.getByTestId("nav-datasets"));
+    await waitFor(() => expect(screen.getByTestId("dataset-catalog")).toBeInTheDocument());
+
+    // 6. User returns to Chat again: cleared prompt must NOT resurrect the old deleted text
+    await user.click(screen.getByTestId("nav-chat"));
+    await waitFor(() => expect(screen.getByTestId("chat-window")).toBeInTheDocument());
+    expect(screen.getByTestId("preserved-draft-text")).toHaveTextContent("none");
   });
 });

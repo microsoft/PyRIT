@@ -491,7 +491,12 @@ def test_readiness_is_bounded_and_requires_http_200(*, bash_path: str, tmp_path:
         "frontend-http-failure",
         "missing-frontend",
         "diagnostics-failure",
-        "signal",
+        pytest.param(
+            "signal",
+            marks=pytest.mark.skipif(
+                os.name == "nt", reason="POSIX signal handling is not reliable in Git Bash on Windows"
+            ),
+        ),
     ],
 )
 def test_smoke_failures_dump_diagnostics_and_remove_container(*, bash_path: str, tmp_path: Path, case: str) -> None:
@@ -513,6 +518,7 @@ def test_smoke_failures_dump_diagnostics_and_remove_container(*, bash_path: str,
         assert result.returncode == 143
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX signal handling is not reliable in Git Bash on Windows")
 @pytest.mark.parametrize("cleanup_stage", ["logs", "rm"])
 @pytest.mark.parametrize("cleanup_signal", ["INT", "TERM"])
 @pytest.mark.parametrize(
