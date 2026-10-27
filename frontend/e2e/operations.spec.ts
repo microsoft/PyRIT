@@ -441,7 +441,7 @@ test('exports selected findings as Word and Markdown @seeded', async ({ page, re
     const downloaded = page.waitForEvent('download')
     await dialog.getByRole('button', { name: button, exact: true }).click()
     expect((await exportRequest).postDataJSON()).toEqual({
-      finding_ids: selectedTitles.map(findingId), format: expectedFormat, dashboard_base_url: `${origin}/`,
+      finding_ids: selectedTitles.map(findingId), format: expectedFormat, dashboard_origin: origin,
     })
     const file = await downloaded
     await expect(dialog).toHaveCount(0)
@@ -481,7 +481,7 @@ test('exports selected findings as Word and Markdown @seeded', async ({ page, re
   for (const title of excludedTitles) {
     expect(markdown).not.toContain(title)
   }
-  expect(markdown).toContain(`**Description**\n\n\`\`\`\`text\n${description}\n\`\`\`\``)
+  expect(markdown).toContain(`**Description:** ${description.split('\n')[0]}\\\n`)
   const link = `${origin}/attacks/${attack.attack_result_id}/conversations/${attack.conversation_id}` +
     `?findingEvidenceId=${evidence.item.id}`
   // As in Word, the evidence bullet's objective is the link text.

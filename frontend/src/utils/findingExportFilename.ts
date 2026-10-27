@@ -5,8 +5,8 @@ const MARK = /^\p{M}$/u
 
 /**
  * Name an exported findings document after its Operation and the user's local time, e.g.
- * `copyrit-findings-synthetic-evaluation-2026-10-22-1258.docx`. The backend applies the same
- * rule in labelled UTC for clients that use its suggested name.
+ * `copyrit-findings-synthetic-evaluation-2026-10-22-1258.docx`. The backend's suggested name, for
+ * other clients, uses the Operation ID and labelled UTC instead.
  */
 export function findingExportFilename(operation: Pick<Operation, 'id' | 'name'>, extension: string, now: Date): string {
   const name = Array.from(

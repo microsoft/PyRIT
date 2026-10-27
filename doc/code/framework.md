@@ -416,7 +416,7 @@ See [message normalizers](./targets/11_message_normalizer) for capability behavi
 
 **Responsibility**: The Output module is responsible for writing different components in different formats to different places.
 
-- It renders the core result types — attack results, scenario results, conversations, and scores — without those components needing to know how they are displayed.
+- It renders the core result types — attack results, scenario results, conversations, scores, and finding reports — without those components needing to know how they are displayed.
 - Format and destination are decoupled: a **format** (e.g. pretty ANSI, Markdown, JSON) is separate from a **sink** (stdout, file, Jupyter), so any result can be rendered any way to anywhere.
 - **Does not own**: deciding *what* to render or *when*. Components hand results to output; format classes only turn data into strings and never fetch data, touch `CentralMemory`, or call `print()` directly (that's isolated to leaf printer classes).
 

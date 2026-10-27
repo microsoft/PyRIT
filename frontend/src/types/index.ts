@@ -2026,6 +2026,6 @@ export type FindingExportFormat = 'docx' | 'markdown'
 export interface FindingExportRequest {
   finding_ids: string[]
   format: FindingExportFormat
-  /** The dashboard address, including any path prefix, that evidence links open. */
-  dashboard_base_url: string
+  /** The dashboard origin that evidence links open. */
+  dashboard_origin: string
 }

@@ -96,7 +96,7 @@ describe("api service", () => {
       const request: FindingExportRequest = {
         finding_ids: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],
         format: "markdown",
-        dashboard_base_url: "https://pyrit.example.test/red-team/",
+        dashboard_origin: "https://pyrit.example.test",
       };
       const blob = new Blob(["# Findings"], { type: "text/markdown" });
       const controller = new AbortController();

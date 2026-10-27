@@ -3,7 +3,6 @@
 
 from collections.abc import Awaitable
 from typing import Annotated, TypeVar
-from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
@@ -178,15 +177,10 @@ async def export_operation_findings_async(*, operation_id: UUID, request: Findin
         Response: The complete document as an attachment.
     """
     exported = await _require_operation_async(export_findings_async(operation_id=operation_id, request=request))
-    # Headers can't carry raw non-ASCII text, so such names use RFC 5987 encoding, as Starlette's FileResponse does.
-    quoted = quote(exported.filename)
-    disposition = (
-        f'attachment; filename="{exported.filename}"'
-        if quoted == exported.filename
-        else f"attachment; filename*=utf-8''{quoted}"
-    )
     return Response(
-        content=exported.content, media_type=exported.media_type, headers={"Content-Disposition": disposition}
+        content=exported.content,
+        media_type=exported.media_type,
+        headers={"Content-Disposition": f'attachment; filename="{exported.filename}"'},
     )
 
 

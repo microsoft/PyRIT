@@ -726,10 +726,12 @@ the link, never the attack. Deleting a finding removes its links the same way.
 
 **Export findings** on an operation page downloads the findings you select as
 one document to copy into a larger report. The dialog lists every finding in the
-operation, not only the 20 on the current page, and starts with all of them
-selected. Clear the findings to leave out, or use **Select all** to select or
-clear the whole list; it shows a mixed state when only some are selected. A
-finding added after you open the dialog appears the next time you open it.
+operation, not only the 20 on the current page, each with its severity and
+creation time, and starts with all of them selected. Clear the findings to leave
+out, or use **Select all** to select or clear the whole list; it shows a mixed
+state when only some are selected. A finding added after you open the dialog
+appears the next time you open it. If the dialog refreshes the list because a
+selected finding was deleted, new findings appear straight away, unchecked.
 
 Under **Format**, choose **Word (.docx)**, the default, or **Markdown (.md)**, then
 **Download Word** or **Download Markdown**. Both formats hold the same findings,
@@ -772,7 +774,8 @@ with access to this PyRIT deployment.
 
 Each download reads the findings and evidence as saved at that moment, and its
 links open the live attacks, which can gain messages and scores later. If a
-selected finding is deleted before you download, the download fails.
+selected finding is deleted before you download, the dialog refreshes the list,
+removes that finding from your selection and names it.
 
 > **Note:** Findings, attack objectives, and score rationales can contain
 > sensitive content, and nothing is redacted automatically. Your PyRIT server

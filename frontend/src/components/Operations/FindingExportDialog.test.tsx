@@ -42,6 +42,9 @@ const BETA = syntheticFinding(2, { title: 'Beta', severity: 'low' })
 const GAMMA = syntheticFinding(3, { title: 'Gamma', severity: 'informational' })
 const BLOB = new Blob(['synthetic document'])
 const FILENAME_TIME = '\\d{4}-\\d{2}-\\d{2}-\\d{4}'
+const FINDING_NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'Finding not found' } } }
+const OPERATION_NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'Operation not found' } } }
+const REVIEW_AGAIN = 'Review the list and download again.'
 
 function renderDialog(operation: Operation = OPERATION): ReturnType<typeof render> {
   return render(
@@ -61,10 +64,6 @@ beforeEach(() => {
   jest.clearAllMocks()
   jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([ALPHA, BETA, GAMMA]))
   jest.mocked(operationsApi.exportFindings).mockResolvedValue(BLOB)
-})
-
-afterEach(() => {
-  delete process.env.BASE_URL
 })
 
 describe('FindingExportDialog', () => {
@@ -107,7 +106,7 @@ describe('FindingExportDialog', () => {
       {
         finding_ids: [LAST_PAGE_FINDING.id],
         format: 'markdown',
-        dashboard_base_url: 'http://localhost/',
+        dashboard_origin: 'http://localhost',
       },
       expect.any(AbortSignal),
     )
@@ -188,7 +187,7 @@ describe('FindingExportDialog', () => {
 
     await waitFor(() => expect(downloadFile).toHaveBeenCalledTimes(1))
     expect(operationsApi.exportFindings).toHaveBeenCalledWith(OPERATION.id, {
-      finding_ids: [ALPHA.id, GAMMA.id], format: 'docx', dashboard_base_url: 'http://localhost/',
+      finding_ids: [ALPHA.id, GAMMA.id], format: 'docx', dashboard_origin: 'http://localhost',
     }, expect.any(AbortSignal))
     expect(downloadFile).toHaveBeenCalledWith(
       BLOB, expect.stringMatching(new RegExp(`^copyrit-findings-synthetic-evaluation-${FILENAME_TIME}\\.docx$`)),
@@ -248,6 +247,150 @@ describe('FindingExportDialog', () => {
     }
   })
 
+  it('shows each finding\'s creation time without changing its checkbox name', async () => {
+    const user = userEvent.setup()
+    const earlier = syntheticFinding(4, { title: 'Repeated title', created_at: '2026-10-20T08:15:00Z' })
+    const later = syntheticFinding(5, { title: 'Repeated title', created_at: '2026-10-21T17:45:00Z' })
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([later, earlier]))
+    renderDialog()
+    const dialog = await openDialog(user)
+
+    const rows = await within(dialog).findAllByRole('checkbox', { name: 'Repeated title' })
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toHaveAccessibleDescription(new Date(later.created_at).toLocaleString())
+    expect(rows[1]).toHaveAccessibleDescription(new Date(earlier.created_at).toLocaleString())
+    expect(within(dialog).getByText(new Date(earlier.created_at).toLocaleString())).toBeInTheDocument()
+  })
+
+  it('reloads the list, keeps the rest of the selection and leaves new findings unchecked when a finding was deleted', async () => {
+    const user = userEvent.setup()
+    const delta = syntheticFinding(4, { title: 'Delta' })
+    jest.mocked(operationsApi.listFindings)
+      .mockResolvedValueOnce(onePage([ALPHA, BETA, GAMMA]))
+      .mockResolvedValueOnce(onePage([BETA, GAMMA, delta]))
+    jest.mocked(operationsApi.exportFindings).mockRejectedValueOnce(FINDING_NOT_FOUND)
+    renderDialog()
+    const dialog = await openDialog(user)
+    await user.click(await within(dialog).findByRole('checkbox', { name: BETA.title }))
+    await user.click(within(dialog).getByRole('button', { name: 'Download Word' }))
+
+    expect(await within(dialog).findByText(
+      `"${ALPHA.title}" no longer exists and was removed from your selection. ${REVIEW_AGAIN}`,
+    )).toBeInTheDocument()
+    expect(operationsApi.listFindings).toHaveBeenCalledTimes(2)
+    expect(within(dialog).queryByRole('checkbox', { name: ALPHA.title })).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('checkbox', { name: BETA.title })).not.toBeChecked()
+    expect(within(dialog).getByRole('checkbox', { name: GAMMA.title })).toBeChecked()
+    expect(within(dialog).getByRole('checkbox', { name: delta.title })).not.toBeChecked()
+    expect(within(dialog).queryByText(/Could not export findings/)).not.toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Download Word' }))
+    await waitFor(() => expect(downloadFile).toHaveBeenCalledTimes(1))
+    expect(jest.mocked(operationsApi.exportFindings).mock.calls[1][1].finding_ids).toEqual([GAMMA.id])
+  })
+
+  it('names every deleted finding in one warning', async () => {
+    const user = userEvent.setup()
+    jest.mocked(operationsApi.listFindings)
+      .mockResolvedValueOnce(onePage([ALPHA, BETA, GAMMA]))
+      .mockResolvedValueOnce(onePage([BETA]))
+    jest.mocked(operationsApi.exportFindings).mockRejectedValueOnce(FINDING_NOT_FOUND)
+    renderDialog()
+    const dialog = await openDialog(user)
+    await within(dialog).findByRole('checkbox', { name: 'Select all' })
+    await user.click(within(dialog).getByRole('button', { name: 'Download Word' }))
+
+    expect(await within(dialog).findByText(
+      `"${ALPHA.title}", "${GAMMA.title}" no longer exist and were removed from your selection. ${REVIEW_AGAIN}`,
+    )).toBeInTheDocument()
+    expect(within(dialog).getByRole('checkbox', { name: BETA.title })).toBeChecked()
+  })
+
+  it('keeps focus on Download while the list reloads after a deleted finding', async () => {
+    const user = userEvent.setup()
+    const reload = deferred<FindingListResponse>()
+    jest.mocked(operationsApi.listFindings)
+      .mockResolvedValueOnce(onePage([ALPHA, BETA, GAMMA]))
+      .mockReturnValueOnce(reload.promise)
+    jest.mocked(operationsApi.exportFindings).mockRejectedValueOnce(FINDING_NOT_FOUND)
+    renderDialog()
+    const dialog = await openDialog(user)
+    await within(dialog).findByRole('checkbox', { name: 'Select all' })
+    within(dialog).getByRole('button', { name: 'Download Word' }).focus()
+    await user.keyboard('{Enter}')
+
+    await within(dialog).findByText('Loading findings…')
+    const download = within(dialog).getByRole('button', { name: 'Download Word' })
+    // A natively disabled button drops focus out of the dialog; an aria-disabled one keeps it.
+    expect(download).not.toBeDisabled()
+    expect(download).toHaveAttribute('aria-disabled', 'true')
+    expect(download).toHaveFocus()
+
+    await act(async () => { reload.resolve(onePage([BETA, GAMMA])) })
+    expect(download).toBeEnabled()
+    expect(download).not.toHaveAttribute('aria-disabled')
+    expect(download).toHaveFocus()
+  })
+
+  it('keeps Download focusable but unavailable when every selected finding was deleted', async () => {
+    const user = userEvent.setup()
+    jest.mocked(operationsApi.listFindings)
+      .mockResolvedValueOnce(onePage([ALPHA, BETA, GAMMA]))
+      .mockResolvedValueOnce(onePage([ALPHA, GAMMA]))
+    jest.mocked(operationsApi.exportFindings).mockRejectedValueOnce(FINDING_NOT_FOUND)
+    renderDialog()
+    const dialog = await openDialog(user)
+    await user.click(await within(dialog).findByRole('checkbox', { name: 'Select all' }))
+    await user.click(within(dialog).getByRole('checkbox', { name: BETA.title }))
+    await user.click(within(dialog).getByRole('button', { name: 'Download Word' }))
+
+    expect(await within(dialog).findByText(
+      `"${BETA.title}" no longer exists and was removed from your selection. ${REVIEW_AGAIN}`,
+    )).toBeInTheDocument()
+    const download = within(dialog).getByRole('button', { name: 'Download Word' })
+    expect(download).not.toBeDisabled()
+    expect(download).toHaveAttribute('aria-disabled', 'true')
+    expect(download).toHaveFocus()
+    await user.click(download)
+    expect(operationsApi.exportFindings).toHaveBeenCalledTimes(1)
+
+    await user.click(within(dialog).getByRole('checkbox', { name: ALPHA.title }))
+    expect(download).toBeEnabled()
+  })
+
+  it('shows the export error when the reload still finds every selected finding', async () => {
+    const user = userEvent.setup()
+    jest.mocked(operationsApi.exportFindings).mockRejectedValueOnce(FINDING_NOT_FOUND)
+    renderDialog()
+    const dialog = await openDialog(user)
+    await within(dialog).findByRole('checkbox', { name: 'Select all' })
+    await user.click(within(dialog).getByRole('button', { name: 'Download Word' }))
+
+    expect(await within(dialog).findByText('Could not export findings: Finding not found')).toBeInTheDocument()
+    expect(operationsApi.listFindings).toHaveBeenCalledTimes(2)
+    for (const finding of [ALPHA, BETA, GAMMA]) {
+      expect(within(dialog).getByRole('checkbox', { name: finding.title })).toBeChecked()
+    }
+    expect(within(dialog).queryByText(new RegExp(REVIEW_AGAIN))).not.toBeInTheDocument()
+  })
+
+  it('shows the load error when the Operation is gone after a deleted-finding reload', async () => {
+    const user = userEvent.setup()
+    jest.mocked(operationsApi.listFindings)
+      .mockResolvedValueOnce(onePage([ALPHA, BETA, GAMMA]))
+      .mockRejectedValueOnce(OPERATION_NOT_FOUND)
+    jest.mocked(operationsApi.exportFindings).mockRejectedValueOnce(OPERATION_NOT_FOUND)
+    renderDialog()
+    const dialog = await openDialog(user)
+    await within(dialog).findByRole('checkbox', { name: 'Select all' })
+    await user.click(within(dialog).getByRole('button', { name: 'Download Word' }))
+
+    expect(await within(dialog).findByText(/Could not load findings: Operation not found/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Download Word' })).toBeDisabled()
+  })
+
   it('keeps the dialog and selection when the browser download cannot start', async () => {
     const user = userEvent.setup()
     jest.mocked(downloadFile).mockImplementationOnce(() => { throw new Error('Download blocked') })
@@ -303,19 +446,6 @@ describe('FindingExportDialog', () => {
       'Findings, attack objectives and score rationales can contain sensitive content. '
       + 'Nothing is redacted automatically.',
     )).toBeInTheDocument()
-  })
-
-  it('sends the dashboard address with its application path prefix', async () => {
-    const user = userEvent.setup()
-    process.env.BASE_URL = '/team/pyrit/'
-    renderDialog()
-    const dialog = await openDialog(user)
-    await within(dialog).findByRole('checkbox', { name: 'Select all' })
-    await user.click(within(dialog).getByRole('button', { name: 'Download Word' }))
-
-    await waitFor(() => expect(operationsApi.exportFindings).toHaveBeenCalledTimes(1))
-    expect(jest.mocked(operationsApi.exportFindings).mock.calls[0][1].dashboard_base_url)
-      .toBe('http://localhost/team/pyrit/')
   })
 
   it('ignores a list that finishes after the dialog was closed and reopened', async () => {

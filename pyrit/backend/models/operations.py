@@ -144,15 +144,13 @@ class FindingExportFormat(str, Enum):
 
 
 class FindingExportRequest(BaseModel):
-    """The findings to download, the file format, and the dashboard address their evidence links open."""
+    """The findings to download, the file format, and the dashboard origin their evidence links open."""
 
     model_config = ConfigDict(extra="forbid")
 
     finding_ids: list[UUID] = Field(min_length=1, description="Distinct findings of the operation to include")
     format: FindingExportFormat = FindingExportFormat.DOCX
-    dashboard_base_url: AnyHttpUrl = Field(
-        description="The dashboard's address, including any path prefix, that evidence links open"
-    )
+    dashboard_origin: AnyHttpUrl = Field(description="The dashboard's origin, which evidence links open")
 
     @field_validator("finding_ids")
     @classmethod
@@ -170,18 +168,24 @@ class FindingExportRequest(BaseModel):
             raise ValueError("Each finding can be selected only once.")
         return finding_ids
 
-    @field_validator("dashboard_base_url")
+    @field_validator("dashboard_origin")
     @classmethod
-    def _reject_credentials_query_and_fragment(cls, url: AnyHttpUrl) -> AnyHttpUrl:
+    def _require_origin(cls, url: AnyHttpUrl) -> AnyHttpUrl:
         """
-        Allow an application path prefix, but not credentials, a query, or a fragment.
+        Accept only a scheme, host, and optional port.
 
         Returns:
-            AnyHttpUrl: The dashboard address.
+            AnyHttpUrl: The dashboard origin.
 
         Raises:
-            ValueError: If the address has credentials, a query, or a fragment.
+            ValueError: If the address has credentials, a path, a query, or a fragment.
         """
-        if url.username or url.password or url.query is not None or url.fragment is not None:
-            raise ValueError("Must not include credentials, a query, or a fragment.")
+        if (
+            url.username
+            or url.password
+            or url.path not in (None, "/")
+            or url.query is not None
+            or url.fragment is not None
+        ):
+            raise ValueError("Must be an origin, without credentials, a path, a query, or a fragment.")
         return url
