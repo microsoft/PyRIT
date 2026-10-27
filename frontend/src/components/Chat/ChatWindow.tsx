@@ -993,7 +993,6 @@ export default function ChatWindow({
         && typeof targetResponseStatus?.request_turn_number === 'number'
         && targetResponseStatus.request_turn_number === operation.progress.request_turn_number
         && lastMessage?.role === 'assistant' && lastMessage.message_pieces.length > 0
-        && lastMessage.message_pieces.every((piece) => piece.converted_value_data_type === 'text')
       ) {
         setUndoableSend({
           attackResultId: operation.attackResultId,

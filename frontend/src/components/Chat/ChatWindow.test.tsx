@@ -1461,6 +1461,7 @@ describe("ChatWindow Integration", () => {
 
     async function prepareUndoChat(options: {
       immutable?: boolean; emptyHistory?: boolean; assistantHistory?: boolean; restorable?: boolean;
+      responseDataTypes?: string[];
     } = {}) {
       const user = userEvent.setup();
       const prefix: BackendMessage[] = [{
@@ -1539,10 +1540,13 @@ describe("ChatWindow Integration", () => {
             }],
           }, {
             role: "assistant", turn_number: prefix.length + 1, created_at: "",
-            message_pieces: [{
-              id: "last-assistant", original_value_data_type: "text", original_value: "Accepted result",
-              converted_value_data_type: "text", converted_value: "Accepted result", scores: [], response_error: "none",
-            }],
+            message_pieces: (options.responseDataTypes ?? ["text"]).map((dataType: string, index: number) => ({
+              id: `last-assistant-${index}`, original_value_data_type: dataType,
+              original_value: dataType === "text" ? "Accepted result" : `response-${index}`,
+              converted_value_data_type: dataType,
+              converted_value: dataType === "text" ? "Accepted result" : `response-${index}`,
+              scores: [], response_error: "none",
+            })),
           }],
         };
         return { attack, messages: source };
@@ -1568,7 +1572,7 @@ describe("ChatWindow Integration", () => {
       await user.type(middle, "Custom middle text");
       await user.click(screen.getByRole("button", { name: "Convert Text from stage 2 to end" }));
       await user.click(screen.getByRole("button", { name: "Send message" }));
-      await screen.findByText("Accepted result");
+      await waitFor(() => expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue(""));
       if (options.immutable && !options.emptyHistory && !options.restorable) {
         await waitFor(() => expect(screen.queryByRole("button", { name: "Undo last send" })).not.toBeInTheDocument());
       } else {
@@ -1588,8 +1592,16 @@ describe("ChatWindow Integration", () => {
       };
     }
 
-    it("restores the last prompt and exact middle-stage converter edits with a single click", async () => {
-      const { user, selected } = await prepareUndoChat();
+    it.each([
+      { responseDataTypes: ["text"] },
+      { responseDataTypes: ["image_path"] },
+      { responseDataTypes: ["audio_path"] },
+      { responseDataTypes: ["video_path"] },
+      { responseDataTypes: ["text", "image_path", "audio_path"] },
+    ])("restores the last prompt and exact middle-stage converter edits after a $responseDataTypes response", async ({
+      responseDataTypes,
+    }: { responseDataTypes: string[] }) => {
+      const { user, selected } = await prepareUndoChat({ responseDataTypes });
       expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("");
       await user.click(screen.getByRole("button", { name: "Undo last send" }));
       await waitFor(() => expect(selected).toHaveBeenCalledWith("undo-branch"));
@@ -1640,8 +1652,16 @@ describe("ChatWindow Integration", () => {
       expect(await screen.findByPlaceholderText("Type prompt here")).toHaveValue("Original prompt");
     });
 
-    it("restores matching in-memory converter stages when branching the first prompt", async () => {
-      const { user, selected } = await prepareUndoChat({ immutable: true, emptyHistory: true });
+    it.each([
+      { responseDataTypes: ["text"] },
+      { responseDataTypes: ["image_path"] },
+      { responseDataTypes: ["audio_path"] },
+      { responseDataTypes: ["video_path"] },
+      { responseDataTypes: ["text", "image_path", "audio_path"] },
+    ])("restores matching in-memory converter stages when branching the first prompt after a $responseDataTypes response", async ({
+      responseDataTypes,
+    }: { responseDataTypes: string[] }) => {
+      const { user, selected } = await prepareUndoChat({ immutable: true, emptyHistory: true, responseDataTypes });
       const attack = await mockedAttacksApi.getAttack("undo-attack");
       mockedAttacksApi.saveConversation.mockResolvedValue({
         attack, messages: { conversation_id: "undo-branch", messages: [], target_response_status: null },
@@ -1660,8 +1680,15 @@ describe("ChatWindow Integration", () => {
       }));
     });
 
-    it.each(["pipeline", "working input"])("protects %s edits before first-prompt restore", async (edit: string) => {
-      const { user, selected } = await prepareUndoChat({ immutable: true, emptyHistory: true });
+    it.each([
+      { edit: "pipeline", responseDataTypes: ["text"] },
+      { edit: "working input", responseDataTypes: ["text"] },
+      { edit: "pipeline", responseDataTypes: ["image_path"] },
+      { edit: "working input", responseDataTypes: ["audio_path"] },
+    ])("protects $edit edits before first-prompt restore after a $responseDataTypes response", async ({
+      edit, responseDataTypes,
+    }: { edit: string; responseDataTypes: string[] }) => {
+      const { user, selected } = await prepareUndoChat({ immutable: true, emptyHistory: true, responseDataTypes });
       if (edit === "pipeline") {
         await user.click(screen.getByRole("button", { name: "Remove converter second" }));
       } else {
@@ -5648,8 +5675,7 @@ describe("ChatWindow Integration", () => {
       await waitFor(() => expect(composer).toBeDisabled());
       expect(screen.getByPlaceholderText("Type prompt here")).toBe(composer);
       expect(screen.queryByTestId("single-turn-banner")).not.toBeInTheDocument();
-      if (imageResponse) expect(screen.queryByRole("button", { name: "Undo last send" })).not.toBeInTheDocument();
-      else await waitFor(() => expect(screen.getByRole("button", { name: "Undo last send" })).toBeEnabled());
+      await waitFor(() => expect(screen.getByRole("button", { name: "Undo last send" })).toBeEnabled());
       await user.click(screen.getByLabelText("Why the prompt box is disabled"));
       expect(screen.getByRole("listitem")).toHaveTextContent("This target only supports single-turn conversations.");
       await user.keyboard("{Escape}");

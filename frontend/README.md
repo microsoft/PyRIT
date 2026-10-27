@@ -29,6 +29,13 @@ conversations), open the
 conversation panel, and select the copy at its full
 `/attacks/{attack_id}/conversations/{conversation_id}` URL. Copying
 within a target-free attack keeps it target-free until you send a prompt.
+For single-turn targets or targets that cannot replay the first prompt as history,
+**Branch conversation** on that first user turn restores it to the prompt box
+without copying the response. After a successful single send, **Undo last send**
+also restores the prompt in a new conversation, if the target can replay the
+preceding history. Both actions restore the saved prompt and converter results
+for text, image, audio, video, and mixed responses. They do not overwrite new
+prompt edits or changed converter pipelines.
 When you save an edited conversation, its final user turn moves to the prompt
 box instead of saved history. Text and attachments retain their metadata,
 including text-only video remix IDs. You can enter and edit prompts without a target.
