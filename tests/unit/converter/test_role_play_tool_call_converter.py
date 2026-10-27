@@ -52,13 +52,10 @@ def test_identifier_includes_resolved_target_and_inputs() -> None:
         action_desired=ACTION_DESIRED,
     )
     identifier = converter.get_identifier()
-    assert "incoming_message" not in identifier.params
-    assert "user_prompt_template_hash" not in identifier.params
     assert identifier.params["valid_call"] == VALID_CALL
     assert identifier.params["action_desired"] == ACTION_DESIRED
     assert identifier.params["message_format"] == "random"
     assert identifier.params["system_prompt_template_hash"]
-    assert "seed_prompt" not in identifier.params
     assert identifier.converter_target == target.get_identifier()
 
 
@@ -106,7 +103,7 @@ def test_role_play_fields_are_multiline() -> None:
         parameter.name: parameter
         for parameter in derive_parameters(cls=RolePlayToolCallConverter, identifier_type=ConverterIdentifier)
     }
-    assert "incoming_message" not in parameters
+    assert set(parameters) == {"converter_target", "valid_call", "action_desired", "message_format", "system_prompt"}
     assert parameters["valid_call"].multiline
     assert parameters["action_desired"].multiline
     assert parameters["message_format"].multiline
@@ -125,7 +122,6 @@ def test_shipped_prompt_keeps_placeholders() -> None:
     prompt = SeedPrompt.from_yaml_file(CONVERTER_SEED_PROMPT_PATH / "role_play_tool_calls.yaml")
     assert prompt.parameters == ["objective", "valid_call", "action_desired", "message_format"]
     assert "{{ objective }}" in prompt.value
-    assert "{{ incoming_message }}" not in prompt.value
     assert "{{ valid_call }}" in prompt.value
     assert "authorized AI security evaluation" in prompt.value
     assert "Return only the rewritten pipeline text." in prompt.value

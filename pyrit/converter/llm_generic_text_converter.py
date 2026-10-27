@@ -4,6 +4,10 @@
 import hashlib
 import logging
 import uuid
+from collections import defaultdict
+from dataclasses import fields, is_dataclass
+from inspect import isroutine
+from pathlib import PurePath
 from typing import TYPE_CHECKING, Any
 
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_none
@@ -26,6 +30,66 @@ if TYPE_CHECKING:
     from tenacity.wait import wait_base
 
 logger = logging.getLogger(__name__)
+
+
+def _describe_template_value(value: Any, *, enclosing: frozenset[int] = frozenset()) -> str:
+    """
+    Describe a template parameter value so that values which render differently are told apart.
+
+    The description keeps container types, iteration order, path flavor, dataclass fields and
+    instance attributes. These can all affect Jinja rendering even when values compare equal
+    or have the same ``repr``. Opaque values without structural state use their ``repr``.
+
+    Args:
+        value (Any): The template parameter value.
+        enclosing (frozenset[int]): Ids of the containers being described, to stop at self-references.
+
+    Returns:
+        str: A description of the value's rendering-relevant state, tagged with its type.
+    """
+    type_name = f"{type(value).__module__}.{type(value).__qualname__}"
+    if id(value) in enclosing:
+        return f"{type_name}(<recursive>)"
+    nested = enclosing | {id(value)}
+
+    def describe(item: Any) -> str:
+        return _describe_template_value(item, enclosing=nested)
+
+    attributes = getattr(value, "__dict__", None)
+    state = f"(attributes={describe(attributes)})" if isinstance(attributes, dict) else ""
+    if is_dataclass(value) and not isinstance(value, type):
+        entries = ", ".join(f"{item.name!r}: {describe(getattr(value, item.name))}" for item in fields(value))
+        return f"{type_name}{state}{{{entries}}}"
+    if isinstance(value, dict):
+        entries = ", ".join(f"{describe(key)}: {describe(item)}" for key, item in value.items())
+        factory = f"(default_factory={describe(value.default_factory)})" if isinstance(value, defaultdict) else ""
+        return f"{type_name}{state}{factory}{{{entries}}}"
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return f"{type_name}{state}[{', '.join(describe(item) for item in value)}]"
+    if isinstance(value, PurePath):
+        return f"{type_name}({str(value)!r})"
+    if state and not isinstance(value, (str, bytes, int, float, complex)) and not isroutine(value):
+        return f"{type_name}{state}"
+    return f"{type_name}{state}({value!r})"
+
+
+def _hash_template_parameters(parameters: dict[str, Any]) -> str | None:
+    """
+    Hash template parameters for a converter identifier.
+
+    Args:
+        parameters (dict[str, Any]): Template parameter names and values.
+
+    Returns:
+        str | None: The first 16 hex characters of the SHA-256 digest, or ``None`` if there are no parameters.
+    """
+    if not parameters:
+        return None
+    # Keyword argument order does not change the rendered prompt, so sort by parameter name.
+    description = ", ".join(
+        f"{name!r}: {_describe_template_value(value)}" for name, value in sorted(parameters.items())
+    )
+    return hashlib.sha256(description.encode("utf-8", errors="backslashreplace")).hexdigest()[:16]
 
 
 class LLMGenericTextConverter(Converter):
@@ -82,7 +146,9 @@ class LLMGenericTextConverter(Converter):
                 between retry attempts. If ``None``, no wait is applied between attempts (matches
                 ``pyrit_json_retry``).
             kwargs: Additional parameters forwarded to both the system prompt and user prompt templates
-                during rendering. The incoming prompt supplies ``objective``.
+                during rendering. Their constructor-time state contributes to the identifier, including
+                container iteration order, path flavor and object fields. Parameters should remain static
+                after construction. The incoming prompt supplies ``objective`` at render time.
 
         Raises:
             ValueError: If converter_target is not provided and no default has been configured.
@@ -93,6 +159,9 @@ class LLMGenericTextConverter(Converter):
         self._converter_target = converter_target
         self._system_prompt_template = system_prompt_template
         self._prompt_kwargs = kwargs
+        # Some subclasses add per-call values (such as the current prompt) to ``_prompt_kwargs``
+        # before converting, so the identifier is based on the parameters given here only.
+        self._template_parameters_hash = _hash_template_parameters(kwargs)
         self._retry_exceptions = retry_exceptions if retry_exceptions is not None else self.RETRY_EXCEPTIONS
         self._max_retry_attempts = max_retry_attempts
         self._retry_wait_max_seconds = retry_wait_max_seconds
@@ -129,6 +198,8 @@ class LLMGenericTextConverter(Converter):
             params={
                 "system_prompt_template_hash": system_prompt_hash,
                 "user_prompt_template_hash": user_prompt_hash,
+                # Template parameters are rendered into both prompts, so they change what is sent.
+                "template_parameters_hash": self._template_parameters_hash,
             },
             converter_target=self._converter_target.get_identifier(),
         )

@@ -77,10 +77,10 @@ class ConverterService:
         """
         Build a ConverterInstance from a registry object.
 
-        Uses the converter's identifier to extract all relevant metadata.
+        Project identity and editable source settings without changing the converter.
 
         Returns:
-            ConverterInstance with metadata derived from the object's identifier.
+            ConverterInstance with identity, catalog metadata, and source-specific defaults.
         """
         metadata = self._registry.get_registered_class_metadata(converter_obj.__class__.__name__)
         description = metadata.class_description or None if metadata else None

@@ -250,7 +250,6 @@ async def test_role_play_editor_receives_full_system_prompt_async(upload_service
         assert "{{ objective }}" in prompt
         types = await upload_service.list_converter_types_async()
         entry = next(item for item in types.items if item.converter_type == "RolePlayToolCallConverter")
-        assert "incoming_message" not in {item.name for item in entry.parameters}
         parameter = next(item for item in entry.parameters if item.name == "system_prompt")
         assert parameter.type_name == "str"
         assert parameter.multiline

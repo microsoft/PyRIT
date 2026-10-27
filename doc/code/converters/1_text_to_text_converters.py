@@ -391,7 +391,6 @@ print("Variation Selector:", await var_selector.convert_async(prompt=prompt))  #
 # In Technique Parameters > Request converters, open Settings on the example converter to change its call fields
 # for this run. The registered converter stays unchanged. Add converters after it to transform the generated message.
 # The picker also has New converter, which creates a registered instance you can use in other runs.
-# The call fields are converter settings, not fields beside the objective in `technique.execute`.
 # `system_prompt` is the adversarial chat's system message; the default is loaded from the role-play YAML.
 
 # %%

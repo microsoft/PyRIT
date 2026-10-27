@@ -449,7 +449,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         Resolve ordered converter names or private settings without registering new instances.
 
         Returns:
-            dict[str, list[ConverterConfiguration]]: Ordered chains with shared live converter instances.
+            dict[str, list[ConverterConfiguration]]: Ordered chains of registered converters or private copies.
 
         Raises:
             ValueError: If a chain is null or a name is not registered.
