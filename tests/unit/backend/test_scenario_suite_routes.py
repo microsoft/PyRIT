@@ -647,3 +647,22 @@ def test_delete_requires_admin(anonymous_client: TestClient, service: MagicMock)
 
     assert response.status_code == 403
     service.delete_suite_async.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix", "body"),
+    [
+        ("GET", "", None),
+        ("PUT", "", {"suite": _suite().model_dump(mode="json"), "expected_version": "v1"}),
+        ("DELETE", "", None),
+        ("POST", "/launch", _launch_body()),
+    ],
+    ids=["get", "update", "delete", "launch"],
+)
+@pytest.mark.usefixtures("service", "execution_service")
+def test_path_name_is_limited(*, client: TestClient, method: str, suffix: str, body: dict[str, object] | None) -> None:
+    """Test an over-limit suite name in the URL is rejected before the route runs."""
+    response = client.request(method, f"/api/scenario-suites/{OVER_LIMIT_NAME}{suffix}", json=body)
+
+    assert response.status_code == 422
+    assert [error["field"] for error in response.json()["errors"]] == ["path.name"]

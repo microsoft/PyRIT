@@ -599,3 +599,21 @@ class TestResolvePreset:
 
         assert response.status_code == 200
         assert service.resolve_run_request_async.call_args.kwargs["launch"].expected_version is None
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix", "body"),
+    [
+        ("GET", "", None),
+        ("PUT", "", {"preset": _preset().model_dump(), "expected_version": "v1"}),
+        ("DELETE", "", None),
+        ("POST", "/resolve", {"target_name": "gpt4"}),
+    ],
+    ids=["get", "update", "delete", "resolve"],
+)
+@pytest.mark.usefixtures("service")
+def test_path_name_is_limited(*, client: TestClient, method: str, suffix: str, body: dict[str, object] | None) -> None:
+    response = client.request(method, f"/api/scenario-presets/{'x' * 257}{suffix}", json=body)
+
+    assert response.status_code == 422
+    assert [error["field"] for error in response.json()["errors"]] == ["path.name"]
