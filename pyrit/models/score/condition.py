@@ -6,7 +6,16 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args, get_origin
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, TypeAdapter, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    SerializeAsAny,
+    StrictBool,
+    TypeAdapter,
+    model_validator,
+)
 
 from pyrit.models.code_execution import (  # noqa: TC001 (runtime-required by Pydantic)
     _ProgramInvocation,
@@ -220,6 +229,19 @@ class AnswerMatches(Condition):
     correct_answer: str = Field(min_length=1)
     #: A nonempty choice label. It is not cross-checked against choices in prompt text.
     correct_answer_label: str | None = Field(default=None, min_length=1)
+
+
+class DecisionMatches(Condition):
+    """
+    A decision model's answer to one typed question is the given answer.
+
+    ``answer`` is True or False for a ``noul`` (yes/no) question and an option name for a
+    ``choice`` question.
+    """
+
+    condition_type: Literal["decision_matches"] = "decision_matches"
+    question_name: str = Field(min_length=1, pattern=r"\S")
+    answer: StrictBool | Annotated[str, Field(min_length=1, pattern=r"\S")]
 
 
 class ContentWritten(Condition):
