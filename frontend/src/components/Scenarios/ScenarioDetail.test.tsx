@@ -3,15 +3,27 @@ import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { createMemoryRouter, Link, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 
-import { attacksApi, datasetsApi, scenariosApi, targetsApi } from '@/services/api'
+import {
+  attacksApi,
+  convertersApi,
+  datasetsApi,
+  scenarioPresetsApi,
+  scenariosApi,
+  targetsApi,
+  techniquesApi,
+} from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
 import type {
   AddMessageResponse,
   RegisteredScenario,
   ScenarioDatasetSettings,
+  ScenarioPreset,
+  ScenarioPresetResponse,
   ScenarioRunSizeEstimateRequest,
   ScenarioRunSizeEstimateResponse,
   TargetInstance,
+  TechniqueConfiguration,
+  TechniqueOverride,
 } from '@/types'
 
 import ScenarioDetail from './ScenarioDetail'
@@ -19,12 +31,15 @@ import ScenarioDetail from './ScenarioDetail'
 jest.mock('@/hooks/useRuntime', () => ({ useRuntime: jest.fn() }))
 
 jest.mock('@/services/api', () => ({
+  techniquesApi: { getConfiguration: jest.fn(), validateEdit: jest.fn(), listTypes: jest.fn(), createTechnique: jest.fn() },
+  convertersApi: { listConverters: jest.fn() },
   attacksApi: { getConversation: jest.fn(), saveConversation: jest.fn() },
   datasetsApi: { listDatasets: jest.fn().mockResolvedValue({ items: ['harmbench', 'ds_a', 'ds_b', 'remote', 'stale-dataset'].map((name) => ({
     name, selection_key: `dataset:named:${name}`, loaded: true, provider_available: true,
     logical_examples: 8, seed_pieces: null, objectives: null, modalities: ['text', 'image_path', 'audio_path'],
     harm_categories: ['cyber', 'violence', 'other'], has_unlabeled_harm_categories: false,
   })) }) },
+  scenarioPresetsApi: { get: jest.fn() },
   scenariosApi: {
     estimateRun: jest.fn(),
     getScenario: jest.fn(),
@@ -35,12 +50,28 @@ jest.mock('@/services/api', () => ({
   },
 }))
 
+const mockGetPreset = scenarioPresetsApi.get as jest.Mock
 const mockGetScenario = scenariosApi.getScenario as jest.Mock
 const mockEstimateRun = scenariosApi.estimateRun as jest.Mock
 const mockStartRun = scenariosApi.startRun as jest.Mock
 const mockListTargets = targetsApi.listTargets as jest.Mock
 const mockUseRuntime = jest.mocked(useRuntime)
 const mockAttacks = jest.mocked(attacksApi)
+const mockTechniques = jest.mocked(techniquesApi)
+
+function techniqueConfiguration(name: string): TechniqueConfiguration {
+  return {
+    source_name: name, source_identity: `${name}-identity`, attack_type: 'prompt_sending',
+    settings: { description: `${name} settings`, params: {}, simulation: {
+      num_turns: 2, adversarial_chat_system_prompt: 'Movie script\n{{ objective }}',
+      simulated_target_system_prompt: 'Continue for {{ num_turns }} turns.',
+      next_message_system_prompt: '{{ conversation_context }}',
+    } },
+    parameters: [], editable_fields: ['description', 'simulation'],
+    supplied_parameters: [], read_only: { policy: 'Retained unchanged.' },
+    supports_prepended_conversation: true,
+  }
+}
 
 const mockNavigate = jest.fn()
 const RAW_IMAGE_HTML = ['<', 'img src=x onerror="alert(1)">'].join('')
@@ -146,6 +177,19 @@ function makeEstimate(total: number | null): ScenarioRunSizeEstimateResponse {
   }
 }
 
+function makePresetResponse(
+  preset: Partial<ScenarioPreset> = {},
+  response: Partial<Omit<ScenarioPresetResponse, 'preset'>> = {},
+): ScenarioPresetResponse {
+  return {
+    preset: { name: 'spanish_probe', scenario_name: 'foundry.red_team_agent', ...preset },
+    origin: 'stored',
+    version: 'v1',
+    issues: [],
+    ...response,
+  }
+}
+
 async function flushRenderedPromises(): Promise<void> {
   await act(async () => {
     await Promise.resolve()
@@ -235,6 +279,18 @@ describe('ScenarioDetail', () => {
     mockGetScenario.mockResolvedValue(makeScenario())
     mockEstimateRun.mockResolvedValue(makeEstimate(8))
     mockStartRun.mockResolvedValue({ scenario_result_id: 'sr-default' })
+    mockTechniques.getConfiguration.mockReset()
+    mockTechniques.getConfiguration.mockImplementation(async (name: string) => techniqueConfiguration(name))
+    mockTechniques.validateEdit.mockReset()
+    mockTechniques.validateEdit.mockImplementation(async (override: TechniqueOverride) => {
+      const original = techniqueConfiguration(override.source_name)
+      return { override: { ...override, effective_identity: 'edited-identity' }, configuration: {
+        ...original, settings: { ...original.settings, ...override.changes,
+          simulation: { ...original.settings.simulation, ...override.changes.simulation } },
+      } }
+    })
+    jest.mocked(convertersApi.listConverters).mockResolvedValue({ items: [] })
+    mockListTargets.mockResolvedValue({ items: [], pagination: { limit: 200, has_more: false } })
   })
 
   afterEach(() => {
@@ -798,7 +854,7 @@ describe('ScenarioDetail', () => {
     expect(await screen.findByRole('combobox', { name: 'Objective Target' })).toHaveValue('target-b')
     const parameters = screen.getByRole('region', { name: 'Parameters' })
     const fallback = within(parameters).getByRole('combobox', { name: 'Adversarial Target' })
-    expect(within(screen.getByRole('region', { name: 'Objective Target' })).queryByRole(
+    expect(within(screen.getByRole('region', { name: 'Objective' })).queryByRole(
       'combobox', { name: 'Adversarial Target' },
     )).not.toBeInTheDocument()
     const datasetsSection = screen.getByRole('region', { name: 'Datasets' })
@@ -1141,6 +1197,191 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(true)
   })
 
+  it('should load and edit only single-technique scenarios, then preview and launch the same local override', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
+    renderDetail('/scanner/technique.execute')
+    await screen.findByRole('spinbutton', { name: 'Turn count' })
+    expect(mockTechniques.getConfiguration).toHaveBeenCalledWith('default_technique')
+    const editor = screen.getByRole('region', { name: 'Technique Parameters' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(within(editor).queryByRole('combobox', { name: 'Attack type' })).not.toBeInTheDocument()
+    expect(await within(editor).findByRole('spinbutton', { name: 'Turn count' })).toHaveValue(2)
+    expect(within(editor).getByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }}')
+    await user.clear(within(editor).getByRole('spinbutton', { name: 'Turn count' }))
+    await user.type(within(editor).getByRole('spinbutton', { name: 'Turn count' }), '4')
+    expect(within(editor).queryByRole('button', { name: 'Apply to run' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    await screen.findByText('Edited for this run')
+    expect(mockTechniques.validateEdit).toHaveBeenCalledWith({
+      source_name: 'default_technique', source_identity: 'default_technique-identity',
+      changes: { simulation: { num_turns: 4 } }, dependencies: {},
+    })
+    expect(mockTechniques.createTechnique).not.toHaveBeenCalled()
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledWith(
+      'foundry.red_team_agent', expect.objectContaining({
+        technique_override: expect.objectContaining({ changes: { simulation: { num_turns: 4 } } }),
+      }), expect.any(AbortSignal),
+    ))
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByLabelText('Technique edit preview')).toHaveTextContent('"num_turns": 4')
+    await user.click(within(preview).getByRole('button', { name: 'Launch scan' }))
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0].technique_override).toEqual(expect.objectContaining({
+      source_name: 'default_technique', effective_identity: 'edited-identity',
+    }))
+  })
+
+  it('should keep inline edits when a switch is cancelled and reset to the source', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
+    renderDetail('/scanner/technique.execute')
+    await user.type(await screen.findByLabelText('Simulated user system prompt'), ' edited')
+    await screen.findByText('Edited for this run')
+    expect(await screen.findByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }} edited')
+    await user.click(await screen.findByRole('radio', { name: 'crescendo' }))
+    expect(await screen.findByText('Discard technique edits?')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(await screen.findByRole('radio', { name: 'default_technique' })).toBeChecked()
+    expect(screen.getByText('Edited for this run')).toBeInTheDocument()
+    await user.click(screen.getByRole('checkbox', { name: 'baseline' }))
+    expect(screen.getByText('Edited for this run')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Reset to original' }))
+    expect(screen.queryByText('Edited for this run')).not.toBeInTheDocument()
+    expect(await screen.findByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }}')
+    await user.click(screen.getByRole('radio', { name: 'crescendo' }))
+    expect(screen.getByRole('radio', { name: 'crescendo' })).toBeChecked()
+    await waitFor(() => expect(mockTechniques.getConfiguration).toHaveBeenCalledWith('crescendo'))
+  })
+
+  it('should show one adversarial target selector outside the technique editor', async () => {
+    const user = userEvent.setup()
+    const adversary = makeAdversarialTarget('adversary')
+    mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
+    mockTechniques.getConfiguration.mockImplementation(async (name: string) => {
+      const configuration = techniqueConfiguration(name)
+      return { ...configuration, editable_fields: [...configuration.editable_fields, 'adversarial_chat'] }
+    })
+    renderDetail('/scanner/technique.execute', {
+      targets: [makeTarget('target-a'), adversary],
+    })
+    await screen.findByRole('spinbutton', { name: 'Turn count' })
+    const editor = screen.getByRole('region', { name: 'Technique Parameters' })
+    expect(within(editor).getByText('default_technique settings')).toBeInTheDocument()
+    expect(within(editor).queryByRole('textbox', { name: 'Description' })).not.toBeInTheDocument()
+    expect(within(editor).queryByRole('combobox', { name: /Adversarial target/i })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('combobox', { name: /Adversarial target/i })).toHaveLength(1)
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Adversarial Target' }), 'adversary')
+    await confirmRunPreview(user)
+    expect(mockStartRun.mock.calls[0][0].adversarial_target_name).toBe('adversary')
+    expect(mockStartRun.mock.calls[0][0].technique_override).toBeUndefined()
+  })
+
+  it('should show no editor or configuration request for other scenarios with one selected item', async () => {
+    renderDetail('/scanner/foundry.red_team_agent')
+    await screen.findByTestId('scenario-target-select')
+    expect(screen.queryByRole('button', { name: 'Edit technique' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Technique Parameters' })).not.toBeInTheDocument()
+    expect(mockTechniques.getConfiguration).not.toHaveBeenCalled()
+  })
+
+  it('should group the launch form in technique, objective, technique parameters, parameters, and estimate order', async () => {
+    mockGetScenario.mockResolvedValue(makeScenario({
+      max_concrete_techniques: 1, default_datasets: [],
+      supported_parameter_names: [
+        'objective_target', 'scenario_techniques', 'include_baseline', 'max_concurrency', 'max_retries',
+        'objective', 'prepended_conversation_id', 'apply_converters_to_prepended_history', 'retries_on_objective_failure',
+      ],
+      supported_parameters: [
+        { name: 'objective', type_name: 'str', required: true, multiline: true },
+        { name: 'prepended_conversation_id', type_name: 'str', required: false },
+        { name: 'apply_converters_to_prepended_history', type_name: 'bool', required: false, default: 'False' },
+        { name: 'retries_on_objective_failure', type_name: 'int', required: false, default: '0' },
+      ],
+    }))
+    renderDetail('/scanner/technique.execute')
+    await screen.findByRole('spinbutton', { name: 'Turn count' })
+    const form = screen.getByRole('form', { name: 'Scenario run configuration' })
+    expect(within(form).getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual([
+      'Techniques', 'Objective', 'Technique Parameters', 'Parameters', 'Run estimate',
+    ])
+    expect(within(screen.getByRole('region', { name: 'Objective' })).getByRole('textbox', { name: 'objective' })).toBeRequired()
+    expect(within(screen.getByRole('region', { name: 'Technique Parameters' }))
+      .getByRole('textbox', { name: 'prepended_conversation_id' })).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Parameters' }))
+      .queryByRole('textbox', { name: 'objective' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('should block preview while edits are invalid, awaiting validation, or rejected by the server', async () => {
+    const user = userEvent.setup()
+    let resolveEdit: (result: Awaited<ReturnType<typeof techniquesApi.validateEdit>>) => void = () => {
+      throw new Error('Validation has not started')
+    }
+    mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
+    mockTechniques.validateEdit.mockImplementationOnce(() => new Promise((resolve) => { resolveEdit = resolve }))
+    renderDetail('/scanner/technique.execute')
+    const turns = await screen.findByRole('spinbutton', { name: 'Turn count' })
+    await user.clear(turns)
+    await user.type(turns, '0')
+    expect(screen.getByRole('alert')).toHaveTextContent('Turn count must be a positive integer.')
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    expect(mockTechniques.validateEdit).not.toHaveBeenCalled()
+    await user.clear(turns)
+    await user.type(turns, '3')
+    await waitFor(() => expect(mockTechniques.validateEdit).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    const configuration = techniqueConfiguration('default_technique')
+    await act(async () => {
+      resolveEdit({
+        configuration, override: {
+          source_name: configuration.source_name, source_identity: configuration.source_identity,
+          changes: { simulation: { num_turns: 3 } }, dependencies: {}, effective_identity: 'edited',
+        },
+      })
+    })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+    mockTechniques.validateEdit.mockRejectedValueOnce(new Error('Cannot validate this draft'))
+    await user.clear(turns)
+    await user.type(turns, '4')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cannot validate this draft')
+    expect(turns).toHaveValue(4)
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    expect(mockStartRun).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Reset to original' }))
+    expect(await screen.findByRole('spinbutton', { name: 'Turn count' })).toHaveValue(2)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+  })
+
+  it('should hide unsupported history controls without silently discarding an existing conversation', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      max_concrete_techniques: 1,
+      supported_parameters: [
+        { name: 'prepended_conversation_id', type_name: 'str', required: false, default: 'saved-history' },
+        { name: 'apply_converters_to_prepended_history', type_name: 'bool', required: false, default: 'False' },
+      ],
+    }))
+    mockTechniques.getConfiguration.mockImplementation(async (name: string) => ({
+      ...techniqueConfiguration(name), supports_prepended_conversation: false,
+    }))
+    renderDetail('/scanner/technique.execute')
+    await screen.findByRole('spinbutton', { name: 'Turn count' })
+    expect(screen.queryByRole('textbox', { name: 'prepended_conversation_id' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add new conversation' })).not.toBeInTheDocument()
+    expect(screen.getByText('This technique does not accept a prepended conversation.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Clear the saved conversation before launch')
+    await user.click(screen.getByRole('button', { name: 'Clear saved conversation' }))
+    const preview = await openRunPreview(user)
+    await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+    await user.click(within(preview).getByRole('button', { name: 'Launch scan' }))
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0].scenario_params ?? {}).not.toHaveProperty('prepended_conversation_id')
+    expect(mockStartRun.mock.calls[0][0].scenario_params ?? {}).not.toHaveProperty('apply_converters_to_prepended_history')
+  })
+
   it('allows keyboard changes to a single technique without changing baseline', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
@@ -1169,6 +1410,7 @@ describe('ScenarioDetail', () => {
     )).toBe(true)
     expect(mockStartRun).not.toHaveBeenCalled()
     await timedUser.click(screen.getByRole('radio', { name: 'default_technique' }))
+    await screen.findByRole('spinbutton', { name: 'Turn count' })
     await advanceTimers(300)
     expect(mockEstimateRun).toHaveBeenCalledWith(
       'foundry.red_team_agent',
@@ -2119,7 +2361,7 @@ describe('ScenarioDetail', () => {
     await waitFor(() => expect(button).not.toBeDisabled())
   })
 
-  it('preserves entered values and keeps the preview open after a failed submission', async () => {
+  it('should close a failed preview and preserve entered values with a visible error', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(
       makeScenario({
@@ -2151,16 +2393,44 @@ describe('ScenarioDetail', () => {
     await confirmRunPreview(user)
 
     await screen.findByText('boom')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument())
+    expect(screen.getByRole('alert')).toHaveTextContent('boom')
+    await waitFor(() => expect(screen.getByTestId('launch-scenario-btn')).toHaveFocus())
     expect(screen.getByTestId('scenario-target-select')).toHaveValue('target-b')
     expect(screen.getByTestId('technique-crescendo')).toBeChecked()
     expect(screen.getByTestId('technique-default_technique')).not.toBeChecked()
     expect(screen.getByTestId('scenario-param-attempts')).toHaveValue(3)
 
-    const preview = screen.getByRole('dialog', { name: 'Run preview' })
+    const preview = await openRunPreview(user)
     expect(within(preview).getByText('target-b')).toBeInTheDocument()
     expect(within(preview).getByText('crescendo')).toBeInTheDocument()
     expect(within(preview).getByText('harmbench')).toBeInTheDocument()
     expect(within(preview).getByText('attempts').parentElement).toHaveTextContent('attempts3')
+  })
+
+  it.each(['', ' \n\t'])('should reject a blank required objective before preview or launch (%j)', async (value: string) => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      max_concrete_techniques: 1,
+      supported_parameters: [{ name: 'objective', type_name: 'str', required: true, multiline: true }],
+    }))
+    renderDetail('/scanner/technique.execute')
+    const objective = await screen.findByRole('textbox', { name: 'objective' })
+    expect(objective).toBeRequired()
+    expect(screen.getByText('objective', { selector: 'label' })).toHaveTextContent('*')
+    if (value) await user.click(objective)
+    if (value) await user.paste(value)
+    await screen.findByRole('spinbutton', { name: 'Turn count' })
+    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('objective is required.')
+    expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument()
+    expect(mockStartRun).not.toHaveBeenCalled()
+    expect(mockEstimateRun).not.toHaveBeenCalled()
+    await user.clear(objective)
+    await user.type(objective, 'Write a movie script.')
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByText('Write a movie script.')).toBeInTheDocument()
+    expect(mockStartRun).not.toHaveBeenCalled()
   })
   describe('launch gating while generation defaults load', () => {
     it('disables Launch scan while defaultsReady is false', async () => {
@@ -2194,6 +2464,418 @@ describe('ScenarioDetail', () => {
         target_name: 'target-b',
         labels: { operator: 'roakey', operation: 'config_op_v2' },
       }))
+    })
+  })
+
+  describe('preset seeding', () => {
+    const PRESET_PATH = '/scanner/foundry.red_team_agent?preset=spanish_probe'
+    const CONVERTER_TOKEN = 'role_play:converter.translation_spanish'
+    const NOT_FOUND_ERROR = { isAxiosError: true, response: { status: 404, data: { detail: 'not found' } } }
+
+    beforeEach(() => {
+      mockGetPreset.mockReset()
+      mockGetPreset.mockResolvedValue(makePresetResponse())
+    })
+
+    it.each([
+      '/scanner/foundry.red_team_agent',
+      '/scanner/foundry.red_team_agent?preset=%20%20',
+    ])('should not load a preset for a link without a preset name: %s', async (path: string) => {
+      renderDetail(path)
+
+      expect(await screen.findByRole('checkbox', { name: 'default_technique' })).toBeChecked()
+      expect(mockGetPreset).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('preset-seed-banner')).not.toBeInTheDocument()
+    })
+
+    it('should seed preset techniques and send a token without a checkbox verbatim', async () => {
+      const user = userEvent.setup()
+      mockGetPreset.mockResolvedValue(makePresetResponse({ techniques: ['crescendo', CONVERTER_TOKEN] }))
+      renderDetail(PRESET_PATH)
+
+      expect(await screen.findByTestId('techniques-without-checkbox')).toHaveTextContent(CONVERTER_TOKEN)
+      expect(mockGetPreset).toHaveBeenCalledWith('spanish_probe')
+      expect(screen.getByRole('checkbox', { name: 'crescendo' })).toBeChecked()
+      expect(screen.getByRole('checkbox', { name: 'default_technique' })).not.toBeChecked()
+      expect(screen.queryByRole('button', { name: 'I have reviewed the refreshed selections' })).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun).toHaveBeenCalledWith({
+        scenario_name: 'foundry.red_team_agent',
+        target_name: 'target-a',
+        techniques: ['crescendo', CONVERTER_TOKEN],
+        max_concurrency: 10,
+        max_retries: 0,
+        include_baseline: true,
+        labels: { operator: 'roakey' },
+      })
+    })
+
+    it('should drop a dismissed preset token from the launched run', async () => {
+      const user = userEvent.setup()
+      mockGetPreset.mockResolvedValue(makePresetResponse({ techniques: ['crescendo', CONVERTER_TOKEN] }))
+      renderDetail(PRESET_PATH)
+
+      await user.click(await screen.findByRole('button', { name: `Remove ${CONVERTER_TOKEN}` }))
+      expect(screen.queryByTestId('techniques-without-checkbox')).not.toBeInTheDocument()
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].techniques).toEqual(['crescendo'])
+    })
+
+    it('should expand a preset technique set into checked techniques', async () => {
+      mockGetScenario.mockResolvedValue(makeScenario({
+        aggregate_technique_expansions: { all: ['default_technique', 'crescendo'], default: ['default_technique'] },
+      }))
+      mockGetPreset.mockResolvedValue(makePresetResponse({ techniques: ['all'] }))
+      renderDetail(PRESET_PATH)
+
+      expect(await screen.findByRole('checkbox', { name: 'crescendo' })).toBeChecked()
+      expect(screen.getByRole('checkbox', { name: 'default_technique' })).toBeChecked()
+      expect(screen.queryByTestId('techniques-without-checkbox')).not.toBeInTheDocument()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        techniques: ['default_technique', 'crescendo'],
+      }), expect.any(AbortSignal)))
+    })
+
+    it('should keep preset tokens without a checkbox when a tag selects or clears techniques', async () => {
+      const user = userEvent.setup()
+      mockGetPreset.mockResolvedValue(makePresetResponse({ techniques: [CONVERTER_TOKEN] }))
+      renderDetail(PRESET_PATH)
+
+      await user.click((await screen.findAllByRole('button', { name: 'Select Multi-turn techniques' }))[0])
+      expect(screen.getByRole('checkbox', { name: 'crescendo' })).toBeChecked()
+      await user.click(screen.getAllByRole('button', { name: 'Clear Multi-turn techniques' })[0])
+      expect(screen.getByRole('checkbox', { name: 'crescendo' })).not.toBeChecked()
+      expect(screen.getByRole('button', { name: `Remove ${CONVERTER_TOKEN}` })).toBeInTheDocument()
+      await user.click(screen.getAllByRole('button', { name: 'Select Multi-turn techniques' })[0])
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].techniques).toEqual(['crescendo', CONVERTER_TOKEN])
+    })
+
+    it('should count preset tokens toward the technique limit until one is dismissed', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
+      mockGetPreset.mockResolvedValue(makePresetResponse({ techniques: ['crescendo', CONVERTER_TOKEN] }))
+      renderDetail(PRESET_PATH)
+
+      const crescendo = await screen.findByRole('radio', { name: 'crescendo' })
+      expect(crescendo).not.toBeChecked()
+      expect(screen.getAllByRole('alert').some(
+        (alert) => alert.textContent === 'Select at most 1 concrete technique(s).',
+      )).toBe(true)
+      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+
+      await user.click(screen.getByRole('button', { name: `Remove ${CONVERTER_TOKEN}` }))
+      expect(crescendo).toBeChecked()
+      expect(screen.queryByText('Select at most 1 concrete technique(s).')).not.toBeInTheDocument()
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].techniques).toEqual(['crescendo'])
+    })
+
+    it('should launch a single-technique preset token verbatim without loading run-local settings for it', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(makeScenario({
+        max_concrete_techniques: 1,
+        supported_parameters: [
+          { name: 'prepended_conversation_id', type_name: 'str', required: false },
+          { name: 'apply_converters_to_prepended_history', type_name: 'bool', required: false, default: 'False' },
+        ],
+      }))
+      mockGetPreset.mockResolvedValue(makePresetResponse({ techniques: [CONVERTER_TOKEN] }))
+      renderDetail(PRESET_PATH)
+
+      expect(await screen.findByTestId('techniques-without-checkbox')).toHaveTextContent(CONVERTER_TOKEN)
+      const techniqueParameters = screen.getByRole('region', { name: 'Technique Parameters' })
+      expect(within(techniqueParameters).getByText(
+        `${CONVERTER_TOKEN} is sent as the preset saved it, so its settings cannot be edited for this run.`,
+      )).toBeInTheDocument()
+      expect(within(techniqueParameters).getByRole('textbox', { name: 'prepended_conversation_id' })).toBeInTheDocument()
+      expect(screen.queryByText('This technique does not accept a prepended conversation.')).not.toBeInTheDocument()
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].techniques).toEqual([CONVERTER_TOKEN])
+      expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('technique_override')
+      expect(mockTechniques.getConfiguration).not.toHaveBeenCalled()
+    })
+
+    it('should not send untouched preset history parameters for a technique without history support', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(makeScenario({
+        max_concrete_techniques: 1,
+        supported_parameters: [
+          { name: 'prepended_conversation_id', type_name: 'str', required: false },
+          { name: 'apply_converters_to_prepended_history', type_name: 'bool', required: false, default: 'False' },
+          { name: 'iterations', type_name: 'int', required: false, default: '3' },
+        ],
+      }))
+      mockTechniques.getConfiguration.mockImplementation(async (name: string) => ({
+        ...techniqueConfiguration(name), supports_prepended_conversation: false,
+      }))
+      mockGetPreset.mockResolvedValue(makePresetResponse({
+        techniques: ['crescendo'],
+        scenario_params: { apply_converters_to_prepended_history: false, iterations: 5 },
+      }))
+      renderDetail(PRESET_PATH)
+
+      expect(await screen.findByText('This technique does not accept a prepended conversation.')).toBeInTheDocument()
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockTechniques.getConfiguration).toHaveBeenCalledWith('crescendo')
+      expect(mockStartRun.mock.calls[0][0].scenario_params).toEqual({ iterations: 5 })
+    })
+
+    it('should keep preset tokens without a checkbox after reviewing a runtime refresh', async () => {
+      const user = userEvent.setup()
+      mockGetPreset.mockResolvedValue(makePresetResponse({ techniques: ['crescendo', CONVERTER_TOKEN] }))
+      const detail = renderDetail(PRESET_PATH)
+      await screen.findByTestId('techniques-without-checkbox')
+
+      mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'second' })
+      detail.updateDefaults({})
+      await user.click(await screen.findByRole('button', { name: 'I have reviewed the refreshed selections' }))
+
+      expect(screen.getByRole('button', { name: `Remove ${CONVERTER_TOKEN}` })).toBeInTheDocument()
+      await waitFor(() => expect(mockGetPreset).toHaveBeenCalledTimes(2))
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].techniques).toEqual(['crescendo', CONVERTER_TOKEN])
+    })
+
+    it.each([
+      ['enabled', true, false, false],
+      ['disabled', false, true, true],
+      ['forbidden', true, true, false],
+    ] as const)('should seed the baseline under the %s policy (default %s, preset %s)', async (
+      policy: RegisteredScenario['baseline_policy'],
+      includedByDefault: boolean,
+      presetBaseline: boolean,
+      expected: boolean,
+    ) => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(makeScenario({
+        baseline_policy: policy,
+        include_baseline_by_default: includedByDefault,
+      }))
+      mockGetPreset.mockResolvedValue(makePresetResponse({ include_baseline: presetBaseline }))
+      renderDetail(PRESET_PATH)
+
+      expect(await screen.findByRole('checkbox', { name: 'baseline', checked: expected })).toBeInTheDocument()
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(expected)
+    })
+
+    it('should seed the dataset request from the preset', async () => {
+      const user = userEvent.setup()
+      const datasets = { sources: [{ name: 'ds_a' }, { name: 'ds_b' }] }
+      mockGetPreset.mockResolvedValue(makePresetResponse({ datasets }))
+      renderDetail(PRESET_PATH)
+
+      expect(await screen.findByRole('button', { name: 'Remove ds_a' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Remove ds_b' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Remove harmbench' })).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].datasets).toEqual(datasets)
+    })
+
+    it('should seed rendered parameters and carry the remaining preset parameters into the run', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(makeScenario({
+        supported_parameters: [
+          { name: 'iterations', type_name: 'int', required: false, default: '3', choices: null, is_list: false },
+        ],
+      }))
+      mockGetPreset.mockResolvedValue(makePresetResponse({ scenario_params: { iterations: 5, custom_key: 'x' } }))
+      renderDetail(PRESET_PATH)
+
+      const iterations = await screen.findByLabelText(/^iterations/)
+      expect(iterations).toHaveValue(5)
+      expect(screen.getByTestId('preset-seed-banner'))
+        .toHaveTextContent('Also sends saved parameters this form has no field for: custom_key.')
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { custom_key: 'x', iterations: 5 },
+      }), expect.any(AbortSignal)))
+
+      await user.clear(iterations)
+      await user.type(iterations, '7')
+      const preview = await openRunPreview(user)
+      expect(within(preview).getByText('custom_key').parentElement).toHaveTextContent('custom_keyx')
+      await waitFor(() => expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeEnabled())
+      await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].scenario_params).toEqual({ custom_key: 'x', iterations: 7 })
+    })
+
+    it('should launch untouched preset list parameters exactly as saved', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(makeScenario({
+        supported_parameters: [
+          { name: 'goal_texts', type_name: 'list[str]', required: false, default: null, choices: null, is_list: true },
+          { name: 'skip_texts', type_name: 'list[str]', required: false, default: null, choices: null, is_list: true },
+        ],
+      }))
+      mockGetPreset.mockResolvedValue(makePresetResponse({
+        scenario_params: { goal_texts: ['Hello, world'], skip_texts: [] },
+      }))
+      renderDetail(PRESET_PATH)
+
+      expect(await screen.findByLabelText(/^goal_texts/)).toHaveValue('Hello, world')
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { goal_texts: ['Hello, world'], skip_texts: [] },
+      }), expect.any(AbortSignal)))
+
+      await user.type(screen.getByLabelText(/^skip_texts/), 'a, b')
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].scenario_params).toEqual({
+        goal_texts: ['Hello, world'],
+        skip_texts: ['a', 'b'],
+      })
+    })
+
+    it('should launch operator edits made to the seeded configuration', async () => {
+      const user = userEvent.setup()
+      mockGetPreset.mockResolvedValue(makePresetResponse({
+        techniques: ['default_technique', 'crescendo'],
+        include_baseline: false,
+      }))
+      renderDetail(PRESET_PATH)
+
+      await user.click(await screen.findByRole('checkbox', { name: 'default_technique' }))
+      await user.click(screen.getByRole('checkbox', { name: 'baseline' }))
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0]).toEqual(expect.objectContaining({
+        techniques: ['crescendo'],
+        include_baseline: true,
+      }))
+      expect(mockGetPreset).toHaveBeenCalledTimes(1)
+    })
+
+    it('should show the preset banner and advisory issues without blocking launch', async () => {
+      const user = userEvent.setup()
+      mockGetPreset.mockResolvedValue(makePresetResponse({ description: 'Probes Spanish translations.' }, {
+        issues: [
+          { field: 'techniques', message: "Scenario 'foundry.red_team_agent' does not define: retired." },
+          { field: 'include_baseline', message: "Scenario 'foundry.red_team_agent' does not support a baseline run." },
+        ],
+      }))
+      renderDetail(PRESET_PATH)
+
+      const banner = await screen.findByTestId('preset-seed-banner')
+      expect(banner).toHaveTextContent(
+        'Pre-filled from preset spanish_probe. Changes apply to this run only and are not saved to the preset.',
+      )
+      expect(banner).toHaveTextContent('Probes Spanish translations.')
+      expect(within(screen.getByTestId('preset-issues')).getAllByRole('listitem').map((item) => item.textContent))
+        .toEqual([
+          "Scenario 'foundry.red_team_agent' does not define: retired.",
+          "Scenario 'foundry.red_team_agent' does not support a baseline run.",
+        ])
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+    })
+
+    it('should report a missing scenario before applying a preset', async () => {
+      mockGetScenario.mockRejectedValueOnce(NOT_FOUND_ERROR)
+      renderDetail(PRESET_PATH)
+
+      expect(await screen.findByTestId('scenario-not-found')).toBeInTheDocument()
+      expect(screen.queryByTestId('preset-not-found')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('preset-seed-banner')).not.toBeInTheDocument()
+    })
+
+    it('should show a preset not-found state with links to the scanners and the unseeded scenario', async () => {
+      mockGetPreset.mockRejectedValueOnce(NOT_FOUND_ERROR)
+      renderDetail(PRESET_PATH)
+
+      expect(await screen.findByTestId('preset-not-found')).toHaveTextContent('Preset "spanish_probe" was not found')
+      expect(screen.getByRole('link', { name: /back to scanners/i })).toHaveAttribute('href', '/scanner')
+      expect(screen.getByRole('link', { name: 'Open foundry.red_team_agent without a preset' }))
+        .toHaveAttribute('href', '/scanner/foundry.red_team_agent')
+      expect(screen.queryByRole('button', { name: 'Launch scan' })).not.toBeInTheDocument()
+    })
+
+    it('should show a preset load error and retry both loads', async () => {
+      const user = userEvent.setup()
+      mockGetPreset
+        .mockRejectedValueOnce({ isAxiosError: true, response: { status: 500, data: { detail: 'boom' } } })
+        .mockResolvedValueOnce(makePresetResponse({ techniques: ['crescendo'] }))
+      renderDetail(PRESET_PATH)
+
+      expect(await screen.findByTestId('preset-error'))
+        .toHaveTextContent('Preset "spanish_probe" could not be loaded: boom')
+      expect(screen.queryByTestId('preset-not-found')).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Retry' }))
+
+      expect(await screen.findByRole('checkbox', { name: 'crescendo' })).toBeChecked()
+      expect(screen.getByTestId('preset-seed-banner')).toBeInTheDocument()
+      expect(mockGetPreset).toHaveBeenCalledTimes(2)
+      expect(mockGetScenario).toHaveBeenCalledTimes(2)
+    })
+
+    it('should refuse to seed a preset saved for another scenario', async () => {
+      mockGetPreset.mockResolvedValue(makePresetResponse({ name: 'encoding_probe', scenario_name: 'garak.encoding' }))
+      renderDetail('/scanner/foundry.red_team_agent?preset=encoding_probe')
+
+      expect(await screen.findByTestId('preset-scenario-mismatch')).toHaveTextContent(
+        'Preset "encoding_probe" configures garak.encoding, not foundry.red_team_agent.',
+      )
+      expect(screen.getByRole('link', { name: 'Open garak.encoding with this preset' }))
+        .toHaveAttribute('href', '/scanner/garak.encoding?preset=encoding_probe')
+      expect(screen.queryByRole('button', { name: 'Launch scan' })).not.toBeInTheDocument()
+      expect(mockEstimateRun).not.toHaveBeenCalled()
+    })
+
+    it('should start a fresh form when the same scanner is opened with another preset', async () => {
+      const user = userEvent.setup()
+      mockGetPreset.mockImplementation(async (name: string) => makePresetResponse(
+        name === 'first' ? { name, techniques: ['crescendo'] } : { name, techniques: ['default_technique'] },
+      ))
+      render(<FluentProvider theme={webLightTheme}>
+        <MemoryRouter initialEntries={['/scanner/foundry.red_team_agent?preset=first']}>
+          <Link to="/scanner/foundry.red_team_agent?preset=second">Use another preset</Link>
+          <Routes><Route path="/scanner/:scenarioName" element={
+            <ScenarioDetail targets={[]} defaultObjectiveTarget={null} defaultAdversarialTarget={null}
+              labels={{ operator: 'roakey' }} defaultsReady onNavigate={jest.fn()} />
+          } /></Routes>
+        </MemoryRouter>
+      </FluentProvider>)
+
+      expect(await screen.findByTestId('preset-seed-banner')).toHaveTextContent('Pre-filled from preset first.')
+      expect(screen.getByRole('checkbox', { name: 'crescendo' })).toBeChecked()
+      await user.click(screen.getByRole('checkbox', { name: 'baseline' }))
+      expect(screen.getByRole('checkbox', { name: 'baseline' })).not.toBeChecked()
+      await user.click(screen.getByRole('link', { name: 'Use another preset' }))
+
+      await waitFor(() => expect(screen.getByTestId('preset-seed-banner'))
+        .toHaveTextContent('Pre-filled from preset second.'))
+      expect(screen.getByRole('checkbox', { name: 'default_technique' })).toBeChecked()
+      expect(screen.getByRole('checkbox', { name: 'crescendo' })).not.toBeChecked()
+      expect(screen.getByRole('checkbox', { name: 'baseline' })).toBeChecked()
+      expect(mockGetPreset).toHaveBeenNthCalledWith(1, 'first')
+      expect(mockGetPreset).toHaveBeenNthCalledWith(2, 'second')
+      expect(mockStartRun).not.toHaveBeenCalled()
     })
   })
 })

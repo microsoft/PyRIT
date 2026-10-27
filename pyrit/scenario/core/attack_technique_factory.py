@@ -20,12 +20,17 @@ from __future__ import annotations
 import copy
 import inspect
 import logging
-from dataclasses import replace
+import uuid
+from dataclasses import dataclass, fields, is_dataclass, replace
+from enum import Enum
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
-from pyrit.common import get_global_default_values
+from pydantic import BaseModel
+
+from pyrit.common import REQUIRED_VALUE, get_global_default_values
+from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
@@ -44,6 +49,7 @@ from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
     SimulatedTargetSystemPromptPaths,
+    config_hash,
     load_next_message_prompt,
     load_simulated_target_prompt,
     resolve_prompt_source,
@@ -52,13 +58,15 @@ from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemProm
 from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
-from pyrit.scenario.core.technique_requirements import TechniqueRequirements
+from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, TechniqueRequirements
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from pyrit.converter import Converter
     from pyrit.executor.attack import AttackStrategy
+    from pyrit.models import AttackSeedGroup
+    from pyrit.models.technique_edit import SimulationChanges
     from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
 
@@ -66,6 +74,18 @@ logger = logging.getLogger(__name__)
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+
+
+@dataclass
+class TechniqueFactorySettings:
+    """Supplied factory settings with independent containers and shared live dependencies."""
+
+    description: str | None
+    attack_kwargs: dict[str, Any]
+    adversarial_chat: PromptTarget | None
+    adversarial_system_prompt: str | SeedPrompt | None
+    adversarial_seed_prompt: str | SeedPrompt | None
+    adversarial_prompt_template: str | SeedPrompt | None
 
 
 def _capture_creation(method: Callable[_P, _R]) -> Callable[_P, _R]:
@@ -130,6 +150,7 @@ class AttackTechniqueFactory(Identifiable):
     """
 
     _creation_calls: list[tuple[str, dict[str, Any]]]
+    _OPAQUE_IDENTITY_SCOPE = uuid.uuid4().hex
 
     @_capture_creation
     def __init__(
@@ -699,6 +720,220 @@ class AttackTechniqueFactory(Identifiable):
         factory._validate_kwargs()
         return factory
 
+    def get_effective_settings(self) -> TechniqueFactorySettings:
+        """
+        Copy supplied settings without materializing constructor defaults or deferred dependencies.
+
+        Returns:
+            TechniqueFactorySettings: Independent containers; live targets and converters retain identity.
+        """
+        return TechniqueFactorySettings(
+            description=self._description,
+            attack_kwargs=_copy_creation_value(self._attack_kwargs),
+            adversarial_chat=self._adversarial_chat,
+            adversarial_system_prompt=self._adversarial_system_prompt,
+            adversarial_seed_prompt=self._adversarial_seed_prompt,
+            adversarial_prompt_template=self._adversarial_prompt_template,
+        )
+
+    def get_effective_attack_kwargs(self) -> dict[str, Any]:
+        """
+        Resolve constructor defaults without materializing deferred execution inputs.
+
+        Returns:
+            dict[str, Any]: Effective values; live objects retain identity and supplied arguments stay unchanged.
+        """
+        return resolve_constructor_defaults(
+            class_type=self._attack_class,
+            arguments=_copy_creation_value(self._attack_kwargs),
+            excluded_parameters={"objective_target", "attack_adversarial_config", "attack_scoring_config"},
+        )
+
+    def get_converter_config(self) -> AttackConverterConfig:
+        """
+        Resolve the effective converter configuration without constructing an attack.
+
+        Returns:
+            AttackConverterConfig: The supplied or inherited configuration, or an empty configuration.
+
+        Raises:
+            TypeError: If a configured value is not a converter configuration.
+        """
+        config = self.get_effective_attack_kwargs().get("attack_converter_config")
+        if config is None:
+            return AttackConverterConfig()
+        if not isinstance(config, AttackConverterConfig):
+            raise TypeError("attack_converter_config must be an AttackConverterConfig")
+        return config
+
+    def get_editable_settings(self) -> dict[str, Any]:
+        """
+        Expose lossless settings supported by this factory, before registry-name projection.
+
+        Returns:
+            dict[str, Any]: Supported fields with live references; unsupported state stays on the source.
+        """
+        result: dict[str, Any] = {"description": self._description}
+        accepted = self._compatibility_helper.accepted_params
+        if self.uses_adversarial:
+            result["adversarial_chat"] = self._adversarial_chat
+        if "attack_adversarial_config" in accepted:
+            for name in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
+                prompt = getattr(self, f"_{name}")
+                if (
+                    prompt is None
+                    or isinstance(prompt, str)
+                    or isinstance(prompt, SeedPrompt)
+                    and prompt.data_type == "text"
+                ):
+                    result[name] = prompt.value if isinstance(prompt, SeedPrompt) else prompt
+        if "attack_converter_config" in accepted:
+            config = self.get_converter_config()
+            for name in ("request_converters", "response_converters"):
+                chain = getattr(config, name)
+                if all(not item.indexes_to_apply and not item.prompt_data_types_to_apply for item in chain):
+                    result[name] = [converter for item in chain for converter in item.converters]
+        if self._seed_technique is not None and (simulation := self._seed_technique.simulation_settings) is not None:
+            result["simulation"] = simulation
+        return result
+
+    @property
+    def supports_prepended_conversation(self) -> bool:
+        """Whether the declared attack and seed contracts permit caller-supplied history."""
+        allowed = (
+            "prepended_conversation_config" in self._compatibility_helper.accepted_params
+            and not self._requirements.seed_group.objective_only
+            and not (self._seed_technique is not None and self._seed_technique.has_simulated_conversation)
+        )
+        if not allowed:
+            return False
+        parameter = inspect.signature(self._attack_class.__init__).parameters.get("params_type")
+        if parameter is None:
+            return True
+        params_type = self._attack_kwargs.get("params_type")
+        if params_type is None:
+            found, default = get_global_default_values().get_default_value(
+                class_type=self._attack_class, parameter_name="params_type"
+            )
+            params_type = default if found else parameter.default
+        if not isinstance(params_type, type) or not is_dataclass(params_type):
+            return False
+        return any(field.name == "prepended_conversation" for field in fields(params_type))
+
+    @_capture_creation
+    def with_settings(
+        self,
+        *,
+        settings: TechniqueFactorySettings,
+        simulation: SimulationChanges | None = None,
+        converter_changes: dict[str, list[ConverterConfiguration]] | None = None,
+    ) -> AttackTechniqueFactory:
+        """
+        Copy editable settings while retaining requirements, policies and live dependencies.
+
+        Returns:
+            AttackTechniqueFactory: A private factory, never registered by this operation.
+
+        Raises:
+            ValueError: If simulation settings do not apply to the source technique.
+        """
+        factory = self.with_attack_kwargs(attack_kwargs=settings.attack_kwargs)
+        if converter_changes:
+            factory._attack_kwargs["attack_converter_config"] = replace(
+                factory.get_converter_config(), **converter_changes
+            )
+        self._attack_class.validate_constructor_parameters(factory.get_effective_attack_kwargs())
+        factory._description = settings.description
+        factory._adversarial_chat = settings.adversarial_chat
+        for name in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
+            previous = getattr(self, f"_{name}")
+            value = getattr(settings, name)
+            if isinstance(previous, SeedPrompt) and isinstance(value, str):
+                value = previous.with_value(value)
+            setattr(factory, f"_{name}", value)
+        factory._has_custom_adversarial_prompt = any(
+            value is not None
+            for value in (
+                factory._adversarial_system_prompt,
+                factory._adversarial_seed_prompt,
+                factory._adversarial_prompt_template,
+            )
+        )
+        if simulation is not None:
+            if self._seed_technique is None:
+                raise ValueError("This technique has no simulated conversation")
+            factory._seed_technique = self._seed_technique.with_simulation_changes(simulation)
+        factory._validate_adversarial_flags()
+        return factory
+
+    def get_configuration_identity(self) -> str:
+        """
+        Fingerprint the full source configuration for lossless editing and replay.
+
+        Unlike the behavioral identifier, this includes descriptive metadata, constructor
+        defaults, seed metadata, requirements and scorer policy. Only the digest is exposed.
+
+        Returns:
+            str: A deterministic configuration digest without live-object credentials.
+        """
+        # Retain the saved identity envelope: defaults and supplied settings have separate fingerprints.
+        defaults = {}
+        for name, parameter in inspect.signature(self._attack_class.__init__).parameters.items():
+            if name == "self":
+                continue
+            found, value = get_global_default_values().get_default_value(
+                class_type=self._attack_class, parameter_name=name
+            )
+            if found or parameter.default is not inspect.Parameter.empty and parameter.default is not REQUIRED_VALUE:
+                defaults[name] = value if found else parameter.default
+        return config_hash(
+            self._configuration_value(
+                {
+                    "settings": self.get_effective_settings(),
+                    "attack_type": f"{self._attack_class.__module__}.{self._attack_class.__qualname__}",
+                    "seeds": self._seed_technique,
+                    "requirements": self._requirements,
+                    "scorer_policy": self._scorer_override_policy,
+                    "prefix": self._adversarial_system_prompt_prefix,
+                    "feedback": self._use_score_as_feedback,
+                    "behavior": self._build_identifier().model_dump(mode="json"),
+                    "defaults": defaults,
+                }
+            )
+        )
+
+    @classmethod
+    def _configuration_value(cls, value: Any) -> Any:
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, type):
+            return {"type": f"{value.__module__}.{value.__qualname__}"}
+        if isinstance(value, Identifiable):
+            return value.get_identifier().model_dump(mode="json")
+        if isinstance(value, BaseModel):
+            return {
+                name: cls._configuration_value(getattr(value, name))
+                for name in type(value).model_fields
+                if name not in {"id", "prompt_group_id", "value_sha256", "date_added"}
+            }
+        if is_dataclass(value) and not isinstance(value, type):
+            return {field.name: cls._configuration_value(getattr(value, field.name)) for field in fields(value)}
+        if isinstance(value, dict):
+            return {str(key): cls._configuration_value(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple, set, frozenset)):
+            items = [cls._configuration_value(item) for item in value]
+            return sorted(items, key=str) if isinstance(value, (set, frozenset)) else items
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, Path):
+            return str(value)
+        # Opaque executable state cannot be proved equivalent after a reload. Fail replay closed.
+        return {
+            "opaque_type": f"{type(value).__module__}.{type(value).__qualname__}",
+            "process": cls._OPAQUE_IDENTITY_SCOPE,
+            "instance": id(value),
+        }
+
     def with_extra_turns(self, *, turns: int) -> AttackTechniqueFactory:
         """
         Return a factory with the new-turn budget extended by stored assistant turns.
@@ -809,11 +1044,37 @@ class AttackTechniqueFactory(Identifiable):
             )
         return new_factory
 
+    def validate_group_adversarial_prompts(self, seed_group: AttackSeedGroup) -> None:
+        """
+        Check named group inputs without constructing an attack or resolving targets.
+
+        Args:
+            seed_group (AttackSeedGroup): The group prepared for this technique.
+
+        Raises:
+            IncompatibleTechniqueError: If the technique cannot use the named prompts.
+        """
+        prompts = seed_group.adversarial_prompts
+        if prompts is None:
+            return
+        if not self._uses_adversarial or "attack_adversarial_config" not in self._compatibility_helper.accepted_params:
+            raise IncompatibleTechniqueError(f"Factory '{self._name}' does not accept group adversarial prompts.")
+        if self._has_custom_adversarial_prompt:
+            raise IncompatibleTechniqueError(f"Factory '{self._name}' already has a custom adversarial prompt.")
+        requirements = self._attack_class.ADVERSARIAL_PROMPT_REQUIREMENTS
+        if requirements is None:
+            raise IncompatibleTechniqueError(f"Factory '{self._name}' does not declare named prompt support.")
+        try:
+            requirements.validate_prompts(prompts=prompts, system_prompt_prefix=self._adversarial_system_prompt_prefix)
+        except ValueError as exc:
+            raise IncompatibleTechniqueError(f"Factory '{self._name}': {exc}") from exc
+
     def create(
         self,
         *,
         objective_target: PromptTarget,
         attack_scoring_config: AttackScoringConfig,
+        seed_group: AttackSeedGroup | None = None,
         adversarial_chat: PromptTarget | None = None,
         adversarial_system_prompt: str | SeedPrompt | None = None,
         adversarial_seed_prompt: SeedPrompt | str | None = None,
@@ -848,6 +1109,8 @@ class AttackTechniqueFactory(Identifiable):
             attack_scoring_config: The scoring config to use for the attack. This is important
                 for attacks like TAP that may need a more specific scorer than the
                 scorer the scenario provides.
+            seed_group: Optional group whose named adversarial prompts configure this
+                attack instance. Target messages remain execution inputs.
             adversarial_chat: Optional adversarial chat target to use for this
                 attack. Only valid when the factory did not bake one. Only
                 forwarded if the attack class constructor accepts
@@ -876,6 +1139,8 @@ class AttackTechniqueFactory(Identifiable):
             A fresh AttackTechnique with a newly-constructed attack technique.
 
         Raises:
+            IncompatibleTechniqueError: If group prompts conflict with the technique or
+                lack required template parameters.
             ValueError: If a create-time adversarial chat is supplied while the
                 factory already baked one, if ``scorer_override_policy`` is RAISE
                 and the scenario scorer is incompatible with the attack's type annotation,
@@ -884,6 +1149,18 @@ class AttackTechniqueFactory(Identifiable):
                 accept ``attack_converter_config``.
         """
         create_time_target: PromptTarget | None = adversarial_chat
+        if seed_group is not None:
+            self.validate_group_adversarial_prompts(seed_group)
+        if seed_group is not None and seed_group.adversarial_prompts is not None:
+            if any(
+                prompt is not None
+                for prompt in (adversarial_system_prompt, adversarial_seed_prompt, adversarial_prompt_template)
+            ):
+                raise ValueError("Supply group adversarial prompts or explicit create-time prompts, not both.")
+            prompts = seed_group.adversarial_prompts.model_copy(deep=True)
+            adversarial_system_prompt = prompts.system_prompt
+            adversarial_seed_prompt = prompts.first_message
+            adversarial_prompt_template = prompts.feedback_template
 
         if extra_request_converters and "attack_converter_config" not in self._compatibility_helper.accepted_params:
             # These come from the caller's technique_converters, so dropping them would run a different setup.
@@ -955,7 +1232,12 @@ class AttackTechniqueFactory(Identifiable):
                 kwargs["attack_converter_config"] = converter_config
 
         attack = self._attack_class(**kwargs)
-        return AttackTechnique(attack=attack, seed_technique=self._seed_technique, requirements=self._requirements)
+        return AttackTechnique(
+            attack=attack,
+            seed_technique=self._seed_technique,
+            requirements=self._requirements,
+            adversarial_prompts=(seed_group.adversarial_prompts if seed_group is not None else None),
+        )
 
     def _apply_score_feedback_override(self, *, attack_scoring_config: AttackScoringConfig) -> AttackScoringConfig:
         """

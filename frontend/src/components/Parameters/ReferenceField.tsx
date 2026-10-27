@@ -40,6 +40,7 @@ export default function ReferenceField({
     <div className={styles.root}>
       <Field label={label} hint={hint}>
         <Select
+          className={styles.control}
           value={multiple ? pending : typeof value === 'string' ? value : ''}
           disabled={disabled}
           onChange={(_, data) => multiple ? setPending(data.value) : onChange(data.value)}

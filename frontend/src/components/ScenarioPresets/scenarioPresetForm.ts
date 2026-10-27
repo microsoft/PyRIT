@@ -74,6 +74,8 @@ interface PresetIdentity {
   name: string
   scenarioName: string
   description: string
+  /** Whether the Scanner lists the preset as an entry of its own. */
+  showInScanner: boolean
 }
 
 interface PresetWriteContext {
@@ -145,7 +147,7 @@ function presetScenarioParams(
  * operator left at the scenario's default unset so the preset keeps tracking them.
  */
 export function configToPreset(
-  { name, scenarioName, description }: PresetIdentity,
+  { name, scenarioName, description, showInScanner }: PresetIdentity,
   config: ScenarioConfigFields,
   context: PresetWriteContext,
 ): ScenarioPreset {
@@ -156,6 +158,10 @@ export function configToPreset(
   const trimmedDescription = description.trim()
   if (trimmedDescription.length > 0) {
     preset.description = trimmedDescription
+  }
+  // Listed is the default, so only a hidden preset writes the field, as the server stores it.
+  if (!showInScanner) {
+    preset.show_in_scanner = false
   }
   // The server stamps `author` once, at create. Editing rebuilds the document from
   // form state, so without carrying it forward every edit would erase it.

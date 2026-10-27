@@ -60,7 +60,9 @@ class StaticPromptInjectionScorer(RegexScorer):
         ),
         "Chat Template Injection": (
             r"(?i)(?:\[/?INST\]|<</?SYS>>|<\|im_start\|>|<\|im_end\|>"
-            r"|<\|system\|>|<\|user\|>|<\|assistant\|>|<\|endoftext\|>"
+            r"|<\|start_header_id\|>|<\|end_header_id\|>|<\|eot_id\|>|<\|begin_of_text\|>"
+            r"|<start_of_turn>|<end_of_turn>"
+            r"|<\|system\|>|<\|user\|>|<\|assistant\|>|<\|endoftext\|>|<\|end\|>"
             r"|<\|pad\|>)"
         ),
         "Encoding Evasion Request": (

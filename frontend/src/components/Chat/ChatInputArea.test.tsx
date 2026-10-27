@@ -38,7 +38,6 @@ describe("ChatInputArea", () => {
   const defaultProps = {
     onSend: jest.fn().mockResolvedValue(sentOutcome),
     disabled: false,
-    onNewConversation: jest.fn(),
     onUseAsTemplate: jest.fn(),
     onConfigureTarget: jest.fn(),
     onToggleConverterPanel: jest.fn(),
@@ -105,14 +104,15 @@ describe("ChatInputArea", () => {
   it("should keep Undo reachable for an eligible first-turn undo when a single-turn prompt is disabled", async () => {
     const user = userEvent.setup();
     const onUndo = jest.fn();
-    render(<TestWrapper><ChatInputArea {...defaultProps} disabled singleTurnLimitReached
+    render(<TestWrapper><ChatInputArea {...defaultProps} disabled
+      disabledReasons={["This target only supports single-turn conversations."]}
       undoLastSend={{ isUndoing: false, onUndo }} /></TestWrapper>);
     expect(screen.getByRole("textbox")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Toggle converter panel" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Undo last send" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Undo last send" }));
     expect(onUndo).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("single-turn-banner")).toBeInTheDocument();
+    expect(screen.queryByTestId("single-turn-banner")).not.toBeInTheDocument();
   });
 
   it("should retain the disabled Undo explanation in the prompt box", async () => {
@@ -934,7 +934,7 @@ describe("ChatInputArea", () => {
 
     expect(
       screen.getByText(
-        /does not track conversation history/
+        /only supports single-turn conversations/
       )
     ).toBeInTheDocument();
   });
@@ -1200,62 +1200,30 @@ describe("ChatInputArea", () => {
     expect(screen.queryByText(/\(\s*\d+(?:\.\d+)?\s*[KM]?B\s*\)/)).toBeNull();
   });
 
-  it("should show single-turn banner when singleTurnLimitReached is true", () => {
-    render(
-      <TestWrapper>
-        <ChatInputArea
-          {...defaultProps}
-          singleTurnLimitReached={true}
-          onNewConversation={jest.fn()}
-        />
-      </TestWrapper>
-    );
-
-    expect(screen.getByTestId("single-turn-banner")).toBeInTheDocument();
-    expect(screen.getByText(/only supports single-turn/)).toBeInTheDocument();
-    expect(screen.getByTestId("new-conversation-btn")).toBeInTheDocument();
-    // Input area should not be rendered
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-  });
-
-  it("should call onNewConversation when New Conversation button clicked", async () => {
+  it.each([false, true])("keeps the disabled single-turn composer visible with Undo present=%s", async (withUndo: boolean) => {
     const user = userEvent.setup();
-    const onNewConversation = jest.fn();
-
-    render(
-      <TestWrapper>
-        <ChatInputArea
-          {...defaultProps}
-          singleTurnLimitReached={true}
-          onNewConversation={onNewConversation}
-        />
-      </TestWrapper>
-    );
-
-    await user.click(screen.getByTestId("new-conversation-btn"));
-    expect(onNewConversation).toHaveBeenCalledTimes(1);
+    render(<TestWrapper><ChatInputArea {...defaultProps} disabled
+      disabledReasons={["This target only supports single-turn conversations."]}
+      undoLastSend={withUndo ? { onUndo: jest.fn(), isUndoing: false, disabledReason: "No saved converter state." } : undefined}
+    /></TestWrapper>);
+    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.queryByTestId("single-turn-banner")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("new-conversation-btn")).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText("Why the prompt box is disabled"));
+    expect(screen.getByRole("listitem")).toHaveTextContent("This target only supports single-turn conversations.");
+    expect(screen.queryByText(/Wait for the current operation/)).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.hover(getSendButton());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("This target only supports single-turn conversations.");
+    await user.click(getSendButton());
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
   });
 
-  it("should show New Conversation button when singleTurnLimitReached", () => {
+  it("should show normal input before a single-turn send", () => {
     render(
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          singleTurnLimitReached={true}
-        />
-      </TestWrapper>
-    );
-
-    expect(screen.getByTestId("single-turn-banner")).toBeInTheDocument();
-    expect(screen.getByTestId("new-conversation-btn")).toBeInTheDocument();
-  });
-
-  it("should show normal input when singleTurnLimitReached is false", () => {
-    render(
-      <TestWrapper>
-        <ChatInputArea
-          {...defaultProps}
-          singleTurnLimitReached={false}
         />
       </TestWrapper>
     );
@@ -1853,5 +1821,119 @@ describe("ChatInputArea", () => {
       screen.getByTestId("unsupported-modality-warning")
     ).toHaveTextContent(/selected converter produces audio output, which this target does not support/);
     expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
+  });
+
+  describe("attachment blob URL lifecycle and metadata", () => {
+    let revokeSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      revokeSpy = jest.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      revokeSpy.mockRestore();
+    });
+
+    it("preserves initialAttachments blob URLs without calling URL.revokeObjectURL on mount", () => {
+      const attachment: MessageAttachment = {
+        name: "photo.png",
+        type: "image/png",
+        url: "blob:http://localhost/active-photo",
+        size: 2048,
+        draftId: "draft-photo-1",
+      };
+
+      render(
+        <TestWrapper>
+          <ChatInputArea
+            {...defaultProps}
+            initialAttachments={[attachment]}
+            initialText="restored prompt text"
+          />
+        </TestWrapper>
+      );
+
+      expect(screen.getByText(/photo\.png/)).toBeInTheDocument();
+      expect(revokeSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not revoke blob URL when restoreDraft updates attachments with identical URLs", () => {
+      const handleRef = React.createRef<ChatInputAreaHandle>();
+      const initialAttachment: MessageAttachment = {
+        name: "photo.png",
+        type: "image/png",
+        url: "blob:http://localhost/active-photo",
+        size: 2048,
+        draftId: "draft-photo-1",
+      };
+
+      render(
+        <TestWrapper>
+          <ChatInputArea
+            ref={handleRef}
+            {...defaultProps}
+            initialAttachments={[initialAttachment]}
+            initialText="prompt text"
+          />
+        </TestWrapper>
+      );
+
+      expect(revokeSpy).not.toHaveBeenCalled();
+
+      // Calling restoreDraft with the same attachment or cloned copy should NOT revoke its URL
+      act(() => {
+        handleRef.current?.restoreDraft("updated prompt", [{ ...initialAttachment }]);
+      });
+
+      expect(revokeSpy).not.toHaveBeenCalled();
+    });
+
+    it("revokes blob URL when attachment is explicitly removed", async () => {
+      const user = userEvent.setup();
+      const attachment: MessageAttachment = {
+        name: "photo.png",
+        type: "image/png",
+        url: "blob:http://localhost/remove-me",
+        size: 2048,
+        draftId: "draft-photo-2",
+      };
+
+      render(
+        <TestWrapper>
+          <ChatInputArea
+            {...defaultProps}
+            initialAttachments={[attachment]}
+            initialText="prompt text"
+          />
+        </TestWrapper>
+      );
+
+      expect(screen.getByText(/photo\.png/)).toBeInTheDocument();
+      expect(revokeSpy).not.toHaveBeenCalled();
+
+      const removeBtn = screen.getByRole("button", { name: "Remove photo.png" });
+      await user.click(removeBtn);
+
+      expect(revokeSpy).toHaveBeenCalledTimes(1);
+      expect(revokeSpy).toHaveBeenCalledWith("blob:http://localhost/remove-me");
+    });
+
+    it("retains initialTextMetadata and exposes via getTextMetadata", () => {
+      const handleRef = React.createRef<ChatInputAreaHandle>();
+      const metadata = { datasetId: "ds-123", seedIndex: 42 };
+
+      render(
+        <TestWrapper>
+          <ChatInputArea
+            ref={handleRef}
+            {...defaultProps}
+            initialText="seed prompt"
+            initialTextMetadata={metadata}
+          />
+        </TestWrapper>
+      );
+
+      expect(handleRef.current?.getTextMetadata()).toEqual(metadata);
+    });
   });
 });

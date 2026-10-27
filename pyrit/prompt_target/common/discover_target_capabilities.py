@@ -161,6 +161,7 @@ def _permissive_configuration(
         supports_editable_history=True,
         supports_system_prompt=True,
         supports_streaming_audio=True,
+        supports_web_search=True,
         input_modalities=merged_modalities | TOOL_CALL_INPUT_MODALITIES,
         output_modalities=original.capabilities.output_modalities,
     )
@@ -938,6 +939,7 @@ async def discover_target_capabilities_async(
         supports_editable_history=resolved_editable_history,
         supports_system_prompt=_resolve(CapabilityName.SYSTEM_PROMPT),
         supports_streaming_audio=declared.supports_streaming_audio,
+        supports_web_search=_resolve(CapabilityName.WEB_SEARCH),
         input_modalities=resolved_input_modalities,
         # Output modalities are still declarative because probing them would
         # require target-specific response inspection.

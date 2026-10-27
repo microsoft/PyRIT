@@ -1,0 +1,53 @@
+{
+  "component": "Microsoft Responsible AI/ASSERT",
+  "license": "MIT",
+  "repository": "https://github.com/responsibleai/ASSERT",
+  "revision": "04b713fe73879208369750b3bd5ad53544f3eecc",
+  "revision_date": "2026-09-04",
+  "version": "v0.3.0",
+  "license_file": "LICENSE",
+  "notice_file": "THIRD_PARTY_NOTICES.txt",
+  "redistributed_files": [
+    {
+      "path": "pyrit/executor/promptgen/assert_generator.py",
+      "sources": [
+        "assert_ai/stages/systematization.py",
+        "assert_ai/stages/systematization_convert.py",
+        "assert_ai/stages/stratification.py",
+        "assert_ai/stages/test_set.py"
+      ]
+    },
+    {
+      "path": "pyrit/models/seeds/assert_generation.py",
+      "sources": [
+        "assert_ai/stages/systematization.py",
+        "assert_ai/stages/test_set.py",
+        "assert_ai/internal_pipeline_prompts/systematization_single.md"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/generated/assert_provider.py",
+      "sources": ["assert_ai/stages/test_set.py"]
+    },
+    {
+      "path": "pyrit/datasets/executors/promptgen/assert/systematization.yaml",
+      "sources": ["assert_ai/internal_pipeline_prompts/systematization_single.md"]
+    },
+    {
+      "path": "pyrit/datasets/executors/promptgen/assert/taxonomy.yaml",
+      "sources": ["assert_ai/internal_pipeline_prompts/systematization_convert_single.md"]
+    },
+    {
+      "path": "pyrit/datasets/executors/promptgen/assert/dimensions.yaml",
+      "sources": ["assert_ai/internal_pipeline_prompts/test_set_stratification.md"]
+    },
+    {
+      "path": "pyrit/datasets/executors/promptgen/assert/seed_groups.yaml",
+      "sources": [
+        "assert_ai/internal_pipeline_prompts/test_set_direct_single.md",
+        "assert_ai/internal_pipeline_prompts/test_set_scenario_single.md",
+        "assert_ai/internal_pipeline_prompts/test_set_generation_guidance.md"
+      ]
+    }
+  ]
+}

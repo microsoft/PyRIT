@@ -340,6 +340,14 @@ async function mockScenarioAPIs(page: Page): Promise<ScenarioMocks> {
     });
   });
 
+  await page.route(/\/api\/scenario-(?:presets|suites)(?:\?|$)/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ source: "e2e", items: [] }),
+    });
+  });
+
   await page.route(/\/api\/labels(?:\?|$)/, async (route) => {
     const source = new URL(route.request().url()).searchParams.get("source") ?? "attacks";
     await route.fulfill({
@@ -553,7 +561,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
       "Configuration",
     ]);
     await expect(page.getByTitle("Scanner")).toHaveAttribute("aria-current", "page");
-    await expect(page.getByRole("table", { name: "Registered scenarios" })).toBeVisible();
+    await expect(page.getByRole("table", { name: "Individual scanners" })).toBeVisible();
     await expect(page.getByRole("columnheader", { name: "Default run size" })).toBeVisible();
 
     const row = page.getByTestId(`scenario-card-${SCENARIO_NAME}`);

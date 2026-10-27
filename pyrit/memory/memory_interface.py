@@ -97,6 +97,7 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
+    AdversarialPrompts,
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -204,8 +205,8 @@ class OperationInUseError(ValueError):
         self.usage = usage
 
 
-#: Canonical criteria key of a seed that carries no conditions.
-_NO_CONDITIONS_KEY = json.dumps([], separators=(",", ":"))
+#: Canonical key of a seed without conditions or named adversarial prompts.
+_NO_SEED_BEHAVIOR_KEY = json.dumps({}, separators=(",", ":"))
 
 
 Model = TypeVar("Model")
@@ -4924,9 +4925,9 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
-        Standalone seeds with the same value hash, dataset, and canonical conditions already
+        Standalone seeds with the same value hash, dataset, and behavioral inputs already
         present in storage are skipped. Multi-seed groups are compared as complete groups,
-        including roles, sequence, metadata, and criteria, so shared content cannot strip
+        including roles, sequence, metadata, and behavioral inputs, so shared content cannot strip
         members from a different conversation. Duplicates *within* ``seeds`` are all inserted,
         because the check looks at what storage held when the call started.
         When a stored seed is copied to a new group, its caller-visible ID is updated after
@@ -4945,7 +4946,7 @@ class MemoryInterface(abc.ABC):
     def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
         """Deduplicate and store seeds after their media is prepared."""
         existing_pairs, existing_hashes, existing_seeds = self._get_existing_seed_keys(seeds=seeds)
-        retained_group_ids = self._get_new_condition_group_ids(
+        retained_group_ids = self._get_new_behavior_group_ids(
             seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
         )
         retained_group_ids.update(self._get_new_seed_group_ids(seeds=seeds, existing_seeds=existing_seeds))
@@ -4971,7 +4972,7 @@ class MemoryInterface(abc.ABC):
         for prompt in seeds:
             if not prompt.value_sha256:
                 continue
-            conditions_key = self._seed_conditions_key(prompt)
+            behavior_key = self._seed_behavior_key(prompt)
             # A seed without a dataset name matches the hash in any dataset, mirroring the
             # filter that is applied when dataset_name is not supplied.
             if prompt.prompt_group_id in retained_group_ids:
@@ -4990,9 +4991,9 @@ class MemoryInterface(abc.ABC):
                 entries.append(entry)
                 continue
             if prompt.dataset_name:
-                if (prompt.value_sha256, prompt.dataset_name, conditions_key) in existing_pairs:
+                if (prompt.value_sha256, prompt.dataset_name, behavior_key) in existing_pairs:
                     continue
-            elif (prompt.value_sha256, conditions_key) in existing_hashes:
+            elif (prompt.value_sha256, behavior_key) in existing_hashes:
                 continue
             entries.append(SeedEntry(entry=prompt))
 
@@ -5009,6 +5010,10 @@ class MemoryInterface(abc.ABC):
             str: Canonical persisted member identity.
         """
         entry = SeedEntry(entry=seed)
+        metadata = dict(entry.prompt_metadata or {})
+        prompts = AdversarialPrompts.from_metadata(metadata)
+        if prompts is not None:
+            metadata[AdversarialPrompts.METADATA_KEY] = prompts.identity
         return json.dumps(
             {
                 "value_sha256": entry.value_sha256,
@@ -5016,7 +5021,7 @@ class MemoryInterface(abc.ABC):
                 "seed_type": entry.seed_type,
                 "role": entry.role,
                 "sequence": entry.sequence,
-                "metadata": entry.prompt_metadata or {},
+                "metadata": metadata,
                 "conditions": entry.conditions or [],
                 "parameters": entry.parameters or [],
                 "harm_categories": entry.harm_categories or [],
@@ -5101,19 +5106,16 @@ class MemoryInterface(abc.ABC):
         return new_group_ids
 
     @staticmethod
-    def _seed_conditions_key(seed: Seed[Any]) -> str:
+    def _seed_behavior_key(seed: Seed[Any]) -> str:
         """
-        Serialize criteria canonically, preserving condition order.
+        Serialize the behavioral inputs used by seed identifiers.
 
         Returns:
-            str: Canonical JSON used for criteria identity.
+            str: Canonical JSON, preserving condition and template-parameter order.
         """
-        conditions = seed.model_dump(mode="json", include={"conditions"}).get("conditions", [])
-        if not conditions:
-            return _NO_CONDITIONS_KEY
-        return json.dumps(conditions, sort_keys=True, separators=(",", ":"))
+        return json.dumps(SeedIdentifier.get_behavioral_parameters(seed), sort_keys=True, separators=(",", ":"))
 
-    def _get_new_condition_group_ids(
+    def _get_new_behavior_group_ids(
         self,
         *,
         seeds: Sequence[Seed[Any]],
@@ -5121,30 +5123,29 @@ class MemoryInterface(abc.ABC):
         existing_hashes: set[tuple[str, str]],
     ) -> set[uuid.UUID]:
         """
-        Identify groups whose newly authored criteria require retaining all input seeds.
+        Identify groups with new objective conditions or adversarial inputs.
 
-        Other seeds in the same group do not own conditions. Their ordinary content
-        deduplication must not strip them from a new condition-bearing group, or from a group that
-        removes previously stored criteria. Other multi-seed groups are compared by full
-        membership separately.
+        Retain their companion seeds, including when an objective removes previously stored
+        behavioral inputs. Other multi-seed groups are compared by full membership separately.
 
         Returns:
             set[uuid.UUID]: Group IDs whose complete input membership must be retained.
         """
-        conditions_by_value: dict[tuple[str, str | None], set[str]] = {}
-        for value_hash, dataset, conditions in existing_pairs:
-            conditions_by_value.setdefault((value_hash, dataset), set()).add(conditions)
-        for value_hash, conditions in existing_hashes:
-            conditions_by_value.setdefault((value_hash, None), set()).add(conditions)
+        behaviors_by_value: dict[tuple[str, str | None], set[str]] = {}
+        for value_hash, dataset, behavior in existing_pairs:
+            behaviors_by_value.setdefault((value_hash, dataset), set()).add(behavior)
+        for value_hash, behavior in existing_hashes:
+            behaviors_by_value.setdefault((value_hash, None), set()).add(behavior)
 
         group_ids: set[uuid.UUID] = set()
         for seed in seeds:
             if not isinstance(seed, SeedObjective) or seed.prompt_group_id is None or not seed.value_sha256:
                 continue
-            stored_conditions = conditions_by_value.get((seed.value_sha256, seed.dataset_name or None), set())
-            if self._seed_conditions_key(seed) in stored_conditions:
+            stored_behaviors = behaviors_by_value.get((seed.value_sha256, seed.dataset_name or None), set())
+            behavior_key = self._seed_behavior_key(seed)
+            if behavior_key in stored_behaviors:
                 continue
-            if seed.conditions or stored_conditions - {_NO_CONDITIONS_KEY}:
+            if behavior_key != _NO_SEED_BEHAVIOR_KEY or stored_behaviors - {_NO_SEED_BEHAVIOR_KEY}:
                 group_ids.add(seed.prompt_group_id)
         return group_ids
 
@@ -5152,7 +5153,7 @@ class MemoryInterface(abc.ABC):
         self, *, seeds: Sequence[Seed[Any]]
     ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]], list[tuple[str | None, Seed[Any]]]]:
         """
-        Look up which value hashes and canonical conditions are already stored.
+        Look up which value hashes and behavioral inputs are already stored.
 
         Queries in chunks rather than once per seed, which otherwise dominates the cost of
         loading a large dataset. ``get_seeds`` issues the statement directly instead of going
@@ -5170,8 +5171,8 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             tuple: The stored
-                (value_sha256, dataset_name, conditions) keys, using the requested
-                dataset name, (value_sha256, conditions) keys irrespective of dataset,
+                (value_sha256, dataset_name, behavior) keys, using the requested
+                dataset name, (value_sha256, behavior) keys irrespective of dataset,
                 and matched seeds paired with their requested dataset filter.
         """
         hashes_by_dataset: dict[str | None, set[str]] = {}
@@ -5198,14 +5199,14 @@ class MemoryInterface(abc.ABC):
                     if not existing.value_sha256:
                         continue
                     existing_seeds.append((dataset_name, existing))
-                    conditions_key = self._seed_conditions_key(existing)
+                    behavior_key = self._seed_behavior_key(existing)
                     if dataset_name:
                         # The database decided the name matched, so record the name that was
                         # asked for; the stored spelling can differ under a case-insensitive
                         # collation.
-                        existing_pairs.add((existing.value_sha256, dataset_name, conditions_key))
+                        existing_pairs.add((existing.value_sha256, dataset_name, behavior_key))
                     else:
-                        existing_hashes.add((existing.value_sha256, conditions_key))
+                        existing_hashes.add((existing.value_sha256, behavior_key))
 
         return existing_pairs, existing_hashes, existing_seeds
 

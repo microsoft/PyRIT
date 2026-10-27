@@ -408,24 +408,6 @@ class TestListTargetTypes:
         ("target_type", "parameter_name", "type_name", "required", "choices"),
         [
             (
-                "GandalfTarget",
-                "level",
-                "GandalfLevel",
-                True,
-                [
-                    "baseline",
-                    "do-not-tell",
-                    "do-not-tell-and-block",
-                    "gpt-is-password-encoded",
-                    "word-blacklist",
-                    "gpt-blacklist",
-                    "gandalf",
-                    "gandalf-the-white",
-                    "adventure-1",
-                    "adventure-2",
-                ],
-            ),
-            (
                 "AzureBlobStorageTarget",
                 "blob_content_type",
                 "SupportedContentType",
@@ -920,28 +902,19 @@ class TestCreateTarget:
 
         create.assert_called_once_with("TextTarget", params={})
 
-    async def test_create_gandalf_target_coerces_level_string(self, sqlite_instance) -> None:
-        """A Gandalf level from the JSON request is coerced to its enum before construction."""
+    async def test_create_target_rejects_invalid_enum_value(self, sqlite_instance) -> None:
+        """An invalid enum value from the JSON request raises a parameter error before target construction."""
         service = TargetService()
         request = CreateTargetRequest(
-            type="GandalfTarget",
-            params={"level": "baseline"},
+            type="AzureBlobStorageTarget",
+            params={
+                "container_url": "https://test.blob.core.windows.net/test",
+                "sas_token": "valid_sas_token",
+                "blob_content_type": "unknown",
+            },
         )
 
-        result = await service.create_target_async(request=request)
-
-        assert result.identifier.class_name == "GandalfTarget"
-        assert result.target_specific_params == {"level": "baseline"}
-
-    async def test_create_gandalf_target_rejects_invalid_level(self, sqlite_instance) -> None:
-        """An invalid Gandalf level raises a parameter error before target construction."""
-        service = TargetService()
-        request = CreateTargetRequest(
-            type="GandalfTarget",
-            params={"level": "unknown"},
-        )
-
-        with pytest.raises(ValueError, match="Parameter 'level'.*expected one of"):
+        with pytest.raises(ValueError, match="Parameter 'blob_content_type'.*expected one of"):
             await service.create_target_async(request=request)
 
     async def test_create_azure_blob_target_coerces_content_type_string(self, sqlite_instance) -> None:

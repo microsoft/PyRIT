@@ -8,6 +8,9 @@ import {
 } from '@/styles/touchTargets'
 import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
 
+/** Unhashed class on every Scanner table cell so tests can assert the shared cell spacing. */
+export const SCANNER_CELL_PADDING_CLASS = 'scenario-catalog-cell-padding'
+
 export const useScenarioCatalogStyles = makeStyles({
   root: {
     display: 'flex',
@@ -253,5 +256,35 @@ export const useScenarioCatalogStyles = makeStyles({
   },
   secondaryText: {
     color: tokens.colorNeutralForeground3,
+  },
+  messages: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalS,
+    marginBottom: tokens.spacingVerticalL,
+  },
+  sections: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXL,
+  },
+  section: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    minWidth: 0,
+  },
+  presetMeta: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalS,
+  },
+  issueList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+    margin: 0,
+    paddingLeft: tokens.spacingHorizontalL,
   },
 })

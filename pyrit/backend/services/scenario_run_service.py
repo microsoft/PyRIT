@@ -14,8 +14,10 @@ import contextlib
 import json
 import logging
 import uuid
+from bisect import bisect_right
 from collections import OrderedDict, deque
 from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -100,11 +102,24 @@ _RESTART_INTERRUPTION_REASON = (
 _SHUTDOWN_INTERRUPTION_REASON = "The backend process shut down before this scenario run completed."
 _USER_CANCELLATION_REASON = "Run was cancelled by user"
 _LAUNCH_REQUEST_METADATA_KEY = "scenario_launch_request_v1"
+_RESERVED_INITIAL_METADATA_KEYS = frozenset(
+    {
+        _SCHEDULER_METADATA_KEY,
+        _LAUNCH_REQUEST_METADATA_KEY,
+        SCENARIO_RUN_PLAN_METADATA_KEY,
+        SCENARIO_RUN_STARTED_AT_METADATA_KEY,
+    }
+)
+_INITIAL_METADATA_CONTEXT: ContextVar[Mapping[str, Any] | None] = ContextVar(
+    "scenario_run_initial_metadata",
+    default=None,
+)
 _LAUNCH_REQUEST_FIELDS = (
     "scenario_name",
     "target_name",
     "adversarial_target_name",
     "techniques",
+    "technique_override",
     "datasets",
     "dataset_names",
     "max_dataset_size",
@@ -114,7 +129,7 @@ _LAUNCH_REQUEST_FIELDS = (
     "include_baseline",
 )
 # Fields added after the first saved launch records; older records omit them.
-_OPTIONAL_LAUNCH_FIELDS = frozenset({"adversarial_target_name", "datasets", "max_dataset_size"})
+_OPTIONAL_LAUNCH_FIELDS = frozenset({"adversarial_target_name", "datasets", "max_dataset_size", "technique_override"})
 
 _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
     {
@@ -245,16 +260,28 @@ class ScenarioRunService:
         """Reject new preparations and prevent queued runs from starting."""
         self._stopping = True
 
-    async def start_run_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
+    async def start_run_async(
+        self,
+        *,
+        request: RunScenarioRequest,
+        initial_metadata: Mapping[str, Any] | None = None,
+    ) -> ScenarioRunSummary:
         """
         Initialize and schedule a new run or an explicitly configured continuation.
+
+        Args:
+            request: Scenario launch configuration.
+            initial_metadata: Internal caller-owned scenario metadata persisted
+                atomically with a fresh result. Reserved run-service keys cannot
+                be supplied.
 
         Returns:
             ScenarioRunSummary: Current scheduled run state.
         """
+        metadata = self._validate_initial_metadata(initial_metadata=initial_metadata)
         async with self._reserve_resume_request_async(request.scenario_result_id), self._launch_lock:
             await self._validate_resume_admission_async(scenario_result_id=request.scenario_result_id)
-            return await self._start_run_locked_async(request=request)
+            return await self._start_run_locked_async(request=request, initial_metadata=metadata)
 
     async def resume_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary:
         """
@@ -269,7 +296,7 @@ class ScenarioRunService:
             )
             assert stored is not None
             request = await asyncio.to_thread(self._restore_launch_request, stored=stored)
-            return await self._start_run_locked_async(request=request)
+            return await self._start_run_locked_async(request=request, initial_metadata={})
 
     @contextlib.asynccontextmanager
     async def _reserve_resume_request_async(self, scenario_result_id: str | None) -> AsyncGenerator[None, None]:
@@ -395,7 +422,12 @@ class ScenarioRunService:
             deep=True,
         )
 
-    async def _start_run_locked_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
+    async def _start_run_locked_async(
+        self,
+        *,
+        request: RunScenarioRequest,
+        initial_metadata: Mapping[str, Any],
+    ) -> ScenarioRunSummary:
         """
         Initialize and schedule a scenario run.
 
@@ -406,6 +438,8 @@ class ScenarioRunService:
 
         Args:
             request: The run request with scenario name, target, and options.
+            initial_metadata: Internal caller-owned metadata persisted with a
+                fresh scenario result.
 
         Returns:
             ScenarioRunSummary with a stable ID and current active or queued state.
@@ -425,7 +459,11 @@ class ScenarioRunService:
             resumed_from_cancelled = await self._is_run_cancelled_async(scenario_result_id=request.scenario_result_id)
             if request.scenario_result_id:
                 self._preparing_run_ids.add(request.scenario_result_id)
-            prepare_task = asyncio.create_task(self._prepare_run_async(request=request))
+            metadata_token = _INITIAL_METADATA_CONTEXT.set(initial_metadata)
+            try:
+                prepare_task = asyncio.create_task(self._prepare_run_async(request=request))
+            finally:
+                _INITIAL_METADATA_CONTEXT.reset(metadata_token)
             self._preparations.add(prepare_task)
             prepared = await asyncio.shield(prepare_task)
             return await self._schedule_prepared_run_async(
@@ -448,7 +486,7 @@ class ScenarioRunService:
         self, *, request: RunScenarioRequest, prepared: _PreparedRun, resumed_from_cancelled: bool
     ) -> ScenarioRunSummary:
         """
-        Validate persisted preparation and admit it to the FIFO scheduler.
+        Validate the persisted header before admission; build details only for the returned response.
 
         Returns:
             ScenarioRunSummary: The persisted active, queued, or terminal state.
@@ -459,10 +497,10 @@ class ScenarioRunService:
             raise ValueError("Scenario did not produce a scenario_result_id during initialization.")
         if request.scenario_result_id and scenario_result_id != request.scenario_result_id:
             raise ValueError("Scenario initialization changed the saved result ID; resume was not started.")
-        persisted = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
-        if not persisted:
+        persisted = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+        if persisted is None:
             raise RuntimeError(f"Scenario run {scenario_result_id} was not persisted during initialization.")
-        if not resumed_from_cancelled and persisted[0].scenario_run_state == ScenarioRunState.CANCELLED:
+        if not resumed_from_cancelled and persisted.scenario_run_state == ScenarioRunState.CANCELLED:
             response = await self._build_response_async(
                 scenario_result_id=scenario_result_id,
                 active_error=None,
@@ -474,23 +512,13 @@ class ScenarioRunService:
                     f"Scenario run {scenario_result_id} was not found in the database after initialization."
                 )
             return response
-        if (
-            await self._build_response_async(
-                scenario_result_id=scenario_result_id,
-                active_error=None,
-                queue_position=None,
-                active_scenario_result_id=self._active_scenario_result_id,
-            )
-            is None
-        ):
-            raise RuntimeError(f"Scenario run {scenario_result_id} was not found in the database after initialization.")
         scheduled = _ActiveTask(
             scenario_result_id=scenario_result_id,
             scenario=scenario,
             adversarial_target=prepared.adversarial_target,
-            scenario_name=persisted[0].scenario_name,
+            scenario_name=persisted.scenario_name,
             scenario_registry_name=request.scenario_name,
-            created_at=persisted[0].creation_time,
+            created_at=persisted.creation_time,
             enqueued_at=datetime.now(UTC),
         )
         await self._enqueue_run_async(scheduled=scheduled)
@@ -610,12 +638,19 @@ class ScenarioRunService:
         labels = {key: value for key, value in (request.labels or {}).items() if key != "operation"}
         return request.model_copy(update={"labels": labels if request.labels is not None else None})
 
-    async def _prepare_run_async(self, *, request: RunScenarioRequest) -> _PreparedRun:
+    async def _prepare_run_async(
+        self,
+        *,
+        request: RunScenarioRequest,
+        initial_metadata: Mapping[str, Any] | None = None,
+    ) -> _PreparedRun:
         """
         Resolve and initialize the scenario for a run request.
 
         Args:
             request: The run request with scenario name, target, and options.
+            initial_metadata: Internal caller-owned metadata persisted with a
+                fresh scenario result.
 
         Returns:
             _PreparedRun: The initialized scenario and its scoped default.
@@ -651,6 +686,7 @@ class ScenarioRunService:
                 scenario_class=scenario_class,
                 objective_target=objective_target,
                 techniques=request.techniques,
+                technique_override=request.technique_override,
                 datasets=request.dataset_request,
                 include_baseline=request.include_baseline,
                 max_concurrency=request.max_concurrency
@@ -662,8 +698,31 @@ class ScenarioRunService:
                 memory_labels=request.labels,
             )
             init_kwargs["operation_id"] = request.operation_id
-            scenario = await self._initialize_scenario_async(request=request, init_kwargs=init_kwargs)
+            scenario = await self._initialize_scenario_async(
+                request=request,
+                init_kwargs=init_kwargs,
+                initial_metadata=(
+                    initial_metadata if initial_metadata is not None else (_INITIAL_METADATA_CONTEXT.get() or {})
+                ),
+            )
         return _PreparedRun(scenario=scenario, adversarial_target=adversarial_target)
+
+    @staticmethod
+    def _validate_initial_metadata(*, initial_metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+        """
+        Copy caller metadata after protecting run-service-owned fields.
+
+        Returns:
+            dict[str, Any]: A detached mapping safe to merge into scenario metadata.
+
+        Raises:
+            ValueError: If the caller attempts to replace a reserved metadata key.
+        """
+        metadata = dict(initial_metadata or {})
+        reserved = sorted(_RESERVED_INITIAL_METADATA_KEYS.intersection(metadata))
+        if reserved:
+            raise ValueError(f"Initial scenario metadata cannot set reserved keys: {', '.join(reserved)}")
+        return metadata
 
     async def get_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
         """
@@ -836,11 +895,11 @@ class ScenarioRunService:
         Raises:
             ValueError: If the run is already in a terminal state or not active.
         """
-        results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
-        if not results:
+        header = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+        if header is None:
             return None
 
-        db_status = results[0].scenario_run_state
+        db_status = header.scenario_run_state
         if self._is_terminal_state(db_status):
             raise ValueError(f"Cannot cancel run in '{db_status}' state.")
 
@@ -867,9 +926,9 @@ class ScenarioRunService:
                 active.cancellation_error_type = "CancelledError"
                 task = active.task
             else:
-                latest = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
-                if latest and self._is_terminal_state(latest[0].scenario_run_state):
-                    raise ValueError(f"Cannot cancel run in '{latest[0].scenario_run_state}' state.")
+                latest = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+                if latest is not None and self._is_terminal_state(latest.scenario_run_state):
+                    raise ValueError(f"Cannot cancel run in '{latest.scenario_run_state}' state.")
                 await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
                     expected_states={
@@ -1090,10 +1149,10 @@ class ScenarioRunService:
                 return
             while self._queued_runs:
                 next_run = self._queued_runs[0]
-                persisted = await self._memory.get_scenario_results_async(
-                    scenario_result_ids=[next_run.scenario_result_id]
+                persisted = await self._memory.get_scenario_result_header_async(
+                    scenario_result_id=next_run.scenario_result_id
                 )
-                if not persisted or persisted[0].scenario_run_state != ScenarioRunState.QUEUED:
+                if persisted is None or persisted.scenario_run_state != ScenarioRunState.QUEUED:
                     self._queued_runs.popleft()
                     self._queue_revision += 1
                     continue
@@ -1248,7 +1307,13 @@ class ScenarioRunService:
                 raise ValueError(f"Initializer not found: {e}") from None
             await instance.initialize_async()
 
-    async def _initialize_scenario_async(self, *, request: RunScenarioRequest, init_kwargs: dict[str, Any]) -> Scenario:
+    async def _initialize_scenario_async(
+        self,
+        *,
+        request: RunScenarioRequest,
+        init_kwargs: dict[str, Any],
+        initial_metadata: Mapping[str, Any] | None = None,
+    ) -> Scenario:
         """
         Build and initialize the scenario via the registry.
 
@@ -1264,6 +1329,8 @@ class ScenarioRunService:
                 scenario_result_id).
             init_kwargs: The resolved common parameters to pass to
                 scenario.initialize_async.
+            initial_metadata: Internal caller-owned metadata persisted with a
+                fresh scenario result.
 
         Returns:
             The fully initialized Scenario instance ready for run_async.
@@ -1330,6 +1397,7 @@ class ScenarioRunService:
             scenario_params=request.scenario_params or {},
             scenario_result_id=request.scenario_result_id or None,
             initial_metadata={
+                **(initial_metadata or {}),
                 _SCHEDULER_METADATA_KEY: _SCHEDULER_METADATA_VALUE,
                 _LAUNCH_REQUEST_METADATA_KEY: launch_request,
             },
@@ -2201,20 +2269,26 @@ class ScenarioRunService:
         queue_position: int | None,
         active_scenario_result_id: str | None,
     ) -> ScenarioRunProgress:
+        if len(progress_snapshot.deltas) != len(progress_snapshot.results):
+            raise ValueError("Scenario progress deltas and results have different lengths.")
         overload_events: deque[Any] = deque(maxlen=_MAX_OVERLOAD_EVENTS)
+
         for delta in progress_snapshot.deltas:
             overload_events.extend(delta.retry_events)
-        available = [
-            (delta, result)
-            for delta, result in zip(progress_snapshot.deltas, progress_snapshot.results, strict=True)
-            if cursor is None
-            or (delta.timestamp, uuid.UUID(delta.attack_result_id))
-            > (cursor.timestamp, uuid.UUID(cursor.attack_result_id))
-        ]
-        page = available[:limit]
-        deltas = [delta for delta, _ in page]
-        results = [result for _, result in page]
-        has_more = len(available) > limit
+        # Use binary search to locate the bookmark in results sorted by timestamp and ID.
+        start = (
+            bisect_right(
+                progress_snapshot.deltas,
+                (cursor.timestamp, uuid.UUID(cursor.attack_result_id)),
+                key=lambda delta: (delta.timestamp, uuid.UUID(delta.attack_result_id)),
+            )
+            if cursor is not None
+            else 0
+        )
+        end = start + limit
+        deltas = progress_snapshot.deltas[start:end]
+        results = list(progress_snapshot.results[start:end])
+        has_more = end < len(progress_snapshot.deltas)
         response_plan = progress_snapshot.plan if since is None else None
         next_cursor = (
             self._encode_progress_cursor(scenario_result_id=scenario_result_id, delta=deltas[-1]) if deltas else since

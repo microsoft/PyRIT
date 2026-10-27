@@ -33,7 +33,22 @@ Most tests should be unit tests. Integration and end-to-end tests are for testin
   - Do not rely on memory or singleton state left behind by another test. Each test must declare its own memory dependency.
 - When changing shared memory fixtures, install all optional dependencies with `uv sync --extra all` and run `make unit-test`. Optional component tests must also exercise fixture isolation.
 - No network calls should ever happen in unit tests, but file access is okay
+- Scenario unit tests automatically enable the shared `block_dataset_provider_lookup` fixture from
+  `tests/unit/conftest.py`. Scenario callers in other directories must opt into this fixture too.
+  It blocks unexpected provider lookup and discovery, including direct bulk fetches.
+  Mocking seed resolution alone does not isolate initialization, which prepares datasets first.
+  Use inline seeds or the opt-in `mock_dataset_preparation` fixture for mocked populations.
+  Tests exercising preparation must explicitly patch lookup with fake providers; local Garak
+  corpus tests can use `mock_garak_dataset_fetch`. Do not disable the shared guard.
 - Unit tests should be fast and can be run in parallel.
+
+## Correctness Test Timeouts
+
+- For unit-test subprocesses whose timeout only prevents a hang, use `TEST_WATCHDOG_SECONDS` from `unit.async_utils` rather than a short wall-clock deadline. The shared watchdog allows for startup, filesystem, and scheduling delays on busy CI workers; it is not an expected runtime.
+- Use the same watchdog for thread-barrier rendezvous that test concurrency correctness, not worker startup speed. Keep the barrier and assertions that require distinct workers.
+- Preserve intentional performance limits, operation deadlines, timeout/cancellation assertions, and JavaScript VM execution limits. Do not increase them merely to make a test pass.
+- For a single `node:test` suite that does not need child-process isolation, run `node --test-reporter=tap <suite>` without `--test` to avoid an extra Node process. Preserve fresh subprocesses where isolation is part of the test contract, such as import guards.
+- Still require a successful process exit and, for Node suites, a positive collected-test count with every collected test passing. A longer watchdog must not hide failures, skipped tests, or an empty suite.
 
 ## Integration Test Rules
 
