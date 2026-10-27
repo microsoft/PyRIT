@@ -420,7 +420,7 @@ def _registry_getter_for_component_type(
     the identifier's self-reported ``component_type``: given that family, return the
     ``.instances`` container that resolves its references by name.
 
-    The three component registries share a uniform surface — each is a ``Registry``
+    The four component registries share a uniform surface — each is a ``Registry``
     whose pre-configured instances live under ``.instances`` — so the mapping is a
     flat ``ComponentType -> Registry class`` lookup.
 
@@ -431,6 +431,7 @@ def _registry_getter_for_component_type(
     from pyrit.registry.components import (
         ConverterRegistry,
         ScorerRegistry,
+        SourceRegistry,
         TargetRegistry,
     )
 
@@ -438,6 +439,7 @@ def _registry_getter_for_component_type(
         ComponentType.TARGET: TargetRegistry,
         ComponentType.CONVERTER: ConverterRegistry,
         ComponentType.SCORER: ScorerRegistry,
+        ComponentType.SOURCE: SourceRegistry,
     }
     registry_class = registry_classes.get(component_type)
     if registry_class is None:

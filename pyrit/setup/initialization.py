@@ -72,6 +72,7 @@ def reset_setup_registries() -> None:
         InitializerRegistry,
         ScenarioRegistry,
         ScorerRegistry,
+        SourceRegistry,
         TargetRegistry,
     )
     from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
@@ -85,6 +86,7 @@ def reset_setup_registries() -> None:
         InitializerRegistry,
         ScenarioRegistry,
         ScorerRegistry,
+        SourceRegistry,
         TargetRegistry,
     ):
         registry.reset_registry_singleton()

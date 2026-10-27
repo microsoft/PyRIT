@@ -24,6 +24,8 @@ if TYPE_CHECKING:
         ScenarioRegistry,
         ScorerMetadata,
         ScorerRegistry,
+        SourceMetadata,
+        SourceRegistry,
         TargetMetadata,
         TargetRegistry,
     )
@@ -68,6 +70,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ScenarioRegistry": "pyrit.registry.components",
     "ScorerRegistry": "pyrit.registry.components",
     "ScorerMetadata": "pyrit.registry.components",
+    "SourceRegistry": "pyrit.registry.components",
+    "SourceMetadata": "pyrit.registry.components",
     "TargetRegistry": "pyrit.registry.components",
     "TargetMetadata": "pyrit.registry.components",
     "TagQuery": "pyrit.registry.tag_query",

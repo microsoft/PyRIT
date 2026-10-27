@@ -173,6 +173,36 @@ replacement clears the cached scorer service so requests use the new registry.
 
 The backend owns file-upload handling and cleanup, not the registry.
 
+## Source Registry
+
+`SourceRegistry` holds observation sources, the components that acquire the
+evidence a source-backed scorer judges (a conversation, a trace, files on a
+surface). It discovers the source classes exported from
+`pyrit.score.observation` and holds configured instances under `.instances`,
+like the converter, scorer, and target registries. Sources have their own
+namespace rather than sharing the scorer namespace: a source is configured
+independently of the scorer that reads it, and one source can serve several
+scorers.
+
+A scorer's `source` argument is a registry reference, so a scorer can name a
+registered source instead of receiving the object:
+
+```python
+from pyrit.registry import ScorerRegistry, SourceRegistry
+
+SourceRegistry.get_registry_singleton().create_named_instance(
+    name="workspace",
+    type_name="LocalFileSurfaceSource",
+    params={"root": "/path/to/workspace"},
+)
+scorer = ScorerRegistry.get_registry_singleton().create_instance("FileWriteScorer", source="workspace")
+```
+
+A live source object is still accepted and passes through unchanged.
+`ScorerIdentifier` declares `source` in `constructor_references` rather than as
+a promoted field, so stored scorer identities, their hashes, and the memory
+schema are unchanged.
+
 ## Attack Class Registry
 
 `AttackRegistry` discovers concrete `AttackStrategy` classes from

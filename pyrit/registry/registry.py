@@ -32,7 +32,7 @@ import threading
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
+from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry, SupportsIdentifier
 from pyrit.registry.registry_metadata import RegistryMetadata
 from pyrit.registry.resolution import (
     derive_parameters,
@@ -44,7 +44,6 @@ if TYPE_CHECKING:
     from types import ModuleType
     from typing import Self
 
-    from pyrit.models import Identifiable
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.models.parameter import ComponentType, Parameter
 
@@ -70,7 +69,7 @@ class ReconstructionContext(Protocol):
 
 
 T = TypeVar("T")
-InstanceT = TypeVar("InstanceT", bound="Identifiable")
+InstanceT = TypeVar("InstanceT", bound=SupportsIdentifier)
 MetadataT = TypeVar("MetadataT", bound=RegistryMetadata)
 ConfigurableT = TypeVar("ConfigurableT", bound="SupportsParamBag")
 

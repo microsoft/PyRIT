@@ -22,6 +22,7 @@ import hashlib
 import json
 import logging
 from abc import ABC, abstractmethod
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Self, get_args, get_origin
 
 from pydantic import (
@@ -265,6 +266,13 @@ class ComponentIdentifier(BaseModel):
     #: child-identifier-typed field self-reports which registry resolves it.
     component_type: ClassVar[ComponentType | None] = None
 
+    #: Constructor arguments that are registry references without being promoted
+    #: identity fields, keyed by argument name. A promoted child field gets its own
+    #: persistence column, so a reference whose identity is already carried in
+    #: ``children`` (e.g. a scorer's observation ``source``) is declared here
+    #: instead, which leaves stored identities and their schema unchanged.
+    constructor_references: ClassVar[Mapping[str, ComponentType]] = MappingProxyType({})
+
     #: Cache backing the read-only ``hash`` computed field. Populated once by the
     #: after-validator from the identifier's content; never set externally.
     _hash: str = PrivateAttr(default="")
@@ -391,12 +399,14 @@ class ComponentIdentifier(BaseModel):
         ``component_type`` is ``None`` and is therefore not buildable) contribute
         nothing.
 
+        References declared in ``constructor_references`` are included as well.
+
         Returns:
             dict[str, ComponentType]: Constructor-arg-name → referenced component type.
         """
         from pyrit.models.identifiers.param_markers import ClassAttrMarker, ExcludeMarker, IncludeMarker, ParamMarker
 
-        references: dict[str, ComponentType] = {}
+        references: dict[str, ComponentType] = dict(cls.constructor_references)
         for field_name in cls._promoted_fields():
             field = cls.model_fields[field_name]
             marker = next((m for m in field.metadata if isinstance(m, ParamMarker)), None)

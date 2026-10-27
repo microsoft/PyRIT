@@ -6,7 +6,7 @@
 Component registries package.
 
 This package contains registries for PyRIT components (objects identified by a
-``ComponentIdentifier``, such as converters, scorers, and targets). A component
+``ComponentIdentifier``, such as converters, scorers, sources, and targets). A component
 registry is a ``Registry`` class catalog that can build instances from
 classes and, when it retains pre-configured instances, also exposes them via an
 ``.instances`` property.
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     )
     from pyrit.registry.components.scenario_registry import ScenarioMetadata, ScenarioRegistry
     from pyrit.registry.components.scorer_registry import ScorerMetadata, ScorerRegistry
+    from pyrit.registry.components.source_registry import SourceMetadata, SourceRegistry
     from pyrit.registry.components.target_registry import TargetMetadata, TargetRegistry
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
@@ -48,6 +49,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ScenarioPresetRegistry": "pyrit.registry.components.scenario_preset_registry",
     "ScenarioPresetMetadata": "pyrit.registry.components.scenario_preset_registry",
     "ScenarioPresetNameRegisteredError": "pyrit.registry.components.scenario_preset_registry",
+    "SourceRegistry": "pyrit.registry.components.source_registry",
+    "SourceMetadata": "pyrit.registry.components.source_registry",
     "TargetRegistry": "pyrit.registry.components.target_registry",
     "TargetMetadata": "pyrit.registry.components.target_registry",
 }
