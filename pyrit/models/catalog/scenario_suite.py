@@ -20,7 +20,9 @@ class ScenarioSuiteEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     entry_id: UUID = Field(..., description="Stable entry identifier, preserved while the entry is reordered")
-    preset_name: str = Field(..., description="Scenario preset name resolved when the suite is read")
+    preset_name: str = Field(
+        ..., max_length=MAX_IDENTIFIER_LENGTH, description="Scenario preset name resolved when the suite is read"
+    )
 
     @field_validator("preset_name")
     @classmethod
@@ -48,7 +50,7 @@ class ScenarioSuite(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(..., description="Unique suite name, used as the storage key")
+    name: str = Field(..., max_length=MAX_IDENTIFIER_LENGTH, description="Unique suite name, used as the storage key")
     schema_version: int = Field(1, ge=1, description="Shape of this document")
     description: str | None = Field(None, max_length=MAX_TEXT_LENGTH, description="Human-readable summary of the suite")
     author: str | None = Field(

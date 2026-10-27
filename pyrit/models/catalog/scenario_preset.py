@@ -57,7 +57,11 @@ class ScenarioPreset(BaseModel, Identifiable):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(..., description="Unique preset name, used as the storage key and as the reference from scans")
+    name: str = Field(
+        ...,
+        max_length=MAX_IDENTIFIER_LENGTH,
+        description="Unique preset name, used as the storage key and as the reference from scans",
+    )
     # Literal rather than PRESET_SCHEMA_VERSION: a document written before this field existed
     # is a version 1 document, and must keep reading back as one after the constant is bumped.
     # Defaulting to the constant would relabel those documents as the newest version while they

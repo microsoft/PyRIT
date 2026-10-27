@@ -25,6 +25,7 @@ from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteConflictError, S
 
 SUITE_NAME = "weekly"
 ENTRY_ID = UUID("11111111-1111-4111-8111-111111111111")
+OVER_LIMIT_NAME = "x" * 257
 
 
 def _suite(*, name: str = SUITE_NAME, author: str | None = None) -> ScenarioSuite:
@@ -259,6 +260,23 @@ def test_create_limits_the_description_and_author(
     assert at_limit.status_code == 201
     assert over_limit.status_code == 422
     service.save_suite_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"name": OVER_LIMIT_NAME}, {"entries": [{"entry_id": str(ENTRY_ID), "preset_name": OVER_LIMIT_NAME}]}],
+    ids=["suite_name", "preset_name"],
+)
+def test_create_limits_the_names_without_echoing_them(
+    *, client: TestClient, service: MagicMock, changes: dict[str, object]
+) -> None:
+    service.save_suite_async = AsyncMock(return_value=_response())
+
+    response = client.post("/api/scenario-suites", json={**_suite().model_dump(mode="json"), **changes})
+
+    assert response.status_code == 422
+    assert OVER_LIMIT_NAME not in response.text
+    service.save_suite_async.assert_not_called()
 
 
 def test_update_limits_the_expected_version(client: TestClient, service: MagicMock) -> None:

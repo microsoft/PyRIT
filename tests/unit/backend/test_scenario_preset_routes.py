@@ -257,6 +257,16 @@ class TestCreatePreset:
         assert over_limit.status_code == 422
         service.save_preset_async.assert_awaited_once()
 
+    def test_create_limits_the_name_without_echoing_it(self, client: TestClient, service: MagicMock) -> None:
+        service.save_preset_async = AsyncMock(return_value=_response())
+        name = "x" * 257
+
+        response = client.post("/api/scenario-presets", json={**_preset().model_dump(), "name": name})
+
+        assert response.status_code == 422
+        assert name not in response.text
+        service.save_preset_async.assert_not_called()
+
     @pytest.mark.usefixtures("signed_in_user")
     def test_the_signed_in_user_is_recorded_as_the_author(self, client: TestClient, service: MagicMock) -> None:
         service.save_preset_async = AsyncMock(return_value=_response())
