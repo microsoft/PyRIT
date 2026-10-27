@@ -3,7 +3,9 @@
 
 import asyncio
 import gc
+import re
 import sqlite3
+import time
 import weakref
 from collections.abc import Generator
 from contextlib import asynccontextmanager, closing, contextmanager
@@ -12,16 +14,74 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import Engine, create_engine, event, func, inspect, select, text
+from sqlalchemy.engine import AdaptedConnection
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 
 from pyrit.common.singleton import Singleton
 from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory, migration
 from pyrit.memory.memory_models import Base, PromptMemoryEntry
+from pyrit.memory.memory_session import MemorySession
 from pyrit.models import MessagePiece
 from unit import conftest as unit_fixtures
+from unit.async_utils import settle_tasks_async, wait_for_event_async
+from unit.memory import test_conversation_branching
+from unit.memory.memory_interface import test_interface_observations
 
 _sqlite_instance = asynccontextmanager(unit_fixtures.sqlite_instance.__wrapped__)
 _sqlite_template = contextmanager(unit_fixtures.sqlite_template.__wrapped__)
+
+
+@pytest.mark.parametrize("operation", ["branch", "delete"])
+async def test_concurrent_sqlite_tests_release_workers_after_watchdog_async(tmp_path: Path, operation: str) -> None:
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    with patch.object(memory, "cleanup"):
+        memory.__init__(db_path=tmp_path / "watchdog.db", skip_schema_migration=True)
+    started, release = asyncio.Event(), asyncio.Event()
+    before = asyncio.all_tasks()
+    module = test_conversation_branching if operation == "branch" else test_interface_observations
+
+    async def hold_write_async(driver: object) -> None:
+        started.set()
+        await release.wait()
+
+    def pause_after_flush(session: MemorySession, context: object) -> None:
+        connection = session.connection().connection.dbapi_connection
+        assert isinstance(connection, AdaptedConnection)
+        connection.run_async(hold_write_async)
+
+    async def expire_async(*, future: asyncio.Future[object]) -> None:
+        event.listen(MemorySession, "after_flush", pause_after_flush)
+        try:
+            await wait_for_event_async(event=started, tasks=[future])
+            raise TimeoutError("forced watchdog expiry")
+        finally:
+            event.remove(MemorySession, "after_flush", pause_after_flush)
+
+    try:
+        await asyncio.to_thread(Base.metadata.create_all, memory.engine)
+        with patch.object(module, "wait_for_completion_async", side_effect=expire_async):
+            with pytest.raises(TimeoutError, match="forced watchdog expiry"):
+                if operation == "branch":
+                    test = test_conversation_branching.TestAtomicConversationBranching()
+                    await test.test_concurrent_branch_creation_and_promotions_preserve_membership(file_memory=memory)
+                else:
+                    await test_interface_observations.test_concurrent_orm_score_deletions_clean_final_observation(
+                        file_memory=memory
+                    )
+        assert not [task for task in asyncio.all_tasks() - before if not task.done()]
+        async with memory._get_async_engine().connect() as connection:
+            await connection.exec_driver_sql("PRAGMA busy_timeout = 0")
+            await connection.exec_driver_sql("BEGIN IMMEDIATE")
+            await connection.rollback()
+    finally:
+        release.set()
+        remaining = asyncio.all_tasks() - before
+        for task in remaining:
+            task.cancel()
+        await settle_tasks_async(*remaining)
+        await memory.dispose_engine_async()
 
 
 @pytest.fixture
@@ -289,3 +349,51 @@ async def test_sqlite_instance_keeps_real_async_sessions_async(sqlite_instance: 
     await asyncio.gather(*(write_rows_async(worker) for worker in range(4)))
     async with await sqlite_instance.get_session_async() as session:
         assert (await session.execute(text("SELECT COUNT(DISTINCT value) FROM fixture_threads"))).scalar_one() == 40
+
+
+async def test_file_sqlite_connections_skip_fsync_async(tmp_path: Path) -> None:
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    with patch.object(memory, "cleanup"):
+        memory.__init__(db_path=tmp_path / "fsync.db", skip_schema_migration=True)
+    try:
+        with memory.engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA synchronous").scalar_one() == 0
+        async with await memory.get_session_async() as session:
+            assert (await session.execute(text("PRAGMA synchronous"))).scalar_one() == 0
+    finally:
+        await memory.dispose_engine_async()
+
+
+def test_file_sqlite_connect_does_not_wait_for_an_exclusive_lock(tmp_path: Path) -> None:
+    database = tmp_path / "exclusive.db"
+    engine = create_engine(f"sqlite:///{database}", connect_args={"timeout": 30})
+    try:
+        with closing(sqlite3.connect(database, isolation_level=None)) as holder:
+            holder.execute("CREATE TABLE lock_probe (id INTEGER)")
+            holder.execute("BEGIN EXCLUSIVE")
+            started = time.monotonic()
+            with engine.connect() as connection:
+                assert time.monotonic() - started < 15
+                holder.execute("ROLLBACK")
+                assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 30_000
+                assert connection.exec_driver_sql("PRAGMA synchronous").scalar_one() == 2
+    finally:
+        engine.dispose()
+
+
+async def test_sqlite_busy_error_reports_lock_wait_async(tmp_path: Path) -> None:
+    database = tmp_path / "busy.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database}", connect_args={"timeout": 0.05})
+    try:
+        with closing(sqlite3.connect(database, isolation_level=None)) as holder:
+            holder.execute("CREATE TABLE lock_probe (id INTEGER)")
+            holder.execute("BEGIN IMMEDIATE")
+            async with engine.connect() as connection:
+                with pytest.raises(OperationalError, match="database is locked") as locked:
+                    await connection.exec_driver_sql("INSERT INTO lock_probe VALUES (1)")
+        [note] = locked.value.__notes__
+        waited = re.match(r"SQLite returned SQLITE_BUSY after (\d+\.\d\d) s\.", note)
+        assert waited is not None
+        assert float(waited.group(1)) >= 0.05
+    finally:
+        await engine.dispose()

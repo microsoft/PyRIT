@@ -1018,6 +1018,7 @@ kill -"$TEST_SIGNAL" $$
         sleeps = [int(line.removeprefix("sleep:")) for line in result.stderr.splitlines() if line.startswith("sleep:")]
         return result, calls, sleeps
 
+    @unittest.skipIf(os.name == "nt", "POSIX signal handling is not reliable in Git Bash on Windows")
     def test_cancellation_keeps_public_access_disabled_until_connection_removal(self) -> None:
         for signal, exit_code in (("TERM", 143), ("INT", 130)):
             with self.subTest(signal=signal):
@@ -1032,6 +1033,7 @@ kill -"$TEST_SIGNAL" $$
                 assert result.stdout.count("Waiting for ACA private endpoint connection removal") == 1
                 assert sleeps == [15]
 
+    @unittest.skipIf(os.name == "nt", "POSIX signal handling is not reliable in Git Bash on Windows")
     def test_cancellation_rolls_back_only_infrastructure_after_connection_removal(self) -> None:
         for signal, exit_code in (("TERM", 143), ("INT", 130)):
             with self.subTest(signal=signal):
