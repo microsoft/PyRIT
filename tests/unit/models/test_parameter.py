@@ -339,6 +339,26 @@ def test_list_path_or_str_contract_round_trip() -> None:
         assert candidate.coerce_value(values) == values
 
 
+@pytest.mark.parametrize(
+    ("annotation", "expected"),
+    [
+        (Path, True),
+        (Path | None, True),
+        (Path | str, True),
+        (str | Path | None, True),
+        (Path | int, True),
+        (list[Path | str], True),
+        (Sequence[Path], True),
+        (str, False),
+        (str | None, False),
+        (list[str], False),
+        (int, False),
+    ],
+)
+def test_mentions_path(annotation: object, expected: bool) -> None:
+    assert Parameter(name="source", description="d", param_type=annotation).mentions_path is expected
+
+
 class TestIsScalarParamType:
     """``_is_scalar_param_type`` recognizes plain and constrained scalars."""
 

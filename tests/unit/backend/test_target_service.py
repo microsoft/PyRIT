@@ -530,6 +530,78 @@ async def test_create_github_copilot_target_requires_token_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("register", [True, False])
+async def test_create_github_copilot_target_accepts_working_directory_async(tmp_path: Path, register: bool) -> None:
+    params = {"model_name": "gpt-5-mini", "github_token": "test-github-token", "working_directory": str(tmp_path)}
+
+    with patch.dict("sys.modules", {"copilot": ModuleType("copilot")}):
+        target = await TargetService().create_target_async(
+            request=CreateTargetRequest(
+                name="copilot" if register else None, type="GitHubCopilotTarget", register=register, params=params
+            )
+        )
+
+    assert target.identifier.params["working_directory"] == str(tmp_path.resolve())
+
+
+class _FileTarget(MockPromptTarget):
+    """A target with a parameter that names a file on the server."""
+
+    def __init__(self, *, data_file: Path | None = None) -> None:
+        super().__init__()
+        self.data_file = data_file
+
+
+class _RequiredFileTarget(MockPromptTarget):
+    """A target that cannot be built without a file on the server."""
+
+    def __init__(self, *, data_file: Path) -> None:
+        super().__init__()
+        self.data_file = data_file
+
+
+class _RequiredUploadTarget(MockPromptTarget):
+    """A target that uploads local files from a folder only the server sets."""
+
+    upload_directory_parameter = "upload_dir"
+
+    def __init__(self, *, upload_dir: Path) -> None:
+        super().__init__()
+        self.upload_dir = upload_dir
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_target_path_parameters_are_left_out_and_rejected() -> None:
+    service = TargetService()
+    service._registry.register_class(_FileTarget)
+    service._registry.register_class(_RequiredFileTarget)
+
+    types = await service.list_target_types_async()
+    with pytest.raises(ValueError, match="'data_file' of '_FileTarget' names a server file"):
+        await service.create_target_async(
+            request=CreateTargetRequest(name="files", type="_FileTarget", params={"data_file": "/etc/hosts"})
+        )
+
+    entries = {item.target_type: item for item in types.items}
+    assert "data_file" not in [parameter.name for parameter in entries["_FileTarget"].parameters]
+    assert "_RequiredFileTarget" not in entries
+    assert service.get_target_object(target_registry_name="files") is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_types_list_a_target_whose_required_path_is_the_server_upload_folder(tmp_path: Path) -> None:
+    service = TargetService()
+    service._registry.register_class(_RequiredUploadTarget)
+
+    with_folder = await service.list_target_types_async(upload_directory=str(tmp_path))
+    without_folder = await service.list_target_types_async()
+
+    entry = next(item for item in with_folder.items if item.target_type == "_RequiredUploadTarget")
+    assert "upload_dir" not in [parameter.name for parameter in entry.parameters]
+    assert all(item.target_type != "_RequiredUploadTarget" for item in without_folder.items)
+
+
+@pytest.mark.usefixtures("patch_central_database")
 class TestCreateTargetCodeExecution:
     """Admin gate for targets whose construction runs model repository code."""
 
@@ -900,7 +972,7 @@ class TestCreateTarget:
         ) as create:
             await service.create_target_async(request=CreateTargetRequest(type="TextTarget", params={}))
 
-        create.assert_called_once_with("TextTarget", params={})
+        create.assert_called_once_with("TextTarget", params={}, allowed_path_params=frozenset())
 
     async def test_create_target_rejects_invalid_enum_value(self, sqlite_instance) -> None:
         """An invalid enum value from the JSON request raises a parameter error before target construction."""

@@ -50,6 +50,7 @@ from pyrit.backend.services.media_persistence import (
 from pyrit.common.azure_storage import is_azure_blob_uri
 from pyrit.memory import data_serializer_factory
 from pyrit.models import ConverterIdentifier, MessagePiece, PromptDataType
+from pyrit.models.parameter import Parameter
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.registry.components import ConverterRegistry
 from pyrit.registry.registry import Reconstructable
@@ -229,6 +230,8 @@ class ConverterService:
             converter_type=request.type,
             params=request.source.params if request.source else request.params,
         )
+        # Every upload parameter now holds a stored upload or an accepted blob URL.
+        upload_names = frozenset(self._upload_params(converter_type=request.type))
         try:
             # Uploads may have yielded to another request that took the name.
             if request.register:
@@ -237,11 +240,18 @@ class ConverterService:
                 self._registry.instances.validate_name_available(request.name)
             converter_obj = (
                 await construct_component_async(
-                    self._registry.recreate_instance, source=source, params=params, external_input=True
+                    self._registry.recreate_instance,
+                    source=source,
+                    params=params,
+                    external_input=True,
+                    allowed_path_params=upload_names,
                 )
                 if source is not None
                 else await construct_component_async(
-                    self._registry.create_instance_from_external_input, request.type, params=params
+                    self._registry.create_instance_from_external_input,
+                    request.type,
+                    params=params,
+                    allowed_path_params=upload_names,
                 )
             )
             if not request.register:
@@ -311,12 +321,17 @@ class ConverterService:
                 if spec.source_name != converter_id:
                     raise ValueError("A converter specification must match its pipeline source")
                 source = self._registry.resolve_source(name=spec.source_name, identifier_hash=spec.source_hash)
+                converter_type = type(source).__name__
                 params, paths = await self._persist_data_uri_params_async(
-                    converter_type=type(source).__name__, params=spec.params
+                    converter_type=converter_type, params=spec.params
                 )
                 owned_paths.extend(paths)
                 obj = await construct_component_async(
-                    self._registry.recreate_instance, source=source, params=params, external_input=True
+                    self._registry.recreate_instance,
+                    source=source,
+                    params=params,
+                    external_input=True,
+                    allowed_path_params=frozenset(self._upload_params(converter_type=converter_type)),
                 )
                 if spec.effective_hash and obj.get_identifier().hash != spec.effective_hash:
                     raise ValueError("Temporary converter configuration has changed")
@@ -385,6 +400,25 @@ class ConverterService:
     # Private Helper Methods
     # ========================================================================
 
+    def _upload_params(self, *, converter_type: str) -> dict[str, Parameter]:
+        """
+        Return the converter's ``Path`` and ``Path | str`` parameters, which callers send as uploads.
+
+        Args:
+            converter_type (str): The registered converter class name.
+
+        Returns:
+            dict[str, Parameter]: The upload parameters by name.
+        """
+        metadata = self._registry.get_registered_class_metadata(converter_type)
+        if metadata is None:
+            return {}
+        return {
+            parameter.name: parameter
+            for parameter in metadata.parameters
+            if parameter.is_path or parameter.is_path_or_str
+        }
+
     async def _persist_data_uri_params_async(
         self,
         *,
@@ -424,16 +458,7 @@ class ConverterService:
             ValueError: If a ``Path`` value is not a valid data URI, or an Azure Blob URL
                 is outside the results container's media subdirectories.
         """
-        metadata = self._registry.get_registered_class_metadata(converter_type)
-        path_params = (
-            {
-                parameter.name: parameter
-                for parameter in metadata.parameters
-                if parameter.is_path or parameter.is_path_or_str
-            }
-            if metadata
-            else {}
-        )
+        path_params = self._upload_params(converter_type=converter_type)
 
         result = dict(params)
         owned_paths: list[Path] = []

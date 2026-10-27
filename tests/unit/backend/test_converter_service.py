@@ -35,6 +35,7 @@ from pyrit.converter import (
     Base64Converter,
     BinaryConverter,
     CaesarConverter,
+    ColloquialWordswapConverter,
     ImageCompressionConverter,
     QRCodeConverter,
     RepeatTokenConverter,
@@ -47,6 +48,7 @@ from pyrit.converter import (
 from pyrit.converter.converter import get_converter_modalities
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, PromptDataType
+from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.registry.components import ConverterRegistry
 from unit.mocks import MockPromptTarget
@@ -694,6 +696,52 @@ class TestPersistDataUriParams:
         assert entry.metadata["owned_artifact_paths"] == []
         assert list(upload_service._upload_path.iterdir()) == []
         assert await upload_service.delete_converter_async(converter_id=response.converter_id)
+
+    @pytest.mark.usefixtures("patch_central_database")
+    async def test_variants_and_previews_accept_uploaded_path_overrides(self, upload_service: ConverterService) -> None:
+        source = ColloquialWordswapConverter(deterministic=True)
+        upload_service._registry.instances.register(source, name="wordswap")
+        spec = SourceInstanceSpec(
+            source_name="wordswap",
+            source_hash=source.get_identifier().hash,
+            params={"wordswap_path": _make_data_uri(mime_type="application/yaml", content=b"hello:\n  - wassup\n")},
+        )
+
+        variant = await upload_service.create_converter_async(
+            request=CreateConverterRequest(type="ColloquialWordswapConverter", register=False, source=spec)
+        )
+        preview = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value="hello there", converter_ids=["wordswap"], converter_specs=[spec]
+            )
+        )
+
+        assert variant.identifier.params["substitution_keys"] == ["hello"]
+        assert preview.converted_value == "wassup there"
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    @pytest.mark.usefixtures("patch_central_database")
+    async def test_variants_and_previews_reject_server_path_overrides(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        source = ColloquialWordswapConverter(deterministic=True)
+        upload_service._registry.instances.register(source, name="wordswap")
+        server_file = tmp_path / "server.yaml"
+        server_file.write_text("hello:\n  - leaked\n", encoding="utf-8")
+        spec = SourceInstanceSpec(
+            source_name="wordswap", source_hash=source.get_identifier().hash, params={"wordswap_path": str(server_file)}
+        )
+
+        with pytest.raises(ValueError, match="'wordswap_path' must be uploaded as a data URI"):
+            await upload_service.create_converter_async(
+                request=CreateConverterRequest(type="ColloquialWordswapConverter", register=False, source=spec)
+            )
+        with pytest.raises(ValueError, match="'wordswap_path' must be uploaded as a data URI"):
+            await upload_service.preview_conversion_async(
+                request=ConverterPreviewRequest(
+                    original_value="hello", converter_ids=["wordswap"], converter_specs=[spec]
+                )
+            )
 
     @pytest.mark.parametrize("value", [r"C:\server\input.mp4", "input.mp4", "https://example.org/input.mp4", 123])
     async def test_path_or_str_rest_rejects_non_upload_non_blob_values(
