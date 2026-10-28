@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   tokens,
   Text,
@@ -8,14 +8,17 @@ import {
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 import { useRuntime } from '@/hooks/useRuntime'
+import type { TargetCapabilityDetection } from '@/hooks/useTargetCapabilityDetection'
 import { toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetInstance } from '@/types'
+import { sameTarget } from '@/utils/targetIdentity'
 import CreateTargetDialog from './CreateTargetDialog'
 import TargetTable from './TargetTable'
 import { useTargetConfigStyles } from './TargetConfig.styles'
 
 interface TargetConfigProps {
+  detection: TargetCapabilityDetection
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   onSetDefaultObjectiveTarget: (target: TargetInstance | null) => void
@@ -23,7 +26,20 @@ interface TargetConfigProps {
   onTargetsLoaded?: (targets: TargetInstance[]) => void
 }
 
+function mergeDetectedTargets(
+  targets: TargetInstance[],
+  detection: TargetCapabilityDetection,
+  loadedResults: TargetCapabilityDetection['results'],
+): TargetInstance[] {
+  return targets.map((target) => {
+    const result = detection.results[target.target_registry_name]
+    const updated = result !== loadedResults[target.target_registry_name] ? result?.target : undefined
+    return updated && sameTarget(updated, target) ? updated : target
+  })
+}
+
 export default function TargetConfig({
+  detection,
   defaultObjectiveTarget,
   defaultAdversarialTarget,
   onSetDefaultObjectiveTarget,
@@ -32,10 +48,17 @@ export default function TargetConfig({
 }: TargetConfigProps) {
   const { generation, ready } = useRuntime()
   const styles = useTargetConfigStyles()
-  const [targets, setTargets] = useState<TargetInstance[]>([])
+  const [loaded, setLoaded] = useState<{
+    targets: TargetInstance[]
+    results: TargetCapabilityDetection['results']
+  }>({ targets: [], results: detection.results })
+  const targets = mergeDetectedTargets(loaded.targets, detection, loaded.results)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const detecting = detection.running
+  const detectionRef = useRef(detection)
+  useEffect(() => { detectionRef.current = detection }, [detection])
   // Counter used to re-trigger the fetch effect from event handlers (Refresh,
   // dialog close) without invoking setState synchronously in the effect body.
   const [refetchCount, setRefetchCount] = useState(0)
@@ -50,9 +73,12 @@ export default function TargetConfig({
 
     const attempt = async (n: number): Promise<void> => {
       try {
-        const items = await listRegisteredTargets()
+        const resultsBeforeFetch = detectionRef.current.results
+        const registered = await listRegisteredTargets()
         if (cancelled) return
-        setTargets(items)
+        const currentDetection = detectionRef.current
+        const items = mergeDetectedTargets(registered, currentDetection, resultsBeforeFetch)
+        setLoaded({ targets: items, results: currentDetection.results })
         setError(null)
         setLoading(false)
         onTargetsLoaded?.(items)
@@ -100,7 +126,7 @@ export default function TargetConfig({
             appearance="subtle"
             icon={<ArrowSyncRegular />}
             onClick={fetchTargets}
-            disabled={loading}
+            disabled={loading || detecting}
           >
             Refresh
           </Button>
@@ -109,6 +135,7 @@ export default function TargetConfig({
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}
+            disabled={detecting}
           >
             New Target
           </Button>
@@ -158,11 +185,13 @@ export default function TargetConfig({
 
       {!loading && !error && targets.length > 0 && (
         <TargetTable
+          generation={generation}
           targets={targets}
           defaultObjectiveTarget={defaultObjectiveTarget}
           defaultAdversarialTarget={defaultAdversarialTarget}
           onSetDefaultObjectiveTarget={onSetDefaultObjectiveTarget}
           onSetDefaultAdversarialTarget={onSetDefaultAdversarialTarget}
+          detection={detection}
         />
       )}
 

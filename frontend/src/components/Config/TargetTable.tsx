@@ -12,6 +12,8 @@ import {
   Text,
   Tooltip,
   Checkbox,
+  MessageBar,
+  MessageBarBody,
   mergeClasses,
 } from '@fluentui/react-components'
 import {
@@ -34,6 +36,7 @@ import {
 } from '@fluentui/react-icons'
 
 import { useUserPreferences } from '@/hooks/useUserPreferences'
+import type { TargetCapabilityDetection } from '@/hooks/useTargetCapabilityDetection'
 import type { TargetInstance } from '@/types'
 import {
   sameTarget,
@@ -59,11 +62,13 @@ import { useTargetTableStyles } from './TargetTable.styles'
 import TargetSelect from './TargetSelect'
 
 interface TargetTableProps {
+  generation?: string
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   onSetDefaultObjectiveTarget: (target: TargetInstance | null) => void
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
+  detection: TargetCapabilityDetection
 }
 
 /** Format target_specific_params into a short human-readable string. */
@@ -198,16 +203,19 @@ function CapabilityCells({ target }: { target: TargetInstance }) {
 }
 
 /** Render expandable sub-rows for a RoundRobinTarget's inner targets. */
-function InnerTargetRows({ parentKey, innerTargets, weights }: {
+function InnerTargetRows({ parentKey, innerTargets, weights, selectionVisible, detectionVisible }: {
   parentKey: string
   innerTargets: TargetInstance[]
   weights: number[] | undefined
+  selectionVisible: boolean
+  detectionVisible: boolean
 }) {
   const styles = useTargetTableStyles()
   return (
     <>
       {innerTargets.map((inner, idx) => (
         <TableRow key={`${parentKey}-inner-${idx}`} className={styles.innerTargetRow}>
+          {selectionVisible && <TableCell className={styles.selectionCell} />}
           <TableCell className={styles.actionCell} />
           <TableCell className={styles.registryNameCell}>
             <Text size={200} className={styles.registryNameText}>#{idx + 1} {inner.target_registry_name}</Text>
@@ -235,6 +243,7 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
               {weights?.[idx] != null ? `weight: ${weights[idx]}` : '—'}
             </Text>
           </TableCell>
+          {detectionVisible && <TableCell className={styles.detectionCell} />}
         </TableRow>
       ))}
     </>
@@ -242,11 +251,13 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
 }
 
 export default function TargetTable({
+  generation = '',
   targets,
   defaultObjectiveTarget,
   defaultAdversarialTarget,
   onSetDefaultObjectiveTarget,
   onSetDefaultAdversarialTarget,
+  detection,
 }: TargetTableProps) {
   const styles = useTargetTableStyles()
   const { preferences, updatePreferences } = useUserPreferences()
@@ -257,6 +268,15 @@ export default function TargetTable({
   const [showHiddenTargets, setShowHiddenTargets] = useState(false)
   const [previousHiddenTargetCount, setPreviousHiddenTargetCount] = useState<number | null>(null)
   const [filters, setFilters] = useState<TargetFilters>(DEFAULT_TARGET_FILTERS)
+  const [selecting, setSelecting] = useState(false)
+  const { running: detecting, results: detectionResults } = detection
+  const [excludedTargets, setExcludedTargets] = useState<Set<string>>(new Set())
+  const [detectionGeneration, setDetectionGeneration] = useState(generation)
+  if (detectionGeneration !== generation) {
+    setDetectionGeneration(generation)
+    setSelecting(false)
+    setExcludedTargets(new Set())
+  }
   // Tracks which RoundRobinTarget rows are expanded to show inner targets.
   // We use a Set of target_registry_name strings — when a name is in the set,
   // that row's sub-rows are visible.
@@ -308,6 +328,28 @@ export default function TargetTable({
     [displayedTargets, activeFilters],
   )
   const noTargetsMatch = displayedTargets.length > 0 && filteredTargets.length === 0
+  const isSelected = (target: TargetInstance): boolean => detecting
+    ? Boolean(detectionResults[target.target_registry_name])
+    : !excludedTargets.has(target.target_registry_name)
+  const selectedTargets = filteredTargets.filter(isSelected)
+  const selectionVisible = selecting || detecting
+  const detectionVisible = Object.keys(detectionResults).length > 0
+
+  const selectShown = (selected: boolean): void => {
+    setExcludedTargets((current: Set<string>) => {
+      const next = new Set(current)
+      for (const target of filteredTargets) {
+        if (selected) next.delete(target.target_registry_name)
+        else next.add(target.target_registry_name)
+      }
+      return next
+    })
+  }
+
+  const beginDetection = async (): Promise<void> => {
+    setSelecting(false)
+    await detection.start(selectedTargets)
+  }
 
   const isDefaultObjective = (target: TargetInstance): boolean =>
     sameTarget(defaultObjectiveTarget, target)
@@ -351,20 +393,61 @@ export default function TargetTable({
         />
       </section>
       <Divider appearance="strong" className={styles.defaultsDivider} />
-      <div className={styles.visibilityControls}>
-        <Checkbox
-          checked={showHiddenTargets && hiddenTargetCount > 0}
+      <div role="toolbar" aria-label="Target controls" className={styles.visibilityControls}>
+        <Button
+          className={mergeClasses(styles.rowAction, !showHiddenTargets && styles.visibilityInactive)}
+          appearance="subtle"
+          icon={showHiddenTargets ? <EyeRegular /> : <EyeOffRegular />}
+          aria-pressed={showHiddenTargets && hiddenTargetCount > 0}
           disabled={hiddenTargetCount === 0}
-          label={`Show hidden targets (${hiddenTargetCount})`}
-          onChange={(_, data) => setShowHiddenTargets(data.checked === true)}
+          onClick={() => setShowHiddenTargets((current) => !current)}
           data-testid="show-hidden-targets"
-        />
+        >
+          Show hidden targets ({hiddenTargetCount})
+        </Button>
+        <div className={styles.detectionControls}>
+          <Button
+            className={styles.rowAction}
+            appearance="primary"
+            disabled={detecting || (selecting ? selectedTargets.length === 0 : filteredTargets.length === 0)}
+            onClick={() => {
+              if (selecting) void beginDetection()
+              else {
+                setExcludedTargets(new Set())
+                setSelecting(true)
+              }
+            }}
+          >
+            {detecting ? 'Detecting capabilities...' : selecting ? 'Begin capability detection' : 'Auto-detect capabilities'}
+          </Button>
+          {selectionVisible && (
+            <Button className={styles.rowAction} disabled={detecting} onClick={() => setSelecting(false)}>
+              Cancel
+            </Button>
+          )}
+        </div>
       </div>
       <TargetFiltersBar filters={activeFilters} options={filterOptions} onFiltersChange={setFilters} />
+      {Object.entries(detectionResults).filter(([, result]) => result.error).map(([name, result]) => (
+        <MessageBar key={name} intent="error">
+          <MessageBarBody>{name}: {result.error}</MessageBarBody>
+        </MessageBar>
+      ))}
 
       <Table aria-label="Target instances" className={styles.table}>
         <TableHeader className={styles.stickyHeader}>
           <TableRow>
+            {selectionVisible && (
+              <TableHeaderCell className={styles.selectionCell}>
+                <Checkbox
+                  aria-label="Select all shown targets"
+                  disabled={detecting || filteredTargets.length === 0}
+                  checked={selectedTargets.length === 0 ? false
+                    : selectedTargets.length === filteredTargets.length ? true : 'mixed'}
+                  onChange={(_, data) => selectShown(data.checked === true)}
+                />
+              </TableHeaderCell>
+            )}
             <TableHeaderCell className={styles.actionCell}>Actions</TableHeaderCell>
             <TableHeaderCell style={{ width: '180px' }}>
               <Tooltip content={COLUMN_TOOLTIPS.registryName} relationship="description">
@@ -408,6 +491,7 @@ export default function TargetTable({
                 <span className={styles.helpHeader}>Parameters</span>
               </Tooltip>
             </TableHeaderCell>
+            {detectionVisible && <TableHeaderCell className={styles.detectionCell}>Detection</TableHeaderCell>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -427,6 +511,23 @@ export default function TargetTable({
                   )}
                   data-testid={`target-row-${target.target_registry_name}`}
                 >
+                  {selectionVisible && (
+                    <TableCell className={styles.selectionCell}>
+                      <Checkbox
+                        aria-label={`Select ${target.target_registry_name}`}
+                        disabled={detecting}
+                        checked={isSelected(target)}
+                        onChange={(_, data) => {
+                          setExcludedTargets((current: Set<string>) => {
+                            const next = new Set(current)
+                            if (data.checked === true) next.delete(target.target_registry_name)
+                            else next.add(target.target_registry_name)
+                            return next
+                          })
+                        }}
+                      />
+                    </TableCell>
+                  )}
                   <TableCell className={styles.actionCell}>
                     <Button
                       className={styles.rowAction}
@@ -492,6 +593,11 @@ export default function TargetTable({
                       {formatParams(target.target_specific_params) || '—'}
                     </Text>
                   </TableCell>
+                  {detectionVisible && (
+                    <TableCell className={styles.detectionCell}>
+                      <span role="status">{detectionResults[target.target_registry_name]?.state ?? ''}</span>
+                    </TableCell>
+                  )}
                 </TableRow>
 
                 {/* Sub-rows for each inner target, visible when the parent row is expanded */}
@@ -500,6 +606,8 @@ export default function TargetTable({
                     parentKey={target.target_registry_name}
                     innerTargets={target.inner_targets}
                     weights={weights}
+                    selectionVisible={selectionVisible}
+                    detectionVisible={detectionVisible}
                   />
                 )}
               </React.Fragment>

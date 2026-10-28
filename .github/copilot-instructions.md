@@ -8,6 +8,8 @@ PyRIT uses a modular pluggable-brick design.
 
 **[`doc/code/framework.md`](../doc/code/framework.md) is the canonical reference for how these pieces fit together.** It defines each component's responsibilities — what it owns and, critically, what it *does not* own — and how scenarios, attack techniques, executors, and the core/shared layers relate. Read it before adding or reviewing components so new code lands in the right place.
 
+Keep the framework overview focused on major component responsibilities. Do not add detailed GUI workflows or feature implementation notes. Document shared behavior once in the relevant component guide; keep GUI documentation brief and link to it.
+
 ## Code Review Guidelines
 
 When performing a code review, be selective. Only leave comments for issues that genuinely matter:
