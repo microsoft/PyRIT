@@ -2,10 +2,22 @@
 # Licensed under the MIT license.
 
 import json
+from typing import assert_type
 
 import pytest
 
 from pyrit.models import JsonResponseConfig
+
+
+class DerivedJsonResponseConfig(JsonResponseConfig):
+    pass
+
+
+def test_from_metadata_preserves_subclass_type():
+    config = DerivedJsonResponseConfig.from_metadata(metadata={"response_format": "json"})
+    assert_type(config, DerivedJsonResponseConfig)
+    assert isinstance(config, DerivedJsonResponseConfig)
+    assert config.enabled is True
 
 
 def test_with_none():

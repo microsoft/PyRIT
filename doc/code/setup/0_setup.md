@@ -34,7 +34,7 @@ The CoPyRIT configuration page separates **Save** from **Reinitialize PyRIT**.
 On a single-process, single-replica backend, administrators can apply saved
 configuration, environment documents, and custom initializer scripts without
 restarting Python. The saved `.pyrit_conf` must set `enable_live_reinitialization: true`.
-See [the GUI reinitialization guide](../../gui/0_gui.md) for status, failure behavior, and deployment limits.
+Use the [GUI Configuration page](../../gui/0_gui.md#configuration) to manage these sources.
 
 The backend first validates the saved sources without changing live setup state. It rejects live apply while any
 runtime work is active. When the runtime is idle, it closes admission, checks for work again, and then rebuilds

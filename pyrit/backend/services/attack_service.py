@@ -69,12 +69,14 @@ from pyrit.backend.services.pagination import (
     fingerprint_filters,
     normalize_label_filters,
 )
+from pyrit.backend.services.saved_conversation_read_service import SavedConversationReadService
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import attack_outcome_from_score
 from pyrit.memory import (
     AttackResultKeysetCursor,
     CentralMemory,
+    MemoryInterface,
     data_serializer_factory,
     set_message_piece_sha256_async,
 )
@@ -134,9 +136,12 @@ class AttackService:
     Uses PyRIT memory (database) as the source of truth via AttackResult.
     """
 
-    def __init__(self, *, message_send_service: MessageSendService | None = None) -> None:
+    def __init__(
+        self, *, message_send_service: MessageSendService | None = None, memory: MemoryInterface | None = None
+    ) -> None:
         """Initialize the attack service."""
-        self._memory = CentralMemory.get_memory_instance()
+        self._memory = memory if memory is not None else CentralMemory.get_memory_instance()
+        self._saved_conversation_reader = SavedConversationReadService(memory=self._memory)
         self._message_send_service = (
             message_send_service if message_send_service is not None else get_message_send_service()
         )
@@ -393,13 +398,17 @@ class AttackService:
         *,
         attack_result_id: str,
         conversation_id: str,
+        limit: int | None = None,
+        cursor: str | None = None,
     ) -> ConversationMessagesResponse | None:
         """
-        Get all messages for a conversation belonging to an attack.
+        Get messages for a main or pruned conversation belonging to an attack.
 
         Args:
             attack_result_id: The AttackResult's primary key (used to verify existence).
             conversation_id: The conversation whose messages to return.
+            limit: Optional message-piece page size. None preserves the existing full-conversation read.
+            cursor: Continuation for an explicitly paged read.
 
         Returns:
             ConversationMessagesResponse if attack found, None otherwise.
@@ -407,6 +416,13 @@ class AttackService:
         Raises:
             ValueError: If the conversation does not belong to the attack.
         """
+        if limit is not None:
+            return await self._saved_conversation_reader.get_messages_async(
+                attack_result_id=attack_result_id, conversation_id=conversation_id, limit=limit, cursor=cursor
+            )
+        if cursor is not None:
+            raise ValueError("A message-page cursor requires a limit.")
+
         # Check attack exists
         results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
@@ -422,6 +438,7 @@ class AttackService:
         backend_messages = await pyrit_messages_to_dto_async(
             list(pyrit_messages),
             objective_score_id=ar.last_score.id if ar.last_score else None,
+            memory=self._memory,
         )
         scoring_result = ar.get_scoring_failure(conversation_id)
         latest_response = next(
@@ -1176,17 +1193,24 @@ class AttackService:
             return await self.get_attack_async(attack_result_id=attack_result_id)
         raise AttackObjectiveConflictError("Scores kept changing. Refresh before removing the human override.")
 
-    async def get_conversations_async(self, *, attack_result_id: str) -> AttackConversationsResponse | None:
+    async def get_conversations_async(
+        self, *, attack_result_id: str, limit: int | None = None, cursor: str | None = None
+    ) -> AttackConversationsResponse | None:
         """
-        Get all conversations belonging to an attack.
+        Get main and pruned conversations belonging to an attack.
 
-        Includes the main conversation and all related conversations from the
-        AttackResult. Each entry is enriched with message count, a preview,
+        Each entry is enriched with message count, a preview,
         and the earliest message timestamp using a single batched query.
 
         Returns:
             AttackConversationsResponse if attack found, None otherwise.
         """
+        if limit is not None:
+            return await self._saved_conversation_reader.list_conversations_async(
+                attack_result_id=attack_result_id, limit=limit, cursor=cursor
+            )
+        if cursor is not None:
+            raise ValueError("A conversation-page cursor requires a limit.")
         results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None

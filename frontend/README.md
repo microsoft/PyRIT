@@ -29,6 +29,13 @@ conversations), open the
 conversation panel, and select the copy at its full
 `/attacks/{attack_id}/conversations/{conversation_id}` URL. Copying
 within a target-free attack keeps it target-free until you send a prompt.
+For single-turn targets or targets that cannot replay the first prompt as history,
+**Branch conversation** on that first user turn restores it to the prompt box
+without copying the response. After a successful single send, **Undo last send**
+also restores the prompt in a new conversation, if the target can replay the
+preceding history. Both actions restore the saved prompt and converter results
+for text, image, audio, video, and mixed responses. They do not overwrite new
+prompt edits or changed converter pipelines.
 When you save an edited conversation, its final user turn moves to the prompt
 box instead of saved history. Text and attachments retain their metadata,
 including text-only video remix IDs. You can enter and edit prompts without a target.
@@ -53,6 +60,12 @@ request converters run on the stored history during the scan, without changing
 the source conversation. New outgoing turns are always converted.
 
 ## Dataset catalog
+
+Chat drafts stay in memory while you visit Datasets and return. Text, attachments,
+system prompts, the selected target, and converter setup/results return to their
+original attack and conversation. A loading, missing, or read-only destination
+does not consume the draft. Starting a new attack or leaving the Chat/Datasets
+journey discards the handoff; refreshing the browser does not retain it.
 
 The **Datasets** page shows summaries of datasets already loaded into the backend's
 memory. When memory is empty, **Learn how to load datasets into memory** opens the
@@ -79,8 +92,8 @@ Expanded details stack each label above its stored value.
 ## Resuming a scenario run
 
 Failed runs offer **Resume run** on the run page and **Resume** in Scanner History.
-See the [GUI guide](../doc/gui/0_gui.md#resuming-a-failed-scanner-run) for resume
-behavior and the saved launch configuration requirement.
+See the [GUI History guide](../doc/gui/0_gui.md#history) for a short overview
+of resume behavior.
 
 ## Default labels after runtime changes
 
@@ -99,8 +112,7 @@ and keep that attack's attribution.
 
 Open **Analytics** to filter saved results, compare SDK-computed outcome
 statistics, and drill into matching attacks. See the
-[analytics GUI guide](../doc/gui/0_gui.md#attack-results-analytics) for cohort
-semantics, denominators, time bounds, URL sharing, and refresh behavior.
+[analytics GUI guide](../doc/gui/0_gui.md#analytics) for a short overview.
 The implementation follows
 [part 5 of the analytics roadmap](https://gist.github.com/romanlutz/34230aba87f7fa07996772a4099e9a78).
 

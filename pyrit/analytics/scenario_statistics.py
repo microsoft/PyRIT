@@ -160,8 +160,8 @@ class ScenarioAttempt:
     attempt_id: str
     total_retries: int
     result_role: AttackResultRole | None
-    attempt_index: int | None
-    child_attack_result_ids: tuple[str, ...]
+    attempt_index: int | None = None
+    child_attack_result_ids: tuple[str, ...] = ()
 
     @property
     def attack_result_id(self) -> str:

@@ -135,12 +135,23 @@ describe("api service", () => {
   });
 
   describe("scenarioSuitesApi", () => {
-    it("supports collection and encoded item CRUD with optimistic concurrency", async () => {
+    it("supports definition CRUD and transient execution APIs with encoded identifiers", async () => {
       const suite = { name: "nightly_suite", schema_version: 1, entries: [] };
-      const response = { suite, version: "v1", entry_statuses: [] };
+      const response = { suite, origin: "stored", version: "v1", entry_statuses: [] };
+      const launch = {
+        expected_version: "v1",
+        entries: [],
+        target_name: "objective",
+      };
+      const execution = { suite_execution_id: "execution/id" };
       const controller = new AbortController();
-      (apiClient.get as jest.Mock).mockResolvedValue({ data: response });
-      (apiClient.post as jest.Mock).mockResolvedValue({ data: response });
+      (apiClient.get as jest.Mock)
+        .mockResolvedValueOnce({ data: response })
+        .mockResolvedValueOnce({ data: response })
+        .mockResolvedValueOnce({ data: execution });
+      (apiClient.post as jest.Mock)
+        .mockResolvedValueOnce({ data: response })
+        .mockResolvedValue({ data: execution });
       (apiClient.put as jest.Mock).mockResolvedValue({ data: response });
       (apiClient.delete as jest.Mock).mockResolvedValue({ data: undefined });
 
@@ -157,6 +168,18 @@ describe("api service", () => {
       });
       await scenarioSuitesApi.remove("a/b");
       expect(apiClient.delete).toHaveBeenCalledWith("/scenario-suites/a%2Fb");
+      await expect(scenarioSuitesApi.launch("a/b", launch)).resolves.toEqual(execution);
+      expect(apiClient.post).toHaveBeenCalledWith("/scenario-suites/a%2Fb/launch", launch);
+      await expect(scenarioSuitesApi.getExecution("execution/id", controller.signal)).resolves.toEqual(execution);
+      expect(apiClient.get).toHaveBeenCalledWith("/scenario-suites/executions/execution%2Fid", {
+        signal: controller.signal,
+      });
+      await expect(scenarioSuitesApi.cancelExecution("execution/id", controller.signal)).resolves.toEqual(execution);
+      expect(apiClient.post).toHaveBeenCalledWith(
+        "/scenario-suites/executions/execution%2Fid/cancel",
+        undefined,
+        { signal: controller.signal },
+      );
     });
   });
 

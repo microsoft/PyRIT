@@ -98,6 +98,68 @@ export interface ChatConverterSnapshot {
   applied: Record<string, PieceConversion>
 }
 
+export interface ChatDraftContent {
+  text: string
+  attachments: MessageAttachment[]
+  systemPrompt?: string
+  target?: TargetReference | null
+  converters?: ChatConverterSnapshot
+  textMetadata?: Record<string, unknown>
+}
+
+export interface ChatDraftContextState {
+  originatingAttackId: string | null
+  originatingConversationId: string | null
+  originatingPath: string
+  originatingState?: unknown
+  draft: ChatDraftContent
+  savedAt: number
+  sequence: number
+}
+
+export type ImportDestinationType = 'new_attack' | 'current_conversation' | 'new_conversation' | 'any'
+
+export interface PendingImportPayload {
+  id: string
+  sequence: number
+  destinationType: ImportDestinationType
+  targetAttackId?: string | null
+  targetConversationId?: string | null
+  content: {
+    text: string
+    attachments?: MessageAttachment[]
+    textMetadata?: Record<string, unknown>
+  }
+  replaceDirty?: boolean
+  focus?: boolean
+  stagedAt: number
+}
+
+export interface ChatDraftHandoffContextValue {
+  preservedDraft: ChatDraftContextState | null
+  pendingImport: PendingImportPayload | null
+  activeSequence: number
+  preserveDraft: (state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>) => void
+  clearPreservedDraft: (expectedSequence?: number) => void
+  /** Pass the sequence captured before preparing an import to reject stale async results. */
+  stagePendingImport: (
+    payload: Omit<PendingImportPayload, 'id' | 'sequence' | 'stagedAt'>,
+    expectedSequence?: number,
+  ) => PendingImportPayload | null
+  consumePendingImport: (
+    id?: string,
+    currentAttackId?: string | null,
+    currentConversationId?: string | null,
+  ) => PendingImportPayload | null
+  dismissPendingImport: (id?: string) => void
+  consumePreservedDraft: (
+    currentAttackId: string | null,
+    currentConversationId?: string | null,
+    expectedSequence?: number,
+  ) => ChatDraftContent | null
+  isDraftDirty: (draft?: Partial<ChatDraftContent> | null) => boolean
+}
+
 export interface UndoLastSendAction {
   readonly disabledReason?: string
   readonly isUndoing: boolean
@@ -421,6 +483,7 @@ export interface ConverterIdentifier {
 }
 
 export interface ConverterInstance {
+  parameters?: Parameter[]
   converter_id: string
   reconstructable?: boolean
   reconstruction_error?: string | null
@@ -445,6 +508,8 @@ export interface SourceInstanceSpec {
   params: Record<string, unknown>
   effective_hash?: string
 }
+
+export type ConverterSelection = string | SourceInstanceSpec
 
 export interface TargetBinding {
   version: 1
@@ -518,8 +583,8 @@ export type SimulationChanges = Partial<SimulationSettings>
 interface TechniqueSettingFields {
   description?: string | null
   params?: Record<string, unknown>
-  request_converters?: string[] | null
-  response_converters?: string[] | null
+  request_converters?: ConverterSelection[] | null
+  response_converters?: ConverterSelection[] | null
   adversarial_chat?: string | null
   adversarial_system_prompt?: string | null
   adversarial_seed_prompt?: string | null
@@ -552,6 +617,7 @@ export interface TechniqueConfiguration {
   supplied_parameters: string[]
   read_only: Record<string, string>
   supports_prepended_conversation: boolean
+  supports_prompt?: boolean
 }
 
 export interface TechniqueEditResponse {
@@ -1363,6 +1429,7 @@ export interface ScenarioDatasetLoadResponse {
 }
 
 export interface RegisteredScenario {
+  supports_objective_scorer?: boolean
   /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
   max_concrete_techniques?: number | null
   scenario_name: string
@@ -1404,8 +1471,8 @@ export interface ListRegisteredScenariosResponse {
  *
  * Every optional field is tri-state: absent means "use the scenario's own default",
  * so a preset only pins what the author deliberately chose. It carries no target,
- * Operation attribution, concurrency, retries or labels — those are launch-time
- * decisions supplied by `ResolveScenarioPresetRequest`.
+ * Operation attribution, concurrency, retries or labels — those are decided when the
+ * preset is launched.
  */
 export interface ScenarioPreset {
   name: string
@@ -1413,6 +1480,11 @@ export interface ScenarioPreset {
   description?: string | null
   /** Who created the preset. Descriptive only; never used to authorize a read or a write. */
   author?: string | null
+  /**
+   * Whether the Scanner lists this preset as an entry of its own. Absent means listed.
+   * A hidden preset still runs through the suites that reference it.
+   */
+  show_in_scanner?: boolean
   techniques?: string[] | null
   /** Dataset sources, limits, fetch policy, and filters. Omit to use the scenario defaults. */
   datasets?: ScenarioDatasetRequest | null
@@ -1482,8 +1554,13 @@ export interface ScenarioSuiteEntryStatus {
 
 export interface ScenarioSuiteResponse {
   suite: ScenarioSuite
-  /** Opaque document version required to update the suite. */
-  version: string
+  /**
+   * Whether a stored document or registering code contributed this suite. A
+   * registered suite cannot be updated or deleted through the API.
+   */
+  origin: 'stored' | 'registered'
+  /** Opaque document version required to update a stored suite. Null when registered in code. */
+  version: string | null
   /** Ordered exactly like `suite.entries`. */
   entry_statuses: ScenarioSuiteEntryStatus[]
 }
@@ -1498,9 +1575,18 @@ export interface UpdateScenarioSuiteRequest {
   expected_version: string
 }
 
-/** The launch-owned fields a preset deliberately omits. */
-export interface ResolveScenarioPresetRequest {
-  expected_version?: string | null
+/** The preset state the operator reviewed for one suite entry. */
+export interface ScenarioSuiteLaunchEntrySnapshot {
+  entry_id: string
+  preset_name: string
+  origin: 'stored' | 'registered' | null
+  preset_version: string | null
+}
+
+/** Launch-owned fields and optimistic preconditions for one suite execution. */
+export interface LaunchScenarioSuiteRequest {
+  expected_version: string | null
+  entries: ScenarioSuiteLaunchEntrySnapshot[]
   target_name: string
   adversarial_target_name?: string | null
   initializers?: string[] | null
@@ -1511,7 +1597,53 @@ export interface ResolveScenarioPresetRequest {
   labels?: Record<string, string> | null
 }
 
+export type ScenarioSuiteExecutionStatus =
+  | 'QUEUING'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+
+export type ScenarioSuiteExecutionEntryState =
+  | 'PENDING'
+  | 'SUBMITTING'
+  | 'SUBMISSION_FAILED'
+  | 'CREATED'
+  | 'QUEUED'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+
+/** Current process-local state for one ordered suite entry. */
+export interface ScenarioSuiteExecutionEntrySummary {
+  entry_id: string
+  entry_position: number
+  preset_name: string
+  preset_origin: 'stored' | 'registered'
+  preset_version: string | null
+  state: ScenarioSuiteExecutionEntryState
+  run: ScenarioRunSummary | null
+  /** User-safe failure text. The UI still maps it to state-owned copy before display. */
+  error: string | null
+  /** Internal exception class for diagnostics; never display it to operators. */
+  error_type: string | null
+}
+
+/** Transient progress and grouped child runs for one suite launch. */
+export interface ScenarioSuiteExecutionSummary {
+  suite_execution_id: string
+  suite_name: string
+  suite_origin: 'stored' | 'registered'
+  suite_version: string | null
+  status: ScenarioSuiteExecutionStatus
+  created_at: string
+  updated_at: string
+  entries: ScenarioSuiteExecutionEntrySummary[]
+}
+
 export interface RunScenarioRequest {
+  objective_scorer?: RegisteredComponentReference | null
   scenario_name: string
   target_name?: string | null
   adversarial_target_name?: string | null
@@ -1581,6 +1713,7 @@ export interface ScenarioRunSizeEstimateResponse {
 }
 
 export interface ScenarioRunSizeEstimateRequest {
+  objective_scorer?: RegisteredComponentReference | null
   target_name?: string | null
   adversarial_target_name?: string | null
   techniques?: string[] | null

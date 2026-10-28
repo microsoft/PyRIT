@@ -118,6 +118,20 @@ class TestKeywordSelectionStrategy:
         result = strategy.select_range(text="The secret is here")
         assert result == (4, 10)
 
+    def test_select_range_case_insensitive_matching_keeps_original_indices(self):
+        """A character whose lowercase form expands (dotted capital I) must not
+        shift the selected range: the index has to come from the original text."""
+        strategy = KeywordSelectionStrategy(keyword="secret", case_sensitive=False)
+        text = "İsecret"
+        start, end = strategy.select_range(text=text)
+        assert text[start:end] == "secret"
+
+        strategy_ctx = KeywordSelectionStrategy(
+            keyword="secret", case_sensitive=False, context_before=2, context_after=1
+        )
+        start, end = strategy_ctx.select_range(text=text)
+        assert text[start:end] == "İsecret"
+
     def test_select_range_case_sensitive_no_match(self):
         strategy = KeywordSelectionStrategy(keyword="SECRET", case_sensitive=True)
         result = strategy.select_range(text="The secret is here")

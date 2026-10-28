@@ -11,7 +11,7 @@ import { usePieceConverters } from '@/hooks/useChatConverters'
 import type { useConversationDraft } from '@/hooks/useConversationDraft'
 import type {
   AddMessageResponse, ChatConverterSnapshot, ConversationDraftMessage, ConversationDraftPiece, MessageAttachment,
-  PieceConversionUpdates, SaveConversationRequest, TargetInstance,
+  SaveConversationRequest, TargetInstance,
 } from '@/types'
 import {
   NEW_MESSAGE_ROLES, draftAttachment, draftConverterInputs, editorTargetDisabledReason, unansweredToolCallId,
@@ -246,22 +246,6 @@ export default function ConversationEditor({
     controller.removeMessage(messageId)
     setSelected((previous: Set<string>) => new Set([...previous].filter((id: string) => id !== messageId)))
   }
-  const applyConversions = (updates: PieceConversionUpdates): void => {
-    controller.changeMessages((current: ConversationDraftMessage[]) => current.map((message: ConversationDraftMessage) => ({
-      ...message,
-      pieces: message.pieces.map((piece: ConversationDraftPiece) => {
-        if (!Object.prototype.hasOwnProperty.call(updates, piece.draftId)) return piece
-        const conversion = updates[piece.draftId]
-        return {
-          ...piece,
-          converted_value: conversion?.convertedValue,
-          converted_value_data_type: conversion?.convertedDataType,
-          applied_converter_ids: conversion?.converterInstanceIds ?? [],
-          applied_converter_provenance: conversion?.converterProvenance,
-        }
-      }),
-    })))
-  }
   const unsupportedSelected = messages.some((message: ConversationDraftMessage) => selected.has(message.id)
     && message.pieces.some((piece: ConversationDraftPiece) => piece.data_type !== 'text' && !isPathDataType(piece.data_type)))
   const saveDisabledReason = (converters.isConverting ? 'Wait for conversion to finish before saving.' : undefined)
@@ -271,7 +255,7 @@ export default function ConversationEditor({
     <div className={styles.root} data-testid="conversation-editor">
       {convertersOpen && <div className={styles.converterPane}>
         <ConverterPanel controller={converters} selectedMessageCount={selected.size}
-          onClose={() => setConvertersOpen(false)} onApply={applyConversions} />
+          onClose={() => setConvertersOpen(false)} onApply={controller.applyConversions} />
       </div>}
       <div className={styles.content}>
       <div className={styles.thread}>

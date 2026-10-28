@@ -14,6 +14,7 @@ from sqlalchemy import event, inspect, text
 from sqlalchemy.dialects import mssql
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
+from unit.async_utils import settle_tasks_async, wait_for_completion_async
 from unit.mocks import run_memory_session_async
 
 from pyrit.memory import MemoryInterface, SQLiteMemory
@@ -640,11 +641,20 @@ async def test_concurrent_orm_score_deletions_clean_final_observation(file_memor
     async def delete_async(score_id: uuid.UUID) -> None:
         async with await file_memory.get_session_async() as session:
             entry = await session.get(ScoreEntry, score_id)
-            await asyncio.wait_for(ready.wait(), timeout=5)
+            await ready.wait()
             await session.delete(entry)
             await session.commit()
 
-    await asyncio.wait_for(asyncio.gather(*(delete_async(value.id) for value in (score, replay))), timeout=10)
+    tasks = [asyncio.create_task(delete_async(value.id)) for value in (score, replay)]
+    completion = asyncio.gather(*tasks)
+    try:
+        await wait_for_completion_async(future=completion)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await settle_tasks_async(*tasks)
+        if not completion.cancelled():
+            completion.exception()
     assert file_memory._query_entries(ScoreEntry) == []
     assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == []
     assert file_memory._query_entries(ObservationMessagePieceEntry) == []
