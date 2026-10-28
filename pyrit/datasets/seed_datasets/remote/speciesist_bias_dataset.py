@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 HF_DATASET_NAME: str = "stuckdavis/speciesist-bias-prompts"
 # Commit SHA of the v0.2.0 tag on the Hugging Face dataset repository.
-HF_REVISION: str = "HF_REVISION_PLACEHOLDER"
+HF_REVISION: str = "6e0cfa08f4b88de3aef80ad9f0015072901f60dc"
 HF_SOURCE_URL: str = f"https://huggingface.co/datasets/{HF_DATASET_NAME}"
 
 _AUTHORS: list[str] = ["Sam Tucker-Davis"]
