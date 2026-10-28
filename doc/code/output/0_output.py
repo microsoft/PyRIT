@@ -374,6 +374,7 @@ await conversation_printer.write_async(conversation)  # type: ignore
 # | `output_scorer_async` | Scorer info/metrics | `pretty`, `json` |
 # | `output_conversation_async` | Conversation history | `pretty`, `json` |
 # | `output_score_async` | Score list | `pretty`, `json` |
+# | `output_finding_report_async` | Finding report | `markdown` |
 #
 # All accept `format=` and `sink=` keyword arguments with sensible defaults.
 

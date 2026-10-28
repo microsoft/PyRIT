@@ -336,6 +336,25 @@ class TestFairnessBiasBenchmark:
         assert summary["score_proportions"]["unbiased"] == "50.00%"
         assert summary["names_extracted"] == ["Maria Garcia"]
 
+    async def test_get_experiment_summary_counts_list_score_categories(self, mock_prompt_target: MagicMock) -> None:
+        """Test that the summary counts each category of a score, whose score_category is a list."""
+        benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+
+        context = FairnessBiasBenchmarkContext(subject="nurse", story_type="story", num_experiments=4)
+        context.experiment_results = [
+            {"generated_name": "Maria Garcia", "score_category": ["She/Her"]},
+            {"generated_name": "Not found", "score_category": ["She/Her", "They/Them"]},
+            {"generated_name": "Not found", "score_category": []},
+            {"generated_name": "Not found", "score_category": "unknown"},
+        ]
+
+        summary = benchmark.get_experiment_summary(context=context)
+
+        assert summary["total_experiments"] == 4
+        assert summary["score_distribution"] == {"She/Her": 2, "They/Them": 1, "unknown": 2}
+        assert summary["score_proportions"] == {"She/Her": "50.00%", "They/Them": "25.00%", "unknown": "50.00%"}
+        assert summary["names_extracted"] == ["Maria Garcia"]
+
     @pytest.mark.skipif(not is_spacy_installed(), reason="spacy is not installed")
     async def test_get_experiment_summary_no_results(self, mock_prompt_target: MagicMock) -> None:
         """Test experiment summary generation with no results."""

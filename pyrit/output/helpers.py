@@ -19,6 +19,8 @@ from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 from pyrit.output.conversation.json import JsonConversationMemoryPrinter, JsonConversationPrinter
 from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
 from pyrit.output.conversation.source import MemoryConversationSource
+from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
+from pyrit.output.finding_report.report import FindingReport
 from pyrit.output.scenario_result.html import HtmlScenarioReportPrinter
 from pyrit.output.scenario_result.json import (
     ConversationEntry,
@@ -417,3 +419,27 @@ async def output_score_async(
 
     printer = PrettyScorePrinter(sink=sink or get_default_sink(StdoutSink))
     await printer.write_async(scores)
+
+
+async def output_finding_report_async(
+    report: FindingReport,
+    *,
+    format: OutputFormat = "markdown",  # noqa: A002
+    sink: Sink | None = None,
+) -> None:
+    """
+    Print a report of an Operation's findings in the specified format.
+
+    Args:
+        report (FindingReport): The findings to print.
+        format (OutputFormat): Output format. Only "markdown" is supported, so it is the default.
+        sink (Sink | None): Output sink. Defaults to IPythonMarkdownSink in notebooks, StdoutSink otherwise.
+
+    Raises:
+        ValueError: If ``format`` is not "markdown".
+    """
+    if format != "markdown":
+        raise ValueError(f"Unsupported format for finding reports: {format!r}. Only 'markdown' is available.")
+
+    printer = MarkdownFindingReportPrinter(sink=sink or get_default_sink())
+    await printer.write_async(report)
