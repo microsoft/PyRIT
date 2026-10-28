@@ -1875,7 +1875,7 @@ http = [
 
 [[package]]
 name = "github-copilot-sdk"
-version = "1.0.26"
+version = "1.0.22"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -1883,7 +1883,7 @@ dependencies = [
     { name = "python-dateutil" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c4/3e/d9d1e86ade8143b98516c3b9b3cb061d984993658e1f43766d4a58d75a62/github_copilot_sdk-1.0.26-py3-none-any.whl", hash = "sha256:0854a5a34e3d89a8392ddafff5de78df2071937354f97c4865536b3c5ba15abe", size = 924388, upload-time = "2026-10-22T16:34:28.245Z" },
+    { url = "https://files.pythonhosted.org/packages/26/15/fbbf09a7e0b139667838cc4119b185f79ae32a2af50388bbf2e506e5ecc0/github_copilot_sdk-1.0.22-py3-none-any.whl", hash = "sha256:a3abdcf5145e096eebbfe3ab04179b0ce03922431e62eb6c52b6cfcb70bad948", size = 870060, upload-time = "2026-10-14T20:05:31.711Z" },
 ]
 
 [[package]]
@@ -5136,8 +5136,8 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.133.0" },
     { name = "flask", marker = "extra == 'all'", specifier = ">=3.1.3" },
     { name = "flask", marker = "extra == 'playwright'", specifier = ">=3.1.3" },
-    { name = "github-copilot-sdk", marker = "extra == 'all'", specifier = ">=1.0.11" },
-    { name = "github-copilot-sdk", marker = "extra == 'github-copilot'", specifier = ">=1.0.11" },
+    { name = "github-copilot-sdk", marker = "extra == 'all'", specifier = ">=1.0.11,<1.0.23" },
+    { name = "github-copilot-sdk", marker = "extra == 'github-copilot'", specifier = ">=1.0.11,<1.0.23" },
     { name = "httpx", extras = ["http2"], specifier = ">=0.27.2" },
     { name = "httpx2", specifier = ">=2.5.0,<3" },
     { name = "ipykernel", marker = "extra == 'all'", specifier = ">=6.29.5" },
