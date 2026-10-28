@@ -286,7 +286,8 @@ export default function TechniqueEditor({
   const displayedError = autoApply && revision > 0 ? editError ?? error : error
   const content = (
             <div className={styles.form} onKeyDown={(event) => {
-              if (autoApply && event.key === 'Enter' && event.target instanceof HTMLInputElement) event.preventDefault()
+              if (autoApply && event.key === 'Enter' && event.target instanceof HTMLInputElement
+                && event.currentTarget.contains(event.target)) event.preventDefault()
             }}>
               {loading && <Spinner label="Loading technique types..." />}
               {displayedError && <MessageBar intent="error" role="alert" ref={errorRef} tabIndex={-1}><MessageBarBody>{displayedError}</MessageBarBody></MessageBar>}

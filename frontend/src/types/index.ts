@@ -179,6 +179,9 @@ export interface ChatConverterController {
   isConverting: boolean
   addConverter: (pieceType: string, converterId: string) => void
   setPipeline: (pieceType: string, update: (stages: ConverterPipelineStage[]) => ConverterPipelineStage[]) => void
+  replaceTemporaryConverter: (
+    pieceType: string, stageId: string, source: SourceInstanceSpec, converter: ConverterInstance,
+  ) => void
   retainConverters: (availableIds: Set<string>) => void
   discardTemporarySettings?: () => void
   convert: (pieceType: string) => Promise<PieceConversionUpdates | void>
@@ -496,11 +499,16 @@ export interface ConverterListResponse {
   items: ConverterInstance[]
 }
 
-export interface CreateConverterRequest {
+export type CreateConverterRequest = {
   name: string
   type: string
+} & ({
   params?: Record<string, unknown>
-}
+  source?: never
+} | {
+  source: SourceInstanceSpec
+  params?: never
+})
 
 export interface SourceInstanceSpec {
   source_name: string
