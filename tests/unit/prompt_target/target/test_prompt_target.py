@@ -19,9 +19,9 @@ from pyrit.models import (
     Conversation,
     Message,
     MessagePiece,
+    ParameterResolution,
     PromptDataType,
     RequestGenerationInfo,
-    TemperatureResolution,
     flatten_to_message_pieces,
 )
 from pyrit.prompt_target import OpenAIChatTarget
@@ -554,7 +554,7 @@ async def test_response_preserves_metadata_after_history_squash():
     assert response_piece.conversation_id == _LINEAGE_CONVERSATION_ID
     # Lineage metadata survives alongside the metadata captured from the API response.
     info = RequestGenerationInfo(
-        temperature=TemperatureResolution(requested=None, resolved=None, source="provider_default"),
+        temperature=ParameterResolution(requested=None, resolved=None, source="provider_default"),
         request_piece_ids=(str(user_msg.get_piece().id),),
     )
     assert response_piece.prompt_metadata == {

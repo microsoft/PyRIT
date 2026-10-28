@@ -34,9 +34,9 @@ if TYPE_CHECKING:
         unregister_common_json_schema,
     )
     from pyrit.models.target.request_generation_config import (
+        ParameterResolution,
         RequestGenerationConfig,
         RequestGenerationInfo,
-        TemperatureResolution,
     )
     from pyrit.models.target.target_capabilities import CapabilityName, TargetCapabilities
     from pyrit.models.target.token_usage import (
@@ -58,7 +58,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY": "pyrit.models.target.json_schema_definition",
     "TOKEN_USAGE_METADATA_PREFIX": "pyrit.models.target.token_usage",
     "TargetCapabilities": "pyrit.models.target.target_capabilities",
-    "TemperatureResolution": "pyrit.models.target.request_generation_config",
+    "ParameterResolution": "pyrit.models.target.request_generation_config",
     "TokenUsage": "pyrit.models.target.token_usage",
     "WebSearchConfig": "pyrit.models.target.web_search_config",
     "WebSearchMode": "pyrit.models.target.web_search_config",

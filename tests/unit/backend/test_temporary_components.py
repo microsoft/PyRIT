@@ -640,9 +640,8 @@ class TestTemporaryComponents:
         finally:
             await source.cleanup_target_async()
 
-    @pytest.mark.parametrize("legacy", [False, True])
     async def test_runtime_temperature_preserves_saved_variant_binding_async(
-        self, sqlite_instance: SQLiteMemory, legacy: bool
+        self, sqlite_instance: SQLiteMemory
     ) -> None:
         source = OpenAIChatTarget(
             model_name="gpt-4o", endpoint="https://example.test/v1", api_key="test-only-key", temperature=0.2
@@ -678,11 +677,7 @@ class TestTemporaryComponents:
                             pieces=[
                                 MessagePieceRequest(
                                     original_value="hello",
-                                    prompt_metadata=(
-                                        {"request_temperature": temperature}
-                                        if legacy
-                                        else RequestGenerationConfig(temperature=temperature).to_metadata()
-                                    ),
+                                    prompt_metadata=RequestGenerationConfig(temperature=temperature).to_metadata(),
                                 )
                             ],
                         ),

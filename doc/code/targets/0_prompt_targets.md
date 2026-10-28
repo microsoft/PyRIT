@@ -114,7 +114,12 @@ The adapter also checks the effective sampling mode: `reasoning_effort="none"` i
 allowed, while active reasoning, audio configurations, and streaming remain
 unsupported in this implementation. Nested settings take precedence over top-level
 settings. Omitted effort relies on the profile or deployment declaration covering
-the model's default mode. Unsupported overrides fail before generation I/O.
+the model's default mode. Support is refreshed during construction and whenever
+`set_model_name()` is called, retaining explicit deployment declarations and
+effective underlying-model/passthrough precedence. `apply_capabilities()` can
+declare support for the current model, but cannot bypass the adapter's mode checks;
+changing models re-resolves support from the profile and constructor overrides.
+The same native-capability and mode checks run before generation I/O.
 
 The canonical input is `{"request_generation_config": {"temperature": 0}}`.
 `RequestGenerationConfig` owns this envelope and currently accepts only temperature.
@@ -131,7 +136,7 @@ if request options or configured defaults change before a retry. A later logical
 send resolves afresh; the public send boundary clears copied or stale evidence.
 
 `RequestGenerationInfo` reads the framework-authored `_pyrit_generation` metadata
-on the saved request and responses. Its `temperature` field is a `TemperatureResolution`
+on the saved request and responses. Its `temperature` field is a `ParameterResolution`
 containing `requested`, `resolved`, and `source` (`request`, `target_default`, or
 `provider_default`). The originating `request_piece_ids` belong to the outer record:
 
@@ -152,21 +157,22 @@ without evidence remain readable and show **not recorded**, not a guessed value.
 Use `PromptNormalizer` for persistence; direct target sends return evidence but do
 not themselves write messages to memory.
 
-Readers also accept the earlier draft's flat `request_temperature` input and
-`_pyrit_temperature` evidence. Missing/null temperatures remain non-overrides;
-explicit old and new input values must agree, including across pieces. If both
-evidence formats are present, their values and request associations must agree.
-Malformed or contradictory metadata is rejected rather than silently selecting
-one format. New sends write the canonical envelopes; reading history does not
-rewrite stored messages. Copied evidence in either format is cleared before a send.
-SDK consumers of the earlier draft should replace `TemperatureRequestInfo` with
-`RequestGenerationInfo` and access `info.temperature.requested`, `.resolved`, and `.source`.
+Only `request_generation_config` and `_pyrit_generation` are supported. The earlier,
+unreleased draft keys `request_temperature` and `_pyrit_temperature` are not interpreted.
+Messages without canonical evidence remain readable and show **not recorded**.
+Reading history does not rewrite it; canonical evidence is cleared before a new send.
 
 Future supported generation parameters can add explicit typed fields to
 `RequestGenerationConfig` and their own resolution records to `RequestGenerationInfo`.
-Each parameter needs its own source, provider/mode validation, conflict checks, and
-retry behavior. This is not an arbitrary provider-options dictionary; JSON response
-and web-search policies remain separate contracts. Only temperature is implemented.
+`RequestGenerationConfig.FIELD_CAPABILITIES` maps each option to its own
+`CapabilityName` / `supports_*` flag. The shared code merges non-null values across
+pieces, rejects per-field conflicts, and checks native capabilities with `includes()`.
+Each parameter uses `ParameterResolution` for its requested/resolved value and source.
+Adapters implement provider/mode validation, payload application, and retry resolution;
+no new base-target hook is needed for each parameter. Capability discovery copies the
+declared model and updates probe results, preserving additional flags.
+This is not an arbitrary provider-options dictionary; JSON response and web-search
+policies remain separate contracts. Only temperature is implemented.
 
 In Chat, the top temperature control applies to future sends; clearing it restores
 the target default. It does not build a temporary target or change an attack's target
@@ -194,9 +200,11 @@ Still to decide/implement:
   with the story owners. Existing target hashes are preserved by excluding the additive
   runtime-support flag from configuration identity; no historical identifiers are rewritten.
 
-Custom adapter implementations must opt in with `_SUPPORTS_RUNTIME_TEMPERATURE = True`,
-implement `_validate_request_temperature`, and apply and record the resolved setting
-in their send hook. A model profile alone cannot enable an unimplemented adapter.
+Custom adapter implementations declare a
+`_SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]]`
+(for example, `frozenset({CapabilityName.TEMPERATURE})`), validate ranges and joint
+restrictions in `_validate_request_generation_config`, and apply and record resolved
+settings in their send hook. A model profile alone cannot enable an unimplemented adapter.
 
 ## Chat-style targets vs general targets
 

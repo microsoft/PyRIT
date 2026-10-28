@@ -72,7 +72,7 @@ class PromptTarget(Identifiable):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
     _DEFAULT_TRACE_ENABLED: ClassVar[bool] = False
     _SUPPORTS_TOOL_CALL_HISTORY: ClassVar[bool] = False
-    _SUPPORTS_RUNTIME_TEMPERATURE: ClassVar[bool] = False
+    _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset()
 
     # Declarative auth facts consumed by the create-target service and catalog.
     # Kept off ``TargetCapabilities`` (auth is a construction/credential axis, not
@@ -181,8 +181,14 @@ class PromptTarget(Identifiable):
             if custom_configuration is not None
             else type(self).get_default_configuration(self._underlying_model)
         )
-        if self.capabilities.supports_temperature and not self._SUPPORTS_RUNTIME_TEMPERATURE:
-            self.apply_capabilities(capabilities=self.capabilities.model_copy(update={"supports_temperature": False}))
+        unsupported_generation = {
+            capability.value: False
+            for capability in RequestGenerationConfig.FIELD_CAPABILITIES.values()
+            if capability not in self._SUPPORTED_GENERATION_CAPABILITIES
+            and self.capabilities.includes(capability=capability)
+        }
+        if unsupported_generation:
+            self.apply_capabilities(capabilities=self.capabilities.model_copy(update=unsupported_generation))
         if custom_configuration is None and underlying_model is None and self._SUPPORTS_TOOL_CALL_HISTORY:
             known = get_known_capabilities(model_name)
             if known is not None:
@@ -391,18 +397,19 @@ class PromptTarget(Identifiable):
             ValueError: The override is invalid or unsupported.
         """
         config = RequestGenerationConfig.from_message(message)
-        if config.temperature is not None and not self.capabilities.supports_temperature:
-            raise ValueError(
-                f"{type(self).__name__} does not support runtime temperature for this model configuration."
-            )
-        if config.temperature is not None:
-            self._validate_request_temperature(config.temperature)
+        for capability in sorted(config.required_capabilities):
+            if capability not in self._SUPPORTED_GENERATION_CAPABILITIES or not self.capabilities.includes(
+                capability=capability
+            ):
+                raise ValueError(
+                    f"{type(self).__name__} does not support runtime {capability.name.lower()} "
+                    "for this model configuration."
+                )
+        self._validate_request_generation_config(config)
         return config
 
-    def _validate_request_temperature(self, temperature: float) -> None:
-        # A custom capability declaration alone must not make an unimplemented adapter
-        # silently discard explicit request options.
-        raise ValueError(f"{type(self).__name__} does not implement runtime temperature.")
+    def _validate_request_generation_config(self, config: RequestGenerationConfig) -> None:
+        """Validate adapter-specific parameter ranges and joint model/mode restrictions."""
 
     @abc.abstractmethod
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
@@ -816,7 +823,11 @@ class PromptTarget(Identifiable):
                 return TargetConfiguration(
                     capabilities=known.model_copy(
                         update={
-                            "supports_temperature": known.supports_temperature and cls._SUPPORTS_RUNTIME_TEMPERATURE,
+                            **{
+                                capability.value: False
+                                for capability in RequestGenerationConfig.FIELD_CAPABILITIES.values()
+                                if capability not in cls._SUPPORTED_GENERATION_CAPABILITIES
+                            },
                             "input_modalities": frozenset(
                                 combo
                                 for combo in known.input_modalities

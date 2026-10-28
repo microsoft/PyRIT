@@ -2,8 +2,6 @@ import type { MessagePieceRequest, RequestGenerationConfig, RequestGenerationInf
 
 const REQUEST_GENERATION_KEY = 'request_generation_config'
 const GENERATION_INFO_KEY = '_pyrit_generation'
-const LEGACY_REQUEST_TEMPERATURE_KEY = 'request_temperature'
-const LEGACY_TEMPERATURE_INFO_KEY = '_pyrit_temperature'
 
 /** The toolbar selects the next send; copied historical metadata never selects it. */
 export function withRequestTemperature(pieces: MessagePieceRequest[], input: string): MessagePieceRequest[] {
@@ -15,8 +13,6 @@ export function withRequestTemperature(pieces: MessagePieceRequest[], input: str
     const metadata = { ...piece.prompt_metadata }
     delete metadata[REQUEST_GENERATION_KEY]
     delete metadata[GENERATION_INFO_KEY]
-    delete metadata[LEGACY_REQUEST_TEMPERATURE_KEY]
-    delete metadata[LEGACY_TEMPERATURE_INFO_KEY]
     if (index === 0 && temperature !== undefined) {
       const config: RequestGenerationConfig = { temperature }
       metadata[REQUEST_GENERATION_KEY] = config
@@ -26,26 +22,15 @@ export function withRequestTemperature(pieces: MessagePieceRequest[], input: str
 }
 
 export function temperatureDescription(metadata?: Record<string, unknown> | null): string {
-  const currentValue = metadata?.[GENERATION_INFO_KEY]
-  const legacyValue = metadata?.[LEGACY_TEMPERATURE_INFO_KEY]
-  if (currentValue == null && legacyValue == null) return 'Temperature: not recorded'
-  const current = readGenerationInfo(currentValue)
-  const legacy = readGenerationInfo(legacyValue, true)
-  if (currentValue != null && !current || legacyValue != null && !legacy) return 'Temperature: invalid record'
-  if (current && legacy && (
-    current.temperature.requested !== legacy.temperature.requested
-    || current.temperature.resolved !== legacy.temperature.resolved
-    || current.temperature.source !== legacy.temperature.source
-    || current.request_piece_ids.length !== legacy.request_piece_ids.length
-    || current.request_piece_ids.some((id: string, index: number) => id !== legacy.request_piece_ids[index])
-  )) return 'Temperature: invalid record'
-  const info = current ?? legacy
+  const value = metadata?.[GENERATION_INFO_KEY]
+  if (value == null) return 'Temperature: not recorded'
+  const info = readGenerationInfo(value)
   if (!info) return 'Temperature: invalid record'
-  const { resolved: value, source } = info.temperature
-  if (source === 'provider_default' && value === null) return 'Temperature: provider default (unknown)'
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 'Temperature: invalid record'
-  if (source === 'request') return `Temperature: ${value} (request override)`
-  if (source === 'target_default') return `Temperature: ${value} (target default)`
+  const { resolved, source } = info.temperature
+  if (source === 'provider_default' && resolved === null) return 'Temperature: provider default (unknown)'
+  if (typeof resolved !== 'number' || !Number.isFinite(resolved)) return 'Temperature: invalid record'
+  if (source === 'request') return `Temperature: ${resolved} (request override)`
+  if (source === 'target_default') return `Temperature: ${resolved} (target default)`
   return 'Temperature: invalid record'
 }
 
@@ -53,19 +38,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function isTemperatureValue(value: unknown): value is number | null {
+function isParameterValue(value: unknown): value is number | null {
   return value === null || typeof value === 'number' && Number.isFinite(value)
 }
 
-function readGenerationInfo(value: unknown, legacy: boolean = false): RequestGenerationInfo | undefined {
+function readGenerationInfo(value: unknown): RequestGenerationInfo | undefined {
   if (!isRecord(value)) return undefined
-  const temperature = legacy ? {
-    requested: value.requested_temperature, resolved: value.resolved_temperature, source: value.source,
-  } : value.temperature
+  const temperature = value.temperature
   if (!isRecord(temperature)) return undefined
   const { requested, resolved, source } = temperature
   const ids = value.request_piece_ids === undefined ? [] : value.request_piece_ids
-  if (!isTemperatureValue(requested) || !isTemperatureValue(resolved)
+  if (!isParameterValue(requested) || !isParameterValue(resolved)
     || source !== 'request' && source !== 'target_default' && source !== 'provider_default'
     || !Array.isArray(ids) || !ids.every((id: unknown): id is string => typeof id === 'string')) return undefined
   return { temperature: { requested, resolved, source }, request_piece_ids: ids }

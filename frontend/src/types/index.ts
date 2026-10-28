@@ -164,7 +164,7 @@ export interface RequestGenerationConfig {
   readonly temperature?: number | null
 }
 
-export interface TemperatureResolution {
+export interface ParameterResolution {
   readonly requested: number | null
   readonly resolved: number | null
   readonly source: 'request' | 'target_default' | 'provider_default'
@@ -172,7 +172,7 @@ export interface TemperatureResolution {
 
 /** Framework-authored parameter evidence associated with the originating request. */
 export interface RequestGenerationInfo {
-  readonly temperature: TemperatureResolution
+  readonly temperature: ParameterResolution
   readonly request_piece_ids: readonly string[]
 }
 

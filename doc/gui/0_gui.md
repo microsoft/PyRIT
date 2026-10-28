@@ -256,8 +256,9 @@ piece's `prompt_metadata`, and changing the control makes no temperature-only
 target-construction request. Response wording alone is not evidence of which
 temperature was sent.
 
-The message footers read the new `_pyrit_generation` evidence and the earlier
-draft's `_pyrit_temperature` records. Existing saved messages do not need rewriting.
+The message footers read `_pyrit_generation` evidence. Messages without it show
+**not recorded**, including those using the earlier, unreleased `_pyrit_temperature`
+draft format. Existing saved messages are not rewritten.
 
 #### Repeating a Message
 
