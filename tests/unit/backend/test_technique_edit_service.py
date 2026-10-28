@@ -23,7 +23,7 @@ from pyrit.backend.services.technique_edit_service import TechniqueEditService
 from pyrit.backend.services.technique_service import TechniqueService
 from pyrit.common.apply_defaults import GlobalDefaultValues
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH, EXECUTOR_SIMULATED_TARGET_PATH
-from pyrit.converter import Base64Converter, ROT13Converter
+from pyrit.converter import Base64Converter, CaesarConverter, ImageOverlayConverter, ROT13Converter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackExecutor,
@@ -49,6 +49,7 @@ from pyrit.models import (
     load_next_message_prompt,
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioRunSizeEstimateRequest
+from pyrit.models.component_spec import RegisteredComponentReference, SourceInstanceSpec
 from pyrit.models.technique_edit import (
     SimulationChanges,
     SimulationSettings,
@@ -58,7 +59,7 @@ from pyrit.models.technique_edit import (
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, Registry, TargetRegistry
+from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, Registry, ScorerRegistry, TargetRegistry
 from pyrit.scenario.core import AttackTechniqueFactory
 from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 from pyrit.scenario.scenarios.technique.execute import Execute
@@ -123,6 +124,88 @@ def _specification(*, changes: TechniqueChanges | None = None) -> TechniqueOverr
     )
 
 
+def test_temporary_converter_settings_survive_replay_without_registration(
+    edit_catalog: AttackTechniqueRegistry,
+) -> None:
+    registry = ConverterRegistry.get_registry_singleton()
+    converter = CaesarConverter(caesar_offset=1)
+    registry.instances.register(converter, name="caesar")
+    spec = SourceInstanceSpec(
+        source_name="caesar", source_hash=converter.get_identifier().hash, params={"caesar_offset": 7}
+    )
+    changes = TechniqueChanges(request_converters=[spec, "base64", "caesar"], response_converters=[spec])
+    admitted = TechniqueEditService.validate(_specification(changes=changes))
+    assert admitted.configuration.settings.request_converters == changes.request_converters
+    assert "request_converters" in admitted.configuration.editable_fields
+    assert "response_converters" in admitted.configuration.editable_fields
+    assert "request_converters" not in admitted.configuration.read_only
+    replay = TechniqueOverride.model_validate_json(admitted.override.model_dump_json())
+    copied = TechniqueEditService.resolve(replay)
+    chain = copied.get_converter_config().request_converters
+    assert chain[0].converters[0].get_identifier().params["caesar_offset"] == 7
+    assert chain[2].converters[0] is converter
+    assert registry.instances.get_names() == ["base64", "caesar", "rot13"]
+    assert converter.get_identifier().params["caesar_offset"] == 1
+    assert edit_catalog.get_factories()["role_play_movie_script"].get_converter_config().request_converters == []
+    registry.instances.register(CaesarConverter(caesar_offset=2), name="caesar", replace=True)
+    with pytest.raises(ValueError):
+        TechniqueEditService.resolve(replay)
+
+
+def test_temporary_converter_effective_hash_is_checked(edit_catalog: AttackTechniqueRegistry) -> None:
+    converter = CaesarConverter(caesar_offset=1)
+    ConverterRegistry.get_registry_singleton().instances.register(converter, name="caesar")
+    spec = SourceInstanceSpec(
+        source_name="caesar",
+        source_hash=converter.get_identifier().hash,
+        params={"caesar_offset": 3},
+        effective_hash="stale",
+    )
+    with pytest.raises(ValueError, match="Temporary converter configuration has changed"):
+        TechniqueEditService.validate(_specification(changes=TechniqueChanges(request_converters=[spec])))
+
+
+def test_temporary_file_converter_preserves_its_file_and_rejects_replacement(
+    edit_catalog: AttackTechniqueRegistry,
+) -> None:
+    source = ImageOverlayConverter(base_image="registered-image.png")
+    ConverterRegistry.get_registry_singleton().instances.register(source, name="overlay")
+    spec = SourceInstanceSpec(source_name="overlay", source_hash=source.get_identifier().hash, params={"opacity": 0.5})
+    admitted = TechniqueEditService.validate(_specification(changes=TechniqueChanges(request_converters=[spec])))
+    factory = TechniqueEditService.resolve(admitted.override)
+    edited = factory.get_converter_config().request_converters[0].converters[0].get_identifier()
+    assert edited.params["base_image"] == "registered-image.png"
+    assert edited.params["opacity"] == 0.5
+    spec.params["base_image"] = "data:image/png;base64,AAAA"
+    with pytest.raises(ValueError, match="Create a registered converter"):
+        TechniqueEditService.validate(_specification(changes=TechniqueChanges(request_converters=[spec])))
+
+
+async def test_temporary_converter_is_used_by_the_attack_async(edit_catalog: AttackTechniqueRegistry) -> None:
+    source = CaesarConverter(caesar_offset=1)
+    ConverterRegistry.get_registry_singleton().instances.register(source, name="caesar")
+    config = TechniqueEditService.configuration("plain")
+    admitted = TechniqueEditService.validate(
+        TechniqueOverride(
+            source_name=config.source_name,
+            source_identity=config.source_identity,
+            changes=TechniqueChanges(
+                request_converters=[
+                    SourceInstanceSpec(
+                        source_name="caesar", source_hash=source.get_identifier().hash, params={"caesar_offset": 3}
+                    ),
+                ]
+            ),
+        )
+    )
+    factory = TechniqueEditService.resolve(admitted.override)
+    target = MockPromptTarget()
+    technique = factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
+    await technique.attack.execute_async(objective="abc")
+    assert target.prompt_sent == ["def"]
+    assert source.get_identifier().params["caesar_offset"] == 1
+
+
 @pytest.mark.parametrize("value", [0, 2, -1, True, "2", 1.5, None, [], {}])
 async def test_creation_and_editing_share_strict_input_and_attack_validation_async(
     edit_catalog: AttackTechniqueRegistry, value: Any
@@ -172,6 +255,7 @@ def test_snapshot_and_patch_preserve_existing_presence_and_null_serialization(
         "supplied_parameters",
         "read_only",
         "supports_prepended_conversation",
+        "supports_prompt",
     }
     assert payload["settings"] == {
         "description": "Write a movie script.",
@@ -757,6 +841,11 @@ def test_python_factory_construction_keeps_default_history_roles(edit_catalog: A
 
 
 async def test_isolated_run_overrides_estimate_and_resume_async(edit_catalog: AttackTechniqueRegistry) -> None:
+    scorer = SubStringScorer(substring="selected")
+    ScorerRegistry.get_registry_singleton().instances.register(scorer, name="selected")
+    scorer_reference = RegisteredComponentReference(
+        registry_name="selected", identifier_hash=scorer.get_identifier().hash
+    )
     first, second = [
         TechniqueEditService.validate(
             _specification(changes=TechniqueChanges(simulation=SimulationChanges(num_turns=turns)))
@@ -781,12 +870,16 @@ async def test_isolated_run_overrides_estimate_and_resume_async(edit_catalog: At
         estimate = await ScenarioService().estimate_scenario_run_size_async(
             scenario_name="technique.execute",
             request=ScenarioRunSizeEstimateRequest(
-                techniques=["role_play_movie_script"], technique_override=first, scenario_params={"objective": "write"}
+                objective_scorer=scorer_reference,
+                techniques=["role_play_movie_script"],
+                technique_override=first,
+                scenario_params={"objective": "write"},
             ),
         )
         assert estimate.total_attack_count == 1
         service = ScenarioRunService()
         request = RunScenarioRequest(
+            objective_scorer=scorer_reference,
             scenario_name="technique.execute",
             target_name="objective",
             techniques=["role_play_movie_script"],
@@ -795,12 +888,15 @@ async def test_isolated_run_overrides_estimate_and_resume_async(edit_catalog: At
         )
         with patch.object(service, "_run_initializers_async", return_value=None):
             prepared = await service._prepare_run_async(request=request)
+            assert prepared.scenario._objective_scorer is scorer
             stored = await CentralMemory.get_memory_instance().get_scenario_result_header_async(
                 scenario_result_id=prepared.scenario._scenario_result_id
             )
             restored = service._restore_launch_request(stored=stored)
             assert restored.technique_override == first
+            assert restored.objective_scorer == scorer_reference
             resumed = await service._prepare_run_async(request=restored)
+            assert resumed.scenario._objective_scorer is scorer
             assert resumed.scenario._scenario_result_id == prepared.scenario._scenario_result_id
             targets = TargetRegistry.get_registry_singleton().instances
             assert all(not entry.instance.prompt_sent for entry in targets.get_all_instances())

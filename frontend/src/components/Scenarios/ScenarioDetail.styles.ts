@@ -130,6 +130,13 @@ export const useScenarioDetailStyles = makeStyles({
   touchTarget: {
     ...mobileTouchTarget,
   },
+  resetTechnique: {
+    ...mobileTouchTarget,
+    alignSelf: 'flex-start',
+    color: tokens.colorBrandForeground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorBrandStroke1}`,
+    borderRadius: tokens.borderRadiusCircular,
+  },
   centeredState: {
     display: 'flex',
     flexDirection: 'column',
@@ -266,6 +273,18 @@ export const useScenarioDetailStyles = makeStyles({
   },
   errorText: {
     color: tokens.colorPaletteRedForeground1,
+  },
+  pinnedTokens: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXS,
+  },
+  presetIssueList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+    margin: 0,
+    paddingLeft: tokens.spacingHorizontalL,
   },
   launchButton: {
     width: '100%',

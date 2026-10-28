@@ -44,6 +44,7 @@ import {
   formatTimestamp,
   objectivePreview,
 } from '@/components/AttackResults/attackAttemptFormatting'
+import { suiteExecutionRoutePath } from '@/components/ScenarioSuites/suiteRoutes'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
 import { useScenarioRunResume } from '@/hooks/useScenarioRunResume'
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
@@ -132,13 +133,19 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     fromScenarioHistory?: boolean
     scenarioHistorySearch?: string
     scenarioName?: string
+    suiteExecutionId?: string
+    suiteName?: string
   } | null
-  const backPath = navigationState?.fromScenarioHistory
+  const backPath = navigationState?.suiteExecutionId
+    ? suiteExecutionRoutePath(navigationState.suiteExecutionId)
+    : navigationState?.fromScenarioHistory
     ? `/history/scanner${navigationState.scenarioHistorySearch ?? ''}`
     : navigationState?.scenarioName
       ? `/scanner/${encodeURIComponent(navigationState.scenarioName)}`
       : '/scanner'
-  const backLabel = navigationState?.fromScenarioHistory
+  const backLabel = navigationState?.suiteExecutionId
+    ? `Back to ${navigationState.suiteName ?? 'suite execution'}`
+    : navigationState?.fromScenarioHistory
     ? 'Back to scanner history'
     : navigationState?.scenarioName
       ? 'Back to scenario'

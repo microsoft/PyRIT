@@ -28,6 +28,7 @@ from pydantic import (
     model_validator,
 )
 
+from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.parameter import Parameter
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_LABEL_KEY_LENGTH, MAX_LABEL_VALUE_LENGTH
 from pyrit.models.results.scenario_result import ScenarioRunState
@@ -63,6 +64,8 @@ _RequestLabels = Annotated[
     ],
     Field(max_length=MAX_ITEMS),
 ]
+_RequestMaxConcurrency = Annotated[int, Field(ge=1, le=100)]
+_RequestMaxRetries = Annotated[int, Field(ge=0, le=20)]
 
 
 def _validate_dataset_filter_mapping(
@@ -81,6 +84,46 @@ def _validate_dataset_filter_mapping(
         if key not in DATASET_FILTERS:
             raise ValueError(f"Unknown dataset filter '{key}'. Allowed: {', '.join(sorted(DATASET_FILTERS))}.")
     return value
+
+
+class _ScenarioLaunchOptions(BaseModel):
+    """
+    Launch fields shared by scenario, preset, and suite launches.
+
+    The objective target is declared by each request because a direct scenario
+    run may omit it, while a preset or suite launch must supply it.
+    """
+
+    adversarial_target_name: _RequestName | None = Field(
+        None,
+        min_length=1,
+        description="Registered multi-turn target overriding the adversarial fallback",
+    )
+    initializers: _RequestNames | None = Field(
+        None,
+        description="Initializer names to run before each scenario",
+    )
+    initializer_args: dict[_RequestName, _RequestParams] | None = Field(
+        None,
+        max_length=MAX_ITEMS,
+        description="Per-initializer arguments keyed by initializer name",
+    )
+    max_concurrency: _RequestMaxConcurrency | None = Field(
+        None,
+        description="Maximum concurrent operations; omit to use the run default",
+    )
+    max_retries: _RequestMaxRetries | None = Field(
+        None,
+        description="Maximum retry attempts on failure; omit to use the run default",
+    )
+    operation_id: UUID | None = Field(None, description="Saved Operation reference, or unassigned")
+    labels: _RequestLabels | None = Field(None, description="Labels to attach to memory entries")
+
+
+class ScenarioLaunchConfiguration(_ScenarioLaunchOptions):
+    """Target and execution fields a preset or suite launch supplies."""
+
+    target_name: _RequestName = Field(..., min_length=1, description="Registered objective target name")
 
 
 class ScenarioRunSizeEstimateStatus(str, Enum):
@@ -391,6 +434,7 @@ class RegisteredScenario(BaseModel):
     scenario_name: str = Field(..., description="Scenario name  (e.g., 'foundry.red_team_agent')")
     scenario_type: str = Field(..., description="Scenario type identifier (e.g., 'RedTeamAgentScenario')")
     scenario_version: int = Field(1, ge=1, description="Scenario definition version used for default metadata")
+    supports_objective_scorer: bool = False
     description: str = Field(..., description="Human-readable description of the scenario")
     description_markdown: str = Field(
         "",
@@ -449,6 +493,7 @@ class ScenarioRunSizeEstimateRequest(_DatasetRequestModel):
     """Request-specific scenario run-size configuration."""
 
     technique_override: TechniqueOverride | None = None
+    objective_scorer: RegisteredComponentReference | None = None
 
     adversarial_target_name: _RequestName | None = Field(
         None,
@@ -472,44 +517,28 @@ class ScenarioRunSizeEstimateRequest(_DatasetRequestModel):
     )
 
 
-class RunScenarioRequest(_DatasetRequestModel):
+class RunScenarioRequest(_DatasetRequestModel, _ScenarioLaunchOptions):
     """Request body for starting a scenario run."""
 
     technique_override: TechniqueOverride | None = None
+    objective_scorer: RegisteredComponentReference | None = None
 
     scenario_name: _RequestName = Field(..., description="Scenario name (e.g., 'foundry.red_team_agent')")
     target_name: _RequestName | None = Field(
         None, description="Registered objective target name; required when the scenario declares objective_target"
     )
-    adversarial_target_name: _RequestName | None = Field(
-        None,
-        min_length=1,
-        description="Registered multi-turn target overriding only the adversarial fallback for this run",
-    )
-    initializers: _RequestNames | None = Field(
-        None, description="Initializer names to run before scenario (e.g., ['target', 'load_default_datasets'])"
-    )
     techniques: _RequestTechniques | None = Field(
         None, description="Technique names to use (uses scenario default if omitted)"
     )
-    max_concurrency: int | None = Field(10, ge=1, le=100, description="Maximum concurrent operations")
-    max_retries: int | None = Field(0, ge=0, le=20, description="Maximum retry attempts on failure")
+    max_concurrency: _RequestMaxConcurrency | None = Field(10, description="Maximum concurrent operations")
+    max_retries: _RequestMaxRetries | None = Field(0, description="Maximum retry attempts on failure")
     include_baseline: bool | None = Field(
         None, description="Override the scenario baseline default; forbidden scenarios reject true"
     )
-    labels: _RequestLabels | None = Field(None, description="Labels to attach to memory entries")
-    operation_id: UUID | None = Field(None, description="Saved Operation reference, or unassigned")
     scenario_params: _RequestParams | None = Field(
         None,
         description="Custom parameters for the scenario (passed to scenario.set_params_from_args). "
         "Keys are parameter names declared by the scenario's supported_parameters().",
-    )
-    initializer_args: dict[_RequestName, _RequestParams] | None = Field(
-        None,
-        max_length=MAX_ITEMS,
-        description="Per-initializer arguments keyed by initializer name. "
-        "Each value is a dict of args passed to that initializer's set_params_from_args(). "
-        "Example: {'target': {'endpoint': 'https://...'}}.",
     )
     scenario_result_id: _RequestName | None = Field(
         None,
@@ -533,9 +562,11 @@ class AttackRetrySummary(BaseModel):
 
     attack_result_id: str = Field(..., description="Stable ID of the attack result (used to de-duplicate)")
     atomic_attack_name: str = Field(..., description="Atomic-attack cell that retried")
+    total_retries: int = Field(0, ge=0, description="Total retry attempts recorded for this attack")
     retries: list[RetryEvent] = Field(
         default_factory=list, description="Retry attempts, each with component role/name, endpoint, and exception"
     )
+    retries_truncated: bool = Field(False, description="Whether the retries list was truncated to a maximum budget")
 
 
 class ScenarioOverloadSummary(BaseModel):

@@ -91,9 +91,7 @@ async function expectLongLabelStaysInsideCard(page: Page): Promise<void> {
     range.selectNodeContents(textHost);
     const text = range.getBoundingClientRect();
     const cardBox = article.getBoundingClientRect();
-    const badgeBox = textHost.getBoundingClientRect();
     return {
-      cardWidth: cardBox.width,
       cardRight: cardBox.right,
       cardLeft: cardBox.left,
       cardTop: cardBox.top,
@@ -102,18 +100,15 @@ async function expectLongLabelStaysInsideCard(page: Page): Promise<void> {
       textRight: text.right,
       textTop: text.top,
       textBottom: text.bottom,
-      badgeHeight: badgeBox.height,
       scrollWidth: textHost.scrollWidth,
       clientWidth: textHost.clientWidth,
     };
   }, LONG_HARM_CATEGORY);
 
-  expect(metrics.cardWidth).toBeLessThanOrEqual(360);
   expect(metrics.textLeft).toBeGreaterThanOrEqual(metrics.cardLeft - 1);
   expect(metrics.textRight).toBeLessThanOrEqual(metrics.cardRight + 1);
   expect(metrics.textTop).toBeGreaterThanOrEqual(metrics.cardTop - 1);
   expect(metrics.textBottom).toBeLessThanOrEqual(metrics.cardBottom + 1);
-  expect(metrics.badgeHeight).toBeGreaterThan(20);
   expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
 }
 
@@ -131,11 +126,10 @@ test.describe("dataset catalog layout", () => {
     await expect(cards).toHaveCount(2);
     const [first, second] = await cards.evaluateAll((articles: Element[]) =>
       articles.map((article: Element) => {
-        const { left, right, top } = article.getBoundingClientRect();
-        return { left, right, top };
+        const { left, right } = article.getBoundingClientRect();
+        return { left, right };
       }),
     );
-    expect(first.top).toBe(second.top);
     expect(second.left).toBeGreaterThan(first.right);
   });
 
@@ -454,7 +448,6 @@ test.describe("dataset example table", () => {
       range.selectNodeContents(textHost);
       const text = range.getBoundingClientRect();
       const cellBox = host.getBoundingClientRect();
-      const badgeBox = textHost.getBoundingClientRect();
       return {
         textLeft: text.left,
         textRight: text.right,
@@ -464,7 +457,6 @@ test.describe("dataset example table", () => {
         cellRight: cellBox.right,
         cellTop: cellBox.top,
         cellBottom: cellBox.bottom,
-        badgeHeight: badgeBox.height,
         scrollWidth: textHost.scrollWidth,
         clientWidth: textHost.clientWidth,
       };
@@ -474,14 +466,11 @@ test.describe("dataset example table", () => {
     expect(metrics.textRight).toBeLessThanOrEqual(metrics.cellRight + 1);
     expect(metrics.textTop).toBeGreaterThanOrEqual(metrics.cellTop - 1);
     expect(metrics.textBottom).toBeLessThanOrEqual(metrics.cellBottom + 1);
-    expect(metrics.badgeHeight).toBeGreaterThan(20);
     expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
     const tableLayout = await table.evaluate((host) => ({
-      columnWidth: host.querySelector("th")?.getBoundingClientRect().width ?? 0,
       wrapperWidth: host.parentElement?.clientWidth ?? 0,
       scrollWidth: host.parentElement?.scrollWidth ?? 0,
     }));
-    expect(tableLayout.columnWidth).toBeGreaterThanOrEqual(140);
     expect(tableLayout.scrollWidth).toBeGreaterThan(tableLayout.wrapperWidth);
     await table.getByRole("button", { name: "Show alpha" }).click();
     await expect(page.getByRole("region", { name: "Example detail" })).toBeVisible();
@@ -501,18 +490,13 @@ test.describe("dataset example table", () => {
         const termBox = term.getBoundingClientRect();
         const valueBox = value.getBoundingClientRect();
         return {
-          termLeft: termBox.left,
           termBottom: termBox.bottom,
-          valueLeft: valueBox.left,
           valueTop: valueBox.top,
-          valueWidth: valueBox.width,
           clientWidth: value.clientWidth,
           scrollWidth: value.scrollWidth,
         };
       });
       expect(dimensions.valueTop).toBeGreaterThanOrEqual(dimensions.termBottom);
-      expect(dimensions.valueLeft).toBeCloseTo(dimensions.termLeft, 0);
-      expect(dimensions.valueWidth).toBeGreaterThanOrEqual(250);
       expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth + 1);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);

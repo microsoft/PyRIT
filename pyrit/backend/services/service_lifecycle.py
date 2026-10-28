@@ -14,6 +14,9 @@ from pyrit.backend.services.manual_send_scheduler import get_manual_send_schedul
 from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.backend.services.scenario_run_service import reset_scenario_run_service_async
 from pyrit.backend.services.scenario_service import get_scenario_service
+from pyrit.backend.services.scenario_suite_execution_service import (
+    reset_scenario_suite_execution_service_async,
+)
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.backend.services.technique_service import get_technique_service
@@ -64,6 +67,7 @@ async def _close_cached_services_async() -> None:
                 await get_scenario_service().close_async()
             if get_converter_service.cache_info().currsize:
                 await get_converter_service().close_async()
+            await reset_scenario_suite_execution_service_async()
             await reset_scenario_run_service_async()
         finally:
             for factory in (

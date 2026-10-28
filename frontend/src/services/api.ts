@@ -49,12 +49,13 @@ import type {
   ChangeMainConversationResponse,
   ListRegisteredScenariosResponse,
   RegisteredScenario,
-  ResolveScenarioPresetRequest,
   RunScenarioRequest,
   ScenarioPreset,
   ScenarioPresetListResponse,
   ScenarioPresetResponse,
   ScenarioSuite,
+  LaunchScenarioSuiteRequest,
+  ScenarioSuiteExecutionSummary,
   ScenarioSuiteListResponse,
   ScenarioSuiteResponse,
   UpdateScenarioPresetRequest,
@@ -784,22 +785,6 @@ export const scenarioPresetsApi = {
   remove: async (name: string): Promise<void> => {
     await apiClient.delete(`/scenario-presets/${encodeURIComponent(name)}`)
   },
-
-  /**
-   * Combines a stored preset with the launch-owned fields it omits into a runnable request.
-   * Sending `expected_version` fails with 409 when the preset changed after it was read,
-   * so a launch cannot silently run a configuration the operator never saw.
-   */
-  resolve: async (
-    name: string,
-    request: ResolveScenarioPresetRequest,
-  ): Promise<RunScenarioRequest> => {
-    const response = await apiClient.post(
-      `/scenario-presets/${encodeURIComponent(name)}/resolve`,
-      request,
-    )
-    return response.data
-  },
 }
 
 export const scenarioSuitesApi = {
@@ -835,6 +820,40 @@ export const scenarioSuitesApi = {
 
   remove: async (name: string): Promise<void> => {
     await apiClient.delete(`/scenario-suites/${encodeURIComponent(name)}`)
+  },
+
+  launch: async (
+    name: string,
+    request: LaunchScenarioSuiteRequest,
+  ): Promise<ScenarioSuiteExecutionSummary> => {
+    const response = await apiClient.post(
+      `/scenario-suites/${encodeURIComponent(name)}/launch`,
+      request,
+    )
+    return response.data
+  },
+
+  getExecution: async (
+    executionId: string,
+    signal?: AbortSignal,
+  ): Promise<ScenarioSuiteExecutionSummary> => {
+    const response = await apiClient.get(
+      `/scenario-suites/executions/${encodeURIComponent(executionId)}`,
+      { signal },
+    )
+    return response.data
+  },
+
+  cancelExecution: async (
+    executionId: string,
+    signal?: AbortSignal,
+  ): Promise<ScenarioSuiteExecutionSummary> => {
+    const response = await apiClient.post(
+      `/scenario-suites/executions/${encodeURIComponent(executionId)}/cancel`,
+      undefined,
+      { signal },
+    )
+    return response.data
   },
 }
 

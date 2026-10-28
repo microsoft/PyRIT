@@ -15,7 +15,15 @@ import pytest
 from pyrit.common.apply_defaults import get_global_default_values
 from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
 from pyrit.memory import AzureSQLMemory, CentralMemory, SQLiteMemory
-from pyrit.registry import AttackRegistry, InitializerRegistry, Registry, TargetRegistry
+from pyrit.models.catalog import ScenarioSuite
+from pyrit.registry import (
+    AttackRegistry,
+    InitializerRegistry,
+    Registry,
+    ScenarioSuiteRegistry,
+    ScenarioSuiteStorage,
+    TargetRegistry,
+)
 from pyrit.setup.configuration_loader import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import reset_setup_registries, validate_reinitialization_memory
@@ -58,6 +66,33 @@ def test_reset_setup_registries_discards_attack_catalog_without_resetting_memory
 
         assert AttackRegistry.get_registry_singleton() is not registry
         assert CentralMemory.get_memory_instance() is memory
+
+
+def test_reset_setup_registries_replaces_registered_suites_without_deleting_storage(tmp_path: Path) -> None:
+    storage = ScenarioSuiteStorage(source=str(tmp_path))
+    registry = ScenarioSuiteRegistry(storage=storage)
+    ScenarioSuiteRegistry.set_registry_singleton(registry)
+    stored = registry.save_suite(suite=ScenarioSuite(name="stored_suite"), expected_version=None)
+    registered = ScenarioSuite(name="registered_suite")
+    registry.register_suite(suite=registered)
+
+    reset_setup_registries()
+
+    replacement = ScenarioSuiteRegistry.get_registry_singleton()
+    replacement.configure_source(str(tmp_path))
+    assert replacement is not registry
+    assert replacement.get_suite(name=registered.name) is None
+    stored_after_reset = replacement.get_suite(name=stored.suite.name)
+    assert stored_after_reset is not None
+    assert stored_after_reset.version == stored.version
+
+    replacement.register_suite(suite=registered)
+    reset_setup_registries()
+
+    after_removal = ScenarioSuiteRegistry.get_registry_singleton()
+    after_removal.configure_source(str(tmp_path))
+    assert after_removal.get_suite(name=registered.name) is None
+    assert after_removal.get_suite(name=stored.suite.name) is not None
 
 
 async def test_preflight_uses_isolated_registry_without_changing_live_state() -> None:

@@ -43,7 +43,7 @@ import { validateRegistryName } from '@/utils/registryName'
 import { routerPathParamValue } from '@/utils/routeParams'
 
 import { useScenarioSuiteEditorStyles } from './ScenarioSuiteEditor.styles'
-import { SUITES_ROUTE } from './suiteRoutes'
+import { SUITE_LIBRARY_ROUTE } from './suiteRoutes'
 
 type LoadStatus = 'loading' | 'ready' | 'not-found' | 'error'
 
@@ -110,7 +110,9 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
   const [saveError, setSaveError] = useState<string | null>(null)
 
   const currentDraft: SuiteDraft = { name, description, entries }
+  const readOnly = loaded?.origin === 'registered'
   const hasUnsavedChanges = status === 'ready'
+    && !readOnly
     && draftSignature(currentDraft) !== draftSignature(savedDraft)
   const shouldBlockNavigation = useCallback(
     (): boolean => hasUnsavedChanges && !allowNavigation.current,
@@ -276,11 +278,15 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
     try {
       if (loaded === null) {
         await scenarioSuitesApi.create(suite)
+      } else if (loaded.version === null) {
+        setSaveError(`Suite '${loaded.suite.name}' is defined in code and cannot be edited here.`)
+        setSaving(false)
+        return
       } else {
         await scenarioSuitesApi.update(loaded.suite.name, suite, loaded.version)
       }
       allowNavigation.current = true
-      navigate(SUITES_ROUTE)
+      navigate(SUITE_LIBRARY_ROUTE)
     } catch (err: unknown) {
       setSaveError(toApiError(err).detail)
       setSaving(false)
@@ -318,7 +324,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
               {status === 'not-found' ? `No suite named "${decodedName}".` : loadError}
             </MessageBarBody>
           </MessageBar>
-          <Button appearance="primary" onClick={() => navigate(SUITES_ROUTE)}>
+          <Button appearance="primary" onClick={() => navigate(SUITE_LIBRARY_ROUTE)}>
             Back to suites
           </Button>
         </div>
@@ -336,7 +342,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
     >
       <div className={styles.headerText}>
         <Text id="scenario-suite-editor-title" as="h1" size={600} weight="semibold">
-          {editing ? `Edit ${decodedName}` : 'New suite'}
+          {readOnly ? `View ${decodedName}` : editing ? `Edit ${decodedName}` : 'New suite'}
         </Text>
         <Text size={300} className={styles.subtitle}>
           Arrange scenario presets in the order they should appear. Saving a suite does not run it.
@@ -344,11 +350,20 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
       </div>
 
       <form className={styles.form} onSubmit={(event) => void handleSubmit(event)} noValidate>
+        {readOnly && (
+          <MessageBar intent="info">
+            <MessageBarBody role="status">
+              This suite is defined in code. It is read-only and cannot be edited or deleted here.
+            </MessageBarBody>
+          </MessageBar>
+        )}
         {presetLoadError && (
           <MessageBar intent="warning">
             <MessageBarBody role="alert">
-              Preset library unavailable. Existing entries can still be edited and saved, but new presets cannot
-              be added. {presetLoadError}
+              Preset library unavailable. {readOnly
+                ? 'Existing entries remain visible, but current preset details may be unavailable.'
+                : 'Existing entries can still be edited and saved, but new presets cannot be added.'}{' '}
+              {presetLoadError}
             </MessageBarBody>
           </MessageBar>
         )}
@@ -371,6 +386,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
             <Text size={200} className={styles.meta}>
               Schema version {loaded?.suite.schema_version ?? 1}
               {editing ? ` · Author: ${loaded?.suite.author ?? '—'}` : ''}
+              {readOnly ? ' · Defined in code' : ''}
             </Text>
           </div>
           <Field
@@ -393,7 +409,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
             <Textarea
               className={styles.control}
               value={description}
-              disabled={saving}
+              disabled={saving || readOnly}
               onChange={(_, data) => setDescription(data.value)}
               data-testid="suite-description-input"
             />
@@ -416,8 +432,10 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
           {availablePresets.length === 0 ? (
             <MessageBar intent="info">
               <MessageBarBody>
-                No presets are available to add. Existing unavailable references can still be
-                preserved, reordered, removed, and saved.
+                {readOnly
+                  ? 'No current preset definitions are available. The registered suite entries remain read-only.'
+                  : 'No presets are available to add. Existing unavailable references can still be preserved, '
+                    + 'reordered, removed, and saved.'}
               </MessageBarBody>
             </MessageBar>
           ) : (
@@ -427,7 +445,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
                   value={selectedPresetName}
                   selectedOptions={selectedPresetName === '' ? [] : [selectedPresetName]}
                   placeholder="Select a preset"
-                  disabled={saving}
+                  disabled={saving || readOnly}
                   onOptionSelect={(_, data) => setSelectedPresetName(data.optionValue ?? '')}
                   data-testid="suite-preset-select"
                 >
@@ -443,7 +461,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
                 type="button"
                 appearance="secondary"
                 icon={<AddRegular />}
-                disabled={saving || selectedPresetName === ''}
+                disabled={saving || readOnly || selectedPresetName === ''}
                 onClick={addEntry}
                 data-testid="add-suite-entry"
               >
@@ -484,7 +502,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
                           size="small"
                           icon={<ChevronUpRegular />}
                           aria-label={`Move entry ${index + 1} up`}
-                          disabled={saving || index === 0}
+                          disabled={saving || readOnly || index === 0}
                           onClick={() => moveEntry(entry.entry_id, -1)}
                         />
                         <Button
@@ -494,7 +512,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
                           size="small"
                           icon={<ChevronDownRegular />}
                           aria-label={`Move entry ${index + 1} down`}
-                          disabled={saving || index === entries.length - 1}
+                          disabled={saving || readOnly || index === entries.length - 1}
                           onClick={() => moveEntry(entry.entry_id, 1)}
                         />
                         <Button
@@ -504,7 +522,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
                           size="small"
                           icon={<DeleteRegular />}
                           aria-label={`Remove entry ${index + 1}`}
-                          disabled={saving}
+                          disabled={saving || readOnly}
                           onClick={() => removeEntry(entry.entry_id)}
                         />
                       </div>
@@ -536,23 +554,25 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
         </section>
 
         <div className={styles.actions}>
-          <Button
-            className={styles.touchTarget}
-            appearance="primary"
-            type="submit"
-            disabled={saving}
-            data-testid="save-suite-btn"
-          >
-            {saving ? 'Saving...' : 'Save suite'}
-          </Button>
+          {!readOnly && (
+            <Button
+              className={styles.touchTarget}
+              appearance="primary"
+              type="submit"
+              disabled={saving}
+              data-testid="save-suite-btn"
+            >
+              {saving ? 'Saving...' : 'Save suite'}
+            </Button>
+          )}
           <Button
             className={styles.touchTarget}
             appearance="secondary"
             type="button"
             disabled={saving}
-            onClick={() => navigate(SUITES_ROUTE)}
+            onClick={() => navigate(SUITE_LIBRARY_ROUTE)}
           >
-            Cancel
+            {readOnly ? 'Back to suites' : 'Cancel'}
           </Button>
         </div>
       </form>
