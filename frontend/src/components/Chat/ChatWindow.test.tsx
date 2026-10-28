@@ -16,6 +16,7 @@ import {
   AttackTargetResolutionStatus,
   ConverterInstance,
   ConversationMessagesResponse,
+  CreateConversationResponse,
   Message,
   MessageAttachment,
   MessageSendConversation,
@@ -1504,6 +1505,8 @@ describe("ChatWindow Integration", () => {
       mockedAttacksApi.getMessages.mockImplementation(async (_attackId, conversationId) => (
         conversationId === "undo-branch"
           ? { conversation_id: "undo-branch", messages: prefix, target_response_status: null }
+          : conversationId === "undo-other"
+            ? { conversation_id: "undo-other", messages: [], target_response_status: null }
           : source
       ));
       mockedAttacksApi.getAttack.mockResolvedValue(attack);
@@ -1560,12 +1563,16 @@ describe("ChatWindow Integration", () => {
       const selected = jest.fn();
       function UndoHarness() {
         const [conversation, setConversation] = useState("undo-source");
-        return <ChatWindow {...defaultProps} attackResultId="undo-attack"
+        return <>
+          <button onClick={() => setConversation("undo-other")}>Switch undo conversation</button>
+          <button onClick={() => setConversation("undo-source")}>Return to sent conversation</button>
+          <ChatWindow {...defaultProps} attackResultId="undo-attack"
           activeTarget={target} availableTargets={[target]}
           conversationId={conversation} activeConversationId={conversation}
-          onSelectConversation={(id: string) => { selected(id); setConversation(id); }} />;
+          onSelectConversation={(id: string) => { selected(id); setConversation(id); }} />
+        </>;
       }
-      render(<TestWrapper><UndoHarness /></TestWrapper>);
+      const rendered = render(<TestWrapper><UndoHarness /></TestWrapper>);
       await user.type(await screen.findByPlaceholderText("Type prompt here"), "Original prompt");
       await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
       await user.click(await screen.findByRole("combobox", { name: "Add converter" }));
@@ -1586,6 +1593,7 @@ describe("ChatWindow Integration", () => {
       }
       return {
         user, selected,
+        refreshView: () => rendered.rerender(<TestWrapper><UndoHarness /></TestWrapper>),
         changeSource: () => {
           source = { ...source, messages: [...source.messages, {
             role: "user", turn_number: 3, created_at: "",
@@ -1719,7 +1727,7 @@ describe("ChatWindow Integration", () => {
         attack, messages: { conversation_id: "undo-branch", messages: [], target_response_status: null },
       });
       await user.click(screen.getByRole("button", { name: "Remove converter second" }));
-      expect(screen.getByRole("button", { name: "Undo last send" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Undo last send" })).toBeEnabled();
       await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[0]);
       await user.click(screen.getByRole("menuitem", { name: "Branch conversation" }));
       await waitFor(() => expect(selected).toHaveBeenCalledWith("undo-branch"));
@@ -1767,7 +1775,7 @@ describe("ChatWindow Integration", () => {
       }));
     });
 
-    it("keeps temporary converter settings changed after sending when branching the first prompt", async () => {
+    it.each(["branch", "undo"])("keeps temporary converter settings changed after sending during %s", async (action: string) => {
       const { user, selected } = await prepareUndoChat({ immutable: true, emptyHistory: true, configurable: true });
       const attack = await mockedAttacksApi.getAttack("undo-attack");
       mockedAttacksApi.saveConversation.mockResolvedValue({
@@ -1788,9 +1796,13 @@ describe("ChatWindow Integration", () => {
       await user.type(offset, "3");
       await user.click(screen.getByRole("button", { name: "Apply Settings" }));
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-      expect(await screen.findByRole("button", { name: "Undo last send" })).toBeDisabled();
-      await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[0]);
-      await user.click(screen.getByRole("menuitem", { name: "Branch conversation" }));
+      expect(await screen.findByRole("button", { name: "Undo last send" })).toBeEnabled();
+      if (action === "undo") {
+        await user.click(screen.getByRole("button", { name: "Undo last send" }));
+      } else {
+        await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[0]);
+        await user.click(screen.getByRole("menuitem", { name: "Branch conversation" }));
+      }
       await waitFor(() => expect(selected).toHaveBeenCalledWith("undo-branch"));
       expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("Original prompt");
       expect(screen.getByText("Temporary")).toBeInTheDocument();
@@ -1806,13 +1818,16 @@ describe("ChatWindow Integration", () => {
       expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled();
     });
 
-    it("disables undo rather than overwriting a new prompt", async () => {
+    it.each(["composer", "working input"])("disables undo rather than overwriting new %s edits", async (input: string) => {
       const { user } = await prepareUndoChat();
-      await user.type(screen.getByPlaceholderText("Type prompt here"), "Keep my new draft");
+      await user.click(screen.getByRole("button", { name: "Remove converter second" }));
+      const draftInput = input === "composer" ? screen.getByPlaceholderText("Type prompt here")
+        : screen.getByRole("textbox", { name: "Working input - Text" });
+      await user.type(draftInput, "Keep my new draft");
       expect(screen.getByRole("button", { name: "Undo last send" })).toBeDisabled();
       await user.click(screen.getByRole("button", { name: "Undo last send" }));
       expect(mockedAttacksApi.createConversation).not.toHaveBeenCalled();
-      expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("Keep my new draft");
+      expect(draftInput).toHaveValue("Keep my new draft");
     });
 
     it("detects newer source messages before creating an undo branch", async () => {
@@ -1825,11 +1840,101 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByRole("button", { name: "Undo last send" })).toBeDisabled();
     });
 
-    it("disables undo if the converter pipeline has changed", async () => {
-      const { user } = await prepareUndoChat();
+    it.each(["removed", "cleared", "replaced"])("undoes with a %s pipeline without stale conversion state", async (edit: string) => {
+      const { user, selected } = await prepareUndoChat();
       await user.click(screen.getByRole("button", { name: "Remove converter second" }));
-      expect(screen.getByRole("button", { name: "Undo last send" })).toBeDisabled();
-      expect(mockedAttacksApi.createConversation).not.toHaveBeenCalled();
+      if (edit !== "removed") await user.click(screen.getByRole("button", { name: "Remove converter first" }));
+      if (edit === "replaced") {
+        await user.click(screen.getByRole("combobox", { name: "Add converter" }));
+        await user.click(await screen.findByRole("option", { name: /^second/ }));
+      }
+      expect(screen.getByRole("button", { name: "Undo last send" })).toBeEnabled();
+      await user.click(screen.getByRole("button", { name: "Undo last send" }));
+      await waitFor(() => expect(selected).toHaveBeenCalledWith("undo-branch"));
+      expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith("undo-attack", {
+        source_conversation_id: "undo-source", cutoff_index: 0,
+      });
+      expect(screen.getByText("Context before send")).toBeInTheDocument();
+      expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("Original prompt");
+      expect(screen.queryByRole("textbox", { name: "Converted prompt" })).not.toBeInTheDocument();
+      expect(screen.queryByDisplayValue("Custom middle text")).not.toBeInTheDocument();
+      expect(screen.queryByDisplayValue("Custom middle text|second")).not.toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: "Working input - Text" })).toHaveValue("Original prompt");
+      if (edit === "removed") expect(screen.getByRole("button", { name: "Remove converter first" })).toBeInTheDocument();
+      else expect(screen.queryByRole("button", { name: "Remove converter first" })).not.toBeInTheDocument();
+      if (edit === "replaced") expect(screen.getByRole("button", { name: "Remove converter second" })).toBeInTheDocument();
+      else expect(screen.queryByRole("button", { name: "Remove converter second" })).not.toBeInTheDocument();
+      expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(2);
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+      await user.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(2));
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenLastCalledWith("undo-attack", expect.objectContaining({
+        target_conversation_id: "undo-branch", pieces: [{ data_type: "text", original_value: "Original prompt" }],
+      }));
+    });
+
+    it.each([
+      { phase: "load", edit: "pipeline" }, { phase: "create", edit: "pipeline" },
+      { phase: "history", edit: "pipeline" }, { phase: "load", edit: "working input" },
+    ])("preserves $edit changes during the Undo $phase request", async ({ phase, edit }: { phase: string; edit: string }) => {
+      const { user, selected } = await prepareUndoChat();
+      let finishRead: ((value: ConversationMessagesResponse) => void) | undefined;
+      let finishCreate: ((value: CreateConversationResponse) => void) | undefined;
+      const source = await mockedAttacksApi.getMessages("undo-attack", "undo-source");
+      if (phase === "create") {
+        mockedAttacksApi.createConversation.mockImplementationOnce(() => new Promise((resolve) => { finishCreate = resolve; }));
+      } else if (phase === "load") {
+        mockedAttacksApi.getMessages.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+      } else {
+        mockedAttacksApi.getMessages.mockImplementationOnce(async () => source)
+          .mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+      }
+      await user.click(screen.getByRole("button", { name: "Undo last send" }));
+      if (phase !== "load") await waitFor(() => expect(mockedAttacksApi.createConversation).toHaveBeenCalledTimes(1));
+      if (edit === "pipeline") await user.click(screen.getByRole("button", { name: "Remove converter second" }));
+      else await user.type(screen.getByRole("textbox", { name: "Working input - Text" }), "Keep working edits");
+      await act(async () => {
+        if (finishRead) finishRead(phase === "load" ? source
+          : { conversation_id: "undo-branch", messages: source.messages.slice(0, 1), target_response_status: null });
+        if (finishCreate) finishCreate({ conversation_id: "undo-branch", created_at: "" });
+      });
+      expect(await screen.findByText(phase === "load" ? /view, prompt, or runtime changed/ : /without replacing your current draft/))
+        .toBeInTheDocument();
+      expect(selected).not.toHaveBeenCalled();
+      expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("");
+      expect(screen.getByRole("button", { name: "Remove converter first" })).toBeInTheDocument();
+      if (edit === "pipeline") expect(screen.queryByRole("button", { name: "Remove converter second" })).not.toBeInTheDocument();
+      else expect(screen.getByRole("textbox", { name: "Working input - Text" })).toHaveValue("Keep working edits");
+      expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(2);
+      if (phase === "load") expect(mockedAttacksApi.createConversation).not.toHaveBeenCalled();
+    });
+
+    it.each(["generation", "readiness", "navigation"])("does not restore Undo after a pending branch changes %s", async (change: string) => {
+      const runtime = jest.spyOn(runtimeHooks, "useRuntime").mockReturnValue({
+        ready: true, state: "ready", generation: "undo-generation",
+      });
+      const { user, selected, refreshView } = await prepareUndoChat();
+      let finishCreate: ((value: CreateConversationResponse) => void) | undefined;
+      mockedAttacksApi.createConversation.mockImplementationOnce(() => new Promise((resolve) => { finishCreate = resolve; }));
+      await user.click(screen.getByRole("button", { name: "Undo last send" }));
+      await waitFor(() => expect(mockedAttacksApi.createConversation).toHaveBeenCalledTimes(1));
+      if (change === "navigation") {
+        await user.click(screen.getByRole("button", { name: "Switch undo conversation" }));
+        await user.click(screen.getByRole("button", { name: "Return to sent conversation" }));
+      } else {
+        runtime.mockReturnValue({
+          ready: change !== "readiness", state: change === "readiness" ? "unavailable" : "ready",
+          generation: change === "generation" ? "new-generation" : "undo-generation",
+        });
+        refreshView();
+      }
+      if (!finishCreate) throw new Error("Missing pending branch");
+      const resolveCreate = finishCreate;
+      await act(async () => { resolveCreate({ conversation_id: "undo-branch", created_at: "" }); });
+      expect(await screen.findByText(/without replacing your current draft/)).toBeInTheDocument();
+      expect(selected).not.toHaveBeenCalled();
+      expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("");
+      expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(2);
     });
 
     it("keeps the sent turn and disables undo when branch creation has an uncertain outcome", async () => {
@@ -5696,6 +5801,7 @@ describe("ChatWindow Integration", () => {
         converted_value_data_type: options.convertedMedia ? "pdf_path" : "image_path",
         converted_value: options.convertedMedia ? "stale.pdf" : "original.png",
         original_filename: "evidence.png", original_value_mime_type: "image/png",
+        prompt_metadata: { evidence: "original" },
         scores: [], response_error: "none",
       });
       source.messages[1].message_pieces[0] = {
@@ -5858,6 +5964,76 @@ describe("ChatWindow Integration", () => {
         (piece: AddMessageRequest['pieces'][number]) => !piece.applied_converter_ids
           && !piece.applied_converter_provenance && piece.converted_value === undefined,
       )).toBe(true);
+    });
+
+    it.each([false, true])("restores original media and metadata on Undo with a changed pipeline=%s", async (changed: boolean) => {
+      mockedConvertersApi.listConverters.mockResolvedValue({
+        items: [makeConverterInstance("first", "TextToImageConverter", ["text"], ["image_path"])],
+      });
+      const { user, selected, stored, source, attack } = await setupFirstPromptChat({
+        convertedPrompt: true, withAttachment: true, convertedMedia: true, selectedPipeline: true,
+      });
+      const originalSource = JSON.stringify(stored.get("first-source"));
+      await branchFirstPrompt(user);
+      await waitFor(() => expect(selected).toHaveBeenCalledWith("first-branch"));
+      selected.mockClear();
+      mockedConvertersApi.previewConversion.mockResolvedValue({
+        original_value: "Original request", original_value_data_type: "text",
+        converted_value: "new.png", converted_value_data_type: "image_path",
+        steps: [{
+          converter_id: "first", converter_type: "TextToImageConverter", input_value: "Original request",
+          input_data_type: "text", output_value: "new.png", output_data_type: "image_path",
+        }],
+      });
+      await user.click(screen.getByRole("button", { name: "Convert" }));
+      expect(await screen.findByTestId("converted-file-chip")).toHaveTextContent("new.png");
+      mockSendResult.mockImplementation(async (_attackId: string, request: AddMessageRequest) => {
+        const messages = {
+          ...source, conversation_id: request.target_conversation_id,
+          messages: [{
+            ...source.messages[0],
+            message_pieces: request.pieces.map((piece: AddMessageRequest['pieces'][number], index: number) => ({
+              id: `media-sent-${index}`, original_value: piece.original_value,
+              original_value_data_type: piece.data_type ?? "text",
+              converted_value: piece.converted_value ?? piece.original_value,
+              converted_value_data_type: piece.converted_value_data_type ?? piece.data_type ?? "text",
+              prompt_metadata: piece.prompt_metadata, scores: [], response_error: "none" as const,
+            })),
+          }, source.messages[1]],
+        };
+        stored.set(request.target_conversation_id, messages);
+        return { attack, messages };
+      });
+      await user.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Undo last send" })).toBeEnabled());
+      const sentSource = JSON.stringify(stored.get("first-branch"));
+      if (changed) await user.click(screen.getByRole("button", { name: "Remove converter first" }));
+      const empty = { conversation_id: "first-undo", messages: [], target_response_status: null };
+      stored.set("first-undo", empty);
+      mockedAttacksApi.createConversation.mockResolvedValue({ conversation_id: "first-undo", created_at: "" });
+      await user.click(screen.getByRole("button", { name: "Undo last send" }));
+      await waitFor(() => expect(selected).toHaveBeenCalledWith("first-undo"));
+      expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("Original request");
+      expect(screen.getByRole("button", { name: "Remove evidence.png" })).toBeInTheDocument();
+      if (changed) expect(screen.queryByTestId("converted-file-chip")).not.toBeInTheDocument();
+      else expect(screen.getByTestId("converted-file-chip")).toHaveTextContent("new.png");
+      expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(1);
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(stored.get("first-source"))).toBe(originalSource);
+      expect(JSON.stringify(stored.get("first-branch"))).toBe(sentSource);
+      await user.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(2));
+      const pieces = mockedAttacksApi.submitMessageSend.mock.calls[1][1].pieces;
+      expect(pieces[0]).toMatchObject({
+        original_value: "Original request", prompt_metadata: { custom: "preserved" },
+      });
+      expect(pieces[1]).toMatchObject({
+        original_value: "original.png", data_type: "image_path", prompt_metadata: { evidence: "original" },
+      });
+      if (changed) expect(pieces.every((piece: AddMessageRequest['pieces'][number]) => (
+        piece.converted_value === undefined && !piece.applied_converter_ids && !piece.applied_converter_provenance
+      ))).toBe(true);
+      else expect(pieces[0]).toMatchObject({ converted_value: "new.png", applied_converter_ids: ["first"] });
     });
 
     it.each(["load", "save"])("keeps converter changes made during a pending branch %s", async (phase: string) => {

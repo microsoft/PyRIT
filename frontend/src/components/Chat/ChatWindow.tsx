@@ -179,6 +179,20 @@ interface UndoableSend {
   history: Array<Pick<BackendMessage, 'role'>>
 }
 
+function preparePromptRestore(
+  saved: ChatConverterSnapshot | undefined, current: ChatConverterSnapshot,
+): { snapshot: ChatConverterSnapshot; pipelineChanged: boolean } {
+  const pipelineChanged = saved
+    ? JSON.stringify(current.pipelines) !== JSON.stringify(saved.pipelines)
+    : Object.values(current.pipelines).some((stages: ConverterPipelineStage[]) => stages.length > 0)
+  return {
+    pipelineChanged,
+    snapshot: saved && !pipelineChanged ? saved : {
+      ...current, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
+    },
+  }
+}
+
 interface RepeatSendGroup {
   source: PendingSend
   progress: MessageSendStatus
@@ -1802,23 +1816,14 @@ export default function ChatWindow({
     return pending
   }
 
-  const promptRestoreDisabledReason = (
-    snapshot?: ChatConverterSnapshot, allowPipelineChanges: boolean = false,
-  ): string | undefined => {
+  const promptRestoreDisabledReason = (snapshot?: ChatConverterSnapshot): string | undefined => {
     if (converters.isConverting) return 'Wait for the current conversion to finish before restoring a sent prompt.'
     if (chatInputText || draftAttachments.length || Object.entries(converters.workingInputs).some(
       ([id, value]: [string, string]) => value !== converters.inputs.find((input: ConverterInputPiece) => input.id === id)?.value,
     ) || Object.keys(converters.applied).length) {
       return 'Clear the current prompt and conversion edits before restoring a sent prompt.'
     }
-    const pipelineChanged = snapshot
-      ? JSON.stringify(converters.pipelines) !== JSON.stringify(snapshot.pipelines)
-      : Object.values(converters.pipelines).some((stages: ConverterPipelineStage[]) => stages.length > 0)
-    if (pipelineChanged && !allowPipelineChanges) {
-      return snapshot
-        ? 'The converter pipeline changed after sending. Restore is unavailable for this prompt.'
-        : 'Clear the current converter pipeline before restoring a stored prompt.'
-    }
+    const { pipelineChanged } = preparePromptRestore(snapshot, converters.snapshot())
     if (snapshot && Object.keys(snapshot.errors).length > 0 && !pipelineChanged) {
       return 'The previous conversion was incomplete. Restore is unavailable for this prompt.'
     }
@@ -1884,24 +1889,14 @@ export default function ChatWindow({
         if (!draftUnchanged()) throw new Error('The view, prompt, or runtime changed. Your current draft was not replaced.')
         const saved = firstPromptSend?.cutoffIndex === selected.turn_number - 1
           && firstPromptSend.historySignature === conversationPieceSignature(source) ? firstPromptSend : undefined
-        const restoreError = promptRestoreDisabledReason(saved?.converters, true)
+        const restoreError = promptRestoreDisabledReason(saved?.converters)
         if (restoreError) throw new Error(restoreError)
-        const pipelineChanged = saved
-          ? JSON.stringify(branchConverterSnapshot.pipelines) !== JSON.stringify(saved.converters.pipelines)
-          : Object.values(branchConverterSnapshot.pipelines).some((stages: ConverterPipelineStage[]) => stages.length > 0)
-        promptSnapshot = saved?.converters ?? {
-          generation: runtime.generation, pipelines: {}, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
-        }
-        if (pipelineChanged) {
-          promptSnapshot = {
-            generation: runtime.generation, pipelines: branchConverterSnapshot.pipelines,
-            workingInputs: {}, stageResults: {}, errors: {}, applied: {},
-          }
-        }
+        const restoration = preparePromptRestore(saved?.converters, branchConverterSnapshot)
+        promptSnapshot = restoration.snapshot
         const promptMessage = copiedMessages[copiedMessages.length - 1]
         restoredPrompt = saved ? {
           text: saved.originalValue, attachments: saved.attachments, textMetadata: saved.textMetadata, converters: promptSnapshot,
-        } : draftMessageToComposer(pipelineChanged ? {
+        } : draftMessageToComposer(restoration.pipelineChanged ? {
           ...promptMessage,
           pieces: promptMessage.pieces.map((piece: ConversationDraftPiece) => ({
             ...piece, converted_value: undefined, converted_value_data_type: undefined,
@@ -2014,7 +2009,7 @@ export default function ChatWindow({
   const branchConversationDisabledReason = (index: number): string | undefined => {
     if (activeTarget && canBranchFirstPrompt(activeTarget, messages, index)
       && recoverableSend?.failedRequestMessageIndex !== index) {
-      return promptRestoreDisabledReason(firstPromptSend?.converters, true)
+      return promptRestoreDisabledReason(firstPromptSend?.converters)
     }
     if (targetResolutionStatus === 'unbound') return undefined
     if (!activeTarget) return 'Configure a target before branching this conversation.'
@@ -2046,6 +2041,16 @@ export default function ChatWindow({
     if (undoDisabledReason || !undoableSend || undoInFlight.current) return
     const saved = undoableSend
     const revision = inputBoxRef.current?.getDraftRevision()
+    const navigationRevision = navigationRevisionRef.current
+    const converterSnapshot = converters.snapshot()
+    const { snapshot: restoredConverters } = preparePromptRestore(saved.converters, converterSnapshot)
+    const draftUnchanged = (): boolean => viewedAttackRef.current === saved.attackResultId
+      && getViewedConversationId() === saved.conversationId
+      && navigationRevisionRef.current === navigationRevision
+      && inputBoxRef.current?.getDraftRevision() === revision
+      && launchStateRef.current.generation === saved.converters.generation && launchStateRef.current.ready
+      && !convertersRef.current.isConverting
+      && JSON.stringify(convertersRef.current.snapshot()) === JSON.stringify(converterSnapshot)
     let branchAttempted = false
     undoInFlight.current = true
     setIsUndoingSend(true)
@@ -2058,10 +2063,7 @@ export default function ChatWindow({
         setUndoableSend(null)
         throw new Error('The conversation changed after this send. Undo is no longer available.')
       }
-      const draftUnchanged = (): boolean => viewedAttackRef.current === saved.attackResultId
-        && getViewedConversationId() === saved.conversationId
-        && inputBoxRef.current?.getDraftRevision() === revision
-      if (!draftUnchanged() || launchStateRef.current.generation !== saved.converters.generation) {
+      if (!draftUnchanged()) {
         throw new Error('The view, prompt, or runtime changed. Your current draft was not replaced.')
       }
       branchAttempted = true
@@ -2073,7 +2075,7 @@ export default function ChatWindow({
         attacksApi.getAttack(saved.attackResultId),
       ])
       setUndoableSend(null)
-      if (!draftUnchanged() || launchStateRef.current.generation !== saved.converters.generation) {
+      if (!draftUnchanged()) {
         setEditorNotice(`Undo created conversation ${branch.conversation_id} without replacing your current draft.`)
         return
       }
@@ -2081,11 +2083,10 @@ export default function ChatWindow({
       markConversationLoaded(branch.conversation_id)
       onSelectConversation(branch.conversation_id)
       onAttackChange?.(attack)
-      setChatInputText(saved.originalValue)
-      setDraftAttachments(saved.attachments)
-      inputBoxRef.current?.restoreDraft(saved.originalValue, saved.attachments, saved.textMetadata)
-      converters.restoreSnapshot(saved.converters, saved.originalValue, saved.attachments)
-      inputBoxRef.current?.focus()
+      restoreEditorPrompt({
+        text: saved.originalValue, attachments: saved.attachments, textMetadata: saved.textMetadata,
+        converters: restoredConverters,
+      }, restoredConverters)
       setEditorNotice('Last send undone. The original sent conversation remains in history.')
     } catch (error) {
       if (branchAttempted) setUndoableSend(null)
