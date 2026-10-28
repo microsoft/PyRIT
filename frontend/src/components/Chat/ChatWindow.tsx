@@ -1700,7 +1700,10 @@ export default function ChatWindow({
       if (chatInputText || draftAttachments.length || activePieceConversions.text) {
         const pieces: ConversationDraftPiece[] = [
           ...(chatInputText || activePieceConversions.text
-            ? [{ ...newDraftPiece(), draftId: 'text', original_value: chatInputText }] : []),
+            ? [{
+              ...newDraftPiece(), draftId: 'text', original_value: chatInputText,
+              prompt_metadata: inputBoxRef.current?.getTextMetadata(),
+            }] : []),
           ...draftAttachments.map(attachmentDraft),
         ].map((piece: ConversationDraftPiece) => {
           const conversion = activePieceConversions[piece.draftId]
