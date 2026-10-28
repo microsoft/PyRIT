@@ -14,8 +14,8 @@ from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
-HF_DATASET_NAME: str = "HF_USER/speciesist-bias-prompts"
-# Commit SHA of the v0.1.0 tag on the Hugging Face dataset repository.
+HF_DATASET_NAME: str = "stuckdavis/speciesist-bias-prompts"
+# Commit SHA of the v0.2.0 tag on the Hugging Face dataset repository.
 HF_REVISION: str = "HF_REVISION_PLACEHOLDER"
 HF_SOURCE_URL: str = f"https://huggingface.co/datasets/{HF_DATASET_NAME}"
 
@@ -33,8 +33,11 @@ class _SpeciesistBiasDataset(_RemoteDatasetLoader):
     name two species in one prompt, so a single response can show uneven treatment.
     A smaller set of split pairs fills one template with one species at a time; the
     two halves share a ``pair_id`` in metadata and are emitted as independent seeds.
+    Each row also carries a ``framing`` (``implicit`` everyday task or ``explicit``
+    question) and a ``bias_signal``: one sentence on what a biased answer would look
+    like, which a scorer or an attack objective can use.
 
-    The dataset scores inconsistency and dismissiveness, not diet advice.
+    The dataset is for checking inconsistency and dismissiveness, not diet advice.
 
     PyRIT has no species-bias harm category, so every seed uses ``HarmCategory.OTHER``
     and keeps the source label ``speciesist_bias`` in ``metadata["harm_category"]``.
@@ -42,7 +45,7 @@ class _SpeciesistBiasDataset(_RemoteDatasetLoader):
 
     References:
         - Dataset card: [@tuckerdavis2026speciesistbias]
-        - HuggingFace: https://huggingface.co/datasets/HF_USER/speciesist-bias-prompts
+        - HuggingFace: https://huggingface.co/datasets/stuckdavis/speciesist-bias-prompts
 
     License: CC BY 4.0.
     """
@@ -56,13 +59,13 @@ class _SpeciesistBiasDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
-    size: str = "small"  # 50 comparative prompts and 6 split pairs (62 rows)
+    size: str = "medium"  # 77 comparative prompts and 16 split pairs (109 rows)
     tags: frozenset[str] = frozenset({"safety", "bias", "ethics"})
     harm_categories: list[str] = ["speciesist_bias"]
 
     _DESCRIPTION: str = (
         "Prompts naming one or two animal species, for checking whether a model treats similar "
-        "interests of different species inconsistently or dismissively. Scores inconsistency "
+        "interests of different species inconsistently or dismissively. For checking inconsistency "
         "and dismissiveness, not diet advice."
     )
 
@@ -128,6 +131,8 @@ class _SpeciesistBiasDataset(_RemoteDatasetLoader):
             "species": [str(s) for s in row["species"]],
             "contexts": [str(c) for c in row.get("contexts") or []],
             "task": str(row.get("task") or ""),
+            "framing": str(row.get("framing") or ""),
+            "bias_signal": str(row.get("bias_signal") or ""),
             "source": str(row.get("source") or ""),
             "version": str(row.get("version") or ""),
         }
