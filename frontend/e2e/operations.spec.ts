@@ -1,6 +1,10 @@
+import { readFileSync } from 'node:fs'
+
 import { test, expect } from '@playwright/test'
 
-import type { Finding, Operation } from '../src/types'
+import type {
+  CreateAttackResponse, Finding, FindingEvidenceAttachResponse, FindingExportFormat, Operation,
+} from '../src/types'
 import { waitForAppReady } from './_runtime'
 
 for (const width of [1280, 390]) {
@@ -350,4 +354,158 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
   await page.reload()
   await expect(historyLink).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Independent human finding', exact: true })).toBeVisible()
+})
+
+test('exports selected findings as Word and Markdown @seeded', async ({ page, request }) => {
+  test.setTimeout(90_000)
+  const version = await (await request.get('/api/version')).json()
+  const headers = { 'PyRIT-Compatibility-ID': version.compatibility_id }
+  const operationResponse = await request.post('/api/operations', {
+    headers, data: { name: `Findings export ${Date.now()}` },
+  })
+  expect(operationResponse.status()).toBe(201)
+  const operation: Operation = await operationResponse.json()
+  const description = 'Ünïcødé 😀 中文 first line\n```\n# Not a finding\n<b>kept literal</b>\nlast line'
+  const longTitle = `Beyond the first page ${'unbroken'.repeat(30)}`
+  // Saved out of severity order, so the document's order can only come from severity.
+  const seeds = [
+    { title: 'Export low', severity: 'low' },
+    { title: 'Export critical', severity: 'critical', description },
+    { title: longTitle, severity: 'informational' },
+    ...Array.from({ length: 17 }, (_, index) => ({
+      title: `Export moderate ${String(index).padStart(2, '0')}`, severity: 'moderate',
+    })),
+    { title: 'Export important', severity: 'important' },
+  ]
+  const findings = new Map<string, Finding>()
+  for (const seed of seeds) {
+    const response = await request.post(`/api/operations/${operation.id}/findings`, { headers, data: seed })
+    expect(response.status()).toBe(201)
+    findings.set(seed.title, await response.json())
+  }
+  const findingId = (title: string): string => {
+    const finding = findings.get(title)
+    if (!finding) throw new Error(`Expected a saved finding titled ${title}.`)
+    return finding.id
+  }
+  const attackResponse = await request.post('/api/attacks', {
+    headers, data: {
+      target_registry_name: 'browser_offline',
+      operation_id: operation.id,
+      prepended_conversation: [{ role: 'user', pieces: [{ original_value: 'Saved offline evidence.' }] }],
+    },
+  })
+  expect(attackResponse.ok()).toBeTruthy()
+  const attack: CreateAttackResponse = await attackResponse.json()
+  const attachResponse = await request.post(
+    `/api/operations/${operation.id}/findings/${findingId('Export critical')}/evidence`,
+    { headers, data: { attack_result_id: attack.attack_result_id } },
+  )
+  expect(attachResponse.ok()).toBeTruthy()
+  const evidence: FindingEvidenceAttachResponse = await attachResponse.json()
+  const selectedTitles = ['Export critical', 'Export moderate 03', 'Export low', longTitle]
+  const excludedTitles = seeds.map(seed => seed.title).filter(title => !selectedTitles.includes(title))
+
+  await page.goto(`/operations/${operation.id}`)
+  await waitForAppReady(page)
+  const region = page.getByRole('region', { name: 'Operation', exact: true })
+  await expect(region.getByRole('listitem')).toHaveCount(20)
+  await expect(region.getByRole('heading', { name: longTitle })).toHaveCount(0)
+  const origin = new URL(page.url()).origin
+  const trigger = page.getByRole('button', { name: 'Export findings', exact: true })
+  const dialog = page.getByRole('dialog', { name: 'Export findings' })
+  const list = dialog.getByRole('list')
+  const selectAll = dialog.getByRole('checkbox', { name: 'Select all', exact: true })
+  const format = dialog.getByRole('combobox', { name: 'Format' })
+  const openWithEverySelected = async (): Promise<void> => {
+    await trigger.click()
+    await expect(list.getByRole('checkbox', { checked: true })).toHaveCount(seeds.length)
+    await expect(selectAll).toBeChecked()
+    // The sensitive-content warning wraps, and its bar must grow to hold it.
+    const warning = dialog.locator('.fui-MessageBar').filter({ hasText: 'Nothing is redacted automatically.' })
+    expect(await warning.evaluate(element => element.scrollHeight <= element.clientHeight)).toBeTruthy()
+  }
+  const selectSubset = async (): Promise<void> => {
+    await selectAll.click()
+    await expect(list.getByRole('checkbox', { checked: true })).toHaveCount(0)
+    for (const title of selectedTitles) {
+      await list.getByRole('checkbox', { name: title, exact: true }).check()
+    }
+    await expect(selectAll).toBeChecked({ indeterminate: true })
+  }
+  const download = async (
+    button: string, expectedFormat: FindingExportFormat,
+  ): Promise<{ filename: string; content: Buffer }> => {
+    const exportRequest = page.waitForRequest(sent =>
+      sent.url().endsWith(`/api/operations/${operation.id}/findings/export`) && sent.method() === 'POST')
+    const downloaded = page.waitForEvent('download')
+    await dialog.getByRole('button', { name: button, exact: true }).click()
+    expect((await exportRequest).postDataJSON()).toEqual({
+      finding_ids: selectedTitles.map(findingId), format: expectedFormat, dashboard_origin: origin,
+    })
+    const file = await downloaded
+    await expect(dialog).toHaveCount(0)
+    await expect(trigger).toBeFocused()
+    return { filename: file.suggestedFilename(), content: readFileSync(await file.path()) }
+  }
+
+  await openWithEverySelected()
+  await expect(list.getByRole('checkbox').first()).toHaveAccessibleName('Export critical')
+  await expect(list.getByRole('checkbox').last()).toHaveAccessibleName(longTitle)
+  await selectAll.click()
+  await expect(list.getByRole('checkbox', { checked: true })).toHaveCount(0)
+  await expect(selectAll).not.toBeChecked()
+  await expect(dialog.getByRole('button', { name: 'Download Word', exact: true })).toBeDisabled()
+  await selectAll.click()
+  await expect(list.getByRole('checkbox', { checked: true })).toHaveCount(seeds.length)
+  await selectSubset()
+  await expect(format).toHaveValue('docx')
+  await expect(format.locator('option:checked')).toHaveText('Word (.docx)')
+  const word = await download('Download Word', 'docx')
+  // Named after the Operation and the browser's local time.
+  const filenameStart = `^copyrit-findings-${operation.name.toLowerCase().replace(/ /g, '-')}-\\d{4}-\\d{2}-\\d{2}-\\d{4}`
+  expect(word.filename).toMatch(new RegExp(`${filenameStart}\\.docx$`))
+  expect(word.content.subarray(0, 4).toString('latin1')).toBe('PK\x03\x04')
+  expect(word.content.includes('word/document.xml')).toBeTruthy()
+
+  // Reopening starts again from the whole Operation.
+  await openWithEverySelected()
+  await selectSubset()
+  await format.selectOption({ label: 'Markdown (.md)' })
+  await expect(list.getByRole('checkbox', { checked: true })).toHaveCount(selectedTitles.length)
+  const markdownFile = await download('Download Markdown', 'markdown')
+  expect(markdownFile.filename).toMatch(new RegExp(`${filenameStart}\\.md$`))
+  const markdown = markdownFile.content.toString('utf8')
+  expect(markdown.startsWith(`# Findings - ${operation.name}\n\n`)).toBeTruthy()
+  expect(markdown.match(/^## .*$/gm)).toEqual(selectedTitles.map(title => `## ${title}`))
+  for (const title of excludedTitles) {
+    expect(markdown).not.toContain(title)
+  }
+  expect(markdown).toContain(`**Description:** ${description.split('\n')[0]}\\\n`)
+  const link = `${origin}/attacks/${attack.attack_result_id}/conversations/${attack.conversation_id}` +
+    `?findingEvidenceId=${evidence.item.id}`
+  // As in Word, the evidence bullet's objective is the link text.
+  expect(markdown.split('\n').filter(line => line.startsWith('- [') && line.endsWith(`](<${link}>)`))).toHaveLength(1)
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
+  await openWithEverySelected()
+  const content = dialog.locator('.fui-DialogContent')
+  expect(await content.evaluate(element => element.scrollHeight > element.clientHeight
+    && ['auto', 'scroll'].includes(getComputedStyle(element).overflowY))).toBeTruthy()
+  expect(await content.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy()
+  expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy()
+  const longLabel = dialog.locator('label').filter({ hasText: longTitle })
+  expect(await longLabel.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy()
+  const longBox = await longLabel.boundingBox()
+  const shortBox = await dialog.locator('label').filter({ hasText: /^Export low$/ }).boundingBox()
+  if (!longBox || !shortBox) throw new Error('Expected visible finding labels.')
+  expect(longBox.height).toBeGreaterThan(2 * shortBox.height)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+
+  await page.goto(link)
+  await expect(page.getByText('Saved offline evidence.', { exact: true })).toBeVisible()
 })

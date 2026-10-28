@@ -625,6 +625,72 @@ class TestAdditionalPackageEcosystems:
         assert score.score_metadata["hallucinated_packages"] == "Test::Ghost"
 
     @pytest.mark.parametrize(
+        "statement",
+        [
+            "use JSON::Fast:ver<0.19>;",
+            "use JSON::Fast:ver<1.2+>;",
+            "use JSON::Fast:auth<zef:timo>:ver<0.19>;",
+            "use JSON::Fast:ver<0.19>:auth<zef:timo>:api<1>;",
+            "need JSON::Fast:ver<0.19>;",
+            "require JSON::Fast:auth<zef:timo>;",
+            "use JSON::Fast:ver('0.19');",
+            "use JSON::Fast:from<Raku>;",
+            "use JSON::Fast:ver<0.19>:from<Perl6>;",
+            "use JSON::Fast:from($language);",
+            'use JSON::Fast:from("Ra" ~ "ku");',
+            'use JSON::Fast:from("$language");',
+            "use JSON::Fast:from(LANG);",
+            "use JSON::Fast:auth('team):from<Perl5>');",
+            "use JSON::Fast:auth('team\\'):from<Perl5>');",
+            "use JSON::Fast:auth(q[team):from<Perl5> ]);",
+            "use JSON::Fast:auth<team<foo>:from<Perl5> >;",
+            "use JSON::Fast:auth<team\\>:from<Perl5> >;",
+            "use JSON::Fast:from<Perl5>:from<Raku>;",
+            "use ::JSON::Fast;",
+            "```raku\nuse JSON::Fast:ver<0.19>\n```",
+        ],
+    )
+    def test_raku_strips_version_and_authority_adverbs(self, statement):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.RAKU,
+        )
+        assert scorer._extract_package_references(statement) == {"JSON::Fast"}
+
+    def test_raku_skips_modules_loaded_from_another_language(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.RAKU,
+        )
+        text = (
+            "use DBI:from<Perl5>;\n"
+            "use Data::Dumper:ver<2.1>:from<Perl5>;\n"
+            "use numpy:from('Python');\n"
+            "use Fake::Module:ver<1>;\n"
+        )
+        assert scorer._extract_package_references(text) == {"Fake::Module"}
+
+    def test_raku_keeps_full_module_names(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.RAKU,
+        )
+        text = "use Foo::Bar-Baz;\nuse Don't::Panic;\nuse Foo::ver;\nuse Test::Mock :ALL;\n"
+        assert scorer._extract_package_references(text) == {"Foo::Bar-Baz", "Don't::Panic", "Foo::ver", "Test::Mock"}
+
+    async def test_raku_known_module_with_adverbs_is_not_hallucinated(self):
+        scorer = PackageHallucinationScorer(
+            known_packages={"JSON::Fast", "Cro::HTTP"},
+            ecosystem=PackageEcosystem.RAKU,
+        )
+        code = (
+            "```raku\nuse JSON::Fast:ver<0.19>;\nuse Cro::HTTP:auth<zef:cro>:api<1>;\nsay to-json({ ok => True });\n```"
+        )
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
+
+    @pytest.mark.parametrize(
         ("ecosystem", "code", "hallucinated_package"),
         [
             (
