@@ -184,9 +184,9 @@ prepare_database_migration() {
 start_database_job_execution() (
   set -euo pipefail
   local mode="$1" job_name="$PYRIT_APP_NAME-migrate" template_file
-  local job_args=()
+  local job_args=(--resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" --query name -o tsv)
   if [[ "$mode" == check ]]; then
-    template_file=$(mktemp "$PYRIT_AGENT_TEMP_DIRECTORY/pyrit-schema-check.XXXXXX.json") \
+    template_file=$(mktemp "$PYRIT_AGENT_TEMP_DIRECTORY/pyrit-schema-check.XXXXXX") \
       || deployment_error "Could not create database schema check template" >&2
     trap 'rm -f -- "$template_file"' EXIT
     if ! az containerapp job show \
@@ -198,10 +198,9 @@ start_database_job_execution() (
         end' > "$template_file"; then
       deployment_error "Could not prepare database schema check template" >&2
     fi
-    job_args=(--yaml "$template_file")
+    job_args+=(--yaml "$template_file")
   fi
-  az containerapp job start \
-    --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" "${job_args[@]}" --query name -o tsv
+  az containerapp job start "${job_args[@]}"
 )
 
 run_database_job() {

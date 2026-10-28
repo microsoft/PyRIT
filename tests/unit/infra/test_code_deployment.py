@@ -469,6 +469,7 @@ echo done
                     for line in result.stderr.splitlines()
                     if line.startswith("template-file ")
                 )
+                assert "XXXXXX" not in Path(template_file).name
                 assert not Path(template_file).exists()
                 assert ("migration-needed" in result.stdout) == (status == "Failed")
                 assert ("current" in result.stdout) == (status == "Succeeded")
