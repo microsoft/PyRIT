@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
+import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import type { TechniqueConfiguration, TechniqueOverride } from '@/types'
 
 import TechniqueEditor from './TechniqueEditor'
@@ -10,7 +11,7 @@ import TechniqueEditor from './TechniqueEditor'
 jest.mock('@/services/api', () => ({
   techniquesApi: { validateEdit: jest.fn(), createTechnique: jest.fn(), listTypes: jest.fn() },
   targetsApi: { listTargets: jest.fn() },
-  convertersApi: { listConverters: jest.fn() },
+  convertersApi: { listConverters: jest.fn(), listConverterTypes: jest.fn(), buildConverter: jest.fn(), createConverter: jest.fn() },
 }))
 
 const techniques = jest.mocked(techniquesApi)
@@ -36,9 +37,9 @@ function configuration(): TechniqueConfiguration {
 }
 
 function tree(original = configuration(), onApplied = jest.fn(), initial?: TechniqueConfiguration, onClose = jest.fn()) {
-  return <FluentProvider theme={webLightTheme}>
+  return <FluentProvider theme={webLightTheme}><UserPreferencesProvider>
     <TechniqueEditor original={original} initial={initial} onApplied={onApplied} onClose={onClose} />
-  </FluentProvider>
+  </UserPreferencesProvider></FluentProvider>
 }
 
 describe('TechniqueEditor', () => {
@@ -89,6 +90,121 @@ describe('TechniqueEditor', () => {
     expect(techniques.createTechnique).not.toHaveBeenCalled()
   })
 
+  it('should edit one duplicate converter temporarily and retain settings through reorder and reopen', async () => {
+    const user = userEvent.setup()
+    const original = configuration()
+    original.settings.request_converters = ['caesar', 'caesar']
+    const converter = { converter_id: 'caesar', reconstructable: true, identifier: {
+      class_name: 'CaesarConverter', hash: 'source', caesar_offset: 1,
+    } }
+    jest.mocked(convertersApi.listConverters).mockResolvedValue({ items: [converter] })
+    jest.mocked(convertersApi.listConverterTypes).mockResolvedValue({ items: [{
+      converter_type: 'CaesarConverter', supported_input_types: ['text'], supported_output_types: ['text'],
+      is_llm_based: false, parameters: [{ name: 'caesar_offset', type_name: 'int', required: true }],
+    }] })
+    jest.mocked(convertersApi.buildConverter).mockResolvedValue({
+      identifier: { ...converter.identifier, hash: 'private', caesar_offset: 7 },
+    })
+    render(tree(original))
+    await user.click(await screen.findByRole('button', { name: 'Settings for converter caesar, Request converters stage 2' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Settings' }))
+    const offset = await screen.findByLabelText(/caesar_offset/i)
+    await user.clear(offset)
+    await user.type(offset, '7')
+    await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+    await screen.findByText('Temporary')
+    await user.click(await screen.findByRole('button', { name: 'Reorder converter caesar, Request converters stage 2' }))
+    await user.keyboard('{ArrowUp}')
+    await user.click(screen.getByRole('button', { name: 'Settings for converter caesar, Request converters stage 1' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Settings' }))
+    expect(await screen.findByLabelText(/caesar_offset/i)).toHaveValue('7')
+    await user.click(within(await screen.findByRole('dialog', { name: 'Converter Settings' }))
+      .getByRole('button', { name: 'Cancel' }))
+    await user.click(await screen.findByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
+    expect(techniques.validateEdit.mock.calls[0][0].changes.request_converters).toEqual([
+      { source_name: 'caesar', source_hash: 'source', params: { caesar_offset: 7 }, effective_hash: 'private' },
+      'caesar',
+    ])
+    expect(convertersApi.createConverter).not.toHaveBeenCalled()
+    expect(converter.identifier.caesar_offset).toBe(1)
+  })
+
+  it('should keep newer chain edits and dialogs when an earlier creation finishes late', async () => {
+    const user = userEvent.setup()
+    let finish: (value: Awaited<ReturnType<typeof convertersApi.createConverter>>) => void = () => {
+      throw new Error('Creation has not started')
+    }
+    jest.mocked(convertersApi.listConverterTypes).mockResolvedValue({ items: [{
+      converter_type: 'Base64Converter', supported_input_types: ['text'], supported_output_types: ['text'],
+      is_llm_based: false, parameters: [],
+    }] })
+    jest.mocked(convertersApi.createConverter).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    render(tree())
+    await user.click(await screen.findByRole('combobox', { name: 'Request converters' }))
+    await user.click(screen.getByRole('option', { name: /^New converter/ }))
+    await user.click(await screen.findByRole('combobox', { name: /Converter Type/i }))
+    await user.click(screen.getByRole('option', { name: /Base64Converter/ }))
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    await waitFor(() => expect(convertersApi.createConverter).toHaveBeenCalledTimes(1))
+    await user.click(within(screen.getByRole('dialog', { name: 'Add Converter' })).getByRole('button', { name: 'Cancel' }))
+    await user.click(await screen.findByRole('button', { name: 'Remove converter base64, Request converters stage 1' }))
+    await user.click(screen.getByRole('combobox', { name: 'Request converters' }))
+    await user.click(screen.getByRole('option', { name: /^New converter/ }))
+    await screen.findByRole('dialog', { name: 'Add Converter' })
+    const created = { converter_id: 'late_base64', identifier: { class_name: 'Base64Converter', hash: 'late' } }
+    finish(created)
+    await screen.findByText('late_base64')
+    expect(screen.getByRole('dialog', { name: 'Add Converter' })).toBeInTheDocument()
+    await user.click(within(screen.getByRole('dialog', { name: 'Add Converter' })).getByRole('button', { name: 'Cancel' }))
+    expect(await screen.findByRole('button', { name: 'Remove converter rot13, Request converters stage 1' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Remove converter base64,/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
+    expect(techniques.validateEdit.mock.calls[0][0].changes.request_converters).toEqual(['rot13', 'late_base64'])
+  })
+
+  it('should reset temporary settings without changing the registered converter', async () => {
+    const user = userEvent.setup()
+    const original = configuration()
+    const initial = configuration()
+    initial.settings.response_converters = [{
+      source_name: 'base64', source_hash: 'b64', params: {}, effective_hash: 'private',
+    }]
+    render(tree(original, jest.fn(), initial))
+    await user.click(await screen.findByRole('button', { name: 'Settings for converter base64, Response converters stage 1' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Reset to registered converter' }))
+    expect(screen.queryByText('Temporary')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
+    expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({ response_converters: ['base64'] })
+  })
+
+  it('should create and append a converter from the shared picker', async () => {
+    const user = userEvent.setup()
+    jest.mocked(convertersApi.listConverterTypes).mockResolvedValue({ items: [{
+      converter_type: 'CaesarConverter', supported_input_types: ['text'], supported_output_types: ['text'],
+      is_llm_based: false, parameters: [{ name: 'caesar_offset', type_name: 'int', required: true }],
+    }] })
+    jest.mocked(convertersApi.createConverter).mockImplementation(async () => {
+      const created = { converter_id: 'new_caesar', identifier: { class_name: 'CaesarConverter', hash: 'new' } }
+      jest.mocked(convertersApi.listConverters).mockResolvedValue({ items: [created] })
+      return created
+    })
+    render(tree())
+    await user.click(await screen.findByRole('combobox', { name: 'Request converters' }))
+    await user.click(screen.getByRole('option', { name: /^New converter/ }))
+    await user.click(await screen.findByRole('combobox', { name: /Converter Type/i }))
+    await user.click(screen.getByRole('option', { name: /CaesarConverter/ }))
+    await user.type(screen.getByLabelText(/Registry Name/i), 'new_caesar')
+    await user.type(screen.getByLabelText(/caesar_offset/i), '3')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    await screen.findByText('new_caesar')
+    await user.click(await screen.findByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
+    expect(techniques.validateEdit.mock.calls[0][0].changes.request_converters).toEqual(['base64', 'rot13', 'new_caesar'])
+  })
+
   it('should retain the source adversarial target without a second target control or description edit', async () => {
     const user = userEvent.setup()
     const original = configuration()
@@ -117,7 +233,8 @@ describe('TechniqueEditor', () => {
     await user.paste('New movie\n{{ objective }}\n{% if objective %}literal{% endif %}')
     await user.clear(screen.getByRole('spinbutton', { name: 'Turn count' }))
     await user.type(screen.getByRole('spinbutton', { name: 'Turn count' }), '3')
-    await user.click(screen.getByRole('button', { name: 'Move Request converters 2 up' }))
+    await user.click(screen.getByRole('button', { name: 'Reorder converter rot13, Request converters stage 2' }))
+    await user.keyboard('{ArrowUp}')
     await user.click(screen.getByRole('button', { name: 'Apply to run' }))
     await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
     expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({

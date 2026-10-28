@@ -16,8 +16,13 @@ from pyrit.backend.models.scenario_suites import (
     ScenarioSuiteListResponse,
     ScenarioSuiteResponse,
 )
-from pyrit.models.catalog import PresetIssue, ScenarioSuite, ScenarioSuiteEntry, StoredScenarioSuite
-from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteStorage
+from pyrit.models.catalog import (
+    PresetIssue,
+    ScenarioSuite,
+    ScenarioSuiteEntry,
+    ScenarioSuiteRegistryEntry,
+)
+from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -32,30 +37,21 @@ class _PresetProjection:
 
 
 class ScenarioSuiteService:
-    """Wire adapter over ``ScenarioSuiteStorage`` with live preset-status projection."""
+    """Wire adapter over ``ScenarioSuiteRegistry`` with live preset-status projection."""
 
-    def __init__(self, *, storage: ScenarioSuiteStorage | None = None) -> None:
+    def __init__(self, *, registry: ScenarioSuiteRegistry | None = None) -> None:
         """
         Initialize the service.
 
         Args:
-            storage (ScenarioSuiteStorage | None): Storage to use, constructed lazily by default.
+            registry (ScenarioSuiteRegistry | None): Registry to use, or the singleton by default.
         """
-        self._storage = storage
+        self._registry = registry
 
     @property
     def source(self) -> str:
         """Credential-free storage source suites are read from and written to."""
-        return self._get_storage().display_source
-
-    def configure_source(self, source: str | None) -> None:
-        """
-        Point the service at a local directory or Azure Blob source.
-
-        Args:
-            source (str | None): Configured source, or None for the default directory.
-        """
-        self._storage = ScenarioSuiteStorage(source=source)
+        return self._get_registry().source
 
     async def list_suites_async(self) -> ScenarioSuiteListResponse:
         """
@@ -74,17 +70,17 @@ class ScenarioSuiteService:
         Returns:
             ScenarioSuiteResponse | None: The suite and current entry statuses, or None if absent.
         """
-        stored = await self.load_suite_async(name=name)
-        return None if stored is None else await asyncio.to_thread(self._to_response, stored=stored)
+        entry = await self.load_suite_async(name=name)
+        return None if entry is None else await asyncio.to_thread(self._to_response, entry=entry)
 
-    async def load_suite_async(self, *, name: str) -> StoredScenarioSuite | None:
+    async def load_suite_async(self, *, name: str) -> ScenarioSuiteRegistryEntry | None:
         """
-        Read one stored suite without projecting referenced presets.
+        Read one suite without projecting referenced presets.
 
         Returns:
-            StoredScenarioSuite | None: The stored suite, or None if absent.
+            ScenarioSuiteRegistryEntry | None: The suite and its origin, or None if absent.
         """
-        return await asyncio.to_thread(self._get_storage().load_suite, name)
+        return await asyncio.to_thread(self._get_registry().get_suite, name=name)
 
     async def save_suite_async(
         self,
@@ -99,11 +95,12 @@ class ScenarioSuiteService:
             ScenarioSuiteResponse: The persisted suite, its new version, and current entry statuses.
         """
         stored = await asyncio.to_thread(
-            self._get_storage().save_suite,
+            self._get_registry().save_suite,
             suite=suite,
             expected_version=expected_version,
         )
-        return await asyncio.to_thread(self._to_response, stored=stored)
+        entry = ScenarioSuiteRegistryEntry(suite=stored.suite, origin="stored", version=stored.version)
+        return await asyncio.to_thread(self._to_response, entry=entry)
 
     async def delete_suite_async(self, *, name: str) -> bool:
         """
@@ -112,18 +109,16 @@ class ScenarioSuiteService:
         Returns:
             bool: True if a suite was deleted, False if it was already absent.
         """
-        return await asyncio.to_thread(self._get_storage().delete_suite, name)
+        return await asyncio.to_thread(self._get_registry().delete_suite, name=name)
 
-    def _get_storage(self) -> ScenarioSuiteStorage:
+    def _get_registry(self) -> ScenarioSuiteRegistry:
         """
-        Return storage, constructing the default backend on first use.
+        Return the injected registry or the process singleton.
 
         Returns:
-            ScenarioSuiteStorage: The configured storage backend.
+            ScenarioSuiteRegistry: The suite registry.
         """
-        if self._storage is None:
-            self._storage = ScenarioSuiteStorage()
-        return self._storage
+        return self._registry if self._registry is not None else ScenarioSuiteRegistry.get_registry_singleton()
 
     def _read_all_responses(self) -> list[ScenarioSuiteResponse]:
         """
@@ -132,27 +127,28 @@ class ScenarioSuiteService:
         Returns:
             list[ScenarioSuiteResponse]: Every readable suite, sorted by name.
         """
-        stored = self._get_storage().list_suites()
+        entries = self._get_registry().list_suites()
         projections: dict[str, _PresetProjection] = {}
-        return [self._to_response(stored=stored[name], projections=projections) for name in sorted(stored)]
+        return [self._to_response(entry=entry, projections=projections) for entry in entries]
 
     @staticmethod
     def _to_response(
         *,
-        stored: StoredScenarioSuite,
+        entry: ScenarioSuiteRegistryEntry,
         projections: dict[str, _PresetProjection] | None = None,
     ) -> ScenarioSuiteResponse:
         """
-        Attach current preset metadata to one stored suite.
+        Attach current preset metadata to one suite.
 
         Returns:
             ScenarioSuiteResponse: The suite response.
         """
         return ScenarioSuiteResponse(
-            suite=stored.suite,
-            version=stored.version,
+            suite=entry.suite,
+            origin=entry.origin,
+            version=entry.version,
             entry_statuses=ScenarioSuiteService._resolve_entry_statuses(
-                entries=stored.suite.entries,
+                entries=entry.suite.entries,
                 projections=projections,
             ),
         )

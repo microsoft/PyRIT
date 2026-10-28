@@ -6,6 +6,7 @@ import {
 } from '@fluentui/react-components'
 
 import ParameterField from '@/components/Parameters/ParameterField'
+import ConverterChainField from '@/components/Converters/ConverterChainField'
 import ReferenceField from '@/components/Parameters/ReferenceField'
 import { buildParametersFromForm, getInitialFormValues, type ParameterFormValue } from '@/components/Parameters/parameterForm'
 import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
@@ -13,6 +14,7 @@ import { toApiError } from '@/services/errors'
 import type {
   CreateTechniqueRequest, Parameter, RegistryReferenceOption, TechniqueTypeEntry,
   TechniqueConfiguration, TechniqueChanges, TechniqueEditResponse, SimulationChanges,
+  ConverterInstance, ConverterSelection,
 } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 
@@ -79,15 +81,16 @@ export default function TechniqueEditor({
   const configuration = initial ?? original
   const [types, setTypes] = useState<TechniqueTypeEntry[]>([])
   const [targetOptions, setTargetOptions] = useState<RegistryReferenceOption[]>([])
-  const [converterOptions, setConverterOptions] = useState<RegistryReferenceOption[]>([])
+  const [converters, setConverters] = useState<ConverterInstance[]>([])
+  const converterOptions = converters.map((entry) => ({ name: entry.converter_id, type: entry.identifier.class_name }))
   const [selectedType, setSelectedType] = useState(configuration?.attack_type ?? '')
   const [name, setName] = useState(configuration?.source_name ?? '')
   const [description, setDescription] = useState(configuration?.settings.description ?? '')
   const [tags, setTags] = useState('')
   const [values, setValues] = useState<Record<string, ParameterFormValue>>(() =>
     configuration ? editorValues(configuration) : {})
-  const [requestConverters, setRequestConverters] = useState<string[]>(configuration?.settings.request_converters ?? [])
-  const [responseConverters, setResponseConverters] = useState<string[]>(configuration?.settings.response_converters ?? [])
+  const [requestConverters, setRequestConverters] = useState<ConverterSelection[]>(configuration?.settings.request_converters ?? [])
+  const [responseConverters, setResponseConverters] = useState<ConverterSelection[]>(configuration?.settings.response_converters ?? [])
   const [adversarialTarget, setAdversarialTarget] = useState(configuration?.settings.adversarial_chat ?? '')
   const [systemPrompt, setSystemPrompt] = useState(configuration?.settings.adversarial_system_prompt ?? '')
   const [seedPrompt, setSeedPrompt] = useState(configuration?.settings.adversarial_seed_prompt ?? '')
@@ -146,7 +149,7 @@ export default function TechniqueEditor({
         setTypes(original ? metadata.items : metadata.items.filter((entry) =>
           getAttackParameters(entry).every((parameter) => !parameter.required || canConfigure(parameter))))
         setTargetOptions(targets.map((entry) => ({ name: entry.target_registry_name, type: entry.identifier.class_name })))
-        setConverterOptions(converters.items.map((entry) => ({ name: entry.converter_id, type: entry.identifier.class_name })))
+        setConverters(converters.items)
       } catch (err) {
         if (!ignore) setError(toApiError(err).detail)
       } finally {
@@ -249,8 +252,8 @@ export default function TechniqueEditor({
       params: result.ok ? result.parameters ?? {} : {},
     }
     if (selected.supports_converters && (requestConverters.length || responseConverters.length)) {
-      request.request_converters = requestConverters
-      request.response_converters = responseConverters
+      request.request_converters = requestConverters.filter((entry): entry is string => typeof entry === 'string')
+      request.response_converters = responseConverters.filter((entry): entry is string => typeof entry === 'string')
     }
     if (selected.supports_adversarial) {
       if (adversarialTarget) request.adversarial_chat = adversarialTarget
@@ -337,10 +340,12 @@ export default function TechniqueEditor({
                   )}
                   {selected?.supports_converters && (
                     <>
-                      {editable('request_converters') && <ReferenceField label="Request converters" options={converterOptions} value={requestConverters} multiple disabled={inputsDisabled}
-                        onChange={(next) => { if (Array.isArray(next)) update(setRequestConverters, next) }} />}
-                      {editable('response_converters') && <ReferenceField label="Response converters" options={converterOptions} value={responseConverters} multiple disabled={inputsDisabled}
-                        onChange={(next) => { if (Array.isArray(next)) update(setResponseConverters, next) }} />}
+                      {editable('request_converters') && <ConverterChainField label="Request converters" converters={converters}
+                        value={requestConverters} disabled={inputsDisabled} allowTemporary={editing}
+                        onChange={(next) => update(setRequestConverters, next)} onConvertersChanged={setConverters} />}
+                      {editable('response_converters') && <ConverterChainField label="Response converters" converters={converters}
+                        value={responseConverters} disabled={inputsDisabled} allowTemporary={editing}
+                        onChange={(next) => update(setResponseConverters, next)} onConvertersChanged={setConverters} />}
                     </>
                   )}
                   {(selected?.supports_adversarial || original?.editable_fields.includes('adversarial_chat')) && (

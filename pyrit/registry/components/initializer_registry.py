@@ -285,7 +285,10 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
 
     @staticmethod
     def _module_defined_initializers(
-        *, module: ModuleType, base_class: type[PyRITInitializer]
+        *,
+        module: ModuleType,
+        base_class: type[PyRITInitializer],
+        strict: bool = False,
     ) -> list[type[PyRITInitializer]]:
         """
         Find concrete ``PyRITInitializer`` subclasses defined in *module*.
@@ -296,21 +299,39 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         Args:
             module: The imported module to scan.
             base_class: The ``PyRITInitializer`` base class.
+            strict: Raise if an explicitly declared export cannot be loaded.
 
         Returns:
             list[type]: Concrete initializer classes defined in the module.
         """
-        return [
-            attr
-            for attr_name in dir(module)
+        static_members = dict(inspect.getmembers_static(module))
+        member_names = set(static_members)
+        declared_exports = vars(module).get("__all__", ())
+        if isinstance(declared_exports, (list, tuple)):
+            member_names.update(name for name in declared_exports if isinstance(name, str))
+
+        initializers: list[type[PyRITInitializer]] = []
+        for attr_name in sorted(member_names):
+            if attr_name in static_members:
+                attr = static_members[attr_name]
+            else:
+                try:
+                    attr = getattr(module, attr_name)
+                except Exception as error:
+                    if strict:
+                        raise
+                    logger.warning(f"Failed to load declared export '{attr_name}' from {module.__name__}: {error}")
+                    continue
             if (
-                inspect.isclass(attr := getattr(module, attr_name))
+                inspect.isclass(attr)
                 and issubclass(attr, base_class)
                 and attr is not base_class
                 and not inspect.isabstract(attr)
                 and attr.__module__ == module.__name__
-            )
-        ]
+            ):
+                initializers.append(attr)
+
+        return initializers
 
     def create_from_script_paths(
         self, *, script_paths: Sequence[str | Path], strict: bool = False
@@ -353,7 +374,11 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
                     file_path=script_path, module_name=f"init_script_{script_path.stem}"
                 )
                 file_instances: list[PyRITInitializer] = []
-                for init_cls in self._module_defined_initializers(module=module, base_class=PyRITInitializer):
+                for init_cls in self._module_defined_initializers(
+                    module=module,
+                    base_class=PyRITInitializer,
+                    strict=strict,
+                ):
                     try:
                         file_instances.append(init_cls())
                         logger.debug(f"Found and instantiated {init_cls.__name__} in {script_path.name}")
@@ -500,7 +525,11 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
                 raise ValueError(f"Failed to write initializer script: {error}") from error
             try:
                 module = self._load_module_from_path(file_path=script_path, module_name=f"custom_initializer.{name}")
-                discovered_classes = self._module_defined_initializers(module=module, base_class=PyRITInitializer)
+                discovered_classes = self._module_defined_initializers(
+                    module=module,
+                    base_class=PyRITInitializer,
+                    strict=True,
+                )
             except Exception as error:
                 raise ValueError(f"Failed to load initializer script '{name}': {error}") from error
 

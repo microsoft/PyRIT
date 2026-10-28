@@ -15,7 +15,7 @@ from collections import Counter
 from collections.abc import Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, ParamSpec, TypeVar, cast
@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 from sqlalchemy import (
     Column,
     MetaData,
+    Select,
     String,
     Unicode,
     and_,
@@ -53,10 +54,11 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.sql import visitors
 from sqlalchemy.sql.elements import ClauseElement
 
+from pyrit.analytics.outcome_statistics import compute_outcome_statistics, success_percentage
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.pagination import DecodedKeysetCursor
-from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonContainer, JsonScalar
+from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonArrayValue, JsonContainer, JsonScalar, UuidHex
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
@@ -113,6 +115,7 @@ from pyrit.models import (
     ConversationRetry,
     ConversationRetryReason,
     ConversationStats,
+    ConversationType,
     ConverterIdentifier,
     Finding,
     FindingCreate,
@@ -131,6 +134,9 @@ from pyrit.models import (
     RetryEvent,
     ScenarioAttackResultDelta,
     ScenarioIdentifier,
+    ScenarioProducerCategoryCounts,
+    ScenarioProducerCounts,
+    ScenarioProgressCounts,
     ScenarioProgressScore,
     ScenarioResult,
     ScenarioRunState,
@@ -148,6 +154,7 @@ from pyrit.models import (
     SeedRecord,
     SeedType,
     TargetIdentifier,
+    config_hash,
     group_conversation_message_pieces_by_sequence,
     sort_message_pieces,
 )
@@ -386,6 +393,17 @@ class ScenarioHistoryAggregate:
     unknown_role_error_attempts: int
     unknown_role_retries: int
 
+    outcome_successes: int = 0
+    outcome_failures: int = 0
+    outcome_errors: int = 0
+    outcome_undetermined: int = 0
+
+    raw_total_errors: int = 0
+    raw_total_retries: int = 0
+    raw_retrying_attacks_count: int = 0
+
+    group_counts: dict[str, ScenarioProgressCounts] = field(default_factory=dict)
+
     @classmethod
     def empty(cls, *, scenario_result_id: str) -> "ScenarioHistoryAggregate":
         """
@@ -412,6 +430,14 @@ class ScenarioHistoryAggregate:
             unknown_role_attempts=0,
             unknown_role_error_attempts=0,
             unknown_role_retries=0,
+            outcome_successes=0,
+            outcome_failures=0,
+            outcome_errors=0,
+            outcome_undetermined=0,
+            raw_total_errors=0,
+            raw_total_retries=0,
+            raw_retrying_attacks_count=0,
+            group_counts={},
         )
 
 
@@ -421,6 +447,65 @@ class ScenarioRunStateRecord:
 
     scenario_result_id: str
     state: ScenarioRunState
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScenarioAttemptSeedSummary:
+    """
+    Lightweight projection of attempt seed and outcome fields for scenario recount.
+
+    Contains only the scalar fields required to resolve logical execution units and
+    aggregate attempt counts during legacy recount. Never loads prompt entries, score
+    records, retry events, or large conversation payloads.
+    """
+
+    attack_result_id: str
+    objective: str
+    objective_sha256: str | None
+    atomic_attack_identifier: AtomicAttackIdentifier | None
+    outcome: AttackOutcome
+    timestamp: datetime
+    total_retries: int
+    attribution_data: dict[str, Any]
+    has_retries: bool = False
+    child_attack_result_ids: tuple[str, ...] = ()
+
+
+class MessagePieceKeysetCursor(NamedTuple):
+    """Ascending saved-message order, including pieces within the same turn."""
+
+    sequence: int
+    timestamp: datetime
+    message_piece_id: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ConversationMessagePage:
+    """A bounded page of canonical saved messages, possibly splitting a multimodal turn."""
+
+    messages: tuple[Message, ...]
+    next_cursor: MessagePieceKeysetCursor | None
+    partial_message_sequences: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AttackConversationRecord:
+    """A saved main or related conversation reference, without presentation labels."""
+
+    conversation_id: str
+    conversation_type: ConversationType | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AttackConversationPage:
+    """Bounded conversation references and the revision of their stored ordering."""
+
+    main_conversation_id: str
+    conversations: tuple[AttackConversationRecord, ...]
+    total_count: int
+    timestamp: datetime
+    reference_revision: str
+    objective_score_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -7153,6 +7238,15 @@ class MemoryInterface(abc.ABC):
                 .mappings()
                 .all()
             )
+            group_rows = (
+                session.execute(
+                    self._build_scenario_history_group_aggregate_statement(
+                        entry_ids=entry_ids, plan_entry_ids=plan_entry_ids
+                    )
+                )
+                .mappings()
+                .all()
+            )
             name_rows = session.execute(
                 select(AttackResultEntry.attribution_parent_id, self._get_scenario_attempt_unit_expressions()[0])
                 .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
@@ -7171,6 +7265,58 @@ class MemoryInterface(abc.ABC):
                     .distinct()
                 ).all()
             }
+
+        groups_by_run: dict[str, dict[str, ScenarioProgressCounts]] = {}
+        for grow in group_rows:
+            if grow["scenario_result_id"] is None or not grow["unit_group_id"]:
+                continue
+            run_id = str(grow["scenario_result_id"])
+            raw_gid = str(grow["unit_group_id"])
+            canonical_gid = raw_gid
+            if "\x1f" in raw_gid:
+                name, _, eval_hash = raw_gid.partition("\x1f")
+                canonical_gid = config_hash({"atomic_attack_name": name, "technique_eval_hash": eval_hash})
+            g_outcomes = compute_outcome_statistics(
+                {
+                    AttackOutcome.SUCCESS: grow["outcome_successes"] or 0,
+                    AttackOutcome.FAILURE: grow["outcome_failures"] or 0,
+                    AttackOutcome.ERROR: grow["outcome_errors"] or 0,
+                    AttackOutcome.UNDETERMINED: grow["outcome_undetermined"] or 0,
+                }
+            )
+            g_producer_counts = ScenarioProducerCounts(
+                target_facing=ScenarioProducerCategoryCounts(
+                    attempts=grow["target_facing_attempts"] or 0,
+                    errors=grow["target_facing_error_attempts"] or 0,
+                    retries=grow["target_facing_retries"] or 0,
+                ),
+                orchestration=ScenarioProducerCategoryCounts(
+                    attempts=grow["orchestration_attempts"] or 0,
+                    errors=grow["orchestration_error_attempts"] or 0,
+                    retries=grow["orchestration_retries"] or 0,
+                ),
+                unknown=ScenarioProducerCategoryCounts(
+                    attempts=grow["unknown_role_attempts"] or 0,
+                    errors=grow["unknown_role_error_attempts"] or 0,
+                    retries=grow["unknown_role_retries"] or 0,
+                ),
+            )
+            g_completed = grow["completed_units"] or 0
+            g_succeeded = grow["successful_units"] or 0
+            counts = ScenarioProgressCounts(
+                completed=g_completed,
+                planned=None,
+                succeeded=g_succeeded,
+                success_percentage=success_percentage(succeeded=g_succeeded, completed=g_completed),
+                errors=grow["error_attempts"] or 0,
+                retries=grow["total_retries"] or 0,
+                producer_counts=g_producer_counts,
+                outcomes=g_outcomes,
+            )
+            run_groups = groups_by_run.setdefault(run_id, {})
+            run_groups[canonical_gid] = counts
+            if canonical_gid != raw_gid:
+                run_groups[raw_gid] = counts
 
         names_by_run: dict[str, list[str]] = {}
         for scenario_result_id, atomic_attack_name in name_rows:
@@ -7200,22 +7346,32 @@ class MemoryInterface(abc.ABC):
                 unknown_role_attempts=row["unknown_role_attempts"] or 0,
                 unknown_role_error_attempts=row["unknown_role_error_attempts"] or 0,
                 unknown_role_retries=row["unknown_role_retries"] or 0,
+                outcome_successes=row["outcome_successes"] or 0,
+                outcome_failures=row["outcome_failures"] or 0,
+                outcome_errors=row["outcome_errors"] or 0,
+                outcome_undetermined=row["outcome_undetermined"] or 0,
+                raw_total_errors=row["raw_total_errors"] or 0,
+                raw_total_retries=row["raw_total_retries"] or 0,
+                raw_retrying_attacks_count=row["raw_retrying_attacks_count"] or 0,
+                group_counts=groups_by_run.get(run_id, {}),
             )
         return aggregates
 
-    def _build_scenario_history_aggregate_statement(
+    def _build_scenario_history_ranked_units(
         self,
         *,
         entry_ids: Sequence[uuid.UUID],
         plan_entry_ids: Sequence[uuid.UUID],
-    ) -> Any:
+    ) -> tuple[Any, Any, Any, Any, Any, Any]:
         """
-        Build the statement that reduces linked attempts to one metrics row per run.
+        Build the intermediate ranked-units subquery and role match conditions for scenario history.
 
         Returns:
-            Any: A statement selecting one aggregate row per scenario run with attempts.
+            tuple: (ranked, counted, completed, is_target_facing, is_orchestration, is_unknown)
         """
-        atomic_name, technique_hash, attributed_seed_group_id, _ = self._get_scenario_attempt_unit_expressions()
+        atomic_name, technique_hash, attributed_seed_group_id, identifier_seed_key = (
+            self._get_scenario_attempt_unit_expressions()
+        )
         parents = AttackResultEntry.__table__.alias("history_parents")
         children = AttackResultEntry.__table__.alias("history_children")
         links = JsonArrayItems(parents.c.attack_metadata, literal("$.child_attack_result_ids")).table_valued(
@@ -7237,9 +7393,6 @@ class MemoryInterface(abc.ABC):
             .group_by(parents.c.id)
             .subquery("history_child_links")
         )
-        # Explicit seed attribution is authoritative, then the objective hash. Runs with attempts identified only by
-        # their atomic identifier's seeds are flagged instead (see _get_scenario_history_runs_needing_sdk_statistics),
-        # because SQL can't derive the logical seed group from those seeds.
         attempts = (
             select(
                 AttackResultEntry.id.label("attempt_id"),
@@ -7247,7 +7400,9 @@ class MemoryInterface(abc.ABC):
                 atomic_name.label("atomic_attack_name"),
                 technique_hash.label("technique_eval_hash"),
                 attributed_seed_group_id.label("attributed_seed_group_id"),
-                func.coalesce(attributed_seed_group_id, AttackResultEntry.objective_sha256, "").label("seed_group_id"),
+                func.coalesce(
+                    attributed_seed_group_id, identifier_seed_key, AttackResultEntry.objective_sha256, ""
+                ).label("seed_group_id"),
                 AttackResultEntry.objective_sha256.label("objective_sha256"),
                 AttackResultEntry.outcome.label("outcome"),
                 AttackResultEntry.timestamp.label("timestamp"),
@@ -7258,6 +7413,16 @@ class MemoryInterface(abc.ABC):
                     ),
                     else_=0,
                 ).label("total_retries"),
+                case(
+                    (
+                        or_(
+                            func.coalesce(AttackResultEntry.total_retries, 0) > 0,
+                            AttackResultEntry.retry_events_json.is_not(None),
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                ).label("has_retries"),
                 JsonScalar(AttackResultEntry.attribution_data, literal("$.result_role")).label("result_role"),
                 JsonScalar(AttackResultEntry.attribution_data, literal("$.attempt_index")).label("attempt_index"),
                 case((child_links.c.parent_id.is_not(None), 1), else_=0).label("has_child_links"),
@@ -7291,18 +7456,28 @@ class MemoryInterface(abc.ABC):
             + func.sum(pressure_attempt).over(partition_by=unit_partition)
             - 1
         )
+        raw_unit_retries = (
+            func.sum(units.c.total_retries).over(partition_by=unit_partition)
+            + func.count().over(partition_by=unit_partition)
+            - 1
+        )
         ranked = select(
             units.c.scenario_result_id,
+            units.c.unit_group_id,
             units.c.timestamp,
             units.c.outcome.label("latest_outcome"),
+            units.c.outcome.label("attempt_outcome"),
+            units.c.has_retries.label("has_retries"),
             func.max(units.c.is_planned).over(partition_by=unit_partition).label("is_planned"),
             unit_retries.label("unit_retries"),
+            raw_unit_retries.label("raw_unit_retries"),
             func.sum(case((is_error, pressure_attempt), else_=0))
             .over(partition_by=unit_partition)
             .label("unit_errors"),
             is_completion.label("is_completion"),
             units.c.result_role.label("result_role"),
             units.c.total_retries.label("attempt_retries"),
+            func.max(units.c.has_retries).over(partition_by=unit_partition).label("unit_has_retries"),
             func.row_number()
             .over(
                 partition_by=unit_partition,
@@ -7326,6 +7501,23 @@ class MemoryInterface(abc.ABC):
             ranked.c.result_role.is_(None),
             and_(not_(is_target_facing), not_(is_orchestration)),
         )
+        return ranked, counted, completed, is_target_facing, is_orchestration, is_unknown
+
+    def _build_scenario_history_aggregate_statement(
+        self,
+        *,
+        entry_ids: Sequence[uuid.UUID],
+        plan_entry_ids: Sequence[uuid.UUID],
+    ) -> Any:
+        """
+        Build the statement that reduces linked attempts to one metrics row per run.
+
+        Returns:
+            Any: A statement selecting one aggregate row per scenario run with attempts.
+        """
+        ranked, counted, completed, is_target_facing, is_orchestration, is_unknown = (
+            self._build_scenario_history_ranked_units(entry_ids=entry_ids, plan_entry_ids=plan_entry_ids)
+        )
         return (
             select(
                 ranked.c.scenario_result_id,
@@ -7339,6 +7531,28 @@ class MemoryInterface(abc.ABC):
                 func.sum(case((and_(counted, ranked.c.unit_retries > 0), ranked.c.unit_retries), else_=0)).label(
                     "total_retries"
                 ),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
+                ).label("outcome_successes"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.FAILURE.value), 1), else_=0)
+                ).label("outcome_failures"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1), else_=0)
+                ).label("outcome_errors"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.UNDETERMINED.value), 1), else_=0)
+                ).label("outcome_undetermined"),
+                func.sum(case((ranked.c.attempt_outcome == AttackOutcome.ERROR.value, 1), else_=0)).label(
+                    "raw_total_errors"
+                ),
+                func.sum(
+                    case(
+                        (and_(ranked.c.unit_rank == 1, ranked.c.raw_unit_retries > 0), ranked.c.raw_unit_retries),
+                        else_=0,
+                    )
+                ).label("raw_total_retries"),
+                func.sum(case((ranked.c.has_retries == 1, 1), else_=0)).label("raw_retrying_attacks_count"),
                 func.sum(case((is_target_facing, 1), else_=0)).label("target_facing_attempts"),
                 func.sum(
                     case(
@@ -7366,6 +7580,74 @@ class MemoryInterface(abc.ABC):
             )
             .group_by(ranked.c.scenario_result_id)
             .order_by(ranked.c.scenario_result_id)
+        )
+
+    def _build_scenario_history_group_aggregate_statement(
+        self,
+        *,
+        entry_ids: Sequence[uuid.UUID],
+        plan_entry_ids: Sequence[uuid.UUID],
+    ) -> Any:
+        """
+        Build the statement that reduces linked attempts to metrics rows per group.
+
+        Returns:
+            Any: A statement selecting aggregate rows grouped by scenario run and atomic group.
+        """
+        ranked, counted, completed, is_target_facing, is_orchestration, is_unknown = (
+            self._build_scenario_history_ranked_units(entry_ids=entry_ids, plan_entry_ids=plan_entry_ids)
+        )
+        return (
+            select(
+                ranked.c.scenario_result_id,
+                ranked.c.unit_group_id,
+                func.sum(case((completed, 1), else_=0)).label("completed_units"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
+                ).label("successful_units"),
+                func.sum(case((counted, ranked.c.unit_errors), else_=0)).label("error_attempts"),
+                func.sum(case((and_(counted, ranked.c.unit_retries > 0), ranked.c.unit_retries), else_=0)).label(
+                    "total_retries"
+                ),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
+                ).label("outcome_successes"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.FAILURE.value), 1), else_=0)
+                ).label("outcome_failures"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1), else_=0)
+                ).label("outcome_errors"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.UNDETERMINED.value), 1), else_=0)
+                ).label("outcome_undetermined"),
+                func.sum(case((is_target_facing, 1), else_=0)).label("target_facing_attempts"),
+                func.sum(
+                    case(
+                        (and_(is_target_facing, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1),
+                        else_=0,
+                    )
+                ).label("target_facing_error_attempts"),
+                func.sum(case((is_target_facing, ranked.c.attempt_retries), else_=0)).label("target_facing_retries"),
+                func.sum(case((is_orchestration, 1), else_=0)).label("orchestration_attempts"),
+                func.sum(
+                    case(
+                        (and_(is_orchestration, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1),
+                        else_=0,
+                    )
+                ).label("orchestration_error_attempts"),
+                func.sum(case((is_orchestration, ranked.c.attempt_retries), else_=0)).label("orchestration_retries"),
+                func.sum(case((is_unknown, 1), else_=0)).label("unknown_role_attempts"),
+                func.sum(
+                    case(
+                        (and_(is_unknown, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1),
+                        else_=0,
+                    )
+                ).label("unknown_role_error_attempts"),
+                func.sum(case((is_unknown, ranked.c.attempt_retries), else_=0)).label("unknown_role_retries"),
+            )
+            .group_by(ranked.c.scenario_result_id, ranked.c.unit_group_id)
+            .order_by(ranked.c.scenario_result_id, ranked.c.unit_group_id)
         )
 
     def _get_scenario_execution_attempt_condition(self, *, attempts: Any) -> Any:
@@ -7419,6 +7701,7 @@ class MemoryInterface(abc.ABC):
                 attempts.c.outcome,
                 attempts.c.timestamp,
                 attempts.c.total_retries,
+                attempts.c.has_retries,
                 attempts.c.result_role,
                 attempts.c.attempt_index,
                 attempts.c.has_child_links,
@@ -7502,6 +7785,7 @@ class MemoryInterface(abc.ABC):
                 attempts.c.outcome,
                 attempts.c.timestamp,
                 attempts.c.total_retries,
+                attempts.c.has_retries,
                 attempts.c.result_role,
                 attempts.c.attempt_index,
                 attempts.c.has_child_links,
@@ -7531,6 +7815,7 @@ class MemoryInterface(abc.ABC):
             matched.c.outcome,
             matched.c.timestamp,
             matched.c.total_retries,
+            matched.c.has_retries,
             matched.c.result_role,
             matched.c.attempt_index,
             matched.c.has_child_links,
@@ -7575,6 +7860,172 @@ class MemoryInterface(abc.ABC):
                     label_values.setdefault(key, set()).add(value)
         return {key: sorted(values) for key, values in sorted(label_values.items())}
 
+    @staticmethod
+    def _row_to_scenario_attack_result_delta(row: Mapping[str, Any]) -> ScenarioAttackResultDelta:
+        retry_events = [
+            RetryEvent.model_validate(event)
+            for event in (json.loads(row["retry_events_json"]) if row["retry_events_json"] else [])
+        ]
+        atomic_identifier = (
+            AtomicAttackIdentifier.model_validate(row["atomic_attack_identifier"])
+            if row["atomic_attack_identifier"]
+            else None
+        )
+        score = None
+        if row["score_id"] is not None:
+            scorer_identifier = (
+                ComponentIdentifier.model_validate(row["scorer_class_identifier"])
+                if row["scorer_class_identifier"]
+                else None
+            )
+            score = ScenarioProgressScore(
+                scorer_name=scorer_identifier.class_name if scorer_identifier else "Unknown",
+                score_type=row["score_type"],
+                status=ScoreStatus(row["score_status"]),
+                score_value=row["score_value"],
+                score_rationale=row["score_rationale"],
+            )
+        related_cids: list[str] = []
+        for col in (
+            row["pruned_conversation_ids"],
+            row["adversarial_chat_conversation_ids"],
+            row["preparation_conversation_ids"],
+        ):
+            if isinstance(col, list):
+                related_cids.extend(str(c) for c in col if c)
+        return ScenarioAttackResultDelta(
+            attack_result_id=str(row["id"]),
+            conversation_id=row["conversation_id"],
+            objective=row["objective"],
+            objective_sha256=row["objective_sha256"],
+            atomic_attack_identifier=atomic_identifier,
+            outcome=AttackOutcome(row["outcome"]),
+            execution_time_ms=row["execution_time_ms"],
+            executed_turns=row["executed_turns"],
+            outcome_reason=row["outcome_reason"],
+            timestamp=row["timestamp"],
+            retry_events=retry_events,
+            total_retries=row["total_retries"] or 0,
+            error_type=row["error_type"],
+            error_message=row["error_message"],
+            attribution_data=row["attribution_data"] or {},
+            attack_metadata=row["attack_metadata"] or {},
+            related_conversation_ids=related_cids,
+            score=score,
+        )
+
+    @staticmethod
+    def _scenario_attack_result_delta_statement() -> Select:
+        """Return the shared lightweight result/score projection, without filters or pagination."""
+        return select(
+            AttackResultEntry.id,
+            AttackResultEntry.conversation_id,
+            AttackResultEntry.objective,
+            AttackResultEntry.objective_sha256,
+            AttackResultEntry.atomic_attack_identifier,
+            AttackResultEntry.outcome,
+            AttackResultEntry.execution_time_ms,
+            AttackResultEntry.executed_turns,
+            AttackResultEntry.outcome_reason,
+            AttackResultEntry.timestamp,
+            AttackResultEntry.retry_events_json,
+            AttackResultEntry.total_retries,
+            AttackResultEntry.error_type,
+            AttackResultEntry.error_message,
+            AttackResultEntry.attribution_data,
+            AttackResultEntry.attack_metadata,
+            AttackResultEntry.pruned_conversation_ids,
+            AttackResultEntry.adversarial_chat_conversation_ids,
+            AttackResultEntry.preparation_conversation_ids,
+            ScoreEntry.id.label("score_id"),
+            ScoreEntry.score_value,
+            ScoreEntry.score_type,
+            ScoreEntry.status.label("score_status"),
+            ScoreEntry.score_rationale,
+            ScoreEntry.scorer_class_identifier,
+        ).outerjoin(
+            ScoreEntry,
+            func.coalesce(AttackResultEntry.human_score_id, AttackResultEntry.automated_score_id) == ScoreEntry.id,
+        )
+
+    def _build_scenario_root_deltas_statement(
+        self,
+        *,
+        scenario_result_id: str,
+        cursor: AttackResultKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> Select:
+        """
+        Page saved roots directly instead of hydrating a chronological prefix and searching for its ancestors.
+
+        Keep reference expansion uncorrelated so SQLite reads the saved edges once, not once per candidate.
+
+        Returns:
+            Select: A run-scoped, ascending keyset query with one sentinel row.
+
+        Raises:
+            ValueError: If the run, cursor, or page limit is invalid.
+        """
+        if not 1 <= limit <= 500:
+            raise ValueError("Hierarchy root limit must be between 1 and 500.")
+        scenario_uuid = uuid.UUID(scenario_result_id)
+        parents = AttackResultEntry.__table__.alias("hierarchy_parents")
+        references = JsonArrayItems(
+            JsonArrayValue(parents.c.attack_metadata, literal("$.child_attack_result_ids"))
+        ).table_valued("value", "type")
+        candidate_id = UuidHex(sql_cast(AttackResultEntry.id, String(36)))
+        referenced_id = UuidHex(references.c.value)
+        incoming_ids = (
+            select(referenced_id)
+            .select_from(JsonArrayJoin(parents, references, literal(True)))
+            .where(
+                parents.c.attribution_parent_id == scenario_uuid,
+                sql_cast(references.c.type, String(8)).in_(("text", "1")),
+                referenced_id.is_not(None),
+            )
+        )
+        conditions = [
+            AttackResultEntry.attribution_parent_id == scenario_uuid,
+            candidate_id.not_in(incoming_ids),
+        ]
+        attempt_id_order = self._get_scenario_attempt_id_order_expression(attempt_id=AttackResultEntry.id)
+        if cursor is not None:
+            cursor_id_order = self._get_scenario_attempt_id_order_expression(
+                attempt_id=literal(uuid.UUID(cursor.attack_result_id), type_=AttackResultEntry.id.type)
+            )
+            conditions.append(
+                or_(
+                    AttackResultEntry.timestamp > cursor.timestamp,
+                    and_(AttackResultEntry.timestamp == cursor.timestamp, attempt_id_order > cursor_id_order),
+                )
+            )
+        return (
+            self._scenario_attack_result_delta_statement()
+            .where(*conditions)
+            .order_by(AttackResultEntry.timestamp.asc(), attempt_id_order.asc())
+            .limit(limit + 1)
+        )
+
+    def _execute_get_scenario_root_deltas(
+        self,
+        *,
+        scenario_result_id: str,
+        cursor: AttackResultKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> tuple[list[ScenarioAttackResultDelta], bool]:
+        """
+        Read one bounded page of true saved roots without loading their children or messages.
+
+        Returns:
+            tuple[list[ScenarioAttackResultDelta], bool]: Root deltas and whether another root page exists.
+        """
+        statement = self._build_scenario_root_deltas_statement(
+            scenario_result_id=scenario_result_id, cursor=cursor, limit=limit
+        )
+        with closing(self._get_session()) as session:
+            rows = session.execute(statement).mappings().all()
+        return [self._row_to_scenario_attack_result_delta(row) for row in rows[:limit]], len(rows) > limit
+
     def _execute_get_scenario_attack_result_deltas(
         self,
         *,
@@ -7617,31 +8068,119 @@ class MemoryInterface(abc.ABC):
             )
 
         statement = (
+            self._scenario_attack_result_delta_statement()
+            .where(and_(*conditions))
+            .order_by(AttackResultEntry.timestamp.asc(), attempt_id_order.asc())
+            .limit(limit + 1)
+        )
+        with closing(self._get_session()) as session:
+            rows = session.execute(statement).mappings().all()
+
+        has_more = len(rows) > limit
+        deltas: list[ScenarioAttackResultDelta] = [
+            self._row_to_scenario_attack_result_delta(row) for row in rows[:limit]
+        ]
+        return deltas, has_more
+
+    @staticmethod
+    def _row_to_scenario_attempt_seed_summary(row: Mapping[str, Any]) -> ScenarioAttemptSeedSummary:
+        atomic_identifier = (
+            AtomicAttackIdentifier.model_validate(row["atomic_attack_identifier"])
+            if row["atomic_attack_identifier"]
+            else None
+        )
+        metadata = row.get("attack_metadata")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except Exception:
+                metadata = {}
+        metadata = metadata or {}
+        attr_data = dict(row.get("attribution_data") or {})
+        for k in ("result_role", "attempt_index"):
+            if k not in attr_data and k in metadata:
+                attr_data[k] = metadata[k]
+        raw_child_ids = metadata.get("child_attack_result_ids") or attr_data.get("child_attack_result_ids")
+        if isinstance(raw_child_ids, (list, tuple)):
+            child_ids = tuple(str(cid) for cid in raw_child_ids if isinstance(cid, str) and cid)
+        else:
+            child_ids = ()
+
+        return ScenarioAttemptSeedSummary(
+            attack_result_id=str(row["id"]),
+            objective=row["objective"],
+            objective_sha256=row["objective_sha256"],
+            atomic_attack_identifier=atomic_identifier,
+            outcome=AttackOutcome(row["outcome"]),
+            timestamp=row["timestamp"],
+            total_retries=row["total_retries"] or 0,
+            attribution_data=attr_data,
+            has_retries=bool(row.get("has_retries", False)),
+            child_attack_result_ids=child_ids,
+        )
+
+    def _execute_get_scenario_recount_summaries(
+        self,
+        *,
+        scenario_result_id: str,
+        cursor: AttackResultKeysetCursor | None = None,
+        limit: int = 500,
+    ) -> tuple[list[ScenarioAttemptSeedSummary], bool]:
+        """
+        Return bounded scenario attempt seed summaries in ascending keyset order for recount.
+
+        This projection selects only minimal scalar fields required for execution unit
+        resolution and recount metrics without loading score entries, prompt rows, or
+        retry events.
+
+        Returns:
+            tuple[list[ScenarioAttemptSeedSummary], bool]: The page and whether more rows exist.
+
+        Raises:
+            ValueError: If the limit or cursor identifiers are invalid.
+        """
+        if limit < 1 or limit > 500:
+            raise ValueError("Scenario recount limit must be between 1 and 500.")
+
+        scenario_uuid = uuid.UUID(scenario_result_id)
+        conditions: list[Any] = [AttackResultEntry.attribution_parent_id == scenario_uuid]
+        attempt_id_order = self._get_scenario_attempt_id_order_expression(attempt_id=AttackResultEntry.id)
+        if cursor is not None:
+            cursor_uuid = uuid.UUID(cursor.attack_result_id)
+            cursor_id_order = self._get_scenario_attempt_id_order_expression(
+                attempt_id=literal(cursor_uuid, type_=AttackResultEntry.id.type)
+            )
+            conditions.append(
+                or_(
+                    AttackResultEntry.timestamp > cursor.timestamp,
+                    and_(
+                        AttackResultEntry.timestamp == cursor.timestamp,
+                        attempt_id_order > cursor_id_order,
+                    ),
+                )
+            )
+
+        statement = (
             select(
                 AttackResultEntry.id,
-                AttackResultEntry.conversation_id,
                 AttackResultEntry.objective,
                 AttackResultEntry.objective_sha256,
                 AttackResultEntry.atomic_attack_identifier,
                 AttackResultEntry.outcome,
-                AttackResultEntry.execution_time_ms,
                 AttackResultEntry.timestamp,
-                AttackResultEntry.retry_events_json,
                 AttackResultEntry.total_retries,
-                AttackResultEntry.error_type,
-                AttackResultEntry.error_message,
                 AttackResultEntry.attribution_data,
                 AttackResultEntry.attack_metadata,
-                ScoreEntry.id.label("score_id"),
-                ScoreEntry.score_value,
-                ScoreEntry.score_type,
-                ScoreEntry.status.label("score_status"),
-                ScoreEntry.score_rationale,
-                ScoreEntry.scorer_class_identifier,
-            )
-            .outerjoin(
-                ScoreEntry,
-                func.coalesce(AttackResultEntry.human_score_id, AttackResultEntry.automated_score_id) == ScoreEntry.id,
+                case(
+                    (
+                        or_(
+                            func.coalesce(AttackResultEntry.total_retries, 0) > 0,
+                            AttackResultEntry.retry_events_json.is_not(None),
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                ).label("has_retries"),
             )
             .where(and_(*conditions))
             .order_by(AttackResultEntry.timestamp.asc(), attempt_id_order.asc())
@@ -7651,51 +8190,239 @@ class MemoryInterface(abc.ABC):
             rows = session.execute(statement).mappings().all()
 
         has_more = len(rows) > limit
+        summaries: list[ScenarioAttemptSeedSummary] = [
+            self._row_to_scenario_attempt_seed_summary(row) for row in rows[:limit]
+        ]
+        return summaries, has_more
+
+    def _build_scenario_attack_result_deltas_by_ids_statement(
+        self,
+        *,
+        scenario_result_id: str,
+        attack_result_ids: Sequence[str],
+    ) -> Select:
+        """
+        Build the batched SELECT statement for scenario result deltas by ID.
+
+        Ensures cross-run references are rejected by constraining
+        attribution_parent_id to the scenario UUID.
+        Bounds parameters to avoid exceeding SQL Server's parameter limit.
+
+        Returns:
+            Select: The constructed select statement.
+        """
+        try:
+            scenario_uuid = uuid.UUID(scenario_result_id)
+        except (ValueError, TypeError):
+            scenario_uuid = uuid.UUID(int=0)
+        valid_uuids: list[uuid.UUID] = []
+        seen: set[uuid.UUID] = set()
+        for aid in attack_result_ids:
+            try:
+                u = uuid.UUID(str(aid))
+                if u not in seen:
+                    seen.add(u)
+                    valid_uuids.append(u)
+            except (ValueError, TypeError):
+                continue
+
+        # Strictly reserve parameter slots for fixed query parameters like attribution_parent_id
+        max_batch_size = max(1, self._MAX_BIND_VARS - 10)
+        chunk_uuids = valid_uuids[:max_batch_size]
+
+        return self._scenario_attack_result_delta_statement().where(
+            AttackResultEntry.attribution_parent_id == scenario_uuid,
+            AttackResultEntry.id.in_(chunk_uuids),
+        )
+
+    def _execute_get_scenario_attack_result_deltas_by_ids(
+        self,
+        *,
+        scenario_result_id: str,
+        attack_result_ids: Sequence[str],
+    ) -> list[ScenarioAttackResultDelta]:
+        """
+        Return lightweight scenario-linked result deltas for specific attack results in chunked queries.
+
+        Deduplicates IDs and chunks queries to respect SQL parameter limits.
+
+        Returns:
+            list[ScenarioAttackResultDelta]: The matched deltas.
+        """
+        try:
+            uuid.UUID(scenario_result_id)
+        except (ValueError, TypeError):
+            return []
+
+        valid_uuids: list[uuid.UUID] = []
+        seen: set[uuid.UUID] = set()
+        for aid in attack_result_ids:
+            try:
+                u = uuid.UUID(str(aid))
+                if u not in seen:
+                    seen.add(u)
+                    valid_uuids.append(u)
+            except (ValueError, TypeError):
+                continue
+
+        if not valid_uuids:
+            return []
+
+        max_batch_size = max(1, self._MAX_BIND_VARS - 10)
         deltas: list[ScenarioAttackResultDelta] = []
-        for row in rows[:limit]:
-            retry_events = [
-                RetryEvent.model_validate(event)
-                for event in (json.loads(row["retry_events_json"]) if row["retry_events_json"] else [])
-            ]
-            atomic_identifier = (
-                AtomicAttackIdentifier.model_validate(row["atomic_attack_identifier"])
-                if row["atomic_attack_identifier"]
-                else None
+        with closing(self._get_session()) as session:
+            for start in range(0, len(valid_uuids), max_batch_size):
+                chunk = valid_uuids[start : start + max_batch_size]
+                statement = self._build_scenario_attack_result_deltas_by_ids_statement(
+                    scenario_result_id=scenario_result_id,
+                    attack_result_ids=[str(u) for u in chunk],
+                )
+                rows = session.execute(statement).mappings().all()
+                deltas.extend(self._row_to_scenario_attack_result_delta(row) for row in rows)
+        return deltas
+
+    def _build_conversation_message_page_statement(
+        self,
+        *,
+        conversation_id: str,
+        cursor: MessagePieceKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> Select:
+        """
+        Build a canonical message-piece page, including continuation within a multimodal turn.
+
+        Returns:
+            Select: An ascending sequence/timestamp/UUID query with one sentinel.
+
+        Raises:
+            ValueError: If the page limit or cursor UUID is invalid.
+        """
+        if not 1 <= limit <= 500:
+            raise ValueError("Conversation message-piece limit must be between 1 and 500.")
+        id_order = self._get_scenario_attempt_id_order_expression(attempt_id=PromptMemoryEntry.id)
+        conditions = [PromptMemoryEntry.conversation_id == conversation_id]
+        if cursor is not None:
+            cursor_id = self._get_scenario_attempt_id_order_expression(
+                attempt_id=literal(uuid.UUID(cursor.message_piece_id), type_=PromptMemoryEntry.id.type)
             )
-            score = None
-            if row["score_id"] is not None:
-                scorer_identifier = (
-                    ComponentIdentifier.model_validate(row["scorer_class_identifier"])
-                    if row["scorer_class_identifier"]
-                    else None
-                )
-                score = ScenarioProgressScore(
-                    scorer_name=scorer_identifier.class_name if scorer_identifier else "Unknown",
-                    score_type=row["score_type"],
-                    status=ScoreStatus(row["score_status"]),
-                    score_value=row["score_value"],
-                    score_rationale=row["score_rationale"],
-                )
-            deltas.append(
-                ScenarioAttackResultDelta(
-                    attack_result_id=str(row["id"]),
-                    conversation_id=row["conversation_id"],
-                    objective=row["objective"],
-                    objective_sha256=row["objective_sha256"],
-                    atomic_attack_identifier=atomic_identifier,
-                    outcome=AttackOutcome(row["outcome"]),
-                    execution_time_ms=row["execution_time_ms"],
-                    timestamp=row["timestamp"],
-                    retry_events=retry_events,
-                    total_retries=row["total_retries"] or 0,
-                    error_type=row["error_type"],
-                    error_message=row["error_message"],
-                    attribution_data=row["attribution_data"] or {},
-                    attack_metadata=row["attack_metadata"] or {},
-                    score=score,
+            conditions.append(
+                or_(
+                    PromptMemoryEntry.sequence > cursor.sequence,
+                    and_(PromptMemoryEntry.sequence == cursor.sequence, PromptMemoryEntry.timestamp > cursor.timestamp),
+                    and_(
+                        PromptMemoryEntry.sequence == cursor.sequence,
+                        PromptMemoryEntry.timestamp == cursor.timestamp,
+                        id_order > cursor_id,
+                    ),
                 )
             )
-        return deltas, has_more
+        return (
+            select(PromptMemoryEntry)
+            .where(*conditions)
+            .order_by(PromptMemoryEntry.sequence.asc(), PromptMemoryEntry.timestamp.asc(), id_order.asc())
+            .limit(limit + 1)
+        )
+
+    def _execute_get_conversation_message_page(
+        self,
+        *,
+        conversation_id: str,
+        cursor: MessagePieceKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> ConversationMessagePage:
+        """
+        Read only the selected page of canonical message pieces.
+
+        Returns:
+            ConversationMessagePage: Messages, continuation, and turns split by the page boundary.
+        """
+        statement = self._build_conversation_message_page_statement(
+            conversation_id=conversation_id, cursor=cursor, limit=limit
+        )
+        with closing(self._get_session()) as session:
+            rows = list(session.scalars(statement))
+            pieces = [row.get_message_piece() for row in rows[:limit]]
+        if not pieces:
+            return ConversationMessagePage(messages=(), next_cursor=None)
+        partial_sequences: set[int] = set()
+        if cursor is not None and pieces[0].sequence == cursor.sequence:
+            partial_sequences.add(cursor.sequence)
+        next_cursor = None
+        if len(rows) > limit:
+            last_piece = pieces[-1]
+            next_cursor = MessagePieceKeysetCursor(
+                sequence=last_piece.sequence,
+                timestamp=last_piece.timestamp,
+                message_piece_id=str(last_piece.id),
+            )
+            if rows[limit].sequence == last_piece.sequence:
+                partial_sequences.add(last_piece.sequence)
+        return ConversationMessagePage(
+            messages=tuple(group_conversation_message_pieces_by_sequence(message_pieces=pieces)),
+            next_cursor=next_cursor,
+            partial_message_sequences=tuple(sorted(partial_sequences)),
+        )
+
+    def _execute_get_attack_conversation_page(
+        self, *, attack_result_id: str, offset: int = 0, limit: int = 50, conversation_id: str | None = None
+    ) -> AttackConversationPage | None:
+        """
+        Read main and pruned references without loading attack relationships or message bodies.
+
+        Returns:
+            AttackConversationPage | None: One bounded reference page, or None for an absent attack.
+
+        Raises:
+            ValueError: If the ID, offset, or page limit is invalid.
+        """
+        if offset < 0 or not 1 <= limit <= 200:
+            raise ValueError("Conversation offset must be nonnegative and limit must be between 1 and 200.")
+        statement = select(
+            AttackResultEntry.conversation_id,
+            AttackResultEntry.pruned_conversation_ids,
+            AttackResultEntry.timestamp,
+            func.coalesce(AttackResultEntry.human_score_id, AttackResultEntry.automated_score_id).label(
+                "objective_score_id"
+            ),
+        ).where(AttackResultEntry.id == uuid.UUID(attack_result_id))
+        with closing(self._get_session()) as session:
+            row = session.execute(statement).mappings().one_or_none()
+        if row is None:
+            return None
+        references: dict[str, AttackConversationRecord] = {}
+        main_id = row["conversation_id"] or ""
+        if main_id:
+            references[main_id] = AttackConversationRecord(conversation_id=main_id)
+        values = row["pruned_conversation_ids"]
+        if isinstance(values, list):
+            for identifier in values:
+                if isinstance(identifier, str) and identifier:
+                    references.setdefault(
+                        identifier,
+                        AttackConversationRecord(conversation_id=identifier, conversation_type=ConversationType.PRUNED),
+                    )
+        ordered = tuple(references.values())
+        revision = hashlib.sha256(
+            json.dumps(
+                [
+                    (
+                        reference.conversation_id,
+                        reference.conversation_type.value if reference.conversation_type is not None else None,
+                    )
+                    for reference in ordered
+                ]
+            ).encode("utf-8")
+        ).hexdigest()
+        if conversation_id is not None:
+            ordered = tuple(reference for reference in ordered if reference.conversation_id == conversation_id)
+        return AttackConversationPage(
+            main_conversation_id=main_id,
+            conversations=ordered[offset : offset + limit],
+            total_count=len(ordered),
+            timestamp=row["timestamp"],
+            reference_revision=revision,
+            objective_score_id=str(row["objective_score_id"]) if row["objective_score_id"] is not None else None,
+        )
 
     def _execute_get_scenario_results(
         self,
@@ -11198,6 +11925,119 @@ class MemoryInterface(abc.ABC):
         return await self._run_database_operation_async(
             self._execute_get_scenario_attack_result_deltas,
             scenario_result_id=scenario_result_id,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    async def get_scenario_root_deltas_async(
+        self,
+        *,
+        scenario_result_id: str,
+        cursor: AttackResultKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> tuple[list[ScenarioAttackResultDelta], bool]:
+        """
+        Page true run-scoped roots without hydrating progress or discovering ancestors in Python.
+
+        Returns:
+            tuple[list[ScenarioAttackResultDelta], bool]: Root deltas and whether another page exists.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scenario_root_deltas,
+            scenario_result_id=scenario_result_id,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    async def get_scenario_recount_summaries_async(
+        self,
+        *,
+        scenario_result_id: str,
+        cursor: AttackResultKeysetCursor | None = None,
+        limit: int = 500,
+    ) -> tuple[list[ScenarioAttemptSeedSummary], bool]:
+        """
+        Return bounded scenario attempt seed summaries in ascending keyset order for recount.
+
+        This projection selects only the minimal scalar fields needed for execution-unit
+        matching and recount metrics. Never loads scores, prompt entries, retry events, or
+        large conversation payloads.
+
+        Returns:
+            tuple[list[ScenarioAttemptSeedSummary], bool]: The page and whether more rows exist.
+
+        Raises:
+            ValueError: If the limit is invalid.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scenario_recount_summaries,
+            scenario_result_id=scenario_result_id,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    async def get_scenario_attack_result_deltas_by_ids_async(
+        self,
+        *,
+        scenario_result_id: str,
+        attack_result_ids: Sequence[str],
+    ) -> list[ScenarioAttackResultDelta]:
+        """
+        Return lightweight scenario-linked result deltas for specific attack results in a single query.
+
+        Ensures child results belonging to other scenarios or non-existent IDs are isolated safely.
+
+        Args:
+            scenario_result_id: The ID of the scenario run.
+            attack_result_ids: Sequence of attack result IDs to retrieve.
+
+        Returns:
+            list[ScenarioAttackResultDelta]: The matched deltas.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scenario_attack_result_deltas_by_ids,
+            scenario_result_id=scenario_result_id,
+            attack_result_ids=attack_result_ids,
+        )
+
+    async def get_attack_conversation_page_async(
+        self,
+        *,
+        attack_result_id: str,
+        offset: int = 0,
+        limit: int = 50,
+        conversation_id: str | None = None,
+    ) -> AttackConversationPage | None:
+        """
+        Read one bounded page of stored main and pruned conversation references.
+
+        Returns:
+            AttackConversationPage | None: Saved references and ordering revision, or an absent attack.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_attack_conversation_page,
+            attack_result_id=attack_result_id,
+            offset=offset,
+            limit=limit,
+            conversation_id=conversation_id,
+        )
+
+    async def get_conversation_message_page_async(
+        self,
+        *,
+        conversation_id: str,
+        cursor: MessagePieceKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> ConversationMessagePage:
+        """
+        Read canonical saved messages with continuation through every message piece.
+
+        Returns:
+            ConversationMessagePage: One bounded piece page grouped into canonical messages.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_conversation_message_page,
+            conversation_id=conversation_id,
             cursor=cursor,
             limit=limit,
         )

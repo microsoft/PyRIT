@@ -54,10 +54,17 @@ class TechniqueEditService:
         override = specification.model_copy(
             update={"dependencies": dependencies, "effective_identity": factory.get_configuration_identity()}
         )
+        configuration = technique_to_configuration(
+            name=specification.source_name, source_identity=specification.source_identity, factory=factory
+        )
+        for name in ("request_converters", "response_converters"):
+            if name in specification.changes.model_fields_set:
+                setattr(configuration.settings, name, getattr(specification.changes, name))
+                if name not in configuration.editable_fields:
+                    configuration.editable_fields.append(name)
+                configuration.read_only.pop(name, None)
         return TechniqueEditResponse(
-            configuration=technique_to_configuration(
-                name=specification.source_name, source_identity=specification.source_identity, factory=factory
-            ),
+            configuration=configuration,
             override=override,
         )
 

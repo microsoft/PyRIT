@@ -39,6 +39,7 @@ def _serializer(*, value: str = "/saved/media.bin") -> MagicMock:
     return serializer
 
 
+@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize(
     ("value", "origin", "resolved_value", "resolved"),
     [
@@ -46,7 +47,7 @@ def _serializer(*, value: str = "/saved/media.bin") -> MagicMock:
         ("http://example.test/media.png", MediaOrigin.REMOTE_URL, "http://example.test/media.png", True),
     ],
 )
-async def test_existing_references_are_not_persisted(
+async def test_existing_references_are_not_persisted_async(
     value: str, origin: MediaOrigin, resolved_value: str, resolved: bool
 ) -> None:
     factory = MagicMock()

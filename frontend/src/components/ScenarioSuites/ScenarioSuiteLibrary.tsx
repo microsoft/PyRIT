@@ -20,7 +20,12 @@ import {
   TableRow,
   Text,
 } from '@fluentui/react-components'
-import { AddRegular, ArrowSyncRegular, DeleteRegular, EditRegular } from '@fluentui/react-icons'
+import {
+  AddRegular,
+  ArrowSyncRegular,
+  DeleteRegular,
+  EditRegular,
+} from '@fluentui/react-icons'
 import { Link, useNavigate } from 'react-router'
 
 import { scenarioSuitesApi } from '@/services/api'
@@ -30,6 +35,13 @@ import type { ScenarioSuiteResponse } from '@/types'
 import { useScenarioSuiteLibraryStyles } from './ScenarioSuiteLibrary.styles'
 import { NEW_SUITE_ROUTE, suiteEditorRoutePath } from './suiteRoutes'
 
+const DEFINED_IN_CODE_HINT = 'Defined in code, so it cannot be edited or deleted here.'
+
+interface ScenarioSuiteLibraryProps {
+  /** Changes when presets change elsewhere on the page, so entry statuses are re-read. */
+  presetsRevision: number
+}
+
 function issueCount(item: ScenarioSuiteResponse): number {
   return item.entry_statuses.reduce(
     (count, status) => count + status.issues.length,
@@ -37,7 +49,8 @@ function issueCount(item: ScenarioSuiteResponse): number {
   )
 }
 
-export default function ScenarioSuiteLibrary() {
+/** Lists the saved scenario suites. Suites launch from the Scanner, not from here. */
+export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteLibraryProps) {
   const styles = useScenarioSuiteLibraryStyles()
   const navigate = useNavigate()
   const [items, setItems] = useState<ScenarioSuiteResponse[]>([])
@@ -75,7 +88,7 @@ export default function ScenarioSuiteLibrary() {
       cancelled = true
       controller.abort()
     }
-  }, [generation])
+  }, [generation, presetsRevision])
 
   const refresh = useCallback((): void => {
     setLoading(true)
@@ -108,8 +121,8 @@ export default function ScenarioSuiteLibrary() {
     >
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text id="scenario-suite-library-title" as="h1" size={600} weight="semibold">
-            Suites
+          <Text id="scenario-suite-library-title" as="h2" size={500} weight="semibold">
+            Scenario suites
           </Text>
           <Text size={300} className={styles.subtitle}>
             Ordered collections of reusable scenario preset definitions.
@@ -131,6 +144,7 @@ export default function ScenarioSuiteLibrary() {
             icon={<ArrowSyncRegular />}
             onClick={refresh}
             disabled={loading}
+            aria-label="Refresh suites"
           >
             Refresh
           </Button>
@@ -188,40 +202,48 @@ export default function ScenarioSuiteLibrary() {
             <TableBody>
               {items.map((item) => {
                 const issues = issueCount(item)
+                const editable = item.origin === 'stored'
                 return (
                   <TableRow key={item.suite.name} data-testid={`suite-row-${item.suite.name}`}>
                     <TableCell className={styles.nameCell}>
-                      <div className={styles.titleRow}>
-                        <Link to={suiteEditorRoutePath(item.suite.name)}>
-                          <Text weight="semibold">{item.suite.name}</Text>
-                        </Link>
+                      <div className={styles.nameContent}>
+                        <div className={styles.titleRow}>
+                          <Link to={suiteEditorRoutePath(item.suite.name)}>
+                            <Text weight="semibold">{item.suite.name}</Text>
+                          </Link>
+                          {issues > 0 && (
+                            <Badge appearance="tint" color="warning">
+                              Needs attention
+                            </Badge>
+                          )}
+                          {!editable && (
+                            <Badge appearance="tint" color="informative">
+                              Defined in code
+                            </Badge>
+                          )}
+                        </div>
+                        {item.suite.description && (
+                          <Text size={200} className={styles.meta}>
+                            {item.suite.description}
+                          </Text>
+                        )}
                         {issues > 0 && (
-                          <Badge appearance="tint" color="warning">
-                            Needs attention
-                          </Badge>
+                          <ul
+                            className={styles.issueList}
+                            data-testid={`suite-issues-${item.suite.name}`}
+                          >
+                            {item.entry_statuses.flatMap((entryStatus, entryIndex) => (
+                              entryStatus.issues.map((issue) => (
+                                <li key={`${entryStatus.entry_id}:${issue.field}:${issue.message}`}>
+                                  <Text size={200}>
+                                    Entry {entryIndex + 1} ({entryStatus.preset_name}): {issue.message}
+                                  </Text>
+                                </li>
+                              ))
+                            ))}
+                          </ul>
                         )}
                       </div>
-                      {item.suite.description && (
-                        <Text size={200} className={styles.meta}>
-                          {item.suite.description}
-                        </Text>
-                      )}
-                      {issues > 0 && (
-                        <ul
-                          className={styles.issueList}
-                          data-testid={`suite-issues-${item.suite.name}`}
-                        >
-                          {item.entry_statuses.flatMap((entryStatus, entryIndex) => (
-                            entryStatus.issues.map((issue) => (
-                              <li key={`${entryStatus.entry_id}:${issue.field}:${issue.message}`}>
-                                <Text size={200}>
-                                  Entry {entryIndex + 1} ({entryStatus.preset_name}): {issue.message}
-                                </Text>
-                              </li>
-                            ))
-                          ))}
-                        </ul>
-                      )}
                     </TableCell>
                     <TableCell>
                       <Text>
@@ -229,7 +251,9 @@ export default function ScenarioSuiteLibrary() {
                       </Text>
                     </TableCell>
                     <TableCell data-testid={`suite-status-${item.suite.name}`}>
-                      {issues === 0
+                      {item.suite.entries.length === 0
+                        ? <Text>Empty suite</Text>
+                        : issues === 0
                         ? <Text>No advisory issues</Text>
                         : <Text>{issues} advisory issue{issues === 1 ? '' : 's'}</Text>}
                     </TableCell>
@@ -247,12 +271,14 @@ export default function ScenarioSuiteLibrary() {
                           onClick={() => navigate(suiteEditorRoutePath(item.suite.name))}
                           data-testid={`edit-suite-${item.suite.name}`}
                         >
-                          Edit
+                          {editable ? 'Edit' : 'View'}
                         </Button>
                         <Button
                           className={styles.touchTarget}
                           appearance="subtle"
                           icon={<DeleteRegular />}
+                          disabled={!editable}
+                          title={editable ? undefined : DEFINED_IN_CODE_HINT}
                           onClick={() => {
                             setActionError(null)
                             setPendingDelete(item)

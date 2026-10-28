@@ -38,6 +38,7 @@ from pyrit.converter import (
     ImageCompressionConverter,
     QRCodeConverter,
     RepeatTokenConverter,
+    RolePlayToolCallConverter,
     ROT13Converter,
     SelectiveTextConverter,
     SuffixAppendConverter,
@@ -46,9 +47,9 @@ from pyrit.converter import (
 )
 from pyrit.converter.converter import get_converter_modalities
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, MemoryInterface
-from pyrit.models import ComponentIdentifier, PromptDataType
+from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.registry.components import ConverterRegistry
+from pyrit.registry.components import ConverterRegistry, TargetRegistry
 from unit.mocks import MockPromptTarget
 
 _TOKEN_BIJECTION_VOCAB = (
@@ -201,6 +202,82 @@ class TestListConverters:
         assert result.items[0].identifier.supported_output_types == ["text"]
         assert result.items[0].identifier.params["param1"] == "value1"
         assert result.items[0].identifier.params["param2"] == 42
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_editing_preserves_target_and_non_identity_constructor_values_async(
+    upload_service: ConverterService,
+) -> None:
+    target = MockPromptTarget()
+    with patch.object(TargetRegistry, "get_registry_singleton", return_value=TargetRegistry()):
+        TargetRegistry.get_registry_singleton().instances.register(target, name="source_chat")
+        source = TranslationConverter(
+            converter_target=target, language="French", max_retries=8, max_wait_time_in_seconds=17
+        )
+        upload_service._registry.instances.register(source, name="translation")
+        instance = await upload_service.get_converter_async(converter_id="translation")
+        assert instance is not None
+        assert instance.reconstructable
+        assert instance.identifier.converter_target == target.get_identifier()
+        assert instance.identifier.params["language"] == "french"
+        assert "max_retries" not in instance.identifier.params
+        edited = upload_service._registry.recreate_instance(
+            source=source, params={"language": "Spanish"}, external_input=True
+        )
+        inputs = edited.get_reconstruction_parameters()
+        assert inputs["converter_target"] is target
+        assert inputs["max_retries"] == 8
+        assert inputs["max_wait_time_in_seconds"] == 17
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_role_play_editor_receives_full_system_prompt_async(upload_service: ConverterService) -> None:
+    target = MockPromptTarget()
+    with patch.object(TargetRegistry, "get_registry_singleton", return_value=TargetRegistry()):
+        TargetRegistry.get_registry_singleton().instances.register(target, name="source_chat")
+        source = RolePlayToolCallConverter(
+            converter_target=target,
+            valid_call="read spec",
+            action_desired="publish report",
+        )
+        upload_service._registry.instances.register(source, name="role_play")
+        instance = await upload_service.get_converter_async(converter_id="role_play")
+        assert instance is not None
+        assert instance.reconstructable
+        prompt = instance.identifier.params["system_prompt"]
+        assert isinstance(prompt, str)
+        assert "Return only the rewritten pipeline text." in prompt
+        assert "{{ objective }}" in prompt
+        types = await upload_service.list_converter_types_async()
+        entry = next(item for item in types.items if item.converter_type == "RolePlayToolCallConverter")
+        parameter = next(item for item in entry.parameters if item.name == "system_prompt")
+        assert parameter.type_name == "str"
+        assert parameter.multiline
+        assert parameter.default == prompt
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("custom", [False, True])
+async def test_translation_editor_receives_the_effective_prompt_without_changing_identity_async(
+    upload_service: ConverterService, custom: bool
+) -> None:
+    prompt = SeedPrompt(value="Translate to {{ language }}.", parameters=["language"]) if custom else None
+    kwargs = {"prompt_template": prompt} if custom else {}
+    source = TranslationConverter(converter_target=MockPromptTarget(), language="French", **kwargs)
+    identity = source.get_identifier()
+    upload_service._registry.instances.register(source, name="translation")
+    instance = await upload_service.get_converter_async(converter_id="translation")
+    assert instance is not None
+    parameter = next(parameter for parameter in instance.parameters if parameter.name == "prompt_template")
+    expected = prompt.value if prompt is not None else TranslationConverter.DEFAULT_PROMPT_TEMPLATE.value
+    assert parameter.default == expected
+    assert parameter.multiline
+    assert instance.identifier.hash == identity.hash
+    assert source.get_identifier() == identity
+    edited = upload_service._registry.recreate_instance(
+        source=source, params={"prompt_template": "New instructions for {{ language }}."}, external_input=True
+    )
+    assert edited.system_prompt == "New instructions for French."
 
 
 class TestListConverterTypes:

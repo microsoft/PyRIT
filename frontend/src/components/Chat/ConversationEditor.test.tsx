@@ -12,6 +12,7 @@ import type { AddMessageResponse, BackendMessage, ChatConverterSnapshot, Convers
 import { toConversationDraft } from '@/utils/conversationDraft'
 
 import ConversationEditor from './ConversationEditor'
+import * as converterPanelModule from './ConverterPanel/ConverterPanel'
 
 jest.mock('@/services/api', () => ({
   attacksApi: { saveConversation: jest.fn() },
@@ -75,6 +76,28 @@ describe('ConversationEditor', () => {
     jest.mocked(attacksApi.saveConversation).mockImplementation(() => new Promise(() => {}))
     jest.mocked(convertersApi.listConverters).mockResolvedValue({ items: [] })
     jest.mocked(convertersApi.listConverterTypes).mockResolvedValue({ items: [] })
+  })
+
+  it.each([false, true])('cancels without a discard warning after unmatched conversions (empty: %s)', async (empty: boolean) => {
+    const user = userEvent.setup()
+    const panel = jest.spyOn(converterPanelModule, 'default').mockImplementation(({ onApply }: Parameters<typeof converterPanelModule.default>[0]) => (
+      <button onClick={() => onApply?.(empty ? {} : {
+        missing: {
+          pieceId: 'missing', pieceType: 'text', originalValue: 'Removed prompt',
+          convertedValue: 'Converted', convertedDataType: 'text', converterInstanceIds: ['converter'],
+        },
+      })}>Apply conversions</button>
+    ))
+    try {
+      setupEditor()
+      await user.click(within(screen.getByRole('region', { name: 'Message 1' })).getAllByRole('button', { name: 'Toggle converter panel' })[0])
+      await user.click(screen.getByRole('button', { name: 'Apply conversions' }))
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument()
+    } finally {
+      panel.mockRestore()
+    }
   })
 
   it('saves the active editor without Done and preserves piece order and source references', async () => {
