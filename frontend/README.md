@@ -73,6 +73,9 @@ fields also accept drops, including **New converter** in the chat pane.
 Drops use the same handling as **Attach files** or **Upload**. Read-only inputs
 stay read-only. Selected converter images show a small preview with **Replace**
 and **Remove**; removing an image restores the path field.
+Drops outside writable media surfaces, including unrelated portal dialogs, do
+not attach files or navigate away from the app. A converter read failure is
+reported without replacing the previous field value.
 
 ## Dataset catalog
 

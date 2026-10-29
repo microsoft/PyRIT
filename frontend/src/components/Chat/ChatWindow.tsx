@@ -2566,6 +2566,7 @@ export default function ChatWindow({
           </MessageBar>
         )}
         <ChatInputArea
+          fileDropEnabled={false}
           ref={inputBoxRef}
           undoLastSend={showUndoLastSend ? {
             disabledReason: undoDisabledReason,

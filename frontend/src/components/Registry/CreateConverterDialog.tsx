@@ -484,12 +484,19 @@ export default function CreateConverterDialog({
     const reader = new FileReader()
     reader.onload = () => {
       if (openEpochRef.current !== epoch) return
+      setError(null)
       setChangedParameters((current) => new Set([...current, parameterName]))
       setParameterValues((current) => ({
         ...current,
         [parameterName]: String(reader.result ?? ''),
       }))
     }
+    const reportReadFailure = (): void => {
+      if (openEpochRef.current !== epoch) return
+      setError({ message: `Could not read "${file.name}". Select a file you can open and try again.`, fromSubmit: false })
+    }
+    reader.onerror = reportReadFailure
+    reader.onabort = reportReadFailure
     reader.readAsDataURL(file)
   }
 

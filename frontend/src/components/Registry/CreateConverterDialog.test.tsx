@@ -286,6 +286,37 @@ describe('CreateConverterDialog', () => {
     },
   )
 
+  it.each([false, true])('should report a file read failure only in its original dialog without replacing its value (closed: %s)', async (closed: boolean) => {
+    const user = userEvent.setup()
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
+    const converter = { converter_id: 'source', identifier: { class_name: 'PathConverter', hash: 'source', source: 'original.txt' } }
+    const editing = { converter }
+    const onTemporary = jest.fn()
+    const click = jest.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined)
+    const read = jest.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(() => undefined)
+    const { rerender } = renderDialog({ editing, onTemporary })
+    await screen.findByLabelText('source *')
+    await user.click(screen.getByRole('button', { name: 'Upload' }))
+    const input = click.mock.contexts[0]
+    if (!(input instanceof HTMLInputElement)) throw new Error('File picker did not open')
+    screen.getByRole('dialog').appendChild(input)
+    await user.upload(input, new File(['unreadable'], 'unreadable.txt', { type: 'text/plain' }))
+    input.remove()
+    const reader = read.mock.contexts[0]
+    if (!(reader instanceof FileReader)) throw new Error('File read did not start')
+    if (closed) {
+      rerender(dialogTree({ open: false, editing, onTemporary }))
+      rerender(dialogTree({ open: true, editing, onTemporary }))
+      await screen.findByLabelText('source *')
+    }
+    act(() => { reader.dispatchEvent(new ProgressEvent('error')) })
+    expect(screen.getByLabelText('source *')).toHaveValue('original.txt')
+    if (closed) expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    else expect(screen.getByRole('alert')).toHaveTextContent('Could not read "unreadable.txt".')
+    expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
+    expect(onTemporary).not.toHaveBeenCalled()
+  })
+
   it('hides converter types with required parameters the form cannot configure', async () => {
     mockedConvertersApi.listConverterTypes.mockResolvedValue({
       items: [

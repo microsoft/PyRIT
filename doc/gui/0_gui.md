@@ -63,6 +63,18 @@ Use **New attack** to start a blank draft. The **History** tab
 are read-only; **Continue manually** creates a separate manual attack. Export
 a conversation when you need a transcript.
 
+Drop files onto the chat or an editable conversation prompt to attach them.
+Converter file fields also accept drops, including **New converter** in the
+chat pane. File drops use the existing attachment or **Upload** handling;
+the click controls and typed path fields remain available.
+
+A drop outside these writable surfaces, including on a dialog that has no
+file input, does not attach a file or replace the page. A file drag shows one
+drop target for the chat. Read-only and disabled inputs remain locked.
+Converter image fields show a thumbnail with **Replace** and **Remove** instead
+of an encoded image value. **Remove** restores path entry. If a converter file
+cannot be read, the dialog reports the error and keeps the previous value.
+
 ![Chat workspace with a prompt and target response](images/chat.png)
 
 ## Scanner

@@ -117,6 +117,7 @@ interface ChatInputAreaProps {
   ) => Promise<ChatSendOutcome>
   conversionRevisionKey?: string
   disabled?: boolean
+  fileDropEnabled?: boolean
   disabledReasons?: string[]
   sendDisabled?: boolean
   sendDisabledReasons?: string[]
@@ -152,7 +153,7 @@ interface ChatInputAreaProps {
 }
 
 const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({
-  onSend, conversionRevisionKey = '', disabled = false, disabledReasons = [], sendDisabled = false, sendDisabledReasons = [], activeTarget,
+  onSend, conversionRevisionKey = '', disabled = false, fileDropEnabled = true, disabledReasons = [], sendDisabled = false, sendDisabledReasons = [], activeTarget,
   operatorLocked = false, crossTargetLocked = false,
   targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, onConfigureTarget,
   onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange,
@@ -299,7 +300,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
         <>
         <div className={styles.composerTrigger}>
           <PromptEditor text={input} attachments={attachments} onInputChange={changeText} onAttachmentsChange={changeAttachments}
-            disabled={disabled} textareaRef={textareaRef} onKeyDown={handleKeyDown}
+            disabled={disabled} fileDropEnabled={fileDropEnabled} textareaRef={textareaRef} onKeyDown={handleKeyDown}
             onToggleConverterPanel={onToggleConverterPanel} isConverterPanelOpen={isConverterPanelOpen}
             undoLastSend={undoLastSend}
             convertedValue={convertedValue} onConvertedValueChange={onConvertedValueChange}

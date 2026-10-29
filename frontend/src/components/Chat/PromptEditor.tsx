@@ -15,6 +15,7 @@ interface PromptEditorProps {
   onInputChange: (value: string) => void
   onAttachmentsChange: (attachments: MessageAttachment[]) => void
   disabled?: boolean
+  fileDropEnabled?: boolean
   header?: ReactNode
   setup?: ReactNode
   warning?: ReactNode
@@ -45,7 +46,7 @@ function attachmentIcon(kind: MessageAttachment['type']): string {
 }
 
 export default function PromptEditor({
-  text, attachments, onInputChange, onAttachmentsChange, disabled = false, header, setup, warning, actions,
+  text, attachments, onInputChange, onAttachmentsChange, disabled = false, fileDropEnabled = true, header, setup, warning, actions,
   attachmentMenuItems, showTextInput = true, textareaRef: externalTextareaRef, onKeyDown,
   onToggleConverterPanel, isConverterPanelOpen, undoLastSend, convertedValue, onConvertedValueChange,
   mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip,
@@ -82,7 +83,8 @@ export default function PromptEditor({
     event.target.value = ''
   }
 
-  return <FileDropZone className={styles.inputWrapper} testId="prompt-editor" disabled={disabled} onFiles={addFiles}>
+  return <FileDropZone className={styles.inputWrapper} testId="prompt-editor" disabled={disabled}
+    enabled={fileDropEnabled} onFiles={addFiles}>
     {header && <div className={styles.editHeader}>{header}</div>}
     {setup}
     <input ref={fileInputRef} type="file" data-testid="file-input" multiple
