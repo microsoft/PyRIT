@@ -224,6 +224,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
   }) => {
     const location = useLocation();
     const draftHandoff = useChatDraftHandoff();
+    const composerSequenceRef = useRef(draftHandoff.activeSequence);
     const [composerText, setComposerText] = useState(() => draftHandoff.preservedDraft?.draft?.text ?? "none");
     const activeTextRef = useRef(composerText);
     useLayoutEffect(() => {
@@ -258,6 +259,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     }, [attackResultId, activeConversationId, conversationId, location.pathname, location.search, location.hash]);
 
     useEffect(() => {
+      const composerSequence = composerSequenceRef.current;
       return () => {
         if (activeTextRef.current && activeTextRef.current !== "none") {
           preserveDraftRef.current({
@@ -265,7 +267,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
             originatingConversationId: routeRef.current.convId,
             originatingPath: routeRef.current.path,
             draft: { text: activeTextRef.current, attachments: [] },
-          });
+          }, composerSequence);
         }
       };
     }, []);
