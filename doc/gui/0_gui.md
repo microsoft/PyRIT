@@ -212,6 +212,10 @@ Configuration is for backend administration, not per-chat settings. Administrato
 edit the PyRIT configuration and environment sources, inspect the initializer
 sequence, and manage trusted custom initializer scripts.
 
+After a save-version conflict, select **Reload from disk** and confirm
+**Discard and reload** to load the current file. Canceling or a failed read keeps
+your draft.
+
 Saving a change does not apply it to the running backend. Reinitialize PyRIT,
 when supported, or restart the backend to apply saved setup changes. This affects
 all users. See [setup](../code/setup/0_setup.md#reinitializing-a-running-backend)

@@ -1,5 +1,5 @@
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { configurationApi } from '@/services/api'
@@ -27,14 +27,32 @@ const mockedConfigurationApi = jest.mocked(configurationApi)
 
 function renderFiles(
   onUnsavedChangesChange = jest.fn(),
-): void {
-  render(
+): ReturnType<typeof render> {
+  return render(
     <FluentProvider theme={webLightTheme}>
       <EnvironmentFiles
         onUnsavedChangesChange={onUnsavedChangesChange}
       />
     </FluentProvider>,
   )
+}
+
+async function rejectEnvironmentSave(status = 409): Promise<{
+  user: ReturnType<typeof userEvent.setup>
+  editor: HTMLElement
+  rendered: ReturnType<typeof render>
+}> {
+  const user = userEvent.setup()
+  mockedConfigurationApi.updateEnvironmentFile.mockRejectedValueOnce({
+    isAxiosError: true, response: { status, data: { detail: 'Environment save failed.' } },
+  })
+  const rendered = renderFiles()
+  const editor = await screen.findByRole('textbox', { name: 'Environment file contents' })
+  expect(screen.queryByRole('button', { name: 'Reload from disk' })).not.toBeInTheDocument()
+  await user.type(editor, '# draft')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await screen.findByText('Environment save failed.')
+  return { user, editor, rendered }
 }
 
 describe('EnvironmentFiles', () => {
@@ -82,7 +100,131 @@ describe('EnvironmentFiles', () => {
 
     expect(await screen.findByText('Environment unavailable')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Dismiss notification' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reload from disk' })).not.toBeInTheDocument()
     expect(screen.queryByText('No environment sources are enabled by the configuration.')).not.toBeInTheDocument()
+  })
+
+  it.each([400, 403, 500])('should not offer disk recovery for a non-conflict save error: %s', async (status: number) => {
+    await rejectEnvironmentSave(status)
+    expect(screen.queryByRole('button', { name: 'Reload from disk' })).not.toBeInTheDocument()
+  })
+
+  it('should retain the environment draft and version when recovery is cancelled', async () => {
+    const { user, editor } = await rejectEnvironmentSave()
+    await user.click(screen.getByRole('button', { name: 'Reload from disk' }))
+    const confirmation = await screen.findByRole('dialog', { name: 'Reload from disk?' })
+    await user.click(within(confirmation).getByRole('button', { name: 'Keep editing' }))
+    await screen.findByRole('textbox', { name: 'Environment file contents' })
+    expect(editor).toHaveValue('VALUE=before\n# draft')
+    expect(mockedConfigurationApi.getEnvironmentFile).toHaveBeenCalledTimes(1)
+    mockedConfigurationApi.updateEnvironmentFile.mockResolvedValueOnce({
+      id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=before\n# draft',
+      exists: true, version: 'saved-v2',
+    })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(mockedConfigurationApi.updateEnvironmentFile).toHaveBeenLastCalledWith('0', {
+      content: 'VALUE=before\n# draft', version: 'version-1',
+    })
+  })
+
+  it('should adopt fresh environment content and version only after confirmed recovery succeeds', async () => {
+    const { user, editor } = await rejectEnvironmentSave()
+    const read = deferred<Awaited<ReturnType<typeof configurationApi.getEnvironmentFile>>>()
+    mockedConfigurationApi.getEnvironmentFile.mockReturnValueOnce(read.promise)
+    await user.click(screen.getByRole('button', { name: 'Reload from disk' }))
+    await user.click(await screen.findByRole('button', { name: 'Discard and reload' }))
+    await waitFor(() => expect(editor).toBeDisabled())
+    await advanceAutoRefresh()
+    expect(mockedConfigurationApi.getEnvironmentFile).toHaveBeenCalledTimes(2)
+    expect(mockedConfigurationApi.updateEnvironmentFile).toHaveBeenCalledTimes(1)
+    await act(async () => { read.resolve({
+      id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=disk\n',
+      exists: true, version: 'disk-v2',
+    }) })
+    await waitFor(() => expect(editor).toHaveValue('VALUE=disk\n'))
+    expect(screen.getByRole('textbox', { name: 'Environment file contents' })).toBe(editor)
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Reload from disk' })).not.toBeInTheDocument()
+    await user.type(editor, '# edit')
+    mockedConfigurationApi.updateEnvironmentFile.mockResolvedValueOnce({
+      id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=disk\n# edit',
+      exists: true, version: 'saved-v3',
+    })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(mockedConfigurationApi.updateEnvironmentFile).toHaveBeenLastCalledWith('0', {
+      content: 'VALUE=disk\n# edit', version: 'disk-v2',
+    })
+  })
+
+  it('should retain the environment draft and version when a confirmed recovery read fails', async () => {
+    const { user, editor } = await rejectEnvironmentSave()
+    mockedConfigurationApi.getEnvironmentFile.mockRejectedValueOnce(new Error('Recovery read failed.'))
+    await user.click(screen.getByRole('button', { name: 'Reload from disk' }))
+    await user.click(await screen.findByRole('button', { name: 'Discard and reload' }))
+    expect(await screen.findByText('Recovery read failed.')).toBeInTheDocument()
+    expect(editor).toHaveValue('VALUE=before\n# draft')
+    expect(screen.getByRole('button', { name: 'Reload from disk' })).toBeEnabled()
+    mockedConfigurationApi.updateEnvironmentFile.mockResolvedValueOnce({
+      id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=before\n# draft',
+      exists: true, version: 'saved-v2',
+    })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(mockedConfigurationApi.updateEnvironmentFile).toHaveBeenLastCalledWith('0', {
+      content: 'VALUE=before\n# draft', version: 'version-1',
+    })
+  })
+
+  it('should scope conflict recovery to its file and preserve another file draft', async () => {
+    mockedConfigurationApi.listEnvironmentFiles.mockResolvedValue({ items: [
+      { id: '0', name: '.env', path: 'C:/config/.env', content: '', exists: true },
+      { id: '1', name: '.env.local', path: 'C:/config/.env.local', content: '', exists: true },
+    ] })
+    mockedConfigurationApi.getEnvironmentFile.mockImplementation(async (id: string) => ({
+      id, name: id === '0' ? '.env' : '.env.local', path: `C:/config/${id}`,
+      content: 'VALUE=before\n', exists: true, version: 'version-1',
+    }))
+    const { user } = await rejectEnvironmentSave()
+    await user.click(screen.getByRole('button', { name: /^\.env\.local/ }))
+    const otherEditor = await screen.findByRole('textbox', { name: 'Environment file contents' })
+    await user.type(otherEditor, '# other draft')
+    expect(screen.queryByRole('button', { name: 'Reload from disk' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '.env', exact: true }))
+    await screen.findByRole('textbox', { name: 'Environment file contents' })
+    mockedConfigurationApi.getEnvironmentFile.mockResolvedValueOnce({
+      id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=disk\n',
+      exists: true, version: 'disk-v2',
+    })
+    await user.click(screen.getByRole('button', { name: 'Reload from disk' }))
+    await user.click(await screen.findByRole('button', { name: 'Discard and reload' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Environment file contents' })).toHaveValue('VALUE=disk\n'))
+    await user.click(screen.getByRole('button', { name: /^\.env\.local/ }))
+    expect(await screen.findByRole('textbox', { name: 'Environment file contents' })).toHaveValue('VALUE=before\n# other draft')
+  })
+
+  it('should ignore a recovery response from a replaced runtime and keep the draft version', async () => {
+    const { user, editor, rendered } = await rejectEnvironmentSave()
+    const read = deferred<Awaited<ReturnType<typeof configurationApi.getEnvironmentFile>>>()
+    mockedConfigurationApi.getEnvironmentFile.mockReturnValueOnce(read.promise)
+    await user.click(screen.getByRole('button', { name: 'Reload from disk' }))
+    await user.click(await screen.findByRole('button', { name: 'Discard and reload' }))
+    await waitFor(() => expect(mockedConfigurationApi.getEnvironmentFile).toHaveBeenCalledTimes(2))
+    mockGeneration = 'second'
+    rendered.rerender(<FluentProvider theme={webLightTheme}>
+      <EnvironmentFiles onUnsavedChangesChange={jest.fn()} />
+    </FluentProvider>)
+    await act(async () => { read.resolve({
+      id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=old-runtime\n',
+      exists: true, version: 'old-runtime-version',
+    }) })
+    expect(editor).toHaveValue('VALUE=before\n# draft')
+    mockedConfigurationApi.updateEnvironmentFile.mockResolvedValueOnce({
+      id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=before\n# draft',
+      exists: true, version: 'saved-v2',
+    })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(mockedConfigurationApi.updateEnvironmentFile).toHaveBeenLastCalledWith('0', {
+      content: 'VALUE=before\n# draft', version: 'version-1',
+    })
   })
 
   it('should recover a failed selected-file read on the next automatic check', async () => {
@@ -93,6 +235,15 @@ describe('EnvironmentFiles', () => {
     await advanceAutoRefresh()
     expect(await screen.findByRole('textbox', { name: 'Environment file contents' })).toHaveValue('VALUE=before\n')
     expect(screen.queryByText('File unavailable')).not.toBeInTheDocument()
+  })
+
+  it('should not expose conflict recovery for a failed environment read with HTTP 409', async () => {
+    mockedConfigurationApi.getEnvironmentFile.mockRejectedValueOnce({
+      isAxiosError: true, response: { status: 409, data: { detail: 'Environment read conflict.' } },
+    })
+    renderFiles()
+    expect(await screen.findByText('Environment read conflict.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reload from disk' })).not.toBeInTheDocument()
   })
 
   it('should disable editing for an inline deployment-secret source', async () => {
