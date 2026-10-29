@@ -49,12 +49,10 @@ export function createTourSteps({
       viewRequired: 'home',
     },
     {
-      target: '[data-tour="target-card"]',
-      content: hasActiveTarget
-        ? 'This card shows your last-used objective target for new chats and scanner runs. Use Manage targets ' +
-          'to register targets or change your adversarial default in the Target Registry.'
-        : 'Targets are the AI endpoints you test. Select a target from the Chat dropdown, or use the Target Registry ' +
-          'to register targets and set an adversarial default for your account in this browser.',
+      target: '[data-tour="home-workflows"]',
+      content:
+        'Use New attack to start a conversation, or Configure scan to choose an automated evaluation. ' +
+        'Each workflow has its own history. Recent work and saved operations are below.',
       placement: 'bottom',
       skipBeacon: true,
       viewRequired: 'home',

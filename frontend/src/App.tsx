@@ -898,10 +898,11 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 path="/"
                 element={
                   <Home
-                    activeTarget={targetDefaults.objectiveTarget}
                     onNavigate={handleNavigate}
+                    onNewAttack={handleNewAttack}
                     onOpenAttack={handleOpenAttack}
-                    onOpenHistory={() => navigate(HISTORY_ATTACKS_PATH + lastHistorySearch.current)}
+                    onOpenAttackHistory={() => navigate(HISTORY_ATTACKS_PATH + lastHistorySearch.current)}
+                    onOpenScannerHistory={() => navigate(HISTORY_SCANNER_PATH + lastScenarioHistorySearch.current)}
                   />
                 }
               />

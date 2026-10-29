@@ -1,283 +1,312 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
+import { useNavigate } from 'react-router'
 import {
   Badge,
   Button,
   MessageBar,
   MessageBarBody,
   Spinner,
+  Tab,
+  TabList,
   Text,
 } from '@fluentui/react-components'
+import type { BadgeProps } from '@fluentui/react-components'
 import {
+  AddRegular,
+  ArrowClockwiseRegular,
   ArrowRightRegular,
-  TagMultipleRegular,
+  BriefcaseRegular,
+  ChatRegular,
+  ChevronRightRegular,
+  HistoryRegular,
+  ScriptRegular,
   TargetRegular,
 } from '@fluentui/react-icons'
-import { attacksApi } from '../../services/api'
-import { toApiError } from '../../services/errors'
-import { OutcomeIcon } from '@/components/OutcomeBadge'
-import type { AttackSummary, TargetInstance } from '../../types'
-import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
-import type { ViewName } from '../Sidebar/Navigation'
+
+import OutcomeBadge from '@/components/OutcomeBadge'
+import type { ViewName } from '@/components/Sidebar/Navigation'
+import { useRuntime } from '@/hooks/useRuntime'
+import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
+import { toApiError } from '@/services/errors'
+import type { AttackOutcome, AttackSummary, OperationListItem, ScenarioRunListItem, ScenarioRunState } from '@/types'
+import { scenarioRunRoutePath } from '@/utils/routeParams'
+
 import { useHomeStyles } from './Home.styles'
 
-const RECENT_ATTACKS_LIMIT = 50
-const MAX_OPERATIONS = 5
-const MAX_ATTACKS_PER_OPERATION = 3
-const NO_OPERATION_KEY = '__no_operation__'
+const RECENT_WORK_LIMIT = 5
+const VISIBLE_OPERATIONS_LIMIT = 3
+const ATTACK_OUTCOME_LABELS: Record<AttackOutcome, string> = {
+  success: 'Objective achieved', failure: 'Not achieved', error: 'Error', undetermined: 'Undetermined',
+}
+const SCAN_STATUS_LABELS: Record<ScenarioRunState, string> = {
+  CREATED: 'Created', QUEUED: 'Queued', IN_PROGRESS: 'Executing',
+  COMPLETED: 'Completed', FAILED: 'Failed', CANCELLED: 'Cancelled',
+}
+const SCAN_STATUS_COLORS: Record<ScenarioRunState, BadgeProps['color']> = {
+  CREATED: 'informative', QUEUED: 'informative', IN_PROGRESS: 'brand',
+  COMPLETED: 'success', FAILED: 'danger', CANCELLED: 'warning',
+}
 
 interface HomeProps {
-  activeTarget: TargetInstance | null
-  onNavigate: (view: ViewName) => void
-  onOpenAttack: (attackResultId: string) => void
-  onOpenHistory: () => void
+  readonly onNavigate: (view: ViewName) => void
+  readonly onNewAttack: () => void
+  readonly onOpenAttack: (attackResultId: string) => void
+  readonly onOpenAttackHistory: () => void
+  readonly onOpenScannerHistory: () => void
 }
 
-interface OperationGroup {
-  key: string
-  name: string
-  isUnlabeled: boolean
-  attacks: AttackSummary[]
-  lastActivity: number
+interface LoadedSummaries<T> {
+  readonly key: string
+  readonly items: T[]
+  readonly error: string | null
 }
 
-function groupAttacksByOperation(attacks: AttackSummary[]): OperationGroup[] {
-  const groups = new Map<string, OperationGroup>()
-
-  for (const attack of attacks) {
-    const opLabel = attack.operation_name
-    const isUnlabeled = !opLabel
-    // Saved Operations group by ID so a rename cannot split them; legacy activity groups by its stored name.
-    const key = isUnlabeled ? NO_OPERATION_KEY : attack.operation_id ? `id:${attack.operation_id}` : `name:${opLabel}`
-    const updatedAt = new Date(attack.updated_at).getTime()
-
-    const existing = groups.get(key)
-    if (existing) {
-      existing.attacks.push(attack)
-      if (updatedAt > existing.lastActivity) {
-        existing.lastActivity = updatedAt
-      }
-    } else {
-      groups.set(key, {
-        key,
-        name: isUnlabeled ? '(no operation)' : opLabel,
-        isUnlabeled,
-        attacks: [attack],
-        lastActivity: updatedAt,
-      })
-    }
-  }
-
-  return Array.from(groups.values()).sort((a, b) => b.lastActivity - a.lastActivity)
+interface RecentItem {
+  readonly id: string
+  readonly kind: 'Attack' | 'Scan'
+  readonly title: string
+  readonly operationName?: string | null
+  readonly updatedAt: string
+  readonly badge: ReactNode
+  readonly open: () => void
 }
 
-function formatRelativeTime(iso: string): string {
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return ''
-  const diffMs = Date.now() - then
-  const seconds = Math.round(diffMs / 1000)
-  if (seconds < 60) return 'just now'
-  const minutes = Math.round(seconds / 60)
+type RecentFilter = 'all' | 'attacks' | 'scans'
+
+function activityTime(timestamp: string): number {
+  const parsed = Date.parse(timestamp)
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+function formatRelativeTime(timestamp: string): string {
+  const parsed = Date.parse(timestamp)
+  if (Number.isNaN(parsed)) return 'Time unavailable'
+  const minutes = Math.floor(Math.max(0, Date.now() - parsed) / 60_000)
+  if (minutes < 1) return 'Just now'
   if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.round(minutes / 60)
+  const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours}h ago`
-  const days = Math.round(hours / 24)
+  const days = Math.floor(hours / 24)
   if (days < 7) return `${days}d ago`
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
-
-function targetDisplayName(target: TargetInstance): string {
-  return targetModelName(target) || target.target_registry_name || targetType(target)
+  return new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
 export default function Home({
-  activeTarget,
-  onNavigate,
-  onOpenAttack,
-  onOpenHistory,
+  onNavigate, onNewAttack, onOpenAttack, onOpenAttackHistory, onOpenScannerHistory,
 }: HomeProps) {
   const styles = useHomeStyles()
-  const [attacks, setAttacks] = useState<AttackSummary[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const navigate = useNavigate()
+  const { generation, ready } = useRuntime()
+  const [filter, setFilter] = useState<RecentFilter>('all')
+  const [revision, setRevision] = useState(0)
+  const [attackResult, setAttackResult] = useState<LoadedSummaries<AttackSummary> | null>(null)
+  const [scanResult, setScanResult] = useState<LoadedSummaries<ScenarioRunListItem> | null>(null)
+  const [operationResult, setOperationResult] = useState<LoadedSummaries<OperationListItem> | null>(null)
+  const requestKey = `${generation}:${revision}`
 
   useEffect(() => {
+    if (!ready) return
     let ignore = false
-    attacksApi
-      .listAttacks({ limit: RECENT_ATTACKS_LIMIT })
-      .then(resp => {
-        if (ignore) return
-        setAttacks(resp.items.map(item => ({ ...item, labels: item.labels ?? {} })))
-        setError(null)
+    const load = <T,>(
+      request: Promise<{ items: T[] }>,
+      commit: (result: LoadedSummaries<T>) => void,
+    ): void => {
+      request.then((response: { items: T[] }) => {
+        if (!ignore) commit({ key: requestKey, items: response.items, error: null })
+      }).catch((cause: unknown) => {
+        if (!ignore) commit({ key: requestKey, items: [], error: toApiError(cause).detail })
       })
-      .catch(err => {
-        if (ignore) return
-        setAttacks([])
-        setError(toApiError(err).detail)
-      })
-      .finally(() => {
-        if (!ignore) setLoading(false)
-      })
+    }
+    load(attacksApi.listAttacks({ limit: RECENT_WORK_LIMIT, include_scenario_attacks: false }), setAttackResult)
+    load(scenariosApi.listRuns({ limit: RECENT_WORK_LIMIT }), setScanResult)
+    load(operationsApi.list(), setOperationResult)
     return () => { ignore = true }
-  }, [])
+  }, [requestKey, ready])
 
-  const operations = useMemo(
-    () => groupAttacksByOperation(attacks).slice(0, MAX_OPERATIONS),
-    [attacks],
-  )
+  const attacksLoading = !ready || attackResult?.key !== requestKey
+  const scansLoading = !ready || scanResult?.key !== requestKey
+  const operationsLoading = !ready || operationResult?.key !== requestKey
+  const attacks = !attacksLoading && attackResult ? attackResult.items : []
+  const scans = !scansLoading && scanResult ? scanResult.items : []
+  const operations = !operationsLoading && operationResult
+    ? operationResult.items.slice(0, VISIBLE_OPERATIONS_LIMIT) : []
+  const recentLoading = (filter !== 'scans' && attacksLoading) || (filter !== 'attacks' && scansLoading)
+  const recentErrors = [
+    filter !== 'scans' && !attacksLoading && attackResult?.error
+      ? `Could not load recent attacks: ${attackResult.error}` : null,
+    filter !== 'attacks' && !scansLoading && scanResult?.error
+      ? `Could not load recent scans: ${scanResult.error}` : null,
+  ].filter((error: string | null): error is string => error !== null)
+  const operationsError = !operationsLoading ? operationResult?.error : null
+  const recent: RecentItem[] = [
+    ...attacks.map((attack: AttackSummary): RecentItem => ({
+      id: attack.attack_result_id,
+      kind: 'Attack',
+      title: attack.objective || attack.last_message_preview || attack.attack_type,
+      operationName: attack.operation_name,
+      updatedAt: attack.updated_at,
+      badge: <OutcomeBadge outcome={attack.outcome} appearance="tint"
+        label={ATTACK_OUTCOME_LABELS[attack.outcome ?? 'undetermined']} />,
+      open: () => { onOpenAttack(attack.attack_result_id) },
+    })),
+    ...scans.map((scan: ScenarioRunListItem): RecentItem => ({
+      id: scan.scenario_result_id,
+      kind: 'Scan',
+      title: scan.scenario_registry_name || scan.scenario_name,
+      operationName: scan.operation_name,
+      updatedAt: scan.updated_at,
+      badge: <Badge appearance="tint" color={SCAN_STATUS_COLORS[scan.status]}>{SCAN_STATUS_LABELS[scan.status]}</Badge>,
+      open: () => { void navigate(scenarioRunRoutePath(scan.scenario_result_id)) },
+    })),
+  ].filter((item: RecentItem) => filter === 'all' || (filter === 'attacks' ? item.kind === 'Attack' : item.kind === 'Scan'))
+    .sort((first: RecentItem, second: RecentItem) => activityTime(second.updatedAt) - activityTime(first.updatedAt))
+    .slice(0, RECENT_WORK_LIMIT)
+  const refresh = (): void => { setRevision((value: number) => value + 1) }
 
   return (
     <div className={styles.root} data-testid="home-view">
       <div className={styles.container}>
-        <div className={styles.hero}>
-          <Text as="h1" size={700} weight="semibold" className={styles.heroTitle}>
-            Welcome to Co-PyRIT
-          </Text>
-          <Text size={300} className={styles.heroSubtitle}>
-            Set your labels, pick a target, and start a new attack — or jump back into a recent operation.
-          </Text>
-        </div>
-
-        <div className={styles.setupGrid}>
-          <section className={styles.card} data-testid="home-labels-card">
-            <div className={styles.cardHeader}>
-              <span className={styles.cardIcon}><TagMultipleRegular /></span>
-              <Text as="h2" size={500} weight="semibold">Labels</Text>
-            </div>
-            <div className={styles.cardBody}>
-              <Text size={200} className={styles.heroSubtitle}>
-                Use the bar above to set your <strong>operator</strong>,
-                {' '}<strong>operation</strong>, and other labels before starting an attack or scan.
-                Your choices stay with you as you navigate. Existing runs keep their original labels.
-              </Text>
-            </div>
-          </section>
-
-          <section className={styles.card} data-testid="home-target-card" data-tour="target-card">
-            <div className={styles.cardHeader}>
-              <span className={styles.cardIcon}><TargetRegular /></span>
-              <Text as="h2" size={500} weight="semibold">Default objective target</Text>
-            </div>
-            <div className={styles.cardBody}>
-              {activeTarget ? (
-                <div className={styles.targetSummary} data-testid="home-target-active">
-                  <Text className={styles.targetName}>{targetDisplayName(activeTarget)}</Text>
-                  <Text size={200} className={styles.targetMeta}>
-                    {targetType(activeTarget)}
-                    {targetEndpoint(activeTarget) ? ` · ${targetEndpoint(activeTarget)}` : ''}
-                  </Text>
-                </div>
-              ) : (
-                <Text size={300} className={styles.emptyHint} data-testid="home-target-empty">
-                  No default objective target selected. Choose a target in Chat or set a default in the registry.
-                </Text>
-              )}
-            </div>
-            <div className={styles.cardFooter}>
-              <Button
-                className={styles.touchTarget}
-                appearance="primary"
-                icon={<ArrowRightRegular />}
-                iconPosition="after"
-                onClick={() => onNavigate('registry')}
-                data-testid="home-configure-target-btn"
-              >
-                {activeTarget ? 'Manage targets' : 'Configure a target'}
-              </Button>
-            </div>
-          </section>
-        </div>
-
-        <section data-testid="home-recent-operations">
-          <div className={styles.sectionHeader}>
-            <Text as="h2" size={500} weight="semibold">Recent operations</Text>
-            <Button
-              className={styles.touchTarget}
-              appearance="subtle"
-              icon={<ArrowRightRegular />}
-              iconPosition="after"
-              onClick={onOpenHistory}
-              data-testid="home-view-all-history-btn"
-            >
-              View all history
-            </Button>
+        <header className={styles.sectionHeader}>
+          <div className={styles.hero}>
+            <Text as="h1" size={800} weight="semibold" className={styles.heroTitle}>Home</Text>
+            <Text size={400} className={styles.secondary}>
+              Start an attack, configure a scan, or return to recent work.
+            </Text>
           </div>
+          <Button appearance="subtle" icon={<ArrowClockwiseRegular />} onClick={refresh} className={styles.touchTarget}>
+            Refresh Home
+          </Button>
+        </header>
 
-          {loading ? (
-            <div className={styles.loadingState} data-testid="home-loading">
-              <Spinner size="medium" label="Loading recent operations..." />
+        <div className={styles.workflowGrid} data-tour="home-workflows">
+          <section className={styles.workflowCard} aria-labelledby="home-attacks-title">
+            <div className={styles.workflowHeading}>
+              <span className={styles.workflowIcon} aria-hidden="true"><ChatRegular /></span>
+              <Text as="h2" id="home-attacks-title" size={600} weight="semibold">Attacks</Text>
             </div>
-          ) : error ? (
-            <MessageBar intent="error" data-testid="home-error">
-              <MessageBarBody>{error}</MessageBarBody>
-            </MessageBar>
-          ) : operations.length === 0 ? (
-            <div className={styles.emptyOperations} data-testid="home-empty">
-              <Text size={400}>No attacks yet</Text>
-              <Text size={200}>
-                Select a target and start a new attack from the Chat tab.
-              </Text>
-              <Button
-                className={styles.touchTarget}
-                appearance="primary"
-                onClick={() => onNavigate('chat')}
-                data-testid="home-start-attack-btn"
-              >
-                Go to chat
+            <Text className={styles.secondary}>Explore a target through a conversation. Try prompts and review responses.</Text>
+            <div className={styles.cardActions}>
+              <Button appearance="primary" icon={<AddRegular />} onClick={onNewAttack} className={styles.touchTarget}>
+                New attack
               </Button>
+              <Button appearance="subtle" icon={<ArrowRightRegular />} iconPosition="after"
+                onClick={onOpenAttackHistory} className={styles.touchTarget}>Attack history</Button>
             </div>
-          ) : (
-            <div className={styles.operationsGrid}>
-              {operations.map(op => {
-                const visibleAttacks = op.attacks.slice(0, MAX_ATTACKS_PER_OPERATION)
-                const hiddenCount = op.attacks.length - visibleAttacks.length
-                return (
-                  <div
-                    key={op.key}
-                    className={styles.operationCard}
-                    data-testid={`home-operation-${op.isUnlabeled ? 'unlabeled' : op.name}`}
-                  >
-                    <div className={styles.operationHeader}>
-                      <Text as="h3" size={400} className={styles.operationName} title={op.name}>
-                        {op.name}
-                      </Text>
-                      <Badge appearance="tint" size="small">
-                        {op.attacks.length} {op.attacks.length === 1 ? 'attack' : 'attacks'}
-                      </Badge>
-                    </div>
-                    <Text size={200} className={styles.operationMeta}>
-                      Last activity {formatRelativeTime(new Date(op.lastActivity).toISOString())}
-                    </Text>
-                    <div className={styles.attackList}>
-                      {visibleAttacks.map(attack => (
-                        <button
-                          key={attack.attack_result_id}
-                          type="button"
-                          className={styles.attackRow}
-                          onClick={() => onOpenAttack(attack.attack_result_id)}
-                          data-testid={`home-open-attack-${attack.attack_result_id}`}
-                          title={attack.last_message_preview || attack.attack_type}
-                        >
-                          <OutcomeIcon outcome={attack.outcome} />
-                          <Text size={200} className={styles.attackPreview}>
-                            {attack.last_message_preview || attack.attack_type}
-                          </Text>
-                          <Text className={styles.attackTimestamp}>
-                            {formatRelativeTime(attack.updated_at)}
-                          </Text>
-                        </button>
-                      ))}
-                      {hiddenCount > 0 && (
-                        <Text size={200} className={styles.operationMeta}>
-                          +{hiddenCount} more in history
-                        </Text>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
+          </section>
+          <section className={styles.workflowCard} aria-labelledby="home-scans-title">
+            <div className={styles.workflowHeading}>
+              <span className={styles.workflowIcon} aria-hidden="true"><TargetRegular /></span>
+              <Text as="h2" id="home-scans-title" size={600} weight="semibold">Scans</Text>
+            </div>
+            <Text className={styles.secondary}>Evaluate targets with automated attack techniques and datasets.</Text>
+            <div className={styles.cardActions}>
+              <Button appearance="secondary" icon={<AddRegular />} className={styles.touchTarget}
+                onClick={() => { onNavigate('scenarios') }}>Configure scan</Button>
+              <Button appearance="subtle" icon={<ArrowRightRegular />} iconPosition="after"
+                onClick={onOpenScannerHistory} className={styles.touchTarget}>Scan history</Button>
+            </div>
+          </section>
+        </div>
+
+        <section aria-labelledby="home-recent-title" aria-busy={recentLoading}>
+          <div className={styles.sectionHeader}>
+            <Text as="h2" id="home-recent-title" size={500} weight="semibold">Recent work</Text>
+            <TabList size="small" selectedValue={filter} aria-label="Recent work type"
+              onTabSelect={(_, data) => {
+                if (data.value === 'all' || data.value === 'attacks' || data.value === 'scans') setFilter(data.value)
+              }}>
+              <Tab value="all" className={styles.touchTarget}>All</Tab>
+              <Tab value="attacks" className={styles.touchTarget}>Attacks</Tab>
+              <Tab value="scans" className={styles.touchTarget}>Scans</Tab>
+            </TabList>
+          </div>
+          {recentErrors.map((error: string) => (
+            <MessageBar key={error} intent="error"><MessageBarBody>
+              {error} <Button onClick={refresh} className={styles.touchTarget}>Retry recent work</Button>
+            </MessageBarBody></MessageBar>
+          ))}
+          {recentLoading && <Spinner size="small" label="Loading recent work..." />}
+          {recent.length > 0 && (
+            <ul className={styles.recentList}>
+              {recent.map((item: RecentItem) => (
+                <li key={`${item.kind}:${item.id}`}>
+                  <button type="button" className={styles.recentRow} onClick={item.open}
+                    title={item.title} data-testid={`home-open-${item.kind.toLowerCase()}-${item.id}`}>
+                    <span className={styles.rowIcon} aria-hidden="true">
+                      {item.kind === 'Attack' ? <ChatRegular /> : <TargetRegular />}
+                    </span>
+                    <span className={styles.rowContent}>
+                      <Text weight="semibold" className={styles.rowTitle}>{item.title}</Text>
+                      <span className={styles.rowMeta}>
+                        <Text size={200}>{item.kind}</Text>
+                        {item.operationName && <><span aria-hidden="true">·</span><Text size={200}>{item.operationName}</Text></>}
+                      </span>
+                    </span>
+                    <span className={styles.status}>{item.badge}</span>
+                    <time dateTime={item.updatedAt} className={styles.timestamp}>
+                      {formatRelativeTime(item.updatedAt)}
+                    </time>
+                    <ChevronRightRegular className={styles.rowChevron} aria-hidden="true" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {!recentLoading && recentErrors.length === 0 && recent.length === 0 && (
+            <div className={styles.emptyState}>
+              <HistoryRegular className={styles.emptyIcon} aria-hidden="true" />
+              <Text size={400} weight="semibold">
+                {filter === 'all' ? 'Your recent work will appear here' : filter === 'attacks' ? 'No recent attacks' : 'No recent scans'}
+              </Text>
+              <Text className={styles.secondary}>Start with an attack or configure a scan above.</Text>
             </div>
           )}
         </section>
+
+        <section aria-labelledby="home-operations-title" aria-busy={operationsLoading}>
+          <div className={styles.sectionHeader}>
+            <Text as="h2" id="home-operations-title" size={500} weight="semibold">Operations</Text>
+            <Button appearance="subtle" icon={<ArrowRightRegular />} iconPosition="after" className={styles.touchTarget}
+              onClick={() => { onNavigate('operations') }}>View operations</Button>
+          </div>
+          {operationsLoading ? <Spinner size="small" label="Loading operations..." /> : operationsError ? (
+            <MessageBar intent="error"><MessageBarBody>
+              Could not load operations: {operationsError}{' '}
+              <Button onClick={refresh} className={styles.touchTarget}>Retry operations</Button>
+            </MessageBarBody></MessageBar>
+          ) : operations.length > 0 ? (
+            <div className={styles.operationsGrid}>
+              {operations.map((operation: OperationListItem) => (
+                <button key={operation.id} type="button" className={styles.operationCard} title={operation.name}
+                  onClick={() => { void navigate(`/operations/${encodeURIComponent(operation.id)}`) }}>
+                  <BriefcaseRegular className={styles.rowIcon} aria-hidden="true" />
+                  <span className={styles.rowContent}>
+                    <Text weight="semibold" className={styles.rowTitle}>{operation.name}</Text>
+                    {operation.description && <Text size={200} className={styles.operationDescription}>{operation.description}</Text>}
+                  </span>
+                  <ChevronRightRegular className={styles.rowChevron} aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className={styles.emptyOperations}>
+              <BriefcaseRegular className={styles.rowIcon} aria-hidden="true" />
+              <div className={styles.rowContent}>
+                <Text weight="semibold">Keep related work together</Text>
+                <Text size={200} className={styles.secondary}>Use operations to organize attacks, scans, and findings.</Text>
+              </div>
+              <Button onClick={() => { onNavigate('operations') }} className={styles.touchTarget}>Open operations</Button>
+            </div>
+          )}
+        </section>
+
+        <footer className={styles.setupFooter}>
+          <ScriptRegular aria-hidden="true" />
+          <Text size={200} className={styles.secondary}>Need to set up a target or technique?</Text>
+          <Button size="small" appearance="subtle" icon={<ArrowRightRegular />} iconPosition="after" className={styles.touchTarget}
+            onClick={() => { onNavigate('registry') }}>Open Registry</Button>
+        </footer>
       </div>
     </div>
   )

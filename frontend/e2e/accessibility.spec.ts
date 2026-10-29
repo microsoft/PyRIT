@@ -315,7 +315,7 @@ test.describe("Accessibility", () => {
 
     await expect(navigation).toHaveCount(1);
     await expect(
-      page.getByRole("heading", { level: 1, name: "Welcome to Co-PyRIT" })
+      page.getByRole("heading", { level: 1, name: "Home", exact: true })
     ).toBeVisible();
     await expect(navigation.getByRole("button", { name: "Home" })).toHaveAttribute(
       "aria-current",

@@ -520,14 +520,7 @@ test.describe("Mobile touch targets", () => {
     await expect(page.getByTestId("home-view")).toBeVisible();
 
     await expectMinimumTouchTargets(
-      page.getByTestId("home-view").locator(
-        [
-          '[data-testid="labels-icon-btn"]',
-          '[data-testid="home-configure-target-btn"]',
-          '[data-testid="home-view-all-history-btn"]',
-          '[data-testid="home-open-attack-home-attack-001"]',
-        ].join(",")
-      )
+      page.getByTestId("home-view").locator("button")
     );
     await expectMinimumTouchTarget(
       page.getByRole("button", { name: "Home", exact: true })

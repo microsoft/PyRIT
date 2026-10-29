@@ -447,17 +447,19 @@ jest.mock("./components/History/AttackHistory", () => {
 
 jest.mock("./components/Home/Home", () => {
   const MockHome = ({
-    activeTarget,
     onNavigate,
+    onNewAttack,
     onOpenAttack,
   }: {
-    activeTarget: unknown;
     onNavigate: (view: string) => void;
+    onNewAttack: () => void;
     onOpenAttack: (attackResultId: string) => void;
   }) => {
     return (
       <div data-testid="home-view">
-        <span data-testid="home-has-target">{activeTarget ? "yes" : "no"}</span>
+        <button onClick={onNewAttack} data-testid="home-new-attack">
+          New attack
+        </button>
         <button onClick={() => onNavigate("registry")} data-testid="home-go-config">
           Go to registry
         </button>
@@ -1324,6 +1326,20 @@ describe("App", () => {
       "registry"
     );
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
+  });
+
+  it("returns to the unsent draft through navigation but resets it through Home New attack", async () => {
+    const user = userEvent.setup();
+    renderApp("/attack/chat");
+    await user.click(await screen.findByTestId("preserve-draft"));
+    await user.click(screen.getByTestId("nav-home"));
+    await screen.findByTestId("home-view");
+    await user.click(screen.getByTestId("nav-chat"));
+    expect(await screen.findByTestId("preserved-draft-text")).toHaveTextContent("preserved prompt draft");
+    await user.click(screen.getByTestId("nav-home"));
+    await user.click(await screen.findByTestId("home-new-attack"));
+    expect(await screen.findByTestId("preserved-draft-text")).toHaveTextContent("none");
+    expect(screen.getByTestId("attack-result-id")).toHaveTextContent("none");
   });
 
   it("shows the not-found UX when an attack returns 404", async () => {
