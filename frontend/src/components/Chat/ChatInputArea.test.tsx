@@ -69,6 +69,25 @@ describe("ChatInputArea", () => {
     expect(defaultProps.onSend).not.toHaveBeenCalled();
   });
 
+  it.each(["picker", "drop"])("should preserve broad %s ingestion and the existing target checks without enforcing chooser hints", async (method: string) => {
+    // Model a chooser's All files override, not a new application allowlist.
+    const user = userEvent.setup({ applyAccept: false });
+    const file = new File(["value"], "sample.csv", { type: "text/csv" });
+    render(<TestWrapper><ChatInputArea {...defaultProps} activeTarget={makeTarget({
+      capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
+    })} /></TestWrapper>);
+    const picker = screen.getByTestId("file-input");
+    expect(picker).toHaveAttribute("accept", "image/*,audio/*,video/*,.pdf,.doc,.docx,.txt");
+    if (method === "picker") await user.upload(picker, file);
+    else fireEvent.drop(screen.getByTestId("prompt-editor"), { dataTransfer: { types: ["Files"], files: [file] } });
+    expect(defaultProps.onAttachmentsChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ file, name: "sample.csv", type: "file", mimeType: "text/csv", size: 5 }),
+    ]);
+    expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent("This target does not support file attachments. Remove them to send.");
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
+  });
+
   it("should render input area and send button", () => {
     render(
       <TestWrapper>

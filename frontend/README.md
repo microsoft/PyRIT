@@ -71,7 +71,10 @@ the source conversation. New outgoing turns are always converted.
 Drop files onto the chat or an editable prompt to attach them. Converter file
 fields also accept drops, including **New converter** in the chat pane.
 Drops use the same handling as **Attach files** or **Upload**. Read-only inputs
-stay read-only. Newly selected converter files show their actual name and size
+stay read-only. The attachment chooser's file-type filter is a browser hint,
+not an application-enforced allowlist. Existing reading and target/component
+checks still apply to both entry methods.
+Newly selected converter files show their actual name and size
 with **Replace** and **Remove**. Image previews use the existing safe display
 rules. Existing encoded values use a generic label when file details are
 unknown; manually typed or pasted values stay editable. **Remove** restores

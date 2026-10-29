@@ -67,6 +67,10 @@ Drop files onto the chat or an editable conversation prompt to attach them.
 Converter file fields also accept drops, including **New converter** in the
 chat pane. File drops use the existing attachment or **Upload** handling;
 the click controls and typed path fields remain available.
+The attachment chooser's file-type filter is browser guidance, not an
+application-enforced allowlist. Both entry paths keep the existing read and
+configured-component checks. A file in the draft is not a guarantee that the
+selected target can use it.
 
 A drop outside these writable surfaces, including on a dialog that has no
 file input, does not attach a file or replace the page. A file drag shows one
