@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Button, FluentProvider, Input, webLightTheme } from '@fluentui/react-components'
+import { Button, FluentProvider, Input, Popover, PopoverSurface, PopoverTrigger, webLightTheme } from '@fluentui/react-components'
 
 import HelpField from './HelpField'
 
@@ -21,7 +21,7 @@ function ExampleField() {
 describe('HelpField', () => {
   beforeEach(() => jest.clearAllMocks())
 
-  it('should retain the label, description, required state, and visible validation without an information button', () => {
+  it('should retain the label, description, required state, and visible validation with a named information button', () => {
     render(<ExampleField />)
 
     const input = screen.getByRole('textbox', { name: 'Objective target' })
@@ -30,7 +30,7 @@ describe('HelpField', () => {
     expect(input).toHaveAccessibleDescription(expect.stringContaining(HELP))
     expect(screen.getByText('Use a registered name.')).toBeVisible()
     expect(screen.getByText('Choose an available target.')).toBeVisible()
-    expect(screen.getAllByRole('button')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: /Objective target.*information/i })).toBeEnabled()
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
   })
 
@@ -52,11 +52,13 @@ describe('HelpField', () => {
     render(<ExampleField />)
 
     await user.tab()
-    expect(screen.getByText('Objective target')).toHaveFocus()
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(HELP)
+    const information = screen.getByRole('button', { name: /Objective target.*information/i })
+    expect(information).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(await screen.findByRole('note')).toHaveTextContent(HELP)
     await user.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument())
-    expect(screen.getByText('Objective target')).toHaveFocus()
+    await waitFor(() => expect(screen.queryByRole('note')).not.toBeInTheDocument())
+    await waitFor(() => expect(information).toHaveFocus())
     await user.tab()
     expect(screen.getByRole('textbox', { name: 'Objective target' })).toHaveFocus()
   })
@@ -67,19 +69,31 @@ describe('HelpField', () => {
 
     await user.click(screen.getByText('Objective target'))
     expect(screen.getByRole('textbox', { name: 'Objective target' })).toHaveFocus()
+    await user.hover(screen.getByRole('textbox', { name: 'Objective target' }))
     await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument())
   })
 
-  it('should let touch users open help and dismiss it by tapping the field', async () => {
+  it('should let touch users open the native information note and dismiss it by tapping the field', async () => {
     const user = userEvent.setup()
     render(<ExampleField />)
 
     await user.pointer([
-      { keys: '[TouchA>]', target: screen.getByText('Objective target') },
+      { keys: '[TouchA>]', target: screen.getByRole('button', { name: /Objective target.*information/i }) },
       { keys: '[/TouchA]' },
     ])
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(HELP)
+    expect(await screen.findByRole('note')).toHaveTextContent(HELP)
     await user.click(screen.getByRole('textbox', { name: 'Objective target' }))
+    await waitFor(() => expect(screen.queryByRole('note')).not.toBeInTheDocument())
+  })
+
+  it('should not show duplicate hover and information disclosures at the same time', async () => {
+    const user = userEvent.setup()
+    render(<ExampleField />)
+
+    await user.hover(screen.getByText('Objective target'))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(HELP)
+    await user.click(screen.getByRole('button', { name: /Objective target.*information/i }))
+    expect(await screen.findByRole('note')).toHaveTextContent(HELP)
     await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument())
   })
 
@@ -90,5 +104,23 @@ describe('HelpField', () => {
     await user.tab()
     expect(screen.getByRole('textbox', { name: 'Name' })).toHaveFocus()
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
+  it('should dismiss the information note without closing an enclosing editor', async () => {
+    const user = userEvent.setup()
+    render(<FluentProvider theme={webLightTheme}>
+      <Popover defaultOpen>
+        <PopoverTrigger disableButtonEnhancement><Button>Options</Button></PopoverTrigger>
+        <PopoverSurface aria-label="Editing options">
+          <HelpField label="Objective target" help={HELP}><Input /></HelpField>
+        </PopoverSurface>
+      </Popover>
+    </FluentProvider>)
+
+    await user.click(screen.getByRole('button', { name: /Objective target.*information/i }))
+    expect(await screen.findByRole('note')).toHaveTextContent(HELP)
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('note')).not.toBeInTheDocument())
+    expect(screen.getByRole('group', { name: 'Editing options' })).toBeVisible()
   })
 })

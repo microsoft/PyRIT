@@ -349,7 +349,7 @@ describe('Shared new run labels', () => {
       .toBeTruthy()
     const settings = within(toolbar).getByRole('group', { name: 'Conversation settings' })
     const actions = within(toolbar).getByRole('group', { name: 'Conversation actions' })
-    const targetPicker = await within(settings).findByRole('combobox', { name: 'Chat target' })
+    const targetPicker = await within(settings).findByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(targetPicker).toBeEnabled())
     await user.selectOptions(targetPicker, 'test_target')
     expect(targetPicker).toHaveValue('test_target')

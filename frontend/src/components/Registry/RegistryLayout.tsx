@@ -1,6 +1,8 @@
 import { Tab, TabList, Tooltip } from '@fluentui/react-components'
 import { Outlet, useLocation, useNavigate } from 'react-router'
 
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
+
 import { useRegistryLayoutStyles } from './Registry.styles'
 
 const REGISTRY_TABS = [
@@ -52,7 +54,7 @@ export default function RegistryLayout() {
         <Tooltip relationship="description" content="Components that evaluate evidence and return a score or verdict.">
           <Tab value="scorers">Scorers</Tab>
         </Tooltip>
-        <Tooltip relationship="description" content="Named attack setups that combine an algorithm with prompts, converters, and settings.">
+        <Tooltip relationship="description" content={HELP_DEFINITIONS.technique}>
           <Tab value="techniques">Techniques</Tab>
         </Tooltip>
         <Tooltip relationship="description" content="Reusable scenario settings. Choose the target and run-specific settings when you launch.">

@@ -15,6 +15,7 @@ import ConverterCard from './ConverterCard'
 
 interface ConverterChainFieldProps {
   label: string
+  readonly help: string
   converters: ConverterInstance[]
   value: ConverterSelection[]
   disabled?: boolean
@@ -25,7 +26,7 @@ interface ConverterChainFieldProps {
 
 /** Ordered converter references with the same picker and settings form as chat. */
 export default function ConverterChainField({
-  label, converters, value, disabled = false, allowTemporary = true, onChange, onConvertersChanged,
+  label, help, converters, value, disabled = false, allowTemporary = true, onChange, onConvertersChanged,
 }: ConverterChainFieldProps) {
   const styles = useConverterChainFieldStyles()
   const id = useId()
@@ -70,9 +71,7 @@ export default function ConverterChainField({
 
   return <section className={styles.root} aria-label={label}>
     <ContextualHelpLabel term={label} labelProps={{ weight: 'semibold' }}>
-      {label === 'Response converters'
-        ? 'Transform target responses before scoring. Converters run in the order shown.'
-        : 'Transform prompts before they reach the target, for example by translating or encoding text. Converters run in the order shown.'}
+      {help}
     </ContextualHelpLabel>
     <SelectConverterInput
       label={label} disabled={disabled} groupedConverters={groupConverters(converters)}

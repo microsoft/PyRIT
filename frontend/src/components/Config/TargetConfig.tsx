@@ -86,7 +86,7 @@ export default function TargetConfig({
     <div className={styles.root} data-testid="target-config">
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          <Text as="h1" size={600} weight="semibold">
+          <Text as="h1" aria-label="Target Registry" size={600} weight="semibold">
             <ContextualHelpLabel term="Target Registry" labelProps={{ weight: 'semibold' }}>
               Named model or endpoint connections that send prompts and return responses. Targets can be used by attacks, scorers, and converters.
             </ContextualHelpLabel>

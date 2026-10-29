@@ -1535,7 +1535,7 @@ describe("ChatWindow Integration", () => {
       await user.click(screen.getByRole("button", { name: "Copy or Branch" }));
       expect(screen.getByRole("menuitem", { name: "Branch conversation", exact: true })).not.toHaveAttribute("aria-disabled", "true");
       await user.keyboard("{Escape}");
-      await user.selectOptions(screen.getByRole("combobox", { name: "Chat target" }), "editable");
+      await user.selectOptions(screen.getByRole("combobox", { name: "Objective target" }), "editable");
       expect(screen.getByRole("button", { name: "Send message", exact: true })).not.toHaveAttribute("aria-disabled");
       expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
     });
@@ -1598,7 +1598,7 @@ describe("ChatWindow Integration", () => {
       await user.click(screen.getByTestId("conversation-editor"));
       expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
       expect(screen.getByTestId("conversation-editor")).toBeInTheDocument();
-      await user.selectOptions(screen.getByRole("combobox", { name: "Chat target" }), "editable-history");
+      await user.selectOptions(screen.getByRole("combobox", { name: "Objective target" }), "editable-history");
       expect(screen.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
       expect(screen.getByRole("button", { name: "Save to new attack", exact: true })).toBeEnabled();
       await user.click(screen.getByRole("button", { name: "Save to new attack", exact: true }));
@@ -2476,7 +2476,7 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: "Save to new attack" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
-    const picker = await screen.findByRole("combobox", { name: "Chat target" });
+    const picker = await screen.findByRole("combobox", { name: "Objective target" });
     await user.selectOptions(picker, "");
     await user.click(screen.getByRole("button", { name: "Insert message at start" }));
     const message = screen.getByRole("region", { name: "Message 1" });
@@ -2537,7 +2537,7 @@ describe("ChatWindow Integration", () => {
     render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
       <RouterProvider router={router} />
     </UserPreferencesProvider></FluentProvider>);
-    const targetPicker = screen.getByRole("combobox", { name: "Chat target" });
+    const targetPicker = screen.getByRole("combobox", { name: "Objective target" });
     const editButton = screen.getByRole("button", { name: "Edit Conversation" });
     expect(targetPicker.compareDocumentPosition(editButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await user.click(editButton);
@@ -3059,7 +3059,7 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByRole("combobox", { name: "Chat target" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Objective target" })).toHaveValue("");
     expect(screen.queryByTestId("no-target-banner")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Configure Target" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /add objective/i })).toBeEnabled();
@@ -3283,10 +3283,17 @@ describe("ChatWindow Integration", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     if (interaction === "hover") await user.hover(input);
     else {
-      await user.click(screen.getByRole("combobox", { name: "Chat target" }));
+      await user.click(screen.getByRole("combobox", { name: "Objective target" }));
+      await user.tab();
+      const information = screen.getByRole("button", { name: /Temperature.*information/i });
+      expect(information).toHaveFocus();
+      await user.keyboard("{Enter}");
+      expect(await screen.findByRole("note")).toHaveTextContent("Controls variation in generated responses.");
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(information).toHaveFocus());
       await user.tab();
     }
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(explanation);
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(explanation));
     expect(targetsApi.buildTarget).not.toHaveBeenCalled();
   });
 

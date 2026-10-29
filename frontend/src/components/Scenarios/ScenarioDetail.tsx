@@ -35,6 +35,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import HelpField from '@/components/HelpField'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import ConversationEditor, { type ConversationEditorHandle } from '@/components/Chat/ConversationEditor'
 import TargetSelect from '@/components/Config/TargetSelect'
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
@@ -1323,7 +1324,7 @@ function ScenarioLaunchForm({
     : null
   const techniquesWithoutCheckbox = selectedTechniques.filter((name) => presetTokens.has(name)
     && !techniqueOptions.some((technique) => technique.name === name))
-  const displayedEstimateNotes = estimateNotes(estimateState)
+  const displayedEstimateNotes = estimateState.status === 'unavailable' ? null : estimateNotes(estimateState)
   const displayedEstimate = estimateFromState(estimateState)
   const selectedTechniqueCount = (supportsTechniques ? selectedTechniques.length : 0)
     + (supportsBaseline && baselineChecked && !isBaselineForbidden ? 1 : 0)
@@ -1474,9 +1475,9 @@ function ScenarioLaunchForm({
 
             {(supportsTechniques || supportsBaseline) && (
             <section className={styles.section} aria-labelledby="techniques-section-title">
-              <Text id="techniques-section-title" as="h2" size={400} weight="semibold">
+              <Text id="techniques-section-title" as="h2" aria-label="Techniques" size={400} weight="semibold">
                 <ContextualHelpLabel term="Techniques" labelProps={{ weight: 'semibold' }}>
-                  Named attack setups that combine an attack algorithm with prompts, converters, and settings.
+                  {HELP_DEFINITIONS.technique}
                 </ContextualHelpLabel>
               </Text>
               {supportsTechniques && <Text size={200} className={styles.hint}>
@@ -1613,13 +1614,13 @@ function ScenarioLaunchForm({
 
             {(supportsObjectiveTarget || objectiveParameters.length > 0 || scenario.supports_objective_scorer) && (
               <section className={styles.section} aria-labelledby="objective-section-title">
-                <Text id="objective-section-title" as="h2" size={400} weight="semibold">
+                <Text id="objective-section-title" as="h2" aria-label="Objective" size={400} weight="semibold">
                   <ContextualHelpLabel term="Objective" labelProps={{ weight: 'semibold' }}>
                     The behavior you want to test for. A clear goal lets the attack and scorer work toward the same result.
                   </ContextualHelpLabel>
                 </Text>
                 {supportsObjectiveTarget && <>
-                  <HelpField label="Objective Target" required help="The model or endpoint you are testing. It receives the attack prompts and returns responses.">
+                  <HelpField label="Objective Target" required help={HELP_DEFINITIONS.objectiveTarget}>
                     <Select
                       className={styles.control}
                       value={targetName}
@@ -1695,7 +1696,7 @@ function ScenarioLaunchForm({
 
             {(supportsDatasets || datasetDefaults.sources.length > 0) && (
             <section className={styles.section} aria-labelledby="datasets-section-title">
-              <Text id="datasets-section-title" as="h2" size={400} weight="semibold">
+              <Text id="datasets-section-title" as="h2" aria-label="Datasets" size={400} weight="semibold">
                 <ContextualHelpLabel term="Datasets" labelProps={{ weight: 'semibold' }}>
                   Seed examples used by this scan. Limits and filters control which examples are selected.
                 </ContextualHelpLabel>
@@ -1732,12 +1733,12 @@ function ScenarioLaunchForm({
                       setAdversarialTargetName(target?.target_registry_name ?? '')
                     }}
                     label="Adversarial Target"
-                    help="The model used for adversarial chat: writing attack prompts. The objective target receives those prompts during the test."
+                    help={HELP_DEFINITIONS.adversarialTarget}
                     placeholder="Use server default"
                     disabled={submitting}
                   />
                 )}
-                {supportsConcurrency && <HelpField label="Max concurrency" help="Maximum attacks that can run at the same time. Lower this to reduce load on the targets.">
+                {supportsConcurrency && <HelpField label="Max concurrency" help={HELP_DEFINITIONS.maxConcurrency}>
                   <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxConcurrency}
@@ -1748,7 +1749,7 @@ function ScenarioLaunchForm({
                     data-testid="max-concurrency-input"
                   />
                 </HelpField>}
-                {supportsRetries && <HelpField label="Max retries" help="Maximum retries for retryable failures while the scenario runs. Retries can increase model calls and run time.">
+                {supportsRetries && <HelpField label="Max retries" help={HELP_DEFINITIONS.maxRetries}>
                   <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxRetries}
@@ -1769,7 +1770,7 @@ function ScenarioLaunchForm({
               data-testid="run-estimate"
             >
               <div className={styles.estimateHeader}>
-                <Text id="run-estimate-title" as="h2" size={400} weight="semibold">
+                <Text id="run-estimate-title" as="h2" aria-label="Run estimate" size={400} weight="semibold">
                   <ContextualHelpLabel term="Run estimate" labelProps={{ weight: 'semibold' }}>
                     {`Estimated work in this scan, not its cost or duration.${displayedEstimateNotes ? ` ${displayedEstimateNotes}` : ''}`}
                   </ContextualHelpLabel>
@@ -1809,6 +1810,12 @@ function ScenarioLaunchForm({
                   </div>
                 ))}
               </dl>
+              {estimateState.status === 'unavailable' && (
+                <Text size={200} className={styles.warningText} role="status">
+                  {estimateState.label}
+                  {estimateState.note && estimateState.note !== estimateState.label ? ` ${estimateState.note}` : ''}
+                </Text>
+              )}
               {estimateState.status === 'refreshing' && (
                 <div className={styles.inlineStatus}>
                   <Spinner size="tiny" />

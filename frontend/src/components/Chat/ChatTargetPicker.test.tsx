@@ -29,12 +29,12 @@ describe('ChatTargetPicker', () => {
   it('keeps the badge and provides a keyboard-focusable target selector', async () => {
     const user = userEvent.setup()
     render(<ChatTargetPicker {...defaultProps} />, { wrapper: TestWrapper })
-    const selector = screen.getByRole('combobox', { name: 'Chat target' })
+    const selector = screen.getByRole('combobox', { name: 'Objective target' })
 
     expect(screen.getByTestId('target-badge')).toHaveTextContent('model')
     expect(selector).toHaveValue('objective')
     await user.tab()
-    expect(screen.getByText('Objective target')).toHaveFocus()
+    expect(screen.getByRole('button', { name: /Objective target.*information/i })).toHaveFocus()
     await user.tab()
     expect(selector).toHaveFocus()
     await user.selectOptions(selector, 'other')
@@ -42,18 +42,29 @@ describe('ChatTargetPicker', () => {
     expect(screen.queryByRole('button', { name: 'Refresh targets' })).not.toBeInTheDocument()
   })
 
+  it('links the visible label to the select and preserves normal label-click focus', async () => {
+    const user = userEvent.setup()
+    render(<ChatTargetPicker {...defaultProps} />, { wrapper: TestWrapper })
+    const selector = screen.getByRole('combobox', { name: 'Objective target' })
+
+    expect(screen.getByLabelText('Objective target', { selector: 'select' })).toBe(selector)
+    expect(screen.getByText('Objective target')).toHaveAttribute('for', selector.id)
+    await user.click(screen.getByText('Objective target'))
+    expect(selector).toHaveFocus()
+  })
+
   it('offers targets in the same place when no target is selected', async () => {
     const user = userEvent.setup()
     const { rerender } = render(<ChatTargetPicker {...defaultProps} target={null} />, { wrapper: TestWrapper })
-    const selector = screen.getByRole('combobox', { name: 'Chat target' })
+    const selector = screen.getByRole('combobox', { name: 'Objective target' })
 
     expect(selector).toHaveValue('')
     await user.tab()
     await user.selectOptions(selector, 'objective')
     expect(defaultProps.onSelect).toHaveBeenCalledWith(target)
     rerender(<ChatTargetPicker {...defaultProps} />)
-    expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveFocus()
-    expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('objective')
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveFocus()
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('objective')
   })
 
   it.each([
@@ -65,6 +76,6 @@ describe('ChatTargetPicker', () => {
     overrides: Partial<ComponentProps<typeof ChatTargetPicker>>,
   ) => {
     render(<ChatTargetPicker {...defaultProps} {...overrides} />, { wrapper: TestWrapper })
-    expect(screen.getByRole('combobox', { name: 'Chat target' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toBeDisabled()
   })
 })

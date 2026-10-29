@@ -113,7 +113,7 @@ function renderDialog(
 
 async function submitCaesarConverter(user: ReturnType<typeof userEvent.setup>) {
   await selectConverterType('CaesarConverter')
-  await user.type(screen.getByLabelText(/caesar_offset/i), '5')
+  await user.type(screen.getByRole('textbox', { name: /caesar_offset/i }), '5')
   await user.click(screen.getByRole('button', { name: 'Add Converter' }))
 }
 
@@ -156,7 +156,7 @@ describe('CreateConverterDialog', () => {
       identifier: { ...converter.identifier, hash: 'private-hash', caesar_offset: 3 },
     })
     renderDialog({ editing: { converter }, onTemporary })
-    const offset = await screen.findByLabelText(/caesar_offset/i)
+    const offset = await screen.findByRole('textbox', { name: /caesar_offset/i })
     expect(offset).toHaveValue('1')
     expect(screen.queryByLabelText(/registry name/i)).not.toBeInTheDocument()
     await user.clear(offset)
@@ -230,7 +230,7 @@ describe('CreateConverterDialog', () => {
         },
       },
     })
-    await screen.findByLabelText(/caesar_offset/i)
+    await screen.findByRole('textbox', { name: /caesar_offset/i })
     await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/need an apply handler/i)
     expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
@@ -257,7 +257,7 @@ describe('CreateConverterDialog', () => {
       const click = jest.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined)
       const read = jest.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(() => undefined)
       const { rerender } = renderDialog({ editing, onTemporary })
-      await screen.findByLabelText('source *')
+      await screen.findByRole('textbox', { name: 'source *' })
       await user.click(screen.getByRole('button', { name: 'Upload' }))
       const fileInput = click.mock.contexts[0]
       if (!(fileInput instanceof HTMLInputElement)) throw new Error('File picker did not open')
@@ -269,14 +269,14 @@ describe('CreateConverterDialog', () => {
       if (closed) {
         rerender(dialogTree({ open: false, editing, onTemporary }))
         rerender(dialogTree({ open: true, editing, onTemporary }))
-        await screen.findByLabelText('source *')
+        await screen.findByRole('textbox', { name: 'source *' })
       }
       const upload = 'data:text/plain;base64,dXBsb2FkZWQ='
       act(() => {
         Object.defineProperty(reader, 'result', { value: upload })
         reader.dispatchEvent(new ProgressEvent('load'))
       })
-      expect(screen.getByLabelText('source *')).toHaveValue(closed ? 'original.txt' : upload)
+      expect(screen.getByRole('textbox', { name: 'source *' })).toHaveValue(closed ? 'original.txt' : upload)
       await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
       await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
       expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('PathConverter', {
@@ -353,7 +353,7 @@ describe('CreateConverterDialog', () => {
     renderDialog()
     await selectConverterType('CaesarConverter')
 
-    const nameInput = screen.getByLabelText(/registry name/i)
+    const nameInput = screen.getByRole('textbox', { name: /registry name/i })
     expect(nameInput).toHaveValue('CaesarConverter')
     await user.clear(nameInput)
     await user.type(nameInput, 'caesar-custom')
@@ -392,7 +392,7 @@ describe('CreateConverterDialog', () => {
 
     await selectConverterType('PathConverter')
 
-    expect(screen.getByLabelText('source *')).toHaveAttribute(
+    expect(screen.getByRole('textbox', { name: 'source *' })).toHaveAttribute(
       'placeholder',
       'Upload a file or enter a server path',
     )
@@ -413,10 +413,10 @@ describe('CreateConverterDialog', () => {
     const user = userEvent.setup()
     renderDialog({ onCreated })
     await selectConverterType('CaesarConverter')
-    const nameInput = screen.getByLabelText(/registry name/i)
+    const nameInput = screen.getByRole('textbox', { name: /registry name/i })
     await user.clear(nameInput)
     await user.type(nameInput, 'caesar-custom')
-    await user.type(screen.getByLabelText(/caesar_offset/i), '5')
+    await user.type(screen.getByRole('textbox', { name: /caesar_offset/i }), '5')
     await user.click(screen.getByRole('button', { name: 'Add Converter' }))
 
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
@@ -615,8 +615,8 @@ describe('CreateConverterDialog', () => {
       onTemporary,
     })
     expect(await screen.findByRole('combobox', { name: /converter_target/i })).toHaveValue('rewrite-target')
-    expect(screen.getByLabelText(/language/i)).toHaveValue('Spanish')
-    expect(screen.getByLabelText(/prompt_template/i)).toHaveValue('Translate the user message to {{ language }}.')
+    expect(screen.getByRole('textbox', { name: /language/i })).toHaveValue('Spanish')
+    expect(screen.getByRole('textbox', { name: /prompt_template/i })).toHaveValue('Translate the user message to {{ language }}.')
     await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
     await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
     expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('TranslationConverter', {
@@ -633,7 +633,7 @@ describe('CreateConverterDialog', () => {
       } },
       onTemporary: jest.fn(),
     })
-    expect(await screen.findByLabelText(/img_to_add/i)).toBeDisabled()
+    expect(await screen.findByRole('textbox', { name: /img_to_add/i })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled()
     expect(screen.getByText('To change this file, create a registered converter with the new upload.')).toBeInTheDocument()
   })
@@ -863,7 +863,7 @@ describe('CreateConverterDialog', () => {
     const user = userEvent.setup()
     renderDialog()
     await selectConverterType('CaesarConverter')
-    await user.type(screen.getByLabelText(/caesar_offset/i), '5')
+    await user.type(screen.getByRole('textbox', { name: /caesar_offset/i }), '5')
     await user.click(screen.getByRole('button', { name: 'Add Converter' }))
 
     expect(
@@ -894,7 +894,7 @@ describe('CreateConverterDialog', () => {
     const user = userEvent.setup()
     renderDialog({ onClose })
     await selectConverterType('CaesarConverter')
-    await user.type(screen.getByLabelText(/caesar_offset/i), '5')
+    await user.type(screen.getByRole('textbox', { name: /caesar_offset/i }), '5')
     await user.click(screen.getByRole('button', { name: 'Add Converter' }))
 
     const alert = await screen.findByRole('alert')
@@ -941,8 +941,8 @@ describe('CreateConverterDialog', () => {
     await screen.findByRole('combobox', { name: /^converter type$/i })
     await selectConverterType('CaesarConverter')
     // Selecting a type prefills the registry name, so replace it rather than append.
-    await user.clear(screen.getByLabelText(/registry name/i))
-    await user.type(screen.getByLabelText(/registry name/i), 'my-second-converter')
+    await user.clear(screen.getByRole('textbox', { name: /registry name/i }))
+    await user.type(screen.getByRole('textbox', { name: /registry name/i }), 'my-second-converter')
 
     await act(async () => {
       resolveCreate?.({ converter_id: 'first-converter' })
@@ -950,8 +950,8 @@ describe('CreateConverterDialog', () => {
 
     // The list still refreshes, but the opening in front of the user is untouched.
     expect(onCreated).toHaveBeenCalledWith('first-converter', false)
-    expect(screen.getByLabelText(/registry name/i)).toHaveValue('my-second-converter')
-    expect(screen.getByLabelText(/caesar_offset/i)).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: /registry name/i })).toHaveValue('my-second-converter')
+    expect(screen.getByRole('textbox', { name: /caesar_offset/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Add Converter' })).toBeInTheDocument()
   })
 
@@ -978,7 +978,7 @@ describe('CreateConverterDialog', () => {
     })
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByLabelText(/registry name/i)).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: /registry name/i })).toHaveValue('')
   })
 
   it('should display and submit the Binary enum default from metadata', async () => {

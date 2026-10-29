@@ -1,20 +1,19 @@
-import { makeStyles, tokens } from '@fluentui/react-components'
+import { makeStyles } from '@fluentui/react-components'
 
 import { mobileTouchTarget } from '@/styles/touchTargets'
 
 export const useContextualHelpLabelStyles = makeStyles({
-  label: {
+  root: {
     display: 'inline-flex',
     alignItems: 'center',
     maxWidth: '100%',
+  },
+  label: {
     cursor: 'help',
     fontSize: 'inherit',
     lineHeight: 'inherit',
-    borderRadius: tokens.borderRadiusSmall,
-    ':focus-visible': {
-      outline: `2px solid ${tokens.colorStrokeFocus2}`,
-      outlineOffset: '2px',
-    },
+  },
+  infoButton: {
     ...mobileTouchTarget,
   },
   content: {

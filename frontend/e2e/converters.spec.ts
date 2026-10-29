@@ -838,7 +838,7 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
   test("keeps original and converted prompts, stage edits, and edited history through save, send, and Undo", async ({
     page, request,
   }) => {
-    await page.getByRole("combobox", { name: "Chat target", exact: true }).selectOption("browser_offline");
+    await page.getByRole("combobox", { name: "Objective target", exact: true }).selectOption("browser_offline");
     const previews: ConverterPreviewRequest[] = [];
     page.on("request", (preview: Request) => {
       if (preview.method() === "POST" && new URL(preview.url()).pathname === "/api/converters/preview") {

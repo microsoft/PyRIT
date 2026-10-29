@@ -171,7 +171,7 @@ test.describe("Application Smoke Tests", () => {
 
   test("should offer the target picker without a bottom warning", async ({ page }) => {
     await page.getByRole("button", { name: "Attacks", exact: true }).click();
-    await expect(page.getByRole("combobox", { name: "Chat target" })).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Objective target" })).toBeVisible();
     await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
   });
 });

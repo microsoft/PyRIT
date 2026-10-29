@@ -15,11 +15,12 @@ decorations without forgetting the selected preset.
 
 ## Contextual help
 
-Hover over a term or field label to read its explanation. You can also focus
-help text with Tab and dismiss it with Escape. On touch screens, tap the text
-to show help, then tap it again or tap the field to close it. Field descriptions
-remain available to assistive technology while the help is closed. Required
-markers, validation errors, and input-format guidance stay visible.
+Hover over a term or field label to read its explanation. Its information
+button also opens the help with a click, tap, or Enter/Space. Press Escape
+to dismiss it. Label clicks still focus the field. Field descriptions remain
+available to assistive technology while the help is closed. Required markers,
+validation errors, input-format guidance, and unavailable-estimate reasons
+stay visible.
 
 ## Conversation selection
 

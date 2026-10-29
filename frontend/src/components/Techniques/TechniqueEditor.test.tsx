@@ -60,8 +60,8 @@ describe('TechniqueEditor', () => {
     expect(await screen.findByText('Movie role play')).toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'Description' })).not.toBeInTheDocument()
     expect(screen.getByRole('spinbutton', { name: 'Turn count' })).toHaveValue(2)
-    expect(screen.getByLabelText('Simulated user system prompt')).toHaveValue('Write a movie.\n{{ objective }}')
-    expect(screen.getByLabelText('Simulated assistant system prompt')).toHaveValue(
+    expect(screen.getByRole('textbox', { name: 'Simulated user system prompt' })).toHaveValue('Write a movie.\n{{ objective }}')
+    expect(screen.getByRole('textbox', { name: 'Simulated assistant system prompt' })).toHaveValue(
       'Comply with {{ objective }} for {{ num_turns }} turns.',
     )
     expect(screen.getByRole('spinbutton', { name: 'max_attempts_on_failure' })).toHaveValue(1)
@@ -196,7 +196,7 @@ describe('TechniqueEditor', () => {
     await user.click(screen.getByRole('option', { name: /^New converter/ }))
     await user.click(await screen.findByRole('combobox', { name: /Converter Type/i }))
     await user.click(screen.getByRole('option', { name: /CaesarConverter/ }))
-    await user.type(screen.getByLabelText(/Registry Name/i), 'new_caesar')
+    await user.type(screen.getByRole('textbox', { name: /Registry Name/i }), 'new_caesar')
     await user.type(screen.getByLabelText(/caesar_offset/i), '3')
     await user.click(screen.getByRole('button', { name: 'Add Converter' }))
     await screen.findByText('new_caesar')
@@ -212,10 +212,10 @@ describe('TechniqueEditor', () => {
     original.settings.adversarial_system_prompt = 'Source system prompt'
     original.editable_fields.push('adversarial_chat', 'adversarial_system_prompt')
     render(tree(original))
-    expect(await screen.findByLabelText('Adversarial system prompt')).toHaveValue('Source system prompt')
+    expect(await screen.findByRole('textbox', { name: 'Adversarial system prompt' })).toHaveValue('Source system prompt')
     expect(screen.queryByRole('combobox', { name: /Adversarial target/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'Description' })).not.toBeInTheDocument()
-    await user.type(screen.getByLabelText('Adversarial system prompt'), ' edited')
+    await user.type(screen.getByRole('textbox', { name: 'Adversarial system prompt' }), ' edited')
     await user.click(screen.getByRole('button', { name: 'Apply to run' }))
     await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(1))
     expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({
@@ -227,7 +227,7 @@ describe('TechniqueEditor', () => {
     const user = userEvent.setup()
     render(tree())
     await screen.findByText('Movie role play')
-    const prompt = screen.getByLabelText('Simulated user system prompt')
+    const prompt = screen.getByRole('textbox', { name: 'Simulated user system prompt' })
     await user.clear(prompt)
     await user.click(prompt)
     await user.paste('New movie\n{{ objective }}\n{% if objective %}literal{% endif %}')
@@ -262,11 +262,11 @@ describe('TechniqueEditor', () => {
     const user = userEvent.setup()
     techniques.validateEdit.mockRejectedValueOnce(new Error('Source technique configuration changed.'))
     render(tree())
-    await user.type(await screen.findByLabelText('Simulated user system prompt'), ' edited')
+    await user.type(await screen.findByRole('textbox', { name: 'Simulated user system prompt' }), ' edited')
     await user.click(screen.getByRole('button', { name: 'Apply to run' }))
     const error = await screen.findByText('Source technique configuration changed.')
     expect(error).toBeInTheDocument()
-    expect(screen.getByLabelText('Simulated user system prompt')).toHaveValue('Write a movie.\n{{ objective }} edited')
+    expect(screen.getByRole('textbox', { name: 'Simulated user system prompt' })).toHaveValue('Write a movie.\n{{ objective }} edited')
     expect(screen.getByRole('button', { name: 'Apply to run' })).toBeEnabled()
     expect(screen.getByRole('alert')).toHaveFocus()
   })
@@ -275,7 +275,7 @@ describe('TechniqueEditor', () => {
     const user = userEvent.setup()
     const onClose = jest.fn()
     render(tree(configuration(), jest.fn(), undefined, onClose))
-    await user.type(await screen.findByLabelText('Simulated user system prompt'), ' uncommitted')
+    await user.type(await screen.findByRole('textbox', { name: 'Simulated user system prompt' }), ' uncommitted')
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(techniques.validateEdit).not.toHaveBeenCalled()
@@ -293,7 +293,7 @@ describe('TechniqueEditor', () => {
     await screen.findByText('Movie role play')
     expect(screen.queryByLabelText('Next-message system prompt')).not.toBeInTheDocument()
     if (mode === 'fixed') {
-      const final = screen.getByLabelText('Fixed final user message')
+      const final = screen.getByRole('textbox', { name: 'Fixed final user message' })
       expect(final).toHaveValue('yes.')
       await user.clear(final)
       await user.type(final, 'continue.')
@@ -330,7 +330,7 @@ describe('TechniqueEditor', () => {
     original.parameters.push({ name: 'text_setting', type_name: 'str', required: false })
     original.settings.params = { ...original.settings.params, text_setting: 'source text' }
     render(tree(original))
-    await user.clear(await screen.findByLabelText('text_setting'))
+    await user.clear(await screen.findByRole('textbox', { name: 'text_setting' }))
     await user.click(screen.getByRole('button', { name: 'Apply to run' }))
     await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
     expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({ params: { text_setting: '' } })
@@ -381,7 +381,7 @@ describe('TechniqueEditor', () => {
     const view = render(<FluentProvider theme={webLightTheme}>
       <TechniqueEditor original={original} autoApply onApplied={onApplied} />
     </FluentProvider>)
-    await user.type(await screen.findByLabelText('Simulated user system prompt'), ' changed')
+    await user.type(await screen.findByRole('textbox', { name: 'Simulated user system prompt' }), ' changed')
     await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(1))
     view.unmount()
     resolveEdit({

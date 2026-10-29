@@ -7,6 +7,7 @@ import {
 import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import { useRuntime } from '@/hooks/useRuntime'
 import { techniquesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -110,9 +111,9 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
     <div className={styles.root} ref={pageRoot} tabIndex={-1}>
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text as="h1" size={600} weight="semibold">
+          <Text as="h1" aria-label="Technique Registry" size={600} weight="semibold">
             <ContextualHelpLabel term="Technique Registry" labelProps={{ weight: 'semibold' }}>
-              Named attack setups with prompts, converters, and settings. The configured attack manages the conversation.
+              {HELP_DEFINITIONS.technique}
             </ContextualHelpLabel>
           </Text>
           <Text size={300} className={styles.subtitle}>Named configurations of existing attack techniques</Text>
@@ -143,10 +144,10 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
         <div className={styles.table}>
           <Table className={styles.tableContent} aria-label="Registered techniques">
             <TableHeader className={styles.tableHeader}><TableRow>
-              <TableHeaderCell><ContextualHelpLabel term="Name">The registry name used to select this technique for a run.</ContextualHelpLabel></TableHeaderCell>
-              <TableHeaderCell><ContextualHelpLabel term="Description">A short summary of the technique's purpose or setup.</ContextualHelpLabel></TableHeaderCell>
-              <TableHeaderCell><ContextualHelpLabel term="Attack type">The algorithm that manages the attack conversation.</ContextualHelpLabel></TableHeaderCell>
-              <TableHeaderCell><ContextualHelpLabel term="Tags">Labels used to find and group techniques. Tags do not change the attack algorithm.</ContextualHelpLabel></TableHeaderCell>
+              <TableHeaderCell aria-label="Name"><ContextualHelpLabel term="Name">The registry name used to select this technique for a run.</ContextualHelpLabel></TableHeaderCell>
+              <TableHeaderCell aria-label="Description"><ContextualHelpLabel term="Description">A short summary of the technique's purpose or setup.</ContextualHelpLabel></TableHeaderCell>
+              <TableHeaderCell aria-label="Attack type"><ContextualHelpLabel term="Attack type">The algorithm that manages the attack conversation.</ContextualHelpLabel></TableHeaderCell>
+              <TableHeaderCell aria-label="Tags"><ContextualHelpLabel term="Tags">Labels used to find and group techniques. Tags do not change the attack algorithm.</ContextualHelpLabel></TableHeaderCell>
             </TableRow></TableHeader>
             <TableBody>{visible.map((item) => (
               <RegistryIdentityRow key={item.name} name={item.name} identity={item.identifier} columns={4}

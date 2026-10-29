@@ -7,6 +7,7 @@ import {
 
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import HelpField from '@/components/HelpField'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import ParameterField from '@/components/Parameters/ParameterField'
 import ConverterChainField from '@/components/Converters/ConverterChainField'
 import ReferenceField from '@/components/Parameters/ReferenceField'
@@ -359,16 +360,18 @@ export default function TechniqueEditor({
                   {selected?.supports_converters && (
                     <>
                       {editable('request_converters') && <ConverterChainField label="Request converters" converters={converters}
+                        help={HELP_DEFINITIONS.requestConverters}
                         value={requestConverters} disabled={inputsDisabled} allowTemporary={editing}
                         onChange={(next) => update(setRequestConverters, next)} onConvertersChanged={setConverters} />}
                       {editable('response_converters') && <ConverterChainField label="Response converters" converters={converters}
+                        help={HELP_DEFINITIONS.responseConverters}
                         value={responseConverters} disabled={inputsDisabled} allowTemporary={editing}
                         onChange={(next) => update(setResponseConverters, next)} onConvertersChanged={setConverters} />}
                     </>
                   )}
                   {(selected?.supports_adversarial || original?.editable_fields.includes('adversarial_chat')) && (
                     <>{!editing && <ReferenceField label="Adversarial target" options={targetOptions} value={adversarialTarget} disabled={inputsDisabled}
-                        help="The model used for adversarial chat: writing attack prompts. The objective target receives the prompts being tested."
+                        help={HELP_DEFINITIONS.adversarialTarget}
                         onChange={(next) => { if (typeof next === 'string') update(setAdversarialTarget, next) }} />}
                       {selected?.supports_adversarial && <>
                       {editable('adversarial_system_prompt') && <HelpField label="Adversarial system prompt"

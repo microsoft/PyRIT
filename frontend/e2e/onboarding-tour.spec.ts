@@ -147,7 +147,7 @@ test.describe("Onboarding tour", () => {
       "Saved chats automatically select their original registered target"
     );
     await expect(
-      page.locator('[data-tour="chat-prerequisite"]').getByRole("combobox", { name: "Chat target" })
+      page.locator('[data-tour="chat-prerequisite"]').getByRole("combobox", { name: "Objective target" })
     ).toBeVisible();
     await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
   });

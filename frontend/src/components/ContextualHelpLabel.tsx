@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from 'react'
+import { useState, type FocusEvent, type KeyboardEvent, type ReactNode } from 'react'
 
 import {
-  Label, Tooltip, mergeClasses, type LabelProps, type TooltipProps,
+  InfoLabel, Label, Tooltip, mergeClasses, type LabelProps,
 } from '@fluentui/react-components'
 
 import { useContextualHelpLabelStyles } from './ContextualHelpLabel.styles'
@@ -14,52 +14,41 @@ interface ContextualHelpLabelProps {
 
 export default function ContextualHelpLabel({ term, children, labelProps }: ContextualHelpLabelProps) {
   const styles = useContextualHelpLabelStyles()
-  const [visible, setVisible] = useState(false)
-  const touchOpen = useRef(false)
-  const labelRef = useRef<HTMLLabelElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!visible) return
-    const dismiss = (): void => {
-      touchOpen.current = false
-      setVisible(false)
-    }
-    const dismissOutside = (event: Event): void => {
-      const target = event.target
-      if (target instanceof Node && (labelRef.current?.contains(target) || contentRef.current?.contains(target))) return
-      dismiss()
-    }
-    document.addEventListener('pointerdown', dismissOutside, true)
-    document.addEventListener('scroll', dismissOutside, true)
-    document.addEventListener('input', dismiss, true)
-    return () => {
-      document.removeEventListener('pointerdown', dismissOutside, true)
-      document.removeEventListener('scroll', dismissOutside, true)
-      document.removeEventListener('input', dismiss, true)
-    }
-  }, [visible])
+  const [hoverVisible, setHoverVisible] = useState(false)
+  const [infoOpen, setInfoOpen] = useState(false)
 
   return (
-    <Tooltip relationship="description" withArrow visible={visible}
-      content={{ children, ref: contentRef, className: styles.content }}
-      onVisibleChange={(
-        event: Parameters<NonNullable<TooltipProps['onVisibleChange']>>[0],
-        data: Parameters<NonNullable<TooltipProps['onVisibleChange']>>[1],
-      ) => {
-        if (touchOpen.current && !data.visible && (event?.type === 'blur' || event?.type === 'pointerleave')) return
-        if (!data.visible) touchOpen.current = false
-        setVisible(data.visible)
-      }}>
-      <Label {...labelProps} ref={labelRef} tabIndex={0}
-        className={mergeClasses(styles.label, labelProps?.className)}
-        onPointerUp={(event: PointerEvent<HTMLLabelElement>) => {
-          if (event.pointerType !== 'touch') return
-          touchOpen.current = !touchOpen.current
-          setVisible(touchOpen.current)
-        }}>
-        {term}
-      </Label>
-    </Tooltip>
+    <InfoLabel {...labelProps}
+      className={mergeClasses(styles.root, labelProps?.className)}
+      root={{ onBlurCapture: (event: FocusEvent<HTMLSpanElement>) => {
+        if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+          setInfoOpen(false)
+          setHoverVisible(false)
+        }
+      } }}
+      info={{ children, className: styles.content, onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+        // Dismiss help without also dismissing an enclosing editor.
+        if (event.key === 'Escape') event.stopPropagation()
+      } }}
+      infoButton={{
+        className: styles.infoButton,
+        popover: {
+          onOpenChange: (_: unknown, data: { open: boolean }) => {
+            setInfoOpen(data.open)
+            setHoverVisible(false)
+          },
+        },
+      }}
+      label={{ children: (_: unknown, props: LabelProps) => (
+        <Tooltip relationship="description" withArrow visible={hoverVisible && !infoOpen}
+          content={{ children, className: styles.content }}
+          onVisibleChange={(_: unknown, data: { visible: boolean }) => {
+            setHoverVisible(!infoOpen && data.visible)
+          }}>
+          <Label {...props} className={mergeClasses(styles.label, props.className)}>{term}</Label>
+        </Tooltip>
+      ) }}>
+      {term}
+    </InfoLabel>
   )
 }

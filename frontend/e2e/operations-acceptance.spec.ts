@@ -42,7 +42,7 @@ async function ensureCatalogTargets(request: APIRequestContext): Promise<void> {
 
 async function sendChat(page: Page, request: APIRequestContext, text: string): Promise<AttackSummary> {
   await page.goto('/attack/chat')
-  await page.getByRole('combobox', { name: 'Chat target', exact: true }).selectOption('browser_offline')
+  await page.getByRole('combobox', { name: 'Objective target', exact: true }).selectOption('browser_offline')
   await page.getByRole('textbox', { name: 'Type prompt here', exact: true }).fill(text)
   const created = page.waitForResponse(response =>
     new URL(response.url()).pathname === '/api/attacks' && response.request().method() === 'POST')
@@ -67,7 +67,7 @@ for (const width of [1280, 390]) {
     const bar = page.getByRole('region', { name: 'Default Labels' })
     await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveValue(PROPOSED_NAME)
     await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveAccessibleDescription('Not registered')
-    await page.getByRole('combobox', { name: 'Chat target', exact: true }).selectOption('browser_offline')
+    await page.getByRole('combobox', { name: 'Objective target', exact: true }).selectOption('browser_offline')
     await page.getByRole('textbox', { name: 'Type prompt here', exact: true }).fill('Blocked until resolved.')
     await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
     expect((await (await request.get('/api/operations')).json()).items).toEqual(before.items)

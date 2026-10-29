@@ -566,14 +566,14 @@ describe('App draft handoff with the real chat and composer', () => {
   it('should preserve target selection and system prompt without changing defaults', async () => {
     const user = userEvent.setup()
     renderChat()
-    const selector = await screen.findByRole('combobox', { name: 'Chat target' })
+    const selector = await screen.findByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(selector).toBeEnabled())
     await user.selectOptions(selector, 'draft-target')
     await user.click(screen.getByRole('button', { name: /system prompt/i }))
     await user.type(screen.getByRole('textbox', { name: /system prompt/i }), 'System instruction')
     await visitDatasets(user)
     await returnToChat(user)
-    expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('draft-target')
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('draft-target')
     await user.click(screen.getByRole('button', { name: /system prompt/i }))
     expect(screen.getByRole('textbox', { name: /system prompt/i })).toHaveValue('System instruction')
   })
@@ -581,12 +581,12 @@ describe('App draft handoff with the real chat and composer', () => {
   it('should preserve a target selected before entering text', async () => {
     const user = userEvent.setup()
     renderChat()
-    const selector = await screen.findByRole('combobox', { name: 'Chat target' })
+    const selector = await screen.findByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(selector).toBeEnabled())
     await user.selectOptions(selector, 'draft-target')
     await visitDatasets(user)
     await returnToChat(user)
-    expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('draft-target')
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('draft-target')
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
   })
 
@@ -597,12 +597,12 @@ describe('App draft handoff with the real chat and composer', () => {
     })
     const user = userEvent.setup()
     renderChat()
-    const selector = await screen.findByRole('combobox', { name: 'Chat target' })
+    const selector = await screen.findByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(selector).toHaveValue('draft-target'))
     await user.selectOptions(selector, '')
     await visitDatasets(user)
     await returnToChat(user)
-    expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('')
   })
 
   it.each(['', 'Unconverted text'])('should preserve an unapplied converter pipeline with text "%s"', async (text: string) => {
@@ -734,7 +734,7 @@ describe('App draft handoff with the real chat and composer', () => {
     await visitDatasets(user)
     await returnToChat(user)
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
-    expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('draft-target')
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('draft-target')
   })
 
   it('should retain uploaded media across visits and release it when explicitly removed', async () => {

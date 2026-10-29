@@ -1156,6 +1156,22 @@ describe('ScenarioDetail', () => {
     expect(within(estimate).queryByText('8')).not.toBeInTheDocument()
   })
 
+  it('shows an unavailable estimate and its actionable reason without opening help', async () => {
+    mockEstimateRun.mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 503, data: { detail: 'Estimate service is unavailable. Try again after it recovers.' } },
+    })
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+
+    const estimate = await screen.findByTestId('run-estimate')
+    await waitFor(() => {
+      expect(within(estimate).getByRole('status')).toHaveTextContent('The backend estimate could not be refreshed.')
+      expect(within(estimate).getByRole('status')).toHaveTextContent('Estimate service is unavailable. Try again after it recovers.')
+    })
+    expect(within(estimate).getByRole('status')).toBeVisible()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
   it('keeps the last good estimate and entered state after a transient preview failure', async () => {
     jest.useFakeTimers()
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
@@ -1269,7 +1285,7 @@ describe('ScenarioDetail', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(within(editor).queryByRole('combobox', { name: 'Attack type' })).not.toBeInTheDocument()
     expect(await within(editor).findByRole('spinbutton', { name: 'Turn count' })).toHaveValue(2)
-    expect(within(editor).getByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }}')
+    expect(within(editor).getByRole('textbox', { name: 'Simulated user system prompt' })).toHaveValue('Movie script\n{{ objective }}')
     await user.clear(within(editor).getByRole('spinbutton', { name: 'Turn count' }))
     await user.type(within(editor).getByRole('spinbutton', { name: 'Turn count' }), '4')
     expect(within(editor).queryByRole('button', { name: 'Apply to run' })).not.toBeInTheDocument()
@@ -1298,9 +1314,9 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
     renderDetail('/scanner/launch/technique.execute')
-    await user.type(await screen.findByLabelText('Simulated user system prompt'), ' edited')
+    await user.type(await screen.findByRole('textbox', { name: 'Simulated user system prompt' }), ' edited')
     await screen.findByRole('button', { name: 'Edited - click to reset' })
-    expect(await screen.findByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }} edited')
+    expect(await screen.findByRole('textbox', { name: 'Simulated user system prompt' })).toHaveValue('Movie script\n{{ objective }} edited')
     await user.click(await screen.findByRole('radio', { name: 'crescendo' }))
     expect(await screen.findByText('Discard technique edits?')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -1310,7 +1326,7 @@ describe('ScenarioDetail', () => {
     expect(screen.getByRole('button', { name: 'Edited - click to reset' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Edited - click to reset' }))
     expect(screen.queryByRole('button', { name: 'Edited - click to reset' })).not.toBeInTheDocument()
-    expect(await screen.findByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }}')
+    expect(await screen.findByRole('textbox', { name: 'Simulated user system prompt' })).toHaveValue('Movie script\n{{ objective }}')
     await user.click(screen.getByRole('radio', { name: 'crescendo' }))
     expect(screen.getByRole('radio', { name: 'crescendo' })).toBeChecked()
     await waitFor(() => expect(mockTechniques.getConfiguration).toHaveBeenCalledWith('crescendo'))

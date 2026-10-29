@@ -106,7 +106,7 @@ describe('AttackHistory', () => {
     })
   })
 
-  it('should guide users without an active target to configuration', async () => {
+  it('should guide users without an active target to Chat', async () => {
     const user = userEvent.setup()
     const onNavigate = jest.fn()
     mockedAttacksApi.listAttacks.mockResolvedValue({
@@ -126,12 +126,12 @@ describe('AttackHistory', () => {
     expect(screen.getByText('No attacks found')).toBeInTheDocument()
     expect(screen.getByText('Select a target in Chat to start an attack.')).toBeInTheDocument()
 
-    const configureTargetButton = screen.getByRole('button', { name: 'Configure target' })
-    expect(configureTargetButton).toBeEnabled()
+    const openChatButton = screen.getByRole('button', { name: 'Open Chat' })
+    expect(openChatButton).toBeEnabled()
     expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
 
-    await user.click(configureTargetButton)
-    expect(onNavigate).toHaveBeenCalledWith('registry')
+    await user.click(openChatButton)
+    expect(onNavigate).toHaveBeenCalledWith('chat')
   })
 
   it('should guide users with an active target to start an attack', async () => {
@@ -155,7 +155,7 @@ describe('AttackHistory', () => {
     const startAttackButton = await screen.findByRole('button', { name: 'Start attack' })
     expect(startAttackButton).toBeEnabled()
     expect(screen.getByText('Start an attack to see it here.')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Configure target' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open Chat' })).not.toBeInTheDocument()
 
     await user.click(startAttackButton)
     expect(onNavigate).toHaveBeenCalledWith('chat')
@@ -172,7 +172,7 @@ describe('AttackHistory', () => {
 
     expect(screen.getByText('Loading attacks...')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Configure target' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open Chat' })).not.toBeInTheDocument()
   })
 
   it('should render attack table rows', async () => {
@@ -490,7 +490,7 @@ describe('AttackHistory', () => {
     expect(screen.getByText('Internal server error')).toBeInTheDocument()
     expect(screen.getByTestId('retry-btn')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Configure target' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open Chat' })).not.toBeInTheDocument()
   })
 
   it('should retry on clicking retry button', async () => {
@@ -766,7 +766,7 @@ describe('AttackHistory', () => {
     })
     expect(screen.getByText('Try adjusting your filters.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Configure target' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open Chat' })).not.toBeInTheDocument()
   })
 
   it('should show reset filters button when a filter is active', async () => {

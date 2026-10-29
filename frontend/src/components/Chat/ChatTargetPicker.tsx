@@ -1,8 +1,9 @@
-import type { ChangeEvent } from 'react'
+import { useId, type ChangeEvent } from 'react'
 
 import { ChevronDownRegular } from '@fluentui/react-icons'
 
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import type { TargetInstance } from '@/types'
 import { targetModelName } from '@/utils/targetIdentity'
 
@@ -23,6 +24,7 @@ export default function ChatTargetPicker({
   target, targets, loading, error, disabled, onSelect, disabledReason,
 }: ChatTargetPickerProps) {
   const styles = useChatTargetPickerStyles()
+  const selectId = useId()
   const placeholder = loading ? 'Loading targets...'
     : error ? 'Targets unavailable'
     : targets.length === 0 ? 'No targets registered' : 'Select a target'
@@ -30,8 +32,8 @@ export default function ChatTargetPicker({
     <>
       <ChevronDownRegular aria-hidden="true" />
       <select
+        id={selectId}
         className={styles.select}
-        aria-label="Chat target"
         value={target?.target_registry_name ?? ''}
         disabled={disabled || loading || Boolean(error) || targets.length === 0}
         onChange={(event: ChangeEvent<HTMLSelectElement>) => {
@@ -52,8 +54,8 @@ export default function ChatTargetPicker({
 
   return (
     <span className={styles.root} data-tour="chat-prerequisite">
-      <ContextualHelpLabel term="Objective target" labelProps={{ size: 'small' }}>
-        The model or endpoint you are testing. It receives your prompts and returns responses.
+      <ContextualHelpLabel term="Objective target" labelProps={{ size: 'small', htmlFor: selectId }}>
+        {HELP_DEFINITIONS.objectiveTarget}
       </ContextualHelpLabel>
       <TargetBadge target={target} picker={picker} emptyLabel={placeholder} />
     </span>

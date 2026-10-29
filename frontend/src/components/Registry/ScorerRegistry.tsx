@@ -109,7 +109,7 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
               sortDirection={sort.column === 'name' ? sort.direction : undefined}
               button={{ className: scorerStyles.sortButton, onClick: () => toggleSort('name') }}>Name</TableHeaderCell>
             <TableHeaderCell className={scorerStyles.typeColumn}>Type</TableHeaderCell>
-            <TableHeaderCell className={scorerStyles.scorableColumn}>
+            <TableHeaderCell aria-label="Scorable" className={scorerStyles.scorableColumn}>
               <ContextualHelpLabel term="Scorable">Evidence the scorer evaluates, such as a message, conversation, or trace.</ContextualHelpLabel>
             </TableHeaderCell>
             {metrics.map((name: string) => (
@@ -165,7 +165,7 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
     <div className={styles.root}>
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text as="h1" size={600} weight="semibold">
+          <Text as="h1" aria-label="Scorer Registry" size={600} weight="semibold">
             <ContextualHelpLabel term="Scorer Registry" labelProps={{ weight: 'semibold' }}>
               Components that evaluate evidence and return a score or verdict. The attack decides what to do with that result.
             </ContextualHelpLabel>

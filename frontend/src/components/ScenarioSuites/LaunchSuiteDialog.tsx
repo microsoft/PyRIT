@@ -9,7 +9,6 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
-  Field,
   MessageBar,
   MessageBarBody,
   Text,
@@ -17,6 +16,8 @@ import {
 import { useNavigate } from 'react-router'
 
 import TargetSelect from '@/components/Config/TargetSelect'
+import HelpField from '@/components/HelpField'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import SingleStepSpinButton from '@/components/Parameters/SingleStepSpinButton'
 import {
@@ -170,6 +171,7 @@ export default function LaunchSuiteDialog({
                 value={targetName}
                 onChange={(target) => setTargetName(target?.target_registry_name ?? '')}
                 label="Target"
+                help={HELP_DEFINITIONS.objectiveTarget}
                 hint="The registered target every suite entry attacks."
                 placeholder="Select a target"
                 disabled={submitting}
@@ -179,11 +181,12 @@ export default function LaunchSuiteDialog({
                 value={adversarialTargetName}
                 onChange={(target) => setAdversarialTargetName(target?.target_registry_name ?? '')}
                 label="Adversarial Target"
+                help={HELP_DEFINITIONS.adversarialTarget}
                 hint="Only used by suite entries whose scenarios require a second target."
                 placeholder="Use server default"
                 disabled={submitting}
               />
-              <Field label="Max concurrency per run">
+              <HelpField label="Max concurrency per run" help={HELP_DEFINITIONS.maxConcurrency}>
                 <SingleStepSpinButton
                   className={styles.numberInput}
                   value={maxConcurrency}
@@ -193,8 +196,8 @@ export default function LaunchSuiteDialog({
                   onChange={(_, data) => setMaxConcurrency(resolveSpinButtonValue(data, maxConcurrency))}
                   data-testid="suite-max-concurrency-input"
                 />
-              </Field>
-              <Field label="Max retries per run">
+              </HelpField>
+              <HelpField label="Max retries per run" help={HELP_DEFINITIONS.maxRetries}>
                 <SingleStepSpinButton
                   className={styles.numberInput}
                   value={maxRetries}
@@ -204,7 +207,7 @@ export default function LaunchSuiteDialog({
                   onChange={(_, data) => setMaxRetries(resolveSpinButtonValue(data, maxRetries))}
                   data-testid="suite-max-retries-input"
                 />
-              </Field>
+              </HelpField>
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={onDismiss} disabled={submitting}>
