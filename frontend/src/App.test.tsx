@@ -26,6 +26,7 @@ jest.mock("./hooks/useTargetRegistry", () => ({
       loading: false,
       error: null,
       refresh: jest.fn(),
+      synchronizeTargets: setTargets,
       rememberTarget: (target: import("./types").TargetInstance) => {
         setTargets((current) => [...current, target]);
       },
@@ -333,26 +334,28 @@ jest.mock("./components/Chat/ChatWindow", () => {
 
 jest.mock("./components/Config/TargetConfig", () => {
   const { makeTarget } = jest.requireActual("@/test-utils/targetFixtures") as typeof import("@/test-utils/targetFixtures");
+  const { useUserPreferences } = jest.requireActual("@/hooks/useUserPreferences") as typeof import("@/hooks/useUserPreferences");
   const MockTargetConfig = ({
-    defaultObjectiveTarget,
-    onSetDefaultObjectiveTarget,
+    onTargetsLoaded,
   }: {
-    defaultObjectiveTarget: unknown;
-    onSetDefaultObjectiveTarget: (t: unknown) => void;
+    onTargetsLoaded?: (targets: import("@/types").TargetInstance[]) => void;
   }) => {
+    const { preferences, rememberUse } = useUserPreferences();
     return (
       <div data-testid="target-config">
         <span data-testid="active-target-name">
-          {(defaultObjectiveTarget as { target_registry_name?: string })?.target_registry_name ?? "none"}
+          {preferences.lastUsedTargets?.objective?.registryName ?? "none"}
         </span>
         <button
-          onClick={() =>
-            onSetDefaultObjectiveTarget(makeTarget({
+          onClick={() => {
+            const target = makeTarget({
               target_registry_name: "test_target",
               target_type: "OpenAIChatTarget",
               identifier_hash: "test-target-hash",
-            }))
-          }
+            });
+            onTargetsLoaded?.([target]);
+            rememberUse({ objective: { registryName: target.target_registry_name, identifierHash: target.identifier.hash } });
+          }}
           data-testid="set-target"
         >
           Set Target
@@ -1226,7 +1229,7 @@ describe("App", () => {
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
   });
 
-  it("sets an active target from the registry and passes it to chat", () => {
+  it("uses a remembered target when starting the next chat", () => {
     renderApp();
 
     // Switch to chat and confirm no target initially

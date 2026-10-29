@@ -501,7 +501,7 @@ describe('CreateConverterDialog', () => {
     })
     writeUserPreferences('local', {
       ...DEFAULT_USER_PREFERENCES,
-      targets: { objective: null, adversarial: defaultTarget },
+      targets: { adversarial: defaultTarget },
     })
   }
 

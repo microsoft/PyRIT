@@ -593,7 +593,7 @@ describe('App draft handoff with the real chat and composer', () => {
   it('should preserve an explicit empty target instead of reapplying the default', async () => {
     writeUserPreferences('local', {
       ...DEFAULT_USER_PREFERENCES,
-      targets: { objective: targetReference(TARGET), adversarial: null },
+      lastUsedTargets: { objective: targetReference(TARGET), adversarial: null },
     })
     const user = userEvent.setup()
     renderChat()
@@ -723,7 +723,7 @@ describe('App draft handoff with the real chat and composer', () => {
   it('should keep cleared text empty while retaining the selected target', async () => {
     writeUserPreferences('local', {
       ...DEFAULT_USER_PREFERENCES,
-      targets: { objective: targetReference(TARGET), adversarial: null },
+      lastUsedTargets: { objective: targetReference(TARGET), adversarial: null },
     })
     const user = userEvent.setup()
     renderChat()

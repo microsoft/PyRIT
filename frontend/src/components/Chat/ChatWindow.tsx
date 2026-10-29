@@ -156,12 +156,14 @@ interface PendingSend {
   readonly initialMessages: Message[]
   readonly navigationRevision: number
   readonly converterGeneration: string
+  readonly target: TargetReference
   readonly converterSnapshot?: ChatConverterSnapshot
   readonly pipelines?: Record<string, ConverterPipelineStage[]>
   attackResultId: string | null
   conversationId: string
   needsRefresh: boolean
   responseReadId?: number
+  rememberedUse?: boolean
   progress?: MessageSendStatus
   repeatGroup?: RepeatSendGroup
 }
@@ -378,7 +380,7 @@ export default function ChatWindow({
   chatScorerInherited = false,
   executionReadOnly = false,
   manualContinuation,
-  defaultChatScorer = null,
+  defaultChatScorer,
   availableScorers = [],
   scorersLoading = false,
   scorersError,
@@ -403,7 +405,7 @@ export default function ChatWindow({
   }
   const [conversationScoringFailure, setConversationScoringFailure] = useState<ScoringFailure | null>(null)
   const [draftScorer, setDraftScorer] = useState<RegisteredComponentReference | null | undefined>(undefined)
-  const selectedScorer = attackResultId ? chatScorer : draftScorer === undefined ? defaultChatScorer : draftScorer
+  const selectedScorer = attackResultId ? chatScorer : draftScorer === undefined ? defaultChatScorer ?? null : draftScorer
   const [scoringNotice, setScoringNotice] = useState<{ id: string; message: string; conversationId: string } | null>(null)
   const [scoringConversations, setScoringConversations] = useState<Set<string>>(new Set())
   const scoringNoticeId = scoringNotice?.id
@@ -418,7 +420,7 @@ export default function ChatWindow({
   const newAttackContext: NewAttackContext = {
     generation: runtime.generation, ready: runtime.ready && defaultsReady, labels, operationId,
     chatScorer: executionReadOnly ? undefined
-      : attackResultId || draftScorer === undefined ? defaultChatScorer ?? undefined : draftScorer,
+      : attackResultId || draftScorer === undefined ? defaultChatScorer : draftScorer,
     chatScorerExplicit: !attackResultId && draftScorer !== undefined,
   }
   const editor = useConversationDraft(newAttackContext, { pendingUserMessage: true })
@@ -460,7 +462,7 @@ export default function ChatWindow({
     launchStateRef.current = { generation: runtime.generation, ready: runtime.ready, defaultsReady }
   }, [runtime.generation, runtime.ready, defaultsReady])
   // Conversation-wide preference for rendering message text as Markdown.
-  const { preferences, updatePreferences } = useUserPreferences()
+  const { preferences, updatePreferences, rememberUse } = useUserPreferences()
   const globalMarkdown = preferences.chatMarkdown
   const location = useLocation()
   const viewedConversationId = activeConversationId ?? conversationId
@@ -922,6 +924,11 @@ export default function ChatWindow({
   ): ChatSendOutcome => {
     const effectiveConvId = operation.conversationId
     const targetResponseStatus = response.messages.target_response_status
+    if (!operation.rememberedUse && operation.progress?.request_turn_number != null
+      && operation.progress.failure_stage !== 'preparation') {
+      rememberUse({ objective: operation.target }, response.attack.chat_scorer ?? null)
+      operation.rememberedUse = true
+    }
     const recovery = operation.progress
       && !['interrupted', 'finalization'].includes(operation.progress.failure_stage ?? '')
       ? getPersistedProcessingRecovery(effectiveConvId, response.messages)
@@ -1229,6 +1236,7 @@ export default function ChatWindow({
       initialMessages: [...messages],
       navigationRevision: navigationRevisionRef.current,
       converterGeneration: runtime.generation,
+      target: targetReference(activeTarget),
       converterSnapshot: count === 1 ? converters.snapshot() : undefined,
       pipelines,
       attackResultId,
@@ -1327,7 +1335,8 @@ export default function ChatWindow({
           operation_id: operationId ?? undefined,
           system_prompt: supportsSystemPrompt ? systemPrompt.trim() || undefined : undefined,
           ...(draftScorer !== undefined ? { chat_scorer: draftScorer }
-            : pendingObjective.trim() && defaultChatScorer ? { chat_scorer: defaultChatScorer } : {}),
+            : defaultChatScorer === null || pendingObjective.trim() && defaultChatScorer
+              ? { chat_scorer: defaultChatScorer } : {}),
         }
         const createResponse = await attacksApi.createAttack(createRequest)
         if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
@@ -1899,7 +1908,8 @@ export default function ChatWindow({
           target_registry_name: target?.target_registry_name,
           name: objective || undefined,
           labels,
-          ...(objective.trim() && defaultChatScorer ? { chat_scorer: defaultChatScorer } : {}),
+          ...(defaultChatScorer === null || objective.trim() && defaultChatScorer
+            ? { chat_scorer: defaultChatScorer } : {}),
         })
         if (getViewedConversationId() !== sourceId || inputBoxRef.current?.getDraftRevision() !== draftRevision) return
         onConversationCreated(response.attack_result_id, response.conversation_id, objective, target)

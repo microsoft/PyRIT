@@ -54,7 +54,7 @@ import {
 import type { ScenarioHistoryFilters } from './components/History/scenarioHistoryFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
 import type {
-  AttackOutcome, AttackSummary, BackendScore, Operation, TargetInfo, TargetInstance, TargetPreferences, TargetReference,
+  AttackOutcome, AttackSummary, BackendScore, Operation, TargetInfo, TargetInstance, TargetReference,
   UserPreferences,
 } from './types'
 import {
@@ -212,14 +212,14 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     pathname: string
     key: number
     target: TargetReference | null
-  }>({ pathname: location.pathname, key: 0, target: targetDefaults.preferences.objective })
+  }>({ pathname: location.pathname, key: 0, target: targetDefaults.objectiveReference })
   if (draftSession.pathname !== location.pathname) {
     const isReturningToUnsavedChatWithPreservedDraft =
       location.pathname === VIEW_PATHS.chat &&
       draftHandoff.preservedDraft?.originatingAttackId === null
     const nextTarget = isReturningToUnsavedChatWithPreservedDraft && draftHandoff.preservedDraft?.draft.target !== undefined
       ? draftHandoff.preservedDraft.draft.target
-      : targetDefaults.preferences.objective
+      : targetDefaults.objectiveReference
     setDraftSession({
       pathname: location.pathname,
       key: draftSession.key + (location.pathname === VIEW_PATHS.chat && !isReturningToUnsavedChatWithPreservedDraft ? 1 : 0),
@@ -228,7 +228,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   }
   const draftTarget = !registry.loading && !registry.error && draftSession.target
     ? resolveTargetReference(draftSession.target, registry.targets) : null
-  const setDefaultTarget = (role: keyof TargetPreferences, target: TargetInstance | null): void => {
+  const setDefaultTarget = (role: 'adversarial', target: TargetInstance | null): void => {
     if (target) registry.rememberTarget(target)
     targetDefaults.setDefault(role, target)
   }
@@ -610,9 +610,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     setDraftSession((current) => ({
       ...current,
       key: current.key + 1,
-      target: targetDefaults.preferences.objective,
+      target: targetDefaults.objectiveReference,
     }))
-  }, [location, clearPreservedDraft, dismissPendingImport, targetDefaults.preferences.objective])
+  }, [location, clearPreservedDraft, dismissPendingImport, targetDefaults.objectiveReference])
 
   const handleConversationCreated = useCallback((
     arId: string,
@@ -771,7 +771,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       chatScorerInherited={readyAttack?.chatScorerInherited}
       executionReadOnly={readyAttack?.executionReadOnly}
       manualContinuation={readyAttack?.manualContinuation}
-      defaultChatScorer={preferences.chatScorer ?? null}
+      defaultChatScorer={preferences.chatScorer !== undefined ? preferences.chatScorer : preferences.lastUsedChatScorer}
       availableScorers={scorerRegistry.scorers}
       scorersLoading={scorerRegistry.loading}
       scorersError={scorerRegistry.error}
@@ -858,21 +858,16 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 <MessageBarBody>{preferenceError}</MessageBarBody>
               </MessageBar>
             )}
-            {!registry.loading && !registry.error && (
-              (['objective', 'adversarial'] as const).map((role) => (
-                targetDefaults.preferences[role]
-                && !(role === 'objective' ? targetDefaults.objectiveTarget : targetDefaults.adversarialTarget)
-                ? (
-                  <MessageBar key={role} intent="warning">
-                    <MessageBarBody>
-                      The saved default {role} target is unavailable or has changed. Select a new default in the registry.
-                      <Button appearance="subtle" onClick={() => setDefaultTarget(role, null)}>
-                        Clear {role} default
-                      </Button>
-                    </MessageBarBody>
-                  </MessageBar>
-                ) : null
-              ))
+            {!registry.loading && !registry.error && targetDefaults.preferences.adversarial
+              && !targetDefaults.adversarialTarget && (
+              <MessageBar intent="warning">
+                <MessageBarBody>
+                  The saved default adversarial target is unavailable or has changed. Select a new default in the registry.
+                  <Button appearance="subtle" onClick={() => setDefaultTarget('adversarial', null)}>
+                    Clear adversarial default
+                  </Button>
+                </MessageBarBody>
+              </MessageBar>
             )}
             <Routes>
               <Route
@@ -904,9 +899,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                   path="targets"
                   element={
                     <TargetConfig
-                      defaultObjectiveTarget={targetDefaults.objectiveTarget}
                       defaultAdversarialTarget={targetDefaults.adversarialTarget}
-                      onSetDefaultObjectiveTarget={(target: TargetInstance | null) => setDefaultTarget('objective', target)}
                       onSetDefaultAdversarialTarget={(target: TargetInstance | null) => setDefaultTarget('adversarial', target)}
                       onTargetsLoaded={registry.synchronizeTargets}
                     />
@@ -930,7 +923,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                   <ScenarioCatalog
                     targets={registry.targets}
                     defaultObjectiveTarget={targetDefaults.objectiveTarget}
-                    defaultAdversarialTarget={targetDefaults.adversarialTarget}
+                    defaultAdversarialTarget={targetDefaults.scanAdversarialTarget}
                     labels={globalLabels}
                     operationId={operationId}
                     defaultsReady={newActivityReady}
@@ -959,7 +952,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                     scorersError={scorerRegistry.error}
                     targets={registry.targets}
                     defaultObjectiveTarget={targetDefaults.objectiveTarget}
-                    defaultAdversarialTarget={targetDefaults.adversarialTarget}
+                    defaultAdversarialTarget={targetDefaults.scanAdversarialTarget}
                     labels={globalLabels}
                     operationId={operationId}
                     defaultsReady={newActivityReady}

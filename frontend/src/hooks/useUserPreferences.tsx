@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
-import type { UserPreferences } from '@/types'
+import type { RegisteredComponentReference, TargetPreferences, UserPreferences } from '@/types'
 import {
   DEFAULT_USER_PREFERENCES,
   readUserPreferences,
@@ -16,6 +16,7 @@ interface PreferenceState {
 
 interface UserPreferencesContextValue extends PreferenceState {
   updatePreferences: (update: (current: UserPreferences) => UserPreferences) => void
+  rememberUse: (targets: Partial<TargetPreferences>, chatScorer?: RegisteredComponentReference | null) => void
 }
 
 const UserPreferencesContext = createContext<UserPreferencesContextValue | null>(null)
@@ -105,8 +106,18 @@ export function UserPreferencesProvider({
     }
   }, [accountKey])
 
+  const rememberUse = useCallback((
+    targets: Partial<TargetPreferences>, chatScorer?: RegisteredComponentReference | null,
+  ): void => {
+    updatePreferences((current: UserPreferences) => ({
+      ...current,
+      lastUsedTargets: { objective: null, adversarial: null, ...current.lastUsedTargets, ...targets },
+      ...(chatScorer !== undefined ? { lastUsedChatScorer: chatScorer } : {}),
+    }))
+  }, [updatePreferences])
+
   return (
-    <UserPreferencesContext.Provider value={{ ...state, updatePreferences }}>
+    <UserPreferencesContext.Provider value={{ ...state, updatePreferences, rememberUse }}>
       {children}
     </UserPreferencesContext.Provider>
   )

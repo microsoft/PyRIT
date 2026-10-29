@@ -333,7 +333,9 @@ export interface TargetPreferences {
 export type OperationSelection = { readonly id: string } | { readonly name: string }
 
 export interface UserPreferences {
-  readonly targets: TargetPreferences
+  readonly targets: Pick<TargetPreferences, 'adversarial'>
+  readonly lastUsedTargets?: TargetPreferences
+  readonly lastUsedChatScorer?: RegisteredComponentReference | null
   readonly hiddenTargetRegistryNames: string[]
   readonly labels: Record<string, string | null>
   /** Omitted to use the server default; null when the user cleared the selection. */

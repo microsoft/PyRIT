@@ -4,6 +4,8 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter } from 'react-router'
 
 import { scenarioSuitesApi } from '@/services/api'
+import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
+import { readUserPreferences } from '@/utils/userPreferences'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { ScenarioSuiteResponse, TargetInstance } from '@/types'
 
@@ -101,7 +103,7 @@ function renderDialog({
   defaultsReady = true,
 }: RenderOptions = {}) {
   return render(
-    <FluentProvider theme={webLightTheme}>
+    <FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
       <MemoryRouter>
         <LaunchSuiteDialog
           suite={suite}
@@ -115,12 +117,13 @@ function renderDialog({
           onSuiteChanged={onSuiteChanged}
         />
       </MemoryRouter>
-    </FluentProvider>,
+    </UserPreferencesProvider></FluentProvider>,
   )
 }
 
 beforeEach(() => {
   jest.clearAllMocks()
+  window.localStorage.clear()
   mockLaunch.mockResolvedValue({ suite_execution_id: 'execution-1' })
 })
 
@@ -137,6 +140,7 @@ describe('LaunchSuiteDialog', () => {
   it('launches the reviewed suite and navigates to grouped progress', async () => {
     const user = userEvent.setup()
     renderDialog({ labels: { team: 'purple' }, operationId: OPERATION_ID })
+    expect(readUserPreferences('local').lastUsedTargets).toBeUndefined()
 
     await user.click(screen.getByTestId('confirm-launch-suite'))
 
@@ -165,6 +169,7 @@ describe('LaunchSuiteDialog', () => {
     expect(mockNavigate).toHaveBeenCalledWith(
       '/scanner/history/suites/executions/execution-1',
     )
+    expect(readUserPreferences('local').lastUsedTargets?.objective?.registryName).toBe('objective-target')
   })
 
   it('launches code-defined suites and presets with null versions', async () => {

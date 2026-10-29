@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
+import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 import { createMemoryRouter, Link, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 
 import {
@@ -246,7 +248,7 @@ function renderDetail(
   }
   const merged = { ...defaultProps, ...props }
   const renderPage = (pageProps: React.ComponentProps<typeof ScenarioDetail>): React.ReactElement => (
-    <FluentProvider theme={webLightTheme}>
+    <FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
       {dataRouter ? <RouterProvider router={createMemoryRouter([{
         path: '/scanner/launch/:scenarioName', element: <ScenarioDetail {...pageProps} />,
       }], { initialEntries: [path] })} /> : <MemoryRouter initialEntries={[path]}>
@@ -257,7 +259,7 @@ function renderDetail(
           />
         </Routes>
       </MemoryRouter>}
-    </FluentProvider>
+    </UserPreferencesProvider></FluentProvider>
   )
   const view = render(renderPage(merged))
   return {
@@ -271,6 +273,7 @@ function renderDetail(
 describe('ScenarioDetail', () => {
   it('uses the shared scorer picker for estimates and launch without changing the scenario default', async () => {
     const user = userEvent.setup()
+    writeUserPreferences('local', { ...DEFAULT_USER_PREFERENCES, lastUsedChatScorer: null })
     mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: true }))
     const scorer = { scorer_registry_name: 'custom', identifier: {
       class_name: 'SubStringScorer', hash: 'custom-hash', scorer_type: 'true_false',
@@ -287,8 +290,11 @@ describe('ScenarioDetail', () => {
     await user.selectOptions(picker, '')
     await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('objective_scorer'))
     await user.selectOptions(picker, 'registered:custom')
+    expect(readUserPreferences('local').lastUsedTargets).toBeUndefined()
     await confirmRunPreview(user)
     expect(mockStartRun.mock.calls[0][0].objective_scorer).toEqual(reference)
+    expect(readUserPreferences('local').lastUsedTargets?.objective?.registryName).toBe('target-a')
+    expect(readUserPreferences('local').lastUsedChatScorer).toBeNull()
   })
 
   it('does not show a scorer override for fixed-scoring scenarios', async () => {
@@ -299,6 +305,7 @@ describe('ScenarioDetail', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    window.localStorage.clear()
     mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'first' })
     mockGetScenario.mockReset()
     mockEstimateRun.mockReset()
@@ -441,7 +448,7 @@ describe('ScenarioDetail', () => {
 
     it('should fill a new conversation when the same scanner is opened with a different URL parameter', async () => {
       const user = userEvent.setup()
-      render(<FluentProvider theme={webLightTheme}>
+      render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
         <MemoryRouter initialEntries={['/scanner/launch/technique.execute?prepended_conversation_id=first-conversation']}>
           <Link to="/scanner/launch/technique.execute?prepended_conversation_id=second-conversation">Use another conversation</Link>
           <Routes><Route path="/scanner/launch/:scenarioName" element={
@@ -449,7 +456,7 @@ describe('ScenarioDetail', () => {
               labels={{ operator: 'roakey' }} defaultsReady onNavigate={jest.fn()} />
           } /></Routes>
         </MemoryRouter>
-      </FluentProvider>)
+      </UserPreferencesProvider></FluentProvider>)
       expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('first-conversation')
       await user.click(screen.getByRole('link', { name: 'Use another conversation' }))
       expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('second-conversation')
@@ -2400,6 +2407,7 @@ describe('ScenarioDetail', () => {
     expect(await screen.findByText('Invalid target')).toBeInTheDocument()
     expect(screen.getByTestId('launch-scenario-btn')).not.toBeDisabled()
     expect(mockNavigate).not.toHaveBeenCalled()
+    expect(readUserPreferences('local').lastUsedTargets).toBeUndefined()
   })
 
   it('guards against a duplicate submit from a fast double click', async () => {
@@ -2920,7 +2928,7 @@ describe('ScenarioDetail', () => {
       mockGetPreset.mockImplementation(async (name: string) => makePresetResponse(
         name === 'first' ? { name, techniques: ['crescendo'] } : { name, techniques: ['default_technique'] },
       ))
-      render(<FluentProvider theme={webLightTheme}>
+      render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
         <MemoryRouter initialEntries={['/scanner/launch/foundry.red_team_agent?preset=first']}>
           <Link to="/scanner/launch/foundry.red_team_agent?preset=second">Use another preset</Link>
           <Routes><Route path="/scanner/launch/:scenarioName" element={
@@ -2928,7 +2936,7 @@ describe('ScenarioDetail', () => {
               labels={{ operator: 'roakey' }} defaultsReady onNavigate={jest.fn()} />
           } /></Routes>
         </MemoryRouter>
-      </FluentProvider>)
+      </UserPreferencesProvider></FluentProvider>)
 
       expect(await screen.findByTestId('preset-seed-banner')).toHaveTextContent('Pre-filled from preset first.')
       expect(screen.getByRole('checkbox', { name: 'crescendo' })).toBeChecked()

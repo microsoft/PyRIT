@@ -9,6 +9,9 @@ import { UserPreferencesProvider, useUserPreferences } from './useUserPreference
 
 const chosenPreferences: UserPreferences = {
   targets: {
+    adversarial: { registryName: 'adversarial', identifierHash: 'adversarial-hash' },
+  },
+  lastUsedTargets: {
     objective: { registryName: 'objective', identifierHash: 'objective-hash' },
     adversarial: { registryName: 'adversarial', identifierHash: 'adversarial-hash' },
   },
@@ -60,6 +63,7 @@ describe('useUserPreferences', () => {
       result.current.updatePreferences((current) => ({ ...current, labels: { campaign: 'new' } }))
       result.current.updatePreferences((current) => ({ ...current, operation: chosenPreferences.operation }))
       result.current.updatePreferences((current) => ({ ...current, targets: chosenPreferences.targets }))
+      result.current.updatePreferences((current) => ({ ...current, lastUsedTargets: chosenPreferences.lastUsedTargets }))
       result.current.updatePreferences((current) => ({
         ...current,
         hiddenTargetRegistryNames: chosenPreferences.hiddenTargetRegistryNames,
@@ -78,12 +82,13 @@ describe('useUserPreferences', () => {
     const first = renderHook(() => useUserPreferences(), { wrapper })
     const second = renderHook(() => useUserPreferences(), { wrapper })
     act(() => first.result.current.updatePreferences((current: UserPreferences) => ({
-      ...current, targets: { ...current.targets, objective: chosenPreferences.targets.objective },
+      ...current, lastUsedTargets: chosenPreferences.lastUsedTargets,
     })))
     act(() => second.result.current.updatePreferences((current: UserPreferences) => ({
       ...current, targets: { ...current.targets, adversarial: chosenPreferences.targets.adversarial },
     })))
     expect(readUserPreferences('tenant:alice').targets).toEqual(chosenPreferences.targets)
+    expect(readUserPreferences('tenant:alice').lastUsedTargets).toEqual(chosenPreferences.lastUsedTargets)
   })
 
   it('merges hidden targets selected in two tabs', () => {
@@ -160,13 +165,14 @@ describe('useUserPreferences', () => {
       expect(result.current.preferences.targets.adversarial).toEqual(chosenPreferences.targets.adversarial)
       writeUserPreferences('tenant:alice', {
         ...DEFAULT_USER_PREFERENCES,
-        targets: { objective: chosenPreferences.targets.objective, adversarial: null },
+        lastUsedTargets: chosenPreferences.lastUsedTargets,
       })
       await act(async () => {
         for (const releaseLock of releaseLocks) releaseLock()
       })
       await waitFor(() => expect(readUserPreferences('tenant:alice')).toEqual({
-        ...DEFAULT_USER_PREFERENCES, targets: chosenPreferences.targets, theme: 'dark',
+        ...DEFAULT_USER_PREFERENCES, targets: chosenPreferences.targets,
+        lastUsedTargets: chosenPreferences.lastUsedTargets, theme: 'dark',
       }))
       expect(request).toHaveBeenCalledWith('pyrit.userPreferences.v1.tenant:alice', expect.any(Function))
     } finally {
@@ -239,6 +245,7 @@ describe('useUserPreferences', () => {
       operation: undefined,
       chatScorer: undefined,
       sidebarExpanded: undefined,
+      lastUsedTargets: undefined,
     })
   })
 
@@ -268,6 +275,7 @@ describe('useUserPreferences', () => {
       operation: { name: 'op_legacy' },
       chatScorer: undefined,
       sidebarExpanded: undefined,
+      lastUsedTargets: undefined,
     })
     writeUserPreferences('local', DEFAULT_USER_PREFERENCES)
     expect(readUserPreferences('local')).toEqual(DEFAULT_USER_PREFERENCES)
@@ -277,7 +285,8 @@ describe('useUserPreferences', () => {
     'not json',
     'null',
     '[]',
-    JSON.stringify({ ...chosenPreferences, targets: { objective: { registryName: 'no-hash' }, adversarial: null } }),
+    JSON.stringify({ ...chosenPreferences, lastUsedTargets: { objective: { registryName: 'no-hash' }, adversarial: null } }),
+    JSON.stringify({ ...chosenPreferences, lastUsedChatScorer: { registry_name: 'no-hash' } }),
     JSON.stringify({ ...chosenPreferences, labels: { bad: 5 } }),
     JSON.stringify({ ...chosenPreferences, theme: 'unknown' }),
     JSON.stringify({ ...chosenPreferences, chatMarkdown: 'markdown' }),
@@ -304,5 +313,22 @@ describe('useUserPreferences', () => {
     await user.click(screen.getByRole('button', { name: 'Save preferences' }))
     expect(screen.getByRole('alert')).toHaveTextContent('session only')
     expect(screen.getByLabelText('Preferences')).toHaveTextContent(JSON.stringify(chosenPreferences))
+  })
+
+  it('persists actual-use references and scorer Off without replacing Registry defaults', () => {
+    writeUserPreferences('tenant:alice', chosenPreferences)
+    const { result, unmount } = renderHook(() => useUserPreferences(), { wrapper })
+    act(() => result.current.rememberUse({
+      objective: { registryName: 'used', identifierHash: 'used-hash' },
+    }, null))
+    unmount()
+    const restored = renderHook(() => useUserPreferences(), { wrapper })
+    expect(restored.result.current.preferences.lastUsedTargets).toEqual({
+      objective: { registryName: 'used', identifierHash: 'used-hash' },
+      adversarial: chosenPreferences.lastUsedTargets?.adversarial,
+    })
+    expect(restored.result.current.preferences.lastUsedChatScorer).toBeNull()
+    expect(restored.result.current.preferences.chatScorer).toEqual(chosenPreferences.chatScorer)
+    expect(restored.result.current.preferences.targets).toEqual(chosenPreferences.targets)
   })
 })

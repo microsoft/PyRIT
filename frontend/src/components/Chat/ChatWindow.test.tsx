@@ -981,6 +981,7 @@ describe("ChatWindow Integration", () => {
         expect(screen.getByRole("textbox")).toHaveValue("Draft to send");
         expect(screen.queryByRole("button", { name: /open conversation/ })).not.toBeInTheDocument();
         expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+        expect(readUserPreferences("local").lastUsedTargets).toBeUndefined();
       });
 
       it("does not start copy trackers after unmount while preparation was being read", async () => {
@@ -1092,6 +1093,17 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledTimes(1));
     expect(mockedAttacksApi.createAttack.mock.calls[0][0]).not.toHaveProperty("chat_scorer");
+  });
+
+  it("should preserve last-used Off when creating a chat without an objective", async () => {
+    const user = userEvent.setup();
+    mockSendResult.mockImplementation(() => new Promise(() => {}));
+    render(<TestWrapper><ChatWindow {...defaultProps} defaultChatScorer={null} /></TestWrapper>);
+    await user.type(screen.getByPlaceholderText("Type prompt here"), "Chat with scoring off");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
+      expect.objectContaining({ chat_scorer: null }),
+    ));
   });
 
   it("should propose the current personal default when the first objective is added to a saved manual chat", async () => {

@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { TargetInstance } from '@/types'
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
+import { targetReference } from '@/utils/targetIdentity'
 
 import { useTargetPreferences } from './useTargetPreferences'
 import { UserPreferencesProvider, useUserPreferences } from './useUserPreferences'
@@ -11,8 +12,8 @@ import { UserPreferencesProvider, useUserPreferences } from './useUserPreference
 function renderTargetPreferences(accountKey: string | null, targets: TargetInstance[]) {
   return renderHook(
     ({ targets: registryTargets }) => {
-      const { error } = useUserPreferences()
-      return { ...useTargetPreferences(registryTargets), error }
+      const { error, rememberUse } = useUserPreferences()
+      return { ...useTargetPreferences(registryTargets), error, rememberUse }
     },
     {
       initialProps: { targets },
@@ -38,12 +39,12 @@ describe('useTargetPreferences', () => {
 
   it('stores only target references and restores each account independently', () => {
     const first = renderTargetPreferences('tenant:alice', [target, adversarial])
-    act(() => first.result.current.setDefault('objective', target))
+    act(() => first.result.current.rememberUse({ objective: targetReference(target) }))
     act(() => first.result.current.setDefault('adversarial', adversarial))
     expect(readUserPreferences('tenant:alice').targets).toEqual({
-      objective: { registryName: 'objective', identifierHash: 'objective-hash' },
       adversarial: { registryName: 'adversarial', identifierHash: 'adversarial-hash' },
     })
+    expect(readUserPreferences('tenant:alice').lastUsedTargets?.objective).toEqual(targetReference(target))
     first.unmount()
 
     const restored = renderTargetPreferences('tenant:alice', [target, adversarial])
@@ -52,15 +53,15 @@ describe('useTargetPreferences', () => {
     const other = renderTargetPreferences('tenant:bob', [target, adversarial])
     expect(other.result.current.objectiveTarget).toBeNull()
     expect(other.result.current.adversarialTarget).toBeNull()
-    act(() => restored.result.current.setDefault('objective', null))
-    expect(readUserPreferences('tenant:alice').targets.objective).toBeNull()
+    act(() => restored.result.current.rememberUse({ objective: null }))
+    expect(readUserPreferences('tenant:alice').lastUsedTargets?.objective).toBeNull()
     expect(readUserPreferences('tenant:alice').targets.adversarial?.registryName).toBe('adversarial')
   })
 
   it('does not use the local profile before a signed-in identity is ready', () => {
     writeUserPreferences('local', {
       ...DEFAULT_USER_PREFERENCES,
-      targets: {
+      lastUsedTargets: {
         objective: { registryName: 'objective', identifierHash: 'objective-hash' },
         adversarial: null,
       },
@@ -68,15 +69,15 @@ describe('useTargetPreferences', () => {
 
     const { result } = renderTargetPreferences(null, [target])
     expect(result.current.objectiveTarget).toBeNull()
-    act(() => result.current.setDefault('objective', target))
+    act(() => result.current.rememberUse({ objective: targetReference(target) }))
     expect(result.current.error).toContain('Could not save')
     expect(window.localStorage.length).toBe(1)
   })
 
-  it('keeps both defaults when they change in the same event', () => {
+  it('keeps last use and the configured default when they change in the same event', () => {
     const { result } = renderTargetPreferences('alice', [target, adversarial])
     act(() => {
-      result.current.setDefault('objective', target)
+      result.current.rememberUse({ objective: targetReference(target) })
       result.current.setDefault('adversarial', adversarial)
     })
     expect(result.current.objectiveTarget).toBe(target)
@@ -113,7 +114,6 @@ describe('useTargetPreferences', () => {
     writeUserPreferences('alice', {
       ...DEFAULT_USER_PREFERENCES,
       targets: {
-        objective: null,
         adversarial: { registryName: 'missing', identifierHash: 'missing-hash' },
       },
     })
@@ -129,7 +129,7 @@ describe('useTargetPreferences', () => {
 
   it('rejects changed identities and ineligible adversarial defaults', () => {
     const { result, rerender } = renderTargetPreferences('alice', [target, adversarial])
-    act(() => result.current.setDefault('objective', target))
+    act(() => result.current.rememberUse({ objective: targetReference(target) }))
     act(() => result.current.setDefault('adversarial', adversarial))
     rerender({
       targets: [
@@ -139,14 +139,14 @@ describe('useTargetPreferences', () => {
     })
     expect(result.current.objectiveTarget).toBeNull()
     expect(result.current.adversarialTarget).toBeNull()
-    expect(result.current.preferences.objective?.registryName).toBe('objective')
+    expect(result.current.objectiveReference?.registryName).toBe('objective')
   })
 
   it('reports invalid storage and allows a new choice', () => {
     window.localStorage.setItem('pyrit.targetDefaults.v1.alice', '{"objective":123}')
     const { result } = renderTargetPreferences('alice', [target])
     expect(result.current.error).toContain('Could not read')
-    act(() => result.current.setDefault('objective', target))
+    act(() => result.current.rememberUse({ objective: targetReference(target) }))
     expect(result.current.error).toBeNull()
     expect(result.current.objectiveTarget).toBe(target)
   })
@@ -156,8 +156,22 @@ describe('useTargetPreferences', () => {
       throw new Error('Storage unavailable')
     })
     const { result } = renderTargetPreferences('alice', [target])
-    act(() => result.current.setDefault('objective', target))
+    act(() => result.current.rememberUse({ objective: targetReference(target) }))
     expect(result.current.objectiveTarget).toBe(target)
     expect(result.current.error).toContain('session only')
+  })
+
+  it('uses the last adversarial scan target only when no registry default exists', () => {
+    const { result, rerender } = renderTargetPreferences('alice', [target, adversarial])
+    act(() => result.current.rememberUse({ adversarial: targetReference(adversarial) }))
+    expect(result.current.scanAdversarialTarget).toBe(adversarial)
+    expect(result.current.adversarialTarget).toBeNull()
+    const environmentTarget = makeTarget({
+      target_registry_name: 'adversarial_chat', capabilities: { supports_multi_turn: true },
+    })
+    rerender({ targets: [target, adversarial, environmentTarget] })
+    expect(result.current.scanAdversarialTarget).toBe(environmentTarget)
+    act(() => result.current.setDefault('adversarial', adversarial))
+    expect(result.current.scanAdversarialTarget).toBe(adversarial)
   })
 })

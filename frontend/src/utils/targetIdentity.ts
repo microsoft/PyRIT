@@ -65,7 +65,7 @@ export function resolveTargetReference(
 }
 
 export function resolveDefaultAdversarialTarget(
-  preferences: TargetPreferences, targets: TargetInstance[],
+  preferences: Pick<TargetPreferences, 'adversarial'>, targets: TargetInstance[],
 ): TargetInstance | null {
   const resolved = preferences.adversarial
     ? resolveTargetReference(preferences.adversarial, targets)
