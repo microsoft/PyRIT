@@ -112,7 +112,7 @@ import type {
   TargetReference,
 } from '../../types'
 import { isTargetResolutionBlocking, targetInfoMatchesTarget } from '../../utils/targetIdentity'
-import { scenarioRunRoutePath } from '../../utils/routeParams'
+import { attackConversationRoutePath, scenarioRunRoutePath } from '../../utils/routeParams'
 import type { ViewName } from '../Sidebar/Navigation'
 import { CHAT_NOTICE_FADE_DURATION_MS, useChatWindowStyles } from './ChatWindow.styles'
 
@@ -2295,7 +2295,9 @@ export default function ChatWindow({
         </MessageBar>}
         {manualContinuation && <MessageBar intent="info"><MessageBarBody>
           Manual continuation of{' '}
-          <Link to={`/attack/chat/${manualContinuation.source_attack_result_id}/conversations/${manualContinuation.source_conversation_id}`}>
+          <Link to={attackConversationRoutePath(
+            manualContinuation.source_attack_result_id, manualContinuation.source_conversation_id,
+          )}>
             the original automated result
           </Link>.
         </MessageBarBody></MessageBar>}

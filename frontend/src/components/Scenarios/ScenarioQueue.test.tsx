@@ -71,6 +71,16 @@ describe('ScenarioQueue', () => {
     expect(screen.getByText('Position 1')).toBeInTheDocument()
   })
 
+  it('encodes a queued scenario result ID in its deep link', () => {
+    renderQueue({
+      ...SNAPSHOT,
+      active: null,
+      queued: [{ ...SNAPSHOT.queued[0], scenario_result_id: 'run/1 %' }],
+    })
+    expect(screen.getByRole('link', { name: /waiting\.scenario/i }))
+      .toHaveAttribute('href', '/scanner/history/run%2F1%20%25')
+  })
+
   it('renders a concise empty state', () => {
     renderQueue({ revision: 0, snapshot_at: '2026-01-01T00:00:00Z', active: null, queued: [] })
 

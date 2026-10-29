@@ -1,6 +1,7 @@
 import { Badge, MessageBar, MessageBarBody, Spinner, Text } from '@fluentui/react-components'
 
 import type { ScenarioQueueEntry, ScenarioQueueSnapshot } from '@/types'
+import { scenarioRunRoutePath } from '@/utils/routeParams'
 
 import { useScenarioQueueStyles } from './ScenarioQueue.styles'
 
@@ -74,7 +75,7 @@ function ScenarioQueueItem({ entry, current }: ScenarioQueueItemProps) {
     <li className={styles.entry}>
       <Badge appearance="tint" color={active ? 'brand' : 'informative'}>{label}</Badge>
       <a
-        href={`/scanner/history/${encodeURIComponent(entry.scenario_result_id)}`}
+        href={scenarioRunRoutePath(entry.scenario_result_id)}
         className={styles.link}
         aria-current={current ? 'page' : undefined}
       >

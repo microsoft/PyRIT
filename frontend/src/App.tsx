@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo, useTransition } from 'react'
+import { useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo, useTransition } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation, useParams, useSearchParams, matchPath } from 'react-router'
 import { useMsal } from '@azure/msal-react'
 import { Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components'
@@ -66,6 +66,7 @@ import {
 } from './utils/targetIdentity'
 import { attacksApi, authApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
+import { generateClientId } from './utils/clientId'
 import { useTour } from './hooks/useTour'
 import { ChatDraftProvider, useChatDraftHandoff } from './hooks/useChatDraftHandoff'
 import {
@@ -326,6 +327,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const lastAnalyticsLocation = useRef('')
   const lastDatasetsLocation = useRef<{ path: string; state: unknown }>({ path: '', state: null })
   const lastChatLocation = useRef<{ path: string; state: unknown }>({ path: '', state: null })
+  const pendingNewAttack = useRef<{ readonly id: string; readonly fromKey: string } | null>(null)
   useEffect(() => {
     if (location.pathname === HISTORY_ATTACKS_PATH) {
       lastHistorySearch.current = location.search
@@ -587,16 +589,28 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   }, [navigate, draftHandoff.preservedDraft])
 
   const handleNewAttack = useCallback(() => {
+    const id = generateClientId()
+    pendingNewAttack.current = { id, fromKey: location.key }
+    navigate(VIEW_PATHS.chat, { state: { newAttackRequestId: id } })
+  }, [location.key, navigate])
+
+  useLayoutEffect(() => {
+    const request = pendingNewAttack.current
+    const state: unknown = location.state
+    if (!request || location.key === request.fromKey || state === null || typeof state !== 'object'
+      || !('newAttackRequestId' in state) || state.newAttackRequestId !== request.id) return
+    pendingNewAttack.current = null
     clearPreservedDraft()
     dismissPendingImport()
     lastChatLocation.current = { path: VIEW_PATHS.chat, state: null }
+    // Keep the editor mounted until the router has committed an allowed navigation.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDraftSession((current) => ({
       ...current,
       key: current.key + 1,
       target: targetDefaults.preferences.objective,
     }))
-    navigate(VIEW_PATHS.chat)
-  }, [navigate, clearPreservedDraft, dismissPendingImport, targetDefaults.preferences.objective])
+  }, [location, clearPreservedDraft, dismissPendingImport, targetDefaults.preferences.objective])
 
   const handleConversationCreated = useCallback((
     arId: string,

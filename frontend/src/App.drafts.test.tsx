@@ -1,6 +1,6 @@
 import { StrictMode, type ReactNode } from 'react'
 
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { createMemoryRouter, MemoryRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
@@ -127,6 +127,7 @@ const TARGET = makeTarget({
     supports_json_schema: false,
     supports_json_output: false,
     supports_system_prompt: true,
+    supports_editable_history: true,
     supported_input_modalities: ['text', 'image_path', 'audio_path', 'video_path'],
     supported_output_modalities: ['text'],
   },
@@ -240,6 +241,51 @@ describe('App draft handoff with the real chat and composer', () => {
     await visitDatasets(user)
     await returnToChat(user)
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+  })
+
+  it('should let the editor block New attack before any draft reset', async () => {
+    const user = userEvent.setup()
+    renderChat()
+    const target = await screen.findByRole('combobox', { name: 'Chat target' })
+    await waitFor(() => expect(target).toBeEnabled())
+    await user.selectOptions(target, 'draft-target')
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Original unsent prompt')
+    await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
+    await user.click(await screen.findByRole('button', { name: 'Insert message at start' }))
+    await user.type(
+      within(screen.getByRole('region', { name: 'Message 1' })).getByPlaceholderText('Type prompt here'),
+      'Unsaved conversation edit',
+    )
+
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+    const firstDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
+    await user.click(within(firstDialog).getByRole('button', { name: 'Keep editing' }))
+    expect(within(screen.getByRole('region', { name: 'Message 1' }))
+      .getByPlaceholderText('Type prompt here')).toHaveValue('Unsaved conversation edit')
+
+    await user.click(await screen.findByRole('button', { name: 'Cancel', exact: true }))
+    const cancelDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
+    await user.click(within(cancelDialog).getByRole('button', { name: 'Discard draft' }))
+    await waitFor(() => expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument())
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Original unsent prompt')
+    await user.click(screen.getByRole('tab', { name: 'History', exact: true }))
+    await screen.findByRole('heading', { name: 'Attack history' })
+    await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
+    expect(await screen.findByPlaceholderText('Type prompt here')).toHaveValue('Original unsent prompt')
+
+    await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
+    await user.click(await screen.findByRole('button', { name: 'Insert message at start' }))
+    await user.type(
+      within(screen.getByRole('region', { name: 'Message 1' })).getByPlaceholderText('Type prompt here'),
+      'Confirmed conversation edit',
+    )
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+    const secondDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
+    await user.click(within(secondDialog).getByRole('button', { name: 'Discard draft' }))
+    await waitFor(() => expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument())
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
   })
 
   it('should restore a saved conversation only after its attack and transcript load', async () => {

@@ -366,6 +366,16 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => { expect(screen.queryByText("Attack Result Details")).not.toBeInTheDocument(); });
   });
 
+  it("encodes both IDs in the manual-continuation source link", () => {
+    render(<TestWrapper><ChatWindow {...defaultProps} manualContinuation={{
+      source_attack_result_id: "attack/\u03b1 %",
+      source_conversation_id: "conv/?#%",
+    }} /></TestWrapper>);
+    expect(screen.getByRole("link", { name: "the original automated result" })).toHaveAttribute(
+      "href", "/attack/chat/attack%2F%CE%B1%20%25/conversations/conv%2F%3F%23%25",
+    );
+  });
+
   it("keeps an automated result read-only until Continue manually creates a separate attack", async () => {
     const user = userEvent.setup();
     const original = makeTextResponse("Original automated response").messages;
@@ -380,6 +390,7 @@ describe("ChatWindow Integration", () => {
       },
       messages: { ...original, conversation_id: "manual-conversation" },
     });
+
     render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="automated" conversationId="original"
       activeConversationId="original" objective="Original goal" executionReadOnly
       lastResponseMessagePieceId="p-resp"
