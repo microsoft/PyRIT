@@ -139,17 +139,17 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   const backPath = navigationState?.suiteExecutionId
     ? suiteExecutionRoutePath(navigationState.suiteExecutionId)
     : navigationState?.fromScenarioHistory
-    ? `/history/scanner${navigationState.scenarioHistorySearch ?? ''}`
+    ? `/scanner/history${navigationState.scenarioHistorySearch ?? ''}`
     : navigationState?.scenarioName
-      ? `/scanner/${encodeURIComponent(navigationState.scenarioName)}`
-      : '/scanner'
+      ? `/scanner/launch/${encodeURIComponent(navigationState.scenarioName)}`
+      : '/scanner/history'
   const backLabel = navigationState?.suiteExecutionId
     ? `Back to ${navigationState.suiteName ?? 'suite execution'}`
     : navigationState?.fromScenarioHistory
     ? 'Back to scanner history'
     : navigationState?.scenarioName
       ? 'Back to scenario'
-      : 'Back to scanners'
+      : 'Back to scanner history'
 
   const seedObjectives = useMemo(
     () => new Map(state.plan?.seed_groups.map((seed) => [seed.id, seed.objective]) ?? []),
@@ -256,7 +256,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
           </Link>
           <div className={styles.centeredState}>
             <ErrorCircleRegular fontSize={32} />
-            <Text as="h1" size={600} weight="semibold">Scenario run not found</Text>
+            <Text as="h2" size={600} weight="semibold">Scenario run not found</Text>
             <Text>{state.error}</Text>
             <Button className={styles.touchTarget} icon={<ArrowSyncRegular />} onClick={retry}>
               Retry
@@ -276,7 +276,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
           </Link>
           <div className={styles.centeredState}>
             <ErrorCircleRegular fontSize={32} />
-            <Text as="h1" size={600} weight="semibold">Unable to load scenario run</Text>
+            <Text as="h2" size={600} weight="semibold">Unable to load scenario run</Text>
             <Text>{state.error}</Text>
             <Button appearance="primary" className={styles.touchTarget} icon={<ArrowSyncRegular />} onClick={retry}>
               Retry
@@ -320,7 +320,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
         <header className={styles.header}>
           <div className={styles.headerIdentity}>
             <div className={styles.titleRow}>
-              <Text as="h1" size={700} weight="semibold">
+              <Text as="h2" size={700} weight="semibold">
                 {run.scenario_registry_name ?? run.scenario_name}
               </Text>
               <Badge

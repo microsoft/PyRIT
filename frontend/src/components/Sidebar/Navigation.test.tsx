@@ -56,7 +56,6 @@ describe("Navigation", () => {
       "Home",
       "Attacks",
       "Scanner",
-      "History",
       "Analytics",
       "Operations",
       "Datasets",
@@ -83,7 +82,7 @@ describe("Navigation", () => {
     renderWithProvider(<Navigation {...defaultProps} onNavigate={onNavigate} />);
     const destinations: Array<[string, ViewName]> = [
       ["Home", "home"], ["Attacks", "chat"], ["Scanner", "scenarios"],
-      ["History", "history"], ["Analytics", "analytics"], ["Operations", "operations"],
+      ["Analytics", "analytics"], ["Operations", "operations"],
       ["Datasets", "datasets"], ["Registry", "registry"], ["Configuration", "configuration"],
     ];
     for (const [label, view] of destinations) {

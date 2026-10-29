@@ -304,7 +304,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/attacks/mobile-attack-001") {
+    if (apiPath === "/attack/chat/mobile-attack-001") {
       await route.fulfill(
         jsonResponse({
           attack_result_id: "mobile-attack-001",
@@ -338,7 +338,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/attacks/mobile-attack-001/message-sends" && method === "POST") {
+    if (apiPath === "/attack/chat/mobile-attack-001/message-sends" && method === "POST") {
       await fulfillMessageSend(route, makeAddMessageResponse(
         "mobile-attack-001", "mobile-conversation-001", MESSAGES,
         null, {
@@ -350,7 +350,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       ));
       return;
     }
-    if (apiPath === "/attacks/mobile-attack-001/messages") {
+    if (apiPath === "/attack/chat/mobile-attack-001/messages") {
       await route.fulfill(
         method === "POST"
           ? jsonResponse(makeAddMessageResponse(
@@ -366,7 +366,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/attacks/mobile-attack-001/conversations") {
+    if (apiPath === "/attack/chat/mobile-attack-001/conversations") {
       await route.fulfill(
         jsonResponse({
           attack_result_id: "mobile-attack-001",
@@ -383,13 +383,13 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/attacks/attack-options") {
+    if (apiPath === "/attack/chat/attack-options") {
       await route.fulfill(
         jsonResponse({ attack_types: ["PromptSendingAttack"] })
       );
       return;
     }
-    if (apiPath === "/attacks/converter-options") {
+    if (apiPath === "/attack/chat/converter-options") {
       await route.fulfill(jsonResponse({ converter_types: [] }));
       return;
     }
@@ -578,7 +578,7 @@ test.describe("Mobile touch targets", () => {
     await expectMinimumTouchTarget(page.getByRole("button", { name: "Reset all filters", exact: true }));
     await expectNoDocumentOverflow(page);
 
-    await page.goto("/history");
+    await page.goto("/attack/history");
     await expect(
       page.getByTestId("open-attack-home-attack-001")
     ).toBeVisible();
@@ -627,7 +627,7 @@ test.describe("Mobile touch targets", () => {
     // the create-attack flow seeds the objective as "" client-side and never
     // loads the long mocked objective, so the disclosure toggle would never
     // render and this test would silently skip checking it.
-    await page.goto("/attacks/mobile-attack-001");
+    await page.goto("/attack/chat/mobile-attack-001");
     await expect(
       page.getByText("Deterministic assistant response for touch-target tests.")
     ).toBeVisible();

@@ -5,9 +5,6 @@ import {
   Button,
   Field,
   Input,
-  Breadcrumb,
-  BreadcrumbDivider,
-  BreadcrumbItem,
   Drawer,
   Menu,
   MenuItem,
@@ -280,7 +277,6 @@ function getPersistedProcessingRecovery(
 interface ChatWindowProps {
   /** Shared layout slot; standalone chat renders its toolbar inline. */
   toolbarContainer?: HTMLElement | null
-  onNewAttack: () => void
   activeTarget: TargetInstance | null
   draftTargetReference?: TargetReference | null
   /** Route identity is available before the attack's metadata has loaded. */
@@ -341,12 +337,12 @@ interface ChatWindowProps {
   lastResponseMessagePieceId?: string | null
   /** Validated scenario-run provenance for attacks opened from a run dashboard. */
   scenarioResultId?: string | null
+  onReturnToScan?: () => void
   findingEvidenceId?: string | null
 }
 
 export default function ChatWindow({
   toolbarContainer,
-  onNewAttack,
   activeTarget,
   draftTargetReference,
   draftContext,
@@ -389,6 +385,7 @@ export default function ChatWindow({
   humanScore,
   lastResponseMessagePieceId,
   scenarioResultId,
+  onReturnToScan,
   findingEvidenceId,
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
@@ -489,7 +486,6 @@ export default function ChatWindow({
 
   const handoffRestoredRef = useRef<number | null>(null)
   const ownsDraftRef = useRef(false)
-  const discardDraftOnUnmountRef = useRef(false)
   const preserveOnUnmountRef = useRef<(() => void) | null>(null)
   useEffect(() => () => { preserveOnUnmountRef.current?.() }, [])
   const [recoverableSends, setRecoverableSends] = useState<Record<string, RecoverableSendDraft>>({})
@@ -678,46 +674,6 @@ export default function ChatWindow({
     && conversationLoadIssue?.conversationId !== viewedConversationId
     && !isMutationLocked && !editDraft && (attackResultId === null || viewedConversationId !== null)
 
-  const activeDraft: ChatDraftContent = {
-    text: chatInputText,
-    attachments: draftAttachments,
-    systemPrompt,
-    target: draftTargetReference !== undefined
-      ? draftTargetReference : activeTarget ? targetReference(activeTarget) : null,
-    converters: converters.snapshot(),
-  }
-  const isActiveDraftDirty = isChatDraftDirty(activeDraft)
-  useLayoutEffect(() => {
-    if (isDraftDestinationReady || isActiveDraftDirty) ownsDraftRef.current = true
-    const savedDraft = { ...activeDraft, textMetadata: inputBoxRef.current?.getTextMetadata() }
-    const isWaitingForRestore = matchingPreservedDraft !== null
-      && handoffRestoredRef.current !== draftHandoff.preservedDraft?.sequence
-      && !isActiveDraftDirty
-    const hasUnrelatedDraft = draftHandoff.preservedDraft !== null && matchingPreservedDraft === null
-    const hasEditedContent = isActiveDraftDirty
-      || Object.values(activeDraft.converters?.pipelines ?? {}).some((stages: ConverterPipelineStage[]) => stages.length > 0)
-    preserveOnUnmountRef.current = (): void => {
-      if (discardDraftOnUnmountRef.current || !ownsDraftRef.current || isWaitingForRestore
-        || !hasChatDraftState(activeDraft) || (hasUnrelatedDraft && !hasEditedContent)) return
-      draftHandoff.preserveDraft({
-        originatingAttackId: draftAttackId,
-        originatingConversationId: draftConversationId,
-        originatingPath: location.pathname + location.search + location.hash,
-        originatingState: location.state,
-        draft: savedDraft,
-      })
-    }
-  })
-
-  const restoreComposerDraft = useCallback((draft: ChatDraftContent): MessageAttachment[] => {
-    const attachments = draft.attachments.map(withDraftIdentity)
-    setChatInputText(draft.text)
-    setDraftAttachments(attachments)
-    if (draft.systemPrompt !== undefined) setSystemPrompt(draft.systemPrompt)
-    inputBoxRef.current?.restoreDraft(draft.text, attachments, draft.textMetadata)
-    return attachments
-  }, [])
-  const restoreConverterSnapshot = converters.restoreSnapshot
   const isScoreLocked = isOperatorLocked || Boolean(isLoadingAttack) || isLoadingMessages
     || awaitingConversationLoad || isEvidenceUnavailable
   const {
@@ -741,6 +697,52 @@ export default function ChatWindow({
     onAttackChange,
     onObjectiveChange,
   })
+  const activeDraft: ChatDraftContent = {
+    text: chatInputText,
+    attachments: draftAttachments,
+    systemPrompt,
+    objective: attackResultId ? undefined : pendingObjective,
+    temperature,
+    ...(draftScorer !== undefined ? { chatScorer: draftScorer } : {}),
+    target: draftTargetReference !== undefined
+      ? draftTargetReference : activeTarget ? targetReference(activeTarget) : null,
+    converters: converters.snapshot(),
+  }
+  const isActiveDraftDirty = isChatDraftDirty(activeDraft)
+  useLayoutEffect(() => {
+    if (isDraftDestinationReady || isActiveDraftDirty) ownsDraftRef.current = true
+    const savedDraft = { ...activeDraft, textMetadata: inputBoxRef.current?.getTextMetadata() }
+    const isWaitingForRestore = matchingPreservedDraft !== null
+      && handoffRestoredRef.current !== draftHandoff.preservedDraft?.sequence
+      && !isActiveDraftDirty
+    const hasUnrelatedDraft = draftHandoff.preservedDraft !== null && matchingPreservedDraft === null
+    const hasEditedContent = isActiveDraftDirty || Boolean(pendingObjective.trim() || temperature) || draftScorer !== undefined
+      || Object.values(activeDraft.converters?.pipelines ?? {}).some((stages: ConverterPipelineStage[]) => stages.length > 0)
+    preserveOnUnmountRef.current = (): void => {
+      if (!ownsDraftRef.current || isWaitingForRestore
+        || !hasChatDraftState(activeDraft) || (hasUnrelatedDraft && !hasEditedContent)) return
+      draftHandoff.preserveDraft({
+        originatingAttackId: draftAttackId,
+        originatingConversationId: draftConversationId,
+        originatingPath: location.pathname + location.search + location.hash,
+        originatingState: location.state,
+        draft: savedDraft,
+      }, draftHandoff.activeSequence)
+    }
+  })
+
+  const restoreComposerDraft = useCallback((draft: ChatDraftContent): MessageAttachment[] => {
+    const attachments = draft.attachments.map(withDraftIdentity)
+    setChatInputText(draft.text)
+    setDraftAttachments(attachments)
+    if (draft.systemPrompt !== undefined) setSystemPrompt(draft.systemPrompt)
+    if (!attackResultId && draft.objective !== undefined) void changeObjective(draft.objective, '')
+    if (draft.temperature !== undefined) setTemperature(draft.temperature)
+    if ('chatScorer' in draft) setDraftScorer(draft.chatScorer)
+    inputBoxRef.current?.restoreDraft(draft.text, attachments, draft.textMetadata)
+    return attachments
+  }, [attackResultId, changeObjective])
+  const restoreConverterSnapshot = converters.restoreSnapshot
 
   // Clear internal messages when attack state is reset (e.g. New Attack).
   // Uses the "adjust state during render" pattern (see React docs:
@@ -1923,7 +1925,7 @@ export default function ChatWindow({
       if (getViewedConversationId() !== sourceId) return
       if (destination === 'technique') {
         const params = new URLSearchParams({ prepended_conversation_id: response.messages.conversation_id })
-        navigate(`/scanner/technique.execute?${params.toString()}`)
+        navigate(`/scanner/launch/technique.execute?${params.toString()}`)
         return
       }
       if (isFailedPrompt && inputBoxRef.current?.getDraftRevision() !== draftRevision) return
@@ -2183,6 +2185,21 @@ export default function ChatWindow({
       </div>
       <div className={mergeClasses(styles.ribbonActions, styles.sharedActions)}
         role="group" aria-label="Conversation actions">
+        {scenarioResultId && (
+          <Link
+            className={styles.breadcrumbLink}
+            to={scenarioRunRoutePath(scenarioResultId)}
+            state={{ fromScenarioHistory: true }}
+            onClick={(event: React.MouseEvent<HTMLAnchorElement>) => {
+              if (onReturnToScan && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+                event.preventDefault()
+                onReturnToScan()
+              }
+            }}
+          >
+            Back to scan
+          </Link>
+        )}
         <Tooltip content="Render all messages as Markdown by default" relationship="label">
           <Switch
             checked={globalMarkdown}
@@ -2236,38 +2253,28 @@ export default function ChatWindow({
             aria-controls="conversation-panel"
           />
         </Tooltip>
-        <Tooltip content={editDraft !== null
-          ? editor.targetError ?? editor.validationError ?? newAttackDisabledReason ?? 'Save to new attack'
-          : 'New Attack'} relationship="description">
+        {editDraft !== null && <Tooltip
+          content={editor.targetError ?? editor.validationError ?? newAttackDisabledReason ?? 'Save to new attack'}
+          relationship="description">
           <Button
             appearance="primary"
             icon={<AddRegular />}
-            onClick={() => {
-              if (editDraft !== null) editorRef.current?.saveToNewAttack()
-              else {
-                discardDraftOnUnmountRef.current = true
-                navigationRevisionRef.current += 1
-                setIsPanelOpen(false)
-                onNewAttack()
-              }
-            }}
-            disabled={isSavingEditor
-              || (editDraft !== null && Boolean(newAttackDisabledReason || editor.targetError || editor.validationError))
-              || (editDraft === null && !attackResultId)}
+            onClick={() => { editorRef.current?.saveToNewAttack() }}
+            disabled={isSavingEditor || Boolean(newAttackDisabledReason || editor.targetError || editor.validationError)}
             data-testid="new-attack-btn"
-            aria-label={editDraft !== null ? 'Save to new attack' : 'New Attack'}
+            aria-label="Save to new attack"
             className={styles.newAttackButton}
           >
-            <span className={styles.newAttackLabel}>{editDraft !== null ? 'Save to new attack' : 'New Attack'}</span>
+            <span className={styles.newAttackLabel}>Save to new attack</span>
           </Button>
-        </Tooltip>
+        </Tooltip>}
       </div>
     </div>
   )
 
   return (
     <div className={styles.root}>
-      <h1 className={styles.pageHeading}>Chat</h1>
+      <h2 className={styles.pageHeading}>Chat</h2>
       {isConverterPanelOpen && (
         <ConverterPanel
           onClose={() => setIsConverterPanelOpen(false)}
@@ -2275,25 +2282,6 @@ export default function ChatWindow({
         />
       )}
       <div className={styles.chatArea} data-testid="chat-area">
-        {scenarioResultId && (
-          <div className={styles.breadcrumbBar}>
-            <Breadcrumb aria-label="Attack provenance" size="small">
-              <BreadcrumbItem>
-                <Text size={200}>Scanner History</Text>
-              </BreadcrumbItem>
-              <BreadcrumbDivider />
-              <BreadcrumbItem>
-                <Link
-                  className={styles.breadcrumbLink}
-                  to={scenarioRunRoutePath(scenarioResultId)}
-                  aria-label={`Return to scenario run ${scenarioResultId}`}
-                >
-                  Scenario run {scenarioResultId.slice(0, 8)}
-                </Link>
-              </BreadcrumbItem>
-            </Breadcrumb>
-          </div>
-        )}
         {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
         {executionReadOnly && <MessageBar intent="info">
           <MessageBarBody>
@@ -2307,7 +2295,7 @@ export default function ChatWindow({
         </MessageBar>}
         {manualContinuation && <MessageBar intent="info"><MessageBarBody>
           Manual continuation of{' '}
-          <Link to={`/attacks/${manualContinuation.source_attack_result_id}/conversations/${manualContinuation.source_conversation_id}`}>
+          <Link to={`/attack/chat/${manualContinuation.source_attack_result_id}/conversations/${manualContinuation.source_conversation_id}`}>
             the original automated result
           </Link>.
         </MessageBarBody></MessageBar>}

@@ -102,6 +102,9 @@ export interface ChatDraftContent {
   text: string
   attachments: MessageAttachment[]
   systemPrompt?: string
+  objective?: string
+  temperature?: string
+  chatScorer?: RegisteredComponentReference | null
   target?: TargetReference | null
   converters?: ChatConverterSnapshot
   textMetadata?: Record<string, unknown>
@@ -139,7 +142,10 @@ export interface ChatDraftHandoffContextValue {
   preservedDraft: ChatDraftContextState | null
   pendingImport: PendingImportPayload | null
   activeSequence: number
-  preserveDraft: (state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>) => void
+  preserveDraft: (
+    state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>,
+    expectedSequence?: number,
+  ) => void
   clearPreservedDraft: (expectedSequence?: number) => void
   /** Pass the sequence captured before preparing an import to reject stale async results. */
   stagePendingImport: (

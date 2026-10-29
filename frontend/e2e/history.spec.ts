@@ -217,7 +217,8 @@ async function mockHistoryAPIs(
 /** Navigate to the Attack History view. */
 async function goToHistory(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: "History", exact: true }).click();
+  await page.getByRole("button", { name: "Attacks", exact: true }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
   await expect(page.getByTestId("attacks-table")).toBeVisible({ timeout: 10_000 });
 }
 
@@ -545,7 +546,7 @@ test.describe("Attack History empty state", () => {
       });
     });
 
-    await page.goto("/history");
+    await page.goto("/attack/history");
 
     const configureTargetButton = page.getByRole("button", { name: "Configure target" });
     await expect(configureTargetButton).toBeVisible();
@@ -557,7 +558,7 @@ test.describe("Attack History empty state", () => {
     await expect(page.getByRole("heading", { level: 1, name: "Target Registry" })).toBeVisible();
 
     await page.goBack();
-    await expect(page).toHaveURL(/\/history\/attacks$/);
+    await expect(page).toHaveURL(/\/attack\/history$/);
     await expect(page.getByRole("button", { name: "Configure target" })).toBeVisible();
   });
 });

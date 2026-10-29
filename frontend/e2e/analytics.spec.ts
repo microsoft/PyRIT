@@ -23,7 +23,7 @@ const OVERVIEW: AttackAnalyticsFilter = {
 const errors = new WeakMap<Page, string[]>()
 
 function reportResponse(response: Response): boolean {
-  return response.url().endsWith('/api/analytics/attacks/query') && response.request().method() === 'POST'
+  return response.url().endsWith('/api/analytics/attack/chat/query') && response.request().method() === 'POST'
 }
 
 async function readReport(response: Response): Promise<AttackAnalyticsReport> {
@@ -47,9 +47,9 @@ function observe(page: Page) {
   const results: Request[] = []
   const facets: Request[] = []
   page.on('request', (request: Request) => {
-    if (request.url().endsWith('/analytics/attacks/query')) reports.push(request)
-    if (request.url().endsWith('/analytics/attacks/results')) results.push(request)
-    if (request.url().endsWith('/analytics/attacks/facets')) facets.push(request)
+    if (request.url().endsWith('/analytics/attack/chat/query')) reports.push(request)
+    if (request.url().endsWith('/analytics/attack/chat/results')) results.push(request)
+    if (request.url().endsWith('/analytics/attack/chat/facets')) facets.push(request)
   })
   return { reports, results, facets }
 }
@@ -157,14 +157,14 @@ test('drills into a real heatmap cell and opens its saved result through the nor
   const sharedUrl = page.url()
   await row.focus()
   await page.keyboard.press('Enter')
-  await expect(page).toHaveURL(new RegExp(`/attacks/${id}$`))
+  await expect(page).toHaveURL(new RegExp(`/attack/chat/${id}$`))
   await expect(page.getByText('This is a safe, locally stored example response for analytics browser checks.')).toBeVisible()
   await page.getByRole('button', { name: 'Analytics', exact: true }).click()
   await expect(page).toHaveURL(sharedUrl)
   await expect(page.getByRole('row', { name: `Open result ${id}` })).toBeVisible()
   await page.getByRole('row', { name: `Open result ${id}` }).focus()
   await page.keyboard.press('Space')
-  await expect(page).toHaveURL(new RegExp(`/attacks/${id}$`))
+  await expect(page).toHaveURL(new RegExp(`/attack/chat/${id}$`))
   await page.goBack()
   await expect(page).toHaveURL(sharedUrl)
   await expect(page.getByRole('row', { name: `Open result ${id}` })).toBeVisible()

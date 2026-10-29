@@ -326,7 +326,7 @@ function ScenarioRunPageProbe() {
     <>
       <ScenarioRunPage />
       <div data-testid="scanner-route" data-location={location.pathname} />
-      <button onClick={() => navigate(`/scanner-history/${OTHER_SCENARIO_RESULT_ID}`)}>Open another run</button>
+      <button onClick={() => navigate(`/scanner/history/${OTHER_SCENARIO_RESULT_ID}`)}>Open another run</button>
       <button onClick={() => navigate(-1)}>Browser back</button>
     </>
   )
@@ -338,17 +338,17 @@ interface TestWrapperProps {
 }
 
 function TestWrapper({
-  path = `/scanner-history/${SCENARIO_RESULT_ID}`,
+  path = `/scanner/history/${SCENARIO_RESULT_ID}`,
   navigationState,
 }: TestWrapperProps) {
   return (
     <FluentProvider theme={webLightTheme}>
       <MemoryRouter initialEntries={[{ pathname: path, state: navigationState }]}>
         <Routes>
-          <Route path="/scanner-history/:scenarioResultId/:attackResultId" element={<ScenarioRunPageProbe />} />
-          <Route path="/scanner-history/:scenarioResultId" element={<ScenarioRunPageProbe />} />
-          <Route path="/attacks/:attackId" element={<AttackRouteProbe />} />
-          <Route path="/attacks/:attackId/conversations/:conversationId" element={<AttackRouteProbe />} />
+          <Route path="/scanner/history/:scenarioResultId/:attackResultId" element={<ScenarioRunPageProbe />} />
+          <Route path="/scanner/history/:scenarioResultId" element={<ScenarioRunPageProbe />} />
+          <Route path="/attack/chat/:attackId" element={<AttackRouteProbe />} />
+          <Route path="/attack/chat/:attackId/conversations/:conversationId" element={<AttackRouteProbe />} />
         </Routes>
       </MemoryRouter>
     </FluentProvider>
@@ -356,7 +356,7 @@ function TestWrapper({
 }
 
 function renderPage(
-  path = `/scanner-history/${SCENARIO_RESULT_ID}`,
+  path = `/scanner/history/${SCENARIO_RESULT_ID}`,
   navigationState?: Record<string, unknown>,
 ) {
   return render(<TestWrapper path={path} navigationState={navigationState} />)
@@ -626,7 +626,7 @@ describe('ScenarioRunPage', () => {
     expect(within(dialog).getByText('The response achieved the objective.')).toBeVisible()
     expect(within(dialog).getByRole('link', { name: 'View conversation' })).toHaveAttribute(
       'href',
-      `/attacks/group-100-attempt-0/conversations/conversation-1?scenarioResultId=${SCENARIO_RESULT_ID}`,
+      `/attack/chat/group-100-attempt-0/conversations/conversation-1?scenarioResultId=${SCENARIO_RESULT_ID}`,
     )
   })
 
@@ -649,7 +649,7 @@ describe('ScenarioRunPage', () => {
   it('renders grouped attacks followed by scorers, techniques, and objectives', () => {
     renderPage()
 
-    expect(screen.getByRole('heading', { name: 'test.scenario', level: 1 })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'test.scenario', level: 2 })).toBeInTheDocument()
     expect(screen.getByTestId('run-state-badge')).toHaveTextContent('In progress')
     expect(screen.getByRole('progressbar', { name: 'Overall scenario run progress' })).toHaveAttribute(
       'aria-valuetext',
@@ -682,6 +682,7 @@ describe('ScenarioRunPage', () => {
 
     const headings = screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)
     expect(headings).toEqual([
+      'test.scenario',
       'Run configuration',
       'Scenario queue',
       'Overall progress',
@@ -930,7 +931,7 @@ describe('ScenarioRunPage', () => {
     expect(screen.getByTestId('run-state-badge')).toHaveTextContent('Queued')
     expect(screen.getByText(SCENARIO_RESULT_ID)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Resume run' })).not.toBeInTheDocument()
-    expect(screen.getByTestId('scanner-route')).toHaveAttribute('data-location', `/scanner-history/${SCENARIO_RESULT_ID}`)
+    expect(screen.getByTestId('scanner-route')).toHaveAttribute('data-location', `/scanner/history/${SCENARIO_RESULT_ID}`)
   })
 
   it.each<[number, string]>([
@@ -1045,7 +1046,7 @@ describe('ScenarioRunPage', () => {
       run: { scenario_result_id: nextRunId, scenario_name: 'AnotherScenario',
         scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
     }))
-    renderPage(`/scanner-history/${nextRunId}`)
+    renderPage(`/scanner/history/${nextRunId}`)
     await act(async () => {
       if (rejected) {
         rejectResume?.(new Error('The previous resume request failed.'))
@@ -1139,7 +1140,7 @@ describe('ScenarioRunPage', () => {
   })
 
   it('shows full objective details', async () => {
-    renderPage(`/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`)
+    renderPage(`/scanner/history/${SCENARIO_RESULT_ID}/attack-result-1`)
     const dialog = await screen.findByRole('dialog', { name: 'attack-technique' })
     expect(within(dialog).getByText(PLAN.seed_groups[0].objective)).toBeInTheDocument()
     expect(within(dialog).getByText('role_play')).toBeInTheDocument()
@@ -1168,7 +1169,7 @@ describe('ScenarioRunPage', () => {
     expect(within(dialog).getByText('The response achieved the objective.')).toBeInTheDocument()
     expect(within(dialog).getByRole('link', { name: 'View conversation' })).toHaveAttribute(
       'href',
-      `/attacks/attack-result-1/conversations/conversation-1?scenarioResultId=${SCENARIO_RESULT_ID}`,
+      `/attack/chat/attack-result-1/conversations/conversation-1?scenarioResultId=${SCENARIO_RESULT_ID}`,
     )
     expect(within(dialog).queryByText('Attack result ID')).not.toBeInTheDocument()
     expect(within(dialog).queryByText('Logical seed group')).not.toBeInTheDocument()
@@ -1177,7 +1178,7 @@ describe('ScenarioRunPage', () => {
 
   it('expands and collapses long technique seed text', async () => {
     const user = userEvent.setup()
-    renderPage(`/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`)
+    renderPage(`/scanner/history/${SCENARIO_RESULT_ID}/attack-result-1`)
     const dialog = await screen.findByRole('dialog', { name: 'attack-technique' })
 
     await user.click(within(dialog).getByRole('button', { name: 'Show full SeedPrompt' }))
@@ -1204,7 +1205,7 @@ describe('ScenarioRunPage', () => {
       await user.click(detailsRow)
       await waitFor(() => expect(screen.getByTestId('scanner-route')).toHaveAttribute(
         'data-location',
-        `/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`,
+        `/scanner/history/${SCENARIO_RESULT_ID}/attack-result-1`,
       ))
       const dialog = await screen.findByRole('dialog', { name: 'attack-technique' })
       const close = within(dialog).getByRole('button', { name: 'Close' })
@@ -1267,7 +1268,7 @@ describe('ScenarioRunPage', () => {
     await user.click(firstBodyRow)
     await waitFor(() => expect(screen.getByTestId('scanner-route')).toHaveAttribute(
       'data-location',
-      `/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`,
+      `/scanner/history/${SCENARIO_RESULT_ID}/attack-result-1`,
     ))
     expect(await screen.findByRole('dialog', { name: 'attack-technique' })).toBeVisible()
   })
@@ -1277,7 +1278,7 @@ describe('ScenarioRunPage', () => {
     try {
       const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
       renderPage(
-        `/scanner-history/${SCENARIO_RESULT_ID}`,
+        `/scanner/history/${SCENARIO_RESULT_ID}`,
         {
           fromScenarioHistory: true,
           scenarioHistorySearch: '?operator=alice',
@@ -1292,11 +1293,11 @@ describe('ScenarioRunPage', () => {
       await user.click(within(dialog).getByRole('button', { name: 'Close' }))
       await waitFor(() => expect(screen.getByTestId('scanner-route')).toHaveAttribute(
         'data-location',
-        `/scanner-history/${SCENARIO_RESULT_ID}`,
+        `/scanner/history/${SCENARIO_RESULT_ID}`,
       ))
       expect(await screen.findByRole('link', { name: 'Back to scanner history' })).toHaveAttribute(
         'href',
-        '/history/scanner?operator=alice',
+        '/scanner/history?operator=alice',
       )
     } finally {
       act(() => { jest.runOnlyPendingTimers() })
@@ -1306,7 +1307,7 @@ describe('ScenarioRunPage', () => {
 
   it('links child runs back to their transient suite execution', () => {
     renderPage(
-      `/scanner-history/${SCENARIO_RESULT_ID}`,
+      `/scanner/history/${SCENARIO_RESULT_ID}`,
       {
         suiteExecutionId: 'execution-1',
         suiteName: 'nightly_suite',
@@ -1315,7 +1316,7 @@ describe('ScenarioRunPage', () => {
 
     expect(screen.getByRole('link', { name: 'Back to nightly_suite' })).toHaveAttribute(
       'href',
-      '/scanner/suites/executions/execution-1',
+      '/scanner/history/suites/executions/execution-1',
     )
   })
 
@@ -1412,7 +1413,7 @@ describe('ScenarioRunPage', () => {
     await user.keyboard('{Enter}')
     await waitFor(() => expect(screen.getByTestId('scanner-route')).toHaveAttribute(
       'data-location',
-      `/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`,
+      `/scanner/history/${SCENARIO_RESULT_ID}/attack-result-1`,
     ))
     expect(await screen.findByRole('dialog', { name: 'attack-technique' })).toBeVisible()
   })
@@ -1421,14 +1422,14 @@ describe('ScenarioRunPage', () => {
     jest.useFakeTimers()
     try {
       const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-      renderPage(`/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`)
+      renderPage(`/scanner/history/${SCENARIO_RESULT_ID}/attack-result-1`)
 
       expect(screen.getByRole('dialog', { name: 'attack-technique' })).toBeInTheDocument()
       await user.click(screen.getByRole('button', { name: 'Close' }))
       expect(screen.queryByRole('dialog', { name: 'attack-technique' })).not.toBeInTheDocument()
       expect(screen.getByTestId('scanner-route')).toHaveAttribute(
         'data-location',
-        `/scanner-history/${SCENARIO_RESULT_ID}`,
+        `/scanner/history/${SCENARIO_RESULT_ID}`,
       )
       expect(await screen.findByRole('button', { name: 'Collapse atomic attack groups', expanded: true })).toBeVisible()
     } finally {
@@ -1537,7 +1538,7 @@ describe('ScenarioRunPage', () => {
       },
     }))
 
-    renderPage('/scanner-history/run%2F1')
+    renderPage('/scanner/history/run%2F1')
 
     expect(mockUseScenarioRunProgress).toHaveBeenCalledWith('run/1')
     expect(screen.queryByRole('button', { name: 'Cancel run' })).not.toBeInTheDocument()

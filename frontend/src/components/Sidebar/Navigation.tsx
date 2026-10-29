@@ -17,7 +17,6 @@ import {
   DatabaseRegular,
   HomeRegular,
   SettingsRegular,
-  HistoryRegular,
   DataBarVerticalRegular,
   BriefcaseRegular,
   PersonFeedbackRegular,
@@ -38,7 +37,6 @@ import { useNavigationStyles } from './Navigation.styles'
 export type ViewName =
   | 'home'
   | 'chat'
-  | 'history'
   | 'analytics'
   | 'operations'
   | 'registry'
@@ -66,7 +64,6 @@ const NAVIGATION_ITEMS: NavigationItem[] = [
   { view: 'home', label: 'Home', icon: <HomeRegular /> },
   { view: 'chat', label: 'Attacks', icon: <ChatRegular /> },
   { view: 'scenarios', label: 'Scanner', icon: <TargetRegular /> },
-  { view: 'history', label: 'History', icon: <HistoryRegular /> },
   { view: 'analytics', label: 'Analytics', icon: <DataBarVerticalRegular /> },
   { view: 'operations', label: 'Operations', icon: <BriefcaseRegular /> },
   { view: 'datasets', label: 'Datasets', icon: <DatabaseRegular /> },

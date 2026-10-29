@@ -139,7 +139,7 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   const after = await current.json();
   expect(after.all_techniques).toContain(name);
   expect(after.default_techniques).toEqual(before.default_techniques);
-  await page.goto("/scanner/airt.rapid_response");
+  await page.goto("/scanner/launch/airt.rapid_response");
   const checkbox = page.getByRole("checkbox", { name, exact: true });
   await expect(checkbox).toBeVisible();
   await checkbox.check();

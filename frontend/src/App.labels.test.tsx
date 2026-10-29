@@ -114,7 +114,7 @@ const SAVED_OPERATIONS = {
     'signed_in_op', 'early_choice', 'future_op', 'user_op',
   ].map(name => ({ id: `operation-${name}`, name, created_at: '2026-10-07T16:00:00Z' })),
 }
-const SCENARIO_PATH = '/scanner/test.scenario'
+const SCENARIO_PATH = '/scanner/launch/test.scenario'
 const operationId = (name: string): string => `operation-${name}`
 
 function renderApp(path = SCENARIO_PATH) {
@@ -297,7 +297,7 @@ describe('Shared new run labels', () => {
       items: [{ ...TARGET, supports_temperature_override: true }],
       pagination: { limit: 200, has_more: false },
     })
-    renderApp('/chat')
+    renderApp('/attack/chat')
     const toolbar = screen.getByRole('group', { name: 'Chat controls' })
     expect(currentLabels()).not.toContainElement(toolbar)
     expect(currentLabels().compareDocumentPosition(toolbar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -347,7 +347,7 @@ describe('Shared new run labels', () => {
 
   it('leaves saved scenario attribution unchanged when future launch labels change', async () => {
     const user = userEvent.setup()
-    renderApp('/scanner-history/saved_run')
+    renderApp('/scanner/history/saved_run')
     const saved = screen.getByRole('region', { name: 'Run configuration' })
     await screen.findByRole('combobox', { name: 'Operation' })
     await chooseOperation(user, 'future_op')
@@ -381,7 +381,7 @@ describe('Shared new run labels', () => {
       target: { target_type: 'OpenAIChatTarget', target_registry_name: 'test_target', identifier_hash: 'test_hash' },
       created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     })
-    renderApp('/attacks/old_attack')
+    renderApp('/attack/chat/old_attack')
     expect(await screen.findByTestId('operator-locked-banner')).toBeInTheDocument()
     await chooseOperation(user, 'future_op')
     expect(screen.getByTestId('operator-locked-banner')).toBeInTheDocument()

@@ -634,7 +634,7 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog {...CATALOG_PROPS} /></TestWrapper>)
 
     const card = await screen.findByRole('link', { name: /foundry\/red_team_agent/i })
-    expect(card).toHaveAttribute('href', '/scanner/foundry%2Fred_team_agent')
+    expect(card).toHaveAttribute('href', '/scanner/launch/foundry%2Fred_team_agent')
   })
 
   it('shows configured limits rather than known population counts', async () => {
@@ -864,10 +864,10 @@ describe('ScenarioCatalog', () => {
     expect(rowTestIds()).toEqual(['scenario-card-garak.encoding', 'preset-card-garak.encoding'])
     expect(
       within(screen.getByTestId('scenario-card-garak.encoding')).getByRole('link', { name: 'garak.encoding' }),
-    ).toHaveAttribute('href', '/scanner/garak.encoding')
+    ).toHaveAttribute('href', '/scanner/launch/garak.encoding')
     expect(within(presetRow).getByRole('link', { name: 'garak.encoding' })).toHaveAttribute(
       'href',
-      '/scanner/garak.encoding?preset=garak.encoding',
+      '/scanner/launch/garak.encoding?preset=garak.encoding',
     )
     await waitForRunSizes()
   })
@@ -918,7 +918,7 @@ describe('ScenarioCatalog', () => {
     const linkedRow = await screen.findByTestId('preset-card-quick & safe')
     expect(within(linkedRow).getByRole('link', { name: 'quick & safe' })).toHaveAttribute(
       'href',
-      '/scanner/foundry%2Fred_team_agent?preset=quick%20%26%20safe',
+      '/scanner/launch/foundry%2Fred_team_agent?preset=quick%20%26%20safe',
     )
     expect(within(linkedRow).getByText('Preset')).toBeInTheDocument()
     expect(within(linkedRow).getByText('Runs foundry/red_team_agent')).toBeInTheDocument()

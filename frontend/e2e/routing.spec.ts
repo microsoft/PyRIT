@@ -226,7 +226,7 @@ test.describe("URL-driven routing", () => {
   });
 
   test("history filters round-trip through the URL and survive a reload", async ({ page }) => {
-    await page.goto("/history");
+    await page.goto("/attack/history");
     await expect(page.getByTestId("attacks-table")).toBeVisible({ timeout: 10_000 });
 
     // Select the "Success" outcome filter.
@@ -246,11 +246,11 @@ test.describe("URL-driven routing", () => {
   });
 
   test("deep-links into an attack and restores its target after reload", async ({ page }) => {
-    await page.goto("/attacks/atk-1");
+    await page.goto("/attack/chat/atk-1");
 
     // The router keeps the deep link, and the attack named by the URL – not
     // some default/empty conversation – drives the chat window.
-    await expect(page).toHaveURL(/\/attacks\/atk-1$/);
+    await expect(page).toHaveURL(/\/attack\/chat\/atk-1$/);
     await expect(page.getByText("Loaded from atk-1")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId("chat-input")).toBeEnabled();
     await expect(page.getByTestId("no-target-banner")).not.toBeVisible();
@@ -263,25 +263,25 @@ test.describe("URL-driven routing", () => {
   });
 
   test("shows the not-found screen for an unknown attack id", async ({ page }) => {
-    await page.goto("/attacks/bogus-id-12345");
+    await page.goto("/attack/chat/bogus-id-12345");
 
     await expect(page.getByTestId("attack-not-found")).toBeVisible({ timeout: 10_000 });
   });
 
   test("browser back returns from an opened attack to history", async ({ page }) => {
-    await page.goto("/history");
+    await page.goto("/attack/history");
     await expect(page.getByTestId("attacks-table")).toBeVisible({ timeout: 10_000 });
 
     await page.getByTestId("attack-row-atk-success").click();
-    await expect(page).toHaveURL(/\/attacks\/atk-success$/);
+    await expect(page).toHaveURL(/\/attack\/chat\/atk-success$/);
 
     await page.goBack();
-    await expect(page).toHaveURL(/\/history\/attacks$/);
+    await expect(page).toHaveURL(/\/attack\/history$/);
     await expect(page.getByTestId("attacks-table")).toBeVisible();
   });
 
   test("Markdown preference survives route remount and reload", async ({ page }) => {
-    await page.goto("/chat");
+    await page.goto("/attack/chat");
 
     const markdownToggle = page.getByRole("switch", { name: "Markdown" });
     await expect(markdownToggle).not.toBeChecked();
@@ -296,12 +296,12 @@ test.describe("URL-driven routing", () => {
       )
       .toBe(true);
 
-    await page.getByRole("button", { name: "History", exact: true }).click();
-    await expect(page).toHaveURL(/\/history\/attacks$/);
+    await page.getByRole("tab", { name: "History", exact: true }).click();
+    await expect(page).toHaveURL(/\/attack\/history$/);
     await expect(page.getByTestId("attacks-table")).toBeVisible();
 
     await page.getByRole("button", { name: "Attacks", exact: true }).click();
-    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page).toHaveURL(/\/attack\/chat$/);
     await expect(page.getByRole("switch", { name: "Markdown" })).toBeChecked();
 
     await page.reload();

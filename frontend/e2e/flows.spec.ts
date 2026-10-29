@@ -219,7 +219,8 @@ async function openAttackInHistory(
   page: Page,
   attackResultId: string,
 ): Promise<void> {
-  await page.getByRole("button", { name: "History", exact: true }).click();
+  await page.getByRole("button", { name: "Attacks", exact: true }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
   await expect(page.getByTestId("attacks-table")).toBeVisible({
     timeout: 10_000,
   });
@@ -227,7 +228,7 @@ async function openAttackInHistory(
   const row = page.getByTestId(`attack-row-${attackResultId}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
   await row.click();
-  await expect(page).toHaveURL(new RegExp(`/attacks/${attackResultId}$`));
+  await expect(page).toHaveURL(new RegExp(`/attack/chat/${attackResultId}$`));
   await expect(page.getByTestId("toggle-panel-btn")).toBeEnabled({
     timeout: 10_000,
   });

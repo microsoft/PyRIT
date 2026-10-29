@@ -120,7 +120,7 @@ test.describe("Onboarding tour", () => {
 
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
-    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page).toHaveURL(/\/attack\/chat$/);
     await expect(dialog).toContainText(
       "Click Select a target in the chat ribbon to enable the message composer"
     );
@@ -194,7 +194,7 @@ test.describe("Onboarding tour", () => {
 
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
-    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page).toHaveURL(/\/attack\/chat$/);
     await expect(dialog).toContainText("Chat shows the message composer");
     await expect(dialog).toContainText("Toggle converter panel");
     await expect(page.getByRole("textbox", { name: "Type prompt here", exact: true })).toBeVisible();
@@ -249,7 +249,7 @@ test.describe("Onboarding tour", () => {
 
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
-    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page).toHaveURL(/\/attack\/chat$/);
     await expect(dialog).toContainText("Chat shows the message composer");
     await expect(dialog).toContainText("Toggle converter panel");
     await expect(page.getByRole("textbox", { name: "Type prompt here", exact: true })).toBeVisible();
@@ -270,12 +270,12 @@ test.describe("Onboarding tour", () => {
     // is running the browser Back button is the only way onto another route.
     await page.goto("/");
     await page.getByRole("button", { name: "Scanner", exact: true }).click();
-    await expect(page).toHaveURL(/\/scanner$/);
+    await expect(page).toHaveURL(/\/scanner\/launch$/);
     await page
       .getByRole("link", { name: TOUR_SCENARIO.scenario_name, exact: true })
       .click();
     await expect(page).toHaveURL(
-      new RegExp(`/scanner/${TOUR_SCENARIO.scenario_name}$`)
+      new RegExp(`/scanner/launch/${TOUR_SCENARIO.scenario_name}$`)
     );
     await page.getByRole("button", { name: "Home", exact: true }).click();
     await expect(page).toHaveURL(/\/$/);
@@ -286,7 +286,7 @@ test.describe("Onboarding tour", () => {
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
-    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page).toHaveURL(/\/attack\/chat$/);
 
     // Walk back onto the Scanner detail route. The Scanner view owns both the
     // catalog and the detail page, but only the catalog carries the anchor.
@@ -294,7 +294,7 @@ test.describe("Onboarding tour", () => {
     await expect(page).toHaveURL(/\/$/);
     await page.goBack();
     await expect(page).toHaveURL(
-      new RegExp(`/scanner/${TOUR_SCENARIO.scenario_name}$`)
+      new RegExp(`/scanner/launch/${TOUR_SCENARIO.scenario_name}$`)
     );
     await expect(page.locator('[data-tour="scanner-catalog"]')).toHaveCount(0);
 
@@ -303,7 +303,7 @@ test.describe("Onboarding tour", () => {
     // and advance after paint rather than stranding the tooltip.
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
-    await expect(page).toHaveURL(/\/scanner$/);
+    await expect(page).toHaveURL(/\/scanner\/launch$/);
     await expect(page.locator('[data-tour="scanner-catalog"]')).toBeVisible();
     await expect(dialog).toContainText("Scanner runs a whole campaign for you");
   });

@@ -30,8 +30,8 @@ jest.mock('@/components/Layout/MainLayout', () => {
     __esModule: true,
     default: ({ children }: { children: ReactNode }) => (
       <>
-        <Link to="/chat">Open new chat</Link>
-        <Link to="/attacks/saved-attack">Open saved chat</Link>
+        <Link to="/attack/chat">Open new chat</Link>
+        <Link to="/attack/chat/saved-attack">Open saved chat</Link>
         <Link to="/registry/targets">Open registry</Link>
         {children}
       </>
@@ -98,7 +98,7 @@ const savedMessages: ConversationMessagesResponse = {
 function TestWrapper({ children }: { children: ReactNode }) {
   return (
     <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={['/chat']}>{children}</MemoryRouter>
+      <MemoryRouter initialEntries={['/attack/chat']}>{children}</MemoryRouter>
     </FluentProvider>
   )
 }

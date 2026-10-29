@@ -112,7 +112,7 @@ async def _report_async(*, operation_id: UUID, finding_ids: Sequence[UUID]) -> F
 
 def _dashboard_link(*, evidence: FindingEvidence, conversation_id: str) -> str:
     return (
-        f"{DASHBOARD_ORIGIN}/attacks/{evidence.attack_result_id}/conversations/{conversation_id}"
+        f"{DASHBOARD_ORIGIN}/attack/chat/{evidence.attack_result_id}/conversations/{conversation_id}"
         f"?findingEvidenceId={evidence.id}"
     )
 
@@ -804,7 +804,7 @@ def test_score_text_capitalizes_booleans_and_names_human_review(score_value: str
     assert finding_export._score_text(ScoreView.from_domain(score)) == expected
 
 
-LINK = "https://pyrit.example.test/attacks/a/conversations/b?findingEvidenceId=c"
+LINK = "https://pyrit.example.test/attack/chat/a/conversations/b?findingEvidenceId=c"
 TABLE_REPORT = FindingReport(
     operation_name="Synthetic evaluation",
     findings=(

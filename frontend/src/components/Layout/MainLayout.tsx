@@ -32,6 +32,7 @@ interface MainLayoutProps extends OperationControlProps {
   operatorReadOnly?: boolean
   toolbarRef?: React.Ref<HTMLDivElement>
   onStartTour?: () => void
+  featureNavigation?: React.ReactNode
 }
 
 export default function MainLayout({
@@ -48,6 +49,7 @@ export default function MainLayout({
   operatorReadOnly,
   toolbarRef,
   onStartTour,
+  featureNavigation,
 }: MainLayoutProps) {
   const styles = useMainLayoutStyles()
   const { background } = useTheme()
@@ -184,6 +186,7 @@ export default function MainLayout({
               </div>
             </div>
           </section>
+          {featureNavigation}
           <div ref={toolbarRef} className={styles.toolbarSlot} />
           {children}
         </main>

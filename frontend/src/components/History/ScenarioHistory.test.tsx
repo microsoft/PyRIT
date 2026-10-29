@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -109,6 +111,72 @@ describe('ScenarioHistory', () => {
     jest.restoreAllMocks()
   })
 
+  it('looks up an exact ID through the API, keeps the filter row, and clears back to history', async () => {
+    const user = userEvent.setup()
+    mockedScenariosApi.listRuns.mockResolvedValue({
+      items: [RUN], pagination: { limit: 25, has_more: false },
+    })
+    function ControlledHistory() {
+      const [filters, setFilters] = useState({ ...DEFAULT_SCENARIO_HISTORY_FILTERS, operator: ['alice'] })
+      return <ScenarioHistory {...defaultProps} filters={filters} onFiltersChange={setFilters} />
+    }
+    render(<FluentProvider theme={webLightTheme}><ControlledHistory /></FluentProvider>)
+    await screen.findByRole('table', { name: 'Scanner history' })
+    const filters = screen.getByRole('group', { name: 'Scanner history filters' })
+    const input = within(filters).getByRole('textbox', { name: 'ID', exact: true })
+    await user.hover(input)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('conversation, attack, finding, or scenario ID')
+    await user.click(input)
+    await user.paste('11111111-1111-4111-8111-111111111111')
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenLastCalledWith(expect.objectContaining({
+      reference_id: '11111111-1111-4111-8111-111111111111', label: ['operator:alice'], cursor: undefined,
+    })))
+    expect(within(filters).getByRole('combobox', { name: 'Registered scenario' })).toBeVisible()
+    expect(screen.queryByText(/matching scenario runs/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Clear ID search' }))
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenLastCalledWith(expect.objectContaining({
+      reference_id: undefined, label: ['operator:alice'],
+    })))
+    const requests = mockedScenariosApi.listRuns.mock.calls.length
+    await user.type(input, 'not an ID')
+    await user.keyboard('{Enter}')
+    expect(screen.getByText('Enter a complete ID (UUID).')).toBeVisible()
+    expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(requests)
+  })
+
+  it('does not send an invalid URL ID as an unfiltered request', () => {
+    renderHistory({ ...defaultProps, filters: { ...DEFAULT_SCENARIO_HISTORY_FILTERS, referenceId: 'invalid' } })
+    expect(screen.getByText('Enter a complete ID (UUID).')).toBeVisible()
+    expect(mockedScenariosApi.listRuns).not.toHaveBeenCalled()
+  })
+
+  it('does not reuse a paginated cursor when an earlier ID search is restored', async () => {
+    const user = userEvent.setup()
+    const firstId = '11111111-1111-4111-8111-111111111111'
+    const secondId = '22222222-2222-4222-8222-222222222222'
+    mockedScenariosApi.listRuns
+      .mockResolvedValueOnce({ items: [RUN], pagination: { limit: 25, has_more: true, next_cursor: 'old-page' } })
+      .mockResolvedValue({ items: [RUN], pagination: { limit: 25, has_more: false } })
+    const withId = (id: string) => (
+      <FluentProvider theme={webLightTheme}>
+        <ScenarioHistory {...defaultProps} filters={{ ...DEFAULT_SCENARIO_HISTORY_FILTERS, referenceId: id }} />
+      </FluentProvider>
+    )
+    const history = render(withId(firstId))
+    await screen.findByRole('table', { name: 'Scanner history' })
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenLastCalledWith(
+      expect.objectContaining({ reference_id: firstId, cursor: 'old-page' }),
+    ))
+    for (const id of [secondId, firstId]) {
+      history.rerender(withId(id))
+      await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenLastCalledWith(
+        expect.objectContaining({ reference_id: id, cursor: undefined }),
+      ))
+      expect(await screen.findByText('Page 1')).toBeInTheDocument()
+    }
+  })
+
   it('resumes a failed history run by keyboard without navigating or replacing its ID and completed counts', async () => {
     const user = userEvent.setup()
     const resumedRun: ScenarioRunSummary = {
@@ -150,7 +218,7 @@ describe('ScenarioHistory', () => {
 
     const row = await screen.findByRole('row', { name: /foundry.red_team.*In progress/ })
     expect(within(row).getByText('1/2 attacks complete')).toBeInTheDocument()
-    expect(within(row).getByRole('link')).toHaveAttribute('href', '/scanner-history/run-1')
+    expect(within(row).getByRole('link')).toHaveAttribute('href', '/scanner/history/run-1')
     expect(screen.queryByRole('button', { name: /Resume foundry/ })).not.toBeInTheDocument()
     expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
     expect(mockQueueRetry).toHaveBeenCalledTimes(1)
@@ -336,7 +404,7 @@ describe('ScenarioHistory', () => {
     await user.click(row)
     expect(onOpenRun).toHaveBeenLastCalledWith('run-1')
     const link = screen.getByRole('link', { name: 'Open foundry.red_team scenario run' })
-    expect(link).toHaveAttribute('href', '/scanner-history/run-1')
+    expect(link).toHaveAttribute('href', '/scanner/history/run-1')
     link.focus()
     await user.keyboard('{Enter}')
     expect(onOpenRun).toHaveBeenCalledTimes(2)
