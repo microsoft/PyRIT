@@ -3,7 +3,17 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
-import { attacksApi, labelsApi, operationsApi, runtimeApi, scenariosApi, targetsApi, versionApi } from '@/services/api'
+import {
+  attacksApi,
+  labelsApi,
+  operationsApi,
+  runtimeApi,
+  scenarioPresetsApi,
+  scenariosApi,
+  scenarioSuitesApi,
+  targetsApi,
+  versionApi,
+} from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { RegisteredScenario } from '@/types'
 import { exportConversation } from '@/utils/conversationExport'
@@ -60,6 +70,8 @@ jest.mock('@/services/api', () => ({
     startRun: jest.fn(),
     cancelRun: jest.fn(),
   },
+  scenarioPresetsApi: { list: jest.fn() },
+  scenarioSuitesApi: { list: jest.fn() },
 }))
 
 const SCENARIO: RegisteredScenario = {
@@ -175,6 +187,8 @@ describe('Shared new run labels', () => {
       items: [SCENARIO], pagination: { limit: 200, has_more: false },
     })
     jest.mocked(scenariosApi.estimateRun).mockResolvedValue(SCENARIO.default_run_size)
+    jest.mocked(scenarioPresetsApi.list).mockResolvedValue({ source: '', items: [] })
+    jest.mocked(scenarioSuitesApi.list).mockResolvedValue({ source: '', items: [] })
     jest.mocked(scenariosApi.startRun).mockResolvedValue({
       scenario_result_id: 'saved_run', scenario_name: SCENARIO.scenario_name,
       scenario_version: 1, status: 'COMPLETED', created_at: '2026-01-01T00:00:00Z',

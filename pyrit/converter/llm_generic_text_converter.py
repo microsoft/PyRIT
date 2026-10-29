@@ -132,6 +132,7 @@ class LLMGenericTextConverter(Converter):
                 via normalization-pipeline adaptation). Can be omitted if a default has been configured
                 via PyRIT initialization.
             system_prompt_template (SeedPrompt | None): The prompt template to set as the system prompt.
+                The input prompt is available as ``objective`` when rendering.
             user_prompt_template_with_objective (SeedPrompt | None): The prompt template to wrap the
                 user input with. Must include an ``objective`` parameter; the raw user prompt is rendered
                 as ``objective``. Additional ``**kwargs`` are also forwarded to the renderer, so subclasses
@@ -147,7 +148,7 @@ class LLMGenericTextConverter(Converter):
             kwargs: Additional parameters forwarded to both the system prompt and user prompt templates
                 during rendering. Their constructor-time state contributes to the identifier, including
                 container iteration order, path flavor and object fields. Parameters should remain static
-                after construction.
+                after construction. The incoming prompt supplies ``objective`` at render time.
 
         Raises:
             ValueError: If converter_target is not provided and no default has been configured.
@@ -221,10 +222,11 @@ class LLMGenericTextConverter(Converter):
             raise ValueError("Input type not supported")
 
         conversation_id = str(uuid.uuid4())
-        kwargs = self._prompt_kwargs.copy()
 
         if self._system_prompt_template:
-            system_prompt = self._system_prompt_template.render_template_value(**kwargs)
+            system_prompt = self._system_prompt_template.render_template_value(
+                **self._render_values(template=self._system_prompt_template, objective=prompt)
+            )
             (
                 await self._converter_target.set_system_prompt_async(
                     system_prompt=system_prompt, conversation_id=conversation_id
@@ -233,9 +235,8 @@ class LLMGenericTextConverter(Converter):
 
         converted_prompt = prompt
         if self._user_prompt_template_with_objective:
-            template_kwargs = {k: v for k, v in kwargs.items() if k != "objective"}
             converted_prompt = self._user_prompt_template_with_objective.render_template_value(
-                objective=prompt, **template_kwargs
+                **self._render_values(template=self._user_prompt_template_with_objective, objective=prompt)
             )
 
         request = Message(
@@ -255,6 +256,22 @@ class LLMGenericTextConverter(Converter):
 
         response_text = await self._send_with_retries_async(request)
         return ConverterResult(output_text=response_text, output_type="text")
+
+    def _render_values(self, *, template: SeedPrompt, objective: str | None) -> dict[str, Any]:
+        """
+        Supply constructor template values and the current input prompt.
+
+        Args:
+            template (SeedPrompt): The template to render.
+            objective (str | None): The incoming prompt, when it should fill ``objective``.
+
+        Returns:
+            dict[str, Any]: Render values for the template.
+        """
+        values = self._prompt_kwargs.copy()
+        if objective is not None:
+            values["objective"] = objective
+        return values
 
     async def _send_with_retries_async(self, request: Message) -> str:
         """

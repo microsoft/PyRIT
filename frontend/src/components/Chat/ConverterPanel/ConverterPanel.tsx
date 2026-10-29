@@ -1,13 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent, KeyboardEvent, ReactNode } from 'react'
+import type { DragEvent, ReactNode } from 'react'
 
 import {
   Button,
-  Menu,
-  MenuTrigger,
-  MenuPopover,
-  MenuList,
-  MenuItem,
   MessageBar,
   MessageBarBody,
   Spinner,
@@ -19,14 +14,15 @@ import {
   DismissRegular,
   OpenRegular,
   PlayRegular,
-  ReOrderDotsVerticalRegular,
-  MoreHorizontalRegular,
 } from '@fluentui/react-icons'
 
 import CreateConverterDialog from '@/components/Registry/CreateConverterDialog'
+import SelectConverterInput from '@/components/Converters/SelectConverterInput'
+import ConverterCard from '@/components/Converters/ConverterCard'
 import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import { groupConverters } from '@/utils/groupConverters'
 import type {
   ChatConverterController, ConverterInputPiece, ConverterInstance, ConverterPipelineStage, ConverterStageResult,
   SourceInstanceSpec, ConverterIdentifier, PieceConversionUpdates,
@@ -41,7 +37,6 @@ import {
 } from '../converterTypes'
 import { useConverterPanelStyles } from './ConverterPanel.styles'
 import ConversionTextEditor from './ConversionTextEditor'
-import SelectConverterInput from './SelectConverterInput'
 
 const PIECE_TYPE_LABELS: Record<string, string> = {
   text: 'Text',
@@ -51,11 +46,9 @@ const PIECE_TYPE_LABELS: Record<string, string> = {
   file: 'File',
 }
 
-const OUTPUT_TYPE_ORDER = ['text', 'image_path', 'audio_path', 'video_path', 'binary_path']
-
 const MIN_PANEL_WIDTH = 480
 const MAX_PANEL_WIDTH = 1200
-const DEFAULT_PANEL_WIDTH = 800
+const DEFAULT_PANEL_WIDTH = 560
 
 interface ValuePreviewProps {
   dataType: string
@@ -295,18 +288,7 @@ export default function ConverterPanel({
     return supported.length === 0 || supported.includes(nextInputType)
   })
 
-  const groups: Record<string, ConverterInstance[]> = {}
-  for (const converter of filteredConverters) {
-    const outputType = converter.identifier.supported_output_types?.[0] ?? 'text'
-    if (!groups[outputType]) groups[outputType] = []
-    groups[outputType].push(converter)
-  }
-  const unknownTypes = Object.keys(groups).filter(
-    (type: string) => !OUTPUT_TYPE_ORDER.includes(type),
-  )
-  const groupedConverters = [...OUTPUT_TYPE_ORDER, ...unknownTypes]
-    .filter((type: string) => groups[type]?.length)
-    .map((type: string) => ({ type, converters: groups[type] }))
+  const groupedConverters = groupConverters(filteredConverters)
 
   const activePipelineConfigured = selectedStages.length > 0
   const convertibleInputs = activeInputs.filter(
@@ -359,19 +341,6 @@ export default function ConverterPanel({
     if (sourceIndex === null) return
     event.preventDefault()
     moveConverter(sourceIndex, targetIndex)
-  }, [moveConverter])
-
-  const handleReorderKeyDown = useCallback((
-    event: KeyboardEvent<HTMLButtonElement>,
-    index: number,
-  ): void => {
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      moveConverter(index, index - 1)
-    } else if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      moveConverter(index, index + 1)
-    }
   }, [moveConverter])
 
   const handleMouseDown = useCallback((): void => {
@@ -515,60 +484,31 @@ export default function ConverterPanel({
                   : ''
                 const cardTestIdSuffix = occurrenceNumber > 1 ? `-${occurrenceNumber}` : ''
                 return (
-                  <div
+                  <ConverterCard
                     key={converter.stageId}
-                    className={styles.converterCard}
-                    data-testid={`converter-item-${converter.converter_id}${cardTestIdSuffix}`}
+                    name={converter.converter_id}
+                    converter={converter}
+                    context={duplicateStageContext}
+                    temporary={Boolean(selectedStages[index]?.temporary)}
+                    disabled={isConverting}
+                    testId={`converter-item-${converter.converter_id}${cardTestIdSuffix}`}
+                    dragTestId={`converter-drag-area-${index}`}
                     onDragOver={(event: DragEvent<HTMLDivElement>) => {
                       if (draggedConverterIndex.current !== null) event.preventDefault()
                     }}
                     onDrop={(event: DragEvent<HTMLDivElement>) => handleDrop(event, index)}
+                    onDragStart={(event) => handleDragStart(event, index)}
+                    onDragEnd={() => { draggedConverterIndex.current = null }}
+                    onMove={(delta) => moveConverter(index, index + delta)}
+                    onRemove={() => removeConverter(index)}
+                    onSettings={() => setSettings({
+                      stageId: converter.stageId, pieceType: effectiveActiveTab,
+                      editing: { converter, spec: selectedStages[index]?.temporary },
+                    })}
+                    onReset={() => setPipeline(effectiveActiveTab, (stages) => stages.map((stage) =>
+                      stage.id === converter.stageId ? { id: stage.id, converterId: stage.converterId } : stage,
+                    ))}
                   >
-                    <div
-                      className={styles.converterCardHeader}
-                      draggable
-                      data-testid={`converter-drag-area-${index}`}
-                      onDragStart={(event: DragEvent<HTMLDivElement>) => {
-                        if ((event.target as HTMLElement).closest('[data-no-drag]')) {
-                          event.preventDefault()
-                          return
-                        }
-                        handleDragStart(event, index)
-                      }}
-                      onDragEnd={() => { draggedConverterIndex.current = null }}
-                    >
-                      <Button
-                        appearance="subtle"
-                        size="small"
-                        icon={<ReOrderDotsVerticalRegular />}
-                        className={styles.dragHandle}
-                        aria-label={`Reorder converter ${converter.converter_id}${duplicateStageContext}`}
-                        title="Drag this header to reorder. Use the arrow keys for keyboard reordering."
-                        onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => handleReorderKeyDown(event, index)}
-                      />
-                      <Text weight="semibold" size={300} className={styles.converterName}>
-                        {converter.converter_id}
-                      </Text>
-                      {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
-                      {selectedStages[index]?.temporary && <Text size={200}>Temporary</Text>}
-                      <Button
-                        appearance="subtle"
-                        size="small"
-                        icon={<DismissRegular />}
-                        data-no-drag
-                        aria-label={`Remove converter ${converter.converter_id}${duplicateStageContext}`}
-                        onClick={() => removeConverter(index)}
-                        className={styles.removeConverterButton}
-                      />
-                    </div>
-                    {converter.identifier.class_name !== converter.converter_id && (
-                      <Text size={200} className={styles.hintText}>
-                        {converter.identifier.class_name}
-                      </Text>
-                    )}
-                    <Text size={200} className={styles.hintText}>
-                      {converter.description || 'No description is available.'}
-                    </Text>
                     {!isBatch && activeInputs.map((input: ConverterInputPiece) => {
                       const stage = stageResults[input.id]?.find(
                         (result: ConverterStageResult) => result.stageId === converter.stageId,
@@ -610,35 +550,7 @@ export default function ConverterPanel({
                         </div>
                       )
                     })}
-                    <div className={styles.converterCardFooter}>
-                      <Menu>
-                        <MenuTrigger disableButtonEnhancement>
-                          <Button
-                            appearance="subtle"
-                            size="small"
-                            icon={<MoreHorizontalRegular />}
-                            className={styles.settingsButton}
-                            aria-label={`Settings for converter ${converter.converter_id}${duplicateStageContext}`}
-                            disabled={isConverting}
-                          />
-                        </MenuTrigger>
-                        <MenuPopover><MenuList>
-                          <MenuItem disabled={!converter.reconstructable}
-                            title={converter.reconstructable ? undefined
-                              : converter.reconstruction_error ?? 'This converter does not support separate settings.'}
-                            onClick={() => setSettings({
-                              stageId: converter.stageId, pieceType: effectiveActiveTab,
-                              editing: { converter, spec: selectedStages[index]?.temporary },
-                            })}>Settings</MenuItem>
-                          {selectedStages[index]?.temporary && <MenuItem
-                            onClick={() => setPipeline(effectiveActiveTab, (stages) => stages.map((stage) =>
-                              stage.id === converter.stageId
-                                ? { id: stage.id, converterId: stage.converterId } : stage,
-                            ))}>Reset to registered converter</MenuItem>}
-                        </MenuList></MenuPopover>
-                      </Menu>
-                    </div>
-                  </div>
+                  </ConverterCard>
                 )
               })}
               {isBatch && Object.keys(results).length > 0 && (
@@ -677,8 +589,8 @@ export default function ConverterPanel({
       <CreateConverterDialog
         open={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
-        onCreated={(converterId: string) => {
-          setCreateDialogOpen(false)
+        onCreated={(converterId: string, isCurrentOpening: boolean) => {
+          if (isCurrentOpening) setCreateDialogOpen(false)
           void loadConverters(converterId, effectiveActiveTab)
         }}
       />

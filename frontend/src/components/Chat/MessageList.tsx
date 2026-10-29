@@ -40,12 +40,14 @@ interface MessageListProps {
   messages: Message[]
   /** Copy this message to the input box of the current conversation */
   onCopyToInput?: (messageIndex: number) => void
+  copyToInputDisabledReason?: string
   onCopyToNewConversation?: (messageIndex: number) => void
   onCopyToNewAttack?: (messageIndex: number) => void
   onUseInTechnique?: (messageIndex: number) => void
   copyConversationDisabled?: boolean
   newConversationDisabledReason?: string
   getBranchConversationDisabledReason?: (messageIndex: number) => string | undefined
+  getBranchConversationDescription?: (messageIndex: number) => string | undefined
   /** True while loading a historical attack's messages */
   isLoading?: boolean
   /** Conversation-wide default: render message text as Markdown. */
@@ -436,7 +438,8 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
  */
 export default function MessageList({
   messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
-  newConversationDisabledReason, getBranchConversationDisabledReason, isLoading, globalMarkdown = false, onEditConversation,
+  newConversationDisabledReason, getBranchConversationDisabledReason, getBranchConversationDescription, copyToInputDisabledReason,
+  isLoading, globalMarkdown = false, onEditConversation,
 }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -679,15 +682,17 @@ export default function MessageList({
                         >Copy or Branch</Button>
                       </MenuTrigger>
                       <MenuPopover><MenuList>
-                        <MenuItem className={styles.copyMenuItem} onClick={() => onCopyToInput(index)}
+                        <MenuItem className={styles.copyMenuItem} disabled={Boolean(copyToInputDisabledReason)}
+                          onClick={() => { if (!copyToInputDisabledReason) onCopyToInput(index) }}
                           aria-label="Copy to next message" aria-describedby={`${copyMenuId}-${index}-prompt`}
-                          subText={{ id: `${copyMenuId}-${index}-prompt`, children: 'Copy only this message to the prompt box.' }}>
+                          subText={{ id: `${copyMenuId}-${index}-prompt`,
+                            children: copyToInputDisabledReason ?? 'Copy only this message to the prompt box.' }}>
                           Copy to next message
                         </MenuItem>
                         <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewConversation || copyConversationDisabled || Boolean(branchDisabledReason)}
                           aria-label="Branch conversation" aria-describedby={`${copyMenuId}-${index}-conversation`}
                           subText={{ id: `${copyMenuId}-${index}-conversation`,
-                            children: `Copy history including this turn into the same attack.${branchDisabledReason ? ` ${branchDisabledReason}` : ''}` }}
+                            children: `${getBranchConversationDescription?.(index) ?? 'Copy history including this turn into the same attack.'}${branchDisabledReason ? ` ${branchDisabledReason}` : ''}` }}
                           onClick={() => onCopyToNewConversation?.(index)}>Branch conversation</MenuItem>
                         <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewAttack || copyConversationDisabled}
                           aria-label="Branch attack" aria-describedby={`${copyMenuId}-${index}-attack`}

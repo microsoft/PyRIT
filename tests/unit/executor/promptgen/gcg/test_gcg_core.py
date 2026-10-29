@@ -787,6 +787,18 @@ class TestUpdateIdsErrorPaths:
         assert prompt.target_toks.tolist() == control_ids
         assert prompt._control_slice.stop <= prompt._target_slice.start
 
+    def test_decoded_candidate_with_the_separator_space_renders_like_the_original(self) -> None:
+        tokenizer = _fast_tokenizer(byte_level=True)
+        original = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="! !")
+        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="! !")
+
+        # Gemma and byte-level BPE tokenizers decode the control tokens with the separator space in front.
+        prompt.control_str = " ! !"
+
+        assert prompt.control == "! !"
+        assert prompt.input_ids.tolist() == original.input_ids.tolist()
+        assert prompt._control_slice == original._control_slice
+
     def test_template_without_a_separator_uses_content_positions(self) -> None:
         tokenizer = _fast_tokenizer(chat_template="{{ messages[0]['content'] }}{{ messages[1]['content'] }}")
         prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="!")

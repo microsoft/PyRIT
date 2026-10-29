@@ -112,9 +112,6 @@ class PDFConverter(Converter):
             # Read the file contents into a BytesIO stream
             with open(existing_pdf, "rb") as pdf_file:
                 self._existing_pdf_bytes = BytesIO(pdf_file.read())
-        else:
-            # No existing PDF path was provided
-            self._existing_pdf = None
 
         # Validate injection items
         if not all(isinstance(item, dict) for item in self._injection_items):

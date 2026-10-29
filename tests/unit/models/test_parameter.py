@@ -12,7 +12,7 @@ import pytest
 from pydantic import ValidationError
 
 from pyrit.common import REQUIRED_VALUE
-from pyrit.models import Parameter
+from pyrit.models import Parameter, SeedPrompt
 from pyrit.models.parameter import (
     ComponentType,
     RegistryReference,
@@ -28,6 +28,36 @@ class _Speed(Enum):
 
 class _Unsupported:
     """Stand-in for an arbitrary (non-scalar, non-registry) constructor type."""
+
+
+def test_seed_prompt_parameter_uses_a_multiline_text_catalog_with_the_loaded_default() -> None:
+    prompt = SeedPrompt(value="Instructions\n{{ objective }}", parameters=["objective"])
+    parameter = Parameter(name="system_prompt", description="Instructions", param_type=SeedPrompt, default=prompt)
+    parameter.validate()
+    assert parameter.is_external_input
+    assert parameter.is_string_coercible
+    external = parameter.for_external_catalog()
+    assert external.type_name == "str"
+    assert external.multiline
+    assert external.default == prompt.value
+    assert parameter.project_json_value(prompt) == prompt.value
+    assert parameter.coerce_value(prompt) is prompt
+    converted = parameter.coerce_value("New instructions\n{{ objective }}")
+    assert isinstance(converted, SeedPrompt)
+    assert converted.value == "New instructions\n{{ objective }}"
+    assert converted.is_jinja_template
+    assert converted.parameters == ["objective"]
+    assert parameter.validate_json_value(prompt.value) == prompt.value
+    with pytest.raises(ValueError):
+        parameter.validate_json_value({"value": "Not a prompt text input"})
+
+
+def test_optional_seed_prompt_accepts_none_without_a_placeholder_string() -> None:
+    parameter = Parameter(name="prompt", description="", param_type=SeedPrompt | None)
+    assert parameter.coerce_value(None) is None
+    assert parameter.validate_json_value(None) is None
+    assert parameter.project_json_value(None) is None
+    assert parameter.for_external_catalog().param_type == str | None
 
 
 @pytest.mark.parametrize(

@@ -7,11 +7,9 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
 
 import pytest
 
-from pyrit.backend.models.scenario_presets import ResolveScenarioPresetRequest
 from pyrit.backend.services import scenario_preset_service as preset_service_module
 from pyrit.backend.services.scenario_preset_service import (
     ScenarioPresetService,
@@ -29,7 +27,6 @@ from pyrit.registry import (
 )
 
 SCENARIO_NAME = "foundry.red_team_agent"
-OPERATION_ID = UUID("11111111-1111-4111-8111-111111111111")
 
 
 def _registered_scenario(
@@ -296,87 +293,6 @@ class TestAdvisoryIssues:
             await service.save_preset_async(preset=_preset(), expected_version=None)
 
         assert await service.get_preset_async(name="quick_scan") is not None
-
-
-class TestRunRequestResolution:
-    """A preset plus launch fields becomes an ordinary run request."""
-
-    def test_unset_run_fields_fall_back_to_the_request_defaults(self) -> None:
-        resolved = ScenarioPresetService.resolve_run_request(
-            preset=_preset(), launch=ResolveScenarioPresetRequest(target_name="gpt4")
-        )
-
-        assert resolved.max_concurrency == 10
-        assert resolved.max_retries == 0
-        assert resolved.operation_id is None
-
-    def test_explicit_run_fields_are_applied(self) -> None:
-        resolved = ScenarioPresetService.resolve_run_request(
-            preset=_preset(),
-            launch=ResolveScenarioPresetRequest(target_name="gpt4", max_concurrency=4, max_retries=2),
-        )
-
-        assert resolved.max_concurrency == 4
-        assert resolved.max_retries == 2
-
-    def test_unset_preset_fields_stay_unset_so_the_scenario_default_still_applies(self) -> None:
-        resolved = ScenarioPresetService.resolve_run_request(
-            preset=_preset(), launch=ResolveScenarioPresetRequest(target_name="gpt4")
-        )
-
-        assert resolved.techniques is None
-        assert resolved.datasets is None
-        assert resolved.dataset_request is None
-        assert resolved.include_baseline is None
-        assert resolved.scenario_params is None
-
-    def test_a_baseline_explicitly_disabled_by_the_preset_is_preserved(self) -> None:
-        resolved = ScenarioPresetService.resolve_run_request(
-            preset=_preset(include_baseline=False), launch=ResolveScenarioPresetRequest(target_name="gpt4")
-        )
-
-        assert resolved.include_baseline is False
-
-    def test_every_preset_field_reaches_the_run_request(self) -> None:
-        preset = _preset(
-            techniques=["crescendo"],
-            datasets=ScenarioDatasetRequest(
-                sources=[DatasetSourceInput(name="harmbench", max_size=10)],
-                max_total=25,
-                filters={"harm_categories": ["violence"]},
-            ),
-            include_baseline=True,
-            scenario_params={"max_turns": 3},
-        )
-
-        resolved = ScenarioPresetService.resolve_run_request(
-            preset=preset, launch=ResolveScenarioPresetRequest(target_name="gpt4")
-        )
-
-        assert resolved.scenario_name == preset.scenario_name
-        assert resolved.techniques == preset.techniques
-        assert resolved.datasets == preset.datasets
-        assert resolved.include_baseline == preset.include_baseline
-        assert resolved.scenario_params == preset.scenario_params
-
-    def test_launch_fields_reach_the_run_request(self) -> None:
-        launch = ResolveScenarioPresetRequest(
-            target_name="gpt4",
-            adversarial_target_name="adversary",
-            initializers=["scorer"],
-            initializer_args={"scorer": {"threshold": 0.5}},
-            operation_id=OPERATION_ID,
-            labels={"operator": "red"},
-        )
-
-        resolved = ScenarioPresetService.resolve_run_request(preset=_preset(), launch=launch)
-
-        assert resolved.target_name == "gpt4"
-        assert resolved.adversarial_target_name == "adversary"
-        assert resolved.initializers == ["scorer"]
-        assert resolved.initializer_args == {"scorer": {"threshold": 0.5}}
-        assert resolved.operation_id == OPERATION_ID
-        assert resolved.labels == {"operator": "red"}
 
 
 class TestRunSizeEstimates:

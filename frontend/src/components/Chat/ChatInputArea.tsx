@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle, type KeyboardEvent } from 'react'
 
 import { Button, Caption1, Popover, PopoverSurface, PopoverTrigger, Tooltip, Text } from '@fluentui/react-components'
-import { SendRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowSyncRegular } from '@fluentui/react-icons'
+import { SendRegular, DismissRegular, InfoRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 
 import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, MultiSendOptions, PieceConversion, TargetInstance, UndoLastSendAction } from '@/types'
 import { isTargetResolutionBlocking } from '@/utils/targetIdentity'
@@ -120,8 +120,6 @@ interface ChatInputAreaProps {
   sendDisabled?: boolean
   sendDisabledReasons?: string[]
   activeTarget?: TargetInstance | null
-  singleTurnLimitReached?: boolean
-  onNewConversation?: () => void
   operatorLocked?: boolean
   crossTargetLocked?: boolean
   targetResolutionStatus?: AttackTargetResolutionStatus
@@ -154,7 +152,7 @@ interface ChatInputAreaProps {
 
 const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({
   onSend, conversionRevisionKey = '', disabled = false, disabledReasons = [], sendDisabled = false, sendDisabledReasons = [], activeTarget,
-  singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false,
+  operatorLocked = false, crossTargetLocked = false,
   targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, onConfigureTarget,
   onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange,
   convertedValue, onClearConversion, onClearAllConversions, onConvertedValueChange,
@@ -293,17 +291,8 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
           text="This attack uses a different target. Continue with your target to keep the conversation."
           buttonText="Continue with your target" buttonIcon={<CopyRegular />} onButtonClick={onUseAsTemplate}
           testId="cross-target-banner" buttonTestId="use-as-template-btn" buttonClassName={styles.touchTarget} />
-      ) : singleTurnLimitReached && !undoLastSend ? (
-        <StatusBanner className={styles.statusBanner} textClassName={styles.statusBannerText} icon={<InfoRegular fontSize={18} />}
-          text="This target only supports single-turn conversations." buttonText="New Conversation" buttonIcon={<AddRegular />}
-          onButtonClick={onNewConversation} testId="single-turn-banner"
-          buttonTestId="new-conversation-btn" buttonClassName={styles.touchTarget} />
       ) : (
         <>
-        {singleTurnLimitReached && <StatusBanner className={styles.statusBanner} textClassName={styles.statusBannerText}
-          icon={<InfoRegular fontSize={18} />} text="This target only supports single-turn conversations."
-          buttonText="New Conversation" buttonIcon={<AddRegular />} onButtonClick={onNewConversation}
-          testId="single-turn-banner" buttonTestId="new-conversation-btn" buttonClassName={styles.touchTarget} />}
         <div className={styles.composerTrigger}>
           <PromptEditor text={input} attachments={attachments} onInputChange={changeText} onAttachmentsChange={changeAttachments}
             disabled={disabled} textareaRef={textareaRef} onKeyDown={handleKeyDown}
@@ -323,7 +312,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               <MultiSendSettings options={effectiveSendOptions} disabled={disabled || sendDisabled}
                 disabledReason={repeatDisabledReason} onChange={setSendOptions} />
               {activeTarget?.capabilities?.supports_multi_turn === false && <Tooltip
-                content="This target does not track conversation history — each turn is sent independently." relationship="description">
+                content="This target only supports single-turn conversations." relationship="description">
                 <span className={styles.singleTurnWarning}><InfoRegular fontSize={18} /></span>
               </Tooltip>}
               <Tooltip content={sendTooltip} relationship="description">

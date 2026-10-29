@@ -273,6 +273,16 @@ class Parameter(BaseModel):
         return _render_default_value(value)
 
     @property
+    def is_seed_prompt(self) -> bool:
+        """Whether the declared value is a SeedPrompt, optionally nullable."""
+        annotation = _unwrap_optional(self.param_type)
+        if not isinstance(annotation, type) or annotation.__name__ != "SeedPrompt":
+            return False
+        from pyrit.models.seeds.seed_prompt import SeedPrompt
+
+        return annotation is SeedPrompt
+
+    @property
     def is_string_coercible(self) -> bool:
         """
         Whether a single string token can be coerced to this parameter's value.
@@ -287,7 +297,7 @@ class Parameter(BaseModel):
         """
         if self.reference is not None or self.opaque:
             return False
-        return _is_scalar_param_type(_unwrap_optional(self.param_type))
+        return _is_scalar_param_type(_unwrap_optional(self.param_type)) or self.is_seed_prompt
 
     @property
     def is_external_input(self) -> bool:
@@ -301,6 +311,7 @@ class Parameter(BaseModel):
         alternative, as for ``api_key: str | Callable[...]`` or
         ``font_size: int | tuple[int, int]``; the other alternatives are for in-process
         callers. Other parameters take Python objects from in-process callers only.
+        ``SeedPrompt`` parameters accept prompt text at this boundary.
 
         Returns:
             bool: True when external callers may supply this parameter.
@@ -309,6 +320,8 @@ class Parameter(BaseModel):
             return True
         if self.opaque:
             return False
+        if self.is_seed_prompt:
+            return True
         param_type = _unwrap_optional(self.param_type)
         if _is_scalar_param_type(param_type):
             return True
@@ -330,12 +343,21 @@ class Parameter(BaseModel):
         catalog description changes, and registry metadata keeps the full annotation. A default the
         described form cannot hold is left out, so callers omit the value and the constructor
         default applies.
+        ``SeedPrompt`` values are described as multiline text, including loaded defaults.
 
         Returns:
             Parameter: This parameter, or a copy whose ``param_type`` is the external form.
         """
         if self.reference is not None or self.variants is not None or self.opaque:
             return self
+        if self.is_seed_prompt:
+            return self.model_copy(
+                update={
+                    "param_type": str | None if type(None) in get_args(self.param_type) else str,
+                    "multiline": True,
+                    "default": self.default.value if hasattr(self.default, "value") else self.default,
+                }
+            )
         external_type = _external_input_type(self.param_type)
         if external_type == self.param_type:
             return self
@@ -372,6 +394,8 @@ class Parameter(BaseModel):
             return False
         if self.reference is not None or self.variants is not None:
             return True
+        if self.is_seed_prompt:
+            return True
         annotation = _unwrap_optional(self.param_type)
         if get_origin(annotation) is list:
             annotation = get_args(annotation)[0] if get_args(annotation) else None
@@ -392,6 +416,9 @@ class Parameter(BaseModel):
         """
         if not self.is_json_input:
             raise ValueError(f"Parameter '{self.name}' requires a Python value; it is not supported through REST")
+        if self.is_seed_prompt:
+            annotation = str | None if type(None) in get_args(self.param_type) else str
+            return TypeAdapter(annotation).validate_python(value, strict=True)
         TypeAdapter(JsonValue).validate_python(value, strict=True)
         if self.variants is not None:
             return value
@@ -416,6 +443,14 @@ class Parameter(BaseModel):
         """
         if self.reference is not None or self.variants is not None or not self.is_json_input:
             raise ValueError(f"Parameter '{self.name}' has no lossless scalar JSON projection")
+        if self.is_seed_prompt:
+            from pyrit.models.seeds.seed_prompt import SeedPrompt
+
+            if value is None:
+                return None
+            if not isinstance(value, SeedPrompt):
+                raise ValueError(f"Parameter '{self.name}' expects a SeedPrompt")
+            return value.value
         if isinstance(value, Enum):
             value = value.value
         if isinstance(value, list):
@@ -457,6 +492,16 @@ class Parameter(BaseModel):
             return _coerce_list(param_name=self.name, param_type=param_type, raw_value=raw_value)
         if _is_scalar_param_type(param_type):
             return _coerce_simple_value(param_name=self.name, annotation=param_type, raw_value=raw_value)
+        if self.is_seed_prompt:
+            from pyrit.models.seeds.seed_prompt import SeedPrompt
+
+            if isinstance(raw_value, SeedPrompt):
+                return raw_value
+            if not isinstance(raw_value, str):
+                raise ValueError(f"Parameter '{self.name}' expects prompt text or a SeedPrompt")
+            prompt = SeedPrompt(value=raw_value, data_type="text", is_jinja_template=True)
+            prompt.parameters = prompt.get_template_parameter_names()
+            return prompt
         return raw_value
 
     def validate_value(self, value: Any) -> None:
@@ -493,7 +538,7 @@ class Parameter(BaseModel):
         if self.reference is not None or self.opaque or self.variants is not None:
             return
         param_type = _unwrap_optional(self.param_type)
-        if param_type is None or _is_scalar_param_type(param_type):
+        if param_type is None or _is_scalar_param_type(param_type) or self.is_seed_prompt:
             return
         if get_origin(param_type) is list:
             type_args = get_args(param_type)

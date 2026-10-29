@@ -386,7 +386,8 @@ class DockerSandboxClient:
         cleanup_warning: str | None = None
         try:
             try:
-                process = await asyncio.wait_for(asyncio.shield(startup), timeout=self._timeout_seconds)
+                async with asyncio.timeout_at(deadline):
+                    process = await asyncio.shield(startup)
             except TimeoutError as error:
                 raise SandboxExecutionError("the Docker client did not finish starting before its deadline") from error
             result = await self._wait_for_invocation_async(

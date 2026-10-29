@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from pyrit.memory.memory_interface import (
         AttackResultKeysetCursor,
         MemoryInterface,
+        ScenarioAttemptSeedSummary,
         ScenarioHistoryAggregate,
         ScenarioHistoryKeysetCursor,
         ScenarioHistoryRunRecord,
@@ -62,6 +63,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ImagePathDataTypeSerializer": "pyrit.memory.storage",
     "MemoryInterface": "pyrit.memory.memory_interface",
     "MemoryEmbedding": "pyrit.memory.memory_embedding",
+    "ScenarioAttemptSeedSummary": "pyrit.memory.memory_interface",
     "ScenarioHistoryKeysetCursor": "pyrit.memory.memory_interface",
     "ScenarioHistoryRunRecord": "pyrit.memory.memory_interface",
     "ScenarioHistoryAggregate": "pyrit.memory.memory_interface",

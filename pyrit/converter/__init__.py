@@ -93,6 +93,7 @@ if TYPE_CHECKING:
     from pyrit.converter.random_capital_letters_converter import RandomCapitalLettersConverter
     from pyrit.converter.random_translation_converter import RandomTranslationConverter
     from pyrit.converter.repeat_token_converter import RepeatTokenConverter
+    from pyrit.converter.role_play_tool_call_converter import RolePlayToolCallConverter
     from pyrit.converter.rot13_converter import ROT13Converter
     from pyrit.converter.sata_masking_converter import SATA_TASK_TEMPLATE, SATAMaskingConverter
     from pyrit.converter.scientific_translation_converter import ScientificTranslationConverter
@@ -229,6 +230,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "RangeSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "RegexSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "RepeatTokenConverter": "pyrit.converter.repeat_token_converter",
+    "RolePlayToolCallConverter": "pyrit.converter.role_play_tool_call_converter",
     "SATA_TASK_TEMPLATE": "pyrit.converter.sata_masking_converter",
     "SATAMaskingConverter": "pyrit.converter.sata_masking_converter",
     "ScientificTranslationConverter": "pyrit.converter.scientific_translation_converter",
