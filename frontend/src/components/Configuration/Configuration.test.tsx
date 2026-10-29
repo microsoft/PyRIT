@@ -177,6 +177,8 @@ describe('Configuration', () => {
       version: 'config-v1',
     })
     expect(await screen.findByText(/Configuration saved. Reinitialize PyRIT/i)).toBeInTheDocument()
+    await advanceAutoRefresh()
+    expect(screen.getByText(/Configuration saved. Reinitialize PyRIT/i)).toBeInTheDocument()
   })
 
   it('should show a load error', async () => {

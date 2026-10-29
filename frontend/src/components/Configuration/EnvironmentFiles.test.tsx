@@ -66,6 +66,8 @@ describe('EnvironmentFiles', () => {
       version: 'version-1',
     })
     expect(await screen.findByText(/saved. Reinitialize PyRIT/i)).toBeInTheDocument()
+    await advanceAutoRefresh()
+    expect(screen.getByText(/saved. Reinitialize PyRIT/i)).toBeInTheDocument()
   })
 
   it('should show an error when the file list cannot be loaded', async () => {

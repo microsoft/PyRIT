@@ -79,6 +79,10 @@ export default function AttackHistory({
   const [attackTypeOptions, setAttackTypeOptions] = useState<string[]>([])
   const [optionsRevision, setOptionsRevision] = useState(0)
   const [optionsError, setOptionsError] = useState<string | null>(null)
+  const [narrowedOptionsError, setNarrowedOptionsError] = useState<{
+    filterKey: string
+    error: string | null
+  } | null>(null)
   const [converterOptions, setConverterOptions] = useState<string[]>([])
   const [operatorOptions, setOperatorOptions] = useState<string[]>([])
   const [operationOptions, setOperationOptions] = useState<FilterOption[]>([])
@@ -114,6 +118,9 @@ export default function AttackHistory({
     && narrowedOtherLabelOptions?.filterKey === labelOptionFilterKey
     ? narrowedOtherLabelOptions.options
     : allOtherLabelOptions
+  const displayedOptionsError = hasLabelOptionFilters && narrowedOptionsError?.filterKey === labelOptionFilterKey
+    ? narrowedOptionsError.error ?? optionsError
+    : optionsError
 
   const [fetchToken, setFetchToken] = useState({
     cursor: undefined as string | undefined,
@@ -136,11 +143,12 @@ export default function AttackHistory({
   // Attack and converter options do not depend on the active history filters.
   useEffect(() => {
     let cancelled = false
+    let failed = false
     optionsPending.current = true
     const fail = (cause: unknown): void => {
+      failed = true
       if (!cancelled) setOptionsError(toApiError(cause).detail)
     }
-    void Promise.resolve().then(() => { if (!cancelled) setOptionsError(null) })
     const reads = [attacksApi.getAttackOptions()
       .then(resp => { if (!cancelled) setAttackTypeOptions(resp.attack_types) })
       .catch(fail),
@@ -160,7 +168,12 @@ export default function AttackHistory({
         if (!cancelled) setOperationOptions(resp.items.map(operation => ({ value: operation.id, label: operation.name })))
       })
       .catch(fail)]
-    void Promise.allSettled(reads).then(() => { if (!cancelled) optionsPending.current = false })
+    void Promise.allSettled(reads).then(() => {
+      if (!cancelled) {
+        optionsPending.current = false
+        if (!failed) setOptionsError(null)
+      }
+    })
     return () => { cancelled = true; optionsPending.current = false }
   }, [optionsRevision])
 
@@ -178,8 +191,11 @@ export default function AttackHistory({
           filterKey: labelOptionFilterKey,
           options: buildOtherLabelOptions(resp.labels),
         })
+        setNarrowedOptionsError({ filterKey: labelOptionFilterKey, error: null })
       })
-      .catch((cause: unknown) => { if (!cancelled) setOptionsError(toApiError(cause).detail) })
+      .catch((cause: unknown) => {
+        if (!cancelled) setNarrowedOptionsError({ filterKey: labelOptionFilterKey, error: toApiError(cause).detail })
+      })
     return () => {
       cancelled = true
     }
@@ -313,7 +329,7 @@ export default function AttackHistory({
           operationOptions={operationOptions}
           otherLabelOptions={otherLabelOptions}
         />
-        {optionsError && <MessageBar intent="error"><MessageBarBody>{optionsError}</MessageBarBody></MessageBar>}
+        {displayedOptionsError && <MessageBar intent="error"><MessageBarBody>{displayedOptionsError}</MessageBarBody></MessageBar>}
       </div>
 
       {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}

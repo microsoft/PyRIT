@@ -38,7 +38,7 @@ import type { ScenarioPresetResponse } from '@/types'
 import ScannerVisibilityLabel from './ScannerVisibilityLabel'
 import { useScenarioPresetLibraryStyles } from './ScenarioPresetLibrary.styles'
 import { NEW_PRESET_ROUTE, presetEditorRoutePath } from './presetRoutes'
-import { estimatePresetRunSizes } from './presetRunSizes'
+import { estimatePresetRunSizes, retainPresetRunSizes } from './presetRunSizes'
 
 const DEFINED_IN_CODE_HINT = 'Defined in code, so it cannot be edited or deleted here.'
 
@@ -89,7 +89,7 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
       try {
         const response = await scenarioPresetsApi.list(controller.signal, false)
         if (cancelled || epoch !== mutationEpoch.current) return
-        setItems(response.items)
+        setItems((current) => retainPresetRunSizes(response.items, current))
         setSource(response.source)
         setError(null)
         setLoading(false)

@@ -26,7 +26,7 @@ import { Link } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import { presetScannerRoutePath } from '@/components/ScenarioPresets/presetRoutes'
-import { estimatePresetRunSizes } from '@/components/ScenarioPresets/presetRunSizes'
+import { estimatePresetRunSizes, retainPresetRunSizes } from '@/components/ScenarioPresets/presetRunSizes'
 import { useRuntime } from '@/hooks/useRuntime'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { scenarioPresetsApi, scenariosApi, scenarioSuitesApi } from '@/services/api'
@@ -600,9 +600,17 @@ export default function ScenarioCatalog({
       const listedPresets = presetsResult.status === 'fulfilled'
         ? presetsResult.value.items.filter(isListedInScanner)
         : []
-      setScenarios(items)
+      setScenarios((current) => items.map((item) => {
+        const previous = current.find((candidate) => candidate.scenario_name === item.scenario_name)
+        return previous
+          && JSON.stringify({ ...previous, default_run_size: null }) === JSON.stringify({ ...item, default_run_size: null })
+          ? { ...item, default_run_size: previous.default_run_size }
+          : item
+      }))
       if (suitesResult.status === 'fulfilled') setSuites(suitesResult.value.items)
-      if (presetsResult.status === 'fulfilled') setPresets(presetsResult.value.items)
+      if (presetsResult.status === 'fulfilled') {
+        setPresets((current) => retainPresetRunSizes(presetsResult.value.items, current))
+      }
       setSuitesError(
         suitesResult.status === 'rejected' ? toApiError(suitesResult.reason).detail : null,
       )
@@ -637,7 +645,6 @@ export default function ScenarioCatalog({
   }, [refetchCount, generation])
 
   const handleRetry = useCallback(() => {
-    setSuiteNotice(null)
     setRefetchCount((count) => count + 1)
   }, [])
   useAutoRefresh(() => { if (!pending.current) handleRetry() }, !loading)

@@ -313,6 +313,39 @@ describe('ScenarioCatalog', () => {
     expect(screen.queryByText('Calculating...')).not.toBeInTheDocument()
   })
 
+  it('retains scenario and preset estimates while quiet replacement estimates are pending', async () => {
+    const scenario = makeScenario({ scenario_name: 'review.scan', default_datasets: ['review_data'] })
+    const estimated = { ...scenario, default_run_size: makeEstimate(6) }
+    const nextScenario = deferred<ListRegisteredScenariosResponse>()
+    const nextPreset = deferred<ScenarioRunSizeEstimateResponse>()
+    mockListCatalog
+      .mockResolvedValueOnce(catalogPage([scenario]))
+      .mockResolvedValueOnce(catalogPage([estimated]))
+      .mockResolvedValueOnce(catalogPage([scenario]))
+      .mockReturnValueOnce(nextScenario.promise)
+    mockListPresets.mockResolvedValue(presetList([
+      makePreset({ name: 'review.preset', scenario_name: 'review.scan' }),
+    ]))
+    mockEstimateRun.mockResolvedValueOnce(makeEstimate(6)).mockReturnValueOnce(nextPreset.promise)
+    render(<TestWrapper><ScenarioCatalog {...CATALOG_PROPS} /></TestWrapper>)
+    const scenarioRow = await screen.findByTestId('scenario-card-review.scan')
+    const presetRow = screen.getByTestId('preset-card-review.preset')
+    expect(await within(scenarioRow).findByText('6 attacks')).toBeInTheDocument()
+    expect(await within(presetRow).findByText('6 attacks')).toBeInTheDocument()
+    await advanceAutoRefresh()
+    expect(mockListCatalog).toHaveBeenCalledTimes(4)
+    expect(mockEstimateRun).toHaveBeenCalledTimes(2)
+    expect(within(scenarioRow).getByText('6 attacks')).toBeInTheDocument()
+    expect(within(presetRow).getByText('6 attacks')).toBeInTheDocument()
+    expect(screen.queryByText('Calculating...')).not.toBeInTheDocument()
+    await act(async () => {
+      nextScenario.resolve(catalogPage([{ ...scenario, default_run_size: makeEstimate(12) }]))
+      nextPreset.resolve(makeEstimate(12))
+    })
+    expect(within(scenarioRow).getByText('12 attacks')).toBeInTheDocument()
+    expect(within(presetRow).getByText('12 attacks')).toBeInTheDocument()
+  })
+
   it('keeps metadata visible when default estimates fail', async () => {
     mockListCatalog
       .mockResolvedValueOnce({
@@ -1240,7 +1273,7 @@ describe('ScenarioCatalog', () => {
     await waitForRunSizes()
     await advanceAutoRefresh()
 
-    expect(screen.queryByTestId('suite-changed-notice')).not.toBeInTheDocument()
+    expect(screen.getByTestId('suite-changed-notice')).toBeInTheDocument()
     expect(await screen.findByTestId('suite-card-nightly')).toBeInTheDocument()
     await waitForRunSizes()
   })

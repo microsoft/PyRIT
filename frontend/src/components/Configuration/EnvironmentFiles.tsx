@@ -37,6 +37,7 @@ export default function EnvironmentFiles({
   const [saving, setSaving] = useState(false)
   const [reloadCount, setReloadCount] = useState(0)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
+  const [readError, setReadError] = useState<string | null>(null)
   const loadedSnapshot = useRef<{ generation: string; reloadCount: number } | null>(null)
   const pending = useRef(false)
   const editRevision = useRef(0)
@@ -61,7 +62,7 @@ export default function EnvironmentFiles({
         if (!cancelled && editRevision.current === revision) {
           loadedSnapshot.current = { generation, reloadCount }
           setHasLoadedFiles(true)
-          setStatusMessage(null)
+          setReadError(null)
           if (refreshing) {
             setFiles((current) => response.items.map((file) => {
               if (file.id === selected?.id) return selected
@@ -86,7 +87,7 @@ export default function EnvironmentFiles({
         }
       } catch (error) {
         if (!cancelled) {
-          setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+          setReadError(toApiError(error).detail)
         }
       } finally {
         if (!cancelled) {
@@ -109,10 +110,10 @@ export default function EnvironmentFiles({
 
     const loadContentAsync = async (): Promise<void> => {
       setLoadingContent(true)
-      setStatusMessage(null)
       try {
         const loadedFile = await configurationApi.getEnvironmentFile(selectedId)
         if (!cancelled) {
+          setReadError(null)
           setFiles((currentFiles) =>
             currentFiles.map((file) => file.id === loadedFile.id ? loadedFile : file),
           )
@@ -121,7 +122,7 @@ export default function EnvironmentFiles({
         }
       } catch (error) {
         if (!cancelled) {
-          setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+          setReadError(toApiError(error).detail)
         }
       } finally {
         if (!cancelled) setLoadingContent(false)
@@ -194,6 +195,11 @@ export default function EnvironmentFiles({
       {statusMessage && (
         <MessageBar intent={statusMessage.intent} className={styles.message}>
           <MessageBarBody>{statusMessage.text}</MessageBarBody>
+        </MessageBar>
+      )}
+      {readError && (
+        <MessageBar intent="error" className={styles.message}>
+          <MessageBarBody>{readError}</MessageBarBody>
         </MessageBar>
       )}
       {selectedFile?.read_only_reason && (

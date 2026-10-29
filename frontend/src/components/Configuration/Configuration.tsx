@@ -61,6 +61,7 @@ export default function Configuration() {
   const [reloadCount, setReloadCount] = useState(0)
   const loadedSnapshot = useRef<{ generation: string; reloadCount: number } | null>(null)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
+  const [readError, setReadError] = useState<string | null>(null)
   const [environmentHasUnsavedChanges, setEnvironmentHasUnsavedChanges] = useState(false)
   const pending = useRef(false)
   const editRevision = useRef(0)
@@ -90,7 +91,7 @@ export default function Configuration() {
         const response = await configurationApi.getContent()
         if (!cancelled && editRevision.current === revision) {
           loadedSnapshot.current = { generation, reloadCount }
-          setStatusMessage(null)
+          setReadError(null)
           setContent(response.content)
           setSavedContent(response.content)
           setSource(response.source)
@@ -99,7 +100,7 @@ export default function Configuration() {
         }
       } catch (error) {
         if (!cancelled) {
-          setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+          setReadError(toApiError(error).detail)
         }
       } finally {
         if (!cancelled) {
@@ -191,6 +192,11 @@ export default function Configuration() {
       {selectedTab === 'configuration' && statusMessage && (
         <MessageBar intent={statusMessage.intent} className={styles.message}>
           <MessageBarBody>{statusMessage.text}</MessageBarBody>
+        </MessageBar>
+      )}
+      {selectedTab === 'configuration' && readError && (
+        <MessageBar intent="error" className={styles.message}>
+          <MessageBarBody>{readError}</MessageBarBody>
         </MessageBar>
       )}
 

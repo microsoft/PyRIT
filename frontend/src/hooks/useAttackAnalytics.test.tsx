@@ -1,11 +1,13 @@
 import { act, renderHook } from '@testing-library/react'
 
 import { analyticsApi } from '@/services/api'
+import { deferred } from '@/test-utils/deferred'
 import { makeAnalyticsReport, makeAnalyticsResults, makeAnalyticsRow } from '@/test-utils/analyticsFixtures'
 import type { AttackAnalyticsQuery, AttackAnalyticsReport } from '@/types'
 import { ANALYTICS_DEBOUNCE_MS, DEFAULT_ANALYTICS_VIEW, analyticsQuery } from '@/utils/attackAnalytics'
 
 import { useAttackAnalytics } from './useAttackAnalytics'
+import { AUTO_REFRESH_INTERVAL_MS } from './useAutoRefresh'
 import { useRuntime } from './useRuntime'
 
 jest.mock('@/services/api', () => ({ analyticsApi: { query: jest.fn(), results: jest.fn() } }))
@@ -67,7 +69,7 @@ describe('useAttackAnalytics', () => {
     expect(mockQuery).toHaveBeenCalledTimes(2)
   })
 
-  it('should honor Retry-After before a manual report retry and never poll the dashboard', async () => {
+  it('should honor Retry-After and quietly read the dashboard once per minute', async () => {
     mockQuery.mockRejectedValueOnce(BUSY)
     const { result } = renderAnalytics()
     await advance()
@@ -77,9 +79,34 @@ describe('useAttackAnalytics', () => {
     expect(mockQuery).toHaveBeenCalledTimes(1)
     await advance(1)
     expect(mockQuery).toHaveBeenCalledTimes(2)
-    await advance(300_000)
+    await advance(AUTO_REFRESH_INTERVAL_MS - 1)
     expect(mockQuery).toHaveBeenCalledTimes(2)
+    await advance(1)
+    expect(result.current.loading).toBe(false)
+    expect(result.current.report).not.toBeNull()
+    await advance()
+    expect(mockQuery).toHaveBeenCalledTimes(3)
+    await advance(AUTO_REFRESH_INTERVAL_MS)
+    await advance()
+    expect(mockQuery).toHaveBeenCalledTimes(4)
     expect(mockResults).not.toHaveBeenCalled()
+  })
+
+  it('should retain a same-scope error until a quiet read succeeds', async () => {
+    mockQuery.mockRejectedValueOnce(BUSY)
+    const { result } = renderAnalytics()
+    await advance()
+    expect(result.current.error).toBe('Capacity busy')
+    const recovery = deferred<AttackAnalyticsReport>()
+    mockQuery.mockReturnValueOnce(recovery.promise)
+    await advance(AUTO_REFRESH_INTERVAL_MS)
+    expect(result.current.error).toBe('Capacity busy')
+    await advance()
+    expect(mockQuery).toHaveBeenCalledTimes(2)
+    expect(result.current.error).toBe('Capacity busy')
+    await act(async () => { recovery.resolve(makeAnalyticsReport()) })
+    expect(result.current.error).toBeNull()
+    expect(result.current.report).not.toBeNull()
   })
 
   it('should cancel a results cooldown on Reload without sending the abandoned page', async () => {

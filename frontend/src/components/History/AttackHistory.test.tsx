@@ -1,7 +1,8 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { makeTarget } from '@/test-utils/targetFixtures'
+import { deferred } from '@/test-utils/deferred'
 import AttackHistory from './AttackHistory'
 import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
 import { DEFAULT_HISTORY_FILTERS } from './historyFilters'
@@ -539,6 +540,24 @@ describe('AttackHistory', () => {
     })
   })
 
+  it('should keep an options error visible until all option reads succeed', async () => {
+    mockedAttacksApi.listAttacks.mockResolvedValue({
+      items: sampleAttacks, pagination: { limit: 25, has_more: false },
+    })
+    mockedAttacksApi.getAttackOptions.mockRejectedValueOnce(new Error('Options unavailable'))
+    mockedAttacksApi.getConverterOptions.mockResolvedValue({ converter_types: [] })
+    mockedLabelsApi.getLabels.mockResolvedValue({ labels: {} })
+    mockedOperationsApi.list.mockResolvedValue({ items: [] })
+    render(<TestWrapper><AttackHistory {...defaultProps} /></TestWrapper>)
+    expect(await screen.findByText('Options unavailable')).toBeInTheDocument()
+    const recovery = deferred<Awaited<ReturnType<typeof attacksApi.getAttackOptions>>>()
+    mockedAttacksApi.getAttackOptions.mockReturnValueOnce(recovery.promise)
+    await advanceAutoRefresh()
+    expect(screen.getByText('Options unavailable')).toBeInTheDocument()
+    await act(async () => { recovery.resolve({ attack_types: [] }) })
+    expect(screen.queryByText('Options unavailable')).not.toBeInTheDocument()
+  })
+
   it('should show network error message for network failures', async () => {
     const networkError = {
       isAxiosError: true,
@@ -683,7 +702,7 @@ describe('AttackHistory', () => {
     const filteredRequest = mockedAttacksApi.listAttacks.mock.calls[2][0]
     expect(filteredRequest).toEqual(expect.objectContaining({ outcome: 'success' }))
     expect(filteredRequest).not.toHaveProperty('cursor')
-    expect(screen.getByText('Page 1')).toBeInTheDocument()
+    expect(await screen.findByText('Page 1')).toBeInTheDocument()
 
     history.rerender(
       <TestWrapper>

@@ -298,6 +298,20 @@ describe('ScenarioPresetLibrary', () => {
     expect(mockList).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps the previous run size while an unchanged preset is re-estimated', async () => {
+    mockList.mockResolvedValue({ source: 'presets.yaml', items: [makeItem()] })
+    renderLibrary()
+    const cell = await screen.findByTestId('preset-run-size-nightly_probe')
+    expect(await within(cell).findByText('12 attacks')).toBeInTheDocument()
+    const estimate = deferred<ScenarioRunSizeEstimateResponse>()
+    mockEstimateRun.mockReturnValueOnce(estimate.promise)
+    await advanceAutoRefresh()
+    expect(within(cell).getByText('12 attacks')).toBeInTheDocument()
+    expect(within(cell).queryByText('—')).not.toBeInTheDocument()
+    await act(async () => { estimate.resolve(makeRunSize(24)) })
+    expect(within(cell).getByText('24 attacks')).toBeInTheDocument()
+  })
+
   it('attributes a preset to its author and leaves the column blank without one', async () => {
     mockList.mockResolvedValue({
       source: 'presets.yaml',
@@ -439,7 +453,7 @@ describe('ScenarioPresetLibrary', () => {
     expect(await screen.findByText(
       "Preset 'nightly_probe' changed since it was loaded. Review it and try again.",
     )).toBeInTheDocument()
-    expect(await screen.findByRole('switch', { name: 'Add nightly_probe to scanner' })).not.toBeChecked()
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Add nightly_probe to scanner' })).not.toBeChecked())
     expect(mockList).toHaveBeenCalledTimes(2)
     expect(screen.queryByText('Version mismatch.')).not.toBeInTheDocument()
   })

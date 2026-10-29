@@ -54,6 +54,52 @@ describe('useAutoRefresh', () => {
     expect(next).toHaveBeenCalledTimes(1)
   })
 
+  it('should not skip interval ticks after a late tick or a wall-clock correction', async () => {
+    let clock = 0
+    jest.spyOn(performance, 'now').mockImplementation(() => clock)
+    jest.spyOn(Date, 'now').mockImplementation(() => clock)
+    const refresh = jest.fn()
+    render(<RefreshView refresh={refresh} />)
+    clock = AUTO_REFRESH_INTERVAL_MS + 5
+    await act(async () => { await jest.advanceTimersByTimeAsync(AUTO_REFRESH_INTERVAL_MS) })
+    expect(refresh).toHaveBeenCalledTimes(1)
+    clock = AUTO_REFRESH_INTERVAL_MS * 2
+    await act(async () => { await jest.advanceTimersByTimeAsync(AUTO_REFRESH_INTERVAL_MS) })
+    expect(refresh).toHaveBeenCalledTimes(2)
+    jest.spyOn(Date, 'now').mockReturnValue(-1_000_000)
+    clock += AUTO_REFRESH_INTERVAL_MS
+    await act(async () => { await jest.advanceTimersByTimeAsync(AUTO_REFRESH_INTERVAL_MS) })
+    expect(refresh).toHaveBeenCalledTimes(3)
+  })
+
+  it('should wait a full minute after a due visibility read before the next interval read', async () => {
+    const visibility = jest.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    const refresh = jest.fn()
+    render(<RefreshView refresh={refresh} />)
+    await act(async () => { await jest.advanceTimersByTimeAsync(65_000) })
+    visibility.mockReturnValue('visible')
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(refresh).toHaveBeenCalledTimes(1)
+    await act(async () => { await jest.advanceTimersByTimeAsync(59_999) })
+    expect(refresh).toHaveBeenCalledTimes(1)
+    await act(async () => { await jest.advanceTimersByTimeAsync(1) })
+    expect(refresh).toHaveBeenCalledTimes(2)
+  })
+
+  it('should retain the in-flight guard when scheduling is disabled and enabled again', async () => {
+    let finish: () => void = () => {}
+    const refresh = jest.fn(() => new Promise<void>((resolve) => { finish = resolve }))
+    const rendered = render(<RefreshView refresh={refresh} />)
+    await act(async () => { await jest.advanceTimersByTimeAsync(AUTO_REFRESH_INTERVAL_MS) })
+    rendered.rerender(<RefreshView refresh={refresh} enabled={false} />)
+    rendered.rerender(<RefreshView refresh={refresh} />)
+    await act(async () => { await jest.advanceTimersByTimeAsync(AUTO_REFRESH_INTERVAL_MS) })
+    expect(refresh).toHaveBeenCalledTimes(1)
+    await act(async () => { finish() })
+    await act(async () => { await jest.advanceTimersByTimeAsync(AUTO_REFRESH_INTERVAL_MS) })
+    expect(refresh).toHaveBeenCalledTimes(2)
+  })
+
   it('should not overlap an unfinished read and should stop after unmount', async () => {
     let finish: () => void = () => {}
     const refresh = jest.fn(() => new Promise<void>((resolve) => { finish = resolve }))

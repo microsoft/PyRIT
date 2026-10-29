@@ -75,7 +75,8 @@ export function useAttackAnalytics(query: AttackAnalyticsQuery | null) {
     [scopeKey, requestKey, quietKey])
   const report = settled?.request.scopeKey === scopeKey ? settled.report : null
   const loading = enabledQuery !== null && settled?.request !== request
-  const error = settled?.request === request ? settled.error : null
+  const error = settled && (settled.request === request
+    || (request.quiet && settled.request.scopeKey === scopeKey)) ? settled.error : null
   // A cancelled page belongs to the previous request even if a failed refresh
   // retains the very same report object. Never revive that page's loading state.
   const currentResults = resultState && (

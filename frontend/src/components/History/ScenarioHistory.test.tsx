@@ -276,7 +276,7 @@ describe('ScenarioHistory', () => {
       const message = error || 'The resumed run failed. Finished results remain available.'
       expect(await screen.findByText(message)).toBeInTheDocument()
       expect(await screen.findByRole('row', { name: /foundry.red_team.*Failed/ })).toHaveTextContent('1/2 attacks complete')
-      expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+      await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2))
       expect(mockQueueRetry).toHaveBeenCalledTimes(1)
       expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
       expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
@@ -317,7 +317,7 @@ describe('ScenarioHistory', () => {
     await user.click(await screen.findByRole('button', { name: /Resume foundry/ }))
 
     expect(await screen.findByText(detail)).toBeInTheDocument()
-    expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2))
     expect(mockQueueRetry).toHaveBeenCalledTimes(1)
 
     await act(async () => {
@@ -365,7 +365,7 @@ describe('ScenarioHistory', () => {
     expect(mockedScenariosApi.resumeRun).toHaveBeenCalledWith('run-1')
     expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2))
     expect(mockQueueRetry).toHaveBeenCalledTimes(1)
     expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
   })
