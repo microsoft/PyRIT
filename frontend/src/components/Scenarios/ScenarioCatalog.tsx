@@ -7,6 +7,7 @@ import {
   Link as FluentLink,
   mergeClasses,
   MessageBar,
+  MessageBarActions,
   MessageBarBody,
   Spinner,
   Table,
@@ -20,6 +21,7 @@ import {
 import {
   ChevronDownRegular,
   ChevronUpRegular,
+  DismissRegular,
   SearchRegular,
 } from '@fluentui/react-icons'
 import { Link } from 'react-router'
@@ -733,6 +735,10 @@ export default function ScenarioCatalog({
           {suiteNotice && (
             <MessageBar intent="warning" data-testid="suite-changed-notice">
               <MessageBarBody>{suiteNotice}</MessageBarBody>
+              <MessageBarActions>
+                <Button appearance="subtle" className={styles.touchTarget} icon={<DismissRegular />}
+                  aria-label="Dismiss notification" onClick={() => setSuiteNotice(null)} />
+              </MessageBarActions>
             </MessageBar>
           )}
           {suitesError && (

@@ -68,6 +68,12 @@ describe('EnvironmentFiles', () => {
     expect(await screen.findByText(/saved. Reinitialize PyRIT/i)).toBeInTheDocument()
     await advanceAutoRefresh()
     expect(screen.getByText(/saved. Reinitialize PyRIT/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Dismiss notification' }))
+    expect(screen.queryByText(/saved. Reinitialize PyRIT/i)).not.toBeInTheDocument()
+    const reads = mockedConfigurationApi.listEnvironmentFiles.mock.calls.length
+    await advanceAutoRefresh()
+    expect(mockedConfigurationApi.listEnvironmentFiles).toHaveBeenCalledTimes(reads + 1)
+    expect(screen.queryByText(/saved. Reinitialize PyRIT/i)).not.toBeInTheDocument()
   })
 
   it('should show an error when the file list cannot be loaded', async () => {
@@ -75,6 +81,7 @@ describe('EnvironmentFiles', () => {
     renderFiles()
 
     expect(await screen.findByText('Environment unavailable')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Dismiss notification' })).not.toBeInTheDocument()
     expect(screen.queryByText('No environment sources are enabled by the configuration.')).not.toBeInTheDocument()
   })
 

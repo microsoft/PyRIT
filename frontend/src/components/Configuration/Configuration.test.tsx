@@ -179,6 +179,12 @@ describe('Configuration', () => {
     expect(await screen.findByText(/Configuration saved. Reinitialize PyRIT/i)).toBeInTheDocument()
     await advanceAutoRefresh()
     expect(screen.getByText(/Configuration saved. Reinitialize PyRIT/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Dismiss notification' }))
+    expect(screen.queryByText(/Configuration saved. Reinitialize PyRIT/i)).not.toBeInTheDocument()
+    const reads = mockedConfigurationApi.getContent.mock.calls.length
+    await advanceAutoRefresh()
+    expect(mockedConfigurationApi.getContent).toHaveBeenCalledTimes(reads + 1)
+    expect(screen.queryByText(/Configuration saved. Reinitialize PyRIT/i)).not.toBeInTheDocument()
   })
 
   it('should show a load error', async () => {
@@ -186,6 +192,7 @@ describe('Configuration', () => {
     renderPage()
 
     expect(await screen.findByText('Configuration unavailable')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Dismiss notification' })).not.toBeInTheDocument()
   })
 
   it('should edit and save a selected environment file with dotenv highlighting', async () => {

@@ -1276,6 +1276,13 @@ describe('ScenarioCatalog', () => {
     expect(screen.getByTestId('suite-changed-notice')).toBeInTheDocument()
     expect(await screen.findByTestId('suite-card-nightly')).toBeInTheDocument()
     await waitForRunSizes()
+    await user.click(screen.getByRole('button', { name: 'Dismiss notification' }))
+    expect(screen.queryByTestId('suite-changed-notice')).not.toBeInTheDocument()
+    const reads = mockListSuites.mock.calls.length
+    await advanceAutoRefresh()
+    expect(mockListSuites).toHaveBeenCalledTimes(reads + 1)
+    expect(screen.queryByTestId('suite-changed-notice')).not.toBeInTheDocument()
+    await waitForRunSizes()
   })
 
   it('searches suites by their presets and the scenarios those presets run', async () => {

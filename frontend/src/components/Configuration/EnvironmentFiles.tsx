@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { Button, Field, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components'
-import { SaveRegular } from '@fluentui/react-icons'
+import { Button, Field, MessageBar, MessageBarActions, MessageBarBody, Spinner } from '@fluentui/react-components'
+import { DismissRegular, SaveRegular } from '@fluentui/react-icons'
 
 import { configurationApi } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
@@ -195,6 +195,10 @@ export default function EnvironmentFiles({
       {statusMessage && (
         <MessageBar intent={statusMessage.intent} className={styles.message}>
           <MessageBarBody>{statusMessage.text}</MessageBarBody>
+          <MessageBarActions>
+            <Button appearance="subtle" className={styles.noticeDismiss} icon={<DismissRegular />}
+              aria-label="Dismiss notification" onClick={() => setStatusMessage(null)} />
+          </MessageBarActions>
         </MessageBar>
       )}
       {readError && (

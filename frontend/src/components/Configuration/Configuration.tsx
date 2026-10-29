@@ -4,6 +4,7 @@ import {
   Button,
   Field,
   MessageBar,
+  MessageBarActions,
   MessageBarBody,
   Spinner,
   Tab,
@@ -11,7 +12,7 @@ import {
   Text,
 } from '@fluentui/react-components'
 import type { SelectTabData, SelectTabEvent } from '@fluentui/react-components'
-import { SaveRegular } from '@fluentui/react-icons'
+import { DismissRegular, SaveRegular } from '@fluentui/react-icons'
 import { useBeforeUnload, useBlocker, useSearchParams } from 'react-router'
 
 import { configurationApi } from '@/services/api'
@@ -192,6 +193,10 @@ export default function Configuration() {
       {selectedTab === 'configuration' && statusMessage && (
         <MessageBar intent={statusMessage.intent} className={styles.message}>
           <MessageBarBody>{statusMessage.text}</MessageBarBody>
+          <MessageBarActions>
+            <Button appearance="subtle" className={styles.noticeDismiss} icon={<DismissRegular />}
+              aria-label="Dismiss notification" onClick={() => setStatusMessage(null)} />
+          </MessageBarActions>
         </MessageBar>
       )}
       {selectedTab === 'configuration' && readError && (

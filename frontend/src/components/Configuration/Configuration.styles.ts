@@ -2,6 +2,7 @@ import { makeStyles, tokens } from '@fluentui/react-components'
 
 import {
   MINIMUM_TOUCH_TARGET_SIZE,
+  mobileTouchTarget,
   NARROW_VIEWPORT_QUERY,
   TOUCH_INPUT_QUERY,
 } from '@/styles/touchTargets'
@@ -138,6 +139,9 @@ export const useConfigurationStyles = makeStyles({
   },
   message: {
     width: '100%',
+  },
+  noticeDismiss: {
+    ...mobileTouchTarget,
   },
   environmentSection: {
     display: 'flex',
