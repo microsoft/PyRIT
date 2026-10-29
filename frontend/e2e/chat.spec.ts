@@ -103,7 +103,7 @@ async function mockBackendAPIs(page: Page) {
 
       await fulfillMessageSend(route, makeAddMessageResponse(
         "e2e-attack-001", MOCK_CONVERSATION_ID, [...accumulatedMessages],
-        null, {
+        { response_error: "none", request_turn_number: turnNumber, response_turn_number: turnNumber }, {
           target: {
             target_type: "OpenAIChatTarget", identifier_hash: "mock-openai-chat-hash",
             endpoint: "https://mock.openai.com", model_name: "gpt-4o-mock",
@@ -161,7 +161,7 @@ test.describe("Application Smoke Tests", () => {
   test("should display chat ribbon", async ({ page }) => {
     await expect(page.getByRole("button", { name: "Attacks", exact: true })).toBeVisible({ timeout: 10000 });
     await page.getByRole("button", { name: "Attacks", exact: true }).click();
-    await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: "New attack", exact: true })).toBeVisible({ timeout: 10000 });
   });
 
   test("should have New Attack button", async ({ page }) => {
@@ -305,7 +305,7 @@ test.describe("Chat Functionality", () => {
     ).toBeVisible({ timeout: 10000 });
 
     // Click New Attack
-    await page.getByTestId("new-attack-btn").click();
+    await page.getByRole("button", { name: "New attack", exact: true }).click();
 
     // Previous messages should be cleared
     await expect(page.getByText("Mock response for: First message")).not.toBeVisible();
@@ -801,10 +801,11 @@ test.describe("Multi-turn conversation flow", () => {
     ).toBeVisible({ timeout: 10000 });
 
     // New Attack
-    await page.getByTestId("new-attack-btn").click();
+    await page.getByRole("button", { name: "New attack", exact: true }).click();
     await expect(getMessageByText(page, "Before reset")).not.toBeVisible();
 
     // Send new message in fresh conversation
+    await expect(page.getByRole("combobox", { name: "Objective target", exact: true })).toHaveValue("mock-openai-chat");
     await input.fill("After reset");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await expect(getMessageByText(page, "After reset")).toBeVisible();

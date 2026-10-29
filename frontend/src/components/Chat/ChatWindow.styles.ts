@@ -23,6 +23,9 @@ export const useChatWindowStyles = makeStyles({
     height: '100%',
     width: '100%',
     overflow: 'hidden',
+    [NARROW_VIEWPORT_QUERY]: {
+      flexShrink: 0,
+    },
   },
   pageHeading: {
     position: 'absolute',

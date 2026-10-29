@@ -129,6 +129,9 @@ export const useMainLayoutStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
+    [NARROW_VIEWPORT_QUERY]: {
+      overflowY: 'auto',
+    },
   },
   labelsSection: {
     flexShrink: 0,

@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 
 import {
@@ -12,12 +12,14 @@ import {
   Popover,
   PopoverSurface,
   PopoverTrigger,
+  PositioningConfigurationProvider,
   Radio,
   RadioGroup,
   Spinner,
   Text,
   Textarea,
   mergeClasses,
+  type PositioningConfigurationFn,
 } from '@fluentui/react-components'
 import {
   AddRegular,
@@ -30,6 +32,8 @@ import {
 
 import OutcomeBadge from '@/components/OutcomeBadge'
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
+import { NARROW_SCREEN_QUERY } from '@/styles/touchTargets'
 import type {
   ApplyScorerStatus,
   AttackOutcome,
@@ -117,6 +121,12 @@ export default function ObjectiveHeader({
   applyStatus = null,
 }: ObjectiveHeaderProps) {
   const styles = useObjectiveHeaderStyles()
+  const isNarrow = useMediaQuery(NARROW_SCREEN_QUERY)
+  const configurePositioning = useCallback<PositioningConfigurationFn>(({ options }) => ({
+    ...options,
+    // Keep the editor on screen when its anchor leaves a narrow viewport.
+    unstable_disableTether: isNarrow ? 'all' : options.unstable_disableTether,
+  }), [isNarrow])
   const [resultOpen, setResultOpen] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [overflowing, setOverflowing] = useState(false)
@@ -244,10 +254,11 @@ export default function ObjectiveHeader({
           Whether the objective was met. Automated and human judgments are recorded separately; open the outcome details to review them.
         </ContextualHelpLabel>
       </Badge>
+      <PositioningConfigurationProvider value={configurePositioning}>
       <Popover
         withArrow
         open={resultOpen}
-        positioning={{ autoSize: 'height', align: 'start' }}
+        positioning={{ autoSize: 'height', align: 'start', overflowBoundary: 'window' }}
         onOpenChange={(_event, data) => {
           setResultOpen(data.open)
           if (data.open) {
@@ -434,6 +445,7 @@ export default function ObjectiveHeader({
           </div>
         </PopoverSurface>
       </Popover>
+      </PositioningConfigurationProvider>
     </div>
   )
 

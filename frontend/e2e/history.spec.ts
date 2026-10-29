@@ -533,7 +533,7 @@ test.describe("Attack History Filters", () => {
 });
 
 test.describe("Attack History empty state", () => {
-  test("guides keyboard users to target configuration and preserves Back navigation", async ({ page }) => {
+  test("guides keyboard users to Chat target selection and preserves Back navigation", async ({ page }) => {
     await mockHistoryAPIs(page, { attacks: [] });
     await page.route(/\/api\/targets(?:\?|$)/, async (route) => {
       await route.fulfill({
@@ -548,17 +548,18 @@ test.describe("Attack History empty state", () => {
 
     await page.goto("/attack/history");
 
-    const configureTargetButton = page.getByRole("button", { name: "Configure target" });
-    await expect(configureTargetButton).toBeVisible();
-    await configureTargetButton.focus();
-    await expect(configureTargetButton).toBeFocused();
-    await configureTargetButton.press("Enter");
+    const openChatButton = page.getByRole("button", { name: "Open Chat", exact: true });
+    await expect(openChatButton).toBeVisible();
+    await openChatButton.focus();
+    await expect(openChatButton).toBeFocused();
+    await openChatButton.press("Enter");
 
-    await expect(page).toHaveURL(/\/registry\/targets$/);
-    await expect(page.getByRole("heading", { level: 1, name: "Target Registry" })).toBeVisible();
+    await expect(page).toHaveURL(/\/attack\/chat$/);
+    await expect(page.getByRole("combobox", { name: "Objective target", exact: true })).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Objective target", exact: true })).toBeDisabled();
 
     await page.goBack();
     await expect(page).toHaveURL(/\/attack\/history$/);
-    await expect(page.getByRole("button", { name: "Configure target" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open Chat", exact: true })).toBeVisible();
   });
 });

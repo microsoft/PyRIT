@@ -304,7 +304,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/attack/chat/mobile-attack-001") {
+    if (apiPath === "/attacks/mobile-attack-001") {
       await route.fulfill(
         jsonResponse({
           attack_result_id: "mobile-attack-001",
@@ -338,7 +338,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/attack/chat/mobile-attack-001/message-sends" && method === "POST") {
+    if (apiPath === "/attacks/mobile-attack-001/message-sends" && method === "POST") {
       await fulfillMessageSend(route, makeAddMessageResponse(
         "mobile-attack-001", "mobile-conversation-001", MESSAGES,
         null, {
@@ -350,7 +350,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       ));
       return;
     }
-    if (apiPath === "/attack/chat/mobile-attack-001/messages") {
+    if (apiPath === "/attacks/mobile-attack-001/messages") {
       await route.fulfill(
         method === "POST"
           ? jsonResponse(makeAddMessageResponse(
@@ -362,11 +362,18 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
                 },
               },
             ))
-          : jsonResponse({ messages: MESSAGES })
+          : jsonResponse({
+              conversation_id: "mobile-conversation-001",
+              messages: MESSAGES,
+              target_response_status: null,
+              automated_score: MESSAGES[1].message_pieces[0].scores[1],
+              latest_response_id: "mobile-assistant-piece",
+              outcome: "success",
+            })
       );
       return;
     }
-    if (apiPath === "/attack/chat/mobile-attack-001/conversations") {
+    if (apiPath === "/attacks/mobile-attack-001/conversations") {
       await route.fulfill(
         jsonResponse({
           attack_result_id: "mobile-attack-001",
@@ -383,13 +390,13 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/attack/chat/attack-options") {
+    if (apiPath === "/attacks/attack-options") {
       await route.fulfill(
         jsonResponse({ attack_types: ["PromptSendingAttack"] })
       );
       return;
     }
-    if (apiPath === "/attack/chat/converter-options") {
+    if (apiPath === "/attacks/converter-options") {
       await route.fulfill(jsonResponse({ converter_types: [] }));
       return;
     }
@@ -459,8 +466,15 @@ async function expectMinimumTouchTarget(locator: Locator): Promise<void> {
   if (!box) {
     throw new Error("Expected a visible touch target");
   }
-  expect(Math.round(box.width)).toBeGreaterThanOrEqual(MINIMUM_TOUCH_TARGET_SIZE);
-  expect(Math.round(box.height)).toBeGreaterThanOrEqual(MINIMUM_TOUCH_TARGET_SIZE);
+  const control = await locator.evaluate((element) => ({
+    name: element.getAttribute("aria-label") ?? element.getAttribute("data-testid") ?? element.textContent?.trim(),
+    tag: element.tagName,
+    coarsePointer: window.matchMedia("(pointer: coarse)").matches,
+    minWidth: getComputedStyle(element).minWidth,
+    minHeight: getComputedStyle(element).minHeight,
+  }));
+  expect(Math.round(box.width), `${JSON.stringify(control)} width`).toBeGreaterThanOrEqual(MINIMUM_TOUCH_TARGET_SIZE);
+  expect(Math.round(box.height), `${JSON.stringify(control)} height`).toBeGreaterThanOrEqual(MINIMUM_TOUCH_TARGET_SIZE);
 }
 
 async function expectMinimumTouchTargets(locator: Locator): Promise<void> {
@@ -490,28 +504,30 @@ test.beforeEach(async ({ page }) => {
 test.describe("Mobile touch targets", () => {
   test.use({ viewport: MOBILE_VIEWPORT, hasTouch: true });
 
-  test("keeps the empty-chat objective editor usable on a narrow screen", async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 320, height: 568 });
-    await selectChatTarget(page);
+  for (const width of [320, 390]) {
+    test(`keeps the empty-chat objective editor usable on a narrow screen (${width}px)`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 568 });
+      await selectChatTarget(page);
 
-    await page.getByRole("button", { name: "Add objective" }).click();
-    const objectiveInput = page.getByRole("textbox", {
-      name: "Attack objective",
+      await page.getByRole("button", { name: "Add objective" }).click();
+      const objectiveInput = page.getByRole("textbox", {
+        name: "Attack objective",
+      });
+      await expectMinimumTouchTarget(objectiveInput);
+      await objectiveInput.fill(
+        "Evaluate whether the response satisfies this mobile attack objective"
+      );
+      await expectMinimumTouchTarget(
+        page.getByRole("button", { name: "Save" })
+      );
+      await expectMinimumTouchTarget(
+        page.getByRole("button", { name: "Cancel" })
+      );
+      await expectNoDocumentOverflow(page);
     });
-    await expectMinimumTouchTarget(objectiveInput);
-    await objectiveInput.fill(
-      "Evaluate whether the response satisfies this mobile attack objective"
-    );
-    await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Save" })
-    );
-    await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Cancel" })
-    );
-    await expectNoDocumentOverflow(page);
-  });
+  }
 
   test("keeps Home, Registry, and History controls at least 44px", async ({
     page,
@@ -691,13 +707,13 @@ test.describe("Mobile touch targets", () => {
     await scoreStack.press("Tab");
     await expect(page.getByRole("tooltip")).toHaveCount(0);
 
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "New attack", exact: true }));
     await expectMinimumTouchTargets(
       page.locator(
         [
           '[data-testid="labels-icon-btn"]',
           '[data-testid="export-conversation-btn"]',
           '[data-testid="toggle-panel-btn"]',
-          '[data-testid="new-attack-btn"]',
           '[aria-label="Attach files"]',
           '[data-testid="toggle-converter-panel-btn"]',
           '[data-testid="undo-last-send-btn"]',
@@ -726,7 +742,7 @@ test.describe("Mobile touch targets", () => {
     const outcomeButton = page.getByRole("button", {
       name: /Objective achieved outcome:/,
     });
-    await outcomeButton.click();
+    await outcomeButton.tap();
     await expect(page.getByRole("group", { name: "Automated score", exact: true })).toContainText("Failure");
     await expect(page.getByText("Overridden by the human score.", { exact: true })).toBeVisible();
     await expect(page.getByText("Human scores always override automated scores", { exact: true })).toHaveCount(0);
@@ -739,24 +755,33 @@ test.describe("Mobile touch targets", () => {
       expect(positions[0]).not.toBeUndefined();
       expect(new Set(positions).size).toBe(1);
     }).toPass();
-    await page.setViewportSize({ width: 320, height: 568 });
-
-    const resultDetails = page.getByText("Attack Result Details").locator("..");
-    await expect(resultDetails).toBeVisible();
-    await expect(async () => {
-      const popoverBounds = await resultDetails.boundingBox();
-      if (!popoverBounds) {
-        throw new Error("Expected attack result details bounds");
+    const resultDetails = page.getByRole("group").filter({
+      has: page.getByText("Attack Result Details", { exact: true }),
+    });
+    for (const width of [320, 390]) {
+      await page.setViewportSize({ width, height: 568 });
+      await expect(resultDetails).toBeVisible();
+      await expect(async () => {
+        const popoverBounds = await resultDetails.boundingBox();
+        if (!popoverBounds) {
+          throw new Error("Expected attack result details bounds");
+        }
+        expect(popoverBounds.y).toBeGreaterThanOrEqual(0);
+        expect(popoverBounds.y + popoverBounds.height, `Result details at ${width}px`).toBeLessThanOrEqual(568);
+      }).toPass();
+      for (const name of resultActions) {
+        await expectMinimumTouchTarget(page.getByRole("button", { name, exact: true }));
       }
-      expect(popoverBounds.y).toBeGreaterThanOrEqual(0);
-      expect(popoverBounds.y + popoverBounds.height).toBeLessThanOrEqual(568);
-    }).toPass();
-    for (const name of resultActions) {
-      await expectMinimumTouchTarget(page.getByRole("button", { name, exact: true }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: /^Automated scorer:/ }));
+      await expectNoDocumentOverflow(page);
     }
-    await expectMinimumTouchTarget(page.getByRole("button", { name: /^Automated scorer:/ }));
-    await expectNoDocumentOverflow(page);
     await page.keyboard.press("Escape");
+    await expect(resultDetails).toBeHidden();
+    await expect(outcomeButton).toBeFocused();
+    await outcomeButton.press("Enter");
+    await expect(resultDetails).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(resultDetails).toBeHidden();
     await page.setViewportSize({ width: 320, height: MOBILE_VIEWPORT.height });
 
     await page.getByTestId("toggle-panel-btn").click();
