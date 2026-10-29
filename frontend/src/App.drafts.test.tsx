@@ -302,7 +302,7 @@ describe('App draft handoff with the real chat and composer', () => {
     await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
     const firstDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
     await user.click(within(firstDialog).getByRole('button', { name: 'Keep editing' }))
-    expect(within(screen.getByRole('region', { name: 'Message 1' }))
+    expect(within(await screen.findByRole('region', { name: 'Message 1' }))
       .getByPlaceholderText('Type prompt here')).toHaveValue('Unsaved conversation edit')
 
     await user.click(await screen.findByRole('button', { name: 'Cancel', exact: true }))
