@@ -7,11 +7,11 @@ import { useRegistryIdentityRowStyles } from './RegistryIdentityRow.styles'
 
 interface RegistryIdentityRowProps {
   readonly name: string
-  readonly identity: Record<string, unknown>
+  readonly identity: object
   readonly columns: number
   readonly expanded: boolean
   readonly onToggle: () => void
-  readonly children: ReactNode
+  readonly children?: ReactNode
 }
 
 export default function RegistryIdentityRow({

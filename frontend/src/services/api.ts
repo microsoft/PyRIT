@@ -730,6 +730,14 @@ export const scenariosApi = {
     return response.data
   },
 
+  getLaunchConfiguration: async (scenarioResultId: string, signal?: AbortSignal): Promise<RunScenarioRequest> =>
+    (await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/launch-configuration`, { signal })).data,
+
+  getRunConversation: async (scenarioResultId: string, conversationId: string): Promise<ConversationMessagesResponse> =>
+    (await apiClient.get(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/conversations/${encodeURIComponent(conversationId)}`,
+    )).data,
+
   getPairedOutcomes: async (
     scenarioResultId: string,
     params: { baseline_group_id: string; attack_group_id: string },

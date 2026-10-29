@@ -332,6 +332,33 @@ describe('ScenarioDetail', () => {
     jest.useRealTimers()
   })
 
+  it('prefills a rerun without replacing its saved server-default adversarial target', async () => {
+    const user = userEvent.setup()
+    const preferred = makeAdversarialTarget('preferred-adversarial')
+    renderDetail('/scanner/launch/foundry.red_team_agent', {
+      targets: [makeTarget('target-a'), makeTarget('target-b'), preferred],
+      defaultAdversarialTarget: preferred,
+      sourceRunId: '123e4567-e89b-12d3-a456-426614174000',
+      initialRun: {
+        scenario_name: 'foundry.red_team_agent', target_name: 'target-b',
+        adversarial_target_name: null, techniques: ['crescendo'], include_baseline: false,
+        max_concurrency: 3, max_retries: 2,
+      },
+    })
+    expect(await screen.findByRole('combobox', { name: 'Objective Target' })).toHaveValue('target-b')
+    expect(screen.getByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('')
+    expect(screen.getByRole('checkbox', { name: 'crescendo', exact: true })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'default_technique', exact: true })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'baseline', exact: true })).not.toBeChecked()
+    expect(screen.getByRole('spinbutton', { name: 'Max concurrency' })).toHaveValue('3')
+    expect(screen.getByRole('spinbutton', { name: 'Max retries' })).toHaveValue('2')
+    await confirmRunPreview(user)
+    expect(mockStartRun.mock.calls[0][0]).toEqual(expect.objectContaining({
+      target_name: 'target-b', techniques: ['crescendo'], include_baseline: false, max_concurrency: 3, max_retries: 2,
+    }))
+    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('adversarial_target_name')
+  })
+
   describe('scanner conversation configuration', () => {
     const saved: AddMessageResponse = {
       attack: {

@@ -32,6 +32,7 @@ interface MainLayoutProps extends OperationControlProps {
   operatorReadOnly?: boolean
   toolbarRef?: React.Ref<HTMLDivElement>
   onStartTour?: () => void
+  labelsBusy?: boolean
   featureNavigation?: React.ReactNode
 }
 
@@ -49,6 +50,7 @@ export default function MainLayout({
   operatorReadOnly,
   toolbarRef,
   onStartTour,
+  labelsBusy = false,
   featureNavigation,
 }: MainLayoutProps) {
   const styles = useMainLayoutStyles()
@@ -180,7 +182,7 @@ export default function MainLayout({
             data-tour="labels-card"
           >
             <div className={styles.labelsRow}>
-              <div className={styles.labelsControls}>
+              <div className={styles.labelsControls} inert={labelsBusy} aria-busy={labelsBusy}>
                 <LabelsBar labels={labels} onLabelsChange={onLabelsChange} operatorReadOnly={operatorReadOnly}
               operation={operation} onOperationChange={onOperationChange} onRetryOperation={onRetryOperation} />
               </div>

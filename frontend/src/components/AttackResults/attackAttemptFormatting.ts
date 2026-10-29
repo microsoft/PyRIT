@@ -11,10 +11,10 @@ const OBJECTIVE_PREVIEW_LENGTH = 96
 
 export function formatAttackSuccess(outcome: ScenarioProgressResult['outcome']): string {
   if (outcome === 'success') {
-    return 'Yes'
+    return 'True'
   }
   if (outcome === 'failure') {
-    return 'No'
+    return 'False'
   }
   return outcome.replace(/^\w/, (letter) => letter.toUpperCase())
 }
@@ -27,7 +27,7 @@ export function formatScore(score: ScenarioProgressResult['score']): string {
 }
 
 export function formatScoreRationale(rationale: string | null | undefined): string {
-  return rationale?.trim() || 'No score rationale was persisted.'
+  return rationale?.trim() || 'No rationale is available.'
 }
 
 export function formatTimestamp(timestamp: string): string {

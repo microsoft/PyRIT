@@ -348,7 +348,7 @@ describe('Shared new run labels', () => {
   it('leaves saved scenario attribution unchanged when future launch labels change', async () => {
     const user = userEvent.setup()
     renderApp('/scanner/history/saved_run')
-    const saved = screen.getByRole('region', { name: 'Run configuration' })
+    const saved = screen.getByRole('region', { name: 'Scan summary' })
     await screen.findByRole('combobox', { name: 'Operation' })
     await chooseOperation(user, 'future_op')
     expect(saved).toHaveTextContent('original_user')
@@ -525,7 +525,7 @@ describe('Shared new run labels', () => {
       expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
         labels: DEFAULT_LABELS, operation_id: operationId('config_op_v2'),
       }))
-      const saved = await screen.findByRole('region', { name: 'Run configuration' })
+      const saved = await screen.findByRole('region', { name: 'Scan summary' })
       expect(saved).toHaveTextContent('original_op')
       expect(saved).not.toHaveTextContent('config_op_v2')
     })

@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.backend.models.attacks import ConversationMessagesResponse
+from pyrit.backend.services.attack_service import AttackService
 from pyrit.backend.services.scenario_run_service import (
     _LAUNCH_REQUEST_FIELDS,
     _LAUNCH_REQUEST_METADATA_KEY,
@@ -30,6 +32,7 @@ from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
+    ComponentIdentifier,
     DatasetFetchPolicy,
     DatasetSourceInput,
     Message,
@@ -809,7 +812,6 @@ async def test_run_completion_waits_for_terminal_handoff_async(
         ScenarioRunState.QUEUED,
         ScenarioRunState.IN_PROGRESS,
         ScenarioRunState.COMPLETED,
-        ScenarioRunState.CANCELLED,
     ],
 )
 async def test_resume_rejects_ineligible_state_before_initializing_async(
@@ -826,6 +828,116 @@ async def test_resume_rejects_ineligible_state_before_initializing_async(
         with pytest.raises(ScenarioRunConflictError, match="cannot resume"):
             await service.resume_run_async(scenario_result_id=str(stored.id))
         prepare.assert_not_called()
+
+
+async def test_cancelled_run_resumes_original_plan_and_result_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    memory = CentralMemory.get_memory_instance()
+    before = await memory.get_attack_results_async(scenario_result_id=str(stored.id))
+    await memory.update_scenario_run_state_async(
+        scenario_result_id=str(stored.id), scenario_run_state=ScenarioRunState.CANCELLED
+    )
+    response = await service.resume_run_async(scenario_result_id=str(stored.id))
+    await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
+    after = await memory.get_scenario_result_header_async(scenario_result_id=str(stored.id))
+    results = await memory.get_attack_results_async(scenario_result_id=str(stored.id))
+    assert response.scenario_result_id == str(stored.id)
+    assert after is not None and after.scenario_run_state == ScenarioRunState.COMPLETED
+    assert {result.attack_result_id for result in before}.issubset({result.attack_result_id for result in results})
+
+
+async def test_rerun_configuration_is_read_only_and_has_no_resume_id_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    memory = CentralMemory.get_memory_instance()
+    before = await memory.get_attack_results_async(scenario_result_id=str(stored.id))
+    with patch.object(service, "_prepare_run_async", new_callable=AsyncMock) as prepare:
+        request = await service.get_launch_configuration_async(str(stored.id))
+    assert request is not None
+    assert request.scenario_result_id is None
+    assert request.scenario_name == _SCENARIO_NAME
+    assert request.target_name == _TARGET_NAME
+    assert request.labels == _LABELS
+    assert request.operation_id == _OPERATION_ID
+    assert request.max_concurrency == 1
+    assert request.include_baseline is False
+    assert request.scenario_params is not None and request.scenario_params["marker"] == "original"
+    prepare.assert_not_awaited()
+    after = await memory.get_attack_results_async(scenario_result_id=str(stored.id))
+    assert [result.attack_result_id for result in after] == [result.attack_result_id for result in before]
+    RunScenarioRequest.model_validate(request.model_dump(exclude_unset=True))
+
+
+@pytest.mark.parametrize("owned", [True, False])
+async def test_scan_conversation_publication_handoff_rechecks_saved_ownership_async(
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], owned: bool
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    memory = CentralMemory.get_memory_instance()
+    results = await memory.get_attack_results_async(scenario_result_id=str(stored.id))
+    result = next(item for item in results if item.outcome != AttackOutcome.ERROR)
+    conversation_id = result.conversation_id
+    expected = ConversationMessagesResponse(conversation_id=conversation_id, messages=[], target_response_status=None)
+    reader = MagicMock(spec=AttackService)
+    reader.get_conversation_messages_async = AsyncMock(return_value=expected)
+    with (
+        patch.object(memory, "get_attack_results_async", new_callable=AsyncMock, side_effect=[[], [result]]),
+        patch("pyrit.backend.services.attack_service.get_attack_service", return_value=reader),
+    ):
+        response = await service.get_conversation_async(
+            scenario_result_id=str(stored.id) if owned else str(uuid.uuid4()),
+            conversation_id=conversation_id,
+        )
+    if owned:
+        assert response is expected
+        assert reader.get_conversation_messages_async.await_args.kwargs == {
+            "attack_result_id": str(result.attack_result_id),
+            "conversation_id": conversation_id,
+        }
+    else:
+        assert response is None
+        reader.get_conversation_messages_async.assert_not_awaited()
+
+
+async def test_rerun_rejects_changed_target_instead_of_using_current_defaults_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    replacement = MockPromptTarget(id="replacement")
+    with (
+        patch.object(service._configuration_resolver, "resolve_target", return_value=replacement),
+        patch.object(
+            replacement,
+            "get_identifier",
+            return_value=ComponentIdentifier(class_name="ChangedTarget", class_module="tests"),
+        ),
+    ):
+        with pytest.raises(ScenarioRunConflictError, match="saved target changed"):
+            await service.get_launch_configuration_async(str(stored.id))
+
+
+async def test_rerun_canonical_dataset_request_remains_a_valid_response_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["datasets"] = {
+        "sources": [{"name": _DATASET_NAME, "fetch": "never"}],
+        "max_total": 2,
+    }
+    with patch.object(service._memory, "get_scenario_result_header_async", new_callable=AsyncMock, return_value=stored):
+        request = await service.get_launch_configuration_async(str(stored.id))
+    assert request is not None and request.datasets is not None
+    assert not request.model_fields_set.intersection({"dataset_names", "dataset_filters", "max_dataset_size"})
+    validated = RunScenarioRequest.model_validate(request.model_dump(exclude_unset=True))
+    assert validated.datasets is not None and validated.datasets.max_total == 2
 
 
 async def test_resume_missing_run_async(resume_environment: tuple[ScenarioRunService, MockPromptTarget]) -> None:

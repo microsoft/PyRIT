@@ -1,223 +1,131 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
-  Badge,
-  Button,
-  Dialog,
-  DialogActions,
-  DialogBody,
-  DialogContent,
-  DialogSurface,
-  DialogTitle,
-  MessageBar,
-  MessageBarActions,
-  MessageBarBody,
-  mergeClasses,
-  ProgressBar,
-  Skeleton,
-  SkeletonItem,
-  Table,
-  TableBody,
-  TableCell,
-  TableHeader,
-  TableHeaderCell,
-  TableRow,
-  Text,
+  Accordion, AccordionHeader, AccordionItem, AccordionPanel, Badge, Button,
+  Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
+  MessageBar, MessageBarBody, ProgressBar, Spinner, Table, TableBody, TableCell,
+  TableHeader, TableHeaderCell, TableRow, Text,
 } from '@fluentui/react-components'
-import {
-  ArrowLeftRegular,
-  ArrowSyncRegular,
-  CheckmarkCircleRegular,
-  ChevronDownRegular,
-  ChevronRightRegular,
-  DismissCircleRegular,
-  ErrorCircleRegular,
-  PlayRegular,
-  StopRegular,
-} from '@fluentui/react-icons'
+import { ArrowLeftRegular, ArrowClockwiseRegular, ChevronDownRegular, ChevronRightRegular, DismissRegular, PlayRegular, StopRegular } from '@fluentui/react-icons'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 
 import AttackAttemptDetails from '@/components/AttackResults/AttackAttemptDetails'
-import ObjectiveScorerDetails from '@/components/AttackResults/ObjectiveScorerDetails'
-import {
-  formatDuration,
-  formatTimestamp,
-  objectivePreview,
-} from '@/components/AttackResults/attackAttemptFormatting'
+import { formatDuration, objectivePreview } from '@/components/AttackResults/attackAttemptFormatting'
+import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import { suiteExecutionRoutePath } from '@/components/ScenarioSuites/suiteRoutes'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
 import { useScenarioRunResume } from '@/hooks/useScenarioRunResume'
-import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type {
-  ScenarioProgressCounts,
-  ScenarioProgressHeader,
-  ScenarioProgressResult,
-  ScenarioRunPlanSeedGroup,
-  ScenarioRunState,
-  ScenarioTechniqueProgress,
-} from '@/types'
-import {
-  attackConversationRoutePath,
-  routerPathParamValue,
-  scenarioRunAttackRoutePath,
-  scenarioRunRoutePath,
-} from '@/utils/routeParams'
-import {
-  getElapsedMilliseconds,
-  getEtaMilliseconds,
-  isTerminalRunState,
-} from '@/utils/scenarioRunProgress'
+import type { ScenarioComponentIdentity, ScenarioProgressResult, ScenarioRunPlanSeedGroup, ScenarioRunState } from '@/types'
+import { attackConversationRoutePath, routerPathParamValue, scenarioConversationRoutePath, scenarioRerunRoutePath, scenarioRunAttackRoutePath, scenarioRunRoutePath } from '@/utils/routeParams'
+import { getElapsedMilliseconds, getEtaMilliseconds, isTerminalRunState } from '@/utils/scenarioRunProgress'
+import { formatAnalyticsPercent } from '@/utils/attackAnalytics'
 
 import AttackExecutionTable from './AttackExecutionTable'
-import { ObjectiveDetailsDialog, TechniqueDetailsDialog } from './ScenarioRunDialogs'
+import { ObjectiveDetailsDialog } from './ScenarioRunDialogs'
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
-import ScenarioQueue from './ScenarioQueue'
-import PairedOutcomes from './PairedOutcomes'
 
-const CLOCK_REFRESH_INTERVAL_MS = 1_000
-const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
-const AUTO_EXPAND_GROUP_LIMIT = 20
-
-const RUN_BADGE_COLORS: Record<ScenarioRunState, 'informative' | 'brand' | 'success' | 'danger' | 'warning'> = {
-  CREATED: 'informative',
-  QUEUED: 'informative',
-  IN_PROGRESS: 'brand',
-  COMPLETED: 'success',
-  FAILED: 'danger',
-  CANCELLED: 'warning',
+const CLOCK_INTERVAL_MS = 1_000
+const MAX_VISIBLE_ATTEMPTS = 100
+const STATE_COLORS: Record<ScenarioRunState, 'informative' | 'brand' | 'success' | 'danger' | 'warning'> = {
+  CREATED: 'informative', QUEUED: 'informative', IN_PROGRESS: 'brand', COMPLETED: 'success', FAILED: 'danger', CANCELLED: 'warning',
 }
 
 export default function ScenarioRunPage() {
-  const {
-    scenarioResultId: encodedScenarioResultId,
-    attackResultId: encodedAttackResultId,
-  } = useParams<{ scenarioResultId: string; attackResultId?: string }>()
-  return (
-    <ScenarioRunPageContent
-      key={encodedScenarioResultId}
-      scenarioResultId={routerPathParamValue(encodedScenarioResultId)}
-      attackResultId={encodedAttackResultId ? routerPathParamValue(encodedAttackResultId) : null}
-    />
-  )
+  const { scenarioResultId, attackResultId } = useParams<{ scenarioResultId: string; attackResultId?: string }>()
+  return <ScenarioRunContent key={scenarioResultId} scenarioResultId={routerPathParamValue(scenarioResultId)}
+    attackResultId={attackResultId ? routerPathParamValue(attackResultId) : null} />
 }
 
-interface ScenarioRunPageContentProps {
+interface ScenarioRunContentProps {
   readonly scenarioResultId: string
   readonly attackResultId: string | null
 }
 
-function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRunPageContentProps) {
+function seedDatasetNames(identities: ScenarioComponentIdentity[]): string {
+  return [...new Set(identities.flatMap((identity: ScenarioComponentIdentity) =>
+    typeof identity.parameters.dataset_name === 'string' ? [identity.parameters.dataset_name] : []))].join(', ')
+}
+
+function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunContentProps) {
   const styles = useScenarioRunPageStyles()
-  const location = useLocation()
   const navigate = useNavigate()
+  const location = useLocation()
+  const navigationState = location.state as {
+    scenarioHistorySearch?: string; suiteExecutionId?: string; suiteName?: string
+  } | null
+  const backPath = navigationState?.suiteExecutionId ? suiteExecutionRoutePath(navigationState.suiteExecutionId)
+    : `/scanner/history${navigationState?.scenarioHistorySearch ?? ''}`
+  const backLabel = navigationState?.suiteExecutionId ? `Back to ${navigationState.suiteName ?? 'suite execution'}` : 'Back to scans'
   const { state, retry, applyRunSummary } = useScenarioRunProgress(scenarioResultId)
-  const queue = useScenarioQueue()
-  const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
+  const [now, setNow] = useState(Date.now)
+  const [expanded, setExpanded] = useState<Set<string> | null>(null)
+  const [identityExpanded, setIdentityExpanded] = useState(false)
+  const [objective, setObjective] = useState<ScenarioRunPlanSeedGroup | null>(null)
+  const [cancelOpen, setCancelOpen] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [cancelError, setCancelError] = useState<string | null>(null)
+  const [rerunPending, setRerunPending] = useState(false)
+  const [rerunError, setRerunError] = useState<string | null>(null)
+  const detailsTrigger = useRef<HTMLElement | null>(null)
+  const active = Boolean(state.run && !isTerminalRunState(state.run.status))
   const resume = useScenarioRunResume({
     onResumed: applyRunSummary,
-    onRefresh: (succeeded: boolean): void => {
-      queue.retry()
-      if (!succeeded) retry()
-    },
+    onRefresh: (succeeded: boolean): void => { if (!succeeded) retry() },
   })
-  const [selectedTechnique, setSelectedTechnique] = useState<ScenarioTechniqueProgress | null>(null)
-  const [selectedObjective, setSelectedObjective] = useState<ScenarioRunPlanSeedGroup | null>(null)
-  const [atomicGroupsExpandedChoice, setAtomicGroupsExpandedChoice] = useState<boolean | null>(null)
-  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set())
-  const detailsTriggerRef = useRef<HTMLElement | null>(null)
-  const navigationState = location.state as {
-    fromScenarioHistory?: boolean
-    scenarioHistorySearch?: string
-    scenarioName?: string
-    suiteExecutionId?: string
-    suiteName?: string
-  } | null
-  const backPath = navigationState?.suiteExecutionId
-    ? suiteExecutionRoutePath(navigationState.suiteExecutionId)
-    : navigationState?.fromScenarioHistory
-    ? `/scanner/history${navigationState.scenarioHistorySearch ?? ''}`
-    : navigationState?.scenarioName
-      ? `/scanner/launch/${encodeURIComponent(navigationState.scenarioName)}`
-      : '/scanner/history'
-  const backLabel = navigationState?.suiteExecutionId
-    ? `Back to ${navigationState.suiteName ?? 'suite execution'}`
-    : navigationState?.fromScenarioHistory
-    ? 'Back to scanner history'
-    : navigationState?.scenarioName
-      ? 'Back to scenario'
-      : 'Back to scanner history'
-
-  const seedObjectives = useMemo(
-    () => new Map(state.plan?.seed_groups.map((seed) => [seed.id, seed.objective]) ?? []),
-    [state.plan],
-  )
-  const plannedAtomicGroups = useMemo(
-    () => new Map(state.plan?.atomic_groups.map((group) => [group.id, group]) ?? []),
-    [state.plan],
-  )
-  const progressAtomicGroups = useMemo(
-    () => new Map(state.summary?.atomic_groups.map((group) => [group.id, group]) ?? []),
-    [state.summary],
-  )
-  const selectedAttempt = useMemo(
-    () => state.results.find((attempt) => attempt.attack_result_id === attackResultId) ?? null,
-    [attackResultId, state.results],
-  )
-  const selectedAttemptGroup = selectedAttempt
-    ? plannedAtomicGroups.get(selectedAttempt.atomic_group_id)
-    : undefined
-  // Attempts are grouped by atomic group id, then truncated per group, so expanding an
-  // older group still shows its own executions rather than an empty table.
-  const attemptsByGroupId = useMemo(() => {
-    const groupedAttempts = new Map<string, ScenarioProgressResult[]>()
-    for (let index = state.results.length - 1; index >= 0; index -= 1) {
-      const attempt = state.results[index]
-      const existing = groupedAttempts.get(attempt.atomic_group_id)
-      if (existing) {
-        existing.push(attempt)
-      } else {
-        groupedAttempts.set(attempt.atomic_group_id, [attempt])
-      }
+  useEffect(() => {
+    if (!active) return
+    const timer = setInterval(() => { setNow(Date.now()) }, CLOCK_INTERVAL_MS)
+    return () => { clearInterval(timer) }
+  }, [active])
+  const seedObjectives = useMemo(() => new Map(state.plan?.seed_groups.map((seed) => [seed.id, seed.objective]) ?? []), [state.plan])
+  const attemptsByGroup = useMemo(() => {
+    const groups = new Map<string, ScenarioProgressResult[]>()
+    for (const attempt of [...state.results].reverse()) {
+      const attempts = groups.get(attempt.atomic_group_id) ?? []
+      attempts.push(attempt)
+      groups.set(attempt.atomic_group_id, attempts)
     }
-    return groupedAttempts
+    return groups
   }, [state.results])
+  const selected = state.results.find((attempt) => attempt.attack_result_id === attackResultId)
+  const selectedActive = state.activeConversations.find((conversation) => conversation.attack_result_id === attackResultId)
+  const selectedGroup = state.plan?.atomic_groups.find((group) => group.id === selected?.atomic_group_id)
+  const techniqueDetails = selectedActive?.technique_details
+    ?? state.summary?.atomic_groups.find((group) => group.id === selected?.atomic_group_id)?.technique_details
+  const runPath = scenarioRunRoutePath(scenarioResultId)
 
-  const closeAttemptDetails = (): void => {
-    navigate(scenarioRunRoutePath(scenarioResultId), { replace: true, state: location.state })
-    requestAnimationFrame(() => detailsTriggerRef.current?.focus())
+  function closeDetails(): void {
+    navigate(runPath, { replace: true, state: location.state })
+    requestAnimationFrame(() => { detailsTrigger.current?.focus() })
   }
 
-  const openAttemptDetails = (
-    attempt: ScenarioProgressResult,
-    trigger: HTMLElement,
-  ): void => {
-    detailsTriggerRef.current = trigger
+  function openDetails(attempt: ScenarioProgressResult, trigger: HTMLElement): void {
+    setObjective(null)
+    detailsTrigger.current = trigger
     navigate(scenarioRunAttackRoutePath(scenarioResultId, attempt.attack_result_id), { state: location.state })
   }
 
-  const toggleDisplayGroup = (groupId: string): void => {
-    setExpandedGroupIds((current) => {
-      const updated = new Set(current)
-      if (updated.has(groupId)) {
-        updated.delete(groupId)
-      } else {
-        updated.add(groupId)
-      }
-      return updated
-    })
+  async function rerun(): Promise<void> {
+    setRerunPending(true)
+    setRerunError(null)
+    try {
+      const request = await scenariosApi.getLaunchConfiguration(scenarioResultId)
+      navigate(scenarioRerunRoutePath(request.scenario_name, scenarioResultId))
+    } catch (error: unknown) {
+      setRerunError(toApiError(error).detail)
+    } finally {
+      setRerunPending(false)
+    }
   }
 
-  const handleCancel = async (): Promise<void> => {
+  async function cancel(): Promise<void> {
     setCancelling(true)
     setCancelError(null)
     try {
-      const run = await scenariosApi.cancelRun(scenarioResultId)
-      applyRunSummary(run)
-      setCancelDialogOpen(false)
+      applyRunSummary(await scenariosApi.cancelRun(scenarioResultId))
+      setCancelOpen(false)
     } catch (error: unknown) {
       setCancelError(toApiError(error).detail)
     } finally {
@@ -225,738 +133,169 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     }
   }
 
-  if (state.loadStatus === 'loading' && !state.run) {
-    return (
-      <main className={styles.root} data-testid="scenario-run-page">
-        <div className={styles.content}>
-          <Link to={backPath} className={styles.backLink}>
-            <ArrowLeftRegular /> {backLabel}
-          </Link>
-          <div className={styles.centeredState} aria-label="Loading scenario run">
-            <Skeleton className={styles.loadingBlock}>
-              <SkeletonItem size={32} />
-              <br />
-              <SkeletonItem size={16} />
-              <br />
-              <SkeletonItem size={96} />
-            </Skeleton>
-            <Text>Loading scenario run...</Text>
-          </div>
-        </div>
-      </main>
-    )
-  }
-
-  if (state.loadStatus === 'not-found' && !state.run) {
-    return (
-      <main className={styles.root} data-testid="scenario-run-page">
-        <div className={styles.content}>
-          <Link to={backPath} className={styles.backLink}>
-            <ArrowLeftRegular /> {backLabel}
-          </Link>
-          <div className={styles.centeredState}>
-            <ErrorCircleRegular fontSize={32} />
-            <Text as="h2" size={600} weight="semibold">Scenario run not found</Text>
-            <Text>{state.error}</Text>
-            <Button className={styles.touchTarget} icon={<ArrowSyncRegular />} onClick={retry}>
-              Retry
-            </Button>
-          </div>
-        </div>
-      </main>
-    )
-  }
-
-  if (state.loadStatus === 'error' && !state.run) {
-    return (
-      <main className={styles.root} data-testid="scenario-run-page">
-        <div className={styles.content}>
-          <Link to={backPath} className={styles.backLink}>
-            <ArrowLeftRegular /> {backLabel}
-          </Link>
-          <div className={styles.centeredState}>
-            <ErrorCircleRegular fontSize={32} />
-            <Text as="h2" size={600} weight="semibold">Unable to load scenario run</Text>
-            <Text>{state.error}</Text>
-            <Button appearance="primary" className={styles.touchTarget} icon={<ArrowSyncRegular />} onClick={retry}>
-              Retry
-            </Button>
-          </div>
-        </div>
-      </main>
-    )
-  }
-
-  if (!state.run || !state.summary) {
-    return null
-  }
+  if (!state.run || !state.summary) return (
+    <main className={styles.root} data-testid="scenario-run-page"><div className={styles.content}>
+      <Link to={backPath} className={styles.backLink}><ArrowLeftRegular /> {backLabel}</Link>
+      {state.loadStatus === 'loading' ? <Spinner label="Loading scan..." /> : (
+        <MessageBar intent="error"><MessageBarBody>{state.error ?? 'Scan not found.'} <Button onClick={retry}>Retry</Button></MessageBarBody></MessageBar>
+      )}
+    </div></main>
+  )
 
   const run = state.run
-  const {
-    overall,
-    objective_scorer: objectiveScorer,
-    display_groups: summarizedDisplayGroups,
-    techniques,
-    seed_groups: seedGroups,
-  } = state.summary
-  const displayGroups = summarizedDisplayGroups ?? techniques
-  const atomicGroupsExpanded = atomicGroupsExpandedChoice ?? displayGroups.length <= AUTO_EXPAND_GROUP_LIMIT
-  const unattributedAttempts = state.summary.unattributed_attempts ?? 0
-  const queued = run.status === 'QUEUED'
-  const canCancel = run.status === 'CREATED' || queued || run.status === 'IN_PROGRESS'
-  const progressText = queued
-    ? `Queued${run.queue_position ? ` · Position ${run.queue_position}` : ''}`
-    : overall.planned === null
-    ? `${overall.completed} known completed units; planned total unavailable`
-    : `${overall.completed} of ${overall.planned} executable units completed`
+  const summary = state.summary
+  const overall = summary.overall
+  const outcomes = overall.outcomes
+  const groups = summary.display_groups ?? summary.techniques
+  const defaultExpanded = groups.find((group) => (group.atomic_group_ids ?? []).some((id: string) => attemptsByGroup.has(id)))?.id ?? groups[0]?.id
+  const elapsed = run.started_at ? formatDuration(getElapsedMilliseconds(run, now))
+    : run.status === 'CREATED' || run.status === 'QUEUED' ? 'Not started' : 'Not recorded'
+  const eta = getEtaMilliseconds(run, overall, now)
+  const selectedAttempt = selected ?? selectedActive
+  const firstError = state.results.find((attempt) => attempt.outcome === 'error')
+  const controlError = rerunError ?? resume.error
+    ?? (resume.executionError !== run.error ? resume.executionError : null)
 
   return (
     <main className={styles.root} data-testid="scenario-run-page">
       <div className={styles.content}>
-        <Link to={backPath} className={styles.backLink}>
-          <ArrowLeftRegular /> {backLabel}
-        </Link>
-
+        <Link to={backPath} className={styles.backLink}><ArrowLeftRegular /> {backLabel}</Link>
         <header className={styles.header}>
           <div className={styles.headerIdentity}>
             <div className={styles.titleRow}>
-              <Text as="h2" size={700} weight="semibold">
-                {run.scenario_registry_name ?? run.scenario_name}
-              </Text>
-              <Badge
-                appearance="filled"
-                color={RUN_BADGE_COLORS[run.status]}
-                icon={statusIcon(run.status)}
-                data-testid="run-state-badge"
-              >
-                {formatRunState(run.status)}
+              <Text as="h1" size={700} weight="semibold">{run.scenario_registry_name ?? run.scenario_name}</Text>
+              <Badge appearance="tint" color={STATE_COLORS[run.status]} data-testid="run-state-badge">
+                {run.status === 'IN_PROGRESS' ? 'Executing' : run.status.charAt(0) + run.status.slice(1).toLowerCase()}
               </Badge>
             </div>
-            {run.scenario_registry_name && run.scenario_registry_name !== run.scenario_name && (
-              <Text size={300}>{run.scenario_name}</Text>
-            )}
-            <Text size={200} className={styles.runId}>
-              Run ID: <code>{run.scenario_result_id}</code>
-            </Text>
+            {run.description && <Text className={styles.sectionHint}>{run.description}</Text>}
           </div>
-          {canCancel && (
-            <div className={styles.headerActions}>
-              <Button
-                appearance="secondary"
-                className={mergeClasses(styles.touchTarget, styles.cancelButton, styles.wideButton)}
-                icon={<StopRegular />}
-                onClick={() => {
-                  setCancelError(null)
-                  setCancelDialogOpen(true)
-                }}
-              >
-                Cancel run
-              </Button>
-            </div>
-          )}
-          {run.status === 'FAILED' && (
-            <div className={styles.headerActions}>
-              <Button
-                appearance="primary"
-                className={mergeClasses(styles.touchTarget, styles.wideButton)}
-                icon={<PlayRegular />}
-                disabled={resume.pendingRunId !== null}
-                onClick={() => { resume.requestResume(scenarioResultId) }}
-                data-testid="scenario-run-resume"
-              >
-                {resume.pendingRunId !== null ? 'Resuming...' : 'Resume run'}
-              </Button>
-            </div>
-          )}
+          <div className={styles.headerActions}>
+            {active && <Link className={styles.backLink} to="/scanner/queue">View queue</Link>}
+            <Button icon={<ArrowClockwiseRegular />} disabled={rerunPending} onClick={() => { void rerun() }}>{rerunPending ? 'Loading...' : 'Rerun'}</Button>
+            {active ? <Button icon={<StopRegular />} className={styles.touchTarget} onClick={() => { setCancelError(null); setCancelOpen(true) }}>Cancel</Button>
+              : (run.status === 'FAILED' || run.status === 'CANCELLED') && <Button appearance="primary" icon={<PlayRegular />}
+                disabled={resume.pendingRunId !== null} onClick={() => { setRerunError(null); resume.requestResume(scenarioResultId) }}>Resume</Button>}
+          </div>
         </header>
-
-        {resume.error && (
-          <MessageBar intent="error">
-            <MessageBarBody>{resume.error}</MessageBarBody>
-          </MessageBar>
-        )}
-
-        <div className={styles.metadata} aria-label="Run metadata">
-          <div className={styles.metadataItem}>
-            <Text size={200} className={styles.metadataLabel}>Scenario version</Text>
-            <Text weight="semibold">{run.scenario_version}</Text>
+        {controlError && <MessageBar intent="error"><MessageBarBody>
+          {controlError}
+        </MessageBarBody></MessageBar>}
+        <section className={styles.metadata} aria-label="Scan summary">
+          <div className={styles.metadataItem}><Text size={200} className={styles.metadataLabel}>Operation</Text>
+            {run.operation_id ? <Link to={`/operations/${encodeURIComponent(run.operation_id)}`}>{run.operation_name ?? 'Operation'}</Link> : <Text>Unassigned</Text>}
           </div>
-          <div className={styles.metadataItem}>
-            <Text size={200} className={styles.metadataLabel}>Created</Text>
-            <Text weight="semibold">{formatTimestamp(run.created_at)}</Text>
+          <div className={styles.metadataItem}><Text size={200} className={styles.metadataLabel}>Target</Text><Text weight="semibold">{run.target?.model_name ?? run.target?.target_type ?? 'Not recorded'}</Text></div>
+          <div className={styles.metadataItem}><Text size={200} className={styles.metadataLabel}>Timing</Text><Text weight="semibold">{elapsed}{active && run.started_at ? ' elapsed' : ''}</Text></div>
+          <div className={styles.metadataItem}><Text size={200} className={styles.metadataLabel}>Attack success</Text>
+            <Text weight="semibold">{outcomes ? outcomes.success_rate_decided === null ? 'Undetermined' : formatAnalyticsPercent(outcomes.success_rate_decided)
+              : overall.success_percentage === null ? 'Undetermined' : `${overall.success_percentage}%`}</Text>
+            <Text size={200} className={styles.sectionHint}>{outcomes ? `${outcomes.successes} / ${outcomes.total_decided} decided` : `${overall.succeeded} / ${overall.completed} complete`}</Text>
           </div>
-          <div className={styles.metadataItem}>
-            <Text size={200} className={styles.metadataLabel}>Completed</Text>
-            <Text weight="semibold">{run.completed_at ? formatTimestamp(run.completed_at) : 'Not yet'}</Text>
-          </div>
-          {run.target && (
-            <div className={styles.metadataItem}>
-              <Text size={200} className={styles.metadataLabel}>Target</Text>
-              <Text weight="semibold">{run.target.model_name ?? run.target.target_type}</Text>
-              <Text size={200} className={styles.sectionHint}>{run.target.target_type}</Text>
-            </div>
-          )}
-          {run.pyrit_version && (
-            <div className={styles.metadataItem}>
-              <Text size={200} className={styles.metadataLabel}>PyRIT version</Text>
-              <Text weight="semibold">{run.pyrit_version}</Text>
-            </div>
-          )}
-          {queued && (
-            <div className={styles.metadataItem}>
-              <Text size={200} className={styles.metadataLabel}>Waiting position</Text>
-              <Text weight="semibold">{run.queue_position ?? 'Updating'}</Text>
-            </div>
-          )}
-        </div>
-
-        <section className={styles.section} aria-labelledby="run-configuration-heading">
-          <div className={styles.sectionHeading}>
-            <Text as="h2" id="run-configuration-heading" size={500} weight="semibold">
-              Run configuration
-            </Text>
-            <Text className={styles.sectionHint}>Persisted, secret-free settings for this run.</Text>
-          </div>
-          <div className={styles.summaryGrid}>
-            <ConfigurationItem
-              label="Techniques"
-              value={(run.techniques_used?.length ?? 0) > 0 ? run.techniques_used?.join(', ') ?? '' : 'Unavailable'}
-            />
-            <ConfigurationItem
-              label="Datasets"
-              value={(run.datasets_used?.length ?? 0) > 0 ? run.datasets_used?.join(', ') ?? '' : 'Unavailable'}
-            />
-            <ConfigurationItem
-              label="Scenario parameters"
-              value={formatConfiguration(run.scenario_parameters ?? {})}
-            />
-            <ConfigurationItem
-              label="Labels"
-              value={formatConfiguration(run.labels ?? {})}
-            />
-            {run.target?.endpoint && <ConfigurationItem label="Target endpoint" value={run.target.endpoint} />}
+          <div className={styles.metadataItem}><Text size={200} className={styles.metadataLabel}>Errors / retries</Text><Text weight="semibold">{overall.errors} / {overall.retries}</Text></div>
+          <div className={styles.metadataItem}><Text size={200} className={styles.metadataLabel}>Labels</Text>
+            <div className={styles.badgeList}>{Object.entries(run.labels ?? {}).map(([key, value]) => <Badge key={key} appearance="outline" className={styles.labelBadge}>{key}: {value}</Badge>)}</div>
           </div>
         </section>
-
-        {state.stale && (
-          <MessageBar intent="warning">
-            <MessageBarBody>
-              Live updates paused. Showing the last successfully loaded progress. {state.error}
-            </MessageBarBody>
-            <MessageBarActions>
-              <Button className={styles.touchTarget} icon={<ArrowSyncRegular />} onClick={retry}>
-                Retry
-              </Button>
-            </MessageBarActions>
-          </MessageBar>
-        )}
-
-        <ScenarioQueue
-          snapshot={queue.snapshot}
-          loading={queue.loading}
-          stale={queue.stale}
-          error={queue.error}
-          currentScenarioResultId={scenarioResultId}
-        />
-
-        {(state.overloadSummaries?.length ?? 0) > 0 && (
-          <MessageBar intent="warning" data-testid="scenario-overload-warning">
-            <MessageBarBody>
-              Recent target overload detected: {formatOverloadSummaries(state.overloadSummaries ?? [])}.
-              {' '}PyRIT is retrying these requests without adaptive throttling; concurrency is not automatically reduced yet.
-            </MessageBarBody>
-          </MessageBar>
-        )}
-
-        {run.status === 'FAILED' && (
-          <MessageBar intent="error">
-            <MessageBarBody>
-              {formatRunFailure(run)}
-              {' '}Resume continues the remaining work with the original configuration and the same run ID.
-            </MessageBarBody>
-          </MessageBar>
-        )}
-
-        {!state.planComplete && (
-          <MessageBar intent="info">
-            <MessageBarBody>
-              This legacy run has no complete persisted execution plan. Known groups and executions are shown, but planned totals and ETA are unavailable.
-            </MessageBarBody>
-          </MessageBar>
-        )}
-
-        {unattributedAttempts > 0 && (
-          <MessageBar intent="warning">
-            <MessageBarBody>
-              {unattributedAttempts} execution{unattributedAttempts === 1 ? '' : 's'} could not be matched to a planned unit, so the totals below understate what ran.
-            </MessageBarBody>
-          </MessageBar>
-        )}
-
-        <section className={styles.section} aria-labelledby="overall-progress-heading">
-          <div className={styles.sectionHeading}>
-            <Text as="h2" id="overall-progress-heading" size={500} weight="semibold">
-              Overall progress
-            </Text>
-            <Text className={styles.sectionHint}>{progressText}</Text>
+        {(run.status === 'FAILED' || run.error || overall.errors > 0) && <MessageBar intent={run.status === 'FAILED' ? 'error' : 'warning'}>
+          <MessageBarBody>{run.status === 'FAILED' ? 'Scan failed. Resume to continue remaining attacks.'
+            : `${overall.errors} attack${overall.errors === 1 ? '' : 's'} ended with an error.`}
+            {firstError && <Button appearance="transparent" onClick={(event) => { openDetails(firstError, event.currentTarget) }}>View attack</Button>}
+            {run.error && <Accordion collapsible><AccordionItem value="error">
+              <AccordionHeader>Error details</AccordionHeader>
+              <AccordionPanel><Text className={styles.objective}>{run.error_type ? `${run.error_type}: ` : ''}{run.error}</Text></AccordionPanel>
+            </AccordionItem></Accordion>}
+          </MessageBarBody>
+        </MessageBar>}
+        {state.stale && <MessageBar intent="warning"><MessageBarBody>Live updates paused. {state.error} <Button onClick={retry}>Retry</Button></MessageBarBody></MessageBar>}
+        {active && <section className={styles.progressSurface} aria-label="Scan progress">
+          <div className={styles.progressPrimary}>
+            <Text weight="semibold">{run.status === 'QUEUED' ? `Queued${run.queue_position ? ` · Position ${run.queue_position}` : ''}` : `${overall.completed}${overall.planned === null ? '' : ` of ${overall.planned}`} attacks complete`}</Text>
+            <ProgressBar value={overall.planned ? overall.completed / overall.planned : undefined} aria-label="Scan progress" />
           </div>
-          {queued ? (
-            <div className={styles.progressSurface} data-testid="queued-run-progress">
-              <div className={styles.progressPrimary}>
-                <Text size={500} weight="semibold">
-                  Queued{run.queue_position ? ` · Position ${run.queue_position}` : ''}
-                </Text>
-                <Text className={styles.sectionHint}>
-                  {run.active_scenario_result_id
-                    ? `Waiting for active run ${run.active_scenario_result_id} to finish.`
-                    : 'Waiting for the scheduler to start this run.'}
-                </Text>
-              </div>
-              <div className={styles.metric}>
-                <Text size={200} className={styles.metricLabel}>Execution progress</Text>
-                <Text weight="semibold">Not started</Text>
-              </div>
-              <div className={styles.metric}>
-                <Text size={200} className={styles.metricLabel}>Estimated remaining</Text>
-                <Text weight="semibold">Available after start</Text>
-              </div>
+          {eta !== null && <Text className={styles.sectionHint}>About {formatDuration(eta)} left</Text>}
+        </section>}
+        {state.activeConversations.length > 0 && <section className={styles.section} aria-labelledby="live-conversations-heading">
+          <Text as="h2" id="live-conversations-heading" size={500} weight="semibold">Executing</Text>
+          {state.activeConversations.map((conversation) => (
+            <div key={conversation.conversation_id} className={styles.liveConversation}>
+              <Button appearance="transparent" onClick={(event) => {
+                detailsTrigger.current = event.currentTarget
+                navigate(scenarioRunAttackRoutePath(scenarioResultId, conversation.attack_result_id), { state: location.state })
+              }}>{conversation.atomic_attack_name}</Button>
+              <Text className={styles.preview}>{conversation.objective}</Text>
+              <Link to={scenarioConversationRoutePath(scenarioResultId, conversation.conversation_id)}>Watch live conversation</Link>
             </div>
-          ) : (
-          <div className={styles.progressSurface}>
-            <div className={styles.progressPrimary}>
-              <div className={styles.progressText}>
-                <Text weight="semibold">{progressText}</Text>
-                {overall.planned !== null && (
-                  <Text weight="semibold">
-                    {overall.planned > 0 ? `${Math.round((overall.completed / overall.planned) * 100)}%` : '0%'}
-                  </Text>
-                )}
-              </div>
-              {overall.planned !== null ? (
-                <ProgressBar
-                  value={overall.planned > 0 ? overall.completed / overall.planned : 0}
-                  aria-label="Overall scenario run progress"
-                  aria-valuetext={progressText}
-                />
-              ) : (
-                <Text className={styles.sectionHint}>Progress percentage unavailable</Text>
-              )}
-            </div>
-            <RunTiming run={run} overall={overall} />
-          </div>
-          )}
-          <span className={styles.liveStatus} aria-live="polite">
-            {queued ? progressText : isTerminalRunState(run.status) ? `Run ${formatRunState(run.status)}` : ''}
-          </span>
-        </section>
-
-        <PairedOutcomes scenarioResultId={scenarioResultId} status={run.status} plan={state.planComplete ? state.plan : null} />
-
+          ))}
+        </section>}
         <section className={styles.section} aria-labelledby="atomic-groups-heading">
-          <div className={styles.sectionHeading}>
-            <div className={styles.objectivesHeading}>
-              <Text as="h2" id="atomic-groups-heading" size={500} weight="semibold">
-                Atomic attack groups
-              </Text>
-              <Button
-                appearance="subtle"
-                className={styles.touchTarget}
-                icon={atomicGroupsExpanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
-                aria-expanded={atomicGroupsExpanded}
-                aria-controls="atomic-groups-panel"
-                aria-label={`${atomicGroupsExpanded ? 'Collapse' : 'Expand'} atomic attack groups`}
-                data-testid="toggle-atomic-groups-btn"
-                onClick={() => setAtomicGroupsExpandedChoice(!atomicGroupsExpanded)}
-              >
-                {atomicGroupsExpanded ? 'Collapse' : 'Expand'}
-              </Button>
-            </div>
-            <Text className={styles.sectionHint}>
-              {`${displayGroups.length.toLocaleString()} group${displayGroups.length === 1 ? '' : 's'}, ${state.results.length.toLocaleString()} execution${state.results.length === 1 ? '' : 's'}`}
-            </Text>
-          </div>
-          <div id="atomic-groups-panel" hidden={!atomicGroupsExpanded}>
-            {atomicGroupsExpanded && (displayGroups.length === 0 ? (
-              <EmptyState text="No atomic attack groups have been persisted yet." />
-            ) : (
-              <div className={styles.displayGroupList}>
-                {displayGroups.map((group) => {
-                  const attempts = (group.atomic_group_ids ?? [])
-                    .flatMap((atomicGroupId) => attemptsByGroupId.get(atomicGroupId) ?? [])
-                  const expanded = expandedGroupIds.has(group.id)
-                  const panelId = `atomic-group-${group.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
-                  return (
-                    <article key={group.id} className={styles.displayGroup}>
-                      <div className={styles.displayGroupSummary}>
-                        <Button
-                          appearance="subtle"
-                          className={styles.expandButton}
-                          icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
-                          aria-expanded={expanded}
-                          aria-controls={panelId}
-                          aria-label={`${expanded ? 'Collapse' : 'Expand'} attacks in ${group.display_group}`}
-                          onClick={() => toggleDisplayGroup(group.id)}
-                        />
-                        <span className={styles.displayGroupIdentity}>
-                          <Text size={400} weight="semibold">{group.display_group}</Text>
-                          <Text size={200} className={styles.sectionHint}>
-                            {group.atomic_attack_names.join(', ')}
-                          </Text>
-                        </span>
-                        <span className={styles.displayGroupMetrics}>
-                          <DisplayGroupMetric
-                            label="Completed"
-                            value={formatCompletion(group.completed, group.planned)}
-                          />
-                          <DisplayGroupMetric
-                            label="Attack success"
-                            value={formatSuccess(group.succeeded, group.completed, group.success_percentage)}
-                          />
-                          <DisplayGroupMetric label="Errors" value={String(group.errors)} />
-                          <DisplayGroupMetric label="Retries" value={String(group.retries)} />
-                        </span>
-                      </div>
-                      {expanded && (
-                        <div
-                          id={panelId}
-                          className={styles.displayGroupPanel}
-                          aria-label={`${group.display_group} attack executions`}
-                        >
-                          <AttackExecutionTable
-                            attempts={attempts.slice(0, MAX_VISIBLE_ATTEMPTS_PER_GROUP)}
-                            totalAttempts={attempts.length}
-                            seedObjectives={seedObjectives}
-                            onOpenDetails={openAttemptDetails}
-                          />
-                        </div>
-                      )}
-                    </article>
-                  )
-                })}
+          <div className={styles.sectionHeading}><Text as="h2" id="atomic-groups-heading" size={500} weight="semibold">Atomic attack groups</Text><Text size={200} className={styles.sectionHint}>{groups.length} groups</Text></div>
+          <div className={styles.displayGroupList}>{groups.map((group) => {
+            const attempts = (group.atomic_group_ids ?? []).flatMap((id: string) => attemptsByGroup.get(id) ?? [])
+            const isExpanded = expanded?.has(group.id) ?? group.id === defaultExpanded
+            return <article key={group.id} className={styles.displayGroup}>
+              <div className={styles.compactGroupSummary}>
+                <Button appearance="subtle" className={styles.expandButton} icon={isExpanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
+                  aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${group.display_group}`} aria-expanded={isExpanded}
+                  onClick={() => { setExpanded((current: Set<string> | null) => { const next = new Set(current ?? (defaultExpanded ? [defaultExpanded] : [])); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next }) }} />
+                <Text weight="semibold">{group.display_group}</Text>
+                <Text size={200} className={styles.sectionHint}>{group.completed}{group.planned === null ? '' : ` / ${group.planned}`} complete</Text>
               </div>
-            ))}
-          </div>
+              {isExpanded && <AttackExecutionTable attempts={attempts.slice(0, MAX_VISIBLE_ATTEMPTS)} totalAttempts={attempts.length}
+                seedObjectives={seedObjectives} onOpenDetails={openDetails} scenarioResultId={scenarioResultId} />}
+            </article>
+          })}</div>
+          {groups.length === 0 && <Text className={styles.sectionHint}>Attack groups will appear when the plan is ready.</Text>}
         </section>
-
-        <section className={styles.section} aria-labelledby="objective-scorer-heading">
-          <Text as="h2" id="objective-scorer-heading" size={500} weight="semibold">
-            Objective Scorer
-          </Text>
-          {!objectiveScorer ? (
-            <EmptyState text="Objective scorer information is unavailable for this run." />
-          ) : (
-            <ObjectiveScorerDetails scorer={objectiveScorer} />
-          )}
-        </section>
-
-        <section className={styles.section} aria-labelledby="techniques-heading">
-          <Text as="h2" id="techniques-heading" size={500} weight="semibold">Techniques</Text>
-          {techniques.length === 0 ? (
-            <EmptyState text="Technique results will appear when the first attack is persisted." />
-          ) : (
-            <div className={styles.summaryGrid}>
-              {techniques.map((technique) => (
-                <article key={technique.id} className={styles.summaryItem}>
-                  <div className={styles.summaryTitle}>
-                    <Button
-                      appearance="transparent"
-                      className={styles.detailLinkButton}
-                      onClick={() => setSelectedTechnique(technique)}
-                    >
-                      {technique.display_group}
-                    </Button>
-                    <Metric
-                      label="Attack success"
-                      value={formatSuccess(
-                        technique.succeeded,
-                        technique.completed,
-                        technique.success_percentage,
-                      )}
-                    />
-                  </div>
-                  <div className={styles.summaryStats}>
-                    <Metric
-                      label="Progress"
-                      value={formatCompletion(technique.completed, technique.planned)}
-                    />
-                    <Metric label="Errors" value={String(technique.errors)} />
-                    <Metric label="Retries" value={String(technique.retries)} />
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
-
         <section className={styles.section} aria-labelledby="objectives-heading">
-          <div className={styles.objectivesHeading}>
-            <Text as="h2" id="objectives-heading" size={500} weight="semibold">Objectives</Text>
-            <Text className={styles.sectionHint}>Aggregated across techniques.</Text>
-          </div>
-          {seedGroups.length === 0 ? (
-            <EmptyState text="No objectives have been persisted yet." />
-          ) : (
-            <div className={styles.tableScroll}>
-              <Table size="small" aria-label="Objectives">
-                <TableHeader className={styles.highlightedTableHeader}>
-                  <TableRow>
-                    <TableHeaderCell>Objective</TableHeaderCell>
-                    <TableHeaderCell className={styles.objectiveSuccessColumn}>Attack Success</TableHeaderCell>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {seedGroups.map((seed) => {
-                    const planSeed = state.plan?.seed_groups.find((candidate) => candidate.id === seed.id)
-                    return (
-                      <TableRow key={seed.id}>
-                        <TableCell>
-                          <Button
-                            appearance="transparent"
-                            className={styles.objectiveLinkButton}
-                            onClick={() => setSelectedObjective(planSeed ?? {
-                              id: seed.id,
-                              objective_sha256: '',
-                              objective: seed.objective ?? 'Objective text unavailable.',
-                              prompts: [],
-                            })}
-                          >
-                            {objectivePreview(seed.objective ?? null, seed.id)}
-                          </Button>
-                        </TableCell>
-                        <TableCell className={styles.objectiveSuccessColumn}>
-                          {formatSuccess(seed.succeeded, seed.completed, seed.success_percentage)}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-          )}
+          <Text as="h2" id="objectives-heading" size={500} weight="semibold">Datasets &amp; objectives</Text>
+          <div className={styles.tableScroll}><Table size="small" aria-label="Datasets and objectives">
+            <TableHeader><TableRow><TableHeaderCell>Dataset</TableHeaderCell><TableHeaderCell>Objective</TableHeaderCell><TableHeaderCell>Completed</TableHeaderCell></TableRow></TableHeader>
+            <TableBody>{summary.seed_groups.map((seed) => {
+              const planSeed = state.plan?.seed_groups.find((candidate) => candidate.id === seed.id)
+              const identities = [
+                ...state.results.filter((attempt) => attempt.seed_group_id === seed.id).flatMap((attempt) => attempt.seed_identifiers ?? []),
+                ...state.activeConversations.filter((attempt) => attempt.seed_group_id === seed.id).flatMap((attempt) => attempt.seed_identifiers),
+              ]
+              return <TableRow key={seed.id}>
+                <TableCell>{seedDatasetNames(identities) || 'Not recorded'}</TableCell>
+                <TableCell><Button appearance="transparent" className={styles.objectiveLinkButton} onClick={() => { setObjective(planSeed ?? { id: seed.id, objective_sha256: '', objective: seed.objective ?? 'Not recorded', prompts: [] }) }}>
+                  {objectivePreview(seed.objective ?? null, seed.id)}
+                </Button></TableCell>
+                <TableCell>{seed.completed}{seed.planned === null ? '' : ` / ${seed.planned}`}</TableCell>
+              </TableRow>
+            })}</TableBody>
+          </Table></div>
+        </section>
+        <section className={styles.section} aria-labelledby="configuration-heading">
+          <Text as="h2" id="configuration-heading" size={500} weight="semibold">Scenario configuration</Text>
+          {run.scenario_identity ? <Table size="small" aria-label="Scenario configuration"><TableBody>
+            <RegistryIdentityRow name={run.scenario_registry_name ?? run.scenario_name} identity={run.scenario_identity}
+              columns={1} expanded={identityExpanded} onToggle={() => { setIdentityExpanded((value: boolean) => !value) }} />
+          </TableBody></Table> : <Text className={styles.sectionHint}>No saved scenario identity.</Text>}
         </section>
       </div>
-
-      <Dialog
-        open={cancelDialogOpen}
-        onOpenChange={(_, data) => {
-          if (!cancelling) {
-            setCancelDialogOpen(data.open)
-          }
-        }}
-      >
-        <DialogSurface>
-          <DialogBody>
-            <DialogTitle>Cancel this scenario run?</DialogTitle>
-            <DialogContent className={styles.dialogContent}>
-              <Text>
-                {queued
-                  ? 'This run will be removed from the queue and will never execute.'
-                  : 'In-flight work will be stopped. Attempts already persisted will remain available in this dashboard.'}
-              </Text>
-              {cancelError && (
-                <MessageBar intent="error">
-                  <MessageBarBody>{cancelError}</MessageBarBody>
-                </MessageBar>
-              )}
-            </DialogContent>
-            <DialogActions>
-              <Button disabled={cancelling} onClick={() => setCancelDialogOpen(false)}>Keep running</Button>
-              <Button
-                appearance="primary"
-                className={styles.cancelButton}
-                disabled={cancelling}
-                icon={<StopRegular />}
-                onClick={() => void handleCancel()}
-              >
-                {cancelling ? 'Cancelling...' : 'Cancel run'}
-              </Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
+      <Dialog open={cancelOpen} onOpenChange={(_, data) => { if (!cancelling) setCancelOpen(data.open) }}>
+        <DialogSurface><DialogBody><DialogTitle>Cancel scan?</DialogTitle><DialogContent className={styles.dialogContent}>
+          <Text>Stop remaining attacks. Saved conversations and results stay available.</Text>
+          {cancelError && <MessageBar intent="error"><MessageBarBody>{cancelError}</MessageBarBody></MessageBar>}
+        </DialogContent><DialogActions><Button disabled={cancelling} onClick={() => { setCancelOpen(false) }}>Keep running</Button>
+          <Button appearance="primary" disabled={cancelling} onClick={() => { void cancel() }}>{cancelling ? 'Cancelling...' : 'Cancel scan'}</Button>
+        </DialogActions></DialogBody></DialogSurface>
       </Dialog>
-
-      <Dialog
-        open={selectedAttempt !== null}
-        onOpenChange={(_, data) => {
-          if (!data.open) {
-            closeAttemptDetails()
-          }
-        }}
-      >
-        <DialogSurface className={styles.attackDetailDialogSurface}>
-          <DialogBody className={styles.attackDetailDialogBody}>
-            <DialogTitle>{selectedAttempt?.atomic_attack_name || 'Attack attempt'}</DialogTitle>
-            {selectedAttempt && (
-              <DialogContent className={styles.attackDetailDialogContent}>
-                <AttackAttemptDetails
-                  attempt={selectedAttempt}
-                  objective={seedObjectives.get(selectedAttempt.seed_group_id) ?? null}
-                  atomicGroup={selectedAttemptGroup}
-                  techniqueDetails={progressAtomicGroups.get(selectedAttempt.atomic_group_id)?.technique_details}
-                  objectiveScorer={objectiveScorer}
-                  conversationPath={attackConversationRoutePath(
-                    selectedAttempt.attack_result_id,
-                    selectedAttempt.conversation_id,
-                    scenarioResultId,
-                  )}
-                />
-              </DialogContent>
-            )}
-            <DialogActions>
-              <Button appearance="primary" onClick={closeAttemptDetails}>Close</Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
+      <Dialog open={Boolean(selectedAttempt)} onOpenChange={(_, data) => { if (!data.open) closeDetails() }}>
+        <DialogSurface className={styles.attackDetailDialogSurface}><DialogBody className={styles.attackDetailDialogBody}>
+          <DialogTitle action={<Button appearance="subtle" icon={<DismissRegular />} aria-label="Close attack details" onClick={closeDetails} />}>{selectedAttempt?.atomic_attack_name}</DialogTitle>
+          <DialogContent className={styles.attackDetailDialogContent}>{selectedAttempt && <AttackAttemptDetails attempt={selectedAttempt}
+            objective={selectedActive?.objective ?? seedObjectives.get(selected?.seed_group_id ?? '')}
+            atomicGroup={selectedGroup} techniqueDetails={techniqueDetails} objectiveScorer={summary.objective_scorer}
+            conversationPath={selectedActive ? scenarioConversationRoutePath(scenarioResultId, selectedActive.conversation_id)
+              : attackConversationRoutePath(selectedAttempt.attack_result_id, selectedAttempt.conversation_id, scenarioResultId)} />}</DialogContent>
+        </DialogBody></DialogSurface>
       </Dialog>
-
-      <TechniqueDetailsDialog technique={selectedTechnique} onClose={() => setSelectedTechnique(null)} />
-      <ObjectiveDetailsDialog objective={selectedObjective} onClose={() => setSelectedObjective(null)} />
+      <ObjectiveDetailsDialog objective={objective} onClose={() => { setObjective(null) }}
+        attempts={state.results.filter((attempt) => attempt.seed_group_id === objective?.id)}
+        onOpenAttempt={openDetails} scenarioResultId={scenarioResultId} />
     </main>
   )
-}
-
-interface MetricProps {
-  readonly label: string
-  readonly value: string
-}
-
-function DisplayGroupMetric({ label, value }: MetricProps) {
-  const styles = useScenarioRunPageStyles()
-  return (
-    <span className={styles.displayGroupMetric}>
-      <Text size={200} className={styles.metricLabel}>{label}</Text>
-      <Text weight="semibold" className={styles.metricValue}>{value}</Text>
-    </span>
-  )
-}
-
-interface ConfigurationItemProps {
-  readonly label: string
-  readonly value: string
-}
-
-function ConfigurationItem({ label, value }: ConfigurationItemProps) {
-  const styles = useScenarioRunPageStyles()
-  return (
-    <article className={styles.summaryItem}>
-      <Text size={200} className={styles.metadataLabel}>{label}</Text>
-      <Text className={styles.objective}>{value}</Text>
-    </article>
-  )
-}
-
-function Metric({ label, value }: MetricProps) {
-  const styles = useScenarioRunPageStyles()
-  return (
-    <div className={styles.metric} role="group" aria-label={label}>
-      <Text size={200} className={styles.metricLabel}>{label}</Text>
-      <Text weight="semibold" className={styles.metricValue}>{value}</Text>
-    </div>
-  )
-}
-
-interface RunTimingProps {
-  readonly run: ScenarioProgressHeader
-  readonly overall: ScenarioProgressCounts
-}
-
-function RunTiming({ run, overall }: RunTimingProps) {
-  const [nowMilliseconds, setNowMilliseconds] = useState(() => Date.now())
-
-  useEffect(() => {
-    if (isTerminalRunState(run.status)) {
-      return
-    }
-    const timer = setInterval(() => setNowMilliseconds(Date.now()), CLOCK_REFRESH_INTERVAL_MS)
-    return () => clearInterval(timer)
-  }, [run.status])
-
-  const elapsed = getElapsedMilliseconds(run, nowMilliseconds)
-  const eta = getEtaMilliseconds(run, overall, nowMilliseconds)
-  const estimatedRemaining = isTerminalRunState(run.status)
-    ? 'Completed'
-    : eta === null
-      ? 'Unavailable'
-      : formatDuration(eta)
-  return (
-    <>
-      <Metric label="Elapsed" value={formatDuration(elapsed)} />
-      <Metric label="Estimated remaining" value={estimatedRemaining} />
-    </>
-  )
-}
-
-interface EmptyStateProps {
-  readonly text: string
-}
-
-function EmptyState({ text }: EmptyStateProps) {
-  const styles = useScenarioRunPageStyles()
-  return (
-    <div className={styles.emptyState}>
-      <Text>{text}</Text>
-    </div>
-  )
-}
-
-function formatRunState(status: string): string {
-  return status.toLowerCase().replace('_', ' ').replace(/^\w/, (letter) => letter.toUpperCase())
-}
-
-function formatRunFailure(run: ScenarioProgressHeader): string {
-  const completedResultsMessage = 'Finished executions remain available below.'
-  if (run.error_type && run.error) {
-    return `Run failed (${run.error_type}): ${run.error} ${completedResultsMessage}`
-  }
-  if (run.error) {
-    return `Run failed: ${run.error} ${completedResultsMessage}`
-  }
-  if (run.error_type) {
-    return `Run failed (${run.error_type}). ${completedResultsMessage}`
-  }
-  return `This run ended before all planned executable units completed. ${completedResultsMessage}`
-}
-
-function statusIcon(status: ScenarioRunState): React.ReactElement {
-  if (status === 'COMPLETED') {
-    return <CheckmarkCircleRegular />
-  }
-  if (status === 'FAILED') {
-    return <DismissCircleRegular />
-  }
-  if (status === 'CANCELLED') {
-    return <StopRegular />
-  }
-  return <ArrowSyncRegular />
-}
-
-function formatConfiguration(value: Record<string, unknown>): string {
-  const entries = Object.entries(value)
-  if (entries.length === 0) {
-    return 'None'
-  }
-  return entries
-    .map(([key, item]) => `${key}: ${typeof item === 'string' ? item : JSON.stringify(item)}`)
-    .join(', ')
-}
-
-function formatSuccess(succeeded: number, evaluated: number, percent: number | null): string {
-  return percent === null ? `${succeeded}/${evaluated} —` : `${succeeded}/${evaluated} (${percent}%)`
-}
-
-function formatCompletion(completed: number, planned: number | null): string {
-  return planned === null ? `${completed}/total unavailable` : `${completed}/${planned}`
-}
-
-function formatOverloadSummaries(
-  summaries: import('@/types').ScenarioOverloadSummary[],
-): string {
-  return summaries.map((summary) => {
-    const codes = summary.status_codes.join('/')
-    return `${formatRole(summary.component_role)} (${summary.count} × HTTP ${codes}, latest ${formatTimestamp(summary.latest_timestamp)})`
-  }).join('; ')
-}
-
-function formatRole(role: string): string {
-  return role.replace(/_/g, ' ').replace(/^\w/, (letter: string) => letter.toUpperCase())
 }

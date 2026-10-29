@@ -66,8 +66,24 @@ Each scenario defines a test workflow with its techniques, data, and scoring.
 Open one to select a target and adjust the settings it supports, such as
 techniques, dataset selection, and concurrency.
 
+Use the chevron on the right of a technique to inspect its identity JSON.
+This does not change the checkbox selection on the left.
+
 Review the run estimate, then launch the scan. Its run page shows progress,
-errors, and results, with links to individual attacks. See the
+errors, and results, with links to individual attacks and conversations.
+Expand an attack group or objective to inspect its attempts. Technique, scorer,
+dataset/seed provenance, and scenario settings use inline identity JSON.
+Decided attack outcomes use **True** and **False**; execution errors remain separate.
+
+**Watch live conversation** opens saved messages while an attack runs. This view
+is read-only and refreshes saved messages; it has no send controls. **Cancel scan**
+stops remaining scan work and keeps saved results. Ordinary manual chats do not
+have scan cancellation controls.
+
+**Rerun** opens the scenario launch page with saved settings filled in. It does
+not start work or change the original run. Review or edit the settings before
+launching. Settings that cannot be restored produce an error instead of silently
+using current defaults. See the
 [scanner guide](../scanner/0_scanner.md) for the scenario model.
 
 ![Scanner page with available scenarios](images/scanner.png)
@@ -135,7 +151,7 @@ finding, or scenario result ID and searches all stored runs. Hover over the fiel
 to see the supported ID types. **Back to scan**, beside Markdown in a scan-owned
 chat, returns to its run.
 
-Supported failed scanner runs can be resumed.
+Supported failed or cancelled scanner runs can be resumed.
 Resume retries unfinished objectives or objectives with execution errors when
 the original launch configuration is available. It skips completed objectives
 with non-error outcomes, including `failure`. Retrying an unsuccessful technique

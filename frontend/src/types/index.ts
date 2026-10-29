@@ -1463,6 +1463,7 @@ export interface ScenarioDatasetLoadResponse {
 
 export interface RegisteredScenario {
   supports_objective_scorer?: boolean
+  baseline_identifier?: ComponentIdentifier | null
   /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
   max_concrete_techniques?: number | null
   scenario_name: string
@@ -1492,6 +1493,7 @@ export interface ScenarioTechniqueSummary {
   name: string
   description: string | null
   tags: string[]
+  identifier?: ComponentIdentifier | null
 }
 
 export interface ListRegisteredScenariosResponse {
@@ -1958,6 +1960,10 @@ export interface ScenarioProgressHeader {
   scenario_name: string
   scenario_registry_name?: string | null
   scenario_version: number
+  description?: string | null
+  operation_id?: string | null
+  operation_name?: string | null
+  scenario_identity?: ScenarioComponentIdentity | null
   status: ScenarioRunState
   created_at: string
   started_at?: string | null
@@ -2032,6 +2038,8 @@ export interface ScenarioProgressResult {
   error_type?: string | null
   error_message?: string | null
   score?: ScenarioProgressScore | null
+  seed_identifiers?: ScenarioComponentIdentity[]
+  related_conversation_ids?: string[]
 }
 
 export interface ScenarioRunPlanSeedGroup {
@@ -2094,6 +2102,7 @@ export interface ScenarioRunPlan {
 }
 
 export interface ScenarioProgressCounts {
+  outcomes?: OutcomeStatistics | null
   completed: number
   planned: number | null
   succeeded: number
@@ -2156,6 +2165,17 @@ export interface ScenarioProgressSummary {
   unattributed_attempts?: number
 }
 
+export interface ScenarioActiveConversation {
+  attack_result_id: string
+  conversation_id: string
+  atomic_attack_name: string
+  seed_group_id?: string | null
+  objective: string
+  started_at: string
+  technique_details?: ScenarioAttackTechniqueDetails | null
+  seed_identifiers: ScenarioComponentIdentity[]
+}
+
 export interface ScenarioRunProgress {
   run: ScenarioProgressHeader
   plan: ScenarioRunPlan | null
@@ -2164,6 +2184,7 @@ export interface ScenarioRunProgress {
   next_cursor?: string | null
   has_more: boolean
   plan_complete: boolean
+  active_conversations?: ScenarioActiveConversation[]
 }
 export interface RuntimeReadiness {
   ready: boolean

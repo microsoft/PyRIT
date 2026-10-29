@@ -885,6 +885,12 @@ class ScenarioProgressReadModel:
             error_type=delta.error_type,
             error_message=delta.error_message,
             score=delta.score,
+            seed_identifiers=[
+                ScenarioProgressReadModel._build_component_identity(component_identifier=seed)
+                for seed in delta.atomic_attack_identifier.seed_identifiers
+            ]
+            if delta.atomic_attack_identifier is not None
+            else [],
             result_role=result_metadata.result_role,
             child_attack_result_ids=ScenarioProgressReadModel._read_child_attack_result_ids(
                 attack_metadata=delta.attack_metadata

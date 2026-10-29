@@ -7,6 +7,7 @@ import type {
   ScenarioRunPlan,
   ScenarioRunState,
   ScenarioRunSummary,
+  ScenarioActiveConversation,
 } from '@/types'
 
 export type ScenarioRunLoadStatus = 'loading' | 'ready' | 'not-found' | 'error'
@@ -21,6 +22,7 @@ export interface ScenarioRunProgressState {
   readonly error: string | null
   readonly stale: boolean
   readonly overloadSummaries: ScenarioOverloadSummary[]
+  readonly activeConversations: ScenarioActiveConversation[]
 }
 
 export type ScenarioRunProgressAction =
@@ -41,6 +43,7 @@ export const INITIAL_SCENARIO_RUN_PROGRESS_STATE: ScenarioRunProgressState = {
   error: null,
   stale: false,
   overloadSummaries: [],
+  activeConversations: [],
 }
 
 export function isTerminalRunState(status: ScenarioRunState): boolean {
@@ -75,6 +78,7 @@ export function scenarioRunProgressReducer(
       ...state,
       loadStatus: 'ready',
       run: {
+        ...state.run,
         scenario_result_id: action.run.scenario_result_id,
         scenario_name: action.run.scenario_name,
         scenario_registry_name: action.run.scenario_registry_name,
@@ -98,6 +102,7 @@ export function scenarioRunProgressReducer(
       error: null,
       stale: false,
       overloadSummaries: state.overloadSummaries,
+      activeConversations: isTerminalRunState(action.run.status) ? [] : state.activeConversations,
     }
   }
 
@@ -126,6 +131,7 @@ export function scenarioRunProgressReducer(
     error: null,
     stale: false,
     overloadSummaries,
+    activeConversations: action.page.active_conversations ?? [],
   }
 }
 

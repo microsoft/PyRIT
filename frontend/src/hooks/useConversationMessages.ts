@@ -18,6 +18,8 @@ interface ConversationLoadRequest {
 }
 
 export interface UseConversationMessagesOptions {
+  readConversation?: (attackResultId: string, conversationId: string) => Promise<ConversationMessagesResponse>
+  pollIntervalMs?: number
   attackResultId: string | null
   conversationId: string | null
   activeConversationId: string | null
@@ -59,6 +61,8 @@ export interface ConversationMessages {
 }
 
 export function useConversationMessages({
+  readConversation,
+  pollIntervalMs,
   attackResultId,
   conversationId,
   activeConversationId,
@@ -138,7 +142,7 @@ export function useConversationMessages({
     const isCurrentLoad = (): boolean => isLatestConversationRead(convId, requestId)
 
     try {
-      const response = await attacksApi.getMessages(arId, convId)
+      const response = await (readConversation ?? attacksApi.getMessages)(arId, convId)
       // Discard superseded loads and responses invalidated by a send.
       if (!isCurrentLoad() || viewedConvRef.current !== convId) { return }
       setConversationLoadIssue(
@@ -173,7 +177,7 @@ export function useConversationMessages({
         setIsLoadingMessages(false)
       }
     }
-  }, [claimConversationRead, isLatestConversationRead, markConversationLoaded, findingEvidenceId])
+  }, [claimConversationRead, isLatestConversationRead, markConversationLoaded, findingEvidenceId, readConversation])
 
   // Reload messages when activeConversationId changes
   useEffect(() => {
@@ -191,6 +195,21 @@ export function useConversationMessages({
     )) { return }
     loadConversation(attackResultId, activeConversationId)
   }, [activeConversationId, attackResultId, loadConversation])
+
+  useEffect(() => {
+    if (!pollIntervalMs || !attackResultId || !activeConversationId) return
+    let active = true
+    let timer: ReturnType<typeof setTimeout>
+    const schedule = (): void => {
+      if (!active) return
+      timer = setTimeout(() => {
+        if (activeLoadRef.current) schedule()
+        else void loadConversation(attackResultId, activeConversationId).finally(schedule)
+      }, pollIntervalMs)
+    }
+    schedule()
+    return () => { active = false; clearTimeout(timer) }
+  }, [pollIntervalMs, attackResultId, activeConversationId, loadConversation])
 
   // Synchronous loading derivation: if activeConversationId differs from the
   // conversation whose messages we've loaded, we're in a transition gap.

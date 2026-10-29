@@ -33,6 +33,7 @@ from pyrit.analytics.scenario_statistics import (
     resolve_execution_unit,
     select_execution_attack_result_ids,
 )
+from pyrit.backend.models.attacks import ConversationMessagesResponse
 from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.backend.services.pagination import (
@@ -49,6 +50,7 @@ from pyrit.backend.services.scenario_progress_read_model import (
     ScenarioProgressSnapshot,
 )
 from pyrit.common.async_compatibility import run_legacy_sync_async
+from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
 from pyrit.memory import AttackResultKeysetCursor, CentralMemory, SQLiteMemory
 from pyrit.memory.memory_interface import (
     MemoryInterface,
@@ -65,6 +67,7 @@ from pyrit.models import (
     AttackResult,
     AttackResultMetadata,
     ComponentIdentifier,
+    ScenarioActiveConversation,
     ScenarioAttackResultDelta,
     ScenarioHierarchyNode,
     ScenarioHierarchyProjection,
@@ -82,6 +85,7 @@ from pyrit.models import (
     ScenarioRunProgress,
     ScenarioRunState,
     TargetIdentifier,
+    project_behavioral_identity,
 )
 from pyrit.models.catalog.scenario import (
     AttackErrorSummary,
@@ -209,6 +213,7 @@ class _ActiveRunSnapshot:
 
     error: str | None = None
     active_group_ids: tuple[str, ...] = ()
+    executions: tuple[ActiveAttackExecution, ...] = ()
     queue_position: int | None = None
     active_scenario_result_id: str | None = None
 
@@ -312,18 +317,104 @@ class ScenarioRunService:
 
     async def resume_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary:
         """
-        Resume a failed run with its saved launch configuration through the normal scheduler.
+        Resume a failed or cancelled run with its saved configuration through the normal scheduler.
 
         Returns:
             ScenarioRunSummary: Current state under the original result ID.
         """
         async with self._reserve_resume_request_async(scenario_result_id), self._launch_lock:
-            stored = await self._validate_resume_admission_async(
-                scenario_result_id=scenario_result_id, failed_only=True
-            )
+            stored = await self._validate_resume_admission_async(scenario_result_id=scenario_result_id)
             assert stored is not None
             request = await asyncio.to_thread(self._restore_launch_request, stored=stored)
             return await self._start_run_locked_async(request=request, initial_metadata={})
+
+    async def get_launch_configuration_async(self, scenario_result_id: str) -> RunScenarioRequest | None:
+        """Return saved launch inputs for a new run, without admitting or starting work."""
+        stored = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+        if stored is None:
+            return None
+        request = await asyncio.to_thread(self._restore_launch_request, stored=stored)
+        await asyncio.to_thread(self._validate_rerun_references, stored=stored, request=request)
+        payload = request.model_dump(
+            mode="json",
+            exclude={"scenario_result_id", "datasets", "dataset_names", "max_dataset_size", "dataset_filters"},
+        )
+        if request.dataset_request is not None:
+            payload["datasets"] = request.dataset_request.model_dump(mode="json", exclude_unset=True)
+        if request.labels is not None:
+            payload["labels"] = {key: value for key, value in request.labels.items() if key != "operation"}
+        return RunScenarioRequest.model_validate(payload)
+
+    def _validate_rerun_references(self, *, stored: ScenarioResult, request: RunScenarioRequest) -> None:
+        """Do not silently substitute changed runtime defaults for saved components."""
+        registry = ScenarioRegistry.get_registry_singleton()
+        scenario_class = registry.get_class(request.scenario_name)
+        reject_non_external_params(
+            params=request.scenario_params or {},
+            declared=scenario_class.supported_parameters(),
+            owner=request.scenario_name,
+        )
+        metadata = registry.get_class_metadata(scenario_class)
+        if metadata.scenario_version != stored.scenario_version:
+            raise ScenarioRunConflictError("The scenario version changed. Start a new configuration explicitly.")
+        if request.objective_scorer is None:
+            original = stored.objective_scorer_identifier
+            current = metadata.default_objective_scorer_identifier
+            if original is None or current is None or original.hash != current.hash:
+                raise ScenarioRunConflictError(
+                    "The saved default scorer changed. Start a new configuration explicitly."
+                )
+        if request.target_name:
+            current_target = self._configuration_resolver.resolve_target(target_name=request.target_name)
+            original_target = stored.scenario_identifier.objective_target
+            if original_target is None or current_target.get_identifier().hash != original_target.hash:
+                raise ScenarioRunConflictError("The saved target changed. Start a new configuration explicitly.")
+
+    async def get_conversation_async(
+        self, *, scenario_result_id: str, conversation_id: str
+    ) -> ConversationMessagesResponse | None:
+        """
+        Read an owned scan conversation, retaining completed conversation score projection.
+
+        Returns:
+            ConversationMessagesResponse | None: Owned messages, or None for an unrelated conversation.
+        """
+        from pyrit.backend.mappers.attack_mappers import pyrit_messages_to_dto_async
+        from pyrit.backend.services.attack_service import get_attack_service
+
+        metadata = await self._memory.get_conversation_metadata_async(conversation_id=conversation_id)
+        if metadata is None or metadata.attack_result_id is None:
+            return None
+        attack_id = str(metadata.attack_result_id)
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_id])
+        if not results:
+            snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
+            if not any(
+                execution.attack_result_id == attack_id
+                and conversation_id in execution.conversation_ids
+                and execution.attribution is not None
+                and execution.attribution.parent_id == scenario_result_id
+                for execution in snapshot.executions
+            ):
+                # Publication can finish between the stored read and the active snapshot.
+                results = await self._memory.get_attack_results_async(attack_result_ids=[attack_id])
+                if not results:
+                    return None
+        if results:
+            if (
+                results[0].attribution_parent_id != scenario_result_id
+                or conversation_id not in results[0].get_active_conversation_ids()
+            ):
+                return None
+            return await get_attack_service().get_conversation_messages_async(
+                attack_result_id=attack_id, conversation_id=conversation_id
+            )
+        messages = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
+        return ConversationMessagesResponse(
+            conversation_id=conversation_id,
+            messages=await pyrit_messages_to_dto_async(list(messages), memory=self._memory),
+            target_response_status=None,
+        )
 
     @contextlib.asynccontextmanager
     async def _reserve_resume_request_async(self, scenario_result_id: str | None) -> AsyncGenerator[None, None]:
@@ -2274,6 +2365,7 @@ class ScenarioRunService:
         return _ActiveRunSnapshot(
             error=active.error,
             active_group_ids=active_group_ids,
+            executions=active.scenario.active_executions if active.scenario is not None else (),
             queue_position=queue_position,
             active_scenario_result_id=active_scenario_result_id,
         )
@@ -2388,7 +2480,7 @@ class ScenarioRunService:
             ScenarioRunProgress | None: Compact progress when the run exists.
         """
         snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
-        return await self.get_run_progress_from_storage_async(
+        progress = await self.get_run_progress_from_storage_async(
             scenario_result_id=scenario_result_id,
             since=since,
             limit=limit,
@@ -2396,6 +2488,45 @@ class ScenarioRunService:
             queue_position=snapshot.queue_position,
             active_scenario_result_id=snapshot.active_scenario_result_id,
         )
+        if progress is not None and not self._is_terminal_state(progress.run.status):
+            progress.active_conversations = self._active_conversations(
+                snapshot=snapshot, scenario_result_id=scenario_result_id
+            )
+        return progress
+
+    @staticmethod
+    def _active_conversations(
+        *, snapshot: _ActiveRunSnapshot, scenario_result_id: str
+    ) -> list[ScenarioActiveConversation]:
+        conversations: list[ScenarioActiveConversation] = []
+        for execution in snapshot.executions:
+            identifier = execution.atomic_attack_identifier
+            attribution = execution.attribution
+            if attribution is None or attribution.parent_id != scenario_result_id:
+                continue
+            conversations.extend(
+                ScenarioActiveConversation(
+                    attack_result_id=execution.attack_result_id,
+                    conversation_id=conversation_id,
+                    atomic_attack_name=attribution.parent_collection,
+                    seed_group_id=attribution.seed_group_id,
+                    objective=execution.objective,
+                    started_at=execution.started_at,
+                    technique_details=ScenarioProgressReadModel._build_attack_technique_details(
+                        technique_identifier=identifier.attack_technique
+                    )
+                    if identifier is not None and identifier.attack_technique is not None
+                    else None,
+                    seed_identifiers=[
+                        ScenarioProgressReadModel._build_component_identity(component_identifier=seed)
+                        for seed in identifier.seed_identifiers
+                    ]
+                    if identifier is not None
+                    else [],
+                )
+                for conversation_id in execution.conversation_ids
+            )
+        return conversations
 
     async def get_run_progress_from_storage_async(
         self,
@@ -2438,7 +2569,7 @@ class ScenarioRunService:
             terminal=terminal,
             objective_scorer_identifier=objective_scorer_identifier,
         )
-        return self._build_progress_response(
+        progress = self._build_progress_response(
             header_result=header_result,
             plan=plan,
             progress_snapshot=progress_snapshot,
@@ -2450,6 +2581,10 @@ class ScenarioRunService:
             queue_position=queue_position,
             active_scenario_result_id=active_scenario_result_id,
         )
+        if header_result.operation_id is not None:
+            operations = await self._memory.get_operations_async(operation_ids=[header_result.operation_id])
+            progress.run.operation_name = operations[0].name if operations else None
+        return progress
 
     def _build_progress_response(
         self,
@@ -2497,6 +2632,10 @@ class ScenarioRunService:
             )
         else:
             techniques_used = self._identifier_techniques(scenario_identifier)
+        scenario_identity = ScenarioProgressReadModel._build_component_identity(
+            component_identifier=project_behavioral_identity(scenario_identifier, identifier_type=ScenarioIdentifier)
+        )
+        scenario_identity.parameters = filter_sensitive_fields(scenario_identity.parameters)
         return ScenarioRunProgress(
             run=ScenarioProgressHeader(
                 scenario_result_id=scenario_result_id,
@@ -2515,6 +2654,9 @@ class ScenarioRunService:
                 datasets_used=datasets_used,
                 scenario_parameters=scenario_parameters,
                 labels=header_result.labels,
+                operation_id=header_result.operation_id,
+                description=header_result.scenario_description or None,
+                scenario_identity=scenario_identity,
                 queue_position=queue_position,
                 active_scenario_result_id=active_scenario_result_id,
                 overload_summaries=self._build_overload_summaries(retry_events=overload_events),

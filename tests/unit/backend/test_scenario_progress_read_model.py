@@ -37,6 +37,7 @@ from pyrit.memory import AttackResultKeysetCursor
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     AttackResultRole,
@@ -64,7 +65,7 @@ from pyrit.scenario.scenarios.adaptive.dispatcher import (
     AdaptiveTechniqueDispatcher,
     TechniqueBundle,
 )
-from pyrit.score import Scorer, SubStringScorer
+from pyrit.score import Scorer, SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
 from unit.async_utils import get_defined_tasks
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
 
@@ -81,6 +82,41 @@ def _make_delta(*, run_id: str, index: int = 0) -> ScenarioAttackResultDelta:
         timestamp=datetime(2025, 1, 1, tzinfo=UTC) + timedelta(seconds=index),
         attribution_data={"parent_collection": "attack", "seed_group_id": f"seed-{index}"},
     )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_progress_preserves_real_dataset_seed_identifiers_async() -> None:
+    seed_group = AttackSeedGroup(seeds=[SeedObjective(value="Review this response.", dataset_name="saved_dataset")])
+    identifier = AtomicAttackIdentifier.build(
+        attack_identifier=ComponentIdentifier(class_name="PromptSendingAttack", class_module="tests"),
+        seed_group=seed_group,
+    )
+    delta = _make_delta(run_id=str(uuid.uuid4())).model_copy(update={"atomic_attack_identifier": identifier})
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=([delta], False))
+    snapshot = await _get_snapshot_async(read_model=ScenarioProgressReadModel(memory=memory), run_id="dataset-run")
+    assert snapshot.results[0].seed_identifiers[0].parameters["dataset_name"] == "saved_dataset"
+    assert snapshot.results[0].seed_identifiers[0].parameters["value"] == "Review this response."
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_scorer_projection_keeps_nested_composite_boundaries() -> None:
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[
+            SubStringScorer(substring="first"),
+            TrueFalseCompositeScorer(
+                aggregator=TrueFalseScoreAggregator.OR,
+                scorers=[SubStringScorer(substring="second"), SubStringScorer(substring="third")],
+            ),
+        ],
+    )
+    identity = ScenarioProgressReadModel._build_scorer_identity(scorer_identifier=scorer.get_identifier())
+    assert identity.component_name == "TrueFalseCompositeScorer"
+    assert len(identity.children["sub_scorers"]) == 2
+    nested = identity.children["sub_scorers"][1]
+    assert nested.component_name == "TrueFalseCompositeScorer"
+    assert len(nested.children["sub_scorers"]) == 2
 
 
 async def _get_snapshot_async(*, read_model: ScenarioProgressReadModel, run_id: str) -> ScenarioProgressSnapshot:

@@ -4,10 +4,11 @@ import OutcomeBadge from '@/components/OutcomeBadge'
 import {
   formatAttackSuccess,
   formatDuration,
-  formatTimestamp,
   objectivePreview,
 } from '@/components/AttackResults/attackAttemptFormatting'
 import type { ScenarioProgressResult } from '@/types'
+import { Link } from 'react-router'
+import { attackConversationRoutePath } from '@/utils/routeParams'
 
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
 
@@ -17,6 +18,8 @@ interface AttackExecutionTableProps {
   readonly onOpenDetails: (attempt: ScenarioProgressResult, trigger: HTMLElement) => void
   /** Total attempts in this group, when more exist than are rendered. */
   readonly totalAttempts: number
+  readonly scenarioResultId?: string
+  readonly showObjective?: boolean
 }
 
 export default function AttackExecutionTable({
@@ -24,6 +27,8 @@ export default function AttackExecutionTable({
   seedObjectives,
   onOpenDetails,
   totalAttempts,
+  scenarioResultId,
+  showObjective = true,
 }: AttackExecutionTableProps) {
   const styles = useScenarioRunPageStyles()
 
@@ -46,11 +51,10 @@ export default function AttackExecutionTable({
         <TableHeader>
           <TableRow>
             <TableHeaderCell>Attack</TableHeaderCell>
-            <TableHeaderCell>Attack Success</TableHeaderCell>
-            <TableHeaderCell>Objective</TableHeaderCell>
-            <TableHeaderCell>Execution</TableHeaderCell>
-            <TableHeaderCell>Retries / error</TableHeaderCell>
-            <TableHeaderCell>Timestamp</TableHeaderCell>
+            <TableHeaderCell>Outcome</TableHeaderCell>
+            {showObjective && <TableHeaderCell>Objective</TableHeaderCell>}
+            <TableHeaderCell>Duration</TableHeaderCell>
+            <TableHeaderCell>Conversation</TableHeaderCell>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -74,18 +78,18 @@ export default function AttackExecutionTable({
               <TableCell>
                 <OutcomeBadge appearance="tint" outcome={attempt.outcome} label={formatAttackSuccess(attempt.outcome)} />
               </TableCell>
-              <TableCell>
+              {showObjective && <TableCell>
                 <Text className={styles.preview}>
                   {objectivePreview(seedObjectives.get(attempt.seed_group_id) ?? null, attempt.seed_group_id)}
                 </Text>
-              </TableCell>
+              </TableCell>}
               <TableCell className={styles.nowrap}>{formatDuration(attempt.execution_time_ms)}</TableCell>
               <TableCell>
-                {attempt.outcome === 'error'
-                  ? attempt.error_message ?? attempt.error_type ?? 'Error'
-                  : `${attempt.total_retries} retries`}
+                <Link to={attackConversationRoutePath(attempt.attack_result_id, attempt.conversation_id, scenarioResultId)}
+                  onClick={(event) => { event.stopPropagation() }} onKeyDown={(event) => { event.stopPropagation() }}>
+                  Conversation
+                </Link>
               </TableCell>
-              <TableCell className={styles.nowrap}>{formatTimestamp(attempt.timestamp)}</TableCell>
             </TableRow>
           ))}
         </TableBody>

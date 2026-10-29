@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.models import DatasetSelectionMode, ScenarioDatasetOptions, ScenarioDatasetSettings
+from pyrit.models import ComponentIdentifier, DatasetSelectionMode, ScenarioDatasetOptions, ScenarioDatasetSettings
 from pyrit.registry.components.scenario_registry import ScenarioRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
@@ -68,6 +68,7 @@ class _MetadataScenario:
         self._technique_class = _MetadataTechnique
         self._default_technique = _MetadataTechnique.DEFAULT
         self._default_dataset_config = MagicMock(dataset_names=["sample"])
+        self._objective_scorer_identifier = ComponentIdentifier(class_name="MetadataScorer", class_module=__name__)
 
     def _resolve_scenario_techniques(self, *, scenario_techniques):
         """Resolve the concrete defaults."""
@@ -181,11 +182,13 @@ def test_build_metadata_expands_ordered_default_techniques() -> None:
         "name": "one",
         "description": "Runs the first attack.",
         "tags": ["default"],
+        "identifier": None,
     }
     assert metadata.technique_summaries[1].model_dump() == {
         "name": "two",
         "description": None,
         "tags": ["default"],
+        "identifier": None,
     }
     assert dict(metadata.aggregate_technique_expansions) == {
         "all": ("one", "two"),
@@ -193,6 +196,7 @@ def test_build_metadata_expands_ordered_default_techniques() -> None:
     }
     assert metadata.dataset_options.mode is DatasetSelectionMode.FIXED
     assert metadata.dataset_defaults.max_total == 4
+    assert metadata.default_objective_scorer_identifier == _MetadataScenario()._objective_scorer_identifier
 
 
 def test_build_metadata_reports_scenario_owned_adversarial_usage() -> None:

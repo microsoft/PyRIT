@@ -65,6 +65,38 @@ def create_seed_group(objective: str) -> AttackSeedGroup:
     )
 
 
+@pytest.mark.usefixtures("patch_central_database")
+async def test_active_execution_snapshot_is_read_only_and_removed_on_cancellation() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    result_id = str(uuid.uuid4())
+    conversation_id = str(uuid.uuid4())
+    attack = create_mock_attack()
+    executor = AttackExecutor()
+
+    async def run_async(*, context: SingleTurnAttackContext) -> AttackResult:
+        context._attack_result_id = result_id
+        context._objective_conversation_ids.add(conversation_id)
+        started.set()
+        await release.wait()
+        return create_attack_result(context.objective)
+
+    attack.execute_with_context_async.side_effect = run_async
+    task = asyncio.create_task(executor.execute_attack_async(attack=attack, objectives=["Observe the attempt"]))
+    try:
+        await wait_for_event_async(event=started, tasks=[task])
+        snapshot = executor.active_executions
+        assert len(snapshot) == 1
+        assert snapshot[0].attack_result_id == result_id
+        assert snapshot[0].conversation_ids == (conversation_id,)
+        assert executor.active_executions == snapshot
+    finally:
+        task.cancel()
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+    assert executor.active_executions == ()
+
+
 class _ParameterBuildAbort(BaseException):
     """Controlled fatal parameter-build failure."""
 

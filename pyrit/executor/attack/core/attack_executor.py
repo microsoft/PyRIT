@@ -11,6 +11,7 @@ import asyncio
 import copy
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -21,6 +22,7 @@ from typing import (
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.executor.attack.core.attack_strategy import (
+    AttackContext,
     AttackStrategy,
     AttackStrategyContextT,
     AttackStrategyResultT,
@@ -32,6 +34,18 @@ if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
 
 AttackResultT = TypeVar("AttackResultT")
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveAttackExecution:
+    """Read-only execution metadata, not an admission ledger or a completed result."""
+
+    attack_result_id: str
+    objective: str
+    conversation_ids: tuple[str, ...]
+    started_at: datetime
+    attribution: AttackResultAttribution | None
+    atomic_attack_identifier: AtomicAttackIdentifier | None
 
 
 @dataclass
@@ -154,6 +168,7 @@ class AttackExecutor:
         if max_concurrency <= 0:
             raise ValueError(f"max_concurrency must be a positive integer, got {max_concurrency}")
         self._max_concurrency = max_concurrency
+        self._active_contexts: dict[int, tuple[AttackContext[Any], datetime]] = {}
         # The semaphore is created lazily, NOT here. asyncio synchronization primitives
         # (Semaphore, Lock, Event, ...) bind to whichever event loop is running on their
         # first await and raise ``RuntimeError: <Semaphore> is bound to a different event
@@ -164,6 +179,24 @@ class AttackExecutor:
         # running loop changes, one AttackExecutor instance is safe to reuse across loops.
         self._semaphore: asyncio.Semaphore | None = None
         self._semaphore_loop: asyncio.AbstractEventLoop | None = None
+
+    @property
+    def active_executions(self) -> tuple[ActiveAttackExecution, ...]:
+        """Snapshot in-flight attempts without changing execution or persistence."""
+        return tuple(
+            ActiveAttackExecution(
+                attack_result_id=result_id,
+                objective=context.objective,
+                conversation_ids=tuple(sorted(context.objective_conversation_ids)),
+                started_at=started_at,
+                attribution=context._attribution,
+                atomic_attack_identifier=context._atomic_attack_identifier.model_copy(deep=True)
+                if context._atomic_attack_identifier is not None
+                else None,
+            )
+            for context, started_at in self._active_contexts.values()
+            if (result_id := context.attack_result_id) is not None
+        )
 
     def _get_semaphore(self) -> asyncio.Semaphore:
         """
@@ -460,10 +493,13 @@ class AttackExecutor:
                 task_attribution = attributions[index] if attributions is not None else None
                 if task_attribution is not None:
                     context._attribution = task_attribution
+                context_key = id(context)
+                self._active_contexts[context_key] = (context, datetime.now(UTC))
                 try:
                     return await attack.execute_with_context_async(context=context)
                 finally:
                     persisted_result_ids[index] = context._persisted_attack_result_id
+                    self._active_contexts.pop(context_key, None)
 
         tasks = [run_one_async(i, p) for i, p in enumerate(params_list)]
         # Admitting the batch's Operations once lets every objective finish if one is deleted midway.

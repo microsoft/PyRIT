@@ -29,6 +29,8 @@ import ScenarioHistory from './components/History/ScenarioHistory'
 import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
 import ScenarioDetail from './components/Scenarios/ScenarioDetail'
 import ScenarioRunPage from './components/Scenarios/ScenarioRunPage'
+import ScenarioConversationPage from './components/Scenarios/ScenarioConversationPage'
+import ScenarioQueuePage from './components/Scenarios/ScenarioQueuePage'
 import ScenarioPresetEditor from './components/ScenarioPresets/ScenarioPresetEditor'
 import { presetEditorRoutePath } from './components/ScenarioPresets/presetRoutes'
 import ScenarioSuiteEditor from './components/ScenarioSuites/ScenarioSuiteEditor'
@@ -44,6 +46,7 @@ import { useAuthConfig } from './auth/AuthConfigContext'
 import { useTargetPreferences } from './hooks/useTargetPreferences'
 import { useTargetRegistry } from './hooks/useTargetRegistry'
 import { useOperationSelection } from './hooks/useOperationSelection'
+import { useScenarioLaunchSeed } from './hooks/useScenarioLaunchSeed'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
 import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
@@ -278,22 +281,40 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     }).filter((entry): entry is [string, string] => entry[1] !== null),
   ), [defaultLabels, preferences.labels, operatorAlias])
 
-  const operationSelection = preferences.operation !== undefined ? preferences.operation
+  const rerunValues = matchPath('/scanner/launch/:scenarioName', location.pathname)
+    ? new URLSearchParams(location.search).getAll('rerun') : []
+  const rerunId = rerunValues.length ? rerunValues.length === 1 ? rerunValues[0] : '' : null
+  const rerun = useScenarioLaunchSeed(rerunId, generation, ready)
+  const { updateAttribution: updateRerunAttribution } = rerun
+  const launchLabels = useMemo<Record<string, string>>(() => rerun.active
+    ? { ...(rerun.request?.labels ?? {}), ...(operatorAlias ? { operator: operatorAlias } : {}) }
+    : globalLabels, [rerun.active, rerun.request?.labels, operatorAlias, globalLabels])
+  const operationSelection = rerun.active
+    ? rerun.request?.operation_id ? { id: rerun.request.operation_id } : null
+    : preferences.operation !== undefined ? preferences.operation
     : defaultsCurrent && serverDefaults?.operation ? { name: serverDefaults.operation } : null
   const operation = useOperationSelection(operationSelection, generation)
   const operationReady = operation.state.status === 'empty' || operation.state.status === 'resolved'
   const operationId = operation.state.status === 'resolved' ? operation.state.operation.id : null
-  const newActivityReady = defaultsReady && operationReady
+  const newActivityReady = defaultsReady && operationReady && (!rerun.active || Boolean(rerun.request))
   const operationBlockedReason = defaultsReady && !operationReady && operation.state.status !== 'loading'
     ? 'Choose a saved Operation, register, or clear this one to start new attacks and scans.'
     : undefined
   const { remember: rememberOperation } = operation
   const handleOperationChange = useCallback((selected: Operation | null) => {
     if (selected) rememberOperation(selected)
+    if (rerun.active) {
+      updateRerunAttribution({ operation_id: selected?.id ?? null })
+      return
+    }
     updatePreferences((current: UserPreferences) => ({ ...current, operation: selected ? { id: selected.id } : null }))
-  }, [rememberOperation, updatePreferences])
+  }, [rememberOperation, rerun.active, updateRerunAttribution, updatePreferences])
 
   const handleGlobalLabelsChange = useCallback((labels: Record<string, string>) => {
+    if (rerun.active) {
+      updateRerunAttribution({ labels })
+      return
+    }
     const changedKeys = Object.keys({ ...globalLabels, ...labels })
       .filter((key: string) => !(operatorAlias && key === 'operator') && labels[key] !== globalLabels[key])
     updatePreferences((current: UserPreferences) => {
@@ -307,7 +328,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       }
       return { ...current, labels: overrides }
     })
-  }, [defaultLabels, globalLabels, operatorAlias, updatePreferences])
+  }, [defaultLabels, globalLabels, operatorAlias, rerun.active, updateRerunAttribution, updatePreferences])
 
   // History filters live in the URL query string so they are shareable and
   // survive refresh. The breadcrumb ref remembers the last /history query so
@@ -812,7 +833,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
             onOpenFeedback={() => setFeedbackOpen(true)}
             canManageConfiguration={canManageConfiguration}
             onStartTour={startTour}
-            labels={globalLabels}
+            labels={launchLabels}
+            labelsBusy={rerun.active && !rerun.request}
             onLabelsChange={handleGlobalLabelsChange}
             operation={operation.state}
             onOperationChange={handleOperationChange}
@@ -948,20 +970,26 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                         <Button onClick={registry.refresh}>Retry targets</Button>
                       </MessageBarBody>
                     </MessageBar>
-                  ) : <ScenarioDetail
+                  ) : rerun.error ? <MessageBar intent="error"><MessageBarBody>
+                    {rerun.error} <Button onClick={rerun.retry}>Retry saved configuration</Button>
+                  </MessageBarBody></MessageBar> : rerun.loading ? <Spinner label="Loading saved configuration..." /> : <ScenarioDetail
                     scorers={scorerRegistry.scorers}
                     scorersLoading={scorerRegistry.loading}
                     scorersError={scorerRegistry.error}
                     targets={registry.targets}
                     defaultObjectiveTarget={targetDefaults.objectiveTarget}
                     defaultAdversarialTarget={targetDefaults.scanAdversarialTarget}
-                    labels={globalLabels}
+                    labels={launchLabels}
+                    initialRun={rerun.initialRequest}
+                    sourceRunId={rerunId ?? undefined}
                     operationId={operationId}
                     defaultsReady={newActivityReady}
                     onNavigate={handleNavigate}
                   />
                 }
               />
+              <Route path="/scanner/queue" element={<ScenarioQueuePage />} />
+              <Route path="/scanner/history/:scenarioResultId/conversations/:conversationId" element={<ScenarioConversationPage />} />
               <Route path="/scanner/history/:scenarioResultId/:attackResultId" element={<ScenarioRunPage />} />
               <Route path="/scanner/history/:scenarioResultId" element={<ScenarioRunPage />} />
               <Route path="/config" element={<Configuration />} />

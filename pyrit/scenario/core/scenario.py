@@ -24,6 +24,7 @@ from pyrit.common import default_values, get_global_default_values
 from pyrit.common.utils import to_sha256
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
+from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
 from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -267,6 +268,7 @@ class Scenario(ABC):
         self._scenario_registry_name: str | None = None
         self._initial_metadata: dict[str, Any] = {}
         self._active_atomic_groups: dict[str, str] = {}
+        self._active_executor: AttackExecutor | None = None
 
         # Store prepared techniques for use in _build_atomic_attacks_async
         self._scenario_techniques: list[ScenarioTechnique] = []
@@ -324,6 +326,11 @@ class Scenario(ABC):
     def active_atomic_group_names(self) -> tuple[str, ...]:
         """The names of atomic groups currently executing."""
         return tuple(self._active_atomic_groups.values())
+
+    @property
+    def active_executions(self) -> tuple[ActiveAttackExecution, ...]:
+        """Read the shared executor's in-flight attempts without treating them as results."""
+        return self._active_executor.active_executions if self._active_executor is not None else ()
 
     def set_scenario_registry_name(self, *, scenario_registry_name: str) -> None:
         """Record the requested registry name for durable run-plan attribution."""
@@ -1943,6 +1950,7 @@ class Scenario(ABC):
         max_concurrency: int = self._max_concurrency
 
         shared_executor = AttackExecutor(max_concurrency=max_concurrency)
+        self._active_executor = shared_executor
         pbar = tqdm(
             desc=f"Executing {self._name}",
             unit="attack",

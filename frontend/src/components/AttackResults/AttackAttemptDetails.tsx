@@ -1,238 +1,88 @@
-import { useId, useState } from 'react'
+import { useState } from 'react'
 
-import { Badge, Button, MessageBar, MessageBarBody, Text, mergeClasses } from '@fluentui/react-components'
-import { ChevronDownRegular, ChevronUpRegular } from '@fluentui/react-icons'
+import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, Badge, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components'
+import { ChatRegular } from '@fluentui/react-icons'
 import { Link } from 'react-router'
 
+import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import type {
-  ScenarioAttackTechniqueDetails,
-  ScenarioComponentIdentity,
-  ScenarioObjectiveScorer,
-  ScenarioProgressResult,
-  ScenarioRunPlanAtomicGroup,
+  ScenarioActiveConversation, ScenarioAttackTechniqueDetails, ScenarioObjectiveScorer,
+  ScenarioProgressResult, ScenarioRunPlanAtomicGroup,
 } from '@/types'
-import {
-  basenameFromValue,
-  buildMediaUrl,
-  dataTypeToAttachmentKind,
-  isPathDataType,
-} from '@/utils/media'
 
-import ComponentIdentityDetails, {
-  DetailMetric,
-  type IdentityChildRenderContext,
-} from './ComponentIdentityDetails'
-import ObjectiveScorerDetails from './ObjectiveScorerDetails'
-import {
-  formatAttackSuccess,
-  formatDuration,
-  formatScore,
-  formatScoreRationale,
-  formatTimestamp,
-} from './attackAttemptFormatting'
+import { formatAttackSuccess, formatDuration, formatScoreRationale, formatTimestamp } from './attackAttemptFormatting'
 import { useAttackAttemptDetailsStyles } from './AttackAttemptDetails.styles'
 
-const COLLAPSIBLE_SEED_LENGTH = 320
-
 interface AttackAttemptDetailsProps {
-  /** The persisted attempt to describe. */
-  readonly attempt: ScenarioProgressResult
-  /** Objective text, when the run plan still has it. */
+  readonly attempt: ScenarioProgressResult | ScenarioActiveConversation
   readonly objective?: string | null
-  /** Planned group the attempt belongs to, used for technique identity. */
   readonly atomicGroup?: ScenarioRunPlanAtomicGroup | null
-  /** Projected technique details shared by every attempt in the atomic group. */
   readonly techniqueDetails?: ScenarioAttackTechniqueDetails | null
-  /** Scorer that decided attack success. */
   readonly objectiveScorer?: ScenarioObjectiveScorer | null
-  /** Route to the attempt's conversation. Supplied by the host so this stays route-agnostic. */
   readonly conversationPath: string
 }
 
 export default function AttackAttemptDetails({
-  attempt,
-  objective,
-  atomicGroup,
-  techniqueDetails,
-  objectiveScorer,
-  conversationPath,
+  attempt, objective, atomicGroup, techniqueDetails, objectiveScorer, conversationPath,
 }: AttackAttemptDetailsProps) {
   const styles = useAttackAttemptDetailsStyles()
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const completed = 'outcome' in attempt ? attempt : null
+  const techniqueName = atomicGroup?.technique_name ?? atomicGroup?.display_group ?? attempt.atomic_attack_name
+  const seeds = attempt.seed_identifiers ?? []
+  const datasetNames = [...new Set(seeds.flatMap((seed) =>
+    typeof seed.parameters.dataset_name === 'string' ? [seed.parameters.dataset_name] : []))]
+  const identities = [
+    { key: 'technique', name: techniqueName, kind: 'Technique', type: techniqueDetails?.component_name ?? attempt.atomic_attack_name, identity: techniqueDetails },
+    { key: 'scorer', name: objectiveScorer?.component_name ?? 'Not recorded', kind: 'Scorer', type: 'Objective scorer', identity: objectiveScorer },
+    { key: 'dataset', name: datasetNames.join(', ') || 'Dataset seeds', kind: 'Dataset', type: 'Seed group', identity: seeds.length ? seeds : null },
+  ]
 
-  const techniqueName = atomicGroup?.technique_name
-    ?? atomicGroup?.display_group
-    ?? attempt.atomic_attack_name
-  const techniqueDescription = atomicGroup?.description
-    ?? 'No description is available for this attack technique.'
-  const techniqueTags = atomicGroup?.tags ?? []
-  const errorMessage = attempt.outcome === 'error'
-    ? attempt.error_message ?? 'No error detail was persisted.'
-    : null
-
-  const renderTechniqueSeed = ({ childName, identity }: IdentityChildRenderContext) => {
-    if (childName !== 'technique_seeds') {
-      return undefined
-    }
-    return <TechniqueSeed identity={identity} />
+  function toggle(key: string): void {
+    setExpanded((current: Set<string>) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
   return (
     <div className={styles.content}>
       <section className={styles.section}>
         <Text size={200} className={styles.sectionLabel}>Objective</Text>
+        <Text as="p" className={styles.bodyText}>{objective ?? 'Objective text is not available.'}</Text>
+      </section>
+      <Link className={styles.conversationLink} to={conversationPath}>
+        <ChatRegular /> {completed ? 'Open conversation' : 'Watch live conversation'}
+      </Link>
+      <section className={styles.surface} aria-label="Attack outcome">
+        <div><Badge appearance="tint" color={!completed ? 'brand' : completed.outcome === 'success' ? 'success' : completed.outcome === 'error' ? 'danger' : 'informative'}>
+          {completed ? formatAttackSuccess(completed.outcome) : 'In progress'}
+        </Badge></div>
         <Text as="p" className={styles.bodyText}>
-          {objective ?? 'Objective text unavailable for this legacy attempt.'}
+          {!completed ? 'The outcome will appear after scoring.' : completed.outcome === 'error'
+            ? 'This attack did not produce a scored outcome.' : formatScoreRationale(completed.score?.score_rationale)}
         </Text>
       </section>
-
-      <div className={styles.summary}>
-        <DetailMetric label="Attack Success" value={formatAttackSuccess(attempt.outcome)} />
-        <DetailMetric label="Score" value={formatScore(attempt.score)} />
-        <DetailMetric label="Execution time" value={formatDuration(attempt.execution_time_ms)} />
-        <DetailMetric label="Retries" value={String(attempt.total_retries)} />
-        <DetailMetric label="Timestamp" value={formatTimestamp(attempt.timestamp)} />
-      </div>
-
-      <section className={styles.section}>
-        <Text size={200} className={styles.sectionLabel}>Attack technique</Text>
-        <div className={styles.surface}>
-          <Text weight="semibold">{techniqueName}</Text>
-          <Text as="p" className={styles.bodyText}>{techniqueDescription}</Text>
-          {techniqueTags.length > 0 && (
-            <div className={styles.badgeList} aria-label="Technique tags">
-              {techniqueTags.map((tag) => (
-                <Badge key={tag} appearance="tint">{tag}</Badge>
-              ))}
-            </div>
-          )}
-          {techniqueDetails && (
-            <ComponentIdentityDetails
-              identity={techniqueDetails}
-              hideComponentName
-              renderChild={renderTechniqueSeed}
-            />
-          )}
-        </div>
-      </section>
-
-      <section className={styles.section}>
-        <Text size={200} className={styles.sectionLabel}>Objective Scorer</Text>
-        {objectiveScorer
-          ? <ObjectiveScorerDetails scorer={objectiveScorer} />
-          : <Text>Objective scorer information is unavailable for this attempt.</Text>}
-      </section>
-
-      <section className={styles.section}>
-        <Text size={200} className={styles.sectionLabel}>Score rationale</Text>
-        <div className={styles.surface}>
-          <Text as="p" className={styles.bodyText}>
-            {formatScoreRationale(attempt.score?.score_rationale)}
-          </Text>
-        </div>
-      </section>
-
-      <Link className={styles.conversationLink} to={conversationPath}>
-        View conversation
-      </Link>
-
-      {errorMessage && (
-        <MessageBar intent="error">
-          <MessageBarBody>
-            {attempt.error_type ? `${attempt.error_type}: ` : ''}
-            {errorMessage}
-          </MessageBarBody>
-        </MessageBar>
-      )}
+      <Table size="small" aria-label="Attack components">
+        <TableHeader><TableRow><TableHeaderCell>Name</TableHeaderCell><TableHeaderCell>Component</TableHeaderCell><TableHeaderCell>Type</TableHeaderCell></TableRow></TableHeader>
+        <TableBody>{identities.map((item: typeof identities[number]) => item.identity ? (
+          <RegistryIdentityRow key={item.key} name={item.name} identity={item.identity} columns={3}
+            expanded={expanded.has(item.key)} onToggle={() => { toggle(item.key) }}>
+            <TableCell>{item.kind}</TableCell><TableCell>{item.type}</TableCell>
+          </RegistryIdentityRow>
+        ) : (
+          <TableRow key={item.key}><TableCell>{item.name}</TableCell><TableCell>{item.kind}</TableCell><TableCell>No saved identity</TableCell></TableRow>
+        ))}</TableBody>
+      </Table>
+      {completed?.outcome === 'error' && <Accordion collapsible><AccordionItem value="error">
+        <AccordionHeader>Error details{completed.error_type ? ` · ${completed.error_type}` : ''}</AccordionHeader>
+        <AccordionPanel><Text className={styles.bodyText}>{completed.error_message ?? 'No error detail is available.'}</Text></AccordionPanel>
+      </AccordionItem></Accordion>}
+      {completed && <Text size={200} className={styles.sectionLabel}>
+        {formatDuration(completed.execution_time_ms)} · {completed.total_retries} retries · {formatTimestamp(completed.timestamp)}
+      </Text>}
     </div>
-  )
-}
-
-interface TechniqueSeedProps {
-  readonly identity: ScenarioComponentIdentity
-}
-
-function TechniqueSeed({ identity }: TechniqueSeedProps) {
-  const styles = useAttackAttemptDetailsStyles()
-  const value = typeof identity.parameters.value === 'string' ? identity.parameters.value : ''
-  const dataType = typeof identity.parameters.data_type === 'string'
-    ? identity.parameters.data_type
-    : 'text'
-
-  return (
-    <div className={styles.seed}>
-      <Text weight="semibold">{identity.component_name}</Text>
-      <TechniqueSeedValue componentName={identity.component_name} dataType={dataType} value={value} />
-    </div>
-  )
-}
-
-interface TechniqueSeedValueProps {
-  readonly componentName: string
-  readonly dataType: string
-  readonly value: string
-}
-
-function TechniqueSeedValue({ componentName, dataType, value }: TechniqueSeedValueProps) {
-  const styles = useAttackAttemptDetailsStyles()
-  if (!value) {
-    return <Text>No seed content is available.</Text>
-  }
-  if (!isPathDataType(dataType)) {
-    return <TextTechniqueSeed componentName={componentName} value={value} />
-  }
-
-  const kind = dataTypeToAttachmentKind(dataType)
-  const mediaUrl = buildMediaUrl(value)
-  if (kind === 'image') {
-    return <img className={styles.seedImage} src={mediaUrl} alt={`${componentName} technique seed`} />
-  }
-  if (kind === 'audio') {
-    return <audio className={styles.seedMedia} src={mediaUrl} controls aria-label={`${componentName} technique seed`} />
-  }
-  if (kind === 'video') {
-    return <video className={styles.seedMedia} src={mediaUrl} controls aria-label={`${componentName} technique seed`} />
-  }
-  return (
-    <a className={styles.fileLink} href={mediaUrl} target="_blank" rel="noopener noreferrer">
-      {basenameFromValue(value, 'Technique seed')}
-    </a>
-  )
-}
-
-interface TextTechniqueSeedProps {
-  readonly componentName: string
-  readonly value: string
-}
-
-function TextTechniqueSeed({ componentName, value }: TextTechniqueSeedProps) {
-  const styles = useAttackAttemptDetailsStyles()
-  const contentId = useId()
-  const [expanded, setExpanded] = useState(false)
-  const canExpand = value.length > COLLAPSIBLE_SEED_LENGTH
-
-  return (
-    <>
-      <Text
-        as="p"
-        id={contentId}
-        className={mergeClasses(styles.bodyText, canExpand && !expanded && styles.collapsedSeedText)}
-      >
-        {value}
-      </Text>
-      {canExpand && (
-        <Button
-          appearance="transparent"
-          size="small"
-          className={styles.seedToggle}
-          icon={expanded ? <ChevronUpRegular /> : <ChevronDownRegular />}
-          aria-controls={contentId}
-          aria-expanded={expanded}
-          aria-label={expanded ? `Collapse ${componentName}` : `Show full ${componentName}`}
-          onClick={() => setExpanded((current) => !current)}
-        >
-          {expanded ? 'Show less' : 'Show more'}
-        </Button>
-      )}
-    </>
   )
 }

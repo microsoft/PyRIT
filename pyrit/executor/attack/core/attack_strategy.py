@@ -223,6 +223,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     )
     _persisted_attack_result_id: str | None = field(default=None, init=False, repr=False, compare=False)
     _persist_attack_result: bool = field(default=True, init=False, repr=False, compare=False)
+    _objective_conversation_ids: set[str] = field(default_factory=set, init=False, repr=False, compare=False)
     _objective_target_conversation_lifecycle: _ObjectiveTargetConversationLifecycle | None = field(
         default=None,
         init=False,
@@ -357,6 +358,12 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         if lifecycle is None:
             return
         lifecycle.record_invocation(conversation_id=conversation_id)
+        self._objective_conversation_ids.add(conversation_id)
+
+    @property
+    def objective_conversation_ids(self) -> frozenset[str]:
+        """Conversations this execution has sent to its objective target."""
+        return frozenset(self._objective_conversation_ids)
 
 
 class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT]):
@@ -1032,6 +1039,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         context._error_result_persistence_error = None
         context._error_result_metadata.clear()
         context._persisted_attack_result_id = None
+        context._objective_conversation_ids.clear()
         await self._resolve_operation_async(context=context)
         self._validate_scoring_expectation(context=context)
         context._error_result_identifier_builder = lambda: AtomicAttackIdentifier.build(
