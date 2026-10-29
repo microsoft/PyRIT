@@ -27,6 +27,7 @@ from pyrit.backend.services.scenario_service import (
     _metadata_to_registered_scenario,
     get_scenario_service,
 )
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import (
     Parameter,
     ScenarioDatasetSizeCap,
@@ -41,6 +42,7 @@ from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
+    AttackTechniqueFactory,
     DatasetAttackConfiguration,
     ScenarioTechnique,
     get_default_adversarial_target,
@@ -160,6 +162,23 @@ def test_catalog_lists_only_external_scenario_parameters() -> None:
 
     assert [parameter.name for parameter in summary.supported_parameters] == ["max_concurrency"]
     assert summary.supported_parameter_names == ["dataset_config", "max_concurrency"]
+
+
+def test_catalog_does_not_invent_an_unconfigured_baseline_identity() -> None:
+    summary = _metadata_to_registered_scenario(metadata=_make_scenario_metadata())
+    assert summary.baseline_identifier is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_catalog_technique_identity_comes_from_factory_without_constructing_an_attack() -> None:
+    factory = AttackTechniqueFactory(name="identity_preview", attack_class=PromptSendingAttack)
+    with patch.object(PromptSendingAttack, "__init__", side_effect=AssertionError("Must not construct an attack")):
+        techniques = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="IdentityPreview", factories=[factory]
+        )
+        member = techniques.get_all_techniques()[0]
+        assert member.identifier == factory.get_identifier()
+        assert _EstimateTechnique.PROMPT_SENDING.identifier is None
 
 
 @pytest.mark.usefixtures("patch_central_database")

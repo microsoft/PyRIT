@@ -68,7 +68,6 @@ import type {
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
-  PairedOutcomeStatistics,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -737,18 +736,6 @@ export const scenariosApi = {
     (await apiClient.get(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/conversations/${encodeURIComponent(conversationId)}`,
     )).data,
-
-  getPairedOutcomes: async (
-    scenarioResultId: string,
-    params: { baseline_group_id: string; attack_group_id: string },
-    signal?: AbortSignal,
-  ): Promise<PairedOutcomeStatistics> => {
-    const response = await apiClient.get<PairedOutcomeStatistics>(
-      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes`,
-      { params, signal },
-    )
-    return response.data
-  },
 
   getQueue: async (signal?: AbortSignal): Promise<ScenarioQueueSnapshot> => {
     const response = await apiClient.get('/scenarios/runs/queue', { signal })

@@ -55,19 +55,11 @@ def _metadata_to_registered_scenario(
         RegisteredScenario: Public catalog projection.
     """
     estimate = default_run_size or ScenarioRunSizeEstimate.unavailable()
-    from pyrit.executor.attack import PromptSendingAttack
-    from pyrit.models import ComponentIdentifier
-
     return RegisteredScenario(
         scenario_name=metadata.registry_name,
         scenario_type=metadata.class_name,
         scenario_version=metadata.scenario_version,
         supports_objective_scorer=metadata.supports_objective_scorer,
-        baseline_identifier=ComponentIdentifier(
-            class_name=PromptSendingAttack.__name__, class_module=PromptSendingAttack.__module__
-        )
-        if metadata.baseline_policy != "forbidden"
-        else None,
         description=metadata.class_description,
         description_markdown=metadata.description_markdown,
         default_technique=metadata.default_technique,

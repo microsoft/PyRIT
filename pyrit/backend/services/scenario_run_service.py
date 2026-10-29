@@ -101,7 +101,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
-from pyrit.scenario.core import override_default_adversarial_target
+from pyrit.scenario.core import get_default_adversarial_target, override_default_adversarial_target
 
 logger = logging.getLogger(__name__)
 
@@ -121,10 +121,12 @@ _RESTART_INTERRUPTION_REASON = (
 _SHUTDOWN_INTERRUPTION_REASON = "The backend process shut down before this scenario run completed."
 _USER_CANCELLATION_REASON = "Run was cancelled by user"
 _LAUNCH_REQUEST_METADATA_KEY = "scenario_launch_request_v1"
+_LAUNCH_REFERENCES_METADATA_KEY = "scenario_launch_references_v1"
 _RESERVED_INITIAL_METADATA_KEYS = frozenset(
     {
         _SCHEDULER_METADATA_KEY,
         _LAUNCH_REQUEST_METADATA_KEY,
+        _LAUNCH_REFERENCES_METADATA_KEY,
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_STARTED_AT_METADATA_KEY,
     }
@@ -357,18 +359,56 @@ class ScenarioRunService:
         metadata = registry.get_class_metadata(scenario_class)
         if metadata.scenario_version != stored.scenario_version:
             raise ScenarioRunConflictError("The scenario version changed. Start a new configuration explicitly.")
-        if request.objective_scorer is None:
-            original = stored.objective_scorer_identifier
-            current = metadata.default_objective_scorer_identifier
-            if original is None or current is None or original.hash != current.hash:
-                raise ScenarioRunConflictError(
-                    "The saved default scorer changed. Start a new configuration explicitly."
-                )
+        original = stored.objective_scorer_identifier
+        current = metadata.default_objective_scorer_identifier
+        if request.objective_scorer is not None:
+            resolved = self._configuration_resolver.resolve_constructor_kwargs(
+                scenario_class=scenario_class, objective_scorer=request.objective_scorer
+            )
+            current = resolved["objective_scorer"].get_identifier()
+        if original is None or current is None or original.hash != current.hash:
+            raise ScenarioRunConflictError("The saved objective scorer changed. Start a new configuration explicitly.")
         if request.target_name:
             current_target = self._configuration_resolver.resolve_target(target_name=request.target_name)
             original_target = stored.scenario_identifier.objective_target
             if original_target is None or current_target.get_identifier().hash != original_target.hash:
                 raise ScenarioRunConflictError("The saved target changed. Start a new configuration explicitly.")
+        references = stored.metadata.get(_LAUNCH_REFERENCES_METADATA_KEY)
+        has_adversarial_reference = isinstance(references, dict) and "adversarial_target_hash" in references
+        if (
+            request.adversarial_target_name is not None
+            or metadata.uses_default_adversarial_target is True
+            or has_adversarial_reference
+        ):
+            original_hash = references.get("adversarial_target_hash") if isinstance(references, dict) else None
+            if not isinstance(original_hash, str):
+                raise ScenarioRunConflictError(
+                    "The saved adversarial target identity is unavailable. Start a new configuration explicitly."
+                )
+            target = self._configuration_resolver.resolve_adversarial_target(
+                target_name=request.adversarial_target_name
+            )
+            target = target if target is not None else get_default_adversarial_target()
+            if target.get_identifier().hash != original_hash:
+                raise ScenarioRunConflictError(
+                    "The saved adversarial target changed. Start a new configuration explicitly."
+                )
+
+    def _capture_launch_references(
+        self, *, request: RunScenarioRequest, scenario_class: type[Scenario]
+    ) -> dict[str, str]:
+        """
+        Pin the resolved adversarial default before a new run is initialized.
+
+        Returns:
+            dict[str, str]: The selected adversarial target hash, if this run uses one.
+        """
+        metadata = ScenarioRegistry.get_registry_singleton().get_class_metadata(scenario_class)
+        if request.adversarial_target_name is None and metadata.uses_default_adversarial_target is not True:
+            return {}
+        target = self._configuration_resolver.resolve_adversarial_target(target_name=request.adversarial_target_name)
+        target = target if target is not None else get_default_adversarial_target()
+        return {"adversarial_target_hash": target.get_identifier().hash}
 
     async def get_conversation_async(
         self, *, scenario_result_id: str, conversation_id: str
@@ -1515,6 +1555,15 @@ class ScenarioRunService:
             launch_request["include_baseline"] = (
                 baseline if baseline is not None else scenario_class.BASELINE_ATTACK_POLICY.value == "enabled"
             )
+        references = (
+            {
+                _LAUNCH_REFERENCES_METADATA_KEY: await run_legacy_sync_async(
+                    self._capture_launch_references, request=request, scenario_class=scenario_class
+                )
+            }
+            if request.scenario_result_id is None
+            else {}
+        )
         return await scenario_registry.create_and_initialize_async(
             request.scenario_name,
             scenario_params=request.scenario_params or {},
@@ -1526,6 +1575,7 @@ class ScenarioRunService:
                 **(initial_metadata or {}),
                 _SCHEDULER_METADATA_KEY: _SCHEDULER_METADATA_VALUE,
                 _LAUNCH_REQUEST_METADATA_KEY: launch_request,
+                **references,
             },
             **init_kwargs,
         )
@@ -2502,9 +2552,10 @@ class ScenarioRunService:
         for execution in snapshot.executions:
             identifier = execution.atomic_attack_identifier
             attribution = execution.attribution
-            if attribution is None or attribution.parent_id != scenario_result_id:
+            conversation_id = execution.current_conversation_id
+            if attribution is None or attribution.parent_id != scenario_result_id or conversation_id is None:
                 continue
-            conversations.extend(
+            conversations.append(
                 ScenarioActiveConversation(
                     attack_result_id=execution.attack_result_id,
                     conversation_id=conversation_id,
@@ -2524,7 +2575,6 @@ class ScenarioRunService:
                     if identifier is not None
                     else [],
                 )
-                for conversation_id in execution.conversation_ids
             )
         return conversations
 

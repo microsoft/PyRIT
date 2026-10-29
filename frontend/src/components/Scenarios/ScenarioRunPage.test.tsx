@@ -47,7 +47,10 @@ const COUNTS = { completed: 2, planned: 2, succeeded: 1, success_percentage: 50,
 const SUMMARY: ScenarioProgressSummary = {
   overall: COUNTS, objective_scorer: SCORER,
   techniques: [{ ...COUNTS, id: 'direct', display_group: 'Direct', atomic_attack_names: ['PromptSendingAttack'], atomic_group_ids: ['group'], tags: [] }],
-  seed_groups: PLAN.seed_groups.map((seed) => ({ ...COUNTS, id: seed.id, objective: seed.objective, completed: 1, planned: 1 })),
+  seed_groups: PLAN.seed_groups.map((seed, index) => ({
+    ...COUNTS, id: seed.id, objective: seed.objective, completed: 1, planned: 1,
+    succeeded: index === 0 ? 1 : 0, success_percentage: index === 0 ? 100 : 0,
+  })),
   atomic_groups: [{ ...COUNTS, id: 'group', atomic_attack_name: 'PromptSendingAttack', display_group: 'Direct', status: 'RUNNING', technique_details: TECHNIQUE }],
 }
 const RUN = {
@@ -181,6 +184,64 @@ describe('ScenarioRunPage', () => {
     expect(dialog.getAllByRole('row', { name: 'View details for PromptSendingAttack' })).toHaveLength(1)
     await user.click(dialog.getByRole('row', { name: 'View details for PromptSendingAttack' }))
     expect(await screen.findByRole('button', { name: 'Close attack details' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Close attack details' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'First objective' })).toHaveFocus())
+  })
+
+  it('shows per-group and per-objective success rates without restoring paired outcomes', () => {
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByText('Attack success 50%', { exact: true })).toBeInTheDocument()
+    const objectives = within(screen.getByRole('table', { name: 'Datasets and objectives' }))
+    expect(objectives.getByRole('row', { name: /First objective/ })).toHaveTextContent('100%')
+    expect(objectives.getByRole('row', { name: /Second objective/ })).toHaveTextContent('0%')
+    expect(screen.queryByRole('heading', { name: 'Paired outcomes' })).not.toBeInTheDocument()
+  })
+
+  it('keeps elapsed-clock updates local instead of rebuilding result groups every second', async () => {
+    jest.useFakeTimers()
+    jest.setSystemTime(new Date('2026-01-01T00:00:02Z'))
+    try {
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      expect(screen.getByText('1s elapsed')).toBeInTheDocument()
+      const renders = jest.mocked(useScenarioRunProgress).mock.calls.length
+      await act(async () => { jest.advanceTimersByTime(3_000) })
+      expect(screen.getByText('4s elapsed')).toBeInTheDocument()
+      expect(jest.mocked(useScenarioRunProgress).mock.calls.length).toBe(renders)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('announces a terminal transition through the existing live region', () => {
+    const view = render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const announcement = within(screen.getByTestId('scenario-run-page')).getByRole('status')
+    expect(announcement).toBeEmptyDOMElement()
+    state = makeState({ run: { ...RUN, status: 'COMPLETED', completed_at: '2026-01-01T00:00:10Z' } })
+    view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(announcement).toHaveTextContent('test.scenario: completed.')
+  })
+
+  it('shows only conditional operational facts with compact optional overload details', async () => {
+    const user = userEvent.setup()
+    state = makeState({
+      plan: null, planComplete: false,
+      summary: { ...SUMMARY, unattributed_attempts: 3 },
+      overloadSummaries: [{
+        component_role: 'objective_target', count: 2, rate_limit_count: 2, server_error_count: 0,
+        status_codes: [429], latest_timestamp: '2026-01-01T00:00:10Z',
+      }],
+    })
+    const view = render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const notice = within(screen.getByLabelText('Scan notices'))
+    expect(notice.getByText(/Service overload detected/)).toBeInTheDocument()
+    expect(notice.getByText(/3 executions could not be matched/)).toBeInTheDocument()
+    expect(notice.getByText(/saved execution plan is incomplete/)).toBeInTheDocument()
+    expect(notice.queryByText(/HTTP 429/)).not.toBeInTheDocument()
+    await user.click(notice.getByRole('button', { name: 'Overload details' }))
+    expect(notice.getByText('objective target: 2 (HTTP 429)')).toBeInTheDocument()
+    state = makeState()
+    view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.queryByLabelText('Scan notices')).not.toBeInTheDocument()
   })
 
   it('shows the stored scenario identity without a field grid', async () => {

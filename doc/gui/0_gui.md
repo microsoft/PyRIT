@@ -74,6 +74,8 @@ errors, and results, with links to individual attacks and conversations.
 Expand an attack group or objective to inspect its attempts. Technique, scorer,
 dataset/seed provenance, and scenario settings use inline identity JSON.
 Decided attack outcomes use **True** and **False**; execution errors remain separate.
+Groups and objectives show success rates and completion counts separately.
+The results page does not include a paired-outcome comparison.
 
 **Watch live conversation** opens saved messages while an attack runs. This view
 is read-only and refreshes saved messages; it has no send controls. **Cancel scan**
@@ -82,8 +84,9 @@ have scan cancellation controls.
 
 **Rerun** opens the scenario launch page with saved settings filled in. It does
 not start work or change the original run. Review or edit the settings before
-launching. Settings that cannot be restored produce an error instead of silently
-using current defaults. See the
+launching. Recorded target/scorer identities and the scenario version are checked.
+Settings that cannot be restored, including older records without a required identity,
+produce an error instead of silently using current defaults. See the
 [scanner guide](../scanner/0_scanner.md) for the scenario model.
 
 ![Scanner page with available scenarios](images/scanner.png)
@@ -93,7 +96,7 @@ using current defaults. See the
 Select **technique.execute** in Scanner to run one attack technique against
 one free-text objective. This is not Chat: the selected technique controls
 the attack, rather than you writing each turn. You can adjust its configuration
-for this run and add a baseline comparison.
+for this run and include a baseline attack for reference.
 
 For techniques that support conversation history, start with a stored or edited
 conversation. **Use in scan** in Chat copies a conversation into this setup

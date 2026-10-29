@@ -975,6 +975,7 @@ class TestScenarioRunServiceStartRun:
             initial_metadata={
                 _svc_mod._SCHEDULER_METADATA_KEY: _svc_mod._SCHEDULER_METADATA_VALUE,
                 _svc_mod._LAUNCH_REQUEST_METADATA_KEY: ANY,
+                _svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {},
             },
             objective_target=objective_target,
             max_concurrency=10,

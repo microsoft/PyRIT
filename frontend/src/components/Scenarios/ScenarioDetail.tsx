@@ -1600,7 +1600,7 @@ function ScenarioLaunchForm({
                     {expanded && <div id={regionId} role="region" aria-label={`Identity for ${technique.name}`}
                       className={mergeClasses(styles.identityRegion, identityStyles.details)}>
                       {technique.identifier ? <pre className={identityStyles.json}>{JSON.stringify(technique.identifier, null, 2)}</pre>
-                        : <Text>Identity was not recorded for this technique.</Text>}
+                        : <Text>{technique.isBaseline ? 'Baseline identity is available after launch.' : 'Identity was not recorded for this technique.'}</Text>}
                     </div>}
                   </div>
                   )

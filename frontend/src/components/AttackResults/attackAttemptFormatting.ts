@@ -1,6 +1,15 @@
-import type { ScenarioProgressResult } from '@/types'
+import type { ScenarioProgressCounts, ScenarioProgressResult } from '@/types'
+import { formatAnalyticsPercent } from '@/utils/attackAnalytics'
 
 const OBJECTIVE_PREVIEW_LENGTH = 96
+
+export function formatProgressSuccess(counts: ScenarioProgressCounts): string {
+  if (counts.outcomes) {
+    return counts.outcomes.success_rate_decided === null ? 'Undetermined'
+      : formatAnalyticsPercent(counts.outcomes.success_rate_decided)
+  }
+  return counts.success_percentage === null ? 'Undetermined' : `${counts.success_percentage}%`
+}
 
 /**
  * Formatting for a single attack attempt.

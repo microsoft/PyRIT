@@ -2057,31 +2057,6 @@ export interface ScenarioRunPlanSeedPrompt {
   parameters: string[]
 }
 
-export interface PairedOutcomeStatistics {
-  baseline_group_id: string
-  attack_group_id: string
-  planned_pairs: number
-  decided_pairs: number
-  excluded_pairs: number
-  failure_to_success: number
-  success_to_failure: number
-  failure_to_failure: number
-  success_to_success: number
-  baseline_success_rate: number | null
-  attack_success_rate: number | null
-  paired_difference: number | null
-  missing_baseline: number
-  missing_attack: number
-  missing_both: number
-  baseline_errors: number
-  attack_errors: number
-  baseline_undetermined: number
-  attack_undetermined: number
-  unmatched_baseline_seeds: number
-  unmatched_attack_seeds: number
-  unattributed_attempts: number
-}
-
 export interface ScenarioRunPlanAtomicGroup {
   kind?: 'baseline' | 'attack' | 'adaptive' | 'unknown' | null
   id: string

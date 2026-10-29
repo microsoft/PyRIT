@@ -43,6 +43,7 @@ class ActiveAttackExecution:
     attack_result_id: str
     objective: str
     conversation_ids: tuple[str, ...]
+    current_conversation_id: str | None
     started_at: datetime
     attribution: AttackResultAttribution | None
     atomic_attack_identifier: AtomicAttackIdentifier | None
@@ -168,7 +169,7 @@ class AttackExecutor:
         if max_concurrency <= 0:
             raise ValueError(f"max_concurrency must be a positive integer, got {max_concurrency}")
         self._max_concurrency = max_concurrency
-        self._active_contexts: dict[int, tuple[AttackContext[Any], datetime]] = {}
+        self._active_contexts: dict[int, tuple[AttackContext[Any], datetime, AttackStrategy[Any, Any]]] = {}
         # The semaphore is created lazily, NOT here. asyncio synchronization primitives
         # (Semaphore, Lock, Event, ...) bind to whichever event loop is running on their
         # first await and raise ``RuntimeError: <Semaphore> is bound to a different event
@@ -183,20 +184,24 @@ class AttackExecutor:
     @property
     def active_executions(self) -> tuple[ActiveAttackExecution, ...]:
         """Snapshot in-flight attempts without changing execution or persistence."""
-        return tuple(
-            ActiveAttackExecution(
-                attack_result_id=result_id,
-                objective=context.objective,
-                conversation_ids=tuple(sorted(context.objective_conversation_ids)),
-                started_at=started_at,
-                attribution=context._attribution,
-                atomic_attack_identifier=context._atomic_attack_identifier.model_copy(deep=True)
-                if context._atomic_attack_identifier is not None
-                else None,
-            )
-            for context, started_at in self._active_contexts.values()
-            if (result_id := context.attack_result_id) is not None
-        )
+        executions: dict[str, ActiveAttackExecution] = {}
+        for context, started_at, strategy in self._active_contexts.values():
+            result_id = context.attack_result_id
+            if result_id is not None:
+                executions[result_id] = ActiveAttackExecution(
+                    attack_result_id=result_id,
+                    objective=context.objective,
+                    conversation_ids=context.objective_conversation_ids,
+                    current_conversation_id=context.current_objective_conversation_id,
+                    started_at=started_at,
+                    attribution=context._attribution,
+                    atomic_attack_identifier=context._atomic_attack_identifier.model_copy(deep=True)
+                    if context._atomic_attack_identifier is not None
+                    else None,
+                )
+            for child in strategy.active_executions:
+                executions[child.attack_result_id] = child
+        return tuple(executions.values())
 
     def _get_semaphore(self) -> asyncio.Semaphore:
         """
@@ -494,7 +499,7 @@ class AttackExecutor:
                 if task_attribution is not None:
                     context._attribution = task_attribution
                 context_key = id(context)
-                self._active_contexts[context_key] = (context, datetime.now(UTC))
+                self._active_contexts[context_key] = (context, datetime.now(UTC), attack)
                 try:
                     return await attack.execute_with_context_async(context=context)
                 finally:

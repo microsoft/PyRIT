@@ -9,13 +9,14 @@ import threading
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from typing import Any, ClassVar
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
 from pyrit.backend.models.attacks import ConversationMessagesResponse
 from pyrit.backend.services.attack_service import AttackService
 from pyrit.backend.services.scenario_run_service import (
+    _LAUNCH_REFERENCES_METADATA_KEY,
     _LAUNCH_REQUEST_FIELDS,
     _LAUNCH_REQUEST_METADATA_KEY,
     _OPTIONAL_LAUNCH_FIELDS,
@@ -26,11 +27,18 @@ from pyrit.backend.services.scenario_run_service import (
 )
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.exceptions import ScenarioPartialFailureException
-from pyrit.executor.attack import AttackScoringConfig, ManyShotJailbreakAttack, PromptSendingAttack
+from pyrit.executor.attack import (
+    AttackScoringConfig,
+    ManyShotJailbreakAttack,
+    PromptSendingAttack,
+    SequentialAttack,
+    SequentialChildAttack,
+)
 from pyrit.executor.attack.single_turn import many_shot_jailbreak
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
+    AtomicAttackIdentifier,
     AttackOutcome,
     ComponentIdentifier,
     DatasetFetchPolicy,
@@ -41,6 +49,7 @@ from pyrit.models import (
     Parameter,
     ScenarioDatasetRequest,
     ScenarioResult,
+    ScenarioRunPlanGroupKind,
     ScenarioRunState,
     Seed,
     SeedDataset,
@@ -48,7 +57,7 @@ from pyrit.models import (
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioRunSummary
 from pyrit.models.seeds import yaml_seed_loader
-from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, IncompatibleTechniquePolicy
 from pyrit.scenario.core import (
     AtomicAttack,
@@ -173,6 +182,108 @@ async def _shutdown_after_launch_async(
         launch.cancel()
     await asyncio.gather(launch, return_exceptions=True)
     await service.shutdown_async()
+
+
+@pytest.mark.parametrize("depth", [0, 1, 2])
+@pytest.mark.parametrize("cancel", [False])
+async def test_real_scenario_live_retry_observation_and_terminal_ownership_async(
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], depth: int, cancel: bool
+) -> None:
+    service, target = resume_environment
+    entered, release = asyncio.Event(), asyncio.Event()
+    conversations: list[str] = []
+    original_send = target._send_prompt_to_target_async
+
+    async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        conversations.append(normalized_conversation[-1].get_piece().conversation_id)
+        if len(conversations) == 2:
+            entered.set()
+            await release.wait()
+        return await original_send(normalized_conversation=normalized_conversation)
+
+    async def build_async(self: Scenario, *, context: ScenarioContext) -> list[AtomicAttack]:
+        seed = context.seed_groups[0]
+        scorer = SubStringScorer(substring="never matches the response")
+        strategy = PromptSendingAttack(
+            objective_target=context.objective_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=scorer),
+            max_attempts_on_failure=1,
+        )
+        for _ in range(depth):
+            strategy = SequentialAttack(
+                objective_target=context.objective_target,
+                child_attacks=[
+                    SequentialChildAttack(
+                        strategy=strategy,
+                        seed_group=seed,
+                        atomic_attack_identifier=AtomicAttackIdentifier.build(
+                            attack_identifier=strategy.get_identifier(), seed_group=seed
+                        ),
+                    )
+                ],
+            )
+        return [
+            AtomicAttack(
+                atomic_attack_name="live",
+                attack_technique=AttackTechnique(attack=strategy),
+                seed_groups=[seed],
+                memory_labels=context.memory_labels,
+                group_kind=ScenarioRunPlanGroupKind.ADAPTIVE if depth else ScenarioRunPlanGroupKind.ATTACK,
+            )
+        ]
+
+    with (
+        patch.object(_OfflineResumeScenario, "_build_atomic_attacks_async", new=build_async),
+        patch.object(target, "_send_prompt_to_target_async", side_effect=send_async),
+    ):
+        response = await service.start_run_async(
+            request=RunScenarioRequest(
+                scenario_name=_SCENARIO_NAME,
+                target_name=_TARGET_NAME,
+                include_baseline=False,
+                max_concurrency=1,
+                max_retries=0,
+            )
+        )
+        run_id = response.scenario_result_id
+        try:
+            await asyncio.wait_for(entered.wait(), TEST_WATCHDOG_SECONDS)
+            progress = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=500)
+            assert progress is not None and len(progress.active_conversations) == 1
+            active = progress.active_conversations[0]
+            assert active.conversation_id == conversations[-1]
+            executions = service._active_tasks[run_id].scenario.active_executions
+            observed = next(item for item in executions if item.attack_result_id == active.attack_result_id)
+            assert observed.conversation_ids == tuple(conversations)
+            assert observed.current_conversation_id == conversations[-1]
+            assert (
+                await service.get_conversation_async(scenario_result_id=run_id, conversation_id=conversations[0])
+                is not None
+            )
+            assert (
+                await service.get_conversation_async(
+                    scenario_result_id=str(uuid.uuid4()), conversation_id=conversations[-1]
+                )
+                is None
+            )
+            if cancel:
+                await service.cancel_run_async(scenario_result_id=run_id)
+            else:
+                release.set()
+                await _wait_for_run_completion_async(service=service, scenario_result_id=run_id)
+            final = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=500)
+            assert final is not None and not final.active_conversations
+            assert final.run.status == (ScenarioRunState.CANCELLED if cancel else ScenarioRunState.COMPLETED)
+            assert (
+                await service.get_conversation_async(scenario_result_id=run_id, conversation_id=conversations[-1])
+                is not None
+            )
+            assert (
+                await service.get_conversation_async(scenario_result_id=run_id, conversation_id=conversations[0])
+                is not None
+            )
+        finally:
+            release.set()
 
 
 async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
@@ -921,6 +1032,83 @@ async def test_rerun_rejects_changed_target_instead_of_using_current_defaults_as
     ):
         with pytest.raises(ScenarioRunConflictError, match="saved target changed"):
             await service.get_launch_configuration_async(str(stored.id))
+
+
+@pytest.mark.parametrize("implicit", [False, True])
+async def test_rerun_pins_selected_adversarial_identity_and_rejects_replacement_async(
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], implicit: bool
+) -> None:
+    service, _ = resume_environment
+    registry = TargetRegistry.get_registry_singleton()
+    adversarial = MockPromptTarget()
+    registry_name = "adversarial_chat" if implicit else "saved-adversarial"
+    registry.instances.register(adversarial, name=registry_name)
+    with patch.object(
+        _OfflineResumeScenario, "uses_default_adversarial_target", new_callable=PropertyMock, return_value=True
+    ):
+        response = await service.start_run_async(
+            request=RunScenarioRequest(
+                scenario_name=_SCENARIO_NAME,
+                target_name=_TARGET_NAME,
+                adversarial_target_name=None if implicit else registry_name,
+                include_baseline=False,
+            )
+        )
+    await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
+    stored = await service._memory.get_scenario_result_header_async(scenario_result_id=response.scenario_result_id)
+    assert stored is not None
+    assert (
+        stored.metadata[_LAUNCH_REFERENCES_METADATA_KEY]["adversarial_target_hash"] == adversarial.get_identifier().hash
+    )
+    restored = await service.get_launch_configuration_async(response.scenario_result_id)
+    assert restored is not None and restored.adversarial_target_name == (None if implicit else registry_name)
+
+    class ReplacementAdversarial(MockPromptTarget):
+        pass
+
+    registry.instances.unregister(registry_name)
+    registry.instances.register(ReplacementAdversarial(), name=registry_name)
+    with pytest.raises(ScenarioRunConflictError, match="saved adversarial target changed"):
+        await service.get_launch_configuration_async(response.scenario_result_id)
+
+
+async def test_rerun_rejects_unverifiable_old_adversarial_selection_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["adversarial_target_name"] = _TARGET_NAME
+    with patch.object(service._memory, "get_scenario_result_header_async", new_callable=AsyncMock, return_value=stored):
+        with pytest.raises(ScenarioRunConflictError, match="adversarial target identity is unavailable"):
+            await service.get_launch_configuration_async(str(stored.id))
+
+
+@pytest.mark.parametrize("selection", ["unchanged", "registry-drift", "different-valid-reference"])
+async def test_rerun_validates_named_scorer_against_source_and_saved_result_async(
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], selection: str
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    scorer = SubStringScorer(substring="default" if selection == "unchanged" else "changed")
+    original_hash = stored.objective_scorer_identifier.hash
+    stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["objective_scorer"] = {
+        "registry_name": "saved-objective",
+        "identifier_hash": scorer.get_identifier().hash if selection == "different-valid-reference" else original_hash,
+    }
+    with patch.object(ScorerRegistry, "_discover"):
+        scorers = ScorerRegistry()
+    scorers.instances.register(scorer, name="saved-objective")
+    with (
+        patch.object(ScorerRegistry, "get_registry_singleton", return_value=scorers),
+        patch.object(ScenarioRegistry, "supports_objective_scorer", return_value=True),
+        patch.object(service._memory, "get_scenario_result_header_async", new_callable=AsyncMock, return_value=stored),
+    ):
+        if selection == "unchanged":
+            restored = await service.get_launch_configuration_async(str(stored.id))
+            assert restored is not None and restored.objective_scorer.identifier_hash == original_hash
+        else:
+            with pytest.raises(ValueError, match="changed"):
+                await service.get_launch_configuration_async(str(stored.id))
 
 
 async def test_rerun_canonical_dataset_request_remains_a_valid_response_async(
