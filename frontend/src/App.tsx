@@ -575,19 +575,20 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       return
     }
     if (view === 'chat') {
-      if (lastChatLocation.current.path) {
-        navigate(lastChatLocation.current.path, { state: lastChatLocation.current.state })
-        return
-      }
+      if (matchPath(VIEW_PATHS.chat, location.pathname) || routeAttackId !== null) return
       if (draftHandoff.preservedDraft?.originatingPath) {
         navigate(draftHandoff.preservedDraft.originatingPath, { state: draftHandoff.preservedDraft.originatingState })
+        return
+      }
+      if (lastChatLocation.current.path) {
+        navigate(lastChatLocation.current.path, { state: lastChatLocation.current.state })
         return
       }
       navigate(VIEW_PATHS.chat)
       return
     }
     navigate(VIEW_PATHS[view])
-  }, [navigate, draftHandoff.preservedDraft])
+  }, [navigate, draftHandoff.preservedDraft, location.pathname, routeAttackId])
 
   const handleNewAttack = useCallback(() => {
     const id = generateClientId()

@@ -37,10 +37,6 @@ jest.mock('@/components/Datasets/DatasetCatalog', () => ({
   __esModule: true,
   default: () => <h1>Dataset catalog</h1>,
 }))
-jest.mock('@/components/History/AttackHistory', () => ({
-  __esModule: true,
-  default: () => <h1>Attack history</h1>,
-}))
 jest.mock('@/components/Scenarios/ScenarioCatalog', () => ({
   __esModule: true,
   default: () => <h1>Scanner launch</h1>,
@@ -60,8 +56,6 @@ jest.mock('@/components/Layout/MainLayout', () => {
         <button onClick={() => onNavigate('datasets')}>Datasets</button>
         <button onClick={() => onNavigate('chat')}>Chat</button>
         <button onClick={() => onNavigate('scenarios')}>Scanner</button>
-        <button onClick={() => navigate('/attack/chat')}>Open unsaved chat</button>
-        <button onClick={() => navigate('/attack/chat/other')}>Open another attack</button>
         <button onClick={() => navigate('/attack/chat/saved/conversations/main')}>Open saved main</button>
         <button onClick={() => navigate('/attack/chat/saved/conversations/branch')}>Open another conversation</button>
         <button onClick={() => navigate(-1)}>Back</button>
@@ -99,6 +93,9 @@ jest.mock('@/services/api', () => ({
   targetsApi: { listTargets: jest.fn(), getTarget: jest.fn() },
   attacksApi: {
     createAttack: jest.fn(),
+    listAttacks: jest.fn(),
+    getAttackOptions: jest.fn(),
+    getConverterOptions: jest.fn(),
     getAttack: jest.fn(),
     getMessages: jest.fn(),
     getConversations: jest.fn(),
@@ -111,6 +108,7 @@ jest.mock('@/services/api', () => ({
     previewConversion: jest.fn(),
   },
   labelsApi: { getLabels: jest.fn().mockResolvedValue({ labels: {} }) },
+  operationsApi: { list: jest.fn().mockResolvedValue({ items: [] }) },
   datasetsApi: {
     listDatasets: jest.fn().mockResolvedValue({ items: [{
       name: 'Example dataset', selection_key: 'example-dataset',
@@ -181,6 +179,11 @@ async function returnToChat(user: UserEvent): Promise<void> {
   await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
 }
 
+async function visitHistory(user: UserEvent): Promise<void> {
+  await user.click(screen.getByRole('tab', { name: 'History', exact: true }))
+  await screen.findByRole('row', { name: 'Open ManualAttack attack' })
+}
+
 async function addConverter(user: UserEvent): Promise<void> {
   await user.click(screen.getByRole('button', { name: 'Toggle converter panel' }))
   await user.click(await screen.findByRole('combobox', { name: 'Add converter' }))
@@ -201,6 +204,16 @@ describe('App draft handoff with the real chat and composer', () => {
     })
     jest.mocked(targetsApi.getTarget).mockResolvedValue(TARGET)
     jest.mocked(attacksApi.getAttack).mockImplementation(async (id: string) => savedAttack(id))
+    jest.mocked(attacksApi.listAttacks).mockResolvedValue({
+      items: [{
+        ...savedAttack('other'),
+        created_at: '2026-10-28T10:00:00Z',
+        updated_at: '2026-10-28T10:00:00Z',
+      }],
+      pagination: { limit: 25, has_more: false },
+    })
+    jest.mocked(attacksApi.getAttackOptions).mockResolvedValue({ attack_types: ['ManualAttack'] })
+    jest.mocked(attacksApi.getConverterOptions).mockResolvedValue({ converter_types: [] })
     jest.mocked(attacksApi.getMessages).mockImplementation(async (_id: string, conversationId: string) => ({
       conversation_id: conversationId, messages: [], target_response_status: null,
     }))
@@ -256,8 +269,7 @@ describe('App draft handoff with the real chat and composer', () => {
     await user.click(screen.getByRole('button', { name: /add objective/i }))
     await user.type(screen.getByRole('textbox', { name: 'Attack objective' }), 'Unsent objective')
     await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
-    await user.click(screen.getByRole('tab', { name: 'History', exact: true }))
-    await screen.findByRole('heading', { name: 'Attack history' })
+    await visitHistory(user)
     await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
     expect(await screen.findByPlaceholderText('Type prompt here')).toHaveValue('Unsent attack prompt')
     expect(screen.getByRole('button', { name: 'Edit objective' })).toHaveTextContent('Unsent objective')
@@ -298,8 +310,7 @@ describe('App draft handoff with the real chat and composer', () => {
     await user.click(within(cancelDialog).getByRole('button', { name: 'Discard draft' }))
     await waitFor(() => expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument())
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Original unsent prompt')
-    await user.click(screen.getByRole('tab', { name: 'History', exact: true }))
-    await screen.findByRole('heading', { name: 'Attack history' })
+    await visitHistory(user)
     await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
     expect(await screen.findByPlaceholderText('Type prompt here')).toHaveValue('Original unsent prompt')
 
@@ -400,20 +411,48 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
   })
 
-  it('should leave an unsaved draft available when another saved attack is opened', async () => {
+  it('should return to retained work after clean saved-chat inspection through History', async () => {
     const user = userEvent.setup()
     renderChat()
     await user.type(await screen.findByPlaceholderText('Type prompt here'), 'Only for my unsaved chat')
-    await visitDatasets(user)
-    await user.click(screen.getByRole('button', { name: 'Open another attack' }))
+    await visitHistory(user)
+    await user.click(screen.getByRole('row', { name: 'Open ManualAttack attack' }))
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
-    await visitDatasets(user)
-    await returnToChat(user)
-    expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/other')
-    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
-    await user.click(screen.getByRole('button', { name: 'Open unsaved chat' }))
+    await visitHistory(user)
+    await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Only for my unsaved chat'))
+    expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat$/)
+    expect(attacksApi.createAttack).not.toHaveBeenCalled()
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
+  })
+
+  it('should keep newer live work and return to it through History until New attack resets it', async () => {
+    const user = userEvent.setup()
+    renderChat()
+    await user.type(await screen.findByPlaceholderText('Type prompt here'), 'Older working draft')
+    await visitHistory(user)
+    await user.click(screen.getByRole('row', { name: 'Open ManualAttack attack' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Newer work in the saved chat')
+    await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Newer work in the saved chat')
+    await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
+    expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat\/other$/)
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Newer work in the saved chat')
+
+    await visitHistory(user)
+    await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Newer work in the saved chat'))
+    expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat\/other$/)
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+    await visitHistory(user)
+    await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
+    expect(await screen.findByPlaceholderText('Type prompt here')).toHaveValue('')
+    expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat$/)
+    expect(attacksApi.createAttack).not.toHaveBeenCalled()
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
   })
 
   it.each(['operator', 'execution'])('should not consume a draft when its destination becomes %s locked', async (lock: string) => {
@@ -498,9 +537,6 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
     await visitDatasets(user)
     await returnToChat(user)
-    expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/saved/conversations/branch')
-    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
-    await user.click(screen.getByRole('button', { name: 'Open saved main' }))
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Only for the main conversation'))
     expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/saved/conversations/main')
   })

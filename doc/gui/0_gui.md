@@ -37,7 +37,8 @@ workspace. Select a target and write the messages yourself. You can attach media
 and branch or edit conversations to try another approach. Add an objective and
 select a chat scorer if you want automated assessment of responses.
 
-The **Chat** tab returns to your latest chat, including an unsent draft.
+The **Chat** tab returns to your retained draft, or your last chat if there is no draft.
+Selecting **Chat** while a chat is open keeps that chat open.
 Use **New attack** to start a blank draft. The **History** tab
 (`/attack/history`) opens saved attacks in the same conversation viewer. Automated results
 are read-only; **Continue manually** creates a separate manual attack. Export
