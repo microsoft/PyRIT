@@ -81,8 +81,6 @@ The results page does not include a paired-outcome comparison.
 is read-only and refreshes saved messages; it has no send controls. **Cancel scan**
 stops remaining scan work and keeps saved results. Ordinary manual chats do not
 have scan cancellation controls.
-After cancellation, saved messages remain available in the read-only chat.
-Interrupted attempts are recorded as errors so Resume can retry them.
 
 **Rerun** opens the scenario launch page with saved settings filled in. It does
 not start work or change the original run. Review or edit the settings before

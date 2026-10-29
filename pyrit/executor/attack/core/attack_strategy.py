@@ -669,10 +669,6 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         context = event_data.context
         if not error or not context:
             return
-        await self._save_error_result_async(context=context, error=error)
-
-    async def _save_error_result_async(self, *, context: AttackStrategyContextT, error: BaseException) -> None:
-        """Preserve interrupted execution evidence through the normal attributed-result path."""
         if not context._persist_attack_result:
             self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
             return
@@ -682,7 +678,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         retry_events = collector.events if collector else []
 
         # Multi-turn contexts keep the active ID on their conversation session.
-        conversation_id = context.current_objective_conversation_id or getattr(context, "conversation_id", None)
+        conversation_id = getattr(context, "conversation_id", None)
         if not conversation_id:
             conversation_id = getattr(getattr(context, "session", None), "conversation_id", None)
         conversation_id = conversation_id or str(uuid.uuid4())
@@ -695,12 +691,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             outcome_reason=f"Exception: {type(error).__name__}: {str(error)}",
             atomic_attack_identifier=self._build_error_result_identifier(context=context),
             labels=context.memory_labels,
-            related_conversations=context.related_conversations
-            | {
-                ConversationReference(conversation_id=observed, conversation_type=ConversationType.PRUNED)
-                for observed in context.objective_conversation_ids
-                if observed != conversation_id
-            },
+            related_conversations=context.related_conversations,
             error_message=str(error),
             error_type=type(error).__name__,
             error_traceback="".join(traceback.format_exception(type(error), error, error.__traceback__)),
@@ -1099,48 +1090,20 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
                             [attack_error, persistence_error],
                         ) from None
                     raise
-            if context._persist_attack_result:
-                try:
-                    await self._default_event_handler._persist_result_async(result=result)
-                except Exception:
-                    await self._default_event_handler._confirm_result_persistence_async(
-                        context=context, attack_result_id=result.attack_result_id
-                    )
-                    raise
-                context._persisted_attack_result_id = result.attack_result_id
-            return result
-        except asyncio.CancelledError as cancellation:
-            if (
-                context._persist_attack_result
-                and context.objective_conversation_ids
-                and context._persisted_attack_result_id is None
-            ):
-
-                async def preserve_async() -> None:
-                    if context.attack_result_id is not None:
-                        await self._default_event_handler._confirm_result_persistence_async(
-                            context=context, attack_result_id=context.attack_result_id
-                        )
-                    if context._persisted_attack_result_id is None:
-                        await self._default_event_handler._save_error_result_async(context=context, error=cancellation)
-
-                publication = asyncio.create_task(preserve_async())
-                while not publication.done():
-                    try:
-                        await asyncio.shield(publication)
-                    except asyncio.CancelledError:
-                        continue
-                publication.result()
-                if context._error_result_persistence_error is not None:
-                    self._logger.error(
-                        "Could not preserve cancelled attack result %s.",
-                        context.attack_result_id,
-                        exc_info=context._error_result_persistence_error,
-                    )
-            raise
         finally:
             context._objective_target_conversation_lifecycle = None
             context._error_result_identifier_builder = None
+
+        if context._persist_attack_result:
+            try:
+                await self._default_event_handler._persist_result_async(result=result)
+            except Exception:
+                await self._default_event_handler._confirm_result_persistence_async(
+                    context=context, attack_result_id=result.attack_result_id
+                )
+                raise
+            context._persisted_attack_result_id = result.attack_result_id
+        return result
 
     async def _resolve_operation_async(self, *, context: AttackStrategyContextT) -> None:
         """
