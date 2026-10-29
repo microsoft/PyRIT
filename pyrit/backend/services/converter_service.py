@@ -71,6 +71,7 @@ class ConverterService:
         self._registry = ConverterRegistry.get_registry_singleton()
         self._upload_directory = TemporaryDirectory(prefix="pyrit-registry-uploads-")
         self._upload_path = Path(self._upload_directory.name).resolve()
+        self._artifact_lock = asyncio.Lock()
         self._provenance_key = secrets.token_bytes(32)
 
     def _build_instance_from_object(self, *, converter_id: str, converter_obj: Any) -> ConverterInstance:
@@ -196,13 +197,21 @@ class ConverterService:
         Returns:
             bool: True when an instance was removed, otherwise False.
         """
-        entry = self._registry.instances.get_entry(converter_id)
-        if entry is None:
-            return False
+        async with self._artifact_lock:
+            entry = self._registry.instances.get_entry(converter_id)
+            if entry is None:
+                return False
 
-        owned_paths = self._get_owned_artifact_paths(entry.metadata)
-        await self._remove_owned_artifacts_async(paths=owned_paths)
-        return self._registry.instances.unregister(converter_id, expected_entry=entry) is not None
+            owned_paths = self._get_owned_artifact_paths(entry.metadata)
+            shared_paths = {
+                path
+                for other in self._registry.instances.get_all_instances()
+                if other is not entry
+                for path in self._get_owned_artifact_paths(other.metadata)
+            }
+            owned_paths = [path for path in owned_paths if path not in shared_paths]
+            await self._remove_owned_artifacts_async(paths=owned_paths)
+            return self._registry.instances.unregister(converter_id, expected_entry=entry) is not None
 
     async def create_converter_async(
         self, *, request: CreateConverterRequest
@@ -256,24 +265,39 @@ class ConverterService:
                     self._registry.create_instance_from_external_input, request.type, params=params
                 )
             )
+            if (
+                request.source
+                and request.source.effective_hash
+                and (converter_obj.get_identifier().hash != request.source.effective_hash)
+            ):
+                raise ValueError("Temporary converter configuration has changed")
             if not request.register:
-                if (
-                    request.source
-                    and request.source.effective_hash
-                    and (converter_obj.get_identifier().hash != request.source.effective_hash)
-                ):
-                    raise ValueError("Temporary converter configuration has changed")
                 return UnregisteredConverter(
                     identifier=ConverterIdentifier.from_component_identifier(converter_obj.get_identifier())
                 )
             if request.name is None:
                 raise ValueError("name is required when register=true")
             converter = self._build_instance_from_object(converter_id=request.name, converter_obj=converter_obj)
-            self._registry.instances.register(
-                converter_obj,
-                name=request.name,
-                metadata={_OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in owned_paths]},
-            )
+            # Do not inherit files while deletion is already removing them.
+            async with self._artifact_lock:
+                inherited_paths: list[Path] = []
+                if request.source:
+                    self._registry.resolve_source(
+                        name=request.source.source_name, identifier_hash=request.source.source_hash
+                    )
+                    inherited_paths = [
+                        path
+                        for entry in self._registry.instances.get_all_instances()
+                        if entry.instance is source
+                        for path in self._get_owned_artifact_paths(entry.metadata)
+                    ]
+                self._registry.instances.register(
+                    converter_obj,
+                    name=request.name,
+                    metadata={
+                        _OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in dict.fromkeys(owned_paths + inherited_paths)]
+                    },
+                )
         except (Exception, asyncio.CancelledError):
             if request.register:
                 await self._remove_owned_artifacts_async(paths=owned_paths)

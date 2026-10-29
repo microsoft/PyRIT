@@ -48,6 +48,7 @@ from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.results.attack_result import AttackScoringInputs
 from pyrit.registry import ScorerRegistry
 from pyrit.score import ManualScorer, MessageToolCallScorer, SubStringScorer
+from unit.async_utils import wait_for_completion_async, wait_for_worker_ready_async
 from unit.mocks import MockPromptTarget
 
 
@@ -662,7 +663,7 @@ async def test_late_score_does_not_overwrite_changed_settings_async(
             service.add_message_async(attack_result_id=attack.attack_result_id, request=chat_request(attack))
         )
         try:
-            await asyncio.wait_for(entered.wait(), 10)
+            await wait_for_worker_ready_async(started=entered, operation=task)
             update = (
                 UpdateAttackRequest(objective="New objective")
                 if change == "objective"
@@ -671,7 +672,7 @@ async def test_late_score_does_not_overwrite_changed_settings_async(
             await AttackService().update_attack_async(attack_result_id=attack.attack_result_id, request=update)
         finally:
             release.set()
-            await task
+            await wait_for_completion_async(future=task)
     [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
     assert stored.automated_score is None
     assert stored.get_scoring_failure(stored.conversation_id) is None

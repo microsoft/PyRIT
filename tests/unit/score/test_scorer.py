@@ -38,6 +38,7 @@ from pyrit.score import (
     FloatScaleScorer,
     FloatScaleThresholdScorer,
     JsonSchemaResponseHandler,
+    LegacyScorerHookError,
     MessageFloatScaleScorer,
     MessageScorable,
     MessageScorer,
@@ -2308,7 +2309,7 @@ class TestLegacyDirectScorerSubclass:
         with (
             patch.object(legacy_class, "CONDITION_TYPE", AnswerMatches),
             pytest.warns(DeprecationWarning, match="_score_async"),
-            pytest.raises(RuntimeError, match="matched typed conditions"),
+            pytest.raises(LegacyScorerHookError, match="matched typed conditions"),
         ):
             await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
         assert scorer.scored_messages == []
