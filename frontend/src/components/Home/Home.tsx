@@ -29,16 +29,13 @@ import type { ViewName } from '@/components/Sidebar/Navigation'
 import { useRuntime } from '@/hooks/useRuntime'
 import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { AttackOutcome, AttackSummary, OperationListItem, ScenarioRunListItem, ScenarioRunState } from '@/types'
+import type { AttackSummary, OperationListItem, ScenarioRunListItem, ScenarioRunState } from '@/types'
 import { scenarioRunRoutePath } from '@/utils/routeParams'
 
 import { useHomeStyles } from './Home.styles'
 
 const RECENT_WORK_LIMIT = 5
 const VISIBLE_OPERATIONS_LIMIT = 3
-const ATTACK_OUTCOME_LABELS: Record<AttackOutcome, string> = {
-  success: 'Objective achieved', failure: 'Not achieved', error: 'Error', undetermined: 'Undetermined',
-}
 const SCAN_STATUS_LABELS: Record<ScenarioRunState, string> = {
   CREATED: 'Created', QUEUED: 'Queued', IN_PROGRESS: 'Executing',
   COMPLETED: 'Completed', FAILED: 'Failed', CANCELLED: 'Cancelled',
@@ -146,8 +143,7 @@ export default function Home({
       title: attack.objective || attack.last_message_preview || attack.attack_type,
       operationName: attack.operation_name,
       updatedAt: attack.updated_at,
-      badge: <OutcomeBadge outcome={attack.outcome} appearance="tint"
-        label={ATTACK_OUTCOME_LABELS[attack.outcome ?? 'undetermined']} />,
+      badge: <OutcomeBadge outcome={attack.outcome} appearance="tint" />,
       open: () => { onOpenAttack(attack.attack_result_id) },
     })),
     ...scans.map((scan: ScenarioRunListItem): RecentItem => ({

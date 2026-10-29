@@ -70,6 +70,8 @@ describe('Home', () => {
     mockOperations.mockResolvedValue({ items: [] })
   })
 
+  afterEach(() => { jest.restoreAllMocks() })
+
   it('should prioritize workflows and only read summaries on entry', async () => {
     render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
     expect(screen.getAllByRole('heading', { level: 2 }).map((heading: HTMLElement) => heading.textContent))
@@ -110,7 +112,7 @@ describe('Home', () => {
     await waitFor(() => { expect(within(list).getAllByRole('button')).toHaveLength(2) })
     expect(within(list).getAllByRole('button')[0]).toHaveTextContent('Safety scan')
     expect(within(list).getByText('Executing')).toBeInTheDocument()
-    expect(within(list).getByText('Undetermined')).toBeInTheDocument()
+    expect(within(list).getByText('undetermined')).toBeInTheDocument()
     await user.click(screen.getByRole('tab', { name: 'Attacks', exact: true }))
     expect(within(list).queryByText('Safety scan')).not.toBeInTheDocument()
     await user.click(within(list).getByRole('button'))
@@ -132,6 +134,72 @@ describe('Home', () => {
     const list = screen.getByRole('list')
     expect(within(list).getAllByRole('button')).toHaveLength(5)
     expect(within(list).getAllByRole('button')[0]).toHaveTextContent('Safety scan')
+  })
+
+  it.each<[AttackSummary['outcome'], string]>([
+    ['success', 'success'], ['failure', 'failure'], ['error', 'error'], ['undetermined', 'undetermined'],
+    [null, 'undetermined'], [undefined, 'undetermined'],
+  ])('should use the shared attack outcome label for %s', async (outcome: AttackSummary['outcome'], label: string) => {
+    mockAttacks.mockResolvedValue({ items: [attack({ outcome })], pagination: PAGINATION })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    const row = await screen.findByRole('button', { name: /Check the support assistant/ })
+    expect(within(row).getByText(label, { exact: true })).toBeVisible()
+    expect(within(row).queryByText(/Objective achieved|Not achieved/)).not.toBeInTheDocument()
+  })
+
+  it.each<[number, string]>([
+    [60_000, 'Just now'],
+    [0, 'Just now'],
+    [-59_000, 'Just now'],
+    [-60_000, '1m ago'],
+    [-3_599_000, '59m ago'],
+    [-3_600_000, '1h ago'],
+    [-86_399_000, '23h ago'],
+    [-86_400_000, '1d ago'],
+    [-518_400_000, '6d ago'],
+  ])('should format an activity time offset of %s milliseconds as %s', async (offset: number, expected: string) => {
+    const now = Date.parse('2026-10-29T12:00:00Z')
+    jest.spyOn(Date, 'now').mockReturnValue(now)
+    mockAttacks.mockResolvedValue({
+      items: [attack({ updated_at: new Date(now + offset).toISOString() })], pagination: PAGINATION,
+    })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    expect(await screen.findByText(expected, { exact: true })).toBeVisible()
+  })
+
+  it('should show a local date for activity at least a week old', async () => {
+    jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-29T12:00:00Z'))
+    const timestamp = '2026-10-22T12:00:00Z'
+    mockAttacks.mockResolvedValue({ items: [attack({ updated_at: timestamp })], pagination: PAGINATION })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    expect(await screen.findByText(new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })))
+      .toBeVisible()
+  })
+
+  it('should identify an invalid activity time without hiding its saved attack', async () => {
+    mockAttacks.mockResolvedValue({ items: [attack({ updated_at: 'not-a-date' })], pagination: PAGINATION })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    const row = await screen.findByRole('button', { name: /Check the support assistant/ })
+    expect(within(row).getByText('Time unavailable', { exact: true })).toBeVisible()
+  })
+
+  it.each<[string, string]>([
+    ['Attacks', 'No recent attacks'], ['Scans', 'No recent scans'],
+  ])('should show the %s filter empty state when only the other kind has saved work', async (tab: string, message: string) => {
+    const user = userEvent.setup()
+    const availableTitle = tab === 'Attacks' ? 'Safety scan' : 'Check the support assistant'
+    if (tab === 'Attacks') mockScans.mockResolvedValue({ items: [scan()], pagination: PAGINATION })
+    else mockAttacks.mockResolvedValue({ items: [attack()], pagination: PAGINATION })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    await screen.findByRole('button', { name: new RegExp(availableTitle) })
+    await user.click(screen.getByRole('tab', { name: tab, exact: true }))
+    expect(await screen.findByText(message, { exact: true })).toBeVisible()
+    expect(screen.queryByRole('list')).not.toBeInTheDocument()
+    expect(screen.queryByText('Your recent work will appear here')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: 'All', exact: true }))
+    expect(screen.getByRole('button', { name: new RegExp(availableTitle) })).toBeVisible()
+    expect(mockAttacks).toHaveBeenCalledTimes(1)
+    expect(mockScans).toHaveBeenCalledTimes(1)
   })
 
   it.each<[ScenarioRunState, string]>([
