@@ -21,6 +21,7 @@ interface OperationPickerProps {
 export default function OperationPicker({ selection, warning, onSelect, onRetry }: OperationPickerProps) {
   const styles = useLabelsBarStyles()
   const unregisteredId = useId('operation-unregistered')
+  const errorId = useId('operation-error')
   const rootRef = useRef<HTMLDivElement>(null)
   const localInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
@@ -73,7 +74,8 @@ export default function OperationPicker({ selection, warning, onSelect, onRetry 
         <Combobox
           ref={localInputRef}
           className={mergeClasses(styles.operationPicker, warning ? styles.metadataWarning : undefined)}
-          aria-describedby={selection.status === 'unregistered' ? unregisteredId : undefined}
+          aria-describedby={selection.status === 'error' ? errorId
+            : selection.status === 'unregistered' ? unregisteredId : undefined}
           size="small"
           freeform
           open={open}
@@ -135,6 +137,9 @@ export default function OperationPicker({ selection, warning, onSelect, onRetry 
           <Button size="small" className={styles.actionButton} onClick={() => onSelect(null)}>Clear</Button>
         )}
       </div>
+      <span id={errorId} role="alert" aria-atomic="true" className={styles.srOnly}>
+        {selection.status === 'error' ? warning : ''}
+      </span>
       {!loading && error && (
         <MessageBar intent="error"><MessageBarBody>
           {error}{' '}
