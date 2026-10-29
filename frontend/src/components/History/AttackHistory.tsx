@@ -260,7 +260,7 @@ export default function AttackHistory({
         view: 'chat' as const,
       }
     : {
-        text: 'Set an objective default in the registry, or select a target directly in Chat.',
+        text: 'Select a target in Chat to start an attack.',
         label: 'Configure target',
         icon: <SettingsRegular />,
         view: 'registry' as const,

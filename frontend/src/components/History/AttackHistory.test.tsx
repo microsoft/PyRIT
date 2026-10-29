@@ -124,7 +124,7 @@ describe('AttackHistory', () => {
       expect(screen.getByTestId('empty-state')).toBeInTheDocument()
     })
     expect(screen.getByText('No attacks found')).toBeInTheDocument()
-    expect(screen.getByText('Set an objective default in the registry, or select a target directly in Chat.')).toBeInTheDocument()
+    expect(screen.getByText('Select a target in Chat to start an attack.')).toBeInTheDocument()
 
     const configureTargetButton = screen.getByRole('button', { name: 'Configure target' })
     expect(configureTargetButton).toBeEnabled()
