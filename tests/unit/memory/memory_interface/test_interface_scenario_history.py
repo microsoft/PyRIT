@@ -11,12 +11,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import and_, select, text
+from sqlalchemy.dialects import mssql, sqlite
 from unit.mocks import get_mock_target_identifier, make_scenario_result, run_memory_session_async
 
 from pyrit.common.utils import to_sha256
 from pyrit.memory import MemoryInterface, ScenarioHistoryKeysetCursor, SQLiteMemory
+from pyrit.memory._scenario_history import _ScenarioHistoryQueries
 from pyrit.memory.memory_models import AttackResultEntry, ConversationEntry, ScenarioResultEntry
 from pyrit.models import (
+    SCENARIO_CONVERSATIONS_METADATA_KEY,
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
     AttackResult,
@@ -24,6 +27,7 @@ from pyrit.models import (
     Finding,
     FindingEvidence,
     Operation,
+    ScenarioActiveConversation,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
@@ -228,6 +232,151 @@ async def test_history_id_lookup_matches_stored_runs_before_pagination(sqlite_in
     assert [record.scenario_result_id for record in filtered] == [str(scenarios[0].id)]
     unknown, _, _ = await sqlite_instance.get_scenario_run_history_page_async(reference_id=uuid.uuid4())
     assert unknown == []
+
+
+@pytest.mark.parametrize("state", [ScenarioRunState.CANCELLED, ScenarioRunState.COMPLETED])
+async def test_history_id_lookup_matches_verified_interrupted_conversations(
+    *, sqlite_instance: MemoryInterface, state: ScenarioRunState
+) -> None:
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
+    conversation_id, attack_id = uuid.uuid4(), uuid.uuid4()
+    recorded = ScenarioActiveConversation(
+        attack_result_id=str(attack_id),
+        conversation_id=str(conversation_id),
+        atomic_attack_name="attack",
+        objective="objective",
+        started_at=timestamp,
+    ).model_dump(mode="json")
+    scenarios = [
+        _make_scenario(
+            result_id=uuid.UUID(int=index + 10),
+            timestamp=timestamp + timedelta(minutes=index),
+            name=f"Scenario{index}",
+            state=state,
+            labels={"operator": "alice" if index == 0 else "bob"},
+            registry_name="stored.scenario",
+        )
+        for index in range(3)
+    ]
+    scenarios[0].metadata[SCENARIO_CONVERSATIONS_METADATA_KEY] = [recorded, recorded]
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=scenarios)
+    await sqlite_instance.add_conversation_to_memory_async(
+        conversation=Conversation(conversation_id=str(conversation_id), attack_result_id=str(attack_id))
+    )
+
+    for reference_id in (conversation_id, attack_id):
+        records, aggregates, has_more = await sqlite_instance.get_scenario_run_history_page_async(
+            reference_id=reference_id, limit=1
+        )
+        assert [record.scenario_result_id for record in records] == [str(scenarios[0].id)]
+        assert not has_more
+        assert aggregates[str(scenarios[0].id)].unit_count == 0
+        assert await sqlite_instance.get_attack_results_async(scenario_result_id=str(scenarios[0].id)) == []
+        excluded, _, _ = await sqlite_instance.get_scenario_run_history_page_async(
+            reference_id=reference_id, labels={"operator": "bob"}
+        )
+        assert excluded == []
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "labels-only",
+        "non-array",
+        "non-object",
+        "wrong-attack",
+        "wrong-conversation",
+        "missing-conversation",
+        "unowned-conversation",
+        "persisted-other-owner",
+    ],
+)
+async def test_history_id_lookup_rejects_unverified_interrupted_attribution(
+    *, sqlite_instance: MemoryInterface, invalid: str
+) -> None:
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
+    conversation_id, attack_id = uuid.uuid4(), uuid.uuid4()
+    recorded = ScenarioActiveConversation(
+        attack_result_id=str(attack_id),
+        conversation_id=str(conversation_id),
+        atomic_attack_name="attack",
+        objective="objective",
+        started_at=timestamp,
+    ).model_dump(mode="json")
+    scenarios = [
+        _make_scenario(
+            result_id=uuid.UUID(int=index + 10),
+            timestamp=timestamp,
+            name=f"Scenario{index}",
+            state=ScenarioRunState.CANCELLED,
+            labels={
+                "operator": str(index),
+                "conversation_id": str(conversation_id),
+                "attack_result_id": str(attack_id),
+            },
+        )
+        for index in range(2)
+    ]
+    records: object = [recorded]
+    if invalid == "labels-only":
+        records = []
+    elif invalid == "non-array":
+        records = recorded
+    elif invalid == "non-object":
+        records = ["invalid", 5, None, [recorded]]
+    elif invalid == "wrong-attack":
+        recorded["attack_result_id"] = str(uuid.uuid4())
+    elif invalid == "wrong-conversation":
+        recorded["conversation_id"] = str(uuid.uuid4())
+    scenarios[0].metadata[SCENARIO_CONVERSATIONS_METADATA_KEY] = records
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=scenarios)
+    if invalid != "missing-conversation":
+        await sqlite_instance.add_conversation_to_memory_async(
+            conversation=Conversation(
+                conversation_id=str(conversation_id),
+                attack_result_id=None if invalid == "unowned-conversation" else str(attack_id),
+            )
+        )
+    expected: list[str] = []
+    if invalid == "persisted-other-owner":
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                AttackResult(
+                    attack_result_id=str(attack_id),
+                    conversation_id=str(conversation_id),
+                    objective="objective",
+                    outcome=AttackOutcome.FAILURE,
+                    execution_time_ms=1,
+                    timestamp=timestamp,
+                    attribution_parent_id=str(scenarios[1].id),
+                )
+            ]
+        )
+        expected = [str(scenarios[1].id)]
+
+    for reference_id in (conversation_id, attack_id):
+        page, _, has_more = await sqlite_instance.get_scenario_run_history_page_async(reference_id=reference_id)
+        assert [record.scenario_result_id for record in page] == expected
+        assert not has_more
+        excluded, _, _ = await sqlite_instance.get_scenario_run_history_page_async(
+            reference_id=reference_id, labels={"operator": "0"}
+        )
+        assert excluded == []
+
+
+@pytest.mark.parametrize("dialect_name", ["sqlite", "mssql"])
+def test_recorded_history_lookup_compiles_correlated_verified_read(dialect_name: str) -> None:
+    reference_id = uuid.uuid4()
+    statement = select(ScenarioResultEntry.id).where(_ScenarioHistoryQueries._recorded_conversation_match(reference_id))
+    dialect = sqlite.dialect() if dialect_name == "sqlite" else mssql.dialect()
+    compiled = statement.compile(dialect=dialect, compile_kwargs={"literal_binds": True})
+    sql = str(compiled)
+    assert str(reference_id) in sql
+    assert SCENARIO_CONVERSATIONS_METADATA_KEY in sql
+    assert ("json_each(" if dialect_name == "sqlite" else "OPENJSON(") in sql
+    scenario_table = 'FROM "ScenarioResultEntries"' if dialect_name == "sqlite" else "FROM [ScenarioResultEntries]"
+    assert sql.count(scenario_table) == 1
+    assert "NOT (EXISTS" in sql
 
 
 async def test_history_creation_order_is_stable_when_scenario_entry_is_rebuilt(

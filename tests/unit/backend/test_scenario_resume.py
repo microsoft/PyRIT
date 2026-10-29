@@ -281,6 +281,12 @@ async def test_real_scenario_live_retry_observation_and_terminal_ownership_async
                 assert final.summary.overall.model_dump(mode="json") == before_counts
                 assert await service._memory.get_attack_results_async(scenario_result_id=run_id) == before_results
                 assert {record.conversation_id for record in final.recorded_conversations} == set(conversations)
+                interrupted_references = {active.attack_result_id, *conversations}
+                for reference_id in interrupted_references:
+                    history = await service.list_runs_async(reference_id=uuid.UUID(reference_id))
+                    assert [item.scenario_result_id for item in history.items] == [run_id]
+                after_lookup = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=500)
+                assert after_lookup is not None and after_lookup.summary.overall == final.summary.overall
                 assert (
                     await service.get_conversation_async(
                         scenario_result_id=str(uuid.uuid4()), conversation_id=conversations[0]
@@ -317,6 +323,16 @@ async def test_real_scenario_live_retry_observation_and_terminal_ownership_async
                 assert after_resume.summary.overall.completed == 1
                 assert after_resume.summary.overall.errors == 0
                 assert after_resume.summary.overall.retries == 0
+                completed_results = await service._memory.get_attack_results_async(scenario_result_id=run_id)
+                completed = completed_results[0]
+                for reference_id in interrupted_references | {completed.attack_result_id, completed.conversation_id}:
+                    history = await service.list_runs_async(reference_id=uuid.UUID(reference_id))
+                    assert [item.scenario_result_id for item in history.items] == [run_id]
+                    assert history.items[0].completed_attacks == after_resume.summary.overall.completed
+                    assert history.items[0].error_attacks == after_resume.summary.overall.errors
+                    assert history.items[0].total_retries == after_resume.summary.overall.retries
+                after_lookup = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=500)
+                assert after_lookup is not None and after_lookup.summary.overall == after_resume.summary.overall
                 assert (
                     await service.get_conversation_async(scenario_result_id=run_id, conversation_id=conversations[0])
                     is not None

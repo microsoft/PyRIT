@@ -10,12 +10,16 @@ from contextlib import closing
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import String, and_, case, cast, or_, select
 
+from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayValue, JsonScalar, UuidHex
 from pyrit.memory.memory_models import AttackResultEntry, ConversationEntry, FindingEvidenceEntry, ScenarioResultEntry
+from pyrit.models import SCENARIO_CONVERSATIONS_METADATA_KEY
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+    from sqlalchemy.sql import ColumnElement
 
     from pyrit.memory.memory_interface import (
         MemoryInterface,
@@ -90,7 +94,13 @@ class _ScenarioHistoryQueries:
                     AttackResultEntry.id.in_(finding_attacks),
                 ),
             )
-            conditions.append(or_(ScenarioResultEntry.id == reference_id, matching_attack.exists()))
+            conditions.append(
+                or_(
+                    ScenarioResultEntry.id == reference_id,
+                    matching_attack.exists(),
+                    self._recorded_conversation_match(reference_id),
+                )
+            )
         if operation_ids:
             conditions.append(ScenarioResultEntry.operation_id.in_(operation_ids))
         effective_names = sorted({name.strip() for name in scenario_names or [] if name.strip()})
@@ -185,6 +195,48 @@ class _ScenarioHistoryQueries:
             for row in page_rows
         ]
         return records, len(rows) > limit
+
+    @staticmethod
+    def _recorded_conversation_match(reference_id: uuid.UUID) -> ColumnElement[bool]:
+        """
+        Match verified SDK provenance when no result row has been persisted.
+
+        Returns:
+            ColumnElement[bool]: A correlated match against the saved conversation's owner.
+        """
+        records = JsonArrayItems(
+            JsonArrayValue(ScenarioResultEntry.scenario_metadata, f"$.{SCENARIO_CONVERSATIONS_METADATA_KEY}")
+        ).table_valued("value", "type")
+        document = case((cast(records.c.type, String(8)).in_(("object", "5")), records.c.value), else_="{}")
+        verified_link = (
+            select(records.c.value)
+            .where(
+                JsonScalar(document, "$.conversation_id") == ConversationEntry.conversation_id,
+                UuidHex(JsonScalar(document, "$.attack_result_id"))
+                == UuidHex(cast(ConversationEntry.attack_result_id, String(36))),
+            )
+            .correlate(ScenarioResultEntry, ConversationEntry)
+            .exists()
+        )
+        persisted_result = (
+            select(AttackResultEntry.id)
+            .where(AttackResultEntry.id == ConversationEntry.attack_result_id)
+            .correlate(ConversationEntry)
+            .exists()
+        )
+        return (
+            select(ConversationEntry.conversation_id)
+            .where(
+                or_(
+                    ConversationEntry.conversation_id == str(reference_id),
+                    ConversationEntry.attack_result_id == reference_id,
+                ),
+                ~persisted_result,
+                verified_link,
+            )
+            .correlate(ScenarioResultEntry)
+            .exists()
+        )
 
 
 def _parse_scenario_started_at(*, raw_value: Any) -> datetime | None:
