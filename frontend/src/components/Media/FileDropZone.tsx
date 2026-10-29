@@ -11,6 +11,7 @@ interface FileDropZoneProps {
   children: ReactNode
   onFiles: (files: File[]) => void
   disabled?: boolean
+  disabledReason?: string
   enabled?: boolean
   className?: string
   label?: string
@@ -18,7 +19,7 @@ interface FileDropZoneProps {
 }
 
 export default function FileDropZone({
-  children, onFiles, disabled = false, enabled = true, className, label = 'Drop files to attach', testId,
+  children, onFiles, disabled = false, disabledReason, enabled = true, className, label = 'Drop files to attach', testId,
 }: FileDropZoneProps) {
   const styles = useFileDropZoneStyles()
   const rootRef = useRef<HTMLDivElement>(null)
@@ -37,7 +38,7 @@ export default function FileDropZone({
     if (!dragTargets.current.size) setDragging(false)
   }, [])
 
-  if ((!enabled || disabled) && dragging) setDragging(false)
+  if (!enabled && dragging) setDragging(false)
 
   useEffect(() => {
     if (!dragging) return
@@ -70,10 +71,8 @@ export default function FileDropZone({
       if (!target || !isFileDrag(event.dataTransfer)) return
       event.preventDefault()
       event.stopPropagation()
-      if (!disabled) {
-        dragTargets.current.add(target)
-        setDragging(true)
-      }
+      dragTargets.current.add(target)
+      setDragging(true)
     }}
     onDragOver={(event: DragEvent<HTMLDivElement>) => {
       const target = localTarget(event)
@@ -81,10 +80,8 @@ export default function FileDropZone({
       event.preventDefault()
       event.stopPropagation()
       event.dataTransfer.dropEffect = disabled ? 'none' : 'copy'
-      if (!disabled) {
-        dragTargets.current.add(target)
-        setDragging(true)
-      }
+      dragTargets.current.add(target)
+      setDragging(true)
     }}
     onDragLeave={(event: DragEvent<HTMLDivElement>) => {
       const target = localTarget(event)
@@ -106,10 +103,10 @@ export default function FileDropZone({
     }}
   >
     {children}
-    {dragging && !disabled && <div className={styles.feedback} role="status">
+    {dragging && enabled && (!disabled || disabledReason) && <div className={styles.feedback} role="status">
       <div className={styles.prompt}>
         <AttachRegular />
-        <Text weight="semibold">{label}</Text>
+        <Text weight="semibold">{disabled ? disabledReason : label}</Text>
       </div>
     </div>}
   </div>

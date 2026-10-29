@@ -452,10 +452,13 @@ describe('CreateConverterDialog', () => {
     fireEvent.load(image)
     expect(image).toBeVisible()
     expect(image).toHaveAttribute('src', 'data:image/png;base64,aW1hZ2U=')
+    if (method === 'drop') expect(screen.getByRole('status')).toHaveTextContent('source: ignored 1 extra file. This field uses only the first file.')
+    else expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'source *' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Replace' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: 'Remove image for source' }))
     const path = screen.getByRole('textbox', { name: 'source *' })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(path).toHaveFocus()
     expect(path).toHaveValue('')
     await user.type(path, '/sample/new.png')
@@ -465,6 +468,34 @@ describe('CreateConverterDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Add Converter' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'PathConverter', type: 'PathConverter', params: { source: 'data:image/png;base64,aW1hZ2U=' },
+    })
+  })
+
+  it('should retain the first file and disclose ignored extras through the shared drop and picker handler', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
+    const click = jest.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined)
+    renderDialog()
+    await selectConverterType('PathConverter')
+    const source = screen.getByRole('textbox', { name: 'source *' })
+    fireEvent.drop(source, { dataTransfer: { types: ['Files'], files: [
+      new File(['first'], 'first.txt', { type: 'text/plain' }),
+      new File(['second'], 'second.txt', { type: 'text/plain' }),
+      new File(['third'], 'third.txt', { type: 'text/plain' }),
+    ] } })
+    await waitFor(() => expect(source).toHaveValue('data:text/plain;base64,Zmlyc3Q='))
+    expect(screen.getByRole('status')).toHaveTextContent('source: ignored 2 extra files. This field uses only the first file.')
+    await user.click(screen.getByRole('button', { name: 'Upload' }))
+    const input = click.mock.contexts[0]
+    if (!(input instanceof HTMLInputElement)) throw new Error('File picker did not open')
+    screen.getByRole('dialog').appendChild(input)
+    await user.upload(input, new File(['replacement'], 'single.txt', { type: 'text/plain' }))
+    input.remove()
+    await waitFor(() => expect(source).toHaveValue('data:text/plain;base64,cmVwbGFjZW1lbnQ='))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'PathConverter', type: 'PathConverter', params: { source: 'data:text/plain;base64,cmVwbGFjZW1lbnQ=' },
     })
   })
 

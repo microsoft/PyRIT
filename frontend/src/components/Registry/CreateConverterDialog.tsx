@@ -86,7 +86,7 @@ interface ParameterInputProps {
   showError: boolean
   onChange: (value: string) => void
   onBrowse: () => void
-  onFile: (file: File) => void
+  onFiles: (files: File[]) => void
   allowUploads: boolean
 }
 
@@ -165,7 +165,7 @@ function ParameterInput({
   showError,
   onChange,
   onBrowse,
-  onFile,
+  onFiles,
   allowUploads,
 }: ParameterInputProps) {
   const styles = useCreateConverterDialogStyles()
@@ -255,7 +255,7 @@ function ParameterInput({
     >
       {isFile ? (
         <FileDropZone className={styles.fileRow} disabled={!allowUploads}
-          label="Drop file" onFiles={(files: File[]) => { if (files[0]) onFile(files[0]) }}>
+          label="Drop file" onFiles={onFiles}>
           {imagePreview ? <div className={styles.filePreview}>
             <MediaPreview key={imagePreview} type="image" src={imagePreview} alt={`Preview for ${parameter.name}`}
               className={styles.fileThumbnail} containerClassName={styles.fileThumbnailContainer} />
@@ -314,6 +314,7 @@ export default function CreateConverterDialog({
   const [submitting, setSubmitting] = useState(false)
   const [showValidation, setShowValidation] = useState(false)
   const [error, setError] = useState<DialogError | null>(null)
+  const [fileNotice, setFileNotice] = useState<string | null>(null)
   const errorRef = useRef<HTMLDivElement>(null)
   // The dialog instance is reused across openings, so a create response can
   // land after the opening that started it has gone.
@@ -330,6 +331,7 @@ export default function CreateConverterDialog({
         if (cancelled) return null
         setLoading(true)
         setError(null)
+        setFileNotice(null)
         // A request from the previous opening keeps its own "Adding..." state, so
         // clear it here rather than letting that response clear it for this one.
         setSubmitting(false)
@@ -447,6 +449,7 @@ export default function CreateConverterDialog({
     setChangedParameters(new Set())
     setShowValidation(false)
     setError(null)
+    setFileNotice(null)
   }
 
   const close = () => {
@@ -476,10 +479,16 @@ export default function CreateConverterDialog({
     })
     setShowValidation(false)
     setError(null)
+    setFileNotice(null)
   }
 
-  const readFile = (parameterName: string, file: File): void => {
-    if (!allowUploads) return
+  const readFiles = (parameterName: string, files: File[]): void => {
+    const file = files[0]
+    if (!allowUploads || !file) return
+    const extraCount = files.length - 1
+    setFileNotice(extraCount > 0
+      ? `${parameterName}: ignored ${extraCount} extra ${extraCount === 1 ? 'file' : 'files'}. This field uses only the first file.`
+      : null)
     const epoch = openEpochRef.current
     const reader = new FileReader()
     reader.onload = () => {
@@ -506,9 +515,7 @@ export default function CreateConverterDialog({
     input.type = 'file'
     input.onchange = () => {
       if (openEpochRef.current !== epoch) return
-      const file = input.files?.[0]
-      if (!file) return
-      readFile(parameterName, file)
+      if (input.files) readFiles(parameterName, Array.from(input.files))
     }
     input.click()
   }
@@ -615,6 +622,9 @@ export default function CreateConverterDialog({
                   <MessageBarBody ref={errorRef} tabIndex={-1} role="alert">{error.message}</MessageBarBody>
                 </MessageBar>
               )}
+              {fileNotice && <MessageBar intent="info">
+                <MessageBarBody role="status">{fileNotice}</MessageBarBody>
+              </MessageBar>}
               {loading && <Spinner label="Loading converter types..." />}
               {editing && <Text>
                 Only changed fields replace source settings. These settings apply to this stage,
@@ -743,11 +753,12 @@ export default function CreateConverterDialog({
                             && !formValueIsSet(parameterValues[parameter.name])
                           }
                           onChange={(value) => {
+                            setFileNotice(null)
                             setChangedParameters((current) => new Set([...current, parameter.name]))
                             setParameterValues((current) => ({ ...current, [parameter.name]: value }))
                           }}
                           onBrowse={() => browse(parameter.name)}
-                          onFile={(file: File) => readFile(parameter.name, file)}
+                          onFiles={(files: File[]) => readFiles(parameter.name, files)}
                           allowUploads={allowUploads}
                         />}
                       </div>

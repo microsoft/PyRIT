@@ -144,6 +144,26 @@ describe('FileDropZone', () => {
     expect(transfer.getData).not.toHaveBeenCalled()
   })
 
+  it('should show only the existing lock reason during an actual blocked file drag', () => {
+    const onFiles = jest.fn()
+    const reason = 'This attack belongs to another operator.'
+    render(<TestWrapper><FileDropZone onFiles={onFiles} disabled disabledReason={reason} testId="zone">
+      Content
+    </FileDropZone></TestWrapper>)
+    const zone = screen.getByTestId('zone')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    fireEvent.dragEnter(zone, { dataTransfer: { types: ['text/plain'] } })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    fireEvent.dragEnter(zone, { dataTransfer })
+    expect(screen.getByRole('status')).toHaveTextContent(reason)
+    expect(screen.queryByText('Drop files to attach')).not.toBeInTheDocument()
+    fireEvent.dragOver(zone, { dataTransfer })
+    expect(dataTransfer).toHaveProperty('dropEffect', 'none')
+    fireEvent.drop(zone, { dataTransfer })
+    expect(onFiles).not.toHaveBeenCalled()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
   it('should block disabled drops and end feedback without remounting an existing draft', async () => {
     const user = userEvent.setup()
     const onFiles = jest.fn()

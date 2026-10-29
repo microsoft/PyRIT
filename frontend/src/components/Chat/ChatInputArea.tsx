@@ -300,7 +300,8 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
         <>
         <div className={styles.composerTrigger}>
           <PromptEditor text={input} attachments={attachments} onInputChange={changeText} onAttachmentsChange={changeAttachments}
-            disabled={disabled} fileDropEnabled={fileDropEnabled} textareaRef={textareaRef} onKeyDown={handleKeyDown}
+            disabled={disabled} disabledReason={inputDisabledReasons.join(' ')}
+            fileDropEnabled={fileDropEnabled} textareaRef={textareaRef} onKeyDown={handleKeyDown}
             onToggleConverterPanel={onToggleConverterPanel} isConverterPanelOpen={isConverterPanelOpen}
             undoLastSend={undoLastSend}
             convertedValue={convertedValue} onConvertedValueChange={onConvertedValueChange}

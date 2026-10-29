@@ -2394,6 +2394,7 @@ export default function ChatWindow({
       )}
       <FileDropZone className={styles.chatArea} testId="chat-area"
         disabled={inputDisabledReasons.length > 0}
+        disabledReason={inputDisabledReasons.join(' ')}
         onFiles={(files: File[]) => inputBoxRef.current?.addFiles(files)}>
         {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
         {executionReadOnly && <MessageBar intent="info">

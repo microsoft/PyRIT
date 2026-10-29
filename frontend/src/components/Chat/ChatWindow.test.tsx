@@ -415,6 +415,7 @@ describe("ChatWindow Integration", () => {
     expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute("aria-disabled", "true");
     const file = new File(["image"], "locked.png", { type: "image/png" });
     fireEvent.dragEnter(screen.getByTestId("chat-area"), { dataTransfer: { types: ["Files"], files: [file] } });
+    expect(screen.getByText("Automated results are read-only. Choose Continue manually.", { exact: true })).toBeVisible();
     fireEvent.drop(screen.getByTestId("chat-area"), { dataTransfer: { types: ["Files"], files: [file] } });
     expect(screen.queryByRole("button", { name: "Remove locked.png" })).not.toBeInTheDocument();
     expect(screen.queryByText("Drop files to attach")).not.toBeInTheDocument();

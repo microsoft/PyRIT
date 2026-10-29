@@ -76,6 +76,8 @@ and **Remove**; removing an image restores the path field.
 Drops outside writable media surfaces, including unrelated portal dialogs, do
 not attach files or navigate away from the app. A converter read failure is
 reported without replacing the previous field value.
+Blocked chat file drags show the existing disabled-input reason only during the
+drag. Converter file fields retain the first file and report ignored extras.
 
 ## Dataset catalog
 
