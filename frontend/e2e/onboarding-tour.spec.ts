@@ -208,7 +208,7 @@ test.describe("Onboarding tour", () => {
     await expect(page).toHaveURL(/\/attack\/chat$/);
     await expect(dialog).toContainText("Chat shows the message composer");
     await expect(dialog).toContainText("Toggle converter panel");
-    await expect(page.getByRole("combobox", { name: "Chat target", exact: true })).toHaveValue("tour-target");
+    await expect(page.getByRole("combobox", { name: "Objective target", exact: true })).toHaveValue("tour-target");
     await expect(page.getByRole("textbox", { name: "Type prompt here", exact: true })).toBeVisible();
     await expect(page.locator('[data-tour="converter-toggle"]')).toHaveAttribute(
       "aria-label",
