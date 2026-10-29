@@ -7,7 +7,7 @@ import ChatWindow from "./ChatWindow";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
 import * as runtimeHooks from "@/hooks/useRuntime";
-import { readUserPreferences } from "@/utils/userPreferences";
+import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "@/utils/userPreferences";
 import {
   AddMessageResponse,
   AddMessageRequest,
@@ -1104,6 +1104,93 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
       expect.objectContaining({ chat_scorer: null }),
     ));
+  });
+
+  it.each([false, true])("distinguishes implicit scoring from explicit Off after removing an objective (%s)", async (chooseOff: boolean) => {
+    const user = userEvent.setup();
+    const personal = { registry_name: "personal", identifier_hash: "personal-hash" };
+    writeUserPreferences("local", { ...DEFAULT_USER_PREFERENCES, lastUsedChatScorer: personal });
+    mockSendResult.mockResolvedValue({
+      ...makeTextResponse("No objective response"),
+      attack: {
+        attack_result_id: "default-created-attack", conversation_id: "default-created-conversation",
+        attack_type: "ManualAttack", objective: "", chat_scorer: null, converters: [], message_count: 1,
+        related_conversation_ids: [], labels: {}, created_at: "", updated_at: "",
+      },
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} defaultChatScorer={personal}
+      availableScorers={[{ scorer_registry_name: "personal", identifier: {
+        class_name: "SubStringScorer", class_module: "pyrit.score", hash: "personal-hash", scorer_type: "true_false",
+      } }]} /></TestWrapper>);
+    await user.click(screen.getByRole("button", { name: "Add objective", exact: true }));
+    await user.type(screen.getByRole("textbox", { name: "Attack objective" }), "Temporary objective");
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    if (chooseOff) {
+      await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+      await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
+      await user.selectOptions(screen.getByRole("combobox", { name: "Chat scorer", exact: true }), "");
+      await user.keyboard("{Escape}");
+    }
+    await user.click(screen.getByRole("button", { name: "Edit objective", exact: true }));
+    await user.clear(screen.getByRole("textbox", { name: "Attack objective" }));
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    await user.type(screen.getByPlaceholderText("Type prompt here"), "Send without an objective");
+    await user.click(screen.getByRole("button", { name: "Send message", exact: true }));
+    await screen.findByText("No objective response");
+    const request = mockedAttacksApi.createAttack.mock.calls[0][0];
+    if (chooseOff) expect(request.chat_scorer).toBeNull();
+    else expect(request).not.toHaveProperty("chat_scorer");
+    expect(readUserPreferences("local").lastUsedChatScorer).toEqual(chooseOff ? null : personal);
+  });
+
+  it.each([
+    { name: "inherited alias", objective: "Goal", inherited: true, scorer: { registry_name: "Scorer::alias", identifier_hash: "original-hash" }, expected: "personal" },
+    { name: "unregistered alias", objective: "Goal", inherited: false, scorer: { registry_name: "Scorer::alias", identifier_hash: "original-hash" }, expected: "personal" },
+    { name: "ineligible scorer", objective: "Goal", inherited: false, scorer: { registry_name: "scale", identifier_hash: "scale-hash" }, expected: "personal" },
+    { name: "implicit Off without an objective", objective: "", inherited: false, scorer: null, expected: "personal" },
+    { name: "Off with an objective", objective: "Goal", inherited: false, scorer: null, expected: null },
+    { name: "registered scorer", objective: "Goal", inherited: false, scorer: { registry_name: "registered", identifier_hash: "original-hash" }, expected: "registered" },
+  ])("remembers target use without poisoning the chat scorer preference: $name", async ({
+    objective, inherited, scorer, expected,
+  }: {
+    objective: string;
+    inherited: boolean;
+    scorer: { registry_name: string; identifier_hash: string } | null;
+    expected: string | null;
+  }) => {
+    const user = userEvent.setup();
+    writeUserPreferences("local", {
+      ...DEFAULT_USER_PREFERENCES,
+      lastUsedChatScorer: { registry_name: "personal", identifier_hash: "personal-hash" },
+    });
+    const attack: AttackSummary = {
+      attack_result_id: "used-attack", conversation_id: "used-conversation", attack_type: "ManualAttack",
+      objective, chat_scorer: scorer, chat_scorer_inherited: inherited, converters: [], message_count: 1,
+      related_conversation_ids: [], labels: {}, created_at: "", updated_at: "",
+    };
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      conversation_id: "used-conversation", messages: [], target_response_status: null,
+    });
+    mockSendResult.mockResolvedValue({ ...makeTextResponse("Used target"), attack });
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="used-attack"
+      conversationId="used-conversation" activeConversationId="used-conversation"
+      objective={objective} chatScorer={scorer} chatScorerInherited={inherited}
+      availableScorers={[
+        { scorer_registry_name: "registered", identifier: {
+          class_name: "SubStringScorer", class_module: "pyrit.score", hash: "original-hash", scorer_type: "true_false",
+        } },
+        { scorer_registry_name: "scale", identifier: {
+          class_name: "ScaleScorer", class_module: "pyrit.score", hash: "scale-hash", scorer_type: "float_scale",
+        } },
+      ]} /></TestWrapper>);
+    const input = screen.getByPlaceholderText("Type prompt here");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "Use this target");
+    await user.click(screen.getByRole("button", { name: "Send message", exact: true }));
+    await screen.findByText("Used target");
+    const preferences = readUserPreferences("local");
+    expect(preferences.lastUsedTargets?.objective?.registryName).toBe(mockTarget.target_registry_name);
+    expect(preferences.lastUsedChatScorer?.registry_name ?? null).toBe(expected);
   });
 
   it("should propose the current personal default when the first objective is added to a saved manual chat", async () => {

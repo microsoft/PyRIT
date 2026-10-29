@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import userEvent from '@testing-library/user-event'
 
 import type { UserPreferences } from '@/types'
+import { makeTarget } from '@/test-utils/targetFixtures'
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import { UserPreferencesProvider, useUserPreferences } from './useUserPreferences'
@@ -330,5 +331,22 @@ describe('useUserPreferences', () => {
     expect(restored.result.current.preferences.lastUsedChatScorer).toBeNull()
     expect(restored.result.current.preferences.chatScorer).toEqual(chosenPreferences.chatScorer)
     expect(restored.result.current.preferences.targets).toEqual(chosenPreferences.targets)
+  })
+
+  it('shares scan target recording without changing the last-used chat scorer', () => {
+    writeUserPreferences('tenant:alice', { ...chosenPreferences, lastUsedChatScorer: null })
+    const target = makeTarget({ target_registry_name: 'scan-target', identifier_hash: 'scan-hash' })
+    const adversarial = makeTarget({ target_registry_name: 'scan-adversarial', identifier_hash: 'adversarial-hash' })
+    const { result } = renderHook(() => useUserPreferences(), { wrapper })
+    act(() => result.current.rememberScanTargets([target, adversarial], {
+      target_name: target.target_registry_name, adversarial_target_name: adversarial.target_registry_name,
+    }))
+    const saved = readUserPreferences('tenant:alice')
+    expect(saved.lastUsedTargets).toEqual({
+      objective: { registryName: 'scan-target', identifierHash: 'scan-hash' },
+      adversarial: { registryName: 'scan-adversarial', identifierHash: 'adversarial-hash' },
+    })
+    expect(saved.lastUsedChatScorer).toBeNull()
+    expect(saved.targets).toEqual(chosenPreferences.targets)
   })
 })

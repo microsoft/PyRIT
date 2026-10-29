@@ -68,6 +68,7 @@ import {
 import { attacksApi, authApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
 import { generateClientId } from './utils/clientId'
+import { resolveChatScorerReference } from '@/utils/scorerPresentation'
 import { useTour } from './hooks/useTour'
 import { ChatDraftProvider, useChatDraftHandoff } from './hooks/useChatDraftHandoff'
 import {
@@ -205,6 +206,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const registry = useTargetRegistry()
   const scorerRegistry = useScorerRegistry()
   const { preferences, updatePreferences, error: preferenceError } = useUserPreferences()
+  const configuredChatScorer = resolveChatScorerReference(preferences.chatScorer, scorerRegistry.scorers)
+  const defaultChatScorer = configuredChatScorer !== undefined ? configuredChatScorer
+    : resolveChatScorerReference(preferences.lastUsedChatScorer, scorerRegistry.scorers)
   const targetDefaults = useTargetPreferences(registry.targets)
   const draftHandoff = useChatDraftHandoff()
   const { clearPreservedDraft, dismissPendingImport } = draftHandoff
@@ -771,7 +775,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       chatScorerInherited={readyAttack?.chatScorerInherited}
       executionReadOnly={readyAttack?.executionReadOnly}
       manualContinuation={readyAttack?.manualContinuation}
-      defaultChatScorer={preferences.chatScorer !== undefined ? preferences.chatScorer : preferences.lastUsedChatScorer}
+      defaultChatScorer={defaultChatScorer}
       availableScorers={scorerRegistry.scorers}
       scorersLoading={scorerRegistry.loading}
       scorersError={scorerRegistry.error}

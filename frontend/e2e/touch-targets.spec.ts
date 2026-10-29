@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "./_fixtures";
+import { expect, test, selectChatTarget, type Locator, type Page } from "./_fixtures";
 import { fulfillMessageSend, makeAddMessageResponse } from "./_attacks";
 import { READY_RUNTIME, READY_RUNTIME_STATUS } from "./_runtime";
 import { mockVersion } from "./_compatibility";
@@ -494,11 +494,7 @@ test.describe("Mobile touch targets", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 320, height: 568 });
-    await page.goto("/");
-    await page.getByRole("button", { name: "Registry", exact: true }).click();
-    await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
-    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
-    await page.getByRole("button", { name: "Attacks", exact: true }).click();
+    await selectChatTarget(page);
 
     await page.getByRole("button", { name: "Add objective" }).click();
     const objectiveInput = page.getByRole("textbox", {
@@ -637,7 +633,7 @@ test.describe("Mobile touch targets", () => {
 
     await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
-    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
+    await expect(page.getByRole("combobox", { name: "Default objective target", exact: true })).toHaveCount(0);
     await page.goBack();
     await expect(
       page.getByTestId("toggle-objective-header-btn")

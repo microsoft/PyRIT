@@ -76,7 +76,7 @@ import type {
 } from '@/types'
 import { newDraftMessage, toConversationDraft } from '@/utils/conversationDraft'
 import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
-import { sameTarget, targetModelName, targetReference } from '@/utils/targetIdentity'
+import { sameTarget, targetModelName } from '@/utils/targetIdentity'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import { ScenarioRunEstimateDetails } from './ScenarioRunEstimate'
@@ -743,7 +743,7 @@ function ScenarioLaunchForm({
   scorersError = null,
 }: ScenarioLaunchFormProps) {
   const runtime = useRuntime()
-  const { rememberUse } = useUserPreferences()
+  const { rememberScanTargets } = useUserPreferences()
   const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
   const staleSelection = selectionGeneration !== runtime.generation
   const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(null)
@@ -1258,14 +1258,7 @@ function ScenarioLaunchForm({
 
     try {
       const summary = await scenariosApi.startRun(requestResult.request)
-      const objectiveTarget = targets.find((target: TargetInstance) =>
-        target.target_registry_name === requestResult.request.target_name)
-      const adversarialTarget = targets.find((target: TargetInstance) =>
-        target.target_registry_name === requestResult.request.adversarial_target_name)
-      if (objectiveTarget || adversarialTarget) rememberUse({
-        ...(objectiveTarget ? { objective: targetReference(objectiveTarget) } : {}),
-        ...(adversarialTarget ? { adversarial: targetReference(adversarialTarget) } : {}),
-      })
+      rememberScanTargets(targets, requestResult.request)
       datasetMetadata.reload()
       setPreviewOpen(false)
       navigate(scenarioRunRoutePath(summary.scenario_result_id), {

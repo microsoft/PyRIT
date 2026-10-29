@@ -30,7 +30,6 @@ import {
 } from '@/components/Scenarios/scenarioRunLimits'
 import { scenarioSuitesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import { targetReference } from '@/utils/targetIdentity'
 import type {
   LaunchScenarioSuiteRequest,
   ScenarioSuiteResponse,
@@ -80,7 +79,7 @@ export default function LaunchSuiteDialog({
 }: LaunchSuiteDialogProps) {
   const styles = useLaunchSuiteDialogStyles()
   const navigate = useNavigate()
-  const { rememberUse } = useUserPreferences()
+  const { rememberScanTargets } = useUserPreferences()
   const adversarialTargets = targets.filter(
     (target) => target.capabilities?.supports_multi_turn === true,
   )
@@ -121,13 +120,7 @@ export default function LaunchSuiteDialog({
     setError(null)
     try {
       const execution = await scenarioSuitesApi.launch(suite.suite.name, request)
-      const objectiveTarget = targets.find((target: TargetInstance) => target.target_registry_name === request.target_name)
-      const adversarialTarget = targets.find((target: TargetInstance) =>
-        target.target_registry_name === request.adversarial_target_name)
-      if (objectiveTarget || adversarialTarget) rememberUse({
-        ...(objectiveTarget ? { objective: targetReference(objectiveTarget) } : {}),
-        ...(adversarialTarget ? { adversarial: targetReference(adversarialTarget) } : {}),
-      })
+      rememberScanTargets(targets, request)
       navigate(suiteExecutionRoutePath(execution.suite_execution_id))
     } catch (err: unknown) {
       const apiError = toApiError(err)

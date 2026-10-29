@@ -1,7 +1,7 @@
 import { Field, Select, Text } from '@fluentui/react-components'
 
 import type { RegisteredComponentReference, ScorerInstance } from '@/types'
-import { findRegisteredScorer } from '@/utils/scorerPresentation'
+import { findRegisteredScorer, isEligibleChatScorer } from '@/utils/scorerPresentation'
 
 import { useChatScorerPickerStyles } from './ChatScorerPicker.styles'
 
@@ -28,8 +28,8 @@ export default function ChatScorerPicker({
   const styles = useChatScorerPickerStyles()
   const selectedScorer = findRegisteredScorer(value ?? null, scorers, inherited)
   const available = !value || selectedScorer !== undefined
-  const eligibleScorers = scorers.filter((scorer: ScorerInstance) =>
-    scorer.identifier.scorer_type === 'true_false' && (usage === 'scenario' || !scorer.chat_scoring_disabled_reason))
+  const eligibleScorers = scorers.filter((scorer: ScorerInstance) => usage === 'scenario'
+    ? scorer.identifier.scorer_type === 'true_false' : isEligibleChatScorer(scorer))
   const selected = value === undefined && onUseLastUsed ? 'last-used'
     : selectedScorer && eligibleScorers.includes(selectedScorer)
     ? `registered:${selectedScorer.scorer_registry_name}` : value ? 'unavailable' : ''

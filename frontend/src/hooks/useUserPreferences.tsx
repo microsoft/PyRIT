@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
-import type { RegisteredComponentReference, TargetPreferences, UserPreferences } from '@/types'
+import type { RegisteredComponentReference, RunScenarioRequest, TargetInstance, TargetPreferences, UserPreferences } from '@/types'
+import { targetReference } from '@/utils/targetIdentity'
 import {
   DEFAULT_USER_PREFERENCES,
   readUserPreferences,
@@ -17,6 +18,9 @@ interface PreferenceState {
 interface UserPreferencesContextValue extends PreferenceState {
   updatePreferences: (update: (current: UserPreferences) => UserPreferences) => void
   rememberUse: (targets: Partial<TargetPreferences>, chatScorer?: RegisteredComponentReference | null) => void
+  rememberScanTargets: (
+    targets: TargetInstance[], request: Pick<RunScenarioRequest, 'target_name' | 'adversarial_target_name'>,
+  ) => void
 }
 
 const UserPreferencesContext = createContext<UserPreferencesContextValue | null>(null)
@@ -116,8 +120,20 @@ export function UserPreferencesProvider({
     }))
   }, [updatePreferences])
 
+  const rememberScanTargets = useCallback((
+    targets: TargetInstance[], request: Pick<RunScenarioRequest, 'target_name' | 'adversarial_target_name'>,
+  ): void => {
+    const objectiveTarget = targets.find((target: TargetInstance) => target.target_registry_name === request.target_name)
+    const adversarialTarget = targets.find((target: TargetInstance) =>
+      target.target_registry_name === request.adversarial_target_name)
+    if (objectiveTarget || adversarialTarget) rememberUse({
+      ...(objectiveTarget ? { objective: targetReference(objectiveTarget) } : {}),
+      ...(adversarialTarget ? { adversarial: targetReference(adversarialTarget) } : {}),
+    })
+  }, [rememberUse])
+
   return (
-    <UserPreferencesContext.Provider value={{ ...state, updatePreferences, rememberUse }}>
+    <UserPreferencesContext.Provider value={{ ...state, updatePreferences, rememberUse, rememberScanTargets }}>
       {children}
     </UserPreferencesContext.Provider>
   )

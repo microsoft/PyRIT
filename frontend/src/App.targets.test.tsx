@@ -6,13 +6,14 @@ import { MemoryRouter } from 'react-router'
 
 import { attacksApi, targetsApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
-import type { AttackSummary, ConversationMessagesResponse } from '@/types'
+import type { AttackSummary, ConversationMessagesResponse, ScorerInstance } from '@/types'
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
 
 const mockGetActiveAccount = jest.fn()
 const mockMsalInstance = { getActiveAccount: mockGetActiveAccount }
+let mockScorers: ScorerInstance[] = []
 
 jest.mock('@azure/msal-react', () => ({
   useMsal: () => ({ instance: mockMsalInstance, accounts: [] }),
@@ -24,6 +25,9 @@ jest.mock('@/hooks/useTour', () => ({
   useTour: () => ({ startTour: jest.fn(), tourProps: {} }),
 }))
 jest.mock('react-joyride', () => ({ Joyride: () => null }))
+jest.mock('@/hooks/useScorerRegistry', () => ({
+  useScorerRegistry: () => ({ scorers: mockScorers, loading: false, error: null, refresh: jest.fn() }),
+}))
 jest.mock('@/components/Layout/MainLayout', () => {
   const { Link } = jest.requireActual<typeof import('react-router')>('react-router')
   return {
@@ -118,6 +122,7 @@ describe('App target selection with the chat composer', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     window.localStorage.clear()
+    mockScorers = []
     mockGetActiveAccount.mockReturnValue({
       homeAccountId: 'alice', tenantId: 'tenant', username: 'alice@example.test',
     })
@@ -263,4 +268,32 @@ describe('App target selection with the chat composer', () => {
     expect(screen.queryByText('Targets unavailable')).not.toBeInTheDocument()
     expect(targetsApi.listTargets).toHaveBeenCalledTimes(2)
   })
+
+  it.each(['chatScorer', 'lastUsedChatScorer'] as const)(
+    'does not initialize a new chat with an unregistered saved %s alias',
+    async (source: 'chatScorer' | 'lastUsedChatScorer') => {
+      const user = userEvent.setup()
+      mockScorers = [{
+        scorer_registry_name: 'registered',
+        identifier: {
+          class_name: 'SubStringScorer', class_module: 'pyrit.score', hash: 'same-hash', scorer_type: 'true_false',
+        },
+      }]
+      writeUserPreferences('tenant:alice', {
+        ...DEFAULT_USER_PREFERENCES,
+        ...(source === 'chatScorer'
+          ? { lastUsedChatScorer: { registry_name: 'registered', identifier_hash: 'same-hash' } } : {}),
+        [source]: { registry_name: 'SelfAskTrueFalseScorer::alias', identifier_hash: 'same-hash' },
+      })
+      render(<App />, { wrapper: TestWrapper })
+      await user.click(await screen.findByRole('button', { name: 'Add objective', exact: true }))
+      await user.type(screen.getByRole('textbox', { name: 'Attack objective' }), 'Check the policy')
+      await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
+      await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+      await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
+      expect(screen.getByRole('combobox', { name: 'Chat scorer', exact: true }))
+        .toHaveValue(source === 'chatScorer' ? 'registered:registered' : '')
+      expect(screen.queryByText(/saved scorer is unavailable/i)).not.toBeInTheDocument()
+    },
+  )
 })

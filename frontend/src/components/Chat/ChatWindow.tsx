@@ -55,6 +55,7 @@ import {
   isChatDraftDirty,
 } from '@/utils/chatDraft'
 import { targetReference } from '@/utils/targetIdentity'
+import { resolveChatScorerReference } from '@/utils/scorerPresentation'
 import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
@@ -157,6 +158,7 @@ interface PendingSend {
   readonly navigationRevision: number
   readonly converterGeneration: string
   readonly target: TargetReference
+  readonly chatScorerExplicit: boolean
   readonly converterSnapshot?: ChatConverterSnapshot
   readonly pipelines?: Record<string, ConverterPipelineStage[]>
   attackResultId: string | null
@@ -926,7 +928,10 @@ export default function ChatWindow({
     const targetResponseStatus = response.messages.target_response_status
     if (!operation.rememberedUse && operation.progress?.request_turn_number != null
       && operation.progress.failure_stage !== 'preparation') {
-      rememberUse({ objective: operation.target }, response.attack.chat_scorer ?? null)
+      const usedScorer = !response.attack.chat_scorer_inherited
+        && (response.attack.objective?.trim() || operation.chatScorerExplicit)
+        ? resolveChatScorerReference(response.attack.chat_scorer ?? null, availableScorers) : undefined
+      rememberUse({ objective: operation.target }, usedScorer)
       operation.rememberedUse = true
     }
     const recovery = operation.progress
@@ -1237,6 +1242,7 @@ export default function ChatWindow({
       navigationRevision: navigationRevisionRef.current,
       converterGeneration: runtime.generation,
       target: targetReference(activeTarget),
+      chatScorerExplicit: draftScorer !== undefined,
       converterSnapshot: count === 1 ? converters.snapshot() : undefined,
       pipelines,
       attackResultId,
@@ -1664,11 +1670,8 @@ export default function ChatWindow({
       setEditorObjective(newObjective)
       return
     }
-    if (!attackResultId && !expectedObjective.trim() && newObjective.trim() && defaultChatScorer) {
-      setDraftScorer((current) => current === undefined ? defaultChatScorer : current)
-    }
     await changeObjective(newObjective, expectedObjective)
-  }, [attackResultId, changeObjective, editDraft, setEditorObjective, defaultChatScorer, executionReadOnly])
+  }, [changeObjective, editDraft, setEditorObjective, executionReadOnly])
 
   const handleScorerUpdate = async (reference: RegisteredComponentReference | null): Promise<void> => {
     if (!attackResultId) { setDraftScorer(reference); return }

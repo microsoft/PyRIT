@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { test, expect, type Locator, type Page, type Request } from "./_fixtures";
+import { test, expect, selectChatTarget, type Locator, type Page, type Request } from "./_fixtures";
 import type { BackendMessage, BackendMessagePiece } from "@/types";
 import { fulfillMessageSend, makeAddMessageResponse } from "./_attacks";
 import { READY_RUNTIME } from "./_runtime";
@@ -140,20 +140,9 @@ async function mockBackendAPIs(page: Page) {
   });
 }
 
-/** Save the mock target as the objective default, then open a new chat. */
+/** Select the mock target in a new chat. */
 async function activateMockTarget(page: Page) {
-  // Click the Registry button in the sidebar
-  await page.getByRole("button", { name: "Registry", exact: true }).click();
-  await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
-
-  // Set the objective default for this browser profile.
-  const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
-  await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
-  await objectiveDefault.selectOption({ index: 1 });
-
-  // Return to Chat view
-  await page.getByRole("button", { name: "Attacks", exact: true }).click();
-  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
+  await selectChatTarget(page);
 }
 
 // ---------------------------------------------------------------------------
@@ -892,16 +881,7 @@ test.describe("Target type scenarios", () => {
       }
     });
 
-    await page.goto("/");
-    await page.getByRole("button", { name: "Registry", exact: true }).click();
-    await expect(page.getByText("dall-e-3", { exact: true })).toBeVisible({ timeout: 10000 });
-
-    // Save the DALL-E target as the objective default.
-    await page.getByRole("combobox", { name: "Default objective target", exact: true })
-      .selectOption("dall-e-image-gen");
-
-    // Navigate to chat
-    await page.getByRole("button", { name: "Attacks", exact: true }).click();
+    await selectChatTarget(page, "dall-e-image-gen");
     // Scope queries to the badge so we don't also match the (hidden)
     // copy of the target text that Fluent's Tooltip renders into the DOM.
     const badge = page.getByTestId("target-badge");

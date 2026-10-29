@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import {
   test as base,
   expect,
+  selectChatTarget,
   type APIRequestContext,
   type Page,
   type Request,
@@ -236,11 +237,7 @@ test.describe("Chat processing recovery @seeded", () => {
   test.setTimeout(90_000);
 
   test.beforeEach(async ({ page, localTarget }) => {
-    await page.goto("/");
-    await page.getByRole("button", { name: "Registry", exact: true }).click();
-    await page.getByRole("combobox", { name: "Default objective target", exact: true })
-      .selectOption(localTarget.registryName);
-    await page.getByRole("button", { name: "Attacks", exact: true }).click();
+    await selectChatTarget(page, localTarget.registryName);
   });
 
   test("keeps the drawer closed when a delayed send refresh discovers another conversation", async ({

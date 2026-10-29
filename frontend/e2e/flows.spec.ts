@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   test,
   expect,
+  selectChatTarget,
   type APIRequestContext,
   type Locator,
   type Page,
@@ -199,19 +200,12 @@ async function createConversation(
   return body.conversation_id;
 }
 
-/** Save an objective default and open a new chat with that target. */
+/** Select a target in a new chat. */
 async function activateTarget(
   page: Page,
   targetRegistryName: string,
 ): Promise<void> {
-  await page.getByRole("button", { name: "Registry", exact: true }).click();
-  await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10_000 });
-  const row = page.getByTestId(`target-row-${targetRegistryName}`);
-  await expect(row).toBeVisible({ timeout: 10_000 });
-  await page.getByRole("combobox", { name: "Default objective target", exact: true })
-    .selectOption(targetRegistryName);
-  await page.getByRole("button", { name: "Attacks", exact: true }).click();
-  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5_000 });
+  await selectChatTarget(page, targetRegistryName);
 }
 
 /** Navigate to an attack by opening the History view and clicking its row. */
