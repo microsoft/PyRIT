@@ -197,6 +197,21 @@ describe('ScenarioRunPage', () => {
     expect(screen.queryByRole('heading', { name: 'Paired outcomes' })).not.toBeInTheDocument()
   })
 
+  it('keeps interrupted saved conversations reachable without inventing an outcome row', () => {
+    state = makeState({
+      results: [], activeConversations: [],
+      recordedConversations: [{
+        attack_result_id: 'interrupted', conversation_id: 'saved', atomic_attack_name: 'direct',
+        objective: 'First objective', started_at: RUN.started_at, seed_identifiers: [],
+      }],
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByRole('link', { name: 'Open saved conversation' })).toHaveAttribute(
+      'href', `/scanner/history/${RUN_ID}/conversations/saved`,
+    )
+    expect(screen.queryByRole('row', { name: /View details for/ })).not.toBeInTheDocument()
+  })
+
   it('keeps elapsed-clock updates local instead of rebuilding result groups every second', async () => {
     jest.useFakeTimers()
     jest.setSystemTime(new Date('2026-01-01T00:00:02Z'))
@@ -302,6 +317,13 @@ describe('ScenarioRunPage', () => {
     expect(screen.queryByText('Detailed execution diagnostics')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Error details' }))
     expect(screen.getByText('Detailed execution diagnostics')).toBeVisible()
+  })
+
+  it('does not describe a cancellation with no error outcomes as an attack error', () => {
+    state = makeState({ run: { ...RUN, status: 'CANCELLED', error: 'Run was cancelled by user' } })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByText('Scan cancelled.')).toBeInTheDocument()
+    expect(screen.queryByText(/0 attacks ended with an error/)).not.toBeInTheDocument()
   })
 
   it.each(['FAILED', 'CANCELLED'] as const)('resumes the original %s run rather than launching a new one', async (status) => {

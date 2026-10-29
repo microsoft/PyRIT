@@ -17,7 +17,7 @@ import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
 import { useScenarioRunResume } from '@/hooks/useScenarioRunResume'
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ScenarioComponentIdentity, ScenarioProgressResult, ScenarioRunPlanSeedGroup, ScenarioRunState } from '@/types'
+import type { ScenarioActiveConversation, ScenarioComponentIdentity, ScenarioProgressResult, ScenarioRunPlanSeedGroup, ScenarioRunState } from '@/types'
 import { attackConversationRoutePath, routerPathParamValue, scenarioConversationRoutePath, scenarioRerunRoutePath, scenarioRunAttackRoutePath, scenarioRunRoutePath } from '@/utils/routeParams'
 import { isTerminalRunState } from '@/utils/scenarioRunProgress'
 
@@ -95,6 +95,14 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
     }
     return new Map([...identities].map(([id, seeds]) => [id, seedDatasetNames(seeds)]))
   }, [state.results, state.activeConversations])
+  const savedConversations = useMemo(() => {
+    const knownResults = new Set(state.results.map((attempt) => attempt.attack_result_id))
+    const recorded = new Map<string, ScenarioActiveConversation>()
+    for (const conversation of state.recordedConversations) {
+      if (!knownResults.has(conversation.attack_result_id)) recorded.set(conversation.attack_result_id, conversation)
+    }
+    return [...recorded.values()]
+  }, [state.results, state.recordedConversations])
   const attemptsByGroup = useMemo(() => {
     const groups = new Map<string, ScenarioProgressResult[]>()
     for (const attempt of [...state.results].reverse()) {
@@ -220,8 +228,10 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
             <div className={styles.badgeList}>{Object.entries(run.labels ?? {}).map(([key, value]) => <Badge key={key} appearance="outline" className={styles.labelBadge}>{key}: {value}</Badge>)}</div>
           </div>
         </section>
-        {(run.status === 'FAILED' || run.error || overall.errors > 0) && <MessageBar intent={run.status === 'FAILED' ? 'error' : 'warning'}>
+        {(run.status === 'FAILED' || run.error || overall.errors > 0) && <MessageBar
+          intent={run.status === 'FAILED' ? 'error' : run.status === 'CANCELLED' && overall.errors === 0 ? 'info' : 'warning'}>
           <MessageBarBody>{run.status === 'FAILED' ? 'Scan failed. Resume to continue remaining attacks.'
+            : run.status === 'CANCELLED' ? 'Scan cancelled.'
             : `${overall.errors} attack${overall.errors === 1 ? '' : 's'} ended with an error.`}
             {firstError && <Button appearance="transparent" onClick={(event) => { openDetails(firstError, event.currentTarget) }}>View attack</Button>}
             {run.error && <Accordion collapsible><AccordionItem value="error">
@@ -265,6 +275,14 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
               <Link to={scenarioConversationRoutePath(scenarioResultId, conversation.conversation_id)}>Watch live conversation</Link>
             </div>
           ))}
+        </section>}
+        {savedConversations.length > 0 && <section className={styles.section} aria-label="Saved conversations">
+          <Text as="h2" size={500} weight="semibold">Saved conversations</Text>
+          {savedConversations.map((conversation) => <div key={conversation.attack_result_id} className={styles.liveConversation}>
+            <Text>{conversation.atomic_attack_name}</Text>
+            <Text className={styles.preview}>{conversation.objective}</Text>
+            <Link to={scenarioConversationRoutePath(scenarioResultId, conversation.conversation_id)}>Open saved conversation</Link>
+          </div>)}
         </section>}
         <section className={styles.section} aria-labelledby="atomic-groups-heading">
           <div className={styles.sectionHeading}><Text as="h2" id="atomic-groups-heading" size={500} weight="semibold">Atomic attack groups</Text><Text size={200} className={styles.sectionHint}>{groups.length} groups</Text></div>
