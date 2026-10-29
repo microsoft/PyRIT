@@ -29,6 +29,10 @@ jest.mock('@/hooks/useConnectionHealth', () => ({
   ConnectionHealthProvider: ({ children }: { children: ReactNode }) => children,
   useConnectionHealth: () => ({ status: 'connected', reconnectCount: 0 }),
 }))
+jest.mock('@/components/Home/Home', () => ({
+  __esModule: true,
+  default: () => <h1>Home</h1>,
+}))
 jest.mock('@/components/Datasets/DatasetCatalog', () => ({
   __esModule: true,
   default: () => <h1>Dataset catalog</h1>,
@@ -217,6 +221,32 @@ describe('App draft handoff with the real chat and composer', () => {
       expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Unsent prompt')
     }
   })
+
+  it.each(['/does-not-exist', '/attack/chat/saved/extra'])(
+    'should preserve the latest chat and draft through the fallback at %s',
+    async (path: string) => {
+      const user = userEvent.setup()
+      const router = createMemoryRouter([{ path: '*', element: <App /> }], {
+        initialEntries: ['/attack/chat'],
+      })
+      render(<RouterProvider router={router} />)
+      const target = await screen.findByRole('combobox', { name: 'Chat target' })
+      await waitFor(() => expect(target).toBeEnabled())
+      await user.selectOptions(target, 'draft-target')
+      await user.type(screen.getByPlaceholderText('Type prompt here'), 'Unsent prompt')
+      await act(async () => { await router.navigate(path) })
+      await screen.findByRole('heading', { name: 'Page not found' })
+      expect(router.state.location.pathname).toBe(path)
+      await user.click(screen.getByRole('link', { name: 'Home', exact: true }))
+      await screen.findByRole('heading', { name: 'Home', exact: true })
+      await returnToChat(user)
+      expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Unsent prompt')
+      expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('draft-target')
+      expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat$/)
+      expect(attacksApi.createAttack).not.toHaveBeenCalled()
+      expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
+    },
+  )
 
   it('should retain the unsent chat through History and Scanner and reset only for New attack', async () => {
     const user = userEvent.setup()

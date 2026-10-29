@@ -653,8 +653,9 @@ function RouterProbe() {
 
   return (
     <>
-      <output aria-label="Current URL">{location.pathname}</output>
+      <output aria-label="Current URL">{location.pathname}{location.search}{location.hash}</output>
       <button type="button" onClick={() => navigate(-1)}>Back</button>
+      <button type="button" onClick={() => navigate(1)}>Forward</button>
     </>
   );
 }
@@ -1077,14 +1078,52 @@ describe("App", () => {
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
-  it("redirects an unknown path back to home", () => {
-    renderApp("/does-not-exist");
-
-    expect(screen.getByTestId("main-layout")).toHaveAttribute(
-      "data-current-view",
-      "home"
+  it.each([
+    "/does-not-exist?from=link#details",
+    "/registry/does-not-exist",
+    "/scanner/does-not-exist",
+  ])("shows an explicit fallback without replacing %s", async (path: string) => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={[path]}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
     );
-    expect(screen.getByTestId("home-view")).toBeInTheDocument();
+
+    expect(await screen.findByRole("heading", { name: "Page not found", level: 1 })).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL").textContent).toBe(path);
+    expect(screen.queryByTestId("home-view")).not.toBeInTheDocument();
+    const home = screen.getByRole("link", { name: "Home", exact: true });
+    expect(home).toHaveAttribute("href", "/");
+    await user.click(home);
+    expect(await screen.findByTestId("home-view")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL").textContent).toBe("/");
+    await user.click(screen.getByRole("button", { name: "Back", exact: true }));
+    expect(await screen.findByRole("heading", { name: "Page not found" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL").textContent).toBe(path);
+  });
+
+  it("keeps the last dataset view when an unknown dataset URL is visited", async () => {
+    const user = userEvent.setup();
+    const state = { catalogPath: "/datasets?filter=harmful", cursors: ["cur-1"] };
+    render(
+      <MemoryRouter initialEntries={[
+        { pathname: "/datasets", search: "?filter=harmful", state },
+        "/datasets/does-not-exist",
+      ]} initialIndex={0}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
+    );
+    expect(await screen.findByTestId("dataset-catalog")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Forward", exact: true }));
+    await screen.findByRole("heading", { name: "Page not found" });
+    await user.click(screen.getByRole("link", { name: "Home", exact: true }));
+    await screen.findByTestId("home-view");
+    await user.click(screen.getByRole("button", { name: "Datasets", exact: true }));
+    expect(await screen.findByTestId("dataset-location")).toHaveTextContent("/datasets?filter=harmful");
+    expect(screen.getByTestId("dataset-state")).toHaveTextContent(JSON.stringify(state));
   });
 
   it("switches to chat view", () => {

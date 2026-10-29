@@ -7,6 +7,7 @@ import { ThemeProvider, useTheme } from './hooks/useTheme'
 import { UserPreferencesProvider, useUserPreferences } from './hooks/useUserPreferences'
 import { RuntimeBanner, RuntimeProvider, useRuntime } from '@/hooks/useRuntime'
 import MainLayout from './components/Layout/MainLayout'
+import PageNotFound from './components/Layout/PageNotFound'
 import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
@@ -338,13 +339,13 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     if (location.pathname === VIEW_PATHS.analytics) {
       lastAnalyticsLocation.current = location.search + location.hash
     }
-    if (isDatasetsPath(location.pathname)) {
+    if (matchPath(DATASETS_PATH, location.pathname) || matchPath(DATASET_DETAIL_PATH, location.pathname)) {
       lastDatasetsLocation.current = {
         path: location.pathname + location.search + location.hash,
         state: location.state,
       }
     }
-    if (isChatPath(location.pathname)) {
+    if (matchPath(VIEW_PATHS.chat, location.pathname) || routeAttackId !== null) {
       lastChatLocation.current = {
         path: location.pathname + location.search + location.hash,
         state: location.state,
@@ -353,7 +354,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     if (!isDatasetsPath(location.pathname) && !isChatPath(location.pathname)) {
       dismissPendingImport()
     }
-  }, [location.pathname, location.search, location.hash, location.state, dismissPendingImport])
+  }, [location.pathname, location.search, location.hash, location.state, routeAttackId, dismissPendingImport])
 
   const handleFiltersChange = useCallback((filters: HistoryFilters) => {
     // The label search is controlled by this URL state and must not lag behind typing.
@@ -997,7 +998,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                     />
                 }
               />
-              <Route path="*" element={<Navigate to="/" replace />} />
+              <Route path="*" element={<PageNotFound />} />
             </Routes>
           </MainLayout>
           {feedbackOpen && (
