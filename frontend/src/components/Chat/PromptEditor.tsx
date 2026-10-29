@@ -4,8 +4,9 @@ import { Button, Caption1, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, S
 import { ArrowShuffleRegular, ArrowUndoRegular, AttachRegular, DismissRegular, OpenRegular } from '@fluentui/react-icons'
 
 import type { ConvertedFileChip, MessageAttachment, PieceConversion, UndoLastSendAction } from '@/types'
+import FileDropZone from '@/components/Media/FileDropZone'
 
-import { withDraftIdentity } from './converterTypes'
+import { attachmentsFromFiles } from './converterTypes'
 import { usePromptEditorStyles } from './PromptEditor.styles'
 
 interface PromptEditorProps {
@@ -70,19 +71,18 @@ export default function PromptEditor({
     }
   }, [convertedValue])
 
+  const addFiles = (files: File[]): void => {
+    if (disabled) return
+    onAttachmentsChange([...attachments, ...attachmentsFromFiles(files)])
+  }
   const selectFiles = (event: React.ChangeEvent<HTMLInputElement>): void => {
     const files = event.target.files
     if (!files) return
-    const additions = Array.from(files, (file: File): MessageAttachment => withDraftIdentity({
-      type: file.type.startsWith('image/') ? 'image' : file.type.startsWith('audio/') ? 'audio'
-        : file.type.startsWith('video/') ? 'video' : 'file',
-      name: file.name, url: URL.createObjectURL(file), mimeType: file.type, size: file.size, file,
-    }))
-    onAttachmentsChange([...attachments, ...additions])
+    addFiles(Array.from(files))
     event.target.value = ''
   }
 
-  return <div className={styles.inputWrapper} data-testid="prompt-editor">
+  return <FileDropZone className={styles.inputWrapper} testId="prompt-editor" disabled={disabled} onFiles={addFiles}>
     {header && <div className={styles.editHeader}>{header}</div>}
     {setup}
     <input ref={fileInputRef} type="file" data-testid="file-input" multiple
@@ -190,5 +190,5 @@ export default function PromptEditor({
       </div>
       {actions && <div className={styles.columnRight}>{actions}</div>}
     </div>
-  </div>
+  </FileDropZone>
 }

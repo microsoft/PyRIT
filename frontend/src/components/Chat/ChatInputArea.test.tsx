@@ -1,5 +1,5 @@
 import React from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatInputArea from "./ChatInputArea";
@@ -52,6 +52,21 @@ describe("ChatInputArea", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("should pass dropped files through the existing attachment pipeline in order without changing the text draft", () => {
+    const files = [
+      new File(["image"], "photo.png", { type: "image/png" }),
+      new File(["audio"], "clip.wav", { type: "audio/wav" }),
+    ];
+    render(<TestWrapper><ChatInputArea {...defaultProps} initialText="Keep this draft" /></TestWrapper>);
+    fireEvent.drop(screen.getByTestId("prompt-editor"), { dataTransfer: { types: ["Files"], files } });
+    expect(defaultProps.onAttachmentsChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ file: files[0], name: "photo.png", type: "image", mimeType: "image/png", size: 5 }),
+      expect.objectContaining({ file: files[1], name: "clip.wav", type: "audio", mimeType: "audio/wav", size: 5 }),
+    ]);
+    expect(screen.getByRole("textbox")).toHaveValue("Keep this draft");
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
   });
 
   it("should render input area and send button", () => {

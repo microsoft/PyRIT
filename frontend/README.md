@@ -68,6 +68,12 @@ off by default and disabled when the conversation ID is empty. When enabled,
 request converters run on the stored history during the scan, without changing
 the source conversation. New outgoing turns are always converted.
 
+Drop files onto the chat or an editable prompt to attach them. Converter file
+fields also accept drops, including **New converter** in the chat pane.
+Drops use the same handling as **Attach files** or **Upload**. Read-only inputs
+stay read-only. Selected converter images show a small preview with **Replace**
+and **Remove**; removing an image restores the path field.
+
 ## Dataset catalog
 
 Chat drafts stay in memory while you visit Datasets and return. Text, attachments,

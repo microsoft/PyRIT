@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
@@ -397,6 +397,69 @@ describe('CreateConverterDialog', () => {
       'Upload a file or enter a server path',
     )
     expect(screen.getByRole('button', { name: 'Upload' })).toBeInTheDocument()
+  })
+
+  it.each(['picker', 'drop'])('should preview an image from %s without changing its stored value and restore paths on Remove', async (method: string) => {
+    const user = userEvent.setup()
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
+    const click = jest.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined)
+    renderDialog()
+    await selectConverterType('PathConverter')
+    const file = new File(['image'], 'sample.png', { type: 'image/png' })
+    if (method === 'drop') fireEvent.drop(screen.getByRole('textbox', { name: 'source *' }), {
+      dataTransfer: { types: ['Files'], files: [file, new File(['ignored'], 'second.png', { type: 'image/png' })] },
+    })
+    else {
+      await user.click(screen.getByRole('button', { name: 'Upload' }))
+      const input = click.mock.contexts[0]
+      if (!(input instanceof HTMLInputElement)) throw new Error('File picker did not open')
+      screen.getByRole('dialog').appendChild(input)
+      await user.upload(input, file)
+      input.remove()
+    }
+    const image = await screen.findByAltText('Preview for source')
+    fireEvent.load(image)
+    expect(image).toBeVisible()
+    expect(image).toHaveAttribute('src', 'data:image/png;base64,aW1hZ2U=')
+    expect(screen.queryByRole('textbox', { name: 'source *' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Replace' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Remove image for source' }))
+    const path = screen.getByRole('textbox', { name: 'source *' })
+    expect(path).toHaveFocus()
+    expect(path).toHaveValue('')
+    await user.type(path, '/sample/new.png')
+    expect(path).toHaveValue('/sample/new.png')
+    fireEvent.drop(path, { dataTransfer: { types: ['Files'], files: [file] } })
+    await screen.findByAltText('Preview for source')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'PathConverter', type: 'PathConverter', params: { source: 'data:image/png;base64,aW1hZ2U=' },
+    })
+  })
+
+  it('should keep an image preview read-only when uploads are not allowed', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
+    mockedConvertersApi.buildConverter.mockResolvedValue({ identifier: { class_name: 'PathConverter', hash: 'image' } })
+    renderDialog({
+      allowUploads: false,
+      editing: { converter: {
+        converter_id: 'image', identifier: { class_name: 'PathConverter', hash: 'image', source: 'data:image/png;base64,aW1hZ2U=' },
+      } },
+      onTemporary: jest.fn(),
+    })
+    const image = await screen.findByAltText('Preview for source')
+    fireEvent.load(image)
+    expect(screen.getByRole('button', { name: 'Replace' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Remove image for source' })).toBeDisabled()
+    fireEvent.drop(image, {
+      dataTransfer: { types: ['Files'], files: [new File(['other'], 'other.png', { type: 'image/png' })] },
+    })
+    await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+    expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('PathConverter', {
+      source_name: 'image', source_hash: 'image', params: {},
+    })
+    expect(image).toHaveAttribute('src', 'data:image/png;base64,aW1hZ2U=')
   })
 
   it('creates a named converter through the registry API', async () => {

@@ -10,7 +10,7 @@ import { usePromptEditorStyles } from './PromptEditor.styles'
 import PromptEditor from './PromptEditor'
 import SystemPromptSetup from './SystemPromptSetup'
 import MultiSendSettings from './MultiSendSettings'
-import { PIECE_TYPE_TO_DATA_TYPE, withDraftIdentity } from './converterTypes'
+import { attachmentsFromFiles, PIECE_TYPE_TO_DATA_TYPE, withDraftIdentity } from './converterTypes'
 
 const DISABLED_WARNING_HOVER_DELAY_MS = 700
 
@@ -98,6 +98,7 @@ function getUnsupportedConverterOutputTypes(converterOutputDataTypes: string[], 
 
 export interface ChatInputAreaHandle {
   addAttachment: (attachment: MessageAttachment) => void
+  addFiles: (files: File[]) => void
   setText: (text: string) => void
   restoreDraft: (text: string, attachments: MessageAttachment[], textMetadata?: Record<string, unknown>) => void
   focus: () => void
@@ -210,6 +211,9 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
     setAttachments(next)
   }
   useImperativeHandle(ref, () => ({
+    addFiles: (files: File[]): void => {
+      if (!disabled) changeAttachments([...attachmentsRef.current, ...attachmentsFromFiles(files)])
+    },
     addAttachment: (attachment: MessageAttachment): void => {
       changeAttachments([...attachmentsRef.current, withDraftIdentity({ ...attachment, draftId: undefined })])
     },

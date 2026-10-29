@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { createMemoryRouter, MemoryRouter, RouterProvider, Route, Routes, useLocation } from "react-router";
@@ -333,6 +333,20 @@ describe("ChatWindow Integration", () => {
     labels: { operator: 'testuser', operation: 'test_op' },
   };
 
+  it("should accept file drops across the chat and composer without duplicate attachments or lost text", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatWindow {...defaultProps} /></TestWrapper>);
+    await user.type(screen.getByTestId("chat-input"), "Unsent draft");
+    const image = new File(["image"], "photo.png", { type: "image/png" });
+    fireEvent.drop(screen.getByTestId("chat-area"), { dataTransfer: { types: ["Files"], files: [image] } });
+    expect(screen.getAllByRole("button", { name: "Remove photo.png" })).toHaveLength(1);
+    fireEvent.drop(screen.getByTestId("chat-input"), { dataTransfer: { types: ["Files"], files: [image] } });
+    expect(screen.getAllByRole("button", { name: "Remove photo.png" })).toHaveLength(2);
+    expect(screen.getByTestId("chat-input")).toHaveValue("Unsent draft");
+    expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled();
+    expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
+  });
+
   async function chooseCount(
     user: ReturnType<typeof userEvent.setup>,
     count: number,
@@ -399,6 +413,11 @@ describe("ChatWindow Integration", () => {
     await screen.findByText("Original automated response", { exact: true });
     expect(screen.getByRole("button", { name: "Edit Conversation", exact: true })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute("aria-disabled", "true");
+    const file = new File(["image"], "locked.png", { type: "image/png" });
+    fireEvent.dragEnter(screen.getByTestId("chat-area"), { dataTransfer: { types: ["Files"], files: [file] } });
+    fireEvent.drop(screen.getByTestId("chat-area"), { dataTransfer: { types: ["Files"], files: [file] } });
+    expect(screen.queryByRole("button", { name: "Remove locked.png" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Drop files to attach")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit objective" })).not.toBeInTheDocument();
     expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import {
   Button,
@@ -25,10 +25,13 @@ import { convertersApi, targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import { useTargetPreferences } from '@/hooks/useTargetPreferences'
 import { resolveDefaultAdversarialTarget } from '@/utils/targetIdentity'
+import { mapMediaUrl } from '@/utils/media'
 import type {
   ConverterInstance, ConverterTypeEntry, Parameter, TargetInstance, SourceInstanceSpec, ConverterIdentifier,
 } from '@/types'
 import ParameterField from '@/components/Parameters/ParameterField'
+import FileDropZone from '@/components/Media/FileDropZone'
+import MediaPreview from '@/components/Media/MediaPreview'
 import {
   buildParametersFromForm,
   getInitialFormValues,
@@ -83,6 +86,7 @@ interface ParameterInputProps {
   showError: boolean
   onChange: (value: string) => void
   onBrowse: () => void
+  onFile: (file: File) => void
   allowUploads: boolean
 }
 
@@ -161,11 +165,21 @@ function ParameterInput({
   showError,
   onChange,
   onBrowse,
+  onFile,
   allowUploads,
 }: ParameterInputProps) {
   const styles = useCreateConverterDialogStyles()
+  const pathInputRef = useRef<HTMLInputElement>(null)
+  const focusPathInput = useRef(false)
   const label = `${parameter.name}${parameter.required ? ' *' : ''}`
   const help = parameter.description?.trim()
+
+  useLayoutEffect(() => {
+    if (focusPathInput.current && pathInputRef.current) {
+      focusPathInput.current = false
+      pathInputRef.current.focus()
+    }
+  }, [value])
 
   if (parameter.reference_type) {
     return (
@@ -226,6 +240,9 @@ function ParameterInput({
     || parameter.type_name === 'Path | str'
     || /path|file/i.test(parameter.name)
     || /path|file/i.test(parameter.description ?? '')
+  const mappedImage = isFile && value.startsWith('data:')
+    ? mapMediaUrl({ dataType: 'image_path', value }) : null
+  const imagePreview = mappedImage?.status === 'preview' && mappedImage.kind === 'image' ? mappedImage.url : null
 
   return (
     <HelpField
@@ -237,8 +254,14 @@ function ParameterInput({
       validationMessage={showError ? 'Required' : undefined}
     >
       {isFile ? (
-        <div className={styles.fileRow}>
-          <Input
+        <FileDropZone className={styles.fileRow} disabled={!allowUploads}
+          label="Drop file" onFiles={(files: File[]) => { if (files[0]) onFile(files[0]) }}>
+          {imagePreview ? <div className={styles.filePreview}>
+            <MediaPreview key={imagePreview} type="image" src={imagePreview} alt={`Preview for ${parameter.name}`}
+              className={styles.fileThumbnail} containerClassName={styles.fileThumbnailContainer} />
+            <Text size={200}>Image selected</Text>
+          </div> : <Input
+            input={{ ref: pathInputRef }}
             disabled={!allowUploads}
             className={styles.fileInput}
             value={value}
@@ -248,9 +271,16 @@ function ParameterInput({
                 : 'Upload a file or enter a server path'
             )}
             onChange={(_, data) => onChange(data.value)}
-          />
-          <Button type="button" disabled={!allowUploads} onClick={onBrowse}>Upload</Button>
-        </div>
+          />}
+          <Button type="button" className={styles.fileButton} disabled={!allowUploads} onClick={onBrowse}>
+            {imagePreview ? 'Replace' : 'Upload'}
+          </Button>
+          {imagePreview && <Button type="button" className={styles.fileButton} disabled={!allowUploads}
+            aria-label={`Remove image for ${parameter.name}`} onClick={() => {
+              focusPathInput.current = true
+              onChange('')
+            }}>Remove</Button>}
+        </FileDropZone>
       ) : (
         <Input
           value={value}
@@ -448,6 +478,21 @@ export default function CreateConverterDialog({
     setError(null)
   }
 
+  const readFile = (parameterName: string, file: File): void => {
+    if (!allowUploads) return
+    const epoch = openEpochRef.current
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (openEpochRef.current !== epoch) return
+      setChangedParameters((current) => new Set([...current, parameterName]))
+      setParameterValues((current) => ({
+        ...current,
+        [parameterName]: String(reader.result ?? ''),
+      }))
+    }
+    reader.readAsDataURL(file)
+  }
+
   const browse = (parameterName: string) => {
     const epoch = openEpochRef.current
     const input = document.createElement('input')
@@ -456,16 +501,7 @@ export default function CreateConverterDialog({
       if (openEpochRef.current !== epoch) return
       const file = input.files?.[0]
       if (!file) return
-      const reader = new FileReader()
-      reader.onload = () => {
-        if (openEpochRef.current !== epoch) return
-        setChangedParameters((current) => new Set([...current, parameterName]))
-        setParameterValues((current) => ({
-          ...current,
-          [parameterName]: String(reader.result ?? ''),
-        }))
-      }
-      reader.readAsDataURL(file)
+      readFile(parameterName, file)
     }
     input.click()
   }
@@ -704,6 +740,7 @@ export default function CreateConverterDialog({
                             setParameterValues((current) => ({ ...current, [parameter.name]: value }))
                           }}
                           onBrowse={() => browse(parameter.name)}
+                          onFile={(file: File) => readFile(parameter.name, file)}
                           allowUploads={allowUploads}
                         />}
                       </div>

@@ -26,6 +26,14 @@ export function withDraftIdentity(attachment: MessageAttachment): MessageAttachm
   return { ...attachment, draftId: attachment.draftId ?? generateClientId() }
 }
 
+export function attachmentsFromFiles(files: File[]): MessageAttachment[] {
+  return files.map((file: File): MessageAttachment => withDraftIdentity({
+    type: file.type.startsWith('image/') ? 'image' : file.type.startsWith('audio/') ? 'audio'
+      : file.type.startsWith('video/') ? 'video' : 'file',
+    name: file.name, url: URL.createObjectURL(file), mimeType: file.type, size: file.size, file,
+  }))
+}
+
 export function buildConverterInputs(text: string, attachments: MessageAttachment[]): ConverterInputPiece[] {
   return [
     { id: 'text', pieceType: 'text', name: 'Text', dataType: 'text', value: text },
