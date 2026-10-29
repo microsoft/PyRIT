@@ -18,7 +18,6 @@ import {
   Text,
 } from '@fluentui/react-components'
 import {
-  ArrowSyncRegular,
   ChevronDownRegular,
   ChevronUpRegular,
   SearchRegular,
@@ -29,6 +28,7 @@ import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import { presetScannerRoutePath } from '@/components/ScenarioPresets/presetRoutes'
 import { estimatePresetRunSizes } from '@/components/ScenarioPresets/presetRunSizes'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { scenarioPresetsApi, scenariosApi, scenarioSuitesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
@@ -536,10 +536,12 @@ export default function ScenarioCatalog({
   const [suiteNotice, setSuiteNotice] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [refetchCount, setRefetchCount] = useState(0)
+  const pending = useRef(false)
 
   useEffect(() => {
     const controller = new AbortController()
     let cancelled = false
+    pending.current = true
 
     const loadScenarioEstimates = async (): Promise<void> => {
       try {
@@ -587,9 +589,6 @@ export default function ScenarioCatalog({
       if (cancelled) return
 
       if (catalogResult.status === 'rejected') {
-        setScenarios([])
-        setSuites([])
-        setPresets([])
         setError(toApiError(catalogResult.reason).detail)
         setLoading(false)
         setEstimatesLoading(false)
@@ -602,8 +601,8 @@ export default function ScenarioCatalog({
         ? presetsResult.value.items.filter(isListedInScanner)
         : []
       setScenarios(items)
-      setSuites(suitesResult.status === 'fulfilled' ? suitesResult.value.items : [])
-      setPresets(presetsResult.status === 'fulfilled' ? presetsResult.value.items : [])
+      if (suitesResult.status === 'fulfilled') setSuites(suitesResult.value.items)
+      if (presetsResult.status === 'fulfilled') setPresets(presetsResult.value.items)
       setSuitesError(
         suitesResult.status === 'rejected' ? toApiError(suitesResult.reason).detail : null,
       )
@@ -628,26 +627,20 @@ export default function ScenarioCatalog({
       ])
     }
 
-    void loadCatalog()
+    void loadCatalog().finally(() => { if (!cancelled) pending.current = false })
 
     return () => {
       cancelled = true
       controller.abort()
+      pending.current = false
     }
   }, [refetchCount, generation])
 
   const handleRetry = useCallback(() => {
-    setLoading(true)
-    setEstimatesLoading(true)
-    setPresetEstimatesLoading(true)
-    setError(null)
-    setEstimateError(null)
-    setPresetEstimateError(null)
-    setSuitesError(null)
-    setPresetsError(null)
     setSuiteNotice(null)
     setRefetchCount((count) => count + 1)
   }, [])
+  useAutoRefresh(() => { if (!pending.current) handleRetry() }, !loading)
 
   const handleSuiteChanged = useCallback((name: string) => {
     handleRetry()
@@ -725,15 +718,6 @@ export default function ScenarioCatalog({
             onChange={(_, data) => setQuery(data.value)}
             aria-label="Search scenarios"
           />
-          <Button
-            className={styles.touchTarget}
-            appearance="subtle"
-            icon={<ArrowSyncRegular />}
-            onClick={handleRetry}
-            disabled={loading}
-          >
-            Refresh
-          </Button>
         </div>
       </div>
 
@@ -746,47 +730,34 @@ export default function ScenarioCatalog({
           )}
           {suitesError && (
             <MessageBar intent="warning">
-              <MessageBarBody>Scenario suites could not be loaded: {suitesError}</MessageBarBody>
+              <MessageBarBody>{suitesError}</MessageBarBody>
             </MessageBar>
           )}
           {presetsError && (
             <MessageBar intent="warning">
-              <MessageBarBody>Scenario presets could not be loaded: {presetsError}</MessageBarBody>
+              <MessageBarBody>{presetsError}</MessageBarBody>
             </MessageBar>
           )}
           {estimateError && (
             <MessageBar intent="warning">
-              <MessageBarBody>Default run sizes could not be calculated: {estimateError}</MessageBarBody>
+              <MessageBarBody>{estimateError}</MessageBarBody>
             </MessageBar>
           )}
           {presetEstimateError && (
             <MessageBar intent="warning">
-              <MessageBarBody>Preset run sizes could not be calculated: {presetEstimateError}</MessageBarBody>
+              <MessageBarBody>{presetEstimateError}</MessageBarBody>
             </MessageBar>
           )}
         </div>
       )}
 
+      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       {loading ? (
         <div className={styles.centeredState}>
           <Spinner label="Loading scenarios..." />
         </div>
-      ) : error ? (
-        <div className={styles.centeredState} data-testid="error-state">
-          <MessageBar intent="error">
-            <MessageBarBody>{error}</MessageBarBody>
-          </MessageBar>
-          <Button
-            className={styles.touchTarget}
-            appearance="primary"
-            icon={<ArrowSyncRegular />}
-            onClick={handleRetry}
-            data-testid="retry-btn"
-          >
-            Retry
-          </Button>
-        </div>
-      ) : scenarios.length === 0 ? (
+      ) : error && scenarios.length === 0 ? null
+      : scenarios.length === 0 ? (
         <div className={styles.centeredState} data-testid="empty-state">
           <Text size={400}>No scenarios are registered</Text>
           <Text size={200}>Register a scenario via your PyRIT initializers to see it here.</Text>

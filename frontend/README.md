@@ -79,7 +79,7 @@ journey discards the handoff; refreshing the browser does not retain it.
 The **Datasets** page shows summaries of datasets already loaded into the backend's
 memory. When memory is empty, **Learn how to load datasets into memory** opens the
 [dataset-loading guide](https://microsoft.github.io/PyRIT/latest/code/datasets/loading-datasets/).
-Use the same memory as the backend, then select **Refresh** in the catalog.
+Use the same memory as the backend. The visible catalog checks for changes each minute.
 The catalog does not download providers or prefetch individual examples.
 
 Open a dataset to inspect its stored examples. Search matches text prompts and
@@ -97,6 +97,16 @@ Filters, page size, and the open example stay in the address bar.
 from. A direct link without that return state goes to `/datasets`.
 On narrow screens, scroll the example table horizontally to read its columns.
 Expanded details stack each label above its stored value.
+
+## Automatic data updates
+
+Home, registries, history, analytics, catalogs, and configuration data update every
+60 seconds while their view is visible, and after relevant actions. Updates do not
+reload the page or reset filters, selection, expanded details, or drafts. Dirty
+configuration and environment files are not replaced by background reads. Successful
+checks show no status message; failed checks show the error text. Active scan and
+chat progress keep their faster polling. Runtime initialization and dataset loading
+remain explicit actions.
 
 ## Resuming a scenario run
 

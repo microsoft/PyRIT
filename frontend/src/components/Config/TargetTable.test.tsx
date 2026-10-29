@@ -766,7 +766,7 @@ describe('TargetTable', () => {
     expect(screen.getByText('#1 inner_a')).toBeInTheDocument()
   })
 
-  it('should ignore a selection the reloaded targets no longer offer', async () => {
+  it('should retain a selection when reloaded targets no longer match it', async () => {
     const user = userEvent.setup()
     const imageChat = makeModalityTarget('image_chat', ['text', 'image_path'], ['text'])
     const textChat = makeModalityTarget('text_chat', ['text'], ['text'])
@@ -784,13 +784,16 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
+    expect(screen.queryByRole('row', { name: /text_chat/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /audio_chat/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Filter by input:' })).toHaveValue('Inputs: Image')
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).not.toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('status')).toHaveTextContent('No targets match the selected filters.')
+    await user.click(screen.getByRole('button', { name: 'Reset all filters' }))
     expect(screen.getByRole('row', { name: /text_chat/ })).toBeInTheDocument()
-    expect(screen.getByRole('row', { name: /audio_chat/ })).toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: 'Filter by input:' })).toHaveValue('')
-    expect(screen.getByRole('button', { name: 'Reset all filters' })).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('should not bring back a selection when a later reload offers it again', async () => {
+  it('should keep a selection through disappearance and reappearance of its matching targets', async () => {
     const user = userEvent.setup()
     const imageChat = makeModalityTarget('image_chat', ['text', 'image_path'], ['text'])
     const textChat = makeModalityTarget('text_chat', ['text'], ['text'])
@@ -812,8 +815,9 @@ describe('TargetTable', () => {
     renderWith([textChat, audioChat])
     renderWith([imageChat, textChat])
 
-    expect(screen.getByRole('combobox', { name: 'Filter by input:' })).toHaveValue('')
-    expect(screen.getByRole('row', { name: /text_chat/ })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Filter by input:' })).toHaveValue('Inputs: Image')
+    expect(screen.queryByRole('row', { name: /text_chat/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /image_chat/ })).toBeInTheDocument()
   })
 
   it('should keep the inner targets of a matching round robin target', async () => {

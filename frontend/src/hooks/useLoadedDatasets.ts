@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useRuntime } from '@/hooks/useRuntime'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { datasetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { DatasetInfo } from '@/types'
@@ -9,7 +10,6 @@ interface LoadedDatasetsState {
   readonly datasets: DatasetInfo[]
   readonly loading: boolean
   readonly error: string | null
-  readonly retry: () => void
   /** Reloads catalog metadata without hiding a page that already has data. */
   readonly refresh: () => void
 }
@@ -25,6 +25,7 @@ export function useLoadedDatasets(): LoadedDatasetsState {
   const [error, setError] = useState<string | null>(null)
   const [refetchCount, setRefetchCount] = useState(0)
   const [activeGeneration, setActiveGeneration] = useState(generation)
+  const pending = useRef(false)
 
   // Reset before paint so a selection key is not matched against the previous runtime's catalog.
   if (activeGeneration !== generation) {
@@ -36,6 +37,7 @@ export function useLoadedDatasets(): LoadedDatasetsState {
 
   useEffect(() => {
     const controller = new AbortController()
+    pending.current = true
 
     const load = async (): Promise<void> => {
       try {
@@ -45,28 +47,27 @@ export function useLoadedDatasets(): LoadedDatasetsState {
         setError(null)
       } catch (err: unknown) {
         if (controller.signal.aborted) return
-        setDatasets([])
         setError(toApiError(err).detail)
       } finally {
-        if (!controller.signal.aborted) setLoading(false)
+        if (!controller.signal.aborted) {
+          setLoading(false)
+          pending.current = false
+        }
       }
     }
 
     void load()
     return () => {
       controller.abort()
+      pending.current = false
     }
   }, [generation, refetchCount])
 
-  const retry = useCallback(() => {
-    setLoading(true)
-    setError(null)
-    setRefetchCount((count) => count + 1)
-  }, [])
-
   const refresh = useCallback(() => {
+    if (pending.current) return
     setRefetchCount((count) => count + 1)
   }, [])
+  useAutoRefresh(refresh, !loading)
 
-  return { datasets, loading, error, retry, refresh }
+  return { datasets, loading, error, refresh }
 }

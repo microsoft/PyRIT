@@ -103,29 +103,27 @@ function capabilityOptions(targets: TargetInstance[]): FilterOption[] {
   return narrowingOptions(targets, options, supportsCapability)
 }
 
-/** The choices each filter offers for the given targets. */
-export function getTargetFilterOptions(targets: TargetInstance[]): TargetFilterOptions {
+/** Current choices plus selected values that must remain visible and removable. */
+export function getTargetFilterOptions(
+  targets: TargetInstance[], filters: TargetFilters = DEFAULT_TARGET_FILTERS,
+): TargetFilterOptions {
   const types = [...new Set(targets.map((target: TargetInstance) => targetType(target)))].sort()
-  return {
+  const options: TargetFilterOptions = {
     types: types.length > 1 ? types.map((type: string) => ({ value: type, label: type })) : [],
     inputs: modalityOptions(targets, 'supported_input_modalities'),
     outputs: modalityOptions(targets, 'supported_output_modalities'),
     capabilities: capabilityOptions(targets),
   }
-}
-
-/** Drop selections the current options no longer offer, so they stop filtering. */
-export function activeTargetFilters(filters: TargetFilters, options: TargetFilterOptions): TargetFilters {
-  const offered = (key: keyof TargetFilters): string[] =>
-    filters[key].filter((value: string) => options[key].some((option: FilterOption) => option.value === value))
-  return { types: offered('types'), inputs: offered('inputs'), outputs: offered('outputs'), capabilities: offered('capabilities') }
-}
-
-/** Whether both hold the same values in the same order. */
-export function isSameTargetFilters(first: TargetFilters, second: TargetFilters): boolean {
-  return (Object.keys(first) as Array<keyof TargetFilters>).every((key: keyof TargetFilters) =>
-    first[key].length === second[key].length
-    && first[key].every((value: string, index: number) => value === second[key][index]))
+  for (const key of ['types', 'inputs', 'outputs', 'capabilities'] as const) {
+    for (const value of filters[key]) {
+      if (options[key].some((option: FilterOption) => option.value === value)) continue
+      const label = key === 'capabilities'
+        ? CAPABILITY_COLUMNS.find((column: (typeof CAPABILITY_COLUMNS)[number]) => column.key === value)?.label
+        : key === 'types' ? value : MODALITY_LABELS[value]
+      options[key].push({ value, label: label ?? value })
+    }
+  }
+  return options
 }
 
 export function hasActiveTargetFilters(filters: TargetFilters): boolean {

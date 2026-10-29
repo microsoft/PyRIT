@@ -11,11 +11,12 @@ import {
   Text,
 } from '@fluentui/react-components'
 import type { SelectTabData, SelectTabEvent } from '@fluentui/react-components'
-import { ArrowSyncRegular, SaveRegular } from '@fluentui/react-icons'
+import { SaveRegular } from '@fluentui/react-icons'
 import { useBeforeUnload, useBlocker, useSearchParams } from 'react-router'
 
 import { configurationApi } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { toApiError } from '@/services/errors'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import EditorWorkspace from '@/components/EditorWorkspace'
@@ -61,7 +62,8 @@ export default function Configuration() {
   const loadedSnapshot = useRef<{ generation: string; reloadCount: number } | null>(null)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
   const [environmentHasUnsavedChanges, setEnvironmentHasUnsavedChanges] = useState(false)
-  const [pendingDiscardAction, setPendingDiscardAction] = useState<(() => void) | null>(null)
+  const pending = useRef(false)
+  const editRevision = useRef(0)
   const selectedTab = configurationTabFromSearchParams(searchParams)
   const configurationHasUnsavedChanges = content !== savedContent
   const hasUnsavedChanges = selectedTab === 'configuration'
@@ -77,17 +79,18 @@ export default function Configuration() {
   }, [hasUnsavedChanges]))
 
   useEffect(() => {
-    const manualReload = reloadCount !== (loadedSnapshot.current?.reloadCount ?? 0)
-    if (((configurationHasUnsavedChanges || environmentHasUnsavedChanges) && !manualReload) || saving) return
+    if (configurationHasUnsavedChanges || environmentHasUnsavedChanges || saving) return
     if (loadedSnapshot.current?.generation === generation && loadedSnapshot.current.reloadCount === reloadCount) return
     let cancelled = false
+    pending.current = true
+    const revision = editRevision.current
 
     const loadContentAsync = async (): Promise<void> => {
-      setStatusMessage(null)
       try {
         const response = await configurationApi.getContent()
-        if (!cancelled) {
+        if (!cancelled && editRevision.current === revision) {
           loadedSnapshot.current = { generation, reloadCount }
+          setStatusMessage(null)
           setContent(response.content)
           setSavedContent(response.content)
           setSource(response.source)
@@ -101,6 +104,7 @@ export default function Configuration() {
       } finally {
         if (!cancelled) {
           setLoading(false)
+          pending.current = false
         }
       }
     }
@@ -108,23 +112,17 @@ export default function Configuration() {
     void loadContentAsync()
     return () => {
       cancelled = true
+      pending.current = false
     }
   }, [reloadCount, generation, configurationHasUnsavedChanges, environmentHasUnsavedChanges, saving])
 
-  const handleReload = (): void => {
-    const reload = (): void => {
-      setLoading(true)
-      setReloadCount((currentCount: number) => currentCount + 1)
-    }
-
-    if (configurationHasUnsavedChanges) {
-      setPendingDiscardAction(() => reload)
-      return
-    }
-    reload()
-  }
+  useAutoRefresh(() => {
+    if (!pending.current) setReloadCount((count: number) => count + 1)
+  }, selectedTab === 'configuration' && !loading && !saving
+    && !configurationHasUnsavedChanges && !environmentHasUnsavedChanges)
 
   const handleSave = async (): Promise<void> => {
+    editRevision.current++
     setSaving(true)
     setStatusMessage(null)
     try {
@@ -160,18 +158,13 @@ export default function Configuration() {
   }
 
   const handleDiscardChanges = (): void => {
-    const discardAction = pendingDiscardAction
-    setPendingDiscardAction(null)
     setContent(savedContent)
     if (blocker.state === 'blocked') {
       blocker.proceed()
-    } else {
-      discardAction?.()
     }
   }
 
   const handleKeepEditing = (): void => {
-    setPendingDiscardAction(null)
     if (blocker.state === 'blocked') {
       blocker.reset()
     }
@@ -208,9 +201,6 @@ export default function Configuration() {
       ) : selectedTab === 'environment' ? (
         <EnvironmentFiles
           onUnsavedChangesChange={setEnvironmentHasUnsavedChanges}
-          onRequestDiscardChanges={(discardChanges: () => void): void => {
-            setPendingDiscardAction(() => discardChanges)
-          }}
         />
       ) : loading ? (
         <div className={styles.loadingState}>
@@ -225,15 +215,6 @@ export default function Configuration() {
           description="Edit YAML configuration loaded when PyRIT starts."
           actions={(
             <div className={styles.actions}>
-              <Button
-                appearance="subtle"
-                className={styles.action}
-                icon={<ArrowSyncRegular />}
-                disabled={loading || saving}
-                onClick={handleReload}
-              >
-                Reload file
-              </Button>
               <Button
                 appearance="primary"
                 className={styles.action}
@@ -254,13 +235,13 @@ export default function Configuration() {
             <YamlEditor
               value={content}
               disabled={saving}
-              onChange={setContent}
+              onChange={(next: string) => { editRevision.current++; setContent(next) }}
             />
           </Field>
         </EditorWorkspace>
       )}
       <ConfirmDialog
-        open={blocker.state === 'blocked' || pendingDiscardAction !== null}
+        open={blocker.state === 'blocked'}
         title="Discard unsaved changes?"
         confirmLabel="Discard changes"
         cancelLabel="Keep editing"

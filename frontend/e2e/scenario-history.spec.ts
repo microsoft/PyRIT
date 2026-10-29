@@ -679,6 +679,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
   });
 
   test("preserves filtered history and scenario provenance through native attempt navigation", async ({ page }) => {
+    await page.clock.install();
     await mockScenarioAPIs(page);
     await page.goto("/scanner/history?operator=alice&status=COMPLETED");
 
@@ -686,7 +687,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await expect(page.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
     const row = page.getByTestId(`scenario-history-row-${RUN_ID}`);
     await expect(row).toBeVisible();
-    await page.getByTestId("scenario-history-refresh").click();
+    await page.clock.fastForward(60_000);
     await expect(row).toBeVisible();
     await row.getByRole("link", { name: new RegExp(`Open ${SCENARIO_NAME.replace(".", "\\.")} scenario run`, "i") }).press("Enter");
     await expect(page).toHaveURL(`/scanner/history/${RUN_ID}`);
@@ -698,10 +699,12 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await page.reload();
     await expect(page).toHaveURL(`/scanner/history/${RUN_ID}`);
     await expect(page.getByRole("heading", { name: SCENARIO_NAME })).toBeVisible();
-    const atomicGroupsToggle = page.getByRole("button", { name: /atomic attack groups$/ });
-    await expect(atomicGroupsToggle).toHaveAttribute("aria-expanded", "true");
-    const groupToggle = page.getByRole("button", { name: "Expand attacks in Prompt sending" });
+    const groups = page.getByRole("region", { name: "Atomic attack groups", exact: true });
+    await expect(groups).toBeVisible();
+    const groupToggle = groups.getByRole("button", { name: /^(Expand|Collapse) Prompt sending$/ });
     await expect(groupToggle).toBeVisible();
+    await expect(groupToggle).toHaveAttribute("aria-expanded", "true");
+    await groupToggle.click();
     await expect(groupToggle).toHaveAttribute("aria-expanded", "false");
     await groupToggle.click();
     const attemptRow = page.getByRole("row", { name: "View details for prompt_sending" });
@@ -714,7 +717,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
 
     await attemptRow.click();
     const attackLink = page.getByRole("dialog", { name: "prompt_sending" })
-      .getByRole("link", { name: "View conversation" });
+      .getByRole("link", { name: "Open conversation" });
     await expect(attackLink).toHaveAttribute(
       "href",
       `/attack/chat/${ATTACK_ID}/conversations/conversation-1?scenarioResultId=${RUN_ID}`,
@@ -724,9 +727,10 @@ test.describe("Scenario catalog, history, and live run routing", () => {
       `/attack/chat/${ATTACK_ID}/conversations/conversation-1?scenarioResultId=${RUN_ID}`,
     );
 
-    const breadcrumb = page.getByRole("navigation", { name: "Attack provenance" });
+    const breadcrumb = page.getByRole("link", { name: "Back to scan", exact: true });
     await expect(breadcrumb).toBeVisible();
-    await breadcrumb.getByRole("link", { name: `Return to scenario run ${RUN_ID}` }).click();
+    await expect(breadcrumb).toHaveAttribute("href", `/scanner/history/${RUN_ID}`);
+    await breadcrumb.click();
     await expect(page).toHaveURL(`/scanner/history/${RUN_ID}`);
     await page.goBack();
     await expect(page).toHaveURL(
@@ -735,7 +739,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
 
     await page.goto(`/attack/chat/${ATTACK_ID}`);
     await expect(page).toHaveURL(`/attack/chat/${ATTACK_ID}`);
-    await expect(page.getByRole("navigation", { name: "Attack provenance" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Back to scan", exact: true })).toHaveCount(0);
   });
 
   test("exposes accessible 44px history controls on narrow screens", async ({ page }) => {
@@ -745,11 +749,9 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/scanner/history");
 
-    const refresh = page.getByTestId("scenario-history-refresh");
     const row = page.getByTestId(`scenario-history-row-${RUN_ID}`);
-    await expect(refresh).toBeVisible();
+    await expect(page.getByTestId("scenario-history-refresh")).toHaveCount(0);
     await expect(row).toBeVisible();
-    expect((await refresh.boundingBox())?.height).toBeGreaterThanOrEqual(44);
     expect((await row.boundingBox())?.height).toBeGreaterThanOrEqual(44);
   });
 

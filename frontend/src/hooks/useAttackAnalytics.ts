@@ -6,10 +6,12 @@ import type { AttackAnalyticsQuery, AttackAnalyticsReport, AttackAnalyticsResult
 import { ANALYTICS_DEBOUNCE_MS, ANALYTICS_PAGE_SIZE, analyticsQueryKey } from '@/utils/attackAnalytics'
 
 import { useRuntime } from './useRuntime'
+import { useAutoRefresh } from './useAutoRefresh'
 
 interface ReportRequestIdentity {
   readonly scopeKey: string
   readonly key: string
+  readonly quiet: boolean
 }
 
 interface ReportState {
@@ -46,7 +48,7 @@ interface ResultsState {
 /**
  * Owns report and result-page reads, never aggregation. A null query disables reads
  * (including for invalid shared URLs). Equal serialized payloads are one request;
- * Reload explicitly starts another generation. There is no polling.
+ * Explicit reloads and quiet visible-view checks start new read generations.
  *
  * Keep a failed same-scope refresh's report and timestamps intact. Filters or axes
  * changing invalidate it immediately, so old results cannot describe a new cohort.
@@ -55,6 +57,7 @@ export function useAttackAnalytics(query: AttackAnalyticsQuery | null) {
   const runtime = useRuntime()
   const enabledQuery = runtime.ready ? query : null
   const [refreshVersion, setRefreshVersion] = useState(0)
+  const [quietKey, setQuietKey] = useState<string | null>(null)
   const [settled, setSettled] = useState<ReportState | null>(null)
   const [resultState, setResultState] = useState<ResultsState | null>(null)
   const resultController = useRef<AbortController | null>(null)
@@ -68,16 +71,21 @@ export function useAttackAnalytics(query: AttackAnalyticsQuery | null) {
   const requestKey = JSON.stringify([analyticsQueryKey(enabledQuery), refreshVersion, runtime.generation])
   // Equal consecutive keys reuse one identity. A -> B -> A creates a new one:
   // revisiting A must not revive a cancelled/older A request or its result page.
-  const request = useMemo(() => ({ scopeKey, key: requestKey }), [scopeKey, requestKey])
+  const request = useMemo(() => ({ scopeKey, key: requestKey, quiet: quietKey === requestKey }),
+    [scopeKey, requestKey, quietKey])
   const report = settled?.request.scopeKey === scopeKey ? settled.report : null
   const loading = enabledQuery !== null && settled?.request !== request
   const error = settled?.request === request ? settled.error : null
   // A cancelled page belongs to the previous request even if a failed refresh
   // retains the very same report object. Never revive that page's loading state.
-  const currentResults = resultState?.request === request && !loading ? resultState : null
+  const currentResults = resultState && (
+    (resultState.request === request && !loading)
+    || (request.quiet && resultState.request.scopeKey === scopeKey)
+  ) ? resultState : null
   const results = currentResults?.results ?? report?.results ?? null
   const page = currentResults?.page ?? 0
   const captureQuery = useEffectEvent((): AttackAnalyticsQuery | null => enabledQuery)
+  const captureResults = useEffectEvent(() => currentResults)
 
   useEffect(() => {
     // The serialized request key owns reactivity, not the caller's object identity.
@@ -86,11 +94,26 @@ export function useAttackAnalytics(query: AttackAnalyticsQuery | null) {
     const payload = captureQuery()
     if (payload === null) return
     const controller = new AbortController()
-    resultController.current?.abort()
+    if (!request.quiet) resultController.current?.abort()
     const timer = setTimeout(() => {
       analyticsApi.query(payload, controller.signal)
-        .then((response: AttackAnalyticsReport) => {
+        .then(async (response: AttackAnalyticsReport) => {
           if (controller.signal.aborted) return
+          if (request.quiet && !captureResults()?.loading) {
+            const previous = captureResults()
+            const refreshedResults = previous && previous.page > 0
+              ? await analyticsApi.results(
+                { filters: response.filters, cursor: previous.cursor, limit: ANALYTICS_PAGE_SIZE }, controller.signal,
+              ) : response.results
+            if (controller.signal.aborted) return
+            if (captureResults() === previous) {
+              setResultState({
+                request, results: refreshedResults, page: previous?.page ?? 0,
+                requestedPage: previous?.page ?? 0, cursor: previous?.cursor ?? null,
+                loading: false, error: null, invalidCursor: false,
+              })
+            }
+          }
           setSettled({ request, report: response, groupOffset: payload.group_offset ?? 0, error: null })
         })
         .catch((reason: unknown) => {
@@ -107,18 +130,24 @@ export function useAttackAnalytics(query: AttackAnalyticsQuery | null) {
     return () => {
       clearTimeout(timer)
       controller.abort()
-      resultController.current?.abort()
     }
   }, [request])
+  useEffect(() => () => { resultController.current?.abort() }, [])
 
   function reload(): void {
     resultController.current?.abort()
+    setQuietKey(null)
     setRefreshVersion((version: number) => version + 1)
   }
+  useAutoRefresh(() => {
+    const nextVersion = refreshVersion + 1
+    setQuietKey(JSON.stringify([analyticsQueryKey(enabledQuery), nextVersion, runtime.generation]))
+    setRefreshVersion(nextVersion)
+  }, enabledQuery !== null && !loading && !currentResults?.loading)
 
   /** Read only rows for the displayed report's filters, leaving its aggregates and timestamp untouched. */
   async function loadResults(cursor: string | null, requestedPage: number): Promise<void> {
-    if (!report || !results || loading) return
+    if (!report || !results || (loading && !request.quiet)) return
     resultController.current?.abort()
     const controller = new AbortController()
     resultController.current = controller
@@ -148,7 +177,7 @@ export function useAttackAnalytics(query: AttackAnalyticsQuery | null) {
   return {
     report,
     reportGroupOffset: settled?.request.scopeKey === scopeKey ? settled.groupOffset : 0,
-    loading,
+    loading: loading && !request.quiet,
     error,
     refreshVersion,
     reload,

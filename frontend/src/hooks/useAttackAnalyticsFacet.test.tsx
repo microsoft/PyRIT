@@ -61,16 +61,42 @@ describe('useAttackAnalyticsFacet', () => {
     expect(result.current.offset).toBe(0)
   })
 
-  it('should honor a busy facet response cooldown before Retry', async () => {
+  it('should honor a busy facet response cooldown before revalidation', async () => {
     mockFacets.mockRejectedValueOnce({
       isAxiosError: true, response: { status: 503, headers: { 'retry-after': '1' }, data: { detail: 'Busy facet' } },
     })
-    const { result } = renderFacet()
+    const { rerender } = renderHook(
+      ({ revision }: { revision: number }) => useAttackAnalyticsFacet({ name: 'operation' }, DEFAULT_ANALYTICS_VIEW.filters, revision),
+      { initialProps: { revision: 0 } },
+    )
     await advance()
-    act(() => { result.current.retry() })
+    rerender({ revision: 1 })
     await advance(999)
     expect(mockFacets).toHaveBeenCalledTimes(1)
     await advance(1)
     expect(mockFacets).toHaveBeenCalledTimes(2)
+  })
+
+  it('should preserve the facet page and options during automatic revalidation and failure', async () => {
+    const { result, rerender } = renderHook(
+      ({ revision }: { revision: number }) => useAttackAnalyticsFacet({ name: 'operation' }, DEFAULT_ANALYTICS_VIEW.filters, revision),
+      { initialProps: { revision: 0 } },
+    )
+    await advance()
+    act(() => { result.current.nextPage() })
+    await advance()
+    const items = result.current.items
+    rerender({ revision: 1 })
+    expect(result.current.offset).toBe(50)
+    expect(result.current.loading).toBe(false)
+    expect(result.current.items).toBe(items)
+    await advance()
+    expect(mockFacets).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 50 }), expect.any(AbortSignal))
+    mockFacets.mockRejectedValueOnce(new Error('Facet unavailable'))
+    rerender({ revision: 2 })
+    await advance()
+    expect(result.current.offset).toBe(50)
+    expect(result.current.items).toEqual(items)
+    expect(result.current.error).toBe('Facet unavailable')
   })
 })

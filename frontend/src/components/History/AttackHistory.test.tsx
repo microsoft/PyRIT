@@ -3,9 +3,11 @@ import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import AttackHistory from './AttackHistory'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
 import { DEFAULT_HISTORY_FILTERS } from './historyFilters'
 import { attacksApi, labelsApi, operationsApi } from '../../services/api'
 
+installAutoRefreshTimers()
 jest.mock('../../services/api', () => ({
   attacksApi: {
     listAttacks: jest.fn(),
@@ -93,7 +95,7 @@ describe('AttackHistory', () => {
     )
 
     expect(screen.getByRole('heading', { level: 1, name: 'Attack History' })).toBeInTheDocument()
-    expect(screen.getByTestId('refresh-btn')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument()
     expect(screen.getByTestId('outcome-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operator-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operation-filter')).toBeInTheDocument()
@@ -364,7 +366,7 @@ describe('AttackHistory', () => {
     })
   })
 
-  it('should show refresh button and call listAttacks on click', async () => {
+  it('should update the visible history after one minute', async () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: [],
       pagination: { limit: 25, has_more: false },
@@ -382,7 +384,7 @@ describe('AttackHistory', () => {
 
     expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1)
 
-    fireEvent.click(screen.getByTestId('refresh-btn'))
+    await advanceAutoRefresh()
     await waitFor(() => {
       expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(2)
     })
@@ -485,15 +487,30 @@ describe('AttackHistory', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('error-state')).toBeInTheDocument()
+      expect(screen.getByText('Internal server error')).toBeInTheDocument()
     })
     expect(screen.getByText('Internal server error')).toBeInTheDocument()
-    expect(screen.getByTestId('retry-btn')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Open Chat' })).not.toBeInTheDocument()
   })
 
-  it('should retry on clicking retry button', async () => {
+  it('should not keep old rows under changed filters after an automatic check', async () => {
+    mockedAttacksApi.listAttacks.mockResolvedValue({
+      items: sampleAttacks, pagination: { limit: 25, has_more: false },
+    })
+    const rendered = render(<TestWrapper><AttackHistory {...defaultProps} /></TestWrapper>)
+    await screen.findByTestId('attacks-table')
+    await advanceAutoRefresh()
+    mockedAttacksApi.listAttacks.mockRejectedValueOnce(new Error('Different cohort unavailable'))
+    rendered.rerender(<TestWrapper><AttackHistory {...defaultProps}
+      filters={{ ...defaultProps.filters, outcome: 'error' }} /></TestWrapper>)
+    expect(await screen.findByText('Different cohort unavailable')).toBeInTheDocument()
+    expect(screen.queryByTestId('attacks-table')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('attack-row-ar-conv-1')).not.toBeInTheDocument()
+  })
+
+  it('should recover on the next automatic check', async () => {
     const axiosError = {
       isAxiosError: true,
       response: { status: 500, data: { detail: 'Internal server error' } },
@@ -507,16 +524,15 @@ describe('AttackHistory', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('error-state')).toBeInTheDocument()
+      expect(screen.getByText('Internal server error')).toBeInTheDocument()
     })
 
-    // Now make it succeed on retry
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: sampleAttacks,
       pagination: { limit: 25, has_more: false },
     })
 
-    fireEvent.click(screen.getByTestId('retry-btn'))
+    await advanceAutoRefresh()
 
     await waitFor(() => {
       expect(screen.getByTestId('attacks-table')).toBeInTheDocument()
@@ -537,7 +553,7 @@ describe('AttackHistory', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('error-state')).toBeInTheDocument()
+      expect(screen.getByText(/network error/i)).toBeInTheDocument()
     })
     expect(screen.getByText(/network error/i)).toBeInTheDocument()
   })

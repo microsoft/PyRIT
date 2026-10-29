@@ -14,7 +14,6 @@ import {
 import type { BadgeProps } from '@fluentui/react-components'
 import {
   AddRegular,
-  ArrowClockwiseRegular,
   ArrowRightRegular,
   BriefcaseRegular,
   ChatRegular,
@@ -27,6 +26,7 @@ import {
 import OutcomeBadge from '@/components/OutcomeBadge'
 import type { ViewName } from '@/components/Sidebar/Navigation'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { AttackSummary, Operation, OperationListItem, ScenarioRunListItem, ScenarioRunState } from '@/types'
@@ -109,23 +109,27 @@ export default function Home({
     let ignore = false
     const load = <T,>(
       request: Promise<{ items: T[] }>,
-      commit: (result: LoadedSummaries<T>) => void,
+      commit: (update: (current: LoadedSummaries<T> | null) => LoadedSummaries<T>) => void,
     ): void => {
       request.then((response: { items: T[] }) => {
-        if (!ignore) commit({ key: requestKey, items: response.items, error: null })
+        if (!ignore) commit(() => ({ key: requestKey, items: response.items, error: null }))
       }).catch((cause: unknown) => {
-        if (!ignore) commit({ key: requestKey, items: [], error: toApiError(cause).detail })
+        if (!ignore) commit((current: LoadedSummaries<T> | null) => ({
+          key: requestKey,
+          items: current?.key.startsWith(`${generation}:`) ? current.items : [],
+          error: toApiError(cause).detail,
+        }))
       })
     }
     load(attacksApi.listAttacks({ limit: RECENT_WORK_LIMIT, include_scenario_attacks: false }), setAttackResult)
     load(scenariosApi.listRuns({ limit: RECENT_WORK_LIMIT }), setScanResult)
     load(operationsApi.list(), setOperationResult)
     return () => { ignore = true }
-  }, [requestKey, ready])
+  }, [requestKey, ready, generation])
 
-  const attacksLoading = !ready || attackResult?.key !== requestKey
-  const scansLoading = !ready || scanResult?.key !== requestKey
-  const operationsLoading = !ready || operationResult?.key !== requestKey
+  const attacksLoading = !ready || !attackResult?.key.startsWith(`${generation}:`)
+  const scansLoading = !ready || !scanResult?.key.startsWith(`${generation}:`)
+  const operationsLoading = !ready || !operationResult?.key.startsWith(`${generation}:`)
   const attacks = !attacksLoading && attackResult ? attackResult.items : []
   const scans = !scansLoading && scanResult ? scanResult.items : []
   const availableOperations = !operationsLoading && operationResult
@@ -138,12 +142,12 @@ export default function Home({
     ? [selected, ...availableOperations.filter((operation: Operation) => operation.id !== selected.id)]
     : availableOperations).slice(0, VISIBLE_OPERATIONS_LIMIT)
   const recentLoading = (filter !== 'scans' && attacksLoading) || (filter !== 'attacks' && scansLoading)
-  const recentErrors = [
+  const recentErrors = [...new Set([
     filter !== 'scans' && !attacksLoading && attackResult?.error
-      ? `Could not load recent attacks: ${attackResult.error}` : null,
+      ? attackResult.error : null,
     filter !== 'attacks' && !scansLoading && scanResult?.error
-      ? `Could not load recent scans: ${scanResult.error}` : null,
-  ].filter((error: string | null): error is string => error !== null)
+      ? scanResult.error : null,
+  ].filter((error: string | null): error is string => error !== null))]
   const operationsError = !operationsLoading ? operationResult?.error : null
   const recent: RecentItem[] = [
     ...attacks.map((attack: AttackSummary): RecentItem => ({
@@ -168,6 +172,8 @@ export default function Home({
     .sort((first: RecentItem, second: RecentItem) => activityTime(second.updatedAt) - activityTime(first.updatedAt))
     .slice(0, RECENT_WORK_LIMIT)
   const refresh = (): void => { setRevision((value: number) => value + 1) }
+  useAutoRefresh(refresh, ready && attackResult?.key === requestKey
+    && scanResult?.key === requestKey && operationResult?.key === requestKey)
 
   return (
     <div className={styles.root} data-testid="home-view">
@@ -179,9 +185,6 @@ export default function Home({
               Start an attack, configure a scan, or return to recent work.
             </Text>
           </div>
-          <Button appearance="subtle" icon={<ArrowClockwiseRegular />} onClick={refresh} className={styles.touchTarget}>
-            Refresh Home
-          </Button>
         </header>
 
         <div className={styles.workflowGrid} data-tour="home-workflows">
@@ -228,7 +231,7 @@ export default function Home({
           </div>
           {recentErrors.map((error: string) => (
             <MessageBar key={error} intent="error"><MessageBarBody>
-              {error} <Button onClick={refresh} className={styles.touchTarget}>Retry recent work</Button>
+              {error}
             </MessageBarBody></MessageBar>
           ))}
           {recentLoading && <Spinner size="small" label="Loading recent work..." />}
@@ -275,12 +278,12 @@ export default function Home({
             <Button appearance="subtle" icon={<ArrowRightRegular />} iconPosition="after" className={styles.touchTarget}
               onClick={() => { onNavigate('operations') }}>View operations</Button>
           </div>
-          {operationsLoading ? <Spinner size="small" label="Loading operations..." /> : operationsError ? (
+          {operationsError && (
             <MessageBar intent="error"><MessageBarBody>
-              Could not load operations: {operationsError}{' '}
-              <Button onClick={refresh} className={styles.touchTarget}>Retry operations</Button>
+              {operationsError}
             </MessageBarBody></MessageBar>
-          ) : operations.length > 0 ? (
+          )}
+          {operationsLoading ? <Spinner size="small" label="Loading operations..." /> : operations.length > 0 ? (
             <div className={styles.operationsGrid}>
               {operations.map((operation: Operation) => (
                 <button key={operation.id} type="button" className={styles.operationCard} title={operation.name}
@@ -294,7 +297,7 @@ export default function Home({
                 </button>
               ))}
             </div>
-          ) : (
+          ) : !operationsError && (
             <div className={styles.emptyOperations}>
               <BriefcaseRegular className={styles.rowIcon} aria-hidden="true" />
               <div className={styles.rowContent}>

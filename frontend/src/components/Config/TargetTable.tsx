@@ -47,9 +47,7 @@ import {
   CAPABILITY_COLUMNS,
   DEFAULT_TARGET_FILTERS,
   MODALITY_LABELS,
-  activeTargetFilters,
   getTargetFilterOptions,
-  isSameTargetFilters,
   orderModalities,
   targetMatchesFilters,
   type TargetFilters,
@@ -292,16 +290,10 @@ export default function TargetTable({
     [hiddenTargetRegistryNames, showHiddenTargets, targets],
   )
 
-  const filterOptions = useMemo(() => getTargetFilterOptions(targets), [targets])
-  const activeFilters = useMemo(() => activeTargetFilters(filters, filterOptions), [filters, filterOptions])
-  // A reload can remove a selected choice. Forget it (adjusting state during render, as
-  // ChatWindow does) so it cannot come back on a later reload; other selections stay.
-  if (!isSameTargetFilters(activeFilters, filters)) {
-    setFilters(activeFilters)
-  }
+  const filterOptions = useMemo(() => getTargetFilterOptions(targets, filters), [targets, filters])
   const filteredTargets = useMemo(
-    () => displayedTargets.filter((target: TargetInstance) => targetMatchesFilters(target, activeFilters)),
-    [displayedTargets, activeFilters],
+    () => displayedTargets.filter((target: TargetInstance) => targetMatchesFilters(target, filters)),
+    [displayedTargets, filters],
   )
   const noTargetsMatch = displayedTargets.length > 0 && filteredTargets.length === 0
 
@@ -347,7 +339,7 @@ export default function TargetTable({
           data-testid="show-hidden-targets"
         />
       </div>
-      <TargetFiltersBar filters={activeFilters} options={filterOptions} onFiltersChange={setFilters} />
+      <TargetFiltersBar filters={filters} options={filterOptions} onFiltersChange={setFilters} />
 
       <Table aria-label="Target instances" className={styles.table}>
         <TableHeader className={styles.stickyHeader}>

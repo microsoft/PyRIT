@@ -1,14 +1,17 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   tokens,
   Text,
   Button,
   Link,
+  MessageBar,
+  MessageBarBody,
   Spinner,
 } from '@fluentui/react-components'
-import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
+import { AddRegular } from '@fluentui/react-icons'
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetInstance } from '@/types'
@@ -30,11 +33,11 @@ export default function TargetConfig({
   const { generation, ready } = useRuntime()
   const styles = useTargetConfigStyles()
   const [targets, setTargets] = useState<TargetInstance[]>([])
+  const [hasShownTargets, setHasShownTargets] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
-  // Counter used to re-trigger the fetch effect from event handlers (Refresh,
-  // dialog close) without invoking setState synchronously in the effect body.
+  const pending = useRef(false)
   const [refetchCount, setRefetchCount] = useState(0)
 
   // Retry fetching targets a few times with backoff. The Vite dev proxy
@@ -44,14 +47,17 @@ export default function TargetConfig({
     if (!ready) return
     const maxRetries = 3
     let cancelled = false
+    pending.current = true
 
     const attempt = async (n: number): Promise<void> => {
       try {
         const items = await listRegisteredTargets()
         if (cancelled) return
         setTargets(items)
+        if (items.length > 0) setHasShownTargets(true)
         setError(null)
         setLoading(false)
+        pending.current = false
         onTargetsLoaded?.(items)
       } catch (err) {
         if (cancelled) return
@@ -62,20 +68,21 @@ export default function TargetConfig({
         }
         setError(toApiError(err).detail)
         setLoading(false)
+        pending.current = false
       }
     }
 
     attempt(0)
     return () => {
       cancelled = true
+      pending.current = false
     }
   }, [refetchCount, generation, ready, onTargetsLoaded])
 
   const fetchTargets = useCallback(() => {
-    setLoading(true)
-    setError(null)
     setRefetchCount(c => c + 1)
   }, [])
+  useAutoRefresh(() => { if (!pending.current) fetchTargets() }, ready && !loading)
 
   const handleTargetCreated = useCallback(() => {
     setDialogOpen(false)
@@ -98,15 +105,6 @@ export default function TargetConfig({
         <div className={styles.headerActions}>
           <Button
             className={styles.headerAction}
-            appearance="subtle"
-            icon={<ArrowSyncRegular />}
-            onClick={fetchTargets}
-            disabled={loading}
-          >
-            Refresh
-          </Button>
-          <Button
-            className={styles.headerAction}
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}
@@ -123,9 +121,7 @@ export default function TargetConfig({
       )}
 
       {error && (
-        <div className={styles.errorState}>
-          <Text>Error: {error}</Text>
-        </div>
+        <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>
       )}
 
       {!loading && !error && targets.length === 0 && (
@@ -157,7 +153,7 @@ export default function TargetConfig({
         </div>
       )}
 
-      {!loading && !error && targets.length > 0 && (
+      {!loading && (hasShownTargets || targets.length > 0) && (
         <TargetTable
           targets={targets}
           defaultAdversarialTarget={defaultAdversarialTarget}

@@ -548,9 +548,7 @@ test.describe("Mobile touch targets", () => {
       .click();
     await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
 
-    await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Refresh", exact: true })
-    );
+    await expect(page.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
     await expectMinimumTouchTarget(
       page.getByRole("button", { name: "New Target", exact: true })
     );
@@ -588,7 +586,7 @@ test.describe("Mobile touch targets", () => {
       page.getByTestId("open-attack-home-attack-001")
     ).toBeVisible();
 
-    await expectMinimumTouchTarget(page.getByTestId("refresh-btn"));
+    await expect(page.getByTestId("refresh-btn")).toHaveCount(0);
     await expectMinimumTouchTargets(
       page.locator(
         [

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   Badge,
@@ -22,13 +22,13 @@ import {
 } from '@fluentui/react-components'
 import {
   AddRegular,
-  ArrowSyncRegular,
   DeleteRegular,
   EditRegular,
 } from '@fluentui/react-icons'
 import { Link, useNavigate } from 'react-router'
 
 import { scenarioSuitesApi } from '@/services/api'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { toApiError } from '@/services/errors'
 import type { ScenarioSuiteResponse } from '@/types'
 
@@ -61,24 +61,29 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
   const [pendingDelete, setPendingDelete] = useState<ScenarioSuiteResponse | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [generation, setGeneration] = useState(0)
+  const pending = useRef(false)
+  const mutationEpoch = useRef(0)
 
   useEffect(() => {
     const controller = new AbortController()
     let cancelled = false
+    pending.current = true
+    const epoch = mutationEpoch.current
 
     const loadSuites = async (): Promise<void> => {
       try {
         const response = await scenarioSuitesApi.list(controller.signal)
-        if (cancelled) return
+        if (cancelled || epoch !== mutationEpoch.current) return
         setItems(response.items)
         setSource(response.source)
         setError(null)
       } catch (err: unknown) {
-        if (cancelled || controller.signal.aborted) return
+        if (cancelled || controller.signal.aborted || epoch !== mutationEpoch.current) return
         setError(toApiError(err).detail)
       } finally {
         if (!cancelled) {
           setLoading(false)
+          pending.current = false
         }
       }
     }
@@ -87,20 +92,21 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
     return () => {
       cancelled = true
       controller.abort()
+      pending.current = false
     }
   }, [generation, presetsRevision])
 
   const refresh = useCallback((): void => {
-    setLoading(true)
-    setError(null)
     setGeneration((current) => current + 1)
   }, [])
+  useAutoRefresh(() => { if (!pending.current) refresh() }, !loading && !deleting)
 
   const handleDelete = async (): Promise<void> => {
     if (!pendingDelete) {
       return
     }
     setDeleting(true)
+    mutationEpoch.current++
     setActionError(null)
     try {
       await scenarioSuitesApi.remove(pendingDelete.suite.name)
@@ -138,16 +144,6 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
           >
             New suite
           </Button>
-          <Button
-            className={styles.touchTarget}
-            appearance="subtle"
-            icon={<ArrowSyncRegular />}
-            onClick={refresh}
-            disabled={loading}
-            aria-label="Refresh suites"
-          >
-            Refresh
-          </Button>
         </div>
       </div>
 
@@ -163,26 +159,13 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
         </MessageBar>
       )}
 
+      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       {loading ? (
         <div className={styles.centeredState}>
           <Spinner label="Loading suites..." />
         </div>
-      ) : error ? (
-        <div className={styles.centeredState} data-testid="suite-error-state">
-          <MessageBar intent="error">
-            <MessageBarBody>{error}</MessageBarBody>
-          </MessageBar>
-          <Button
-            className={styles.touchTarget}
-            appearance="primary"
-            icon={<ArrowSyncRegular />}
-            onClick={refresh}
-            data-testid="retry-suites-btn"
-          >
-            Retry
-          </Button>
-        </div>
-      ) : items.length === 0 ? (
+      ) : error && items.length === 0 ? null
+      : items.length === 0 ? (
         <div className={styles.centeredState} data-testid="suite-empty-state">
           <Text size={400}>No suites saved yet</Text>
           <Text size={200}>Create one to keep an ordered set of scenario presets together.</Text>

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { Button, Field, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components'
-import { ArrowSyncRegular, SaveRegular } from '@fluentui/react-icons'
+import { SaveRegular } from '@fluentui/react-icons'
 
 import { configurationApi } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { toApiError } from '@/services/errors'
 import type { EnvironmentFileContent } from '@/types'
 import EditorWorkspace from '@/components/EditorWorkspace'
@@ -19,12 +20,10 @@ interface StatusMessage {
 
 interface EnvironmentFilesProps {
   onUnsavedChangesChange: (hasUnsavedChanges: boolean) => void
-  onRequestDiscardChanges: (discardChanges: () => void) => void
 }
 
 export default function EnvironmentFiles({
   onUnsavedChangesChange,
-  onRequestDiscardChanges,
 }: EnvironmentFilesProps) {
   const styles = useConfigurationStyles()
   const { generation } = useRuntime()
@@ -33,30 +32,52 @@ export default function EnvironmentFiles({
   const [loadedIds, setLoadedIds] = useState<Set<string>>(() => new Set())
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [hasLoadedFiles, setHasLoadedFiles] = useState(false)
   const [loadingContent, setLoadingContent] = useState(false)
   const [saving, setSaving] = useState(false)
   const [reloadCount, setReloadCount] = useState(0)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
   const loadedSnapshot = useRef<{ generation: string; reloadCount: number } | null>(null)
+  const pending = useRef(false)
+  const editRevision = useRef(0)
   const hasUnsavedChanges = files.some((file) =>
     loadedIds.has(file.id) && file.content !== savedContents[file.id],
   )
 
   useEffect(() => {
-    const manualReload = reloadCount !== (loadedSnapshot.current?.reloadCount ?? 0)
-    if ((hasUnsavedChanges && !manualReload) || saving) return
+    if (hasUnsavedChanges || saving) return
     if (loadedSnapshot.current?.generation === generation && loadedSnapshot.current.reloadCount === reloadCount) return
     let cancelled = false
+    pending.current = true
+    const revision = editRevision.current
+    const refreshing = loadedSnapshot.current?.generation === generation
 
     const loadFilesAsync = async (): Promise<void> => {
-      setStatusMessage(null)
       try {
         const response = await configurationApi.listEnvironmentFiles()
-        if (!cancelled) {
+        if (cancelled || editRevision.current !== revision) return
+        const selected = refreshing && selectedId
+          ? await configurationApi.getEnvironmentFile(selectedId) : null
+        if (!cancelled && editRevision.current === revision) {
           loadedSnapshot.current = { generation, reloadCount }
-          setFiles(response.items)
-          setSavedContents({})
-          setLoadedIds(new Set())
+          setHasLoadedFiles(true)
+          setStatusMessage(null)
+          if (refreshing) {
+            setFiles((current) => response.items.map((file) => {
+              if (file.id === selected?.id) return selected
+              const previous = current.find((item) => item.id === file.id)
+              return previous && loadedIds.has(file.id)
+                ? { ...file, content: previous.content, version: previous.version } : file
+            }))
+            if (selected) {
+              setSavedContents((current) => ({ ...current, [selected.id]: selected.content }))
+              setLoadedIds((current) => new Set(current).add(selected.id))
+            }
+          } else {
+            setFiles(response.items)
+            setSavedContents({})
+            setLoadedIds(new Set())
+          }
           setSelectedId((currentId) =>
             response.items.some((file) => file.id === currentId)
               ? currentId
@@ -70,6 +91,7 @@ export default function EnvironmentFiles({
       } finally {
         if (!cancelled) {
           setLoading(false)
+          pending.current = false
         }
       }
     }
@@ -77,8 +99,9 @@ export default function EnvironmentFiles({
     void loadFilesAsync()
     return () => {
       cancelled = true
+      pending.current = false
     }
-  }, [reloadCount, generation, hasUnsavedChanges, saving])
+  }, [reloadCount, generation, hasUnsavedChanges, saving, selectedId, loadedIds])
 
   useEffect(() => {
     if (!selectedId || loadedIds.has(selectedId)) return
@@ -121,21 +144,13 @@ export default function EnvironmentFiles({
     onUnsavedChangesChange(hasUnsavedChanges)
   }, [hasUnsavedChanges, onUnsavedChangesChange])
 
-  const handleReload = (): void => {
-    const reload = (): void => {
-      setLoading(true)
-      setReloadCount((count: number) => count + 1)
-    }
-
-    if (hasUnsavedChanges) {
-      onRequestDiscardChanges(reload)
-      return
-    }
-    reload()
-  }
+  useAutoRefresh(() => {
+    if (!pending.current) setReloadCount((count: number) => count + 1)
+  }, !loading && !loadingContent && !saving && !hasUnsavedChanges)
 
   const handleContentChange = (content: string): void => {
     if (!selectedId) return
+    editRevision.current++
     setFiles((currentFiles) =>
       currentFiles.map((file) => file.id === selectedId ? { ...file, content } : file),
     )
@@ -143,6 +158,7 @@ export default function EnvironmentFiles({
 
   const handleSave = async (): Promise<void> => {
     if (!selectedFile?.version) return
+    editRevision.current++
     setSaving(true)
     setStatusMessage(null)
     try {
@@ -186,7 +202,7 @@ export default function EnvironmentFiles({
         </MessageBar>
       )}
 
-      <EditorWorkspace
+      {hasLoadedFiles && <EditorWorkspace
         items={files.map((file) => ({
           id: file.id,
           label: file.name,
@@ -198,15 +214,6 @@ export default function EnvironmentFiles({
         description="Edit dotenv sources loaded when PyRIT starts."
         actions={(
           <div className={styles.actions}>
-            <Button
-              appearance="subtle"
-              className={styles.action}
-              icon={<ArrowSyncRegular />}
-              disabled={saving || loadingContent}
-              onClick={handleReload}
-            >
-              Reload file
-            </Button>
             <Button
               appearance="primary"
               className={styles.action}
@@ -220,7 +227,7 @@ export default function EnvironmentFiles({
         )}
         onSelect={setSelectedId}
       >
-          {selectedFile && !selectedFileIsLoaded && (
+          {selectedFile && !selectedFileIsLoaded && loadingContent && (
             <div className={styles.loadingState}>
               <Spinner label={`Loading ${selectedFile.name}...`} />
             </div>
@@ -238,7 +245,7 @@ export default function EnvironmentFiles({
               />
             </Field>
           )}
-      </EditorWorkspace>
+      </EditorWorkspace>}
     </div>
   )
 }

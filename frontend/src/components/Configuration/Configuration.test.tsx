@@ -7,8 +7,12 @@ import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 're
 
 import { configurationApi, initializersApi } from '@/services/api'
 import { installRouterTestRequest } from '@/test-utils/routerRequest'
+import { deferred } from '@/test-utils/deferred'
 
 import Configuration from './Configuration'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   configurationApi: {
@@ -423,42 +427,68 @@ describe('Configuration', () => {
     expect(event.defaultPrevented).toBe(true)
   })
 
-  it('should guard reloading unsaved configuration content', async () => {
+  it('should update clean configuration without replacing the editor or moving focus', async () => {
+    renderPage()
+    const editor = await screen.findByLabelText('Configuration YAML')
+    editor.focus()
+    mockedConfigurationApi.getContent.mockResolvedValueOnce({
+      content: 'operator: remote\n', source: 'review.yaml', version: 'config-v2',
+      live_reinitialization_enabled: false,
+    })
+    await advanceAutoRefresh()
+    await waitFor(() => expect(editor).toHaveValue('operator: remote\n'))
+    expect(screen.getByLabelText('Configuration YAML')).toBe(editor)
+    expect(editor).toHaveFocus()
+  })
+
+  it('should not let an in-flight automatic read overwrite a new draft or its save version', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const editor = await screen.findByLabelText('Configuration YAML')
+    const pending = deferred<Awaited<ReturnType<typeof configurationApi.getContent>>>()
+    mockedConfigurationApi.getContent.mockReturnValueOnce(pending.promise)
+    await advanceAutoRefresh()
+    await waitFor(() => expect(mockedConfigurationApi.getContent).toHaveBeenCalledTimes(2))
+    await user.type(editor, '# keep draft')
+    await act(async () => { pending.resolve({
+      content: 'operator: remote\n', source: 'review.yaml', version: 'config-v2',
+      live_reinitialization_enabled: false,
+    }) })
+    expect(editor).toHaveValue('operator: alice\n# keep draft')
+    mockedConfigurationApi.updateContent.mockResolvedValueOnce({
+      content: 'operator: alice\n# keep draft', source: 'review.yaml', version: 'config-v3',
+      live_reinitialization_enabled: false,
+    })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(mockedConfigurationApi.updateContent).toHaveBeenCalledWith({
+      content: 'operator: alice\n# keep draft', version: 'config-v1',
+    })
+  })
+
+  it('should skip automatic reads while configuration has unsaved content', async () => {
     const user = userEvent.setup()
     renderPage()
 
     const editor = await screen.findByLabelText('Configuration YAML')
     await user.type(editor, '# unsaved')
-    await user.click(screen.getByRole('button', { name: 'Reload file' }))
-
-    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    await advanceAutoRefresh()
+    expect(screen.queryByRole('button', { name: 'Reload file' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Discard unsaved changes?' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Configuration YAML')).toHaveValue('operator: alice\n# unsaved')
     expect(mockedConfigurationApi.getContent).toHaveBeenCalledTimes(1)
-
-    await user.click(await screen.findByRole('button', { name: 'Reload file' }))
-    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
-    await waitFor(() => expect(mockedConfigurationApi.getContent).toHaveBeenCalledTimes(2))
-    expect(await screen.findByLabelText('Configuration YAML')).toHaveValue('operator: alice\n')
   })
 
-  it('should guard reloading an unsaved environment file', async () => {
+  it('should skip automatic reads while an environment file has unsaved content', async () => {
     const user = userEvent.setup()
     renderPage('/config?tab=environment')
 
     const editor = await screen.findByLabelText('Environment file contents')
     await user.type(editor, '# unsaved')
-    await user.click(screen.getByRole('button', { name: 'Reload file' }))
-
-    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    await advanceAutoRefresh()
+    expect(screen.queryByRole('button', { name: 'Reload file' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Discard unsaved changes?' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Environment file contents')).toHaveValue('API_KEY=value\n# unsaved')
     expect(mockedConfigurationApi.listEnvironmentFiles).toHaveBeenCalledTimes(1)
-
-    await user.click(await screen.findByRole('button', { name: 'Reload file' }))
-    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
-    await waitFor(() => expect(mockedConfigurationApi.listEnvironmentFiles).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(screen.getByLabelText('Environment file contents')).toHaveValue('API_KEY=value\n'))
   })
 
 })

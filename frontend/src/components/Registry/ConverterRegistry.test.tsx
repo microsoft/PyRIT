@@ -5,6 +5,9 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { convertersApi } from '@/services/api'
 
 import ConverterRegistry from './ConverterRegistry'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   convertersApi: {
@@ -154,6 +157,27 @@ describe('ConverterRegistry', () => {
     expect(screen.getByText('No converters match these filters.')).toBeVisible()
   })
 
+  it('keeps search, focus, and expanded identity state through an empty automatic snapshot', async () => {
+    const user = userEvent.setup()
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [converter] })
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ items: [converter] })
+    renderRegistry()
+    const search = await screen.findByRole('textbox', { name: 'Search converters' })
+    await user.click(screen.getByRole('button', { name: 'Identity for base64-default' }))
+    await user.type(search, 'base64')
+    search.focus()
+    await advanceAutoRefresh()
+    await screen.findByText('No Converters Registered')
+    expect(screen.getByRole('textbox', { name: 'Search converters' })).toBe(search)
+    expect(search).toHaveValue('base64')
+    expect(search).toHaveFocus()
+    await advanceAutoRefresh()
+    expect(await screen.findByRole('region', { name: 'Identity for base64-default' })).toBeVisible()
+    expect(search).toHaveValue('base64')
+  })
+
   it('shows an empty state', async () => {
     mockedConvertersApi.listConverters.mockResolvedValue({ items: [] })
     renderRegistry()
@@ -162,15 +186,15 @@ describe('ConverterRegistry', () => {
     expect(screen.getByRole('button', { name: 'Create First Converter' })).toBeInTheDocument()
   })
 
-  it('shows an error and retries on refresh', async () => {
+  it('shows the error text and recovers on the next automatic check', async () => {
     mockedConvertersApi.listConverters
       .mockRejectedValueOnce(new Error('registry unavailable'))
       .mockResolvedValueOnce({ items: [converter] })
-    const user = userEvent.setup()
     renderRegistry()
 
     expect(await screen.findByText(/registry unavailable/i)).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(screen.queryByRole('button', { name: /Refresh|Retry/ })).not.toBeInTheDocument()
+    await advanceAutoRefresh()
 
     expect(await screen.findByText('base64-default')).toBeInTheDocument()
     expect(mockedConvertersApi.listConverters).toHaveBeenCalledTimes(2)

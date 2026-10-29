@@ -1,10 +1,14 @@
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { configurationApi } from '@/services/api'
+import { deferred } from '@/test-utils/deferred'
 
 import EnvironmentFiles from './EnvironmentFiles'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 let mockGeneration = 'first'
 jest.mock('@/hooks/useRuntime', () => ({
@@ -23,13 +27,11 @@ const mockedConfigurationApi = jest.mocked(configurationApi)
 
 function renderFiles(
   onUnsavedChangesChange = jest.fn(),
-  onRequestDiscardChanges = (discardChanges: () => void): void => discardChanges(),
 ): void {
   render(
     <FluentProvider theme={webLightTheme}>
       <EnvironmentFiles
         onUnsavedChangesChange={onUnsavedChangesChange}
-        onRequestDiscardChanges={onRequestDiscardChanges}
       />
     </FluentProvider>,
   )
@@ -71,6 +73,17 @@ describe('EnvironmentFiles', () => {
     renderFiles()
 
     expect(await screen.findByText('Environment unavailable')).toBeInTheDocument()
+    expect(screen.queryByText('No environment sources are enabled by the configuration.')).not.toBeInTheDocument()
+  })
+
+  it('should recover a failed selected-file read on the next automatic check', async () => {
+    mockedConfigurationApi.getEnvironmentFile.mockRejectedValueOnce(new Error('File unavailable'))
+    renderFiles()
+    expect(await screen.findByText('File unavailable')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Retry|Reload/ })).not.toBeInTheDocument()
+    await advanceAutoRefresh()
+    expect(await screen.findByRole('textbox', { name: 'Environment file contents' })).toHaveValue('VALUE=before\n')
+    expect(screen.queryByText('File unavailable')).not.toBeInTheDocument()
   })
 
   it('should disable editing for an inline deployment-secret source', async () => {
@@ -132,9 +145,9 @@ describe('EnvironmentFiles', () => {
     expect(onUnsavedChangesChange).toHaveBeenLastCalledWith(true)
   })
 
-  it('should preserve a dirty draft across generations and refresh sources after explicit reload', async () => {
+  it('should preserve a dirty draft across generations and timed checks until edits are discarded', async () => {
     const user = userEvent.setup()
-    const props = { onUnsavedChangesChange: jest.fn(), onRequestDiscardChanges: (discard: () => void) => discard() }
+    const props = { onUnsavedChangesChange: jest.fn() }
     const page = <FluentProvider theme={webLightTheme}><EnvironmentFiles {...props} /></FluentProvider>
     const { rerender } = render(page)
     const editor = await screen.findByRole('textbox', { name: 'Environment file contents' })
@@ -146,13 +159,39 @@ describe('EnvironmentFiles', () => {
     mockedConfigurationApi.getEnvironmentFile.mockResolvedValue({
       id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=updated\n', exists: true, version: 'version-2',
     })
-    await user.click(screen.getByRole('button', { name: 'Reload file' }))
+    await advanceAutoRefresh()
+    expect(editor).toHaveValue('VALUE=before\n# draft')
+    expect(mockedConfigurationApi.listEnvironmentFiles).toHaveBeenCalledTimes(1)
+    await user.clear(editor)
+    await user.type(editor, 'VALUE=before\n')
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Environment file contents' }))
       .toHaveValue('VALUE=updated\n'))
   })
 
+  it('should retain a new draft and its version when a background content read finishes late', async () => {
+    const user = userEvent.setup()
+    renderFiles()
+    const editor = await screen.findByRole('textbox', { name: 'Environment file contents' })
+    const pending = deferred<Awaited<ReturnType<typeof configurationApi.getEnvironmentFile>>>()
+    mockedConfigurationApi.getEnvironmentFile.mockReturnValueOnce(pending.promise)
+    await advanceAutoRefresh()
+    await waitFor(() => expect(mockedConfigurationApi.getEnvironmentFile).toHaveBeenCalledTimes(2))
+    await user.type(editor, '# keep draft')
+    await act(async () => { pending.resolve({
+      id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=remote\n', exists: true, version: 'version-2',
+    }) })
+    expect(editor).toHaveValue('VALUE=before\n# keep draft')
+    mockedConfigurationApi.updateEnvironmentFile.mockResolvedValueOnce({
+      id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=before\n# keep draft', exists: true, version: 'version-3',
+    })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(mockedConfigurationApi.updateEnvironmentFile).toHaveBeenCalledWith('0', {
+      content: 'VALUE=before\n# keep draft', version: 'version-1',
+    })
+  })
+
   it('should refresh clean sources when another client reinitializes', async () => {
-    const props = { onUnsavedChangesChange: jest.fn(), onRequestDiscardChanges: jest.fn() }
+    const props = { onUnsavedChangesChange: jest.fn() }
     const { rerender } = render(
       <FluentProvider theme={webLightTheme}><EnvironmentFiles {...props} /></FluentProvider>,
     )

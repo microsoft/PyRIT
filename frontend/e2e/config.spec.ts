@@ -301,7 +301,8 @@ test.describe("Target Registry Page", () => {
     await expect(page.getByText("Create Target")).toBeVisible();
   });
 
-  test("should refresh targets on Refresh click", async ({ page }) => {
+  test("should update targets after a visible minute without a Refresh control", async ({ page }) => {
+    await page.clock.install();
     // Start with initial targets, then after refresh show an additional one.
     // Using a flag-based approach avoids React StrictMode double-mount issues.
     let showExtra = false;
@@ -316,9 +317,9 @@ test.describe("Target Registry Page", () => {
     await expect(page.getByText("gpt-4o", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(page.getByText("dall-e-3", { exact: true })).not.toBeVisible();
 
-    // Flip the flag and click refresh
     showExtra = true;
-    await page.getByRole("button", { name: /refresh/i }).click();
+    await expect(page.getByRole("button", { name: /^Refresh$/ })).toHaveCount(0);
+    await page.clock.fastForward(60_000);
 
     // Second target should now appear
     await expect(page.getByText("dall-e-3", { exact: true })).toBeVisible({ timeout: 10000 });

@@ -10,6 +10,9 @@ import { deferred } from '@/test-utils/deferred'
 import type { ScenarioSuiteListResponse, ScenarioSuiteResponse } from '@/types'
 
 import ScenarioSuiteLibrary from './ScenarioSuiteLibrary'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   scenarioSuitesApi: {
@@ -311,16 +314,15 @@ describe('ScenarioSuiteLibrary', () => {
     expect(mockRemove).not.toHaveBeenCalled()
   })
 
-  it('reports load failures and retries', async () => {
-    const user = userEvent.setup()
+  it('reports load failures and recovers automatically', async () => {
     mockList.mockRejectedValueOnce(new Error('suite storage unavailable'))
 
     renderLibrary()
 
-    const failure = await screen.findByTestId('suite-error-state')
-    expect(within(failure).getByText('suite storage unavailable')).toBeInTheDocument()
+    expect(await screen.findByText('suite storage unavailable')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
     mockList.mockResolvedValueOnce(listOf(makeSuite()))
-    await user.click(screen.getByTestId('retry-suites-btn'))
+    await advanceAutoRefresh()
 
     expect(await screen.findByTestId('suite-row-nightly_suite')).toBeInTheDocument()
     expect(screen.queryByTestId('suite-error-state')).not.toBeInTheDocument()

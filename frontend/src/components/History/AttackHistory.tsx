@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Text,
   Button,
@@ -6,7 +6,8 @@ import {
   MessageBar,
   MessageBarBody,
 } from '@fluentui/react-components'
-import { ArrowSyncRegular, ChatRegular } from '@fluentui/react-icons'
+import { ChatRegular } from '@fluentui/react-icons'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { attacksApi, labelsApi, operationsApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { AttackSummary, FilterOption, TargetInstance } from '../../types'
@@ -71,9 +72,13 @@ export default function AttackHistory({
   const [attacks, setAttacks] = useState<AttackSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const pending = useRef(false)
+  const optionsPending = useRef(false)
 
   // Filter options
   const [attackTypeOptions, setAttackTypeOptions] = useState<string[]>([])
+  const [optionsRevision, setOptionsRevision] = useState(0)
+  const [optionsError, setOptionsError] = useState<string | null>(null)
   const [converterOptions, setConverterOptions] = useState<string[]>([])
   const [operatorOptions, setOperatorOptions] = useState<string[]>([])
   const [operationOptions, setOperationOptions] = useState<FilterOption[]>([])
@@ -110,39 +115,54 @@ export default function AttackHistory({
     ? narrowedOtherLabelOptions.options
     : allOtherLabelOptions
 
-  // Bumped from event handlers (Refresh button, pagination) to re-trigger the
-  // fetch effect without calling setState synchronously inside it.
   const [fetchToken, setFetchToken] = useState({
     cursor: undefined as string | undefined,
     filterKey,
     nonce: 0,
+    quiet: false,
   })
+  if (fetchToken.filterKey !== filterKey) {
+    setFetchToken({ cursor: undefined, filterKey, nonce: fetchToken.nonce + 1, quiet: false })
+  }
 
-  const fetchAttacks = useCallback((pageCursor?: string) => {
-    setLoading(true)
-    setError(null)
-    setFetchToken(prev => ({ cursor: pageCursor, filterKey, nonce: prev.nonce + 1 }))
+  const fetchAttacks = useCallback((pageCursor?: string, quiet = false) => {
+    if (!quiet) {
+      setLoading(true)
+      setError(null)
+    }
+    setFetchToken(prev => ({ cursor: pageCursor, filterKey, nonce: prev.nonce + 1, quiet }))
   }, [filterKey])
 
   // Attack and converter options do not depend on the active history filters.
   useEffect(() => {
-    attacksApi.getAttackOptions()
-      .then(resp => setAttackTypeOptions(resp.attack_types))
-      .catch(() => { /* ignore */ })
+    let cancelled = false
+    optionsPending.current = true
+    const fail = (cause: unknown): void => {
+      if (!cancelled) setOptionsError(toApiError(cause).detail)
+    }
+    void Promise.resolve().then(() => { if (!cancelled) setOptionsError(null) })
+    const reads = [attacksApi.getAttackOptions()
+      .then(resp => { if (!cancelled) setAttackTypeOptions(resp.attack_types) })
+      .catch(fail),
     attacksApi.getConverterOptions()
-      .then(resp => setConverterOptions(resp.converter_types))
-      .catch(() => { /* ignore */ })
+      .then(resp => { if (!cancelled) setConverterOptions(resp.converter_types) })
+      .catch(fail),
     labelsApi.getLabels()
       .then(resp => {
+        if (cancelled) return
         // TODO(PyRIT 1.4): Remove the labels.* fallbacks with legacy attribution aliases.
         setOperatorOptions([...(resp.operators ?? resp.labels.operator ?? [])].sort())
         setAllOtherLabelOptions(buildOtherLabelOptions(resp.labels))
       })
-      .catch(() => { /* ignore */ })
+      .catch(fail),
     operationsApi.list()
-      .then(resp => setOperationOptions(resp.items.map(operation => ({ value: operation.id, label: operation.name }))))
-      .catch(() => { /* ignore */ })
-  }, [])
+      .then(resp => {
+        if (!cancelled) setOperationOptions(resp.items.map(operation => ({ value: operation.id, label: operation.name })))
+      })
+      .catch(fail)]
+    void Promise.allSettled(reads).then(() => { if (!cancelled) optionsPending.current = false })
+    return () => { cancelled = true; optionsPending.current = false }
+  }, [optionsRevision])
 
   // Arbitrary label options are narrowed by the active indexed attribution filters.
   useEffect(() => {
@@ -159,7 +179,7 @@ export default function AttackHistory({
           options: buildOtherLabelOptions(resp.labels),
         })
       })
-      .catch(() => { /* ignore */ })
+      .catch((cause: unknown) => { if (!cancelled) setOptionsError(toApiError(cause).detail) })
     return () => {
       cancelled = true
     }
@@ -168,6 +188,7 @@ export default function AttackHistory({
     filters.otherLabels,
     hasLabelOptionFilters,
     labelOptionFilterKey,
+    optionsRevision,
   ])
 
   // Fetch attacks whenever filters change or an event handler bumps fetchToken.
@@ -175,6 +196,7 @@ export default function AttackHistory({
   // react-hooks/set-state-in-effect.
   useEffect(() => {
     let cancelled = false
+    pending.current = true
     const effectiveCursor = fetchToken.filterKey === filterKey && settledFilterKey === filterKey
       ? fetchToken.cursor
       : undefined
@@ -193,16 +215,20 @@ export default function AttackHistory({
       })
       .catch(err => {
         if (cancelled) return
-        setAttacks([])
+        if (!fetchToken.quiet) setAttacks([])
         setSettledFilterKey(filterKey)
         setError(toApiError(err).detail)
-        if (!effectiveCursor) setPage(0)
+        if (!fetchToken.quiet && !effectiveCursor) setPage(0)
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setLoading(false)
+          pending.current = false
+        }
       })
     return () => {
       cancelled = true
+      pending.current = false
     }
     // The filter fields are listed individually rather than as `filters` so the
     // effect only re-runs when a meaningful sub-field changes (the parent
@@ -252,6 +278,12 @@ export default function AttackHistory({
     filters.operator.length > 0 || filters.operationId.length > 0 || filters.otherLabels.length > 0
   const filtersPending = settledFilterKey !== filterKey
   const displayLoading = loading || filtersPending
+  useAutoRefresh(() => {
+    if (!pending.current) {
+      if (!optionsPending.current) setOptionsRevision((revision: number) => revision + 1)
+      fetchAttacks(fetchToken.filterKey === filterKey ? fetchToken.cursor : undefined, true)
+    }
+  }, !displayLoading)
   const emptyStateGuidance = activeTarget
     ? {
         text: 'Start an attack to see it here.',
@@ -269,19 +301,9 @@ export default function AttackHistory({
   return (
     <div className={styles.root}>
       <div className={styles.header}>
-        <div className={styles.headerRow}>
-          {showTitle && <Text as="h1" size={500} weight="semibold">Attack History</Text>}
-          <Button
-            className={styles.touchTargetHeight}
-            appearance="subtle"
-            icon={<ArrowSyncRegular />}
-            onClick={() => fetchAttacks()}
-            disabled={displayLoading}
-            data-testid="refresh-btn"
-          >
-            Refresh
-          </Button>
-        </div>
+        {showTitle && <div className={styles.headerRow}>
+          <Text as="h1" size={500} weight="semibold">Attack History</Text>
+        </div>}
         <HistoryFiltersBar
           filters={filters}
           onFiltersChange={onFiltersChange}
@@ -291,30 +313,17 @@ export default function AttackHistory({
           operationOptions={operationOptions}
           otherLabelOptions={otherLabelOptions}
         />
+        {optionsError && <MessageBar intent="error"><MessageBarBody>{optionsError}</MessageBarBody></MessageBar>}
       </div>
 
+      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       <div className={styles.content}>
         {displayLoading ? (
           <div className={styles.emptyState}>
             <Spinner size="medium" label="Loading attacks..." />
           </div>
-        ) : error ? (
-          <div className={styles.emptyState} data-testid="error-state">
-            <MessageBar intent="error">
-              <MessageBarBody>{error}</MessageBarBody>
-            </MessageBar>
-            <Button
-              className={styles.touchTargetHeight}
-              appearance="primary"
-              icon={<ArrowSyncRegular />}
-              onClick={() => fetchAttacks()}
-              disabled={displayLoading}
-              data-testid="retry-btn"
-            >
-              Retry
-            </Button>
-          </div>
-        ) : attacks.length === 0 ? (
+        ) : error && attacks.length === 0 ? null
+        : attacks.length === 0 ? (
           <div className={styles.emptyState} data-testid="empty-state">
             <Text size={400}>No attacks found</Text>
             <Text size={200}>
