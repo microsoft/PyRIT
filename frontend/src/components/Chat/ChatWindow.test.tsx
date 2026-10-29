@@ -1173,6 +1173,16 @@ describe("ChatWindow Integration", () => {
       expect(screen.queryByText(notice)).not.toBeInTheDocument();
     });
 
+    it("should not remember an inherited scan scorer after Apply", async () => {
+      const user = userEvent.setup();
+      mockedAttacksApi.applyScorer.mockResolvedValue({ conversation_id: "score-conv", score, reused: false });
+      render(<TestWrapper><ChatWindow {...props} chatScorerInherited /></TestWrapper>);
+      await openScorerPane(user);
+      await user.click(screen.getByRole("button", { name: "Apply scorer", exact: true }));
+      expect(await screen.findByText(/Latest response scored/)).toBeInTheDocument();
+      expect(readUserPreferences("local").lastUsedChatScorer).toBeUndefined();
+    });
+
     it("should not attach a late scorer A result to scorer B", async () => {
       const user = userEvent.setup();
       let finish: (value: { conversation_id: string; score: typeof score; reused: boolean }) => void = () => {};

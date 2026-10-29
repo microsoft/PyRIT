@@ -1743,7 +1743,7 @@ export default function ChatWindow({
       const result = await attacksApi.applyScorer(attackResultId, {
         conversation_id: conversationId, response_id: responseId, scorer, objective,
       })
-      rememberUse({}, scorer)
+      if (!chatScorerInherited) rememberUse({}, resolveChatScorerReference(scorer, availableScorers))
       status = {
         intent: 'info',
         message: result.reused
