@@ -1,4 +1,4 @@
-import { retryAfterMilliseconds, toApiError } from './errors'
+import { decodeBlobErrorAsync, retryAfterMilliseconds, toApiError } from './errors'
 import type { ApiError } from './errors'
 
 // ---------------------------------------------------------------------------
@@ -206,5 +206,73 @@ describe('toApiError', () => {
     expect(result.status).toBe(422)
     expect(result.detail).toBe('Field "name" is required.')
     expect(result.type).toBe('validation_error')
+  })
+})
+
+describe('decodeBlobErrorAsync', () => {
+  it('replaces a JSON Blob body with the parsed problem and keeps the status', async () => {
+    const problem = { detail: 'Operation not found' }
+    const err = makeAxiosError({
+      status: 404,
+      data: new Blob([JSON.stringify(problem)], { type: 'application/json' }),
+    })
+
+    await decodeBlobErrorAsync(err)
+
+    expect(err).toMatchObject({ response: { status: 404, data: problem } })
+    expect(toApiError(err)).toMatchObject({ status: 404, detail: 'Operation not found' })
+  })
+
+  it('keeps a non-JSON Blob body, such as a proxy page, as readable text', async () => {
+    const page = '<html><body>Bad Gateway</body></html>'
+    const err = makeAxiosError({ status: 502, data: new Blob([page], { type: 'text/html' }) })
+
+    await decodeBlobErrorAsync(err)
+
+    expect(err).toMatchObject({ response: { status: 502, data: page } })
+    expect(toApiError(err)).toMatchObject({ status: 502, detail: page })
+  })
+
+  it('leaves the error failing with its status when the Blob cannot be read', async () => {
+    const read = jest.spyOn(FileReader.prototype, 'readAsText').mockImplementation(() => undefined)
+    try {
+      const body = new Blob(['{"detail":"Unreadable"}'], { type: 'application/json' })
+      const err = makeAxiosError({ status: 500, data: body })
+
+      const decoding = decodeBlobErrorAsync(err)
+      const reader = read.mock.contexts[0]
+      if (!(reader instanceof FileReader)) throw new Error('Blob read did not start')
+      reader.dispatchEvent(new ProgressEvent('error'))
+
+      await expect(decoding).resolves.toBeUndefined()
+      expect(err).toMatchObject({ response: { status: 500 } })
+      expect((err as { response: { data: unknown } }).response.data).toBe(body)
+      expect(toApiError(err)).toMatchObject({ status: 500, detail: 'Server error (500)' })
+    } finally {
+      read.mockRestore()
+    }
+  })
+
+  it.each([
+    ['a JSON body', { detail: 'Finding not found' }],
+    ['a text body', '<html>Bad Gateway</html>'],
+    ['no body', null],
+  ])('leaves an Axios error with %s unchanged', async (_name, data) => {
+    const err = makeAxiosError({ status: 404, data })
+
+    await decodeBlobErrorAsync(err)
+
+    expect((err as { response: { data: unknown } }).response.data).toBe(data)
+  })
+
+  it('ignores a Blob that is not an Axios response body', async () => {
+    const body = new Blob(['{"detail":"Not from Axios"}'], { type: 'application/json' })
+    const notAxios = { response: { status: 404, data: body } }
+
+    await decodeBlobErrorAsync(notAxios)
+    await decodeBlobErrorAsync(new Error('Something broke'))
+    await decodeBlobErrorAsync(makeAxiosError({ hasResponse: false }))
+
+    expect(notAxios.response.data).toBe(body)
   })
 })

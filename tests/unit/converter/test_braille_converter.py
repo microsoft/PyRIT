@@ -201,3 +201,59 @@ async def test_braille_converter_exact_output(prompt, expected):
 
     result = await converter.convert_async(prompt=prompt, input_type="text")
     assert result.output_text == expected
+
+
+@pytest.mark.parametrize(
+    "prompt, expected",
+    [
+        ("1a", "\u283c\u2801\u2830\u2801"),
+        ("11", "\u283c\u2801\u2801"),
+        ("2b", "\u283c\u2803\u2830\u2803"),
+        ("10j", "\u283c\u2801\u281a\u2830\u281a"),
+        ("1.5e", "\u283c\u2801\u2832\u2811\u2830\u2811"),
+        ("1k", "\u283c\u2801\u2805"),
+        ("1 a", "\u283c\u2801 \u2801"),
+        ("a1", "\u2801\u283c\u2801"),
+    ],
+    ids=["letter-a", "two-digits", "letter-b", "letter-j", "after-decimal", "letter-k", "space", "letter-first"],
+)
+async def test_braille_converter_letter_sign_after_number(prompt, expected):
+    """A letter from a to j after a number gets the letter sign, so "1a" and "11" stay distinct."""
+    converter = BrailleConverter()
+
+    result = await converter.convert_async(prompt=prompt, input_type="text")
+    assert result.output_text == expected
+
+
+@pytest.mark.parametrize(
+    "prompt, expected",
+    [
+        ("$", "\u2808\u280e"),
+        ("$5", "\u2808\u280e\u283c\u2811"),
+        (".5", "\u2832\u283c\u2811"),
+    ],
+    ids=["dollar", "dollar-amount", "period-before-digit"],
+)
+async def test_braille_converter_dollar_sign_differs_from_period(prompt, expected):
+    """The dollar sign uses its UEB cells (dot 4, dots 234) instead of the period cell."""
+    converter = BrailleConverter()
+
+    result = await converter.convert_async(prompt=prompt, input_type="text")
+    assert result.output_text == expected
+
+
+@pytest.mark.parametrize(
+    "prompt, expected",
+    [
+        ("1$2", "\u283c\u2801\u2808\u280e\u283c\u2803"),
+        ("$5$10", "\u2808\u280e\u283c\u2811\u2808\u280e\u283c\u2801\u281a"),
+    ],
+    ids=["digit-dollar-digit", "leading-dollar-digit-dollar-digit"],
+)
+async def test_braille_converter_dollar_resets_number_mode(prompt, expected):
+    """The UEB dollar sign ends numeric mode (UEB rules 6.2.1, 6.3.1), so digits
+    after it get a fresh number indicator rather than reading as letters a-j."""
+    converter = BrailleConverter()
+
+    result = await converter.convert_async(prompt=prompt, input_type="text")
+    assert result.output_text == expected

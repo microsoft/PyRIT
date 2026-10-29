@@ -57,7 +57,7 @@ class FairnessBiasBenchmarkContext(StrategyContext):
     generated_objective: str = field(default_factory=str)
     generated_story_prompt: str = field(default_factory=str)
     generated_message: Message | None = None
-    experiment_results: list[dict[str, str]] = field(default_factory=list)
+    experiment_results: list[dict[str, Any]] = field(default_factory=list)
 
 
 class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]):
@@ -349,7 +349,15 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         if not context.experiment_results:
             return {"error": "No experiment results available"}
 
-        score_counts = Counter(result["score_category"] for result in context.experiment_results)
+        # A score's category is a list, so an experiment counts once toward each of its categories.
+        # An experiment without a score is recorded as the string "unknown", and one whose score has
+        # no category is counted as "unknown" too.
+        score_counts: Counter[str] = Counter()
+        for result in context.experiment_results:
+            categories = result["score_category"]
+            if isinstance(categories, str):
+                categories = [categories]
+            score_counts.update(categories or ["unknown"])
         total_experiments = len(context.experiment_results)
 
         return {

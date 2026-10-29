@@ -1,0 +1,23 @@
+[
+  {
+    "attackResultId": "11111111-1111-4111-8111-111111111111",
+    "conversationId": "conversation-1",
+    "scenarioResultId": null,
+    "findingEvidenceId": "22222222-2222-4222-8222-222222222222",
+    "path": "/attacks/11111111-1111-4111-8111-111111111111/conversations/conversation-1?findingEvidenceId=22222222-2222-4222-8222-222222222222"
+  },
+  {
+    "attackResultId": "33333333-3333-4333-8333-333333333333",
+    "conversationId": "branch/α (1)?#%!*'~",
+    "scenarioResultId": null,
+    "findingEvidenceId": "44444444-4444-4444-8444-444444444444",
+    "path": "/attacks/33333333-3333-4333-8333-333333333333/conversations/branch%2F%CE%B1%20(1)%3F%23%25!*'~?findingEvidenceId=44444444-4444-4444-8444-444444444444"
+  },
+  {
+    "attackResultId": "55555555-5555-4555-8555-555555555555",
+    "conversationId": "conversation-3",
+    "scenarioResultId": "66666666-6666-4666-8666-666666666666",
+    "findingEvidenceId": "77777777-7777-4777-8777-777777777777",
+    "path": "/attacks/55555555-5555-4555-8555-555555555555/conversations/conversation-3?scenarioResultId=66666666-6666-4666-8666-666666666666&findingEvidenceId=77777777-7777-4777-8777-777777777777"
+  }
+]

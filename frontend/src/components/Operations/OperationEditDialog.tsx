@@ -3,6 +3,7 @@ import {
   Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger,
   Field, Input, MessageBar, MessageBarBody, Textarea,
 } from '@fluentui/react-components'
+import { EditRegular } from '@fluentui/react-icons'
 
 import { operationsApi } from '@/services/api'
 import { conflictingOperation, toApiError } from '@/services/errors'
@@ -60,7 +61,7 @@ export default function OperationEditDialog({ operation, onSaved }: OperationEdi
       setOpen(data.open)
     }}>
       <DialogTrigger disableButtonEnhancement>
-        <Button className={styles.button}>Edit</Button>
+        <Button className={styles.button} icon={<EditRegular />}>Edit</Button>
       </DialogTrigger>
       <DialogSurface>
         <DialogBody>
