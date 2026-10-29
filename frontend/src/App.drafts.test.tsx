@@ -243,7 +243,7 @@ describe('App draft handoff with the real chat and composer', () => {
         initialEntries: ['/attack/chat'],
       })
       render(<RouterProvider router={router} />)
-      const target = await screen.findByRole('combobox', { name: 'Chat target' })
+      const target = await screen.findByRole('combobox', { name: 'Objective target' })
       await waitFor(() => expect(target).toBeEnabled())
       await user.selectOptions(target, 'draft-target')
       await user.type(screen.getByPlaceholderText('Type prompt here'), 'Unsent prompt')
@@ -254,7 +254,7 @@ describe('App draft handoff with the real chat and composer', () => {
       await screen.findByRole('heading', { name: 'Home', exact: true })
       await returnToChat(user)
       expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Unsent prompt')
-      expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('draft-target')
+      expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('draft-target')
       expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat$/)
       expect(attacksApi.createAttack).not.toHaveBeenCalled()
       expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
@@ -288,7 +288,7 @@ describe('App draft handoff with the real chat and composer', () => {
   it('should let the editor block New attack before any draft reset', async () => {
     const user = userEvent.setup()
     renderChat()
-    const target = await screen.findByRole('combobox', { name: 'Chat target' })
+    const target = await screen.findByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(target).toBeEnabled())
     await user.selectOptions(target, 'draft-target')
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Original unsent prompt')

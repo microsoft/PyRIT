@@ -269,7 +269,7 @@ test.describe("Onboarding tour", () => {
 
     await expect(page).toHaveURL(/\/attack\/chat$/);
     await expect(dialog).toContainText("Click Select a target in the chat ribbon");
-    await page.getByRole("combobox", { name: "Chat target", exact: true }).selectOption("tour-target");
+    await page.getByRole("combobox", { name: "Objective target", exact: true }).selectOption("tour-target");
     await expect(page.getByRole("textbox", { name: "Type prompt here", exact: true })).toBeVisible();
     await expect(page.locator('[data-tour="converter-toggle"]')).toHaveAttribute(
       "aria-label",

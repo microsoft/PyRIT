@@ -699,7 +699,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await draft.fill("Draft without a target");
     await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
 
-    await page.getByRole("combobox", { name: "Chat target", exact: true }).selectOption("target-chat-1");
+    await page.getByRole("combobox", { name: "Objective target", exact: true }).selectOption("target-chat-1");
     const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await expect(input).toHaveValue("Draft without a target");
     await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();

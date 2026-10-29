@@ -312,7 +312,7 @@ describe('App target selection with the chat composer', () => {
       isAxiosError: true, response: { status: 409, data: { detail: 'Configured scorer is unavailable.' } },
     })
     render(<App />, { wrapper: TestWrapper })
-    const target = screen.getByRole('combobox', { name: 'Chat target', exact: true })
+    const target = screen.getByRole('combobox', { name: 'Objective target', exact: true })
     await waitFor(() => expect(target).toBeEnabled())
     await user.selectOptions(target, 'target-a')
     await user.click(screen.getByRole('button', { name: 'Add objective', exact: true }))
