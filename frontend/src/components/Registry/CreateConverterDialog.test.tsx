@@ -111,6 +111,14 @@ function renderDialog(
   return render(dialogTree(props))
 }
 
+function finishFileRead(reader: FileReader | undefined, value: string): void {
+  if (!(reader instanceof FileReader)) throw new Error('File read did not start')
+  act(() => {
+    Object.defineProperty(reader, 'result', { configurable: true, value })
+    reader.dispatchEvent(new ProgressEvent('load'))
+  })
+}
+
 async function submitCaesarConverter(user: ReturnType<typeof userEvent.setup>) {
   await selectConverterType('CaesarConverter')
   await user.type(screen.getByRole('textbox', { name: /caesar_offset/i }), '5')
@@ -276,7 +284,12 @@ describe('CreateConverterDialog', () => {
         Object.defineProperty(reader, 'result', { value: upload })
         reader.dispatchEvent(new ProgressEvent('load'))
       })
-      expect(screen.getByRole('textbox', { name: 'source *' })).toHaveValue(closed ? 'original.txt' : upload)
+      if (closed) expect(screen.getByRole('textbox', { name: 'source *' })).toHaveValue('original.txt')
+      else {
+        expect(screen.getByText('input.txt')).toBeVisible()
+        expect(screen.getByText('8 B')).toBeVisible()
+        expect(screen.queryByRole('textbox', { name: 'source *' })).not.toBeInTheDocument()
+      }
       await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
       await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
       expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('PathConverter', {
@@ -452,6 +465,8 @@ describe('CreateConverterDialog', () => {
     fireEvent.load(image)
     expect(image).toBeVisible()
     expect(image).toHaveAttribute('src', 'data:image/png;base64,aW1hZ2U=')
+    expect(screen.getByText('sample.png')).toBeVisible()
+    expect(screen.getByText('5 B')).toBeVisible()
     if (method === 'drop') expect(screen.getByRole('status')).toHaveTextContent('source: ignored 1 extra file. This field uses only the first file.')
     else expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'source *' })).not.toBeInTheDocument()
@@ -483,20 +498,176 @@ describe('CreateConverterDialog', () => {
       new File(['second'], 'second.txt', { type: 'text/plain' }),
       new File(['third'], 'third.txt', { type: 'text/plain' }),
     ] } })
-    await waitFor(() => expect(source).toHaveValue('data:text/plain;base64,Zmlyc3Q='))
+    expect(await screen.findByText('first.txt')).toBeVisible()
+    expect(screen.getByText('5 B')).toBeVisible()
     expect(screen.getByRole('status')).toHaveTextContent('source: ignored 2 extra files. This field uses only the first file.')
-    await user.click(screen.getByRole('button', { name: 'Upload' }))
+    await user.click(screen.getByRole('button', { name: 'Replace' }))
     const input = click.mock.contexts[0]
     if (!(input instanceof HTMLInputElement)) throw new Error('File picker did not open')
     screen.getByRole('dialog').appendChild(input)
     await user.upload(input, new File(['replacement'], 'single.txt', { type: 'text/plain' }))
     input.remove()
-    await waitFor(() => expect(source).toHaveValue('data:text/plain;base64,cmVwbGFjZW1lbnQ='))
+    expect(await screen.findByText('single.txt')).toBeVisible()
+    expect(screen.getByText('11 B')).toBeVisible()
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Add Converter' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'PathConverter', type: 'PathConverter', params: { source: 'data:text/plain;base64,cmVwbGFjZW1lbnQ=' },
     })
+  })
+
+  it.each([
+    ['sample.wav', 'audio/wav'],
+    ['sample.mp4', 'video/mp4'],
+    ['sample.pdf', 'application/pdf'],
+    ['sample.txt', 'text/plain'],
+  ])('should show actual metadata without a thumbnail for %s and preserve its exact value', async (name: string, mimeType: string) => {
+    const user = userEvent.setup()
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
+    renderDialog()
+    await selectConverterType('PathConverter')
+    fireEvent.drop(screen.getByRole('textbox', { name: 'source *' }), {
+      dataTransfer: { types: ['Files'], files: [new File(['asset'], name, { type: mimeType })] },
+    })
+    expect(await screen.findByText(name)).toBeVisible()
+    expect(screen.getByText('5 B')).toBeVisible()
+    expect(screen.queryByAltText('Preview for source')).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'source *' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Replace' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Remove file for source' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'PathConverter', type: 'PathConverter', params: { source: `data:${mimeType};base64,YXNzZXQ=` },
+    })
+  })
+
+  it.each([
+    ['data:image/png;base64,aW1hZ2U=', 'Image value', 'Remove image for source'],
+    ['data:application/pdf;base64,YXNzZXQ=', 'File value', 'Remove file for source'],
+  ])('should not invent metadata for an existing value %s', async (value: string, label: string, removeLabel: string) => {
+    const user = userEvent.setup()
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true, default: value }], 'PathConverter')
+    renderDialog({ editing: { converter: {
+      converter_id: 'existing', identifier: { class_name: 'PathConverter', hash: 'existing', source: value },
+    } } })
+    expect(await screen.findByText(label)).toBeVisible()
+    expect(screen.queryByText(/^\d+(\.\d+)? (B|KB|MB)$/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'source *' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: removeLabel }))
+    const input = screen.getByRole('textbox', { name: 'source *' })
+    expect(input).toHaveValue('')
+    expect(input).toHaveFocus()
+    expect(input).toHaveAttribute('placeholder', 'Upload a file or enter a server path')
+  })
+
+  it('should replace and remove selected files and retain the last successful file after a current read failure', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
+    const click = jest.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined)
+    renderDialog()
+    await selectConverterType('PathConverter')
+    const file = new File(['asset'], 'sample.pdf', { type: 'application/pdf' })
+    fireEvent.drop(screen.getByRole('textbox', { name: 'source *' }), { dataTransfer: { types: ['Files'], files: [file] } })
+    await screen.findByText('sample.pdf')
+    await user.click(screen.getByRole('button', { name: 'Remove file for source' }))
+    const path = screen.getByRole('textbox', { name: 'source *' })
+    expect(path).toHaveValue('')
+    expect(path).toHaveFocus()
+    await user.type(path, '/server/sample.pdf')
+    expect(path).toHaveValue('/server/sample.pdf')
+    fireEvent.drop(path, { dataTransfer: { types: ['Files'], files: [file] } })
+    await screen.findByText('sample.pdf')
+    await user.click(screen.getByRole('button', { name: 'Replace' }))
+    const input = click.mock.contexts[0]
+    if (!(input instanceof HTMLInputElement)) throw new Error('File picker did not open')
+    screen.getByRole('dialog').appendChild(input)
+    await user.upload(input, new File(['next'], 'replacement.bin', { type: 'application/octet-stream' }))
+    input.remove()
+    const selected = await screen.findByText('replacement.bin')
+    expect(screen.getByText('4 B')).toBeVisible()
+    const read = jest.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(() => undefined)
+    fireEvent.drop(selected, { dataTransfer: { types: ['Files'], files: [new File(['bad'], 'unreadable.txt', { type: 'text/plain' })] } })
+    const reader = read.mock.contexts[0]
+    if (!(reader instanceof FileReader)) throw new Error('File read did not start')
+    act(() => { reader.dispatchEvent(new ProgressEvent('error')) })
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not read "unreadable.txt".')
+    expect(screen.getByText('replacement.bin')).toBeVisible()
+    expect(screen.getByText('4 B')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'PathConverter', type: 'PathConverter', params: { source: 'data:application/octet-stream;base64,bmV4dA==' },
+    })
+  })
+
+  it('should let the latest selection win over an older late read and its metadata', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
+    const read = jest.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(() => undefined)
+    renderDialog()
+    await selectConverterType('PathConverter')
+    const input = screen.getByRole('textbox', { name: 'source *' })
+    fireEvent.drop(input, { dataTransfer: { types: ['Files'], files: [new File(['old'], 'old.pdf', { type: 'application/pdf' })] } })
+    fireEvent.drop(input, { dataTransfer: { types: ['Files'], files: [new File(['current'], 'current.pdf', { type: 'application/pdf' })] } })
+    finishFileRead(read.mock.contexts[1], 'data:application/pdf;base64,Y3VycmVudA==')
+    finishFileRead(read.mock.contexts[0], 'data:application/pdf;base64,b2xk')
+    expect(screen.getByText('current.pdf')).toBeVisible()
+    expect(screen.getByText('7 B')).toBeVisible()
+    expect(screen.queryByText('old.pdf')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'PathConverter', type: 'PathConverter', params: { source: 'data:application/pdf;base64,Y3VycmVudA==' },
+    })
+  })
+
+  it('should keep manual data-prefix typing and paste editable and ignore an older pending read', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
+    const read = jest.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(() => undefined)
+    renderDialog()
+    await selectConverterType('PathConverter')
+    const input = screen.getByRole('textbox', { name: 'source *' })
+    fireEvent.drop(input, { dataTransfer: { types: ['Files'], files: [new File(['old'], 'old.pdf', { type: 'application/pdf' })] } })
+    await user.type(input, 'data:')
+    expect(input).toHaveFocus()
+    expect(input).toHaveValue('data:')
+    await user.paste('application/pdf;base64,bWFudWFs')
+    finishFileRead(read.mock.contexts[0], 'data:application/pdf;base64,b2xk')
+    expect(input).toHaveFocus()
+    expect(input).toHaveValue('data:application/pdf;base64,bWFudWFs')
+    expect(screen.queryByText('old.pdf')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Replace' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'PathConverter', type: 'PathConverter', params: { source: 'data:application/pdf;base64,bWFudWFs' },
+    })
+  })
+
+  it('should ignore a pending read after Remove and after a successful form reset', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true, default: '/server/original.txt' }], 'PathConverter')
+    const read = jest.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(() => undefined)
+    const onCreated = jest.fn()
+    renderDialog({ onCreated })
+    await selectConverterType('PathConverter')
+    const input = screen.getByRole('textbox', { name: 'source *' })
+    fireEvent.drop(input, { dataTransfer: { types: ['Files'], files: [new File(['one'], 'one.pdf', { type: 'application/pdf' })] } })
+    finishFileRead(read.mock.contexts[0], 'data:application/pdf;base64,b25l')
+    fireEvent.drop(screen.getByText('one.pdf'), { dataTransfer: { types: ['Files'], files: [new File(['two'], 'two.pdf', { type: 'application/pdf' })] } })
+    await user.click(screen.getByRole('button', { name: 'Remove file for source' }))
+    finishFileRead(read.mock.contexts[1], 'data:application/pdf;base64,dHdv')
+    const restored = screen.getByRole('textbox', { name: 'source *' })
+    expect(restored).toHaveValue('')
+    expect(restored).toHaveFocus()
+    expect(screen.queryByText('two.pdf')).not.toBeInTheDocument()
+    await user.type(restored, '/server/manual.txt')
+    fireEvent.drop(restored, { dataTransfer: { types: ['Files'], files: [new File(['pending'], 'pending.pdf', { type: 'application/pdf' })] } })
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    const pending = read.mock.contexts[2]
+    if (!(pending instanceof FileReader)) throw new Error('File read did not start')
+    act(() => { pending.dispatchEvent(new ProgressEvent('error')) })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByText('pending.pdf')).not.toBeInTheDocument()
   })
 
   it('should keep an image preview read-only when uploads are not allowed', async () => {
@@ -522,6 +693,25 @@ describe('CreateConverterDialog', () => {
       source_name: 'image', source_hash: 'image', params: {},
     })
     expect(image).toHaveAttribute('src', 'data:image/png;base64,aW1hZ2U=')
+  })
+
+  it('should keep a non-image existing value read-only without inventing file metadata', async () => {
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
+    const read = jest.spyOn(FileReader.prototype, 'readAsDataURL')
+    renderDialog({
+      allowUploads: false,
+      editing: { converter: {
+        converter_id: 'existing', identifier: { class_name: 'PathConverter', hash: 'existing', source: 'data:application/pdf;base64,YXNzZXQ=' },
+      } },
+      onTemporary: jest.fn(),
+    })
+    const label = await screen.findByText('File value')
+    expect(screen.getByRole('button', { name: 'Replace' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Remove file for source' })).toBeDisabled()
+    expect(screen.queryByText(/^\d+(\.\d+)? (B|KB|MB)$/)).not.toBeInTheDocument()
+    fireEvent.drop(label, { dataTransfer: { types: ['Files'], files: [new File(['other'], 'other.pdf', { type: 'application/pdf' })] } })
+    expect(read).not.toHaveBeenCalled()
+    expect(label).toBeVisible()
   })
 
   it('creates a named converter through the registry API', async () => {

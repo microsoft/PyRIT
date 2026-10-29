@@ -5,6 +5,7 @@ import { ArrowShuffleRegular, ArrowUndoRegular, AttachRegular, DismissRegular, O
 
 import type { ConvertedFileChip, MessageAttachment, PieceConversion, UndoLastSendAction } from '@/types'
 import FileDropZone from '@/components/Media/FileDropZone'
+import { formatFileSize } from '@/utils/formatFileSize'
 
 import { attachmentsFromFiles } from './converterTypes'
 import { usePromptEditorStyles } from './PromptEditor.styles'
@@ -34,12 +35,6 @@ interface PromptEditorProps {
   onClearMediaConversion: (pieceId: string) => void
   convertedFileChip?: ConvertedFileChip | null
   onClearConvertedFileChip?: () => void
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function attachmentIcon(kind: MessageAttachment['type']): string {

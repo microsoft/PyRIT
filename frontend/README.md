@@ -71,8 +71,11 @@ the source conversation. New outgoing turns are always converted.
 Drop files onto the chat or an editable prompt to attach them. Converter file
 fields also accept drops, including **New converter** in the chat pane.
 Drops use the same handling as **Attach files** or **Upload**. Read-only inputs
-stay read-only. Selected converter images show a small preview with **Replace**
-and **Remove**; removing an image restores the path field.
+stay read-only. Newly selected converter files show their actual name and size
+with **Replace** and **Remove**. Image previews use the existing safe display
+rules. Existing encoded values use a generic label when file details are
+unknown; manually typed or pasted values stay editable. **Remove** restores
+the path field.
 Drops outside writable media surfaces, including unrelated portal dialogs, do
 not attach files or navigate away from the app. A converter read failure is
 reported without replacing the previous field value.

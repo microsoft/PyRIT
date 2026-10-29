@@ -26,6 +26,7 @@ import { toApiError } from '@/services/errors'
 import { useTargetPreferences } from '@/hooks/useTargetPreferences'
 import { resolveDefaultAdversarialTarget } from '@/utils/targetIdentity'
 import { mapMediaUrl } from '@/utils/media'
+import { formatFileSize } from '@/utils/formatFileSize'
 import type {
   ConverterInstance, ConverterTypeEntry, Parameter, TargetInstance, SourceInstanceSpec, ConverterIdentifier,
 } from '@/types'
@@ -88,6 +89,13 @@ interface ParameterInputProps {
   onBrowse: () => void
   onFiles: (files: File[]) => void
   allowUploads: boolean
+  selectedFile?: SelectedFile
+}
+
+interface SelectedFile {
+  readonly value: string
+  readonly name: string
+  readonly size: number
 }
 
 function isEditableParameter(parameter: Parameter): boolean {
@@ -167,10 +175,12 @@ function ParameterInput({
   onBrowse,
   onFiles,
   allowUploads,
+  selectedFile,
 }: ParameterInputProps) {
   const styles = useCreateConverterDialogStyles()
   const pathInputRef = useRef<HTMLInputElement>(null)
   const focusPathInput = useRef(false)
+  const [manualValue, setManualValue] = useState<string | null>(null)
   const label = `${parameter.name}${parameter.required ? ' *' : ''}`
   const help = parameter.description?.trim()
 
@@ -243,6 +253,11 @@ function ParameterInput({
   const mappedImage = isFile && value.startsWith('data:')
     ? mapMediaUrl({ dataType: 'image_path', value }) : null
   const imagePreview = mappedImage?.status === 'preview' && mappedImage.kind === 'image' ? mappedImage.url : null
+  const fileDetails = selectedFile?.value === value ? selectedFile : undefined
+  const hasFileValue = isFile && value.startsWith('data:') && (Boolean(fileDetails) || manualValue !== value)
+  const defaultValue = parameterDefaultValue(parameter)
+  const pathPlaceholder = parameter.type_name === 'Path | str'
+    ? 'Upload a file or enter a URL' : 'Upload a file or enter a server path'
 
   return (
     <HelpField
@@ -256,27 +271,31 @@ function ParameterInput({
       {isFile ? (
         <FileDropZone className={styles.fileRow} disabled={!allowUploads}
           label="Drop file" onFiles={onFiles}>
-          {imagePreview ? <div className={styles.filePreview}>
-            <MediaPreview key={imagePreview} type="image" src={imagePreview} alt={`Preview for ${parameter.name}`}
-              className={styles.fileThumbnail} containerClassName={styles.fileThumbnailContainer} />
-            <Text size={200}>Image selected</Text>
+          {hasFileValue ? <div className={styles.filePreview}>
+            {imagePreview && <MediaPreview key={imagePreview} type="image" src={imagePreview} alt={`Preview for ${parameter.name}`}
+              className={styles.fileThumbnail} containerClassName={styles.fileThumbnailContainer} />}
+            <div className={styles.fileDetails}>
+              <Text size={200} className={styles.fileName} title={fileDetails?.name}>
+                {fileDetails?.name ?? (imagePreview ? 'Image value' : 'File value')}
+              </Text>
+              {fileDetails && <Text size={100}>{formatFileSize(fileDetails.size)}</Text>}
+            </div>
           </div> : <Input
             input={{ ref: pathInputRef }}
             disabled={!allowUploads}
             className={styles.fileInput}
             value={value}
-            placeholder={parameterDefaultValue(parameter) || (
-              parameter.type_name === 'Path | str'
-                ? 'Upload a file or enter a URL'
-                : 'Upload a file or enter a server path'
-            )}
-            onChange={(_, data) => onChange(data.value)}
+            placeholder={defaultValue && !defaultValue.startsWith('data:') ? defaultValue : pathPlaceholder}
+            onChange={(_, data) => {
+              setManualValue(data.value)
+              onChange(data.value)
+            }}
           />}
           <Button type="button" className={styles.fileButton} disabled={!allowUploads} onClick={onBrowse}>
-            {imagePreview ? 'Replace' : 'Upload'}
+            {hasFileValue ? 'Replace' : 'Upload'}
           </Button>
-          {imagePreview && <Button type="button" className={styles.fileButton} disabled={!allowUploads}
-            aria-label={`Remove image for ${parameter.name}`} onClick={() => {
+          {hasFileValue && <Button type="button" className={styles.fileButton} disabled={!allowUploads}
+            aria-label={`Remove ${imagePreview ? 'image' : 'file'} for ${parameter.name}`} onClick={() => {
               focusPathInput.current = true
               onChange('')
             }}>Remove</Button>}
@@ -315,15 +334,18 @@ export default function CreateConverterDialog({
   const [showValidation, setShowValidation] = useState(false)
   const [error, setError] = useState<DialogError | null>(null)
   const [fileNotice, setFileNotice] = useState<string | null>(null)
+  const [selectedFiles, setSelectedFiles] = useState<Record<string, SelectedFile>>({})
   const errorRef = useRef<HTMLDivElement>(null)
   // The dialog instance is reused across openings, so a create response can
   // land after the opening that started it has gone.
   const openEpochRef = useRef(0)
+  const fileReads = useRef(new Map<string, symbol>())
 
   useEffect(() => {
     // Every change of `open` ends the opening before it, so a response from the
     // previous one leaves this opening's own state alone.
     openEpochRef.current += 1
+    fileReads.current.clear()
     if (!open) return
     let cancelled = false
     Promise.resolve()
@@ -332,6 +354,7 @@ export default function CreateConverterDialog({
         setLoading(true)
         setError(null)
         setFileNotice(null)
+        setSelectedFiles({})
         // A request from the previous opening keeps its own "Adding..." state, so
         // clear it here rather than letting that response clear it for this one.
         setSubmitting(false)
@@ -442,6 +465,7 @@ export default function CreateConverterDialog({
   }
 
   const reset = () => {
+    fileReads.current.clear()
     setSelectedType('')
     setRegistryName('')
     setNameEdited(false)
@@ -450,6 +474,7 @@ export default function CreateConverterDialog({
     setShowValidation(false)
     setError(null)
     setFileNotice(null)
+    setSelectedFiles({})
   }
 
   const close = () => {
@@ -458,6 +483,7 @@ export default function CreateConverterDialog({
   }
 
   const selectType = (converterType: string) => {
+    fileReads.current.clear()
     setSelectedType(converterType)
     if (!nameEdited) setRegistryName(converterType)
     const typeEntry = converterTypes.find((item) => item.converter_type === converterType)
@@ -480,6 +506,7 @@ export default function CreateConverterDialog({
     setShowValidation(false)
     setError(null)
     setFileNotice(null)
+    setSelectedFiles({})
   }
 
   const readFiles = (parameterName: string, files: File[]): void => {
@@ -490,18 +517,28 @@ export default function CreateConverterDialog({
       ? `${parameterName}: ignored ${extraCount} extra ${extraCount === 1 ? 'file' : 'files'}. This field uses only the first file.`
       : null)
     const epoch = openEpochRef.current
+    const selection = Symbol(parameterName)
+    fileReads.current.set(parameterName, selection)
+    const isCurrentSelection = (): boolean =>
+      openEpochRef.current === epoch && fileReads.current.get(parameterName) === selection
     const reader = new FileReader()
     reader.onload = () => {
-      if (openEpochRef.current !== epoch) return
+      if (!isCurrentSelection()) return
+      fileReads.current.delete(parameterName)
+      const value = String(reader.result ?? '')
       setError(null)
       setChangedParameters((current) => new Set([...current, parameterName]))
       setParameterValues((current) => ({
         ...current,
-        [parameterName]: String(reader.result ?? ''),
+        [parameterName]: value,
+      }))
+      setSelectedFiles((current) => ({
+        ...current, [parameterName]: { value, name: file.name, size: file.size },
       }))
     }
     const reportReadFailure = (): void => {
-      if (openEpochRef.current !== epoch) return
+      if (!isCurrentSelection()) return
+      fileReads.current.delete(parameterName)
       setError({ message: `Could not read "${file.name}". Select a file you can open and try again.`, fromSubmit: false })
     }
     reader.onerror = reportReadFailure
@@ -729,7 +766,7 @@ export default function CreateConverterDialog({
                   {editing && <Text>Changes apply only to this stage. The registered converter stays unchanged.</Text>}
                   <div className={styles.parameterGrid}>
                     {selectedConverterType?.parameters.map((parameter) => (
-                      <div key={parameter.name} className={styles.parameterRow}>
+                      <div key={`${selectedType}:${parameter.name}`} className={styles.parameterRow}>
                         {parameter.variants || parameter.multiline ? (
                           <ParameterField
                             parameter={parameter}
@@ -753,13 +790,20 @@ export default function CreateConverterDialog({
                             && !formValueIsSet(parameterValues[parameter.name])
                           }
                           onChange={(value) => {
+                            fileReads.current.delete(parameter.name)
                             setFileNotice(null)
+                            setSelectedFiles((current) => {
+                              const next = { ...current }
+                              delete next[parameter.name]
+                              return next
+                            })
                             setChangedParameters((current) => new Set([...current, parameter.name]))
                             setParameterValues((current) => ({ ...current, [parameter.name]: value }))
                           }}
                           onBrowse={() => browse(parameter.name)}
                           onFiles={(files: File[]) => readFiles(parameter.name, files)}
                           allowUploads={allowUploads}
+                          selectedFile={selectedFiles[parameter.name]}
                         />}
                       </div>
                     ))}

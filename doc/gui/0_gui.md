@@ -72,8 +72,11 @@ A drop outside these writable surfaces, including on a dialog that has no
 file input, does not attach a file or replace the page. A file drag shows one
 drop target for the chat. Read-only and disabled inputs remain locked.
 During a blocked file drag, Chat shows the same reason as its disabled prompt.
-Converter image fields show a thumbnail with **Replace** and **Remove** instead
-of an encoded image value. **Remove** restores path entry. If a converter file
+Newly selected converter files show their name and size with **Replace** and
+**Remove**, instead of an encoded value. Supported image previews also show a
+thumbnail. Existing encoded values without file details use a generic label;
+unknown names and sizes are not guessed. Typed and pasted paths or values stay
+editable. **Remove** restores path entry. If a converter file
 cannot be read, the dialog reports the error and keeps the previous value.
 Converter file fields still use only the first selected file. If a selection
 contains extra files, the dialog reports how many were ignored.

@@ -190,9 +190,22 @@ export const useCreateConverterDialogStyles = makeStyles({
   filePreview: {
     display: 'flex',
     alignItems: 'center',
-    flex: 1,
+    flex: '1 1 180px',
     gap: tokens.spacingHorizontalS,
     minWidth: 0,
+  },
+  fileDetails: {
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    minWidth: 0,
+    gap: tokens.spacingVerticalXXS,
+  },
+  fileName: {
+    display: 'block',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
   },
   fileThumbnailContainer: {
     position: 'relative',
