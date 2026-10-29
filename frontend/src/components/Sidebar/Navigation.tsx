@@ -116,28 +116,27 @@ export default function Navigation({
       <nav aria-label="Primary" className={styles.primaryNavigation}>
         {NAVIGATION_ITEMS.filter((item: NavigationItem) =>
           item.view !== 'configuration' || canManageConfiguration,
-        ).map((item: NavigationItem) => (
-          <Tooltip
-            key={item.view}
-            content={item.label}
-            relationship="label"
-            positioning="after"
-            visible={expanded ? false : undefined}
-          >
+        ).map((item: NavigationItem) => {
+          const button = (
             <Button
+              key={item.view}
               className={styles.navButton}
               data-active={currentView === item.view}
               appearance="subtle"
               icon={item.icon}
-              title={item.label}
               aria-label={item.label}
               aria-current={currentView === item.view ? 'page' : undefined}
               onClick={() => onNavigate(item.view)}
             >
               {expanded && item.label}
             </Button>
-          </Tooltip>
-        ))}
+          )
+          return expanded ? button : (
+            <Tooltip key={item.view} content={item.label} relationship="label" positioning="after">
+              {button}
+            </Tooltip>
+          )
+        })}
       </nav>
 
       <div className={styles.spacer} />

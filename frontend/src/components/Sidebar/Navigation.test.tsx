@@ -3,6 +3,8 @@
  * Licensed under the MIT license.
  */
 
+import { useState } from "react";
+
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider, useTheme } from "../../hooks/useTheme";
@@ -88,6 +90,38 @@ describe("Navigation", () => {
       await user.click(screen.getByRole("button", { name: label }));
       expect(onNavigate).toHaveBeenLastCalledWith(view);
     }
+  });
+
+  it("shows a single icon label after expanding and collapsing in place", async () => {
+    const user = userEvent.setup();
+    function ToggleNavigation() {
+      const [expanded, setExpanded] = useState(true);
+      return (
+        <Navigation
+          {...defaultProps}
+          expanded={expanded}
+          onToggleExpanded={() => { setExpanded((current: boolean) => !current); }}
+        />
+      );
+    }
+
+    renderWithProvider(<ToggleNavigation />);
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    await user.hover(screen.getByRole("button", { name: "Attacks" }));
+    expect(await screen.findByRole("tooltip", { name: "Attacks" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Attacks" })).not.toHaveAttribute("title");
+
+    await user.unhover(screen.getByRole("button", { name: "Attacks" }));
+    await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    await user.hover(screen.getByRole("button", { name: "Attacks" }));
+    expect(screen.queryByRole("tooltip", { name: "Attacks" })).not.toBeInTheDocument();
+
+    await user.unhover(screen.getByRole("button", { name: "Attacks" }));
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    await user.tab();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Attacks" })).toHaveFocus();
+    expect(await screen.findByRole("tooltip", { name: "Attacks" })).toBeVisible();
   });
 
   it("renders one feedback button and forwards clicks to onOpenFeedback", async () => {

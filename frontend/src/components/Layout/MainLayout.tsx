@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   Button,
   DrawerBody,
@@ -12,9 +12,11 @@ import { QuestionCircleRegular } from '@fluentui/react-icons'
 import LabelsBar, { type OperationControlProps } from '@/components/Labels/LabelsBar'
 import Navigation, { type ViewName } from '@/components/Sidebar/Navigation'
 import { UserAccountButton } from '@/components/UserAccountButton'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useTheme } from '@/hooks/useTheme'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import { versionApi } from '@/services/api'
+import { NARROW_SCREEN_QUERY } from '@/styles/touchTargets'
 import type { UserPreferences } from '@/types'
 
 import { useMainLayoutStyles } from './MainLayout.styles'
@@ -31,8 +33,6 @@ interface MainLayoutProps extends OperationControlProps {
   toolbarRef?: React.Ref<HTMLDivElement>
   onStartTour?: () => void
 }
-
-const NARROW_SCREEN_QUERY = '(max-width: 600px)'
 
 export default function MainLayout({
   children,
@@ -56,18 +56,11 @@ export default function MainLayout({
   const [commit, setCommit] = useState<string | null>(null)
   const [databaseInfo, setDatabaseInfo] = useState<string | null>(null)
   const sidebarExpanded = preferences.sidebarExpanded ?? true
-  const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_SCREEN_QUERY).matches)
   const [drawerOpen, setDrawerOpen] = useState(false)
-
-  useEffect(() => {
-    const query = window.matchMedia(NARROW_SCREEN_QUERY)
-    const handleChange = (event: MediaQueryListEvent): void => {
-      setNarrow(event.matches)
-      setDrawerOpen(false)
-    }
-    query.addEventListener('change', handleChange)
-    return () => { query.removeEventListener('change', handleChange) }
+  const closeDrawer = useCallback((): void => {
+    setDrawerOpen(false)
   }, [])
+  const narrow = useMediaQuery(NARROW_SCREEN_QUERY, closeDrawer)
 
   useEffect(() => {
     versionApi.getVersion()

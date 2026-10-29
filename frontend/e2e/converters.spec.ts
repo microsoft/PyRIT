@@ -462,14 +462,14 @@ async function mockBackendAPIs(page: Page) {
 
 /** Navigate to the target registry, set the objective default, then return to chat. */
 async function activateMockTarget(page: Page) {
-  await page.getByTitle("Registry").click();
+  await page.getByRole("button", { name: "Registry", exact: true }).click();
   await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
 
   const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
   await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
   await objectiveDefault.selectOption({ index: 1 });
 
-  await page.getByTitle("Attacks", { exact: true }).click();
+  await page.getByRole("button", { name: "Attacks", exact: true }).click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
@@ -570,10 +570,10 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.getByTitle("Registry", { exact: true }).click();
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
     await page.getByRole("combobox", { name: "Default objective target", exact: true })
       .selectOption(targetRegistryName);
-    await page.getByTitle("Attacks", { exact: true }).click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
     await expect(page.getByTestId("chat-input")).toBeEnabled();
   });
 
@@ -1097,7 +1097,7 @@ test.describe("Converter Panel", () => {
     await expect(page.getByText(/Mock response for:/)).toBeVisible({ timeout: 15000 });
 
     // Navigate to History view
-    await page.getByTitle("History").click();
+    await page.getByRole("button", { name: "History", exact: true }).click();
 
     // Converter badge should appear in the attack table
     await expect(page.getByText("Base64Converter")).toBeVisible({ timeout: 10000 });
@@ -1161,7 +1161,7 @@ test.describe("Converter Panel", () => {
 
   test("should show converter type in history filter options", async ({ page }) => {
     // Navigate to History view
-    await page.getByTitle("History").click();
+    await page.getByRole("button", { name: "History", exact: true }).click();
 
     // The converter badge should be visible in the attack table
     await expect(page.getByText("Base64Converter")).toBeVisible({ timeout: 10000 });

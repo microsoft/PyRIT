@@ -141,6 +141,6 @@ test.describe("Error Handling", () => {
     await page.goto("/");
 
     // UI should be responsive even while APIs are delayed
-    await expect(page.getByTitle("Attacks")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: "Attacks", exact: true })).toBeVisible({ timeout: 10000 });
   });
 });
