@@ -922,7 +922,7 @@ describe('ScenarioDetail', () => {
     const datasetsSection = screen.getByRole('region', { name: 'Datasets' })
     expect(within(datasetsSection).getByRole('table', { name: 'Selected datasets' })).toBeInTheDocument()
     expect(datasetsSection.compareDocumentPosition(parameters)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(fallback).toHaveAccessibleDescription('The registered target this scenario uses to generate attacks.')
+    expect(fallback).toHaveAccessibleDescription(/The model used for adversarial chat/)
     expect(fallback).toHaveValue('adversary')
     expect(within(fallback).queryByRole('option', { name: 'target-a' })).not.toBeInTheDocument()
   })
@@ -1045,7 +1045,7 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByRole('combobox', { name: 'Objective Target' })
     expect(screen.queryByRole('combobox', { name: 'Adversarial Target' })).not.toBeInTheDocument()
-    expect(screen.queryByText('The registered target this scenario uses to generate attacks.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/The model used for adversarial chat/)).not.toBeInTheDocument()
   })
 
   it('shows the configuration, estimate, and launch sections before the preview dialog', async () => {

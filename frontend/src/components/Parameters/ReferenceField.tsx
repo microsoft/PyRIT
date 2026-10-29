@@ -1,7 +1,8 @@
 import { useId, useState } from 'react'
 
-import { Button, Field, Select, Text } from '@fluentui/react-components'
+import { Button, Select, Text } from '@fluentui/react-components'
 
+import HelpField from '@/components/HelpField'
 import type { RegistryReferenceOption } from '@/types'
 
 import { useReferenceFieldStyles } from './ReferenceField.styles'
@@ -13,12 +14,13 @@ interface ReferenceFieldProps {
   multiple?: boolean
   disabled?: boolean
   hint?: string
+  readonly help?: string
   onChange: (value: string | string[]) => void
 }
 
 /** Ordered registry references. Repeated entries are intentional. */
 export default function ReferenceField({
-  label, options, value, multiple = false, disabled = false, hint, onChange,
+  label, options, value, multiple = false, disabled = false, hint, help, onChange,
 }: ReferenceFieldProps) {
   const styles = useReferenceFieldStyles()
   const [pending, setPending] = useState('')
@@ -38,7 +40,7 @@ export default function ReferenceField({
 
   return (
     <div className={styles.root}>
-      <Field label={label} hint={hint}>
+      <HelpField label={label} hint={hint} help={help}>
         <Select
           className={styles.control}
           value={multiple ? pending : typeof value === 'string' ? value : ''}
@@ -50,7 +52,7 @@ export default function ReferenceField({
             <option key={option.name} value={option.name}>{option.name} ({option.type})</option>
           ))}
         </Select>
-      </Field>
+      </HelpField>
       {multiple && (
         <>
           <Button

@@ -1,5 +1,6 @@
-import { Field, Select, Text } from '@fluentui/react-components'
+import { Select, Text } from '@fluentui/react-components'
 
+import HelpField from '@/components/HelpField'
 import type { RegisteredComponentReference, ScorerInstance } from '@/types'
 import { findRegisteredScorer, isEligibleChatScorer } from '@/utils/scorerPresentation'
 
@@ -34,7 +35,9 @@ export default function ChatScorerPicker({
     : selectedScorer && eligibleScorers.includes(selectedScorer)
     ? `registered:${selectedScorer.scorer_registry_name}` : value ? 'unavailable' : ''
   return (
-    <Field label={label}>
+    <HelpField label={label} help={usage === 'scenario'
+      ? 'Evaluates whether the target response meets the objective. The attack decides what to do with the result.'
+      : 'Evaluates the latest target response against your objective. Off disables automatic scoring.'}>
       <Select className={styles.select} aria-label={label} value={selected} disabled={disabled || loading}
         title={selectedScorer ? scorerOptionLabel(selectedScorer) : undefined}
         onChange={(_event, data) => {
@@ -57,6 +60,6 @@ export default function ChatScorerPicker({
       {loading && <Text>Loading scorers...</Text>}
       {error && <Text role="alert">{error}</Text>}
       {!available && <Text role="alert">The saved scorer is unavailable or its configuration changed. Select a scorer or {usage === 'scenario' ? 'use the scenario default' : 'turn scoring off'}.</Text>}
-    </Field>
+    </HelpField>
   )
 }

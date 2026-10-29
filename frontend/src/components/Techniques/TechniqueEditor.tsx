@@ -2,9 +2,11 @@ import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 
 
 import {
   Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
-  Field, Input, MessageBar, MessageBarBody, Select, Spinner, Text, Textarea,
+  Input, MessageBar, MessageBarBody, Select, Spinner, Text, Textarea,
 } from '@fluentui/react-components'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import HelpField from '@/components/HelpField'
 import ParameterField from '@/components/Parameters/ParameterField'
 import ConverterChainField from '@/components/Converters/ConverterChainField'
 import ReferenceField from '@/components/Parameters/ReferenceField'
@@ -293,31 +295,47 @@ export default function TechniqueEditor({
               {!loading && types.length === 0 && <Button onClick={() => setRetry(retry + 1)}>Retry metadata</Button>}
               {!loading && types.length > 0 && (
                 <>
-                  {!editing && <Field label="Registry name" required hint="Start with a letter. Use letters, digits, and underscores.">
+                  {!editing && <HelpField label="Registry name" required hint="Start with a letter. Use letters, digits, and underscores."
+                    help="A unique name used to find and reuse this technique. Adding a technique does not run an attack.">
                     <Input value={name} disabled={submitting} onChange={(_, data) => setName(data.value)} />
-                  </Field>}
+                  </HelpField>}
                   {editing
                     ? description && <Text>{description}</Text>
-                    : <Field label="Description"><Textarea value={description} disabled={inputsDisabled} onChange={(_, data) => setDescription(data.value)} /></Field>}
+                    : <HelpField label="Description" help="A short note about the technique's purpose or setup, to help you choose it later.">
+                      <Textarea value={description} disabled={inputsDisabled} onChange={(_, data) => setDescription(data.value)} />
+                    </HelpField>}
                   {original?.settings.simulation && (
                     <div className={styles.section}>
-                      <Field label="Turn count" required><Input type="number" min={1} step={1} value={numTurns}
-                        disabled={inputsDisabled} onChange={(_, data) => update(setNumTurns, data.value)} /></Field>
+                      <ContextualHelpLabel term="Simulated conversation">
+                        Generated messages added before the final prompt. These are sample exchanges, not replies from the objective target.
+                      </ContextualHelpLabel>
+                      <HelpField label="Turn count" required
+                        help="Number of turns generated for the sample conversation before the final prompt. These are preparation turns, not live turns with the objective target.">
+                        <Input type="number" min={1} step={1} value={numTurns}
+                          disabled={inputsDisabled} onChange={(_, data) => update(setNumTurns, data.value)} />
+                      </HelpField>
                       {([
-                        ['adversarial_chat_system_prompt', 'Simulated user system prompt'],
-                        ['simulated_target_system_prompt', 'Simulated assistant system prompt'],
-                        ['next_message_system_prompt', 'Next-message system prompt'],
-                        ['final_user_message', 'Fixed final user message'],
-                      ] as const).filter(([key]) => original.settings.simulation?.[key] != null).map(([key, label]) => (
-                        <Field key={key} label={label}><Textarea className={styles.prompt} resize="vertical" value={simulation[key] ?? ''}
-                          disabled={inputsDisabled} onChange={(_, data) => update(setSimulation, { ...simulation, [key]: data.value })} /></Field>
+                        ['adversarial_chat_system_prompt', 'Simulated user system prompt',
+                          'Instructions for the model that writes the user side of the sample conversation. {{ objective }} inserts the test objective.'],
+                        ['simulated_target_system_prompt', 'Simulated assistant system prompt',
+                          'Instructions for the model that writes the assistant side of the sample conversation. These generated replies do not come from the objective target.'],
+                        ['next_message_system_prompt', 'Next-message system prompt',
+                          'Instructions for writing the final user message after the sample conversation. {{ conversation_context }} inserts the generated history.'],
+                        ['final_user_message', 'Fixed final user message',
+                          'A specific final user message sent after the sample conversation, instead of a model-generated final message.'],
+                      ] as const).filter(([key]) => original.settings.simulation?.[key] != null).map(([key, label, help]) => (
+                        <HelpField key={key} label={label} help={help}>
+                          <Textarea className={styles.prompt} resize="vertical" value={simulation[key] ?? ''}
+                            disabled={inputsDisabled} onChange={(_, data) => update(setSimulation, { ...simulation, [key]: data.value })} />
+                        </HelpField>
                       ))}
                     </div>
                   )}
-                  {!editing && <><Field label="Tags" hint="Comma-separated tags.">
+                  {!editing && <><HelpField label="Tags" hint="Comma-separated tags."
+                    help="Labels used to find and group techniques, such as single_turn or simulation. Tags do not change the attack algorithm.">
                     <Input value={tags} disabled={submitting} onChange={(_, data) => setTags(data.value)} />
-                  </Field>
-                  <Field label="Attack type" required>
+                  </HelpField>
+                  <HelpField label="Attack type" required help="The algorithm this technique configures. It manages how prompts are sent and how the attack conversation proceeds.">
                     <Select className={styles.select} value={selectedType} disabled={submitting} onChange={(_, data) => {
                       setSelectedType(data.value)
                       setValues(getInitialFormValues(
@@ -328,9 +346,9 @@ export default function TechniqueEditor({
                       <option value="">Select an attack</option>
                       {types.map((entry) => <option key={entry.attack_type} value={entry.attack_type}>{entry.attack_type}</option>)}
                     </Select>
-                  </Field></>}
+                  </HelpField></>}
                   {parameters.map((parameter) => parameter.reference_type ? (
-                    <ReferenceField key={parameter.name} label={parameter.name}
+                    <ReferenceField key={parameter.name} label={parameter.name} help={parameter.description ?? undefined}
                       options={parameter.reference_type === 'target' ? targetOptions : converterOptions}
                       value={referenceValue(values[parameter.name])} multiple={parameter.is_list} disabled={inputsDisabled}
                       onChange={(next) => update(setValues, { ...values, [parameter.name]: next })} />
@@ -350,11 +368,21 @@ export default function TechniqueEditor({
                   )}
                   {(selected?.supports_adversarial || original?.editable_fields.includes('adversarial_chat')) && (
                     <>{!editing && <ReferenceField label="Adversarial target" options={targetOptions} value={adversarialTarget} disabled={inputsDisabled}
+                        help="The model used for adversarial chat: writing attack prompts. The objective target receives the prompts being tested."
                         onChange={(next) => { if (typeof next === 'string') update(setAdversarialTarget, next) }} />}
                       {selected?.supports_adversarial && <>
-                      {editable('adversarial_system_prompt') && <Field label="Adversarial system prompt"><Textarea value={systemPrompt} disabled={inputsDisabled} onChange={(_, data) => update(setSystemPrompt, data.value)} /></Field>}
-                      {editable('adversarial_seed_prompt') && <Field label="Adversarial seed prompt"><Textarea value={seedPrompt} disabled={inputsDisabled} onChange={(_, data) => update(setSeedPrompt, data.value)} /></Field>}
-                      {editable('adversarial_prompt_template') && <Field label="Adversarial per-turn prompt"><Textarea value={turnPrompt} disabled={inputsDisabled} onChange={(_, data) => update(setTurnPrompt, data.value)} /></Field>}
+                      {editable('adversarial_system_prompt') && <HelpField label="Adversarial system prompt"
+                        help="Instructions that guide the attack-writing model. These are not the objective target's system instructions.">
+                        <Textarea value={systemPrompt} disabled={inputsDisabled} onChange={(_, data) => update(setSystemPrompt, data.value)} />
+                      </HelpField>}
+                      {editable('adversarial_seed_prompt') && <HelpField label="Adversarial seed prompt"
+                        help="The starting message for the attack-writing model, used to prepare its first attack prompt.">
+                        <Textarea value={seedPrompt} disabled={inputsDisabled} onChange={(_, data) => update(setSeedPrompt, data.value)} />
+                      </HelpField>}
+                      {editable('adversarial_prompt_template') && <HelpField label="Adversarial per-turn prompt"
+                        help="Instructions used to request the next attack prompt on each turn. The attack supplies the current conversation context.">
+                        <Textarea value={turnPrompt} disabled={inputsDisabled} onChange={(_, data) => update(setTurnPrompt, data.value)} />
+                      </HelpField>}
                       </>}
                     </>
                   )}

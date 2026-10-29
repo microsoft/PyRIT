@@ -9,7 +9,6 @@ import {
   DialogSurface,
   DialogTitle,
   Dropdown,
-  Field,
   Input,
   MessageBar,
   MessageBarBody,
@@ -21,6 +20,7 @@ import {
   Text,
 } from '@fluentui/react-components'
 
+import HelpField from '@/components/HelpField'
 import { convertersApi, targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import { useTargetPreferences } from '@/hooks/useTargetPreferences'
@@ -165,12 +165,13 @@ function ParameterInput({
 }: ParameterInputProps) {
   const styles = useCreateConverterDialogStyles()
   const label = `${parameter.name}${parameter.required ? ' *' : ''}`
+  const help = parameter.description?.trim()
 
   if (parameter.reference_type) {
     return (
-      <Field
+      <HelpField
         label={label}
-        hint={parameter.reference_type === 'target'
+        help={parameter.reference_type === 'target'
           ? `${parameter.name} is the target used by the converter to convert or rewrite the prompt. It uses the default adversarial target when available. You can select a different target.`
           : `Select a registered ${parameter.reference_type}.`}
         validationMessage={showError ? 'Required' : undefined}
@@ -183,41 +184,41 @@ function ParameterInput({
             </option>
           ))}
         </Select>
-      </Field>
+      </HelpField>
     )
   }
 
   if (parameter.type_name === 'bool') {
     const checked = (value || parameterDefaultValue(parameter) || 'false').toLowerCase() === 'true'
     return (
-      <Field label={label} validationMessage={showError ? 'Required' : undefined}>
+      <HelpField label={label} help={help} validationMessage={showError ? 'Required' : undefined}>
         <Switch
           checked={checked}
           label={checked ? 'True' : 'False'}
           onChange={(_, data) => onChange(data.checked ? 'true' : 'false')}
         />
-      </Field>
+      </HelpField>
     )
   }
 
   if (parameter.choices?.length) {
     return (
-      <Field label={label} validationMessage={showError ? 'Required' : undefined}>
+      <HelpField label={label} help={help} validationMessage={showError ? 'Required' : undefined}>
         <Select value={value || parameterDefaultValue(parameter)} onChange={(_, data) => onChange(data.value)}>
           {parameter.required && !parameter.default && <option value="">Select a value</option>}
           {parameter.choices.map((choice) => (
             <option key={choice} value={choice}>{choice}</option>
           ))}
         </Select>
-      </Field>
+      </HelpField>
     )
   }
 
   if (!isEditableParameter(parameter)) {
     return (
-      <Field label={label} hint="This parameter cannot be configured here. Omit it to use the converter default.">
+      <HelpField label={label} help={help} hint="This parameter cannot be configured here. Omit it to use the converter default.">
         <Input disabled value="" />
-      </Field>
+      </HelpField>
     )
   }
 
@@ -227,11 +228,12 @@ function ParameterInput({
     || /path|file/i.test(parameter.description ?? '')
 
   return (
-    <Field
+    <HelpField
       label={label}
+      help={help}
       hint={isFile && !allowUploads
         ? 'To change this file, create a registered converter with the new upload.'
-        : parameter.description || parameter.type_name}
+        : undefined}
       validationMessage={showError ? 'Required' : undefined}
     >
       {isFile ? (
@@ -256,7 +258,7 @@ function ParameterInput({
           onChange={(_, data) => onChange(data.value)}
         />
       )}
-    </Field>
+    </HelpField>
   )
 }
 
@@ -580,9 +582,9 @@ export default function CreateConverterDialog({
               )}
               {!loading && converterTypes.length > 0 && (
                 <>
-                  <Field
+                  <HelpField
                     label="Converter type"
-                    hint="Converter types are grouped by input and output modality."
+                    help="The transformation to apply. Types are grouped by the content they accept and produce, such as text to text or text to image."
                     required
                     validationMessage={showValidation && !selectedType ? 'Select a converter type' : undefined}
                   >
@@ -640,7 +642,7 @@ export default function CreateConverterDialog({
                         </OptionGroup>
                       ))}
                     </Dropdown>
-                  </Field>
+                  </HelpField>
                   {selectedConverterType && (
                     <div className={styles.selectedTypeSummary}>
                       <div className={styles.selectedTypeHeader}>
@@ -655,10 +657,10 @@ export default function CreateConverterDialog({
                       </Text>
                     </div>
                   )}
-                  {!editing && <Field
+                  {!editing && <HelpField
                     label="Registry name"
                     required
-                    hint="The unique name used to select this configured converter."
+                    help="A unique name used to select this configured converter in chats and techniques."
                     validationMessage={
                       showValidation && !registryName.trim() ? 'Enter a registry name' : undefined
                     }
@@ -670,7 +672,7 @@ export default function CreateConverterDialog({
                         setNameEdited(true)
                       }}
                     />
-                  </Field>}
+                  </HelpField>}
                   {editing && <Text>Changes apply only to this stage. The registered converter stays unchanged.</Text>}
                   <div className={styles.parameterGrid}>
                     {selectedConverterType?.parameters.map((parameter) => (

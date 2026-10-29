@@ -26,6 +26,7 @@ import {
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular, DismissRegular, SearchRegular } from '@fluentui/react-icons'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -215,7 +216,11 @@ export default function ConverterRegistry() {
     <div className={styles.root} data-testid="converter-registry">
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text as="h1" size={600} weight="semibold">Converter Registry</Text>
+          <Text as="h1" size={600} weight="semibold">
+            <ContextualHelpLabel term="Converter Registry" labelProps={{ weight: 'semibold' }}>
+              Reusable prompt or response transformations, such as text encoding or translation. Converters do not decide the next attack step.
+            </ContextualHelpLabel>
+          </Text>
           <Text className={pageStyles.subtitle}>Browse configured converters and inspect their identity.</Text>
         </div>
         <div className={styles.actions}>
@@ -298,10 +303,10 @@ export default function ConverterRegistry() {
           <Table className={mergeClasses(styles.table, pageStyles.table)} aria-label="Converter instances">
             <TableHeader>
               <TableRow>
-                <TableHeaderCell className={pageStyles.nameColumn}>Name</TableHeaderCell>
-                <TableHeaderCell>Type</TableHeaderCell>
-                <TableHeaderCell className={pageStyles.modalityColumn}>Inputs</TableHeaderCell>
-                <TableHeaderCell className={pageStyles.modalityColumn}>Outputs</TableHeaderCell>
+                <TableHeaderCell className={pageStyles.nameColumn}><ContextualHelpLabel term="Name">The registry name used to select this configured converter.</ContextualHelpLabel></TableHeaderCell>
+                <TableHeaderCell><ContextualHelpLabel term="Type">The converter class that performs the transformation.</ContextualHelpLabel></TableHeaderCell>
+                <TableHeaderCell className={pageStyles.modalityColumn}><ContextualHelpLabel term="Inputs">Content types this converter accepts.</ContextualHelpLabel></TableHeaderCell>
+                <TableHeaderCell className={pageStyles.modalityColumn}><ContextualHelpLabel term="Outputs">Content types this converter can produce.</ContextualHelpLabel></TableHeaderCell>
                 <TableHeaderCell className={pageStyles.actionColumn} aria-label="Actions" />
               </TableRow>
             </TableHeader>

@@ -13,6 +13,14 @@ Your choice is saved in this browser. System follows the operating system's
 light/dark preference. High-contrast mode overrides every palette and hides
 decorations without forgetting the selected preset.
 
+## Contextual help
+
+Hover over a term or field label to read its explanation. You can also focus
+help text with Tab and dismiss it with Escape. On touch screens, tap the text
+to show help, then tap it again or tap the field to close it. Field descriptions
+remain available to assistive technology while the help is closed. Required
+markers, validation errors, and input-format guidance stay visible.
+
 ## Conversation selection
 
 Opening a saved attack with related conversations automatically opens the

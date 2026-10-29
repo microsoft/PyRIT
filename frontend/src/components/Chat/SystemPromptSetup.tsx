@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, Caption1, Textarea, mergeClasses } from '@fluentui/react-components'
+import { Button, Caption1, Textarea, Tooltip, mergeClasses } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular, WarningRegular } from '@fluentui/react-icons'
 import { useSystemPromptSetupStyles } from './SystemPromptSetup.styles'
 
@@ -19,6 +19,8 @@ export default function SystemPromptSetup({ value, onChange, disabled = false }:
   return (
     <div className={styles.root} data-testid="system-prompt-setup">
       <div className={styles.headerRow}>
+        <Tooltip relationship="description"
+          content="Instructions sent at the start of this conversation to guide the target's behavior, separate from the user messages you send during the chat.">
         <Button
           appearance="transparent"
           size="small"
@@ -31,6 +33,7 @@ export default function SystemPromptSetup({ value, onChange, disabled = false }:
         >
           System Prompt
         </Button>
+        </Tooltip>
         {disabled && (
           <span className={styles.reason} data-testid="system-prompt-reason">
             <WarningRegular fontSize={14} />

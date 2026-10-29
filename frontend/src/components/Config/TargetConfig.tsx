@@ -7,6 +7,7 @@ import {
   Spinner,
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { useRuntime } from '@/hooks/useRuntime'
 import { toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
@@ -85,7 +86,11 @@ export default function TargetConfig({
     <div className={styles.root} data-testid="target-config">
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          <Text as="h1" size={600} weight="semibold">Target Registry</Text>
+          <Text as="h1" size={600} weight="semibold">
+            <ContextualHelpLabel term="Target Registry" labelProps={{ weight: 'semibold' }}>
+              Named model or endpoint connections that send prompts and return responses. Targets can be used by attacks, scorers, and converters.
+            </ContextualHelpLabel>
+          </Text>
           <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
             Manage targets and choose an adversarial default. Existing chats and runs are unchanged.
           </Text>

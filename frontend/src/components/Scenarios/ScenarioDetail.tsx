@@ -10,7 +10,6 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
-  Field,
   Radio,
   MessageBar,
   MessageBarBody,
@@ -29,12 +28,13 @@ import {
   ArrowSyncRegular,
   ChevronDownRegular,
   ChevronRightRegular,
-  InfoRegular,
   SettingsRegular,
 } from '@fluentui/react-icons'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import HelpField from '@/components/HelpField'
 import ConversationEditor, { type ConversationEditorHandle } from '@/components/Chat/ConversationEditor'
 import TargetSelect from '@/components/Config/TargetSelect'
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
@@ -1475,7 +1475,9 @@ function ScenarioLaunchForm({
             {(supportsTechniques || supportsBaseline) && (
             <section className={styles.section} aria-labelledby="techniques-section-title">
               <Text id="techniques-section-title" as="h2" size={400} weight="semibold">
-                Techniques
+                <ContextualHelpLabel term="Techniques" labelProps={{ weight: 'semibold' }}>
+                  Named attack setups that combine an attack algorithm with prompts, converters, and settings.
+                </ContextualHelpLabel>
               </Text>
               {supportsTechniques && <Text size={200} className={styles.hint}>
                 {singleTechnique
@@ -1611,9 +1613,13 @@ function ScenarioLaunchForm({
 
             {(supportsObjectiveTarget || objectiveParameters.length > 0 || scenario.supports_objective_scorer) && (
               <section className={styles.section} aria-labelledby="objective-section-title">
-                <Text id="objective-section-title" as="h2" size={400} weight="semibold">Objective</Text>
+                <Text id="objective-section-title" as="h2" size={400} weight="semibold">
+                  <ContextualHelpLabel term="Objective" labelProps={{ weight: 'semibold' }}>
+                    The behavior you want to test for. A clear goal lets the attack and scorer work toward the same result.
+                  </ContextualHelpLabel>
+                </Text>
                 {supportsObjectiveTarget && <>
-                  <Field label="Objective Target" required hint="The registered target this scenario will run against.">
+                  <HelpField label="Objective Target" required help="The model or endpoint you are testing. It receives the attack prompts and returns responses.">
                     <Select
                       className={styles.control}
                       value={targetName}
@@ -1632,7 +1638,7 @@ function ScenarioLaunchForm({
                         </option>
                       ))}
                     </Select>
-                  </Field>
+                  </HelpField>
                   {targets.length === 0 && (
                     <Button className={styles.touchTarget} appearance="secondary" icon={<SettingsRegular />}
                       type="button" onClick={() => onNavigate('registry')}>
@@ -1689,7 +1695,11 @@ function ScenarioLaunchForm({
 
             {(supportsDatasets || datasetDefaults.sources.length > 0) && (
             <section className={styles.section} aria-labelledby="datasets-section-title">
-              <Text id="datasets-section-title" as="h2" size={400} weight="semibold">Datasets</Text>
+              <Text id="datasets-section-title" as="h2" size={400} weight="semibold">
+                <ContextualHelpLabel term="Datasets" labelProps={{ weight: 'semibold' }}>
+                  Seed examples used by this scan. Limits and filters control which examples are selected.
+                </ContextualHelpLabel>
+              </Text>
               <ScenarioDatasetTable
                 request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}
@@ -1722,12 +1732,12 @@ function ScenarioLaunchForm({
                       setAdversarialTargetName(target?.target_registry_name ?? '')
                     }}
                     label="Adversarial Target"
-                    hint="The registered target this scenario uses to generate attacks."
+                    help="The model used for adversarial chat: writing attack prompts. The objective target receives those prompts during the test."
                     placeholder="Use server default"
                     disabled={submitting}
                   />
                 )}
-                {supportsConcurrency && <Field label="Max concurrency">
+                {supportsConcurrency && <HelpField label="Max concurrency" help="Maximum attacks that can run at the same time. Lower this to reduce load on the targets.">
                   <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxConcurrency}
@@ -1737,8 +1747,8 @@ function ScenarioLaunchForm({
                     onChange={(_, data) => setMaxConcurrency(resolveSpinButtonValue(data, maxConcurrency))}
                     data-testid="max-concurrency-input"
                   />
-                </Field>}
-                {supportsRetries && <Field label="Max retries">
+                </HelpField>}
+                {supportsRetries && <HelpField label="Max retries" help="Maximum retries for retryable failures while the scenario runs. Retries can increase model calls and run time.">
                   <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxRetries}
@@ -1748,7 +1758,7 @@ function ScenarioLaunchForm({
                     onChange={(_, data) => setMaxRetries(resolveSpinButtonValue(data, maxRetries))}
                     data-testid="max-retries-input"
                   />
-                </Field>}
+                </HelpField>}
               </div>
             </section>
             )}
@@ -1760,36 +1770,30 @@ function ScenarioLaunchForm({
             >
               <div className={styles.estimateHeader}>
                 <Text id="run-estimate-title" as="h2" size={400} weight="semibold">
-                  Run estimate
+                  <ContextualHelpLabel term="Run estimate" labelProps={{ weight: 'semibold' }}>
+                    {`Estimated work in this scan, not its cost or duration.${displayedEstimateNotes ? ` ${displayedEstimateNotes}` : ''}`}
+                  </ContextualHelpLabel>
                 </Text>
-                {displayedEstimateNotes && (
-                  <Tooltip
-                    content={displayedEstimateNotes}
-                    relationship="description"
-                    positioning="above"
-                  >
-                    <Button
-                      appearance="subtle"
-                      icon={<InfoRegular />}
-                      aria-label="Estimate notes"
-                      size="small"
-                    />
-                  </Tooltip>
-                )}
               </div>
               <dl className={styles.costEstimateList}>
                 <div className={mergeClasses(styles.costEstimateRow, styles.totalEstimateRow)}>
-                  <dt>Total atomic attacks</dt>
+                  <dt><ContextualHelpLabel term="Total atomic attacks">
+                    Individual attack executions in this scan, across its objectives and techniques.
+                  </ContextualHelpLabel></dt>
                   <dd>{formatAtomicAttackCount(estimateState)}</dd>
                 </div>
                 {supportsDatasets && <div className={styles.costEstimateRow}>
-                  <dt>Dataset size</dt>
+                  <dt><ContextualHelpLabel term="Dataset size">
+                    Selected examples available to this run, after its dataset limits and filters.
+                  </ContextualHelpLabel></dt>
                   <dd>
                     {datasetSizeLabel}
                   </dd>
                 </div>}
                 {(supportsTechniques || supportsBaseline) && <div className={styles.costEstimateRow}>
-                  <dt>Number techniques</dt>
+                  <dt><ContextualHelpLabel term="Number techniques">
+                    How many techniques are included. Each technique can produce multiple individual attacks.
+                  </ContextualHelpLabel></dt>
                   <dd>{selectedTechniqueCount}</dd>
                 </div>}
                 {dynamicParameters.map((parameter) => (

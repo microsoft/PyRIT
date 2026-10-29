@@ -519,7 +519,8 @@ describe('CreateConverterDialog', () => {
 
     await selectConverterType('PersuasionConverter')
     expect(screen.getByRole('combobox', { name: /converter_target/i })).toHaveValue(expectedName)
-    expect(screen.getByText(/^converter_target is the target used by the converter/)).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: /converter_target/i }))
+      .toHaveAccessibleDescription(/^converter_target is the target used by the converter/)
     expect(screen.getByRole('option', {
       name: new RegExp(`^${expectedName} .*\\(default\\)$`), selected: true,
     })).toBeInTheDocument()

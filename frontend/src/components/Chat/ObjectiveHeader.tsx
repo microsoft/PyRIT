@@ -29,6 +29,7 @@ import {
 } from '@fluentui/react-icons'
 
 import OutcomeBadge from '@/components/OutcomeBadge'
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import type {
   ApplyScorerStatus,
   AttackOutcome,
@@ -42,6 +43,8 @@ import { toApiError } from '@/services/errors'
 
 import { useObjectiveHeaderStyles } from './ObjectiveHeader.styles'
 import ChatScorerPicker from './ChatScorerPicker'
+
+const OBJECTIVE_HELP = 'The behavior you are testing for. An objective gives the scorer a goal; it is not automatically sent as a user message.'
 
 interface ObjectiveHeaderProps {
   objective: string
@@ -237,7 +240,9 @@ export default function ObjectiveHeader({
   const resultControl = (outcome || objective.trim()) && (
     <div className={styles.outcomeSection}>
       <Badge className={styles.label} appearance="tint" color="brand" size="small">
-        Objective Achieved Outcome
+        <ContextualHelpLabel term="Objective Achieved Outcome">
+          Whether the objective was met. Automated and human judgments are recorded separately; open the outcome details to review them.
+        </ContextualHelpLabel>
       </Badge>
       <Popover
         withArrow
@@ -440,7 +445,7 @@ export default function ObjectiveHeader({
         {canShowObjective && (
           <div className={mergeClasses(styles.headerSection, styles.emptyHeaderSection)}>
             <Badge className={styles.label} appearance="tint" color="brand" size="small">
-              Objective
+              <ContextualHelpLabel term="Objective">{OBJECTIVE_HELP}</ContextualHelpLabel>
             </Badge>
             {isEditing ? (
               <>
@@ -485,7 +490,7 @@ export default function ObjectiveHeader({
     <div className={styles.root} data-testid="objective-header" data-conversation-editor-controls>
       <div className={styles.headerSection}>
         <Badge className={styles.label} appearance="tint" color="brand" size="small">
-          Objective
+          <ContextualHelpLabel term="Objective">{OBJECTIVE_HELP}</ContextualHelpLabel>
         </Badge>
         <ObjectiveContent
           type={canAdd && onAdd ? 'button' : undefined}

@@ -34,6 +34,8 @@ describe('ChatTargetPicker', () => {
     expect(screen.getByTestId('target-badge')).toHaveTextContent('model')
     expect(selector).toHaveValue('objective')
     await user.tab()
+    expect(screen.getByText('Objective target')).toHaveFocus()
+    await user.tab()
     expect(selector).toHaveFocus()
     await user.selectOptions(selector, 'other')
     expect(defaultProps.onSelect).toHaveBeenCalledWith(otherTarget)

@@ -1,7 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 
-import { MessageBar, MessageBarBody, Text } from '@fluentui/react-components'
+import { MessageBar, MessageBarBody } from '@fluentui/react-components'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import CreateConverterDialog from '@/components/Registry/CreateConverterDialog'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -68,7 +69,11 @@ export default function ConverterChainField({
   }
 
   return <section className={styles.root} aria-label={label}>
-    <Text weight="semibold">{label}</Text>
+    <ContextualHelpLabel term={label} labelProps={{ weight: 'semibold' }}>
+      {label === 'Response converters'
+        ? 'Transform target responses before scoring. Converters run in the order shown.'
+        : 'Transform prompts before they reach the target, for example by translating or encoding text. Converters run in the order shown.'}
+    </ContextualHelpLabel>
     <SelectConverterInput
       label={label} disabled={disabled} groupedConverters={groupConverters(converters)}
       onOptionSelect={add} onCreateNew={() => setCreateOpen(true)}

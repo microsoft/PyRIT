@@ -2,6 +2,7 @@ import type { ChangeEvent } from 'react'
 
 import { ChevronDownRegular } from '@fluentui/react-icons'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import type { TargetInstance } from '@/types'
 import { targetModelName } from '@/utils/targetIdentity'
 
@@ -51,6 +52,9 @@ export default function ChatTargetPicker({
 
   return (
     <span className={styles.root} data-tour="chat-prerequisite">
+      <ContextualHelpLabel term="Objective target" labelProps={{ size: 'small' }}>
+        The model or endpoint you are testing. It receives your prompts and returns responses.
+      </ContextualHelpLabel>
       <TargetBadge target={target} picker={picker} emptyLabel={placeholder} />
     </span>
   )

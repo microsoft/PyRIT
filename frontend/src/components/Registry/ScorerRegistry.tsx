@@ -4,6 +4,7 @@ import { Button, Divider, mergeClasses, Table, TableBody, TableCell, TableHeader
 import { ArrowSyncRegular } from '@fluentui/react-icons'
 
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import type { RegisteredComponentReference, ScorerInstance } from '@/types'
 import {
@@ -108,7 +109,9 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
               sortDirection={sort.column === 'name' ? sort.direction : undefined}
               button={{ className: scorerStyles.sortButton, onClick: () => toggleSort('name') }}>Name</TableHeaderCell>
             <TableHeaderCell className={scorerStyles.typeColumn}>Type</TableHeaderCell>
-            <TableHeaderCell className={scorerStyles.scorableColumn}>Scorable</TableHeaderCell>
+            <TableHeaderCell className={scorerStyles.scorableColumn}>
+              <ContextualHelpLabel term="Scorable">Evidence the scorer evaluates, such as a message, conversation, or trace.</ContextualHelpLabel>
+            </TableHeaderCell>
             {metrics.map((name: string) => (
               <TableHeaderCell key={name}
                 sortable sortDirection={sort.column === name ? sort.direction : undefined}
@@ -162,7 +165,11 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
     <div className={styles.root}>
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text as="h1" size={600} weight="semibold">Scorer Registry</Text>
+          <Text as="h1" size={600} weight="semibold">
+            <ContextualHelpLabel term="Scorer Registry" labelProps={{ weight: 'semibold' }}>
+              Components that evaluate evidence and return a score or verdict. The attack decides what to do with that result.
+            </ContextualHelpLabel>
+          </Text>
           <Text>Browse configured scorers.</Text>
         </div>
         <div className={styles.actions}>
