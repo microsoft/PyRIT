@@ -1056,10 +1056,6 @@ class MemoryInterface(abc.ABC):
         """
         if limit < 1 or offset < 0:
             raise ValueError("Finding limit must be positive and offset must be nonnegative.")
-        severity_order = case(
-            {severity.value: position for position, severity in enumerate(FindingSeverity)},
-            value=FindingEntry.severity,
-        )
         statement = select(FindingEntry)
         if operation_id is not None:
             statement = statement.where(FindingEntry.operation_id == operation_id)
@@ -1067,13 +1063,41 @@ class MemoryInterface(abc.ABC):
             # SQL Server also treats "[" as a LIKE wildcard.
             escaped_title = title_query.replace("/", "//").replace("%", "/%").replace("_", "/_").replace("[", "/[")
             statement = statement.where(FindingEntry.title.ilike(f"%{escaped_title}%", escape="/"))
-        statement = (
-            statement.order_by(severity_order, FindingEntry.created_at.desc(), FindingEntry.id.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        statement = statement.order_by(*self._finding_order()).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
+
+    async def get_findings_by_ids_async(
+        self, *, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+    ) -> list[Finding]:
+        """
+        Read selected findings of one operation, highest severity first, then newest first.
+
+        IDs that are not in the operation are omitted.
+
+        Returns:
+            list[Finding]: The selected findings, in the same order as ``get_findings_async``.
+        """
+        if not finding_ids:
+            return []
+        requested = set(finding_ids)
+        # The operation filter takes one of the statement's binds.
+        chunk_size = max(1, self._MAX_BIND_VARS - 1)
+        async with await self.get_session_async() as session:
+            ordered_ids = await session.scalars(
+                select(FindingEntry.id)
+                .where(FindingEntry.operation_id == operation_id)
+                .order_by(*self._finding_order())
+            )
+            selected_ids = [finding_id for finding_id in ordered_ids if finding_id in requested]
+            findings: dict[uuid.UUID, Finding] = {}
+            for start in range(0, len(selected_ids), chunk_size):
+                statement = select(FindingEntry).where(
+                    FindingEntry.id.in_(selected_ids[start : start + chunk_size]),
+                    FindingEntry.operation_id == operation_id,
+                )
+                findings.update({entry.id: entry.get_finding() for entry in await session.scalars(statement)})
+        return [findings[finding_id] for finding_id in selected_ids if finding_id in findings]
 
     async def get_finding_async(self, *, operation_id: uuid.UUID, finding_id: uuid.UUID) -> Finding | None:
         """
@@ -1145,6 +1169,34 @@ class MemoryInterface(abc.ABC):
         async with await self.get_session_async() as session:
             return [entry.get_evidence() for entry in (await session.scalars(statement)).all()]
 
+    async def get_finding_evidence_for_findings_async(
+        self, *, finding_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, list[FindingEvidence]]:
+        """
+        Read all evidence of several findings, most recently linked first.
+
+        Returns:
+            dict[uuid.UUID, list[FindingEvidence]]: Evidence for findings that have evidence.
+        """
+        if not finding_ids:
+            return {}
+        unique_ids = list(dict.fromkeys(finding_ids))
+        evidence: dict[uuid.UUID, list[FindingEvidence]] = {}
+        async with await self.get_session_async() as session:
+            for start in range(0, len(unique_ids), self._MAX_BIND_VARS):
+                statement = (
+                    select(FindingEvidenceEntry)
+                    .where(FindingEvidenceEntry.finding_id.in_(unique_ids[start : start + self._MAX_BIND_VARS]))
+                    .order_by(
+                        FindingEvidenceEntry.finding_id,
+                        FindingEvidenceEntry.attached_at.desc(),
+                        FindingEvidenceEntry.id.desc(),
+                    )
+                )
+                for entry in await session.scalars(statement):
+                    evidence.setdefault(entry.finding_id, []).append(entry.get_evidence())
+        return evidence
+
     async def get_finding_evidence_by_source_async(
         self, *, finding_id: uuid.UUID, attack_result_id: uuid.UUID
     ) -> FindingEvidence | None:
@@ -1214,6 +1266,14 @@ class MemoryInterface(abc.ABC):
             for operation_id, severity, count in (await session.execute(statement)).all():
                 counts.setdefault(operation_id, {})[FindingSeverity(severity)] = count
         return counts
+
+    @staticmethod
+    def _finding_order() -> "tuple[ColumnElement[Any], ...]":
+        severity_order = case(
+            {severity.value: position for position, severity in enumerate(FindingSeverity)},
+            value=FindingEntry.severity,
+        )
+        return severity_order, FindingEntry.created_at.desc(), FindingEntry.id.desc()
 
     def _uses_legacy_memory_override(self) -> bool:
         return any(

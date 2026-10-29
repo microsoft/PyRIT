@@ -13,8 +13,18 @@ import {
   isDatasetsPath,
   isChatPath,
 } from './routeParams'
+import attackConversationRouteCases from './attackConversationRoute.cases.json'
 
 const SCENARIO_RESULT_ID = '123e4567-e89b-12d3-a456-426614174000'
+
+describe('attack conversation route contract', () => {
+  // The backend's findings export builds the same links; its tests check these cases too.
+  it.each(attackConversationRouteCases)('builds $path', (routeCase) => {
+    expect(attackConversationRoutePath(
+      routeCase.attackResultId, routeCase.conversationId, routeCase.scenarioResultId, routeCase.findingEvidenceId,
+    )).toBe(routeCase.path)
+  })
+})
 
 describe('routerPathParamValue', () => {
   it('returns an empty value for a missing route parameter', () => {

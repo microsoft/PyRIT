@@ -445,6 +445,9 @@ class AttackPrompt:
         return slice(indices[0], indices[-1] + 1)
 
     def _update_ids(self) -> None:
+        # Gemma and byte-level BPE tokenizers decode the control with the separator space in front;
+        # rendering that again would add a second space and an extra token before the control.
+        self.control = self.control.removeprefix(" ")
         if not self.control.strip() or not self.target.strip():
             raise ValueError("GCG control and target must contain non-whitespace text.")
         if not self.tokenizer.is_fast:

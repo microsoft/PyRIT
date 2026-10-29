@@ -2,7 +2,11 @@
 # Licensed under the MIT license.
 
 import ast
+import inspect
 import re
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -577,3 +581,81 @@ def test_template_loaded_once_at_construction(tmp_path):
     converter = CodeAttackConverter(template=custom, encoding=Encoding.PYTHON_STRING)
     custom.unlink()
     assert converter._seed_prompt is not None
+
+
+@pytest.mark.parametrize("encoding", list(Encoding), ids=lambda v: v.name)
+def test_encode_dispatches_every_encoding(encoding: Encoding) -> None:
+    """Every Encoding member is handled by _encode and uses its own encoder."""
+    converter = CodeAttackConverter(template=Template.PYTHON_STACK)
+    converter._encoding = encoding
+    expected = getattr(converter, f"_encode_{encoding.name.lower()}")("hello world")
+
+    assert converter._encode("hello world") == expected
+
+
+def test_encode_rejects_unknown_encoding() -> None:
+    """An encoding outside the Encoding enum is still rejected with ValueError."""
+    converter = CodeAttackConverter(template=Template.PYTHON_STACK)
+    converter._encoding = "future_encoding"  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="Unsupported encoding: 'future_encoding'"):
+        converter._encode("hello world")
+
+
+@pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
+def test_encode_dispatch_type_exhaustiveness(tmp_path: Path, extend_enum: bool) -> None:
+    """
+    The ``assert_never`` guard in ``_encode`` makes ``ty`` flag a new, unhandled ``Encoding``.
+
+    The probe is built from the real ``Encoding`` and ``_encode`` source. The current
+    enum must type-check cleanly; with a temporary extra member ``ty`` must report
+    exactly one ``assert_never`` error.
+    """
+    enum_source = inspect.getsource(CodeAttackConverter.Encoding)
+    if extend_enum:
+        enum_source += '        FUTURE_ENCODING = "future_encoding"\n'
+    encoder_stubs = [
+        f"    def _encode_{member.name.lower()}(self, prompt: str) -> str:\n        return prompt\n"
+        for member in Encoding
+    ]
+    probe = tmp_path / "dispatch.py"
+    probe.write_text(
+        "\n".join(
+            [
+                "from enum import Enum",
+                "from typing import TYPE_CHECKING, assert_never",
+                "",
+                "class CodeAttackConverter:",
+                enum_source,
+                "    def __init__(self, encoding: Encoding) -> None:",
+                "        self._encoding = encoding",
+                "",
+                inspect.getsource(CodeAttackConverter._encode),
+                *encoder_stubs,
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ty",
+            "check",
+            "--project",
+            str(Path(__file__).resolve().parents[3]),
+            "--python-version",
+            "3.11",
+            str(probe),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == (1 if extend_enum else 0), output
+    if extend_enum:
+        assert output.count("error[") == 1, output
+        assert "type-assertion-failure" in output, output
+        assert "assert_never(self._encoding)" in output, output

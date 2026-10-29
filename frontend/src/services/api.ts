@@ -1,7 +1,7 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { InteractionRequiredAuthError, type PublicClientApplication } from '@azure/msal-browser'
 import { generateClientId } from '@/utils/clientId'
-import { toApiError } from './errors'
+import { decodeBlobErrorAsync, toApiError } from './errors'
 import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
@@ -87,6 +87,7 @@ import type {
   FindingEvidenceCreateRequest,
   FindingEvidenceAttachResponse,
   FindingEvidenceListResponse,
+  FindingExportRequest,
   Operation,
   OperationCreate,
   OperationDetail,
@@ -155,6 +156,13 @@ export const operationsApi = {
     await apiClient.delete(
       `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence/${encodeURIComponent(evidenceId)}`,
     )
+  },
+  exportFindings: async (
+    operationId: string, request: FindingExportRequest, signal?: AbortSignal,
+  ): Promise<Blob> => {
+    return (await apiClient.post<Blob>(
+      `${operationPath(operationId)}/findings/export`, request, { responseType: 'blob', signal },
+    )).data
   },
 }
 
@@ -232,6 +240,8 @@ apiClient.interceptors.request.use(async (config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
+    // File downloads receive error bodies as Blobs; read them before any check below.
+    await decodeBlobErrorAsync(error)
     const problem = error?.response?.data
     if (
       (error?.response?.status === 400 && problem?.type === 'urn:pyrit:compatibility:invalid') ||
