@@ -37,6 +37,7 @@ from pyrit.executor.attack import (
 from pyrit.executor.attack.single_turn import many_shot_jailbreak
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import (
+    SCENARIO_CONVERSATIONS_METADATA_KEY,
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -185,7 +186,7 @@ async def _shutdown_after_launch_async(
 
 
 @pytest.mark.parametrize("depth", [0, 1, 2])
-@pytest.mark.parametrize("cancel", [False])
+@pytest.mark.parametrize("cancel", [False, True])
 async def test_real_scenario_live_retry_observation_and_terminal_ownership_async(
     *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], depth: int, cancel: bool
 ) -> None:
@@ -266,6 +267,8 @@ async def test_real_scenario_live_retry_observation_and_terminal_ownership_async
                 )
                 is None
             )
+            before_counts = progress.summary.overall.model_dump(mode="json")
+            before_results = await service._memory.get_attack_results_async(scenario_result_id=run_id)
             if cancel:
                 await service.cancel_run_async(scenario_result_id=run_id)
             else:
@@ -274,6 +277,29 @@ async def test_real_scenario_live_retry_observation_and_terminal_ownership_async
             final = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=500)
             assert final is not None and not final.active_conversations
             assert final.run.status == (ScenarioRunState.CANCELLED if cancel else ScenarioRunState.COMPLETED)
+            if cancel:
+                assert final.summary.overall.model_dump(mode="json") == before_counts
+                assert await service._memory.get_attack_results_async(scenario_result_id=run_id) == before_results
+                assert {record.conversation_id for record in final.recorded_conversations} == set(conversations)
+                assert (
+                    await service.get_conversation_async(
+                        scenario_result_id=str(uuid.uuid4()), conversation_id=conversations[0]
+                    )
+                    is None
+                )
+                stored_header = await service._memory.get_scenario_result_header_async(scenario_result_id=run_id)
+                mismatched = stored_header.model_copy(deep=True)
+                mismatched.metadata[SCENARIO_CONVERSATIONS_METADATA_KEY] = [
+                    {**record, "attack_result_id": str(uuid.uuid4())}
+                    for record in mismatched.metadata[SCENARIO_CONVERSATIONS_METADATA_KEY]
+                ]
+                with patch.object(service._memory, "get_scenario_result_header_async", return_value=mismatched):
+                    assert (
+                        await service.get_conversation_async(
+                            scenario_result_id=run_id, conversation_id=conversations[0]
+                        )
+                        is None
+                    )
             assert (
                 await service.get_conversation_async(scenario_result_id=run_id, conversation_id=conversations[-1])
                 is not None
@@ -282,8 +308,162 @@ async def test_real_scenario_live_retry_observation_and_terminal_ownership_async
                 await service.get_conversation_async(scenario_result_id=run_id, conversation_id=conversations[0])
                 is not None
             )
+            if cancel:
+                resumed = await service.resume_run_async(scenario_result_id=run_id)
+                await _wait_for_run_completion_async(service=service, scenario_result_id=run_id)
+                after_resume = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=500)
+                assert resumed.scenario_result_id == run_id
+                assert after_resume is not None and after_resume.run.status == ScenarioRunState.COMPLETED
+                assert after_resume.summary.overall.completed == 1
+                assert after_resume.summary.overall.errors == 0
+                assert after_resume.summary.overall.retries == 0
+                assert (
+                    await service.get_conversation_async(scenario_result_id=run_id, conversation_id=conversations[0])
+                    is not None
+                )
         finally:
             release.set()
+
+
+async def test_cancelled_provenance_preserves_mixed_outcome_denominators_and_resume_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    memory = service._memory
+    await memory.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value=f"{index} goal", dataset_name="l6-metric-regression") for index in range(4)],
+        added_by="offline-test",
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    blocked = False
+
+    async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        nonlocal blocked
+        message = normalized_conversation[-1]
+        if message.get_value().startswith("2") and not blocked:
+            blocked = True
+            entered.set()
+            await release.wait()
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value="MATCH" if not message.get_value().startswith("1") else "Denied",
+                conversation_id=message.get_piece().conversation_id,
+            ).to_message()
+        ]
+
+    async def build_async(self: Scenario, *, context: ScenarioContext) -> list[AtomicAttack]:
+        return [
+            AtomicAttack(
+                atomic_attack_name="metrics",
+                seed_groups=sorted(context.seed_groups, key=lambda group: group.objective.value),
+                attack_technique=AttackTechnique(
+                    attack=PromptSendingAttack(
+                        objective_target=context.objective_target,
+                        attack_scoring_config=AttackScoringConfig(objective_scorer=SubStringScorer(substring="MATCH")),
+                    )
+                ),
+                memory_labels=context.memory_labels,
+            )
+        ]
+
+    with (
+        patch.object(_OfflineResumeScenario, "_build_atomic_attacks_async", new=build_async),
+        patch.object(target, "_send_prompt_to_target_async", side_effect=send_async),
+    ):
+        response = await service.start_run_async(
+            request=RunScenarioRequest(
+                scenario_name=_SCENARIO_NAME,
+                target_name=_TARGET_NAME,
+                include_baseline=False,
+                max_concurrency=1,
+                max_retries=0,
+                datasets=ScenarioDatasetRequest(
+                    sources=[DatasetSourceInput(name="l6-metric-regression", fetch="never")], max_total="all"
+                ),
+            )
+        )
+        run_id = response.scenario_result_id
+        try:
+            await asyncio.wait_for(entered.wait(), TEST_WATCHDOG_SECONDS)
+            before = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=500)
+            assert before is not None
+            assert before.summary.overall.completed == 2 and before.summary.overall.succeeded == 1
+            assert before.summary.overall.outcomes.success_rate_decided == 0.5
+            assert before.summary.overall.outcomes.success_rate_all == 0.5
+            await service.cancel_run_async(scenario_result_id=run_id)
+            after = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=500)
+            assert after is not None and after.summary.overall == before.summary.overall
+            assert len(await memory.get_attack_results_async(scenario_result_id=run_id)) == 2
+            assert after.recorded_conversations
+            await service.resume_run_async(scenario_result_id=run_id)
+            await _wait_for_run_completion_async(service=service, scenario_result_id=run_id)
+            resumed = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=500)
+            assert resumed is not None and resumed.summary.overall.completed == 4
+            assert resumed.summary.overall.succeeded == 3
+            assert resumed.summary.overall.errors == 0 and resumed.summary.overall.retries == 0
+            assert len(await memory.get_attack_results_async(scenario_result_id=run_id)) == 4
+        finally:
+            release.set()
+
+
+@pytest.mark.parametrize("publication_fails", [False, True])
+async def test_provenance_publication_drains_repeated_cancel_before_scheduler_handoff_async(
+    *,
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+    publication_fails: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service, target = resume_environment
+    entered, publication_started, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original_update = service._memory.update_scenario_metadata_fields_async
+
+    async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        entered.set()
+        await asyncio.Event().wait()
+        return []
+
+    async def update_async(*, scenario_result_id: str, fields: Mapping[str, Any]) -> None:
+        if SCENARIO_CONVERSATIONS_METADATA_KEY in fields:
+            publication_started.set()
+            await release.wait()
+            if publication_fails:
+                raise RuntimeError("Provenance storage is unavailable")
+        await original_update(scenario_result_id=scenario_result_id, fields=fields)
+
+    with patch.object(target, "_send_prompt_to_target_async", side_effect=send_async):
+        response = await service.start_run_async(
+            request=RunScenarioRequest(
+                scenario_name=_SCENARIO_NAME,
+                target_name=_TARGET_NAME,
+                include_baseline=False,
+                max_concurrency=1,
+                max_retries=1,
+            )
+        )
+        run_id = response.scenario_result_id
+        await asyncio.wait_for(entered.wait(), TEST_WATCHDOG_SECONDS)
+        with patch.object(service._memory, "update_scenario_metadata_fields_async", side_effect=update_async):
+            first = asyncio.create_task(service.cancel_run_async(scenario_result_id=run_id))
+            second = None
+            try:
+                await asyncio.wait_for(publication_started.wait(), TEST_WATCHDOG_SECONDS)
+                second = asyncio.create_task(service.cancel_run_async(scenario_result_id=run_id))
+                await asyncio.sleep(0)
+                assert not first.done() and not second.done()
+                assert service.get_queue_snapshot().active.scenario_result_id == run_id
+                release.set()
+                await wait_for_completion_async(future=asyncio.gather(first, second))
+                progress = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=500)
+                assert progress is not None and progress.run.status == ScenarioRunState.CANCELLED
+                assert bool(progress.recorded_conversations) is not publication_fails
+                assert progress.summary.overall.completed == 0 and progress.summary.overall.errors == 0
+                assert progress.summary.overall.retries == 0
+                if publication_fails:
+                    assert "Could not preserve interrupted conversations" in caplog.text
+            finally:
+                release.set()
+                await asyncio.gather(first, *([second] if second is not None else []), return_exceptions=True)
 
 
 async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(

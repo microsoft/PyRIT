@@ -23,6 +23,7 @@ from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score.score import ScoreStatus
 
 SCENARIO_RUN_PLAN_METADATA_KEY = "run_plan"
+SCENARIO_CONVERSATIONS_METADATA_KEY = "scenario_conversations_v1"
 SCENARIO_RUN_STARTED_AT_METADATA_KEY = "started_at"
 SCENARIO_RUN_PLAN_VERSION = 1
 
@@ -361,7 +362,7 @@ class ScenarioProgressSummary(BaseModel):
 
 
 class ScenarioActiveConversation(BaseModel):
-    """A saved objective conversation owned by a currently executing attempt."""
+    """A saved objective conversation and the scan execution that produced it."""
 
     attack_result_id: str
     conversation_id: str
@@ -384,6 +385,7 @@ class ScenarioRunProgress(BaseModel):
     has_more: bool = False
     plan_complete: bool
     active_conversations: list[ScenarioActiveConversation] = Field(default_factory=list)
+    recorded_conversations: list[ScenarioActiveConversation] = Field(default_factory=list)
 
 
 class ScenarioQueueEntry(BaseModel):

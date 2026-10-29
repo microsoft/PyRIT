@@ -60,6 +60,7 @@ from pyrit.memory.memory_interface import (
     ScenarioHistoryRunRecord,
 )
 from pyrit.models import (
+    SCENARIO_CONVERSATIONS_METADATA_KEY,
     SCENARIO_RUN_PLAN_METADATA_KEY,
     SCENARIO_RUN_STARTED_AT_METADATA_KEY,
     AtomicAttackIdentifier,
@@ -127,6 +128,7 @@ _RESERVED_INITIAL_METADATA_KEYS = frozenset(
         _SCHEDULER_METADATA_KEY,
         _LAUNCH_REQUEST_METADATA_KEY,
         _LAUNCH_REFERENCES_METADATA_KEY,
+        SCENARIO_CONVERSATIONS_METADATA_KEY,
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_STARTED_AT_METADATA_KEY,
     }
@@ -439,7 +441,12 @@ class ScenarioRunService:
                 # Publication can finish between the stored read and the active snapshot.
                 results = await self._memory.get_attack_results_async(attack_result_ids=[attack_id])
                 if not results:
-                    return None
+                    header = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+                    if header is None or not any(
+                        record.attack_result_id == attack_id and record.conversation_id == conversation_id
+                        for record in self._recorded_conversations(header)
+                    ):
+                        return None
         if results:
             if (
                 results[0].attribution_parent_id != scenario_result_id
@@ -455,6 +462,19 @@ class ScenarioRunService:
             messages=await pyrit_messages_to_dto_async(list(messages), memory=self._memory),
             target_response_status=None,
         )
+
+    @staticmethod
+    def _recorded_conversations(header: ScenarioResult) -> list[ScenarioActiveConversation]:
+        """
+        Read SDK-owned provenance, not caller labels or a runtime ownership ledger.
+
+        Returns:
+            list[ScenarioActiveConversation]: Recorded objective-conversation links.
+        """
+        records = header.metadata.get(SCENARIO_CONVERSATIONS_METADATA_KEY, [])
+        if not isinstance(records, list):
+            raise ValueError("Stored scenario conversation provenance is invalid.")
+        return [ScenarioActiveConversation.model_validate(record) for record in records]
 
     @contextlib.asynccontextmanager
     async def _reserve_resume_request_async(self, scenario_result_id: str | None) -> AsyncGenerator[None, None]:
@@ -2631,6 +2651,7 @@ class ScenarioRunService:
             queue_position=queue_position,
             active_scenario_result_id=active_scenario_result_id,
         )
+        progress.recorded_conversations = self._recorded_conversations(header_result)
         if header_result.operation_id is not None:
             operations = await self._memory.get_operations_async(operation_ids=[header_result.operation_id])
             progress.run.operation_name = operations[0].name if operations else None

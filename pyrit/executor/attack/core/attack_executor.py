@@ -9,7 +9,9 @@ This is the new, cleaner design that leverages the params_type architecture.
 
 import asyncio
 import copy
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import (
@@ -34,6 +36,21 @@ if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
 
 AttackResultT = TypeVar("AttackResultT")
+_interrupted_observer: ContextVar[Callable[[AttackContext[Any], datetime], None] | None] = ContextVar(
+    "interrupted_attack_observer", default=None
+)
+
+
+@contextmanager
+def _observe_interrupted_executions(
+    observer: Callable[[AttackContext[Any], datetime], None],
+) -> Generator[None, None, None]:
+    """Collect interrupted execution provenance in the caller's SDK scope."""
+    token = _interrupted_observer.set(observer)
+    try:
+        yield
+    finally:
+        _interrupted_observer.reset(token)
 
 
 @dataclass(frozen=True, slots=True)
@@ -499,9 +516,15 @@ class AttackExecutor:
                 if task_attribution is not None:
                     context._attribution = task_attribution
                 context_key = id(context)
-                self._active_contexts[context_key] = (context, datetime.now(UTC), attack)
+                started_at = datetime.now(UTC)
+                self._active_contexts[context_key] = (context, started_at, attack)
                 try:
                     return await attack.execute_with_context_async(context=context)
+                except asyncio.CancelledError:
+                    observer = _interrupted_observer.get()
+                    if observer is not None and context.attack_result_id is not None:
+                        observer(context, started_at)
+                    raise
                 finally:
                     persisted_result_ids[index] = context._persisted_attack_result_id
                     self._active_contexts.pop(context_key, None)

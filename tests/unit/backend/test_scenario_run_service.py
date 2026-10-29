@@ -464,6 +464,7 @@ def _make_db_scenario_result(
         class_name=scenario_name, class_module="tests", version=1, pyrit_version="0.10.0"
     )
     sr.scenario_description = "A stored scenario description."
+    sr.metadata = {}
     sr.get_techniques_used.return_value = []
     sr.attack_results = attack_results or {}
     sr.number_tries = 1

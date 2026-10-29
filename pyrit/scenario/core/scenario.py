@@ -14,6 +14,7 @@ import logging
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast, final
@@ -24,10 +25,12 @@ from pyrit.common import default_values, get_global_default_values
 from pyrit.common.utils import to_sha256
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
-from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
+from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution, _observe_interrupted_executions
 from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure
+from pyrit.executor.attack.core.attack_strategy import AttackContext
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    SCENARIO_CONVERSATIONS_METADATA_KEY,
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AllAvailableDatasetSize,
     AttackOutcome,
@@ -1948,6 +1951,21 @@ class Scenario(ABC):
         # the narrowed value in a local so the type checker can verify all uses below.
         assert self._max_concurrency is not None, "Scenario not initialized; call initialize_async first."
         max_concurrency: int = self._max_concurrency
+        interrupted: dict[tuple[str, str], dict[str, Any]] = {}
+
+        def record_interrupted(context: AttackContext[Any], started_at: datetime) -> None:
+            attribution = context._attribution
+            if attribution is None or attribution.parent_id != scenario_result_id or context.attack_result_id is None:
+                return
+            for conversation_id in context.objective_conversation_ids:
+                interrupted[(context.attack_result_id, conversation_id)] = {
+                    "attack_result_id": context.attack_result_id,
+                    "conversation_id": conversation_id,
+                    "atomic_attack_name": attribution.parent_collection,
+                    "seed_group_id": attribution.seed_group_id,
+                    "objective": context.objective,
+                    "started_at": started_at.isoformat(),
+                }
 
         shared_executor = AttackExecutor(max_concurrency=max_concurrency)
         self._active_executor = shared_executor
@@ -2015,7 +2033,9 @@ class Scenario(ABC):
         # without losing parallelism for the common case where remaining_attacks fits in
         # the budget.
         worker_count = min(max_concurrency, len(remaining_attacks))
-        workers = [asyncio.create_task(worker_async()) for _ in range(worker_count)]
+        # Workers and nested executors inherit this observation scope, not new scheduler state.
+        with _observe_interrupted_executions(record_interrupted):
+            workers = [asyncio.create_task(worker_async()) for _ in range(worker_count)]
         group = asyncio.gather(*workers)
         try:
             # The supervisor owns cancellation; gather must not forward it ahead of this handler.
@@ -2034,6 +2054,25 @@ class Scenario(ABC):
                 except asyncio.CancelledError as cancellation:
                     caller_cancellation = cancellation
             drain.result()
+            if interrupted:
+                publication = asyncio.create_task(
+                    self._persist_conversation_provenance_async(
+                        scenario_result_id=scenario_result_id, records=interrupted
+                    )
+                )
+                while not publication.done():
+                    try:
+                        await asyncio.shield(publication)
+                    except asyncio.CancelledError as cancellation:
+                        caller_cancellation = cancellation
+                    except Exception:
+                        break
+                try:
+                    publication.result()
+                except Exception:
+                    logger.exception(
+                        "Could not preserve interrupted conversations for scenario %s.", scenario_result_id
+                    )
             if caller_cancellation is not None:
                 raise caller_cancellation from None
             raise
@@ -2051,6 +2090,33 @@ class Scenario(ABC):
                 else ExceptionGroup(f"Multiple atomic attacks failed in scenario '{self._name}'", errors)
             )
             raise final_error
+
+    async def _persist_conversation_provenance_async(
+        self, *, scenario_result_id: str, records: Mapping[tuple[str, str], dict[str, Any]]
+    ) -> None:
+        """
+        Persist SDK-observed conversation links without producing attack outcomes.
+
+        Raises:
+            ValueError: If the scenario or its existing provenance is invalid.
+        """
+        stored = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+        if stored is None:
+            raise ValueError(f"Scenario result {scenario_result_id} is unavailable for conversation provenance.")
+        previous = stored.metadata.get(SCENARIO_CONVERSATIONS_METADATA_KEY, [])
+        if not isinstance(previous, list) or any(
+            not isinstance(record, dict)
+            or not isinstance(record.get("attack_result_id"), str)
+            or not isinstance(record.get("conversation_id"), str)
+            for record in previous
+        ):
+            raise ValueError("Stored scenario conversation provenance is invalid.")
+        merged = {(record["attack_result_id"], record["conversation_id"]): record for record in previous}
+        merged.update(records)
+        await self._memory.update_scenario_metadata_fields_async(
+            scenario_result_id=scenario_result_id,
+            fields={SCENARIO_CONVERSATIONS_METADATA_KEY: list(merged.values())},
+        )
 
     def _collect_errors_from_outcomes(
         self,

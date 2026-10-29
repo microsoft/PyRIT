@@ -176,6 +176,7 @@ if TYPE_CHECKING:
         ScenarioOrchestrationParentSummary,
     )
     from pyrit.models.scenario_progress import (
+        SCENARIO_CONVERSATIONS_METADATA_KEY,
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_PLAN_VERSION,
         SCENARIO_RUN_STARTED_AT_METADATA_KEY,
@@ -550,6 +551,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioTechniqueSummary": "pyrit.models.catalog",
     "ScenarioResult": "pyrit.models.results.scenario_result",
     "ScenarioRunState": "pyrit.models.results.scenario_result",
+    "SCENARIO_CONVERSATIONS_METADATA_KEY": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_PLAN_METADATA_KEY": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_PLAN_VERSION": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_STARTED_AT_METADATA_KEY": "pyrit.models.scenario_progress",

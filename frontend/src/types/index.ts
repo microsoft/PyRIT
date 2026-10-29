@@ -2160,6 +2160,7 @@ export interface ScenarioRunProgress {
   has_more: boolean
   plan_complete: boolean
   active_conversations?: ScenarioActiveConversation[]
+  recorded_conversations?: ScenarioActiveConversation[]
 }
 export interface RuntimeReadiness {
   ready: boolean

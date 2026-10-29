@@ -23,6 +23,7 @@ export interface ScenarioRunProgressState {
   readonly stale: boolean
   readonly overloadSummaries: ScenarioOverloadSummary[]
   readonly activeConversations: ScenarioActiveConversation[]
+  readonly recordedConversations: ScenarioActiveConversation[]
 }
 
 export type ScenarioRunProgressAction =
@@ -44,6 +45,7 @@ export const INITIAL_SCENARIO_RUN_PROGRESS_STATE: ScenarioRunProgressState = {
   stale: false,
   overloadSummaries: [],
   activeConversations: [],
+  recordedConversations: [],
 }
 
 export function isTerminalRunState(status: ScenarioRunState): boolean {
@@ -103,6 +105,7 @@ export function scenarioRunProgressReducer(
       stale: false,
       overloadSummaries: state.overloadSummaries,
       activeConversations: isTerminalRunState(action.run.status) ? [] : state.activeConversations,
+      recordedConversations: state.recordedConversations,
     }
   }
 
@@ -132,6 +135,7 @@ export function scenarioRunProgressReducer(
     stale: false,
     overloadSummaries,
     activeConversations: action.page.active_conversations ?? [],
+    recordedConversations: action.page.recorded_conversations ?? [],
   }
 }
 
