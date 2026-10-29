@@ -65,6 +65,7 @@ jest.mock('@/services/api', () => ({
   targetsApi: { listTargets: jest.fn(), getTarget: jest.fn() },
   scenariosApi: {
     listCatalog: jest.fn(),
+    listRuns: jest.fn(),
     getScenario: jest.fn(),
     estimateRun: jest.fn(),
     startRun: jest.fn(),
@@ -185,6 +186,9 @@ describe('Shared new run labels', () => {
     jest.mocked(scenariosApi.getScenario).mockResolvedValue(SCENARIO)
     jest.mocked(scenariosApi.listCatalog).mockResolvedValue({
       items: [SCENARIO], pagination: { limit: 200, has_more: false },
+    })
+    jest.mocked(scenariosApi.listRuns).mockResolvedValue({
+      items: [], pagination: { limit: 5, has_more: false },
     })
     jest.mocked(scenariosApi.estimateRun).mockResolvedValue(SCENARIO.default_run_size)
     jest.mocked(scenarioPresetsApi.list).mockResolvedValue({ source: '', items: [] })
