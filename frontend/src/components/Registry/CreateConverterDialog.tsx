@@ -18,6 +18,7 @@ import {
   Spinner,
   Switch,
   Text,
+  type FieldControlProps,
 } from '@fluentui/react-components'
 
 import HelpField from '@/components/HelpField'
@@ -268,37 +269,39 @@ function ParameterInput({
         : undefined}
       validationMessage={showError ? 'Required' : undefined}
     >
-      {isFile ? (
-        <FileDropZone className={styles.fileRow} disabled={!allowUploads}
+      {(controlProps: FieldControlProps) => isFile ? (
+        <FileDropZone disabled={!allowUploads}
           label="Drop file" onFiles={onFiles}>
-          {hasFileValue ? <div className={styles.filePreview}>
-            {imagePreview && <MediaPreview key={imagePreview} type="image" src={imagePreview} alt={`Preview for ${parameter.name}`}
-              className={styles.fileThumbnail} containerClassName={styles.fileThumbnailContainer} />}
-            <div className={styles.fileDetails}>
-              <Text size={200} className={styles.fileName} title={fileDetails?.name}>
-                {fileDetails?.name ?? (imagePreview ? 'Image value' : 'File value')}
-              </Text>
-              {fileDetails && <Text size={100}>{formatFileSize(fileDetails.size)}</Text>}
-            </div>
-          </div> : <Input
-            input={{ ref: pathInputRef }}
-            disabled={!allowUploads}
-            className={styles.fileInput}
-            value={value}
-            placeholder={defaultValue && !defaultValue.startsWith('data:') ? defaultValue : pathPlaceholder}
-            onChange={(_, data) => {
-              setManualValue(data.value)
-              onChange(data.value)
-            }}
-          />}
-          <Button type="button" className={styles.fileButton} disabled={!allowUploads} onClick={onBrowse}>
-            {hasFileValue ? 'Replace' : 'Upload'}
-          </Button>
-          {hasFileValue && <Button type="button" className={styles.fileButton} disabled={!allowUploads}
-            aria-label={`Remove ${imagePreview ? 'image' : 'file'} for ${parameter.name}`} onClick={() => {
-              focusPathInput.current = true
-              onChange('')
-            }}>Remove</Button>}
+          <div {...(hasFileValue ? controlProps : {})} role={hasFileValue ? 'group' : undefined} className={styles.fileRow}>
+            {hasFileValue ? <div className={styles.filePreview}>
+              {imagePreview && <MediaPreview key={imagePreview} type="image" src={imagePreview} alt={`Preview for ${parameter.name}`}
+                className={styles.fileThumbnail} containerClassName={styles.fileThumbnailContainer} />}
+              <div className={styles.fileDetails}>
+                <Text size={200} className={styles.fileName} title={fileDetails?.name}>
+                  {fileDetails?.name ?? (imagePreview ? 'Image value' : 'File value')}
+                </Text>
+                {fileDetails && <Text size={100}>{formatFileSize(fileDetails.size)}</Text>}
+              </div>
+            </div> : <Input
+              input={{ ref: pathInputRef }}
+              disabled={!allowUploads}
+              className={styles.fileInput}
+              value={value}
+              placeholder={defaultValue && !defaultValue.startsWith('data:') ? defaultValue : pathPlaceholder}
+              onChange={(_, data) => {
+                setManualValue(data.value)
+                onChange(data.value)
+              }}
+            />}
+            <Button type="button" className={styles.fileButton} disabled={!allowUploads} onClick={onBrowse}>
+              {hasFileValue ? 'Replace' : 'Upload'}
+            </Button>
+            {hasFileValue && <Button type="button" className={styles.fileButton} disabled={!allowUploads}
+              aria-label={`Remove ${imagePreview ? 'image' : 'file'} for ${parameter.name}`} onClick={() => {
+                focusPathInput.current = true
+                onChange('')
+              }}>Remove</Button>}
+          </div>
         </FileDropZone>
       ) : (
         <Input

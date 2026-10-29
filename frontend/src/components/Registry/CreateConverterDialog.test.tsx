@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
@@ -308,7 +308,7 @@ describe('CreateConverterDialog', () => {
     const click = jest.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined)
     const read = jest.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(() => undefined)
     const { rerender } = renderDialog({ editing, onTemporary })
-    await screen.findByLabelText('source *')
+    await screen.findByRole('textbox', { name: 'source *' })
     await user.click(screen.getByRole('button', { name: 'Upload' }))
     const input = click.mock.contexts[0]
     if (!(input instanceof HTMLInputElement)) throw new Error('File picker did not open')
@@ -320,10 +320,10 @@ describe('CreateConverterDialog', () => {
     if (closed) {
       rerender(dialogTree({ open: false, editing, onTemporary }))
       rerender(dialogTree({ open: true, editing, onTemporary }))
-      await screen.findByLabelText('source *')
+      await screen.findByRole('textbox', { name: 'source *' })
     }
     act(() => { reader.dispatchEvent(new ProgressEvent('error')) })
-    expect(screen.getByLabelText('source *')).toHaveValue('original.txt')
+    expect(screen.getByRole('textbox', { name: 'source *' })).toHaveValue('original.txt')
     if (closed) expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     else expect(screen.getByRole('alert')).toHaveTextContent('Could not read "unreadable.txt".')
     expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
@@ -539,6 +539,29 @@ describe('CreateConverterDialog', () => {
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'PathConverter', type: 'PathConverter', params: { source: `data:${mimeType};base64,YXNzZXQ=` },
     })
+  })
+
+  it('should retain native field naming, descriptions and information controls for a selected file', async () => {
+    const user = userEvent.setup()
+    const help = 'Choose a local source file for this converter.'
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true, description: help }], 'PathConverter')
+    renderDialog()
+    await selectConverterType('PathConverter')
+    const input = screen.getByRole('textbox', { name: 'source *' })
+    expect(input).toHaveAccessibleDescription(help)
+    fireEvent.drop(input, {
+      dataTransfer: { types: ['Files'], files: [new File(['asset'], 'source.pdf', { type: 'application/pdf' })] },
+    })
+    await screen.findByText('source.pdf')
+    const control = screen.getByRole('group', { name: 'source *', exact: true })
+    expect(control).toHaveAccessibleDescription(help)
+    expect(within(control).getByRole('button', { name: 'Replace', exact: true })).toBeEnabled()
+    expect(within(control).getByRole('button', { name: 'Remove file for source' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: /source.*information/i }))
+    expect(await screen.findByRole('note')).toHaveTextContent(help)
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('note')).not.toBeInTheDocument())
+    expect(screen.getByRole('dialog')).toBeVisible()
   })
 
   it.each([
