@@ -25,6 +25,7 @@ jest.mock("./hooks/useTargetRegistry", () => ({
       targets,
       loading: false,
       error: null,
+      isEmpty: false,
       refresh: jest.fn(),
       synchronizeTargets: setTargets,
       rememberTarget: (target: import("./types").TargetInstance) => {

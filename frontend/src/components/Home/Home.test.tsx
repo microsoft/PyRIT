@@ -58,6 +58,7 @@ function operation(overrides: Partial<OperationListItem> = {}): OperationListIte
 
 describe('Home', () => {
   const defaultProps = {
+    selectedOperation: null, noRegisteredTargets: false,
     onNavigate: jest.fn(), onNewAttack: jest.fn(), onOpenAttack: jest.fn(),
     onOpenAttackHistory: jest.fn(), onOpenScannerHistory: jest.fn(),
   }
@@ -82,7 +83,10 @@ describe('Home', () => {
     expect(mockAttacks).toHaveBeenCalledWith({ limit: 5, include_scenario_attacks: false })
     expect(mockScans).toHaveBeenCalledWith({ limit: 5 })
     expect(mockOperations).toHaveBeenCalledTimes(1)
-    for (const callback of Object.values(defaultProps)) expect(callback).not.toHaveBeenCalled()
+    for (const callback of [
+      defaultProps.onNavigate, defaultProps.onNewAttack, defaultProps.onOpenAttack,
+      defaultProps.onOpenAttackHistory, defaultProps.onOpenScannerHistory,
+    ]) expect(callback).not.toHaveBeenCalled()
   })
 
   it('should use the intentional new-attack action and each workflow history', async () => {
@@ -101,6 +105,17 @@ describe('Home', () => {
     await user.click(screen.getByRole('button', { name: 'Open Registry', exact: true }))
     expect(defaultProps.onNavigate).toHaveBeenCalledWith('registry')
     expect(defaultProps.onNavigate).not.toHaveBeenCalledWith('chat')
+  })
+
+  it('should reuse only the secondary setup action when zero registered targets are confirmed', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><Home {...defaultProps} noRegisteredTargets /></TestWrapper>)
+    const setup = within(screen.getByRole('contentinfo'))
+    await user.click(setup.getByRole('button', { name: 'Register a target', exact: true }))
+    expect(defaultProps.onNavigate).toHaveBeenCalledWith('registry')
+    expect(defaultProps.onNewAttack).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'New attack', exact: true })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Configure scan', exact: true })).toBeEnabled()
   })
 
   it('should merge recent work by activity, filter without fetching, and open saved destinations', async () => {
@@ -224,6 +239,56 @@ describe('Home', () => {
     expect(within(section).queryByText(/attacks|total/i)).not.toBeInTheDocument()
     await user.click(within(section).getByRole('button', { name: /Saved operation A real saved engagement/ }))
     expect(screen.getByLabelText('Current path')).toHaveTextContent('/operations/operation%2Fone')
+  })
+
+  it('should place the selected saved ID first, then newest-created available operations without mutating the list', async () => {
+    const oldest = operation({ id: 'old', name: 'A oldest', created_at: '2026-10-01T00:00:00Z' })
+    const selected = operation({ id: 'selected', name: 'B selected', created_at: '2026-10-02T00:00:00Z' })
+    const recent = operation({ id: 'recent', name: 'Y newer', created_at: '2026-10-27T00:00:00Z' })
+    const newest = operation({ id: 'newest', name: 'Z newest', created_at: '2026-10-28T00:00:00Z' })
+    const items = [oldest, selected, recent, newest]
+    mockOperations.mockResolvedValue({ items })
+    const { rerender } = render(
+      <TestWrapper><Home {...defaultProps} selectedOperation={{ ...selected, name: 'Previous name' }} /></TestWrapper>,
+    )
+    const section = screen.getByRole('region', { name: 'Operations', exact: true })
+    await within(section).findByText('B selected')
+    const links = within(section).getAllByRole('button').slice(1)
+    expect(links).toHaveLength(3)
+    expect(links[0]).toHaveAccessibleName(/^B selected/)
+    expect(links[1]).toHaveAccessibleName(/^Z newest/)
+    expect(links[2]).toHaveAccessibleName(/^Y newer/)
+    expect(items.map((item: OperationListItem) => item.id)).toEqual(['old', 'selected', 'recent', 'newest'])
+    expect(within(section).queryByText(/last activity|attacks|total/i)).not.toBeInTheDocument()
+    rerender(<TestWrapper><Home {...defaultProps} selectedOperation={oldest} /></TestWrapper>)
+    expect(within(section).getAllByRole('button')[1]).toHaveAccessibleName(/^A oldest/)
+    rerender(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    expect(within(section).getAllByRole('button')[1]).toHaveAccessibleName(/^Z newest/)
+    expect(mockOperations).toHaveBeenCalledTimes(1)
+  })
+
+  it('should rank newest-created operations when no saved operation is selected', async () => {
+    mockOperations.mockResolvedValue({ items: [
+      operation({ id: 'old', name: 'A old', created_at: '2026-10-01T00:00:00Z' }),
+      operation({ id: 'new', name: 'Z new', created_at: '2026-10-28T00:00:00Z' }),
+    ] })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    const section = screen.getByRole('region', { name: 'Operations', exact: true })
+    await within(section).findByText('Z new')
+    const links = within(section).getAllByRole('button').slice(1)
+    expect(links[0]).toHaveAccessibleName(/^Z new/)
+    expect(links[1]).toHaveAccessibleName(/^A old/)
+  })
+
+  it('should keep a newly saved selected operation available before the directory includes it', async () => {
+    const selected = operation({ id: 'newly-saved', name: 'Newly saved' })
+    mockOperations.mockResolvedValue({ items: [operation()] })
+    render(<TestWrapper><Home {...defaultProps} selectedOperation={selected} /></TestWrapper>)
+    const section = screen.getByRole('region', { name: 'Operations', exact: true })
+    await within(section).findByText('Saved operation')
+    const links = within(section).getAllByRole('button').slice(1)
+    expect(links[0]).toHaveAccessibleName(/^Newly saved/)
+    expect(links[1]).toHaveAccessibleName(/^Saved operation/)
   })
 
   it('should keep successful sources visible when another fails and retry without an empty-success fallback', async () => {

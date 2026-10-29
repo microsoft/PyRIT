@@ -898,6 +898,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 path="/"
                 element={
                   <Home
+                    selectedOperation={operation.state.status === 'resolved' ? operation.state.operation : null}
+                    noRegisteredTargets={registry.isEmpty}
                     onNavigate={handleNavigate}
                     onNewAttack={handleNewAttack}
                     onOpenAttack={handleOpenAttack}

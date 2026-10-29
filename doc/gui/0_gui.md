@@ -30,7 +30,10 @@ setup. These actions do not send prompts or start a scan. The sidebar's
 Each workflow has its own history link. Recent work shows up to five saved
 attacks and scans; filter by type or select **Refresh Home** to update the list.
 Open a saved operation to review its work and findings. Registry remains
-available below these sections for setup.
+available below these sections for setup. Operation links put the selected saved
+operation first, then the newest-created records, not the most recently active
+records. When the complete registry confirms that no targets are registered, the
+secondary setup action offers **Register a target**.
 
 ![Home page with workflows and recent work](images/home.png)
 

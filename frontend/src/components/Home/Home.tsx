@@ -29,7 +29,7 @@ import type { ViewName } from '@/components/Sidebar/Navigation'
 import { useRuntime } from '@/hooks/useRuntime'
 import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { AttackSummary, OperationListItem, ScenarioRunListItem, ScenarioRunState } from '@/types'
+import type { AttackSummary, Operation, OperationListItem, ScenarioRunListItem, ScenarioRunState } from '@/types'
 import { scenarioRunRoutePath } from '@/utils/routeParams'
 
 import { useHomeStyles } from './Home.styles'
@@ -46,6 +46,8 @@ const SCAN_STATUS_COLORS: Record<ScenarioRunState, BadgeProps['color']> = {
 }
 
 interface HomeProps {
+  readonly selectedOperation: Operation | null
+  readonly noRegisteredTargets: boolean
   readonly onNavigate: (view: ViewName) => void
   readonly onNewAttack: () => void
   readonly onOpenAttack: (attackResultId: string) => void
@@ -90,7 +92,7 @@ function formatRelativeTime(timestamp: string): string {
 }
 
 export default function Home({
-  onNavigate, onNewAttack, onOpenAttack, onOpenAttackHistory, onOpenScannerHistory,
+  selectedOperation, noRegisteredTargets, onNavigate, onNewAttack, onOpenAttack, onOpenAttackHistory, onOpenScannerHistory,
 }: HomeProps) {
   const styles = useHomeStyles()
   const navigate = useNavigate()
@@ -126,8 +128,15 @@ export default function Home({
   const operationsLoading = !ready || operationResult?.key !== requestKey
   const attacks = !attacksLoading && attackResult ? attackResult.items : []
   const scans = !scansLoading && scanResult ? scanResult.items : []
-  const operations = !operationsLoading && operationResult
-    ? operationResult.items.slice(0, VISIBLE_OPERATIONS_LIMIT) : []
+  const availableOperations = !operationsLoading && operationResult
+    ? [...operationResult.items].sort((first: Operation, second: Operation) =>
+        activityTime(second.created_at) - activityTime(first.created_at)) : []
+  const selected = selectedOperation
+    ? availableOperations.find((operation: Operation) => operation.id === selectedOperation.id) ?? selectedOperation
+    : null
+  const operations = (selected
+    ? [selected, ...availableOperations.filter((operation: Operation) => operation.id !== selected.id)]
+    : availableOperations).slice(0, VISIBLE_OPERATIONS_LIMIT)
   const recentLoading = (filter !== 'scans' && attacksLoading) || (filter !== 'attacks' && scansLoading)
   const recentErrors = [
     filter !== 'scans' && !attacksLoading && attackResult?.error
@@ -273,7 +282,7 @@ export default function Home({
             </MessageBarBody></MessageBar>
           ) : operations.length > 0 ? (
             <div className={styles.operationsGrid}>
-              {operations.map((operation: OperationListItem) => (
+              {operations.map((operation: Operation) => (
                 <button key={operation.id} type="button" className={styles.operationCard} title={operation.name}
                   onClick={() => { void navigate(`/operations/${encodeURIComponent(operation.id)}`) }}>
                   <BriefcaseRegular className={styles.rowIcon} aria-hidden="true" />
@@ -301,7 +310,7 @@ export default function Home({
           <ScriptRegular aria-hidden="true" />
           <Text size={200} className={styles.secondary}>Need to set up a target or technique?</Text>
           <Button size="small" appearance="subtle" icon={<ArrowRightRegular />} iconPosition="after" className={styles.touchTarget}
-            onClick={() => { onNavigate('registry') }}>Open Registry</Button>
+            onClick={() => { onNavigate('registry') }}>{noRegisteredTargets ? 'Register a target' : 'Open Registry'}</Button>
         </footer>
       </div>
     </div>
