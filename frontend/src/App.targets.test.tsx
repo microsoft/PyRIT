@@ -6,7 +6,7 @@ import { MemoryRouter } from 'react-router'
 
 import { attacksApi, targetsApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
-import type { AttackSummary, ConversationMessagesResponse, ScorerInstance } from '@/types'
+import type { AttackSummary, ConversationMessagesResponse, RegisteredComponentReference, ScorerInstance } from '@/types'
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
@@ -269,31 +269,66 @@ describe('App target selection with the chat composer', () => {
     expect(targetsApi.listTargets).toHaveBeenCalledTimes(2)
   })
 
-  it.each(['chatScorer', 'lastUsedChatScorer'] as const)(
-    'does not initialize a new chat with an unregistered saved %s alias',
-    async (source: 'chatScorer' | 'lastUsedChatScorer') => {
-      const user = userEvent.setup()
-      mockScorers = [{
-        scorer_registry_name: 'registered',
-        identifier: {
-          class_name: 'SubStringScorer', class_module: 'pyrit.score', hash: 'same-hash', scorer_type: 'true_false',
-        },
-      }]
-      writeUserPreferences('tenant:alice', {
-        ...DEFAULT_USER_PREFERENCES,
-        ...(source === 'chatScorer'
-          ? { lastUsedChatScorer: { registry_name: 'registered', identifier_hash: 'same-hash' } } : {}),
-        [source]: { registry_name: 'SelfAskTrueFalseScorer::alias', identifier_hash: 'same-hash' },
-      })
-      render(<App />, { wrapper: TestWrapper })
-      await user.click(await screen.findByRole('button', { name: 'Add objective', exact: true }))
-      await user.type(screen.getByRole('textbox', { name: 'Attack objective' }), 'Check the policy')
-      await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
-      await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
-      await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
-      expect(screen.getByRole('combobox', { name: 'Chat scorer', exact: true }))
-        .toHaveValue(source === 'chatScorer' ? 'registered:registered' : '')
-      expect(screen.queryByText(/saved scorer is unavailable/i)).not.toBeInTheDocument()
-    },
-  )
+  it('does not initialize a new chat with an unregistered automatic last-use alias', async () => {
+    const user = userEvent.setup()
+    mockScorers = [{
+      scorer_registry_name: 'registered',
+      identifier: {
+        class_name: 'SubStringScorer', class_module: 'pyrit.score', hash: 'same-hash', scorer_type: 'true_false',
+      },
+    }]
+    writeUserPreferences('tenant:alice', {
+      ...DEFAULT_USER_PREFERENCES,
+      lastUsedChatScorer: { registry_name: 'SelfAskTrueFalseScorer::alias', identifier_hash: 'same-hash' },
+    })
+    render(<App />, { wrapper: TestWrapper })
+    await user.click(await screen.findByRole('button', { name: 'Add objective', exact: true }))
+    await user.type(screen.getByRole('textbox', { name: 'Attack objective' }), 'Check the policy')
+    await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
+    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
+    expect(screen.getByRole('combobox', { name: 'Chat scorer', exact: true })).toHaveValue('')
+    expect(screen.queryByText(/saved scorer is unavailable/i)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    { name: 'missing', reference: { registry_name: 'missing', identifier_hash: 'old-hash' } },
+    { name: 'changed', reference: { registry_name: 'registered', identifier_hash: 'old-hash' } },
+  ])('preserves a $name configured override and its feedback instead of substituting last use', async ({
+    reference,
+  }: { reference: RegisteredComponentReference }) => {
+    const user = userEvent.setup()
+    const lastUsed = { registry_name: 'registered', identifier_hash: 'same-hash' }
+    mockScorers = [{
+      scorer_registry_name: 'registered',
+      identifier: {
+        class_name: 'SubStringScorer', class_module: 'pyrit.score', hash: 'same-hash', scorer_type: 'true_false',
+      },
+    }]
+    writeUserPreferences('tenant:alice', {
+      ...DEFAULT_USER_PREFERENCES, chatScorer: reference, lastUsedChatScorer: lastUsed,
+    })
+    jest.mocked(attacksApi.createAttack).mockRejectedValueOnce({
+      isAxiosError: true, response: { status: 409, data: { detail: 'Configured scorer is unavailable.' } },
+    })
+    render(<App />, { wrapper: TestWrapper })
+    const target = screen.getByRole('combobox', { name: 'Chat target', exact: true })
+    await waitFor(() => expect(target).toBeEnabled())
+    await user.selectOptions(target, 'target-a')
+    await user.click(screen.getByRole('button', { name: 'Add objective', exact: true }))
+    await user.type(screen.getByRole('textbox', { name: 'Attack objective' }), 'Check the policy')
+    await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
+    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
+    expect(screen.getByRole('combobox', { name: 'Chat scorer', exact: true })).toHaveValue('unavailable')
+    expect(screen.getByText(/The saved scorer is unavailable or its configuration changed/)).toBeVisible()
+    await user.keyboard('{Escape}')
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Use the configured scorer')
+    await user.click(screen.getByRole('button', { name: 'Send message', exact: true }))
+    expect(await screen.findByText(/Configured scorer is unavailable\./)).toBeVisible()
+    expect(attacksApi.createAttack).toHaveBeenCalledWith(expect.objectContaining({ chat_scorer: reference }))
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
+    expect(readUserPreferences('tenant:alice').chatScorer).toEqual(reference)
+    expect(readUserPreferences('tenant:alice').lastUsedChatScorer).toEqual(lastUsed)
+  })
 })

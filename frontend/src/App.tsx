@@ -206,8 +206,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const registry = useTargetRegistry()
   const scorerRegistry = useScorerRegistry()
   const { preferences, updatePreferences, error: preferenceError } = useUserPreferences()
-  const configuredChatScorer = resolveChatScorerReference(preferences.chatScorer, scorerRegistry.scorers)
-  const defaultChatScorer = configuredChatScorer !== undefined ? configuredChatScorer
+  const defaultChatScorer = preferences.chatScorer !== undefined ? preferences.chatScorer
     : resolveChatScorerReference(preferences.lastUsedChatScorer, scorerRegistry.scorers)
   const targetDefaults = useTargetPreferences(registry.targets)
   const draftHandoff = useChatDraftHandoff()

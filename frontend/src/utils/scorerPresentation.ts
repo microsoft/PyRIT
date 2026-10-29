@@ -14,6 +14,7 @@ export function isEligibleChatScorer(scorer: ScorerInstance): boolean {
   return scorer.identifier.scorer_type === 'true_false' && !scorer.chat_scoring_disabled_reason
 }
 
+/** Validate automatic last-use references; explicit overrides retain their unavailable-state feedback. */
 export function resolveChatScorerReference(
   reference: RegisteredComponentReference | null | undefined, scorers: ScorerInstance[],
 ): RegisteredComponentReference | null | undefined {
