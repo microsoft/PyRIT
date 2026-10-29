@@ -34,7 +34,4 @@ export const useTechniqueRegistryStyles = makeStyles({
   tableHeader: { position: 'sticky', top: 0, backgroundColor: tokens.colorNeutralBackground1, zIndex: 1 },
   nameCell: { overflowWrap: 'anywhere', wordBreak: 'break-word' },
   tags: { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS },
-  creationCall: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontFamily: tokens.fontFamilyMonospace },
-  action: { ...mobileTouchTargetHeight },
-  content: { maxHeight: '65vh', overflowY: 'auto' },
 })

@@ -542,6 +542,7 @@ export interface TechniqueInstance {
   tags: string[]
   uses_adversarial: boolean
   uses_default_adversarial_target: boolean
+  identifier: ComponentIdentifier
   /** Supplied factory creation inputs, with live component credentials omitted. */
   creation_statement: string
 }

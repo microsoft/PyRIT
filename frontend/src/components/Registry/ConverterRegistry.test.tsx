@@ -117,13 +117,41 @@ describe('ConverterRegistry', () => {
   })
 
   it('lists registered converter instances and configuration', async () => {
+    const user = userEvent.setup()
     renderRegistry()
 
     expect(screen.getByText('Loading converters...')).toBeInTheDocument()
     expect(await screen.findByText('base64-default')).toBeInTheDocument()
-    expect(screen.getByText('Base64Converter')).toBeInTheDocument()
-    expect(screen.getByText('encoding_func: b64encode')).toBeInTheDocument()
+    expect(within(screen.getByRole('table', { name: 'Converter instances' })).getByText('Base64Converter')).toBeInTheDocument()
+    expect(screen.queryByRole('region')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Identity for base64-default' }))
+    const details = screen.getByRole('region', { name: 'Identity for base64-default' })
+    expect(JSON.parse(details.textContent ?? '')).toEqual(converter.identifier)
     expect(screen.queryByRole('button', { name: /set active/i })).not.toBeInTheDocument()
+  })
+
+  it('filters by name, type, and output without changing the registered instances', async () => {
+    const audio = {
+      ...converter, converter_id: 'speech',
+      identifier: { ...converter.identifier, class_name: 'SpeechConverter', supported_output_types: ['audio_path'] },
+    }
+    mockedConvertersApi.listConverters.mockResolvedValue({ items: [converter, audio] })
+    const user = userEvent.setup()
+    renderRegistry()
+    await screen.findByText('speech')
+    await user.type(screen.getByRole('textbox', { name: 'Search converters' }), 'speech')
+    expect(screen.queryByText('base64-default')).not.toBeInTheDocument()
+    expect(screen.getByText('1 of 2 converters')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by type' }), 'Base64Converter')
+    expect(screen.queryByText('speech')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by output' }), 'audio_path')
+    expect(screen.queryByText('base64-default')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove speech' }).textContent).toBe('')
+    expect(mockedConvertersApi.deleteConverter).not.toHaveBeenCalled()
+    await user.type(screen.getByRole('textbox', { name: 'Search converters' }), 'missing')
+    expect(screen.getByText('No converters match these filters.')).toBeVisible()
   })
 
   it('shows an empty state', async () => {

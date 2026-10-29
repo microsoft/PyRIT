@@ -1,7 +1,7 @@
-import { Fragment, useId, useState } from 'react'
+import { Fragment, useState } from 'react'
 
 import { Button, Divider, mergeClasses, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Tooltip } from '@fluentui/react-components'
-import { ArrowSyncRegular, ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
+import { ArrowSyncRegular } from '@fluentui/react-icons'
 
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
@@ -11,6 +11,7 @@ import {
 } from '@/utils/scorerPresentation'
 
 import { useConverterRegistryStyles } from './Registry.styles'
+import RegistryIdentityRow from './RegistryIdentityRow'
 import { useScorerRegistryStyles } from './ScorerRegistry.styles'
 
 interface ScorerRegistryProps {
@@ -68,7 +69,6 @@ function MetricCell({ name, value }: { name: string; value: unknown }) {
 function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
   const styles = useConverterRegistryStyles()
   const scorerStyles = useScorerRegistryStyles()
-  const detailsId = useId()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState<ScorerTableSort>({ column: 'name', direction: 'ascending' })
   const toggleSort = (column: string): void => {
@@ -129,18 +129,10 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
             </TableHeaderCell>
           </TableRow></TableHeader>
           <TableBody>{sorted.map((scorer: ScorerInstance) => (
-            <Fragment key={scorer.scorer_registry_name}>
-            <TableRow>
-              <TableCell>
-                <Button appearance="transparent" className={scorerStyles.name}
-                  icon={expanded.has(scorer.scorer_registry_name) ? <ChevronDownRegular /> : <ChevronRightRegular />}
-                  aria-expanded={expanded.has(scorer.scorer_registry_name)}
-                  aria-controls={`${detailsId}-${encodeURIComponent(scorer.scorer_registry_name)}`}
-                  aria-label={`Evaluation details for ${scorer.scorer_registry_name}`}
-                  onClick={() => toggleDetails(scorer.scorer_registry_name)}>
-                  {scorer.scorer_registry_name}
-                </Button>
-              </TableCell>
+            <RegistryIdentityRow key={scorer.scorer_registry_name}
+              name={scorer.scorer_registry_name} identity={scorer.identifier} columns={metrics.length + 4}
+              expanded={expanded.has(scorer.scorer_registry_name)}
+              onToggle={() => toggleDetails(scorer.scorer_registry_name)}>
               <TableCell>
                 <Text className={scorerStyles.type}>
                   {(scorer.display_type ?? scorer.identifier.class_name).split('(').map((part: string, index: number) => (
@@ -154,18 +146,7 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
               <TableCell>{scorerEvidenceLabel(scorer)}</TableCell>
               {metrics.map((name: string) => <MetricCell key={name} name={name} value={scorer.metrics?.[name]} />)}
               <MetricCell name="average_score_time_seconds" value={scorer.metrics?.average_score_time_seconds} />
-            </TableRow>
-            {expanded.has(scorer.scorer_registry_name) && <TableRow>
-              <TableCell colSpan={metrics.length + 4}>
-                <div className={scorerStyles.details} id={`${detailsId}-${encodeURIComponent(scorer.scorer_registry_name)}`}
-                  role="region" aria-label={`Evaluation details for ${scorer.scorer_registry_name}`}>
-                  {scorer.evaluation_identifier
-                    ? <pre className={scorerStyles.json}>{JSON.stringify(scorer.evaluation_identifier, null, 2)}</pre>
-                    : <Text>n/a</Text>}
-                </div>
-              </TableCell>
-            </TableRow>}
-            </Fragment>
+            </RegistryIdentityRow>
           ))}</TableBody>
         </Table>
       </div>
