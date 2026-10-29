@@ -185,7 +185,7 @@ async def _shutdown_after_launch_async(
 
 
 @pytest.mark.parametrize("depth", [0, 1, 2])
-@pytest.mark.parametrize("cancel", [False])
+@pytest.mark.parametrize("cancel", [False, True])
 async def test_real_scenario_live_retry_observation_and_terminal_ownership_async(
     *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], depth: int, cancel: bool
 ) -> None:
