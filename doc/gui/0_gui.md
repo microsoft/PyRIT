@@ -86,8 +86,9 @@ Registry prepares reusable components; it does not execute attacks. Create
 targets to connect to model endpoints, converters to transform content, and
 named techniques that configure existing attacks. Browse configured scorers
 and select a default chat scorer; scorer setup uses initializers, not an editor
-on this page. An adversarial-target default applies to new scans; without one,
-scans reuse the last adversarial target. Objective targets do not have a Registry
+on this page. An explicit scan choice takes precedence. Otherwise, the current
+adversarial-target order is a saved Registry default, the registered
+`adversarial_chat` target, then last use. Objective targets do not have a Registry
 default. Existing chats and runs keep their settings.
 
 Expand a scorer, technique, or converter name to inspect its identity JSON.
