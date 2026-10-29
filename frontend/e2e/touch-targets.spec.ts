@@ -611,14 +611,36 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
   });
 
-  test("keeps the Initializer selector at least 44px", async ({ page }) => {
-    await page.goto("/config");
-    await page.getByRole("tab", { name: "Initializers", exact: true }).click();
+  test.describe("Initializer selector", () => {
+    test.use({ isMobile: true });
 
-    await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Browse available initializers" })
-    );
-    await expectNoDocumentOverflow(page);
+    test("keeps the Initializer selector at least 44px and inside the content", async ({ page }) => {
+      for (const width of [320, 390]) {
+        await page.setViewportSize({ width, height: MOBILE_VIEWPORT.height });
+        await page.goto("/config");
+        await page.getByRole("tab", { name: "Initializers", exact: true }).click();
+        await expect(page.getByRole("heading", { name: "Configured initializers", exact: true })).toBeVisible();
+        const selector = page.getByRole("button", { name: "Browse available initializers", exact: true });
+        await expect(selector).toBeEnabled();
+        expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+        await expectMinimumTouchTarget(selector);
+        const bounds = await selector.boundingBox();
+        const content = await page.getByTestId("initializers").evaluate((element) => {
+          const parent = element.parentElement;
+          if (!parent) throw new Error("Missing Configuration container");
+          const box = parent.getBoundingClientRect();
+          const style = getComputedStyle(parent);
+          return {
+            left: box.left + parseFloat(style.paddingLeft),
+            right: box.right - parseFloat(style.paddingRight),
+          };
+        });
+        if (!bounds) throw new Error("Expected a visible Initializer selector");
+        expect(bounds.x).toBeGreaterThanOrEqual(content.left);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(content.right);
+        await expectNoDocumentOverflow(page);
+      }
+    });
   });
 
   test("keeps Chat message, input, and conversation controls at least 44px", async ({

@@ -38,6 +38,7 @@ export default function AvailableInitializersDialog({
       <DialogTrigger disableButtonEnhancement>
         <Button
           appearance="secondary"
+          className={styles.touchTarget}
           icon={<AppsListRegular />}
           disabled={disabled}
           onClick={() => setOpen(true)}

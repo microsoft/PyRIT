@@ -32,6 +32,12 @@ export const useConfigurationStyles = makeStyles({
     flexWrap: 'wrap',
     gap: tokens.spacingVerticalM,
   },
+  tabs: {
+    [NARROW_VIEWPORT_QUERY]: {
+      flexWrap: 'wrap',
+      flexShrink: 0,
+    },
+  },
   actions: {
     display: 'flex',
     alignItems: 'center',

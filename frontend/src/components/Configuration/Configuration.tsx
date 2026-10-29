@@ -219,7 +219,7 @@ export default function Configuration() {
         liveReinitializationEnabled={liveReinitializationEnabled}
       />
 
-      <TabList selectedValue={selectedTab} onTabSelect={handleTabSelect}>
+      <TabList className={styles.tabs} selectedValue={selectedTab} onTabSelect={handleTabSelect}>
         <Tab value="configuration">PyRIT Configuration</Tab>
         <Tab value="environment">Environment &amp; Secrets</Tab>
         <Tab value="initializers">Initializers</Tab>
