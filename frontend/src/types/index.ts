@@ -335,6 +335,7 @@ export interface UserPreferences {
   readonly theme: ThemeMode
   readonly chatMarkdown: boolean
   readonly chatScorer?: RegisteredComponentReference | null
+  readonly sidebarExpanded?: boolean
 }
 
 export interface RegisteredComponentReference {

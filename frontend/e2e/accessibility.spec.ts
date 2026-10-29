@@ -129,7 +129,7 @@ test.describe("Accessibility", () => {
     const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
     await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
     await objectiveDefault.selectOption({ index: 1 });
-    await page.getByTitle("Technique.execute").click();
+    await page.getByTitle("Attacks").click();
 
     // Input should be accessible
     const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
@@ -146,7 +146,7 @@ test.describe("Accessibility", () => {
 
   test("should have accessible sidebar navigation", async ({ page }) => {
     // Chat button
-    const chatBtn = page.getByTitle("Technique.execute");
+    const chatBtn = page.getByTitle("Attacks");
     await expect(chatBtn).toBeVisible();
 
     // Registry button
@@ -272,7 +272,7 @@ test.describe("Accessibility", () => {
     const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
     await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
     await objectiveDefault.selectOption({ index: 1 });
-    await page.getByTitle("Technique.execute").click();
+    await page.getByTitle("Attacks").click();
 
     const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await expect(input).toBeEnabled({ timeout: 5000 });
@@ -337,7 +337,7 @@ test.describe("Accessibility", () => {
     const views = [
       { button: "History", heading: "History" },
       { button: "Registry", heading: "Target Registry" },
-      { button: "Technique.execute", heading: "Chat" },
+      { button: "Attacks", heading: "Chat" },
     ];
 
     for (const view of views) {

@@ -241,7 +241,7 @@ async function activateMockTarget(page: Page) {
   const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
   await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
   await objectiveDefault.selectOption({ index: 1 });
-  await page.getByTitle("Technique.execute").click();
+  await page.getByTitle("Attacks").click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
@@ -506,7 +506,7 @@ test.describe("Error: connection banner on health failure", () => {
   }) => {
     // Let the page load normally first
     await page.goto("/");
-    await expect(page.getByTitle("Technique.execute")).toBeVisible({
+    await expect(page.getByTitle("Attacks")).toBeVisible({
       timeout: 10000,
     });
 
@@ -554,7 +554,7 @@ test.describe("Error: connection banner recovery", () => {
     });
 
     await page.goto("/");
-    await expect(page.getByTitle("Technique.execute")).toBeVisible({
+    await expect(page.getByTitle("Attacks")).toBeVisible({
       timeout: 10000,
     });
 

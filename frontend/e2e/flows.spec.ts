@@ -210,7 +210,7 @@ async function activateTarget(
   await expect(row).toBeVisible({ timeout: 10_000 });
   await page.getByRole("combobox", { name: "Default objective target", exact: true })
     .selectOption(targetRegistryName);
-  await page.getByTitle("Technique.execute").click();
+  await page.getByTitle("Attacks").click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5_000 });
 }
 

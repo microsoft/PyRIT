@@ -300,7 +300,7 @@ test.describe("URL-driven routing", () => {
     await expect(page).toHaveURL(/\/history\/attacks$/);
     await expect(page.getByTestId("attacks-table")).toBeVisible();
 
-    await page.getByTitle("Technique.execute").click();
+    await page.getByTitle("Attacks").click();
     await expect(page).toHaveURL(/\/chat$/);
     await expect(page.getByRole("switch", { name: "Markdown" })).toBeChecked();
 
