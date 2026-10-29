@@ -13,7 +13,7 @@ import pytest
 
 from pyrit.common import REQUIRED_VALUE, forward_init_parameters
 from pyrit.common.apply_defaults import _RequiredValueSentinel
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, SeedPrompt
 from pyrit.models.identifiers import ConverterIdentifier, TargetIdentifier
 from pyrit.models.parameter import ComponentType, Parameter
 from pyrit.prompt_target import PromptTarget
@@ -615,6 +615,58 @@ class TestDeriveParameters:
     def test_descriptions_parsed(self) -> None:
         params = {p.name: p for p in derive_parameters(cls=_Plain)}
         assert params["count"].description == "A required count."
+
+    def test_seed_prompt_metadata_and_resolution_use_the_existing_parameter_contract(self) -> None:
+        default_prompt = SeedPrompt(value="Default\ninstructions")
+
+        class _PromptInput:
+            def __init__(self, *, prompt: SeedPrompt = default_prompt) -> None:
+                self.prompt = prompt
+
+        parameter = derive_parameters(cls=_PromptInput)[0]
+        assert parameter.multiline
+        assert parameter.for_external_catalog().default == "Default\ninstructions"
+        resolved = resolve_constructor_args(
+            cls=_PromptInput,
+            raw_args={"prompt": "Edited\ninstructions"},
+            external_input=True,
+            strict_json=True,
+        )
+        assert isinstance(resolved["prompt"], SeedPrompt)
+        assert resolved["prompt"].value == "Edited\ninstructions"
+        assert _PromptInput().prompt.value == "Default\ninstructions"
+
+    def test_component_multiline_names_do_not_affect_other_components(self) -> None:
+        class _Multiline(_Plain):
+            MULTILINE_PARAMETER_NAMES = frozenset({"note"})
+
+        params = {p.name: p for p in derive_parameters(cls=_Multiline)}
+        assert params["note"].multiline
+        assert not params["mode"].multiline
+        assert not any(p.multiline for p in derive_parameters(cls=_Plain))
+
+    def test_component_multiline_names_are_inherited(self) -> None:
+        class _Multiline(_Plain):
+            MULTILINE_PARAMETER_NAMES = frozenset({"note"})
+
+        class _Child(_Multiline):
+            pass
+
+        params = {p.name: p for p in derive_parameters(cls=_Child)}
+        assert params["note"].multiline
+
+    def test_component_multiline_names_supplement_identifier_defaults(self) -> None:
+        class _Multiline:
+            MULTILINE_PARAMETER_NAMES = frozenset({"note"})
+
+            def __init__(self, *, http_request: str = "", note: str = "") -> None:
+                self.http_request = http_request
+                self.note = note
+
+        params = {p.name: p for p in derive_parameters(cls=_Multiline, identifier_type=TargetIdentifier)}
+        assert params["http_request"].multiline
+        assert params["note"].multiline
+        assert TargetIdentifier.get_multiline_parameter_names() == frozenset({"http_request"})
 
     def test_order_follows_signature(self) -> None:
         names = [p.name for p in derive_parameters(cls=_Plain)]

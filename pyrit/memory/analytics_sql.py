@@ -191,6 +191,20 @@ class JsonArrayItems(FunctionElement[str]):
     inherit_cache = True
 
 
+class JsonArrayValue(FunctionElement[str]):
+    """A saved array at a JSON path, or an empty array for a missing or non-array value."""
+
+    type = UnicodeText()
+    inherit_cache = True
+
+
+class UuidHex(FunctionElement[str]):
+    """Normalize UUID string forms for comparison with a stored ID, without casting malformed references."""
+
+    type = UnicodeText()
+    inherit_cache = True
+
+
 class JsonArrayEmpty(FunctionElement[bool]):
     """
     A scalar 0/1 check for a recorded empty array, independent of JSON whitespace.
@@ -362,6 +376,59 @@ def _mssql_json_items(element: JsonArrayItems, compiler: Any, **kwargs: Any) -> 
         str: A table-valued expression to be joined with OUTER APPLY.
     """
     return f"OPENJSON({', '.join(_arguments(element, compiler, **kwargs))})"
+
+
+@compiles(JsonArrayValue, "sqlite")
+def _sqlite_json_array_value(element: JsonArrayValue, compiler: Any, **kwargs: Any) -> str:
+    """
+    Check the saved property's shape before expanding it.
+
+    Returns:
+        str: A JSON array expression safe for JSON1 expansion.
+    """
+    document, path = _arguments(element, compiler, **kwargs)
+    return f"CASE WHEN json_type({document}, {path}) = 'array' THEN json_extract({document}, {path}) ELSE '[]' END"
+
+
+@compiles(JsonArrayValue, "mssql")
+def _mssql_json_array_value(element: JsonArrayValue, compiler: Any, **kwargs: Any) -> str:
+    """
+    Keep only saved JSON arrays without truncating their contents.
+
+    Returns:
+        str: A JSON array expression safe for OPENJSON expansion.
+    """
+    document, path = _arguments(element, compiler, **kwargs)
+    value = f"JSON_QUERY({document}, {path})"
+    normalized = _mssql_without_json_whitespace(value)
+    return f"CASE WHEN LEFT({normalized}, 1) = N'[' THEN {value} ELSE N'[]' END"
+
+
+@compiles(UuidHex, "sqlite")
+def _sqlite_uuid_hex(element: UuidHex, compiler: Any, **kwargs: Any) -> str:
+    """
+    Match Python's case-insensitive UUID normalization without interpreting invalid text as an ID.
+
+    Returns:
+        str: Lowercase UUID hex for canonical, undashed, braced, or URN string forms.
+    """
+    value = _arguments(element, compiler, **kwargs)[0]
+    return f"replace(trim(replace(replace(lower({value}), 'urn:', ''), 'uuid:', ''), '{{}}'), '-', '')"
+
+
+@compiles(UuidHex, "mssql")
+def _mssql_uuid_hex(element: UuidHex, compiler: Any, **kwargs: Any) -> str:
+    """
+    Normalize reference strings without SQL Server's truncating uniqueidentifier conversion.
+
+    Exact UTF-16 width and binary collation also prevent trailing spaces or Unicode folding from matching an ID.
+
+    Returns:
+        str: The same UUID-comparison expression as SQLite and the Python reader.
+    """
+    value = _arguments(element, compiler, **kwargs)[0]
+    normalized = f"replace(trim(N'{{}}' FROM replace(replace(lower({value}), N'urn:', N''), N'uuid:', N'')), N'-', N'')"
+    return f"CASE WHEN DATALENGTH({normalized}) = 64 THEN {normalized} COLLATE Latin1_General_100_BIN2 END"
 
 
 @compiles(JsonArrayEmpty, "sqlite")

@@ -45,6 +45,8 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
     examples to bypass safety measures.
     """
 
+    FIXED_PARAMS_TYPE = ManyShotJailbreakParameters
+
     @apply_defaults
     def __init__(
         self,
@@ -85,7 +87,6 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
             attack_scoring_config=attack_scoring_config,
             prompt_normalizer=prompt_normalizer,
             max_attempts_on_failure=max_attempts_on_failure,
-            params_type=ManyShotJailbreakParameters,
         )
 
         # Template for the faux dialogue to be prepended

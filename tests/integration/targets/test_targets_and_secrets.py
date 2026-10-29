@@ -18,7 +18,6 @@ from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
 from pyrit.memory.sqlite_memory import SQLiteMemory
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import (
-    AzureMLChatTarget,
     OpenAIChatTarget,
     OpenAICompletionTarget,
     OpenAIImageTarget,
@@ -600,25 +599,6 @@ async def test_realtime_target_same_conversation_multi_turn(
         assert set(target._existing_conversation) == {conversation_id}
     finally:
         await target.cleanup_target_async()
-
-
-@pytest.mark.parametrize(
-    ("endpoint", "api_key"),
-    [
-        ("AZURE_ML_MANAGED_ENDPOINT", "AZURE_ML_KEY"),
-        ("AZURE_ML_PHI_ENDPOINT", "AZURE_ML_PHI_KEY"),
-    ],
-)
-async def test_connect_required_aml_text_targets(sqlite_instance, endpoint, api_key):
-    endpoint_value = _get_required_env_var(endpoint)
-    api_key_value = _get_required_env_var(api_key)
-
-    target = AzureMLChatTarget(
-        endpoint=endpoint_value,
-        api_key=api_key_value,
-    )
-
-    await _assert_can_send_prompt(target=target)
 
 
 async def test_connect_openai_completion(sqlite_instance: SQLiteMemory) -> None:

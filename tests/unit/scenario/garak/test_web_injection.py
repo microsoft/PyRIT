@@ -24,9 +24,9 @@ from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     PackageHallucinationTechnique,
-    WebInjection,
     WebInjectionTechnique,
 )
+from pyrit.scenario.scenarios.garak.web_injection import WebInjection
 from pyrit.score import (
     MarkdownInjectionScorer,
     TrueFalseCompositeScorer,
@@ -64,6 +64,16 @@ def dataset_values() -> dict[str, list[str]]:
 
 
 @pytest.fixture
+def garak_dataset_names() -> list[str]:
+    return [
+        WebInjection.DATASET_EXAMPLE_DOMAINS,
+        WebInjection.DATASET_MARKDOWN_JS,
+        WebInjection.DATASET_WEB_HTML_JS,
+        WebInjection.DATASET_NORMAL_INSTRUCTIONS,
+    ]
+
+
+@pytest.fixture
 async def web_injection_seeds_async(*, patch_central_database: None, dataset_values: dict[str, list[str]]) -> None:
     seeds = [SeedPrompt(value=value, dataset_name=name) for name, values in dataset_values.items() for value in values]
     await CentralMemory.get_memory_instance().add_seeds_to_memory_async(seeds=seeds, added_by="test")
@@ -89,6 +99,7 @@ async def test_omitted_and_none_keep_finite_prompt_default_async(kwargs: dict[st
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("limit", [1, 3, 12])
 @pytest.mark.parametrize("baseline", [False, True])
+@pytest.mark.usefixtures("mock_dataset_preparation")
 async def test_every_technique_is_capped_and_preview_bounds_plan_async(*, limit: int, baseline: bool) -> None:
     values = {
         WebInjection.DATASET_EXAMPLE_DOMAINS: [f"domain{index}.example" for index in range(15)],
@@ -167,6 +178,7 @@ class TestWebInjectionInitialization:
         assert "garak_web_html_js" in names
         assert "garak_xss_normal_instructions" in names
 
+    @pytest.mark.usefixtures("mock_garak_dataset_fetch")
     async def test_real_local_datasets_load_async(self, *, mock_objective_target: PromptTarget) -> None:
         memory = CentralMemory.get_memory_instance()
         assert not await memory.get_seeds_async()
@@ -514,6 +526,7 @@ class TestWebInjectionDatasetSelection:
         # The check runs before any dataset is fetched, so memory is left untouched.
         assert len(await memory.get_seeds_async()) == seeds_before
 
+    @pytest.mark.usefixtures("mock_garak_dataset_fetch")
     async def test_complete_selection_runs_with_empty_memory_async(
         self, *, mock_objective_target: PromptTarget
     ) -> None:
@@ -578,6 +591,7 @@ class TestWebInjectionDatasetSelection:
     @pytest.mark.parametrize(
         "dataset_names", [[], [WebInjection.DATASET_MARKDOWN_JS]], ids=["no_datasets", "named_dataset"]
     )
+    @pytest.mark.usefixtures("mock_garak_dataset_fetch")
     async def test_technique_without_source_datasets_accepts_named_or_empty_selection_async(
         self, *, dataset_names: list[str], mock_objective_target: PromptTarget
     ) -> None:

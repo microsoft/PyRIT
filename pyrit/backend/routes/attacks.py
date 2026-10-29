@@ -390,11 +390,14 @@ async def get_conversation_messages(  # pyrit-async-suffix-exempt
     conversation_id: str = Query(
         ..., max_length=MAX_IDENTIFIER_LENGTH, description="The conversation_id whose messages to return"
     ),
+    limit: int | None = Query(None, ge=1, le=500, description="Optional saved message-piece page size"),
+    cursor: CursorStr | None = Query(None, description="Opaque message-piece continuation cursor"),
 ) -> ConversationMessagesResponse:
     """
-    Get all messages for a conversation belonging to an attack.
+    Get saved messages for a main or pruned conversation belonging to an attack.
 
-    Returns prepended conversation and all messages in order.
+    Omitting limit preserves the existing full-conversation response. Paged reads can
+    split a multimodal turn; append pieces by their IDs and turn number across pages.
 
     Returns:
         ConversationMessagesResponse: All messages for the conversation.
@@ -405,6 +408,8 @@ async def get_conversation_messages(  # pyrit-async-suffix-exempt
         messages = await service.get_conversation_messages_async(
             attack_result_id=attack_result_id,
             conversation_id=conversation_id,
+            limit=limit,
+            cursor=cursor,
         )
     except ValueError as e:
         raise HTTPException(
@@ -425,24 +430,31 @@ async def get_conversation_messages(  # pyrit-async-suffix-exempt
     "/{attack_result_id}/conversations",
     response_model=AttackConversationsResponse,
     responses={
+        400: {"model": ProblemDetail, "description": "Invalid conversation cursor"},
         404: {"model": ProblemDetail, "description": "Attack not found"},
     },
 )
-async def get_conversations(
+async def get_conversations(  # pyrit-async-suffix-exempt
     attack_result_id: IdentifierStr,
-) -> AttackConversationsResponse:  # pyrit-async-suffix-exempt
+    limit: int | None = Query(None, ge=1, le=200, description="Optional saved conversation-reference page size"),
+    cursor: CursorStr | None = Query(None, description="Opaque conversation-reference continuation cursor"),
+) -> AttackConversationsResponse:
     """
-    Get all conversations belonging to an attack.
+    Get main and pruned conversations belonging to an attack.
 
-    Returns the main conversation and all related conversations with
-    message counts and preview text.
+    Without a limit, preserve the existing active-conversation list and timestamp
+    ordering. Paged reads use stored-reference order, with message counts and
+    preview text. Both paths exclude adversarial and preparation contexts.
 
     Returns:
         AttackConversationsResponse: All conversations for the attack.
     """
     service = get_attack_service()
 
-    result = await service.get_conversations_async(attack_result_id=attack_result_id)
+    try:
+        result = await service.get_conversations_async(attack_result_id=attack_result_id, limit=limit, cursor=cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

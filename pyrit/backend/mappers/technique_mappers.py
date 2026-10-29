@@ -151,4 +151,5 @@ def technique_to_configuration(
         supplied_parameters=list(factory.get_effective_settings().attack_kwargs),
         read_only=readonly,
         supports_prepended_conversation=factory.supports_prepended_conversation,
+        supports_prompt=factory.supports_prompt,
     )

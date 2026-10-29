@@ -59,6 +59,7 @@ def _metadata_to_registered_scenario(
         scenario_name=metadata.registry_name,
         scenario_type=metadata.class_name,
         scenario_version=metadata.scenario_version,
+        supports_objective_scorer=metadata.supports_objective_scorer,
         description=metadata.class_description,
         description_markdown=metadata.description_markdown,
         default_technique=metadata.default_technique,
@@ -274,7 +275,10 @@ class ScenarioService:
                 objective_target=objective_target,
                 include_baseline=request.include_baseline,
             )
-            scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name)
+            constructor_kwargs = resolver.resolve_constructor_kwargs(
+                scenario_class=scenario_class, objective_scorer=request.objective_scorer
+            )
+            scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name, **constructor_kwargs)
             scenario.set_params_from_args(args={**(request.scenario_params or {}), **kwargs})
             settings = await scenario.load_datasets_async()
         metadata = await get_dataset_service().list_datasets_async()
@@ -557,6 +561,9 @@ class ScenarioService:
             return await self._registry.create_and_estimate_async(
                 name=scenario_name,
                 scenario_params=request.scenario_params or {},
+                constructor_kwargs=resolver.resolve_constructor_kwargs(
+                    scenario_class=scenario_class, objective_scorer=request.objective_scorer
+                ),
                 **estimate_kwargs,
             )
 

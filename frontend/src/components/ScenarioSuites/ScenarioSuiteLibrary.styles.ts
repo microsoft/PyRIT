@@ -1,22 +1,13 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
 import { mobileTouchTarget, NARROW_VIEWPORT_QUERY } from '@/styles/touchTargets'
-import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
 
 export const useScenarioSuiteLibraryStyles = makeStyles({
   root: {
     display: 'flex',
     flexDirection: 'column',
-    height: '100%',
     width: '100%',
     minWidth: 0,
-    padding: tokens.spacingVerticalXXL,
-    overflowX: 'hidden',
-    overflowY: 'auto',
-    backgroundColor: WORKSPACE_CANVAS_BACKGROUND,
-    [NARROW_VIEWPORT_QUERY]: {
-      padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalM}`,
-    },
   },
   header: {
     display: 'flex',
@@ -65,10 +56,14 @@ export const useScenarioSuiteLibraryStyles = makeStyles({
     overflowX: 'auto',
   },
   table: {
-    minWidth: '760px',
+    minWidth: '900px',
     backgroundColor: tokens.colorNeutralBackground1,
   },
   nameCell: {
+    verticalAlign: 'top',
+    minWidth: 0,
+  },
+  nameContent: {
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalXXS,

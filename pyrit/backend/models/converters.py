@@ -69,9 +69,8 @@ class ConverterInstance(BaseModel):
     """
     A registered converter instance.
 
-    Pairs the registry instance id with the converter's ``ConverterIdentifier`` —
-    the typed identity/configuration projection that is the single source of truth
-    for the converter's class, supported data types, and constructor params.
+    Pairs the registry name with the converter's identity and editable parameter
+    metadata. Parameter defaults describe the registered instance's settings.
     """
 
     converter_id: str = Field(..., description="Converter instance registry name")
@@ -80,6 +79,9 @@ class ConverterInstance(BaseModel):
     description: str | None = Field(None, description="Short description of the converter type")
     reconstructable: bool = False
     reconstruction_error: str | None = None
+    parameters: list[Parameter] = Field(
+        default_factory=list, description="Editable inputs with source-specific defaults"
+    )
 
 
 class ConverterInstanceListResponse(BaseModel):
@@ -110,8 +112,6 @@ class CreateConverterRequest(BaseModel):
     def _validate_registration(self) -> "CreateConverterRequest":
         if self.register and not self.name:
             raise ValueError("name is required when register=true")
-        if self.source is not None and self.register:
-            raise ValueError("source requires register=false")
         if self.source is not None and self.params:
             raise ValueError("Use source.params for reconstruction overrides")
         return self

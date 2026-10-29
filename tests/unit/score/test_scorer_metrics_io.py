@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.models import ComponentIdentifier
+from pyrit.models.harm_category import HarmCategory
 from pyrit.score.scorer_evaluation.scorer_metrics import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
@@ -325,6 +326,35 @@ def test_get_all_harm_metrics():
         results = get_all_harm_metrics(harm_category="hate_speech")
     assert len(results) == 1
     assert results[0].metrics.mean_absolute_error == 0.08
+
+
+@pytest.mark.parametrize(
+    ("harm_category", "expected_file_name"),
+    [
+        ("REPRESENTATIONAL", "representational_metrics.jsonl"),
+        ("SEXUAL_CONTENT", "sexual_metrics.jsonl"),
+        ("violence", "violence_metrics.jsonl"),
+    ],
+)
+def test_get_all_harm_metrics_reads_the_same_file_as_the_eval_hash_lookup(
+    *, harm_category: str, expected_file_name: str
+) -> None:
+    with patch("pyrit.score.scorer_evaluation.scorer_metrics_io._load_jsonl", return_value=[]) as mock_load:
+        get_all_harm_metrics(harm_category=harm_category)
+        find_harm_metrics_by_eval_hash(eval_hash="missing", harm_category=harm_category)
+
+    assert [call[0][0].name for call in mock_load.call_args_list] == [expected_file_name, expected_file_name]
+
+
+@pytest.mark.parametrize(
+    "scorer_harm_category",
+    [HarmCategory.SEXUAL_CONTENT.name, HarmCategory.REPRESENTATIONAL.name, "hate_speech", "self_harm", "violence"],
+)
+def test_get_all_harm_metrics_finds_registry_entries_for_scorer_categories(*, scorer_harm_category: str) -> None:
+    results = get_all_harm_metrics(harm_category=scorer_harm_category)
+
+    assert results
+    assert all(result.metrics.harm_category for result in results)
 
 
 # --- add_evaluation_results tests ---
