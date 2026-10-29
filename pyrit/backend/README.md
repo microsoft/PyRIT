@@ -161,10 +161,13 @@ enums when registered factories change; it does not create attacks.
 Selections from an earlier enum remain valid in the same scenario and registry
 generation if their factories are unchanged. Earlier aggregate selections retain
 their original members; they do not gain newly registered techniques.
-Responses include `creation_statement`, a Python-style display of the factory's
+Responses include `identifier`, the canonical factory identity shown inline in
+the Registry. It can contain raw prompt and seed values, including nested
+technique seeds. This JSON is not a redacted or hash-only view.
+Responses also include `creation_statement`, a Python-style display of the factory's
 supplied arguments. Helper constructors retain their original call form.
 Live components without captured inputs use `...`; this display is not executable
-or lossless source. Responses do not include identifier or expanded seed JSON.
+or lossless source. The GUI displays identity JSON, not the creation statement.
 
 ### Manual Messages
 
