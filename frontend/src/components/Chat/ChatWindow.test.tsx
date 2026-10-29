@@ -57,6 +57,7 @@ jest.setTimeout(60000);
 
 jest.mock("@/services/api", () => ({
   attacksApi: {
+    applyScorer: jest.fn(),
     createAttack: jest.fn(),
     updateAttack: jest.fn(),
     removeHumanScore: jest.fn(),
@@ -1006,6 +1007,44 @@ describe("ChatWindow Integration", () => {
   // -----------------------------------------------------------------------
   // Basic rendering
   // -----------------------------------------------------------------------
+
+  it("should apply the scorer only to the viewed latest response and remember use only after Apply", async () => {
+    const user = userEvent.setup();
+    const reference = { registry_name: "judge", identifier_hash: "hash" };
+    const response = makeTextResponse("Saved response").messages;
+    mockedAttacksApi.getMessages.mockResolvedValue({ ...response, conversation_id: "score-conv", automated_score: null });
+    const score = {
+      id: "saved-score", message_piece_id: response.messages[0].message_pieces[0].id,
+      scorer_type: "SubStringScorer", score_type: "true_false", score_value: "true",
+      objective: "Goal", score_rationale: "Objective satisfied", timestamp: "",
+    };
+    mockedAttacksApi.applyScorer.mockResolvedValue({ conversation_id: "score-conv", score, reused: true });
+    mockedAttacksApi.getAttack.mockResolvedValue({
+      attack_result_id: "score-attack", conversation_id: "score-conv", attack_type: "ManualAttack",
+      objective: "Goal", converters: [], message_count: 1, related_conversation_ids: [],
+      labels: {}, created_at: "", updated_at: "",
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="score-attack" conversationId="score-conv"
+      activeConversationId="score-conv" objective="Goal" chatScorer={reference}
+      availableScorers={[{ scorer_registry_name: "judge", identifier: {
+        class_name: "SubStringScorer", class_module: "pyrit.score", hash: "hash", scorer_type: "true_false",
+      } }]} /></TestWrapper>);
+    await screen.findByText("Saved response");
+    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
+    expect(mockedAttacksApi.applyScorer).not.toHaveBeenCalled();
+    expect(readUserPreferences("local").lastUsedChatScorer).toBeUndefined();
+    mockedAttacksApi.getMessages.mockResolvedValue({ ...response, conversation_id: "score-conv", automated_score: score });
+    await user.click(screen.getByRole("button", { name: "Apply scorer", exact: true }));
+    await waitFor(() => expect(mockedAttacksApi.applyScorer).toHaveBeenCalledTimes(1));
+    expect(mockedAttacksApi.applyScorer.mock.calls[0]).toEqual(["score-attack", {
+      conversation_id: "score-conv", response_id: response.messages[0].message_pieces[0].id,
+      objective: "Goal", scorer: reference,
+    }]);
+    expect(await screen.findByText(/Already scored. Kept the existing valid result/)).toBeInTheDocument();
+    expect(readUserPreferences("local").lastUsedChatScorer).toEqual(reference);
+    expect(screen.getByTestId("automated-score-details")).toHaveTextContent("Objective satisfied");
+  });
 
   it("should dismiss scoring error notices after ten seconds without dismissing saved error details", async () => {
     jest.useFakeTimers();

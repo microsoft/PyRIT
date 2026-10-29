@@ -37,6 +37,13 @@ workspace. Select a target and write the messages yourself. You can attach media
 and branch or edit conversations to try another approach. Add an objective and
 select a chat scorer if you want automated assessment of responses.
 
+To score a saved response, open the objective outcome, expand **Automated scorer**,
+and select a scorer. **Apply scorer** evaluates only the latest saved assistant
+response in the open conversation. It keeps an existing complete result for the
+same response, scorer configuration, and objective criteria without another
+evaluation. **Off** hides the action. Earlier responses, other conversations, and
+human scores do not change; future responses keep the selected chat scorer.
+
 New chats and scans start with the last objective target you used. New chats also
 reuse the last chat scorer, including **Off**, unless a Registry default is set.
 These choices are saved in the current browser profile after use. Opening saved

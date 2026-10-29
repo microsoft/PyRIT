@@ -47,6 +47,7 @@ from pyrit.backend.models.attacks import (
     MessageView,
     PrependedMessageRequest,
     SaveConversationRequest,
+    ScoreView,
     TargetResponseStatus,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
@@ -449,12 +450,16 @@ class AttackService:
             or scoring_result.response_id not in {str(piece.id) for piece in latest_response.message_pieces}
         ):
             scoring_result = None
+        automated_score = await get_chat_scoring_service().response_score_async(
+            attack=ar, response=get_chat_scoring_service().latest_response(pyrit_messages)
+        )
 
         return ConversationMessagesResponse(
             conversation_id=conversation_id,
             messages=backend_messages,
             target_response_status=_get_latest_target_response_status(backend_messages),
             scoring_failure=scoring_result,
+            automated_score=ScoreView.from_domain(automated_score) if automated_score else None,
         )
 
     async def get_saved_conversation_async(self, *, conversation_id: str) -> AddMessageResponse | None:

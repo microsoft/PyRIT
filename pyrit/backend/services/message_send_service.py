@@ -45,7 +45,6 @@ from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.executor.attack import attack_outcome_from_score
-from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.memory import CentralMemory, data_serializer_factory
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import (
@@ -845,15 +844,12 @@ class MessageSendService:
         try:
             if scoring.scoring_error:
                 raise ValueError(scoring.scoring_error)
-            scores = await score_attack_response_async(
+            score = await get_chat_scoring_service().score_response_async(
                 response=response,
-                objective_scorer=scoring.scorer,
-                auxiliary_scorers=[],
+                scorer=scoring.scorer,
                 expectation=scoring.scoring_expectation,
             )
-            if not scores["objective_scores"]:
-                raise ValueError("The scorer did not return an objective score.")
-            return None, scores["objective_scores"][0]
+            return None, score
         except Exception as exc:
             logger.exception("Chat scoring failed for response '%s'.", response_id)
             result = ScoringFailure(

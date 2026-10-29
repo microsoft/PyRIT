@@ -1063,6 +1063,20 @@ export interface BackendScore {
   score_category?: string[] | null
   score_rationale?: string | null
   timestamp: string
+  objective?: string | null
+}
+
+export interface ApplyChatScorerRequest {
+  conversation_id: string
+  response_id: string
+  scorer: RegisteredComponentReference
+  objective: string
+}
+
+export interface ApplyChatScorerResponse {
+  conversation_id: string
+  score: BackendScore
+  reused: boolean
 }
 
 export type PromptResponseError = 'blocked' | 'none' | 'processing' | 'empty' | 'unknown'
@@ -1129,6 +1143,7 @@ export interface TargetResponseStatus {
 }
 
 export interface ConversationMessagesResponse {
+  automated_score?: BackendScore | null
   scoring_failure?: ScoringFailure | null
   conversation_id: string
   messages: BackendMessage[]

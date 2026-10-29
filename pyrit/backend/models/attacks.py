@@ -350,6 +350,7 @@ class ConversationMessagesResponse(BaseModel):
     conversation_id: str = Field(..., description="Conversation identifier")
     messages: list[MessageView] = Field(default_factory=list, description="All messages in order")
     scoring_failure: ScoringFailure | None = None
+    automated_score: ScoreView | None = None
     target_response_status: TargetResponseStatus | None = Field(
         default=None,
         description=(
