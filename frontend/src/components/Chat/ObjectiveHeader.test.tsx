@@ -92,7 +92,7 @@ describe('ObjectiveHeader', () => {
       status: value === 'undetermined' ? 'undetermined' : 'complete', timestamp: '',
     }
     render(<TestWrapper><ObjectiveHeader objective="Goal" automatedScore={score} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     expect(screen.getByRole('group', { name: 'Automated score', exact: true })).toHaveTextContent(label)
   })
 
@@ -106,7 +106,7 @@ describe('ObjectiveHeader', () => {
       scorers={[{ scorer_registry_name: 'judge', identifier: {
         class_name: 'Judge', hash: 'hash', scorer_type: 'true_false',
       } }]} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
     await user.selectOptions(screen.getByRole('combobox', { name: 'Chat scorer' }),
       'registered:judge')
@@ -263,7 +263,7 @@ describe('ObjectiveHeader', () => {
     const user = userEvent.setup()
     render(<TestWrapper><ObjectiveHeader objective="Goal" outcome="undetermined" canUpdateOutcome
       onUpdateHumanScore={jest.fn().mockRejectedValue(new Error('Unavailable'))} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.type(screen.getByRole('textbox', { name: 'Rationale' }), 'Keep this review')
     await user.click(screen.getByRole('button', { name: 'Add' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Unable to update')
@@ -276,7 +276,7 @@ describe('ObjectiveHeader', () => {
     const user = userEvent.setup()
     render(<TestWrapper><ObjectiveHeader objective={objective} outcome="undetermined"
       chatScorer={selected ? { registry_name: 'judge', identifier_hash: 'hash' } : null} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     const scoreRow = screen.getByRole('group', { name: 'Automated score', exact: true })
     expect(scoreRow).toHaveTextContent(selected && objective ? 'Not scored' : 'Not set')
     expect(within(scoreRow).queryByRole('button')).not.toBeInTheDocument()
@@ -294,7 +294,7 @@ describe('ObjectiveHeader', () => {
     }
     const rendered = render(<TestWrapper><ObjectiveHeader objective="Goal" outcome="success"
       automatedScore={automatedScore} humanScore={humanScore} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     expect(screen.getByText('Overridden by the human score.')).toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Automated score', exact: true })).toHaveTextContent('Failure')
     expect(screen.getByRole('radio', { name: 'Success' })).toBeChecked()
@@ -319,7 +319,7 @@ describe('ObjectiveHeader', () => {
           chat_scoring_disabled_reason: 'Requires tool criteria.' },
       ] }
     const rendered = render(<TestWrapper><ObjectiveHeader {...props} objective="" /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     expect(screen.queryByRole('button', { name: /^automated scorer:/i })).not.toBeInTheDocument()
     rendered.rerender(<TestWrapper><ObjectiveHeader {...props} objective="Goal" /></TestWrapper>)
     const scoreRow = screen.getByRole('group', { name: 'Automated score', exact: true })
@@ -347,7 +347,7 @@ describe('ObjectiveHeader', () => {
       } }] }
     const rendered = render(<TestWrapper><ObjectiveHeader {...props} /></TestWrapper>)
     expect(screen.queryByRole('button', { name: 'Apply scorer', exact: true })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
     expect(screen.queryByRole('button', { name: 'Apply scorer', exact: true })).not.toBeInTheDocument()
     await user.selectOptions(screen.getByRole('combobox', { name: 'Chat scorer' }), 'registered:judge')
@@ -365,7 +365,7 @@ describe('ObjectiveHeader', () => {
     render(<TestWrapper><ObjectiveHeader objective="Goal" canUpdateScorer onUpdateScorer={jest.fn()}
       canApplyScorer onApplyScorer={onApplyScorer} applyingScorer
       chatScorer={{ registry_name: 'judge', identifier_hash: 'hash' }} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     const pending = within(screen.getByRole('region', { name: 'Automated scorer selection' }))
       .getByRole('button', { name: 'Scoring latest response...' })
     expect(pending).toBeDisabled()
@@ -384,11 +384,11 @@ describe('ObjectiveHeader', () => {
         class_name: 'Judge', class_module: 'pyrit.score', hash: 'hash', scorer_type: 'true_false',
       } }] }
     const rendered = render(<TestWrapper><ObjectiveHeader {...props} applyingScorer /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Automated scorer selection' })).not.toBeInTheDocument())
     rendered.rerender(<TestWrapper><ObjectiveHeader {...props} applyStatus={{ intent, message }} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     const pane = screen.getByRole('region', { name: 'Automated scorer selection' })
     expect(within(pane).getByRole(role)).toHaveTextContent(message)
     expect(within(pane).getByRole('button', { name: 'Apply scorer', exact: true })).toBeEnabled()
@@ -400,7 +400,7 @@ describe('ObjectiveHeader', () => {
       chatScorer={{ registry_name: 'saved-alias', identifier_hash: 'hash' }}
       scorers={[{ scorer_registry_name: 'current-alias', identifier: { class_name: 'SubStringScorer', hash: 'hash', scorer_type: 'true_false' } }]}
       canUpdateScorer onUpdateScorer={jest.fn()} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     const scorerButton = screen.getByRole('button', { name: /^automated scorer:/i })
     expect(scorerButton).toHaveTextContent(inherited ? 'current-alias' : 'saved-alias')
     expect(scorerButton).toHaveTextContent(inherited ? 'SubStringScorer' : 'Unavailable')
@@ -417,7 +417,7 @@ describe('ObjectiveHeader', () => {
         identifier: { class_name: 'MessageToolCallScorer', hash: 'hash', scorer_type: 'true_false' },
         chat_scoring_disabled_reason: 'Requires tool criteria.' }]}
       canUpdateScorer onUpdateScorer={jest.fn()} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
     const picker = screen.getByRole('combobox', { name: 'Chat scorer' })
     expect(picker).toHaveValue('unavailable')
@@ -433,7 +433,7 @@ describe('ObjectiveHeader', () => {
         error: 'Scorer configuration changed\nTraceback:\n  ValueError: Missing grade' }}
       chatScorer={{ registry_name: 'new-judge', identifier_hash: 'new-hash' }}
       onUpdateScorer={jest.fn()} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.click(screen.getByRole('button', { name: /scoring error.*view details/i }))
     expect(screen.getByText(/old-judge: Scorer configuration changed/)).toBeInTheDocument()
     expect(screen.getByLabelText('Scorer failure details').textContent).toContain(
