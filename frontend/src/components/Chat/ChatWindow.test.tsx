@@ -1122,6 +1122,71 @@ describe("ChatWindow Integration", () => {
     expect(await screen.findByRole("button", { name: "Objective achieved outcome: undetermined" })).toBeInTheDocument();
   });
 
+  describe("Apply scorer status lifetime", () => {
+    const scorerA = { registry_name: "judge", identifier_hash: "hash" };
+    const scorerB = { registry_name: "other-judge", identifier_hash: "other-hash" };
+    const notice = /Already scored. Kept the existing valid result/;
+    const props = {
+      ...defaultProps, attackResultId: "score-attack", conversationId: "score-conv",
+      activeConversationId: "score-conv", objective: "Goal", chatScorer: scorerA,
+      availableScorers: [scorerA, scorerB].map((reference) => ({
+        scorer_registry_name: reference.registry_name, identifier: {
+          class_name: "SubStringScorer", class_module: "pyrit.score", hash: reference.identifier_hash,
+          scorer_type: "true_false",
+        },
+      })),
+    };
+    const score = {
+      id: "saved-score", message_piece_id: "p-resp", scorer_type: "SubStringScorer", score_type: "true_false",
+      score_value: "true", timestamp: "",
+    };
+
+    beforeEach(() => {
+      mockedAttacksApi.getMessages.mockResolvedValue({
+        ...makeTextResponse("Saved response").messages, conversation_id: "score-conv",
+        automated_score: null, latest_response_id: "p-resp",
+      });
+      mockedAttacksApi.getAttack.mockResolvedValue({
+        attack_result_id: "score-attack", conversation_id: "score-conv", attack_type: "ManualAttack",
+        objective: "Goal", converters: [], message_count: 2, related_conversation_ids: [],
+        labels: {}, created_at: "", updated_at: "",
+      });
+    });
+
+    async function openScorerPane(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+      await screen.findByText("Saved response");
+      await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+      await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
+    }
+
+    it.each([
+      { change: "scorer", update: { chatScorer: scorerB } },
+      { change: "objective", update: { objective: "New goal" } },
+    ])("should not show scorer A's notice after the $change changes", async ({ update }) => {
+      const user = userEvent.setup();
+      mockedAttacksApi.applyScorer.mockResolvedValue({ conversation_id: "score-conv", score, reused: true });
+      const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      await openScorerPane(user);
+      await user.click(screen.getByRole("button", { name: "Apply scorer", exact: true }));
+      expect(await screen.findByText(notice)).toBeInTheDocument();
+      rendered.rerender(<TestWrapper><ChatWindow {...props} {...update} /></TestWrapper>);
+      expect(screen.queryByText(notice)).not.toBeInTheDocument();
+    });
+
+    it("should not attach a late scorer A result to scorer B", async () => {
+      const user = userEvent.setup();
+      let finish: (value: { conversation_id: string; score: typeof score; reused: boolean }) => void = () => {};
+      mockedAttacksApi.applyScorer.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+      const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      await openScorerPane(user);
+      await user.click(screen.getByRole("button", { name: "Apply scorer", exact: true }));
+      rendered.rerender(<TestWrapper><ChatWindow {...props} chatScorer={scorerB} /></TestWrapper>);
+      await act(async () => { finish({ conversation_id: "score-conv", score, reused: true }); });
+      await waitFor(() => expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(2));
+      expect(screen.queryByText(notice)).not.toBeInTheDocument();
+    });
+  });
+
   it("should show an Apply failure in the scorer pane and reload the conversation", async () => {
     const user = userEvent.setup();
     mockedAttacksApi.getMessages.mockResolvedValue({

@@ -209,9 +209,12 @@ interface ConversationScoring {
   readonly latestResponseId: string | null
 }
 
+/** An Apply result, shown only for the context it was requested in. */
 interface ConversationApplyStatus extends ApplyScorerStatus {
   readonly conversationId: string
   readonly responseId: string
+  readonly scorerHash: string
+  readonly objective: string
 }
 
 function conversationScoringOf(conversationId: string, response: ConversationMessagesResponse): ConversationScoring {
@@ -1728,7 +1731,9 @@ export default function ChatWindow({
   const handleApplyScorer = async (): Promise<void> => {
     const conversationId = viewedConversationId
     const responseId = viewedScoring?.latestResponseId
-    if (!attackResultId || !conversationId || !selectedScorer || !responseId || applyingScorer.current) return
+    const scorer = selectedScorer
+    const objective = currentObjective
+    if (!attackResultId || !conversationId || !scorer || !responseId || applyingScorer.current) return
     const revision = navigationRevisionRef.current
     applyingScorer.current = true
     setApplyingConversationId(conversationId)
@@ -1736,10 +1741,9 @@ export default function ChatWindow({
     let status: ApplyScorerStatus
     try {
       const result = await attacksApi.applyScorer(attackResultId, {
-        conversation_id: conversationId, response_id: responseId,
-        scorer: selectedScorer, objective: currentObjective,
+        conversation_id: conversationId, response_id: responseId, scorer, objective,
       })
-      rememberUse({}, selectedScorer)
+      rememberUse({}, scorer)
       status = {
         intent: 'info',
         message: result.reused
@@ -1751,7 +1755,7 @@ export default function ChatWindow({
     }
     try {
       if (navigationRevisionRef.current !== revision) return
-      setApplyStatus({ ...status, conversationId, responseId })
+      setApplyStatus({ ...status, conversationId, responseId, scorerHash: scorer.identifier_hash, objective })
       if (getViewedConversationId() !== conversationId) return
       const [updated] = await Promise.all([
         attacksApi.getAttack(attackResultId),
@@ -2373,7 +2377,9 @@ export default function ChatWindow({
   )
 
   const viewedApplyStatus = applyStatus && applyStatus.conversationId === viewedConversationId
-    && applyStatus.responseId === viewedScoring?.latestResponseId ? applyStatus : null
+    && applyStatus.responseId === viewedScoring?.latestResponseId
+    && applyStatus.scorerHash === selectedScorer?.identifier_hash && applyStatus.objective === currentObjective
+    ? applyStatus : null
 
   return (
     <div className={styles.root}>
