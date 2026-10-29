@@ -28,6 +28,7 @@ from pyrit.backend.models.attacks import (
     CreateAttackResponse,
     MessagePieceView,
     MessageView,
+    ScoreView,
     TargetResponseStatus,
 )
 from pyrit.backend.models.common import (
@@ -45,6 +46,7 @@ from pyrit.backend.models.converters import (
     ConverterTypeResponse,
     PreviewStep,
 )
+from pyrit.backend.models.scores import ApplyChatScorerResponse
 from pyrit.backend.models.targets import (
     TargetListResponse,
     TargetTypeResponse,
@@ -53,8 +55,10 @@ from pyrit.backend.routes import version as version_routes
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.routes.scores import _get_user_identifier
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError, AttackService
+from pyrit.backend.services.chat_scoring_service import ChatScoringError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.memory import MemoryInterface
+from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
 
@@ -1155,6 +1159,47 @@ class TestAttackRoutes:
             )
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    @pytest.mark.parametrize(
+        ("error", "status_code"),
+        [
+            (None, status.HTTP_200_OK),
+            (PermissionError("Automated results are read-only. Choose Continue manually."), status.HTTP_403_FORBIDDEN),
+            (LookupError("The conversation does not belong to this attack."), status.HTTP_404_NOT_FOUND),
+            (
+                AttackStateConflictError("The latest response changed. Reload before applying."),
+                status.HTTP_409_CONFLICT,
+            ),
+            (ManualSendConflictError("The conversation is busy."), status.HTTP_409_CONFLICT),
+            (ManualSendQueueFullError("Too many manual operations."), status.HTTP_429_TOO_MANY_REQUESTS),
+            (ValueError("This conversation has no saved assistant response to score."), status.HTTP_400_BAD_REQUEST),
+            (ChatScoringError("The scorer could not evaluate the latest response."), status.HTTP_502_BAD_GATEWAY),
+        ],
+    )
+    def test_apply_scorer_maps_outcomes(self, client: TestClient, error: Exception | None, status_code: int) -> None:
+        """Test that Apply scorer reports each service outcome with its own status and message."""
+        result = ApplyChatScorerResponse(
+            conversation_id="conversation",
+            score=ScoreView(score_type="true_false", score_value="true", message_piece_id=uuid.uuid4()),
+            reused=True,
+        )
+        with patch("pyrit.backend.routes.attacks.get_chat_scoring_service") as get_service:
+            get_service.return_value.apply_async = AsyncMock(return_value=result, side_effect=error)
+            response = client.post(
+                "/api/attacks/attack-1/apply-scorer",
+                json={
+                    "conversation_id": str(uuid.uuid4()),
+                    "response_id": str(uuid.uuid4()),
+                    "scorer": {"registry_name": "judge", "identifier_hash": "hash"},
+                    "objective": "Goal",
+                },
+            )
+
+        assert response.status_code == status_code
+        if error is None:
+            assert response.json()["reused"] is True
+        else:
+            assert response.json() == {"detail": str(error)}
 
 
 # ============================================================================

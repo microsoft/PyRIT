@@ -8,17 +8,14 @@ import hashlib
 import json
 import logging
 import time
-import traceback
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncGenerator, Callable, Coroutine
+from collections.abc import AsyncGenerator
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import lru_cache, partial
 from typing import Any
-
-from pydantic import PydanticUserError
 
 from pyrit.backend.mappers import request_piece_to_pyrit_message_piece, request_to_pyrit_message
 from pyrit.backend.models.attacks import AddMessageRequest, ConverterConfigurationRequest, MessagePieceRequest
@@ -30,7 +27,11 @@ from pyrit.backend.models.message_sends import (
     MessageSendStatus,
     RequestConverterMode,
 )
-from pyrit.backend.services.chat_scoring_service import get_chat_scoring_service
+from pyrit.backend.services.chat_scoring_service import (
+    ChatEvaluation,
+    ChatScoringSelection,
+    get_chat_scoring_service,
+)
 from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.history_replay import validate_history_replay
@@ -38,19 +39,17 @@ from pyrit.backend.services.manual_send_scheduler import (
     ManualSendConflictError,
     ManualSendQueueFullError,
     ManualSendScheduler,
+    complete_owned_write_async,
     get_manual_send_scheduler,
 )
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.executor.attack import attack_outcome_from_score
 from pyrit.memory import CentralMemory, data_serializer_factory
-from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
-    AttackOutcome,
     AttackResult,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
@@ -58,11 +57,8 @@ from pyrit.models import (
     ConverterIdentifier,
     Message,
     MessagePiece,
-    Score,
-    ScoringExpectation,
 )
 from pyrit.models.component_spec import TargetBinding
-from pyrit.models.results.attack_result import AttackScoringInputs, ScoringFailure
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
@@ -84,9 +80,7 @@ class _ValidatedMessage:
     owns_target: bool = False
     target_binding: TargetBinding | None = None
     replay_target: PromptTarget | None = None
-    scoring_inputs: AttackScoringInputs | None = None
-    scoring_objective: str = ""
-    scoring_expectation: ScoringExpectation | None = None
+    scoring: ChatScoringSelection | None = None
     scorer: Scorer | None = None
     scoring_error: str | None = None
 
@@ -386,15 +380,12 @@ class MessageSendService:
                 validate_history_replay(target=replay_target, messages=history)
             validate_history_replay(target=target, messages=history)
 
-        inputs = policy.inputs(ar)
-        expectation = (
-            inputs.expectation if inputs and inputs.expectation else ScoringExpectation(objective=ar.objective)
-        )
+        selection = policy.selection(ar)
         scorer = None
         scoring_error = None
-        if request.send and inputs and inputs.scorer and ar.objective.strip():
+        if request.send and selection is not None:
             try:
-                scorer = policy.resolve(inputs.scorer, inherited=inputs.inherited, expectation=expectation)
+                scorer = policy.resolve_selection(selection)
             except ValueError as exc:
                 scoring_error = str(exc)
         return _ValidatedMessage(
@@ -404,9 +395,7 @@ class MessageSendService:
             applied_identifiers=applied_identifiers,
             target_binding=binding if request.send else None,
             replay_target=replay_target,
-            scoring_inputs=inputs,
-            scoring_objective=ar.objective,
-            scoring_expectation=expectation,
+            scoring=selection,
             scorer=scorer,
             scoring_error=scoring_error,
         )
@@ -428,7 +417,7 @@ class MessageSendService:
                 if progress is not None:
                     progress.state = MessageSendState.PREPARING
                 with attack_result_id_scope(attack_result_id=attack_result_id):
-                    await self._complete_memory_write_async(
+                    await complete_owned_write_async(
                         partial(
                             self._memory.add_conversation_to_memory_async,
                             conversation=Conversation(
@@ -565,7 +554,7 @@ class MessageSendService:
         conversations, pieces, messages = await asyncio.to_thread(
             self._prepare_copies, operation=operation, source=source, history=history, message=message
         )
-        await self._complete_memory_write_async(
+        await complete_owned_write_async(
             partial(
                 self._register_copies_async,
                 operation=operation,
@@ -721,8 +710,7 @@ class MessageSendService:
             index for index, piece in enumerate(request.pieces) if piece.converted_value is not None
         }
         last_response: MessagePiece | None = None
-        scoring_result: ScoringFailure | None = None
-        objective_score: Score | None = None
+        evaluation: ChatEvaluation | None = None
 
         existing = await self._memory.get_message_pieces_async(conversation_id=msg_conversation_id)
         sequence = max((p.sequence for p in existing), default=-1) + 1
@@ -766,38 +754,16 @@ class MessageSendService:
                 )
             if progress is not None:
                 progress.state = MessageSendState.FINALIZING
-            current_pieces = await self._memory.get_message_pieces_async(conversation_id=msg_conversation_id)
-            last_response = (
-                delivered_response.message_pieces[0]
-                if isinstance(delivered_response, Message) and delivered_response.api_role == "assistant"
-                else next(
-                    (piece for piece in current_pieces if piece.id not in prior_ids and piece.role == "assistant"),
-                    None,
-                )
+            response = await self._stored_response_async(
+                conversation_id=msg_conversation_id, delivered=delivered_response, prior_ids=prior_ids
             )
-            if (
-                last_response is not None
-                and validated.scoring_inputs
-                and validated.scoring_inputs.scorer
-                and validated.scoring_objective.strip()
-            ):
-                response = delivered_response
-                if not isinstance(response, Message):
-                    responses = await self._memory.get_conversation_messages_async(conversation_id=msg_conversation_id)
-                    response = next(
-                        (
-                            message
-                            for message in responses
-                            if any(piece.id == last_response.id for piece in message.message_pieces)
-                        ),
-                        None,
-                    )
-                if response is not None:
-                    scoring_result, objective_score = await self._score_chat_response_async(
-                        response=response,
-                        scoring=validated,
-                        progress=progress,
-                    )
+            last_response = response.message_pieces[0] if response is not None else None
+            if response is not None and validated.scoring is not None:
+                evaluation = await self._score_chat_response_async(
+                    response=response,
+                    validated=validated,
+                    progress=progress,
+                )
         else:
             existing_metadata = await self._memory.get_conversation_metadata_async(conversation_id=msg_conversation_id)
             await self._store_message_only_async(
@@ -809,7 +775,7 @@ class MessageSendService:
             )
 
         async with self._scheduler.metadata_update_async(attack_result_id=attack_result_id):
-            await self._complete_memory_write_async(
+            await complete_owned_write_async(
                 partial(
                     self._update_attack_after_message_async,
                     attack_result_id=attack_result_id,
@@ -822,102 +788,55 @@ class MessageSendService:
                             piece_count=len(request.pieces),
                         ),
                     ),
-                    scoring_result=scoring_result,
-                    objective_score=objective_score,
+                    evaluation=evaluation,
                 )
             )
+
+    async def _stored_response_async(
+        self, *, conversation_id: str, delivered: Message | None, prior_ids: set[uuid.UUID]
+    ) -> Message | None:
+        """
+        Find the assistant response that this send stored, including a stored error response.
+
+        Returns:
+            The response, or None when the send stored no assistant response.
+        """
+        if isinstance(delivered, Message) and delivered.api_role == "assistant":
+            return delivered
+        messages = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
+        return get_chat_scoring_service().latest_response(
+            [message for message in messages if message.message_pieces[0].id not in prior_ids]
+        )
 
     async def _score_chat_response_async(
         self,
         *,
         response: Message,
-        scoring: _ValidatedMessage,
+        validated: _ValidatedMessage,
         progress: MessageSendConversation | None,
-    ) -> tuple[ScoringFailure | None, Score | None]:
-        reference = scoring.scoring_inputs.scorer if scoring.scoring_inputs else None
-        assert reference is not None
-        conversation_id = response.message_pieces[0].conversation_id
-        assert conversation_id is not None
-        response_id = str(response.message_pieces[0].id)
+    ) -> ChatEvaluation:
+        """
+        Evaluate the delivered response with the scoring selection captured at admission.
+
+        Returns:
+            The evaluation, including recorded diagnostics when the scorer failed.
+        """
+        assert validated.scoring is not None
         if progress is not None:
             progress.is_scoring = True
         try:
-            if scoring.scoring_error:
-                raise ValueError(scoring.scoring_error)
-            score = await get_chat_scoring_service().score_response_async(
+            evaluation = await get_chat_scoring_service().evaluate_async(
+                selection=validated.scoring,
                 response=response,
-                scorer=scoring.scorer,
-                expectation=scoring.scoring_expectation,
+                scorer=validated.scorer,
+                error=validated.scoring_error,
             )
-            return None, score
-        except Exception as exc:
-            logger.exception("Chat scoring failed for response '%s'.", response_id)
-            result = ScoringFailure(
-                scorer=reference,
-                objective=scoring.scoring_objective,
-                response_id=response_id,
-                conversation_id=conversation_id,
-                error=scoring.scoring_error or self._scoring_failure_detail(exception=exc, response_id=response_id),
-            )
-            if progress is not None:
-                progress.scoring_error = result.error
-            return result, None
         finally:
             if progress is not None:
                 progress.is_scoring = False
-
-    @staticmethod
-    def _scoring_failure_detail(*, exception: Exception, response_id: str) -> str:
-        """
-        Retain scorer diagnostics for trusted operators without adding request headers.
-
-        Returns:
-            The exception chain, provider error details, and traceback with a response reference.
-        """
-        from httpx import HTTPStatusError, ResponseNotRead
-        from openai import APIStatusError
-
-        cause: BaseException = exception
-        seen: set[int] = set()
-        provider_details: list[str] = []
-        while id(cause) not in seen:
-            seen.add(id(cause))
-            if isinstance(cause, APIStatusError):
-                provider_details.append(
-                    f"Provider HTTP status: {cause.status_code}\n"
-                    f"Provider request ID: {cause.request_id}\n"
-                    f"Provider error body: {json.dumps(cause.body, default=str)}"
-                )
-            elif isinstance(cause, HTTPStatusError):
-                response = cause.response
-                try:
-                    body = response.text
-                except ResponseNotRead:
-                    body = "(response body was not read)"
-                request_id = (
-                    response.headers.get("x-request-id")
-                    or response.headers.get("request-id")
-                    or response.headers.get("apim-request-id")
-                )
-                provider_details.append(
-                    f"Provider HTTP status: {response.status_code}\n"
-                    f"Provider request ID: {request_id}\nProvider error body: {body}"
-                )
-            nested = cause.__cause__ or (None if cause.__suppress_context__ else cause.__context__)
-            if nested is None:
-                break
-            cause = nested
-        kind = type(cause).__name__
-        if isinstance(cause, PydanticUserError) and cause.code:
-            kind = f"{kind} ({cause.code})"
-        return "\n\n".join(
-            [
-                "The response was sent, but its objective scorer failed.",
-                f"Cause: {kind}\nMessage: {cause}\nResponse reference: {response_id}",
-                *provider_details,
-                "Traceback:\n" + "".join(traceback.format_exception(exception)),
-            ]
-        )
+        if progress is not None and evaluation.failure is not None:
+            progress.scoring_error = evaluation.failure.error
+        return evaluation
 
     def _validate_target_match(
         self, *, attack_identifier: ComponentIdentifier | None, target: PromptTarget | None
@@ -949,58 +868,61 @@ class MessageSendService:
         attack_result_id: str,
         last_response: MessagePiece | None,
         validated: _ValidatedMessage,
-        scoring_result: ScoringFailure | None = None,
-        objective_score: Score | None = None,
+        evaluation: ChatEvaluation | None = None,
     ) -> None:
-        for _ in range(5):
-            if await self._update_attack_after_message_once_async(
-                attack_result_id=attack_result_id,
-                last_response=last_response,
-                validated=validated,
-                scoring_result=scoring_result,
-                objective_score=objective_score,
-            ):
-                return
-        raise AttackStateConflictError(
-            "The response and score were saved, but the attack kept changing during publication. Refresh its results."
-        )
-
-    async def _update_attack_after_message_once_async(
-        self,
-        *,
-        attack_result_id: str,
-        last_response: MessagePiece | None,
-        validated: _ValidatedMessage,
-        scoring_result: ScoringFailure | None = None,
-        objective_score: Score | None = None,
-    ) -> bool:
         """
-        Update attack recency and converter tracking after a message is added.
+        Update attack recency, converter tracking, and any chat score after a message is added.
 
         Bumps the attack's ``timestamp`` column (the single indexed recency key) so the edited
-        conversation re-floats to the top of the History view.
+        conversation re-floats to the top of the History view. A chat evaluation is recorded
+        through the shared chat-scoring publication in the same guarded write.
 
         Args:
             attack_result_id: The attack result to update.
             last_response: The latest delivered response piece, if one was stored.
             validated: Captured converters and scoring inputs for the admitted send.
-            scoring_result: Scoring status for the delivered response.
-            objective_score: The framework-selected objective score.
-
-        Returns:
-            False when publication must be retried after a concurrent edit.
+            evaluation: The chat evaluation of the delivered response, if one ran.
 
         Raises:
             ValueError: If the attack disappeared before its metadata could be updated.
         """
+        if evaluation is not None:
+            try:
+                await get_chat_scoring_service().publish_async(
+                    attack_result_id=attack_result_id,
+                    evaluation=evaluation,
+                    message_fields=lambda attack: self._message_fields(
+                        attack=attack, last_response=last_response, validated=validated
+                    ),
+                )
+            except LookupError as exc:
+                raise ValueError(f"Attack '{attack_result_id}' not found after message send") from exc
+            return
         results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             raise ValueError(f"Attack '{attack_result_id}' not found after message send")
-        ar = results[0]
-        last_response_id = str(last_response.id) if last_response else None
-        update_fields: dict[str, Any] = {"timestamp": datetime.now(UTC)}
-        if last_response_id:
-            update_fields["last_response_id"] = last_response_id
+        await self._memory.update_attack_result_by_id_async(
+            attack_result_id=attack_result_id,
+            update_fields={
+                "timestamp": datetime.now(UTC),
+                **self._message_fields(attack=results[0], last_response=last_response, validated=validated),
+            },
+        )
+
+    def _message_fields(
+        self, *, attack: AttackResult, last_response: MessagePiece | None, validated: _ValidatedMessage
+    ) -> dict[str, Any]:
+        """
+        Prepare the attack's recency and converter-tracking updates for an added message.
+
+        Returns:
+            The delivered response when it is the newest, and the merged converter identifiers.
+        """
+        fields: dict[str, Any] = {}
+        if last_response is not None and get_chat_scoring_service().is_latest_response(
+            attack=attack, piece=last_response
+        ):
+            fields["last_response_id"] = str(last_response.id)
 
         request_converter_ids = [
             identifier for identifiers in validated.applied_identifiers.values() for identifier in identifiers
@@ -1008,8 +930,8 @@ class MessageSendService:
         request_converter_ids.extend(self._get_converter_identifiers(configurations=validated.request_configurations))
         response_converter_ids = self._get_converter_identifiers(configurations=validated.response_configurations)
         if request_converter_ids or response_converter_ids:
-            attack_strategy_identifier = ar.get_attack_strategy_identifier()
-            if attack_strategy_identifier and ar.atomic_attack_identifier:
+            attack_strategy_identifier = attack.get_attack_strategy_identifier()
+            if attack_strategy_identifier and attack.atomic_attack_identifier:
                 attack_id = AttackIdentifier.from_component_identifier(attack_strategy_identifier)
                 merged_request_converters = self._merge_attack_result_converter_identifiers(
                     existing=attack_id.request_converters,
@@ -1029,58 +951,11 @@ class MessageSendService:
                         response_converters=merged_response_converters,
                     )
                     new_atomic = self._replace_attack_in_atomic(
-                        AtomicAttackIdentifier.from_component_identifier(ar.atomic_attack_identifier),
+                        AtomicAttackIdentifier.from_component_identifier(attack.atomic_attack_identifier),
                         attack=new_attack_id,
                     )
-                    update_fields["atomic_attack_identifier"] = new_atomic.model_dump()
-
-        if scoring_result is not None or objective_score is not None:
-            assert last_response is not None
-            conversation_id = last_response.conversation_id
-            selection_current = (
-                ar.objective == validated.scoring_objective
-                and get_chat_scoring_service().inputs(ar) == validated.scoring_inputs
-            )
-            if selection_current:
-                errors = dict(ar.metadata.get(AttackResult.SCORING_ERRORS_KEY, {}))
-                if scoring_result is not None:
-                    errors[conversation_id] = scoring_result.model_dump(mode="json")
-                else:
-                    errors.pop(conversation_id, None)
-                update_fields["attack_metadata"] = {AttackResult.SCORING_ERRORS_KEY: errors}
-            is_latest = ar.last_response is None or ar.last_response.timestamp <= last_response.timestamp
-            if not is_latest:
-                update_fields.pop("last_response_id", None)
-            if is_latest and selection_current:
-                update_fields["automated_score_id"] = objective_score.id if objective_score else None
-                if ar.human_score is None:
-                    outcome = (
-                        attack_outcome_from_score(objective_score) if objective_score else AttackOutcome.UNDETERMINED
-                    )
-                    update_fields.update(
-                        outcome=outcome.value,
-                        outcome_reason=objective_score.score_rationale if objective_score else None,
-                    )
-            try:
-                await self._memory.update_attack_result_conditionally_async(
-                    attack_result_id=attack_result_id,
-                    expected_fields={
-                        "objective": ar.objective,
-                        "attack_metadata": ar.metadata,
-                        "human_score_id": ar.human_score.id if ar.human_score else None,
-                        "last_response_id": ar.last_response.id if ar.last_response else None,
-                    },
-                    update_fields=update_fields,
-                )
-            except AttackStateConflictError:
-                logger.info("Retrying chat scoring publication for response '%s'.", last_response_id)
-                return False
-            return True
-        await self._memory.update_attack_result_by_id_async(
-            attack_result_id=attack_result_id,
-            update_fields=update_fields,
-        )
-        return True
+                    fields["atomic_attack_identifier"] = new_atomic.model_dump()
+        return fields
 
     @staticmethod
     def _replace_converter_pipelines(
@@ -1263,7 +1138,7 @@ class MessageSendService:
     ) -> None:
         """Store message without sending (send=False)."""
         await self._persist_base64_pieces_async(request)
-        await self._complete_memory_write_async(
+        await complete_owned_write_async(
             partial(
                 self._persist_message_only_async,
                 conversation_id=conversation_id,
@@ -1296,24 +1171,6 @@ class MessageSendService:
             piece.set_simulated_role()
             piece.converter_identifiers.extend(applied_converter_identifiers.get(index, []))
             await self._memory.add_message_pieces_to_memory_async(message_pieces=[piece])
-
-    @staticmethod
-    async def _complete_memory_write_async(write: Callable[[], Coroutine[Any, Any, None]]) -> None:
-        """Keep ownership until a write finishes, even when the caller cancels."""
-        worker = asyncio.create_task(write())
-        cancelled = False
-        while not worker.done():
-            try:
-                await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                cancelled = True
-            except Exception:
-                if not cancelled:
-                    raise
-                break
-        if cancelled:
-            raise asyncio.CancelledError from (None if worker.cancelled() else worker.exception())
-        worker.result()
 
     async def _resolve_video_remix_metadata_async(self, request: AddMessageRequest) -> None:
         """

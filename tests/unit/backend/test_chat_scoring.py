@@ -36,6 +36,10 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
+    ConversationReference,
+    ConversationType,
+    MatchesObjective,
     Message,
     MessagePiece,
     MessageScorable,
@@ -49,9 +53,39 @@ from pyrit.models import (
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.results.attack_result import AttackScoringInputs
 from pyrit.registry import ScorerRegistry
-from pyrit.score import ManualScorer, MessageToolCallScorer, SubStringScorer
+from pyrit.score import (
+    ManualScorer,
+    MessageToolCallScorer,
+    MessageTrueFalseScorer,
+    ScorerPromptValidator,
+    SubStringScorer,
+)
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
+
+
+class _ObjectiveJudge(MessageTrueFalseScorer):
+    """A deterministic judge whose objective-only input gains the ``MatchesObjective`` condition."""
+
+    CONDITION_TYPE = MatchesObjective
+
+    def __init__(self) -> None:
+        super().__init__(validator=ScorerPromptValidator())
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        return [
+            Score(
+                score_value="true",
+                score_type="true_false",
+                message_piece_id=message_piece.id,
+                scorer_class_identifier=self.get_identifier(),
+            )
+        ]
 
 
 @pytest.fixture
@@ -155,7 +189,82 @@ async def test_apply_scores_only_latest_response_and_reuses_after_selection_revi
         attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
     )
     assert transcript is not None and transcript.automated_score is not None
-    assert transcript.automated_score.id == first.score.id
+    assert transcript.automated_score.id == first.score.id and transcript.outcome == AttackOutcome.SUCCESS
+
+
+async def test_apply_reuses_result_of_scorer_that_adds_objective_condition_async(
+    *,
+    latest_response_chat: tuple[ChatScoringService, AttackResult, ApplyChatScorerRequest, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    policy, attack, request, _ = latest_response_chat
+    judge = _ObjectiveJudge()
+    ScorerRegistry.get_registry_singleton().instances.register(judge, name="objective-judge")
+    reference = RegisteredComponentReference(
+        registry_name="objective-judge", identifier_hash=judge.get_identifier().hash
+    )
+    await AttackService().update_attack_async(
+        attack_result_id=attack.attack_result_id, request=UpdateAttackRequest(chat_scorer=reference)
+    )
+    request = request.model_copy(update={"scorer": reference})
+    with patch.object(judge, "score_async", wraps=judge.score_async) as evaluate:
+        first = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+        repeated = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+    [stored] = await sqlite_instance.get_prompt_scores_async(prompt_ids=[request.response_id])
+    assert stored.scored_expectation == ScoringExpectation(objective=attack.objective, conditions=(MatchesObjective(),))
+    assert repeated.reused and repeated.score.id == first.score.id and evaluate.call_count == 1
+
+
+async def test_send_result_of_scorer_that_adds_objective_condition_is_projected_and_reused_async(
+    *,
+    scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    service, attack, _, _ = scoring_chat
+    judge = _ObjectiveJudge()
+    ScorerRegistry.get_registry_singleton().instances.register(judge, name="objective-judge")
+    reference = RegisteredComponentReference(
+        registry_name="objective-judge", identifier_hash=judge.get_identifier().hash
+    )
+    await AttackService().update_attack_async(
+        attack_result_id=attack.attack_result_id, request=UpdateAttackRequest(chat_scorer=reference)
+    )
+    with patch.object(judge, "score_async", wraps=judge.score_async) as evaluate:
+        await service.add_message_async(attack_result_id=attack.attack_result_id, request=chat_request(attack))
+        transcript = await AttackService().get_conversation_messages_async(
+            attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+        )
+        assert transcript is not None and transcript.automated_score is not None
+        assert transcript.outcome == AttackOutcome.SUCCESS and transcript.latest_response_id is not None
+        request = ApplyChatScorerRequest(
+            conversation_id=uuid.UUID(attack.conversation_id),
+            response_id=uuid.UUID(transcript.latest_response_id),
+            scorer=reference,
+            objective=attack.objective,
+        )
+        with patch(
+            "pyrit.backend.services.chat_scoring_service.get_manual_send_scheduler", return_value=service._scheduler
+        ):
+            applied = await ChatScoringService().apply_async(attack_result_id=attack.attack_result_id, request=request)
+    assert applied.reused and applied.score.id == transcript.automated_score.id and evaluate.call_count == 1
+
+
+async def test_apply_publication_conflicts_are_bounded_and_release_the_conversation_async(
+    *,
+    latest_response_chat: tuple[ChatScoringService, AttackResult, ApplyChatScorerRequest, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    policy, attack, request, _ = latest_response_chat
+    with patch.object(
+        sqlite_instance,
+        "update_attack_result_conditionally_async",
+        side_effect=AttackStateConflictError("The attack changed."),
+    ) as publish:
+        with pytest.raises(AttackStateConflictError, match="kept changing"):
+            await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+    assert publish.call_count == ChatScoringService.MAX_PUBLICATION_ATTEMPTS
+    retried = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+    assert retried.reused
 
 
 async def test_apply_reuses_false_verdict_and_rechecks_changed_objective_async(
@@ -278,12 +387,17 @@ async def test_apply_requires_complete_response_evidence_not_a_single_piece_scor
         scorable=MessageScorable(message_piece_ids=(response.message_pieces[0].id,)),
         expectation=ScoringExpectation(objective=request.objective),
     )
-    request = request.model_copy(update={"response_id": response.message_pieces[0].id})
+    request = request.model_copy(update={"response_id": response.message_pieces[1].id})
     with patch.object(scorer, "score_async", wraps=scorer.score_async) as evaluate:
         result = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
         repeated = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
     assert not result.reused and repeated.reused and evaluate.call_count == 1
     assert result.score.scorable == MessageScorable.from_message(response)
+    transcript = await AttackService().get_conversation_messages_async(
+        attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+    )
+    *_, latest = await sqlite_instance.get_conversation_messages_async(conversation_id=attack.conversation_id)
+    assert transcript is not None and transcript.latest_response_id == str(latest.message_pieces[0].id)
 
 
 async def test_apply_rejects_automated_execution_async(
@@ -339,6 +453,11 @@ async def test_apply_preserves_human_override_async(
     assert saved.human_score is not None and saved.human_score.id == human.id
     assert saved.automated_score is not None and saved.automated_score.id == result.score.id
     assert saved.outcome == AttackOutcome.FAILURE and saved.outcome_reason == "Human review"
+    transcript = await AttackService().get_conversation_messages_async(
+        attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+    )
+    assert transcript is not None and transcript.outcome == AttackOutcome.FAILURE
+    assert transcript.automated_score is not None and transcript.automated_score.id == result.score.id
 
 
 async def test_apply_failure_is_visible_and_retry_does_not_reuse_it_async(
@@ -346,13 +465,14 @@ async def test_apply_failure_is_visible_and_retry_does_not_reuse_it_async(
 ) -> None:
     policy, attack, request, scorer = latest_response_chat
     with patch.object(scorer, "score_async", side_effect=RuntimeError("Judge unavailable")):
-        with pytest.raises(ChatScoringError, match="Judge unavailable"):
+        with pytest.raises(ChatScoringError, match="could not evaluate the latest response"):
             await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
     transcript = await AttackService().get_conversation_messages_async(
         attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
     )
     assert transcript is not None and transcript.scoring_failure is not None
-    assert "Judge unavailable" in transcript.scoring_failure.error
+    assert "Judge unavailable" in transcript.scoring_failure.error and "Traceback:" in transcript.scoring_failure.error
+    assert str(request.response_id) in transcript.scoring_failure.error
     result = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
     assert not result.reused
     transcript = await AttackService().get_conversation_messages_async(
@@ -397,14 +517,14 @@ async def test_apply_cancellation_keeps_ownership_until_publication_finishes_asy
 ) -> None:
     policy, attack, request, _ = latest_response_chat
     entered, release = asyncio.Event(), asyncio.Event()
-    publish = policy._publish_async
+    publish = policy.publish_async
 
     async def publish_async(**kwargs: Any) -> None:
         entered.set()
         await release.wait()
         await publish(**kwargs)
 
-    with patch.object(policy, "_publish_async", side_effect=publish_async):
+    with patch.object(policy, "publish_async", side_effect=publish_async):
         task = asyncio.create_task(policy.apply_async(attack_result_id=attack.attack_result_id, request=request))
         try:
             await asyncio.wait_for(entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
@@ -837,6 +957,82 @@ async def test_scores_and_restores_actual_response_async(
     assert "scoring_failure" not in summary.model_dump()
 
 
+async def test_projection_describes_the_newest_response_after_each_send_async(
+    scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    service, attack, _, _ = scoring_chat
+    attacks = AttackService()
+    await service.add_message_async(attack_result_id=attack.attack_result_id, request=chat_request(attack))
+    first = await attacks.get_conversation_messages_async(
+        attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+    )
+    judge = SubStringScorer(substring="never-present")
+    ScorerRegistry.get_registry_singleton().instances.register(judge, name="false-judge")
+    await attacks.update_attack_async(
+        attack_result_id=attack.attack_result_id,
+        request=UpdateAttackRequest(
+            chat_scorer=RegisteredComponentReference(
+                registry_name="false-judge", identifier_hash=judge.get_identifier().hash
+            )
+        ),
+    )
+    await service.add_message_async(attack_result_id=attack.attack_result_id, request=chat_request(attack))
+    second = await attacks.get_conversation_messages_async(
+        attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+    )
+    *_, latest = await sqlite_instance.get_conversation_messages_async(conversation_id=attack.conversation_id)
+    assert first is not None and second is not None and second.automated_score is not None
+    assert first.outcome == AttackOutcome.SUCCESS and second.outcome == AttackOutcome.FAILURE
+    assert second.latest_response_id == str(latest.message_pieces[0].id) != first.latest_response_id
+    assert str(second.automated_score.message_piece_id) == second.latest_response_id
+
+
+@pytest.mark.parametrize("scored", [False, True])
+async def test_projection_keeps_a_recorded_automated_result_with_its_conversation_async(
+    automated_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    scored: bool,
+) -> None:
+    _, source, _, scorer = automated_chat
+    branch = str(uuid.uuid4())
+    attack = AttackResult(
+        conversation_id=str(uuid.uuid4()),
+        objective=source.objective,
+        outcome=AttackOutcome.SUCCESS if scored else AttackOutcome.ERROR,
+        atomic_attack_identifier=source.atomic_attack_identifier,
+        related_conversations={
+            ConversationReference(conversation_id=branch, conversation_type=ConversationType.PRUNED)
+        },
+    )
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
+    responses = [
+        MessagePiece(role="assistant", conversation_id=conversation_id, original_value="default")
+        for conversation_id in (attack.conversation_id, branch)
+    ]
+    for response in responses:
+        await sqlite_instance.add_message_to_memory_async(request=response.to_message())
+    if scored:
+        [score] = await scorer.score_async(
+            scorable=MessageScorable(message_piece_ids=(responses[0].id,)),
+            expectation=ScoringExpectation(objective=attack.objective),
+        )
+        await sqlite_instance.update_attack_result_by_id_async(
+            attack_result_id=attack.attack_result_id,
+            update_fields={"automated_score_id": score.id, "last_response_id": responses[0].id},
+        )
+    attacks = AttackService()
+    main, other = [
+        await attacks.get_conversation_messages_async(
+            attack_result_id=attack.attack_result_id, conversation_id=conversation_id
+        )
+        for conversation_id in (attack.conversation_id, branch)
+    ]
+    assert main is not None and other is not None
+    assert main.outcome == attack.outcome and (main.automated_score is not None) is scored
+    assert other.outcome == AttackOutcome.UNDETERMINED and other.automated_score is None
+
+
 @pytest.mark.parametrize("wrapped_configuration_error", [False, True])
 async def test_scoring_failure_keeps_response_and_allows_next_send_async(
     scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
@@ -894,7 +1090,7 @@ def test_scoring_failure_includes_provider_diagnostics(provider: str) -> None:
     )
     wrapper = RuntimeError("Scoring wrapper")
     wrapper.__cause__ = failure
-    detail = MessageSendService._scoring_failure_detail(exception=wrapper, response_id="response-123")
+    detail = ChatScoringService.failure_detail(exception=wrapper, response_id="response-123")
     assert "Provider HTTP status: 429" in detail
     assert "Provider request ID: request-123" in detail
     assert "Provider quota exceeded" in detail and "Scoring wrapper" in detail

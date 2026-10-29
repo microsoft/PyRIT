@@ -1012,11 +1012,12 @@ describe("ChatWindow Integration", () => {
     const user = userEvent.setup();
     const reference = { registry_name: "judge", identifier_hash: "hash" };
     const response = makeTextResponse("Saved response").messages;
-    mockedAttacksApi.getMessages.mockResolvedValue({ ...response, conversation_id: "score-conv", automated_score: null });
+    const loaded = { ...response, conversation_id: "score-conv", automated_score: null, latest_response_id: "reasoning-piece" };
+    mockedAttacksApi.getMessages.mockResolvedValue(loaded);
     const score = {
       id: "saved-score", message_piece_id: response.messages[0].message_pieces[0].id,
       scorer_type: "SubStringScorer", score_type: "true_false", score_value: "true",
-      objective: "Goal", score_rationale: "Objective satisfied", timestamp: "",
+      score_rationale: "Objective satisfied", timestamp: "",
     };
     mockedAttacksApi.applyScorer.mockResolvedValue({ conversation_id: "score-conv", score, reused: true });
     mockedAttacksApi.getAttack.mockResolvedValue({
@@ -1034,16 +1035,121 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
     expect(mockedAttacksApi.applyScorer).not.toHaveBeenCalled();
     expect(readUserPreferences("local").lastUsedChatScorer).toBeUndefined();
-    mockedAttacksApi.getMessages.mockResolvedValue({ ...response, conversation_id: "score-conv", automated_score: score });
+    mockedAttacksApi.getMessages.mockResolvedValue({ ...loaded, automated_score: score, outcome: "success" });
     await user.click(screen.getByRole("button", { name: "Apply scorer", exact: true }));
     await waitFor(() => expect(mockedAttacksApi.applyScorer).toHaveBeenCalledTimes(1));
     expect(mockedAttacksApi.applyScorer.mock.calls[0]).toEqual(["score-attack", {
-      conversation_id: "score-conv", response_id: response.messages[0].message_pieces[0].id,
-      objective: "Goal", scorer: reference,
+      conversation_id: "score-conv", response_id: "reasoning-piece", objective: "Goal", scorer: reference,
     }]);
     expect(await screen.findByText(/Already scored. Kept the existing valid result/)).toBeInTheDocument();
     expect(readUserPreferences("local").lastUsedChatScorer).toEqual(reference);
     expect(screen.getByTestId("automated-score-details")).toHaveTextContent("Objective satisfied");
+    expect(screen.getByRole("button", { name: /objective achieved outcome: success/i })).toBeInTheDocument();
+  });
+
+  it("should show the new latest response's result in the header after a send", async () => {
+    const user = userEvent.setup();
+    const verdict = (id: string, value: string) => ({
+      id, message_piece_id: "p-resp", scorer_type: "SubStringScorer", score_type: "true_false",
+      score_value: value, timestamp: "",
+    });
+    mockedAttacksApi.getMessages.mockResolvedValueOnce({
+      ...makeTextResponse("First response").messages, conversation_id: "score-conv",
+      automated_score: verdict("first", "true"), outcome: "success", latest_response_id: "p-resp",
+    });
+    mockedAttacksApi.submitMessageSend.mockResolvedValue({
+      attack_result_id: "score-attack", conversation_id: "score-conv", send_id: "score-send",
+      request_turn_number: 2, state: "completed", error: null, failure_stage: null,
+    });
+    mockedAttacksApi.getAttack.mockResolvedValue({
+      attack_result_id: "score-attack", conversation_id: "score-conv", attack_type: "ManualAttack",
+      objective: "Goal", converters: [], message_count: 4, related_conversation_ids: [],
+      labels: {}, created_at: "", updated_at: "",
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="score-attack" conversationId="score-conv"
+      activeConversationId="score-conv" objective="Goal" outcome="success"
+      chatScorer={{ registry_name: "judge", identifier_hash: "hash" }} /></TestWrapper>);
+    await screen.findByText("First response");
+    expect(screen.getByRole("button", { name: /objective achieved outcome: success/i })).toBeInTheDocument();
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      ...makeTextResponse("Second response").messages, conversation_id: "score-conv",
+      automated_score: verdict("second", "false"), outcome: "failure", latest_response_id: "p-resp",
+    });
+    await user.type(screen.getByPlaceholderText("Type prompt here"), "Next");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByText("Second response")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /objective achieved outcome: failure/i })).toBeInTheDocument();
+  });
+
+  it.each([
+    { projected: "error" as const, attackOutcome: "error" as const },
+    { projected: "undetermined" as const, attackOutcome: "error" as const },
+  ])("should show the projected $projected outcome for the viewed response", async ({ projected, attackOutcome }) => {
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      ...makeTextResponse("Saved response").messages, conversation_id: "score-conv",
+      automated_score: null, outcome: projected, latest_response_id: "p-resp",
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="score-attack" conversationId="score-conv"
+      activeConversationId="score-conv" objective="Goal" outcome={attackOutcome} executionReadOnly /></TestWrapper>);
+    await screen.findByText("Saved response");
+    expect(screen.getByRole("button", { name: `Objective achieved outcome: ${projected}` })).toBeInTheDocument();
+  });
+
+  it("should refresh the header projection after the objective changes", async () => {
+    const user = userEvent.setup();
+    const saved = { ...makeTextResponse("Saved response").messages, conversation_id: "score-conv", latest_response_id: "p-resp" };
+    mockedAttacksApi.getMessages.mockResolvedValueOnce({
+      ...saved, outcome: "success", automated_score: {
+        id: "goal-score", message_piece_id: "p-resp", scorer_type: "SubStringScorer", score_type: "true_false",
+        score_value: "true", timestamp: "",
+      },
+    });
+    mockedAttacksApi.updateAttack.mockResolvedValue({
+      attack_result_id: "score-attack", conversation_id: "score-conv", attack_type: "ManualAttack",
+      objective: "New goal", converters: [], message_count: 2, related_conversation_ids: [],
+      labels: {}, created_at: "", updated_at: "",
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="score-attack" conversationId="score-conv"
+      activeConversationId="score-conv" objective="Goal" outcome="success"
+      chatScorer={{ registry_name: "judge", identifier_hash: "hash" }} /></TestWrapper>);
+    await screen.findByText("Saved response");
+    expect(screen.getByRole("button", { name: "Objective achieved outcome: success" })).toBeInTheDocument();
+    mockedAttacksApi.getMessages.mockResolvedValue({ ...saved, outcome: "undetermined", automated_score: null });
+    await user.click(screen.getByRole("button", { name: "Edit objective" }));
+    const input = screen.getByRole("textbox", { name: "Attack objective" });
+    await user.clear(input);
+    await user.type(input, "New goal{Enter}");
+    expect(await screen.findByRole("button", { name: "Objective achieved outcome: undetermined" })).toBeInTheDocument();
+  });
+
+  it("should show an Apply failure in the scorer pane and reload the conversation", async () => {
+    const user = userEvent.setup();
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      ...makeTextResponse("Saved response").messages, conversation_id: "score-conv",
+      automated_score: null, outcome: "undetermined", latest_response_id: "p-resp",
+    });
+    mockedAttacksApi.applyScorer.mockRejectedValue({
+      isAxiosError: true, response: { status: 409, data: { detail: "The latest response changed. Reload before applying the scorer." } },
+    });
+    mockedAttacksApi.getAttack.mockResolvedValue({
+      attack_result_id: "score-attack", conversation_id: "score-conv", attack_type: "ManualAttack",
+      objective: "Goal", converters: [], message_count: 2, related_conversation_ids: [],
+      labels: {}, created_at: "", updated_at: "",
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="score-attack" conversationId="score-conv"
+      activeConversationId="score-conv" objective="Goal"
+      chatScorer={{ registry_name: "judge", identifier_hash: "hash" }}
+      availableScorers={[{ scorer_registry_name: "judge", identifier: {
+        class_name: "SubStringScorer", class_module: "pyrit.score", hash: "hash", scorer_type: "true_false",
+      } }]} /></TestWrapper>);
+    await screen.findByText("Saved response");
+    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
+    await user.click(screen.getByRole("button", { name: "Apply scorer", exact: true }));
+    const pane = screen.getByRole("region", { name: "Automated scorer selection" });
+    expect(await within(pane).findByRole("alert")).toHaveTextContent("The latest response changed. Reload before applying the scorer.");
+    await waitFor(() => expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(2));
+    expect(within(pane).getByRole("button", { name: "Apply scorer", exact: true })).toBeEnabled();
   });
 
   it("should dismiss scoring error notices after ten seconds without dismissing saved error details", async () => {

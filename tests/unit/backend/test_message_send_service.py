@@ -310,8 +310,8 @@ class TestAddMessage:
             sequence=1,
         )
         mock_memory.get_attack_results_async.return_value = [ar]
-        mock_memory.get_message_pieces_async.side_effect = [[], [response_piece]]
-        mock_memory.get_conversation_messages_async.return_value = []
+        mock_memory.get_message_pieces_async.return_value = []
+        mock_memory.get_conversation_messages_async.return_value = [response_piece.to_message()]
 
         with (
             patch("pyrit.backend.services.message_send_service.get_target_service") as mock_get_target_svc,

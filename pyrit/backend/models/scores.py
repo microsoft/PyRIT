@@ -18,7 +18,7 @@ class ApplyChatScorerRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     conversation_id: uuid.UUID
-    response_id: uuid.UUID
+    response_id: uuid.UUID = Field(..., description="ID of a piece in the latest response the client saw")
     scorer: RegisteredComponentReference
     objective: TextStr
 

@@ -79,7 +79,7 @@ async def apply_chat_scorer_async(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ChatScoringError as exc:
-        raise HTTPException(status_code=502, detail=f"Unable to score the latest response. {exc}") from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/save-conversation", response_model=AddMessageResponse)

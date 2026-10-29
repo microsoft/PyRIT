@@ -29,7 +29,14 @@ import {
 } from '@fluentui/react-icons'
 
 import OutcomeBadge from '@/components/OutcomeBadge'
-import type { AttackOutcome, BackendScore, RegisteredComponentReference, ScoringFailure, ScorerInstance } from '@/types'
+import type {
+  ApplyScorerStatus,
+  AttackOutcome,
+  BackendScore,
+  RegisteredComponentReference,
+  ScoringFailure,
+  ScorerInstance,
+} from '@/types'
 import { findRegisteredScorer } from '@/utils/scorerPresentation'
 import { toApiError } from '@/services/errors'
 
@@ -62,7 +69,10 @@ interface ObjectiveHeaderProps {
   canUpdateScorer?: boolean
   onUpdateScorer?: (reference: RegisteredComponentReference | null) => Promise<void>
   canApplyScorer?: boolean
-  onApplyScorer?: () => Promise<boolean>
+  onApplyScorer?: () => Promise<void>
+  /** True while the selected scorer is applied to this conversation's latest response. */
+  applyingScorer?: boolean
+  applyStatus?: ApplyScorerStatus | null
 }
 
 function scoreVerdict(score?: BackendScore | null): 'success' | 'failure' | 'undetermined' {
@@ -100,6 +110,8 @@ export default function ObjectiveHeader({
   onUpdateScorer,
   canApplyScorer = false,
   onApplyScorer,
+  applyingScorer = false,
+  applyStatus = null,
 }: ObjectiveHeaderProps) {
   const styles = useObjectiveHeaderStyles()
   const [resultOpen, setResultOpen] = useState(false)
@@ -122,9 +134,6 @@ export default function ObjectiveHeader({
   const [resultError, setResultError] = useState('')
   const [showAutomatedDetails, setShowAutomatedDetails] = useState(false)
   const [showScorerPicker, setShowScorerPicker] = useState(false)
-  const [isApplyingScorer, setIsApplyingScorer] = useState(false)
-  const [applyNotice, setApplyNotice] = useState('')
-  const applyPending = useRef(false)
   const contentRef = useRef<HTMLElement>(null)
   const humanScoreDisabledReasonId = useId()
   const missingObjective = !objective.trim()
@@ -210,7 +219,6 @@ export default function ObjectiveHeader({
     if (!canUpdateScorer || !onUpdateScorer) return
     setIsUpdatingResult(true)
     setResultError('')
-    setApplyNotice('')
     try {
       await onUpdateScorer(reference)
     } catch (cause: unknown) {
@@ -220,23 +228,10 @@ export default function ObjectiveHeader({
     }
   }
   const handleApplyScorer = async (): Promise<void> => {
-    if (!onApplyScorer || !canApplyScorer || applyPending.current) return
-    applyPending.current = true
-    setIsApplyingScorer(true)
+    if (!onApplyScorer || !canApplyScorer || applyingScorer) return
     setResultError('')
-    setApplyNotice('')
-    try {
-      const reused = await onApplyScorer()
-      setApplyNotice(reused
-        ? 'Already scored. Kept the existing valid result. No new evaluation.'
-        : 'Latest response scored. Earlier responses and other conversations are unchanged.')
-      setShowAutomatedDetails(true)
-    } catch (cause: unknown) {
-      setResultError(toApiError(cause).detail)
-    } finally {
-      applyPending.current = false
-      setIsApplyingScorer(false)
-    }
+    await onApplyScorer()
+    setShowAutomatedDetails(true)
   }
   const scoringFailed = scoringFailure != null
   const resultControl = (outcome || objective.trim()) && (
@@ -255,9 +250,8 @@ export default function ObjectiveHeader({
             setHumanVerdict(currentHumanVerdict === 'failure' ? 'failure' : 'success')
             setRationale(humanScore?.score_rationale ?? automatedScore?.score_rationale ?? '')
             setResultError('')
-            setApplyNotice('')
-            setShowAutomatedDetails(false)
-            setShowScorerPicker(false)
+            setShowAutomatedDetails(applyStatus !== null)
+            setShowScorerPicker(applyStatus !== null || applyingScorer)
           }
         }}
       >
@@ -299,17 +293,19 @@ export default function ObjectiveHeader({
             <div className={styles.scorerSelection} role="region" aria-label="Automated scorer selection">
               <ChatScorerPicker value={chatScorer} scorers={scorers} inherited={chatScorerInherited}
                 loading={scorersLoading} error={scorersError}
-                disabled={!canUpdateScorer || isUpdatingResult || isApplyingScorer}
+                disabled={!canUpdateScorer || isUpdatingResult || applyingScorer}
                 onChange={(reference: RegisteredComponentReference | null) => { void handleScorerChange(reference) }} />
               {chatScorer && onApplyScorer && <>
                 <Text size={200}>Applies only to the latest saved response in this conversation. Existing valid results are kept.</Text>
-                <Button appearance="primary" icon={isApplyingScorer ? <Spinner size="tiny" /> : <SparkleRegular />}
-                  disabled={!canApplyScorer || isUpdatingResult || isApplyingScorer}
+                <Button appearance="primary" icon={applyingScorer ? <Spinner size="tiny" /> : <SparkleRegular />}
+                  disabled={!canApplyScorer || isUpdatingResult || applyingScorer}
                   onClick={() => { void handleApplyScorer() }}>
-                  {isApplyingScorer ? 'Scoring latest response...' : 'Apply scorer'}
+                  {applyingScorer ? 'Scoring latest response...' : 'Apply scorer'}
                 </Button>
               </>}
-              {applyNotice && <MessageBar intent="info" role="status"><MessageBarBody>{applyNotice}</MessageBarBody></MessageBar>}
+              {applyStatus && <MessageBar intent={applyStatus.intent} role={applyStatus.intent === 'error' ? 'alert' : 'status'}>
+                <MessageBarBody>{applyStatus.message}</MessageBarBody>
+              </MessageBar>}
             </div>
           )}
           <div className={styles.resultScoreRow} role="group" aria-label="Automated score">
@@ -382,7 +378,7 @@ export default function ObjectiveHeader({
             layout="horizontal"
             value={humanVerdict}
             onChange={(_event, data) => setHumanVerdict(data.value as 'success' | 'failure')}
-            disabled={!canUpdateOutcome || isApplyingScorer}
+            disabled={!canUpdateOutcome || applyingScorer}
             aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}
           >
             <Radio value="success" label="Success" />
@@ -394,7 +390,7 @@ export default function ObjectiveHeader({
               value={rationale}
               onChange={(_event, data) => setRationale(data.value)}
               resize="vertical"
-              disabled={!canUpdateOutcome || isApplyingScorer}
+              disabled={!canUpdateOutcome || applyingScorer}
               aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}
             />
           </Field>
@@ -416,7 +412,7 @@ export default function ObjectiveHeader({
                 appearance="secondary"
                 className={styles.resultAction}
                 onClick={handleRemoveResult}
-                disabled={!canRemoveHumanScore || isUpdatingResult || isApplyingScorer}
+                disabled={!canRemoveHumanScore || isUpdatingResult || applyingScorer}
               >
                 Remove
               </Button>
@@ -425,7 +421,7 @@ export default function ObjectiveHeader({
               appearance="primary"
               className={styles.resultAction}
               onClick={handleUpdateResult}
-              disabled={!canUpdateOutcome || isUpdatingResult || isApplyingScorer}
+              disabled={!canUpdateOutcome || isUpdatingResult || applyingScorer}
               aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}
             >
               {isUpdatingResult ? 'Saving...' : 'Add'}

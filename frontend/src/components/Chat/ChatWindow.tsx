@@ -35,7 +35,7 @@ import TargetBadge from './TargetBadge'
 import ChatTargetPicker from './ChatTargetPicker'
 import { generateClientId } from '@/utils/clientId'
 import ObjectiveHeader from './ObjectiveHeader'
-import type { RegisteredComponentReference, ScoringFailure, ManualContinuation, ScorerInstance } from '@/types'
+import type { ApplyScorerStatus, RegisteredComponentReference, ScoringFailure, ManualContinuation, ScorerInstance } from '@/types'
 import ConversationEditor from './ConversationEditor'
 import type { ConversationEditorHandle } from './ConversationEditor'
 import {
@@ -198,6 +198,30 @@ interface SendIssue {
   description: string
   blocking: boolean
   draft?: PendingSend
+}
+
+/** The backend's scoring projection for a conversation's latest response. */
+interface ConversationScoring {
+  readonly conversationId: string
+  readonly score: BackendScore | null
+  readonly failure: ScoringFailure | null
+  readonly outcome?: AttackOutcome
+  readonly latestResponseId: string | null
+}
+
+interface ConversationApplyStatus extends ApplyScorerStatus {
+  readonly conversationId: string
+  readonly responseId: string
+}
+
+function conversationScoringOf(conversationId: string, response: ConversationMessagesResponse): ConversationScoring {
+  return {
+    conversationId,
+    score: response.automated_score ?? null,
+    failure: response.scoring_failure ?? null,
+    outcome: response.outcome ?? undefined,
+    latestResponseId: response.latest_response_id ?? null,
+  }
 }
 
 function isSendFinished(progress: MessageSendConversation): boolean {
@@ -405,13 +429,11 @@ export default function ChatWindow({
     setTemperatureAttackId(attackResultId)
     setTemperature('')
   }
-  const [conversationScoringFailure, setConversationScoringFailure] = useState<ScoringFailure | null>(null)
-  const [conversationScore, setConversationScore] = useState<{
-    conversationId: string
-    score: BackendScore | null
-  } | null>(null)
+  const [conversationScoring, setConversationScoring] = useState<ConversationScoring | null>(null)
   const applyingScorer = useRef(false)
-  const [isApplyingScorer, setIsApplyingScorer] = useState(false)
+  const [applyingConversationId, setApplyingConversationId] = useState<string | null>(null)
+  const isApplyingScorer = applyingConversationId !== null
+  const [applyStatus, setApplyStatus] = useState<ConversationApplyStatus | null>(null)
   const [draftScorer, setDraftScorer] = useState<RegisteredComponentReference | null | undefined>(undefined)
   const selectedScorer = attackResultId ? chatScorer : draftScorer === undefined ? defaultChatScorer ?? null : draftScorer
   const [scoringNotice, setScoringNotice] = useState<{ id: string; message: string; conversationId: string } | null>(null)
@@ -474,6 +496,7 @@ export default function ChatWindow({
   const globalMarkdown = preferences.chatMarkdown
   const location = useLocation()
   const viewedConversationId = activeConversationId ?? conversationId
+  const viewedScoring = conversationScoring?.conversationId === viewedConversationId ? conversationScoring : null
   const draftAttackId = draftContext ? draftContext.originatingAttackId : attackResultId
   const draftConversationId = draftContext ? draftContext.originatingConversationId : viewedConversationId
   const draftHandoff = useChatDraftHandoff()
@@ -523,10 +546,7 @@ export default function ChatWindow({
   const handleConversationLoaded = useCallback((
     convId: string, response: ConversationMessagesResponse, frontendMessages: Message[],
   ): Message[] => {
-    setConversationScoringFailure(response.scoring_failure ?? null)
-    if ('automated_score' in response) {
-      setConversationScore({ conversationId: convId, score: response.automated_score ?? null })
-    }
+    setConversationScoring(conversationScoringOf(convId, response))
     const savedUserIds = userPieceIds(response)
     loadedUserPieceIdsRef.current.set(convId, savedUserIds)
     const persistedRecovery = getPersistedProcessingRecovery(convId, response)
@@ -979,7 +999,7 @@ export default function ChatWindow({
     if (isLatestRead && isViewingSend(operation)) {
       invalidateConversationLoads(effectiveConvId)
       setMessages(backendMessages)
-      setConversationScoringFailure(response.messages.scoring_failure ?? null)
+      setConversationScoring(conversationScoringOf(effectiveConvId, response.messages))
       markConversationLoaded(effectiveConvId)
       onAttackChange?.(response.attack)
       const scoringError = operation.progress?.scoring_error
@@ -1680,7 +1700,17 @@ export default function ChatWindow({
       return
     }
     await changeObjective(newObjective, expectedObjective)
-  }, [changeObjective, editDraft, setEditorObjective, executionReadOnly])
+    setApplyStatus(null)
+    if (
+      attackResultId && viewedConversationId && !isSendInFlight(viewedConversationId)
+      && getViewedConversationId() === viewedConversationId
+    ) {
+      await loadConversation(attackResultId, viewedConversationId)
+    }
+  }, [
+    attackResultId, changeObjective, editDraft, setEditorObjective, executionReadOnly,
+    viewedConversationId, getViewedConversationId, isSendInFlight, loadConversation,
+  ])
 
   const handleScorerUpdate = async (reference: RegisteredComponentReference | null): Promise<void> => {
     if (!attackResultId) { setDraftScorer(reference); return }
@@ -1688,43 +1718,51 @@ export default function ChatWindow({
     const revision = navigationRevisionRef.current
     const updated = await attacksApi.updateAttack(attackResultId, { chat_scorer: reference })
     if (navigationRevisionRef.current !== revision) return
+    setApplyStatus(null)
     onAttackChange?.(updated)
     if (viewedConversationId && getViewedConversationId() === viewedConversationId) {
       await loadConversation(attackResultId, viewedConversationId)
     }
   }
 
-  const handleApplyScorer = async (): Promise<boolean> => {
-    const response = messages.filter((message: Message) => message.role === 'assistant').slice(-1)[0]
-    const responseId = response?.displayPieces?.[0]?.pieceId
-    if (!attackResultId || !viewedConversationId || !selectedScorer || !responseId || applyingScorer.current) {
-      throw new Error('Load a saved assistant response and select a scorer before applying it.')
-    }
+  const handleApplyScorer = async (): Promise<void> => {
+    const conversationId = viewedConversationId
+    const responseId = viewedScoring?.latestResponseId
+    if (!attackResultId || !conversationId || !selectedScorer || !responseId || applyingScorer.current) return
     const revision = navigationRevisionRef.current
     applyingScorer.current = true
-    setIsApplyingScorer(true)
+    setApplyingConversationId(conversationId)
+    setApplyStatus(null)
+    let status: ApplyScorerStatus
     try {
       const result = await attacksApi.applyScorer(attackResultId, {
-        conversation_id: viewedConversationId, response_id: responseId,
+        conversation_id: conversationId, response_id: responseId,
         scorer: selectedScorer, objective: currentObjective,
       })
       rememberUse({}, selectedScorer)
-      if (navigationRevisionRef.current === revision && getViewedConversationId() === viewedConversationId) {
-        const [updated] = await Promise.all([
-          attacksApi.getAttack(attackResultId),
-          loadConversation(attackResultId, viewedConversationId),
-        ])
-        if (navigationRevisionRef.current === revision) onAttackChange?.(updated)
+      status = {
+        intent: 'info',
+        message: result.reused
+          ? 'Already scored. Kept the existing valid result. No new evaluation.'
+          : 'Latest response scored. Earlier responses and other conversations are unchanged.',
       }
-      return result.reused
     } catch (cause: unknown) {
-      if (navigationRevisionRef.current === revision && getViewedConversationId() === viewedConversationId) {
-        await loadConversation(attackResultId, viewedConversationId)
-      }
-      throw cause
+      status = { intent: 'error', message: toApiError(cause).detail }
+    }
+    try {
+      if (navigationRevisionRef.current !== revision) return
+      setApplyStatus({ ...status, conversationId, responseId })
+      if (getViewedConversationId() !== conversationId) return
+      const [updated] = await Promise.all([
+        attacksApi.getAttack(attackResultId),
+        loadConversation(attackResultId, conversationId),
+      ])
+      if (navigationRevisionRef.current === revision) onAttackChange?.(updated)
+    } catch (cause: unknown) {
+      console.error('Failed to refresh the attack after applying the scorer:', cause)
     } finally {
       applyingScorer.current = false
-      setIsApplyingScorer(false)
+      setApplyingConversationId(null)
     }
   }
 
@@ -2334,14 +2372,8 @@ export default function ChatWindow({
     </div>
   )
 
-  const viewedAutomatedScore = conversationScore?.conversationId === viewedConversationId
-    ? conversationScore.score && conversationScore.score.objective !== currentObjective
-      ? null : conversationScore.score
-    : automatedScore
-  const viewedOutcome = humanScore ? outcome : conversationScore?.conversationId === viewedConversationId
-    ? viewedAutomatedScore?.score_value?.toLowerCase() === 'true' ? 'success'
-      : viewedAutomatedScore?.score_value?.toLowerCase() === 'false' ? 'failure' : 'undetermined'
-    : outcome
+  const viewedApplyStatus = applyStatus && applyStatus.conversationId === viewedConversationId
+    && applyStatus.responseId === viewedScoring?.latestResponseId ? applyStatus : null
 
   return (
     <div className={styles.root}>
@@ -2376,22 +2408,21 @@ export default function ChatWindow({
           key={`${attackResultId ?? 'new'}-${viewedConversationId ?? 'new'}-${editDraft === null ? 'saved' : 'draft'}`}
           objective={editDraft === null ? currentObjective : editorObjective}
           draftMode={editDraft !== null}
-          outcome={viewedOutcome}
-          automatedScore={viewedAutomatedScore}
+          outcome={humanScore ? outcome : viewedScoring?.outcome ?? outcome}
+          automatedScore={viewedScoring ? viewedScoring.score : automatedScore}
           chatScorer={selectedScorer}
           chatScorerInherited={Boolean(attackResultId) && chatScorerInherited}
-          scoringFailure={editDraft !== null ? null
-            : conversationScoringFailure?.conversation_id === viewedConversationId && conversationScoringFailure.objective === currentObjective
-              ? conversationScoringFailure : null}
+          scoringFailure={editDraft !== null ? null : viewedScoring?.failure ?? null}
           scorers={availableScorers}
           scorersLoading={scorersLoading}
           scorersError={scorersError}
           canUpdateScorer={!executionReadOnly && editDraft === null && !isScoreLocked && !isSending && !isApplyingScorer && runtime.ready}
           onUpdateScorer={handleScorerUpdate}
           canApplyScorer={!executionReadOnly && editDraft === null && !isScoreLocked && !isSending && !isApplyingScorer && runtime.ready
-            && Boolean(attackResultId && selectedScorer && currentObjective.trim())
-            && messages.some((message: Message) => message.role === 'assistant' && message.displayPieces?.length)}
+            && Boolean(attackResultId && selectedScorer && currentObjective.trim() && viewedScoring?.latestResponseId)}
           onApplyScorer={attackResultId ? handleApplyScorer : undefined}
+          applyingScorer={applyingConversationId !== null && applyingConversationId === viewedConversationId}
+          applyStatus={viewedApplyStatus}
           humanScore={humanScore}
           canUpdateOutcome={
             editDraft === null
