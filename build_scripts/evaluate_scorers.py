@@ -48,7 +48,7 @@ async def evaluate_scorers(tags: list[str] | None = None, max_concurrency: int =
     """
     print("Initializing PyRIT...")
     target_init = TargetInitializer()
-    target_init.params = {"tags": ["default", "scorer"]}
+    target_init.set_params_from_args(args={"tags": ["default", "scorer"]})
     scorer_init = ScorerInitializer()
     await initialize_pyrit_async(
         memory_db_type=IN_MEMORY,
