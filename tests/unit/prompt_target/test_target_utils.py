@@ -64,6 +64,12 @@ def test_validate_temperature_above_two_raises():
         validate_temperature(2.1)
 
 
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), -float("inf")])
+def test_validate_temperature_non_finite_raises(invalid_value: float) -> None:
+    with pytest.raises(PyritException, match="temperature must be between 0 and 2"):
+        validate_temperature(invalid_value)
+
+
 def test_validate_top_p_none():
     validate_top_p(None)
 
@@ -88,6 +94,12 @@ def test_validate_top_p_below_zero_raises():
 def test_validate_top_p_above_one_raises():
     with pytest.raises(PyritException, match="top_p must be between 0 and 1"):
         validate_top_p(1.1)
+
+
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), -float("inf")])
+def test_validate_top_p_non_finite_raises(invalid_value: float) -> None:
+    with pytest.raises(PyritException, match="top_p must be between 0 and 1"):
+        validate_top_p(invalid_value)
 
 
 def test_validate_presence_penalty_none() -> None:
