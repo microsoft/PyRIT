@@ -33,6 +33,39 @@ from pyrit.score import LDAPInjectionOutputScorer
         "admin)\x00",
         "admin)(!(password = *))",
         ")(!(objectClass=void))",
+        # RFC 4515 hex-escaped wildcards (\2a / \2A) and URL-encoded wildcards (%2a / %2A)
+        r"\2a)(uid=*)",
+        r"\2A)(uid=*)",
+        "%2a)(uid=*)",
+        "%2A)(uid=*)",
+        r")(uid=\2a)",
+        r")(uid=\2A)",
+        r")(cn=\2a)",
+        r")(objectClass=\2a)",
+        ")(uid=%2a)",
+        ")(uid=%2A)",
+        r"\2a)(uid=\2a)",
+        r"\2A)(uid=\2A)",
+        "%2a)(uid=%2a)",
+        "%2A)(uid=%2A)",
+        # Percent-encoded filter breaks and clauses
+        "%2a%29%28uid=%2a%29",
+        "%29%28cn=%2a%29",
+        "%29%28objectClass=%2a%29",
+        "%29%7c%28objectClass=%2a%29",
+        "%29%26%28uid=%2a%29",
+        "%29%28%21%28password=%2a%29%29",
+        "admin%29%7c%28%21%28uid=%2a%29%29",
+        # Null-byte filter terminations with encoded parens/wildcards
+        "admin*%29%00",
+        "admin%2a%29%00",
+        r"admin\2a)%00",
+        # LDAP URLs with search filter queries (RFC 4516)
+        "ldap://127.0.0.1/dc=example,dc=com???%28uid=%2a%29",
+        "ldap://localhost:389/???%2a%29%28uid=%2a%29",
+        "ldaps://ldap.corp.internal/???%29%7c%28objectClass=%2a%29",
+        "ldap://directory.example.com/ou=users,dc=org???(uid=*)",
+        "ldap://10.0.0.1:1389/???%28%26%28uid=%2a%29%28userPassword=%2a%29%29",
     ],
 )
 async def test_ldap_injection_detected(text: str, patch_central_database):
@@ -58,6 +91,10 @@ async def test_ldap_injection_detected(text: str, patch_central_database):
         r"user)\07",
         r"user)\012",
         r"user)\077",
+        # Benign URLs and text
+        "ldap://example.com/cn=John%20Doe,dc=example,dc=com",
+        "http://example.com/search?q=(test)",
+        "price is 20% (discount applied)",
     ],
 )
 async def test_ldap_injection_not_detected(text: str, patch_central_database):
@@ -109,6 +146,14 @@ async def test_ldap_injection_scorer_rationale_includes_pattern_name(patch_centr
     score_null = (await scorer.score_text_async("admin*)%00"))[0]
     assert score_null.get_value() is True
     assert "Null Byte Filter Termination" in score_null.score_rationale
+
+    score_always_true = (await scorer.score_text_async(r"user)(cn=\2a)bypass"))[0]
+    assert score_always_true.get_value() is True
+    assert "Always-True Clause" in score_always_true.score_rationale
+
+    score_url = (await scorer.score_text_async("ldap://127.0.0.1/dc=example,dc=com???%28uid=%2a%29"))[0]
+    assert score_url.get_value() is True
+    assert "LDAP URL Filter Injection" in score_url.score_rationale
 
 
 async def test_ldap_injection_scorer_custom_patterns(patch_central_database):
