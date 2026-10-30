@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         IncompatibleTechniquePolicy,
         ResolvedDataset,
         Scenario,
+        ScenarioRequiredData,
         ScenarioTechnique,
         TechniqueRequirements,
     )
@@ -101,6 +102,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "Parameter": "pyrit.models.parameter",
     "ResolvedDataset": "pyrit.scenario.core.dataset_configuration",
     "Scenario": "pyrit.scenario.core.scenario",
+    "ScenarioRequiredData": "pyrit.scenario.core.required_data",
     "ScenarioTechnique": "pyrit.scenario.core.scenario_technique",
     "TechniqueRequirements": "pyrit.scenario.core.technique_requirements",
     "IncompatibleTechniqueError": "pyrit.scenario.core.technique_requirements",

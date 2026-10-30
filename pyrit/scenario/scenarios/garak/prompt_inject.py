@@ -24,8 +24,10 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetConstraintError,
     DatasetSource,
+    DatasetSourceKind,
 )
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage
+from pyrit.scenario.core.required_data import ScenarioRequiredData
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import (
@@ -52,7 +54,13 @@ _DEFAULT_GOAL_TEXTS = (
 
 
 class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
-    """Create an attack group for each context and goal combination."""
+    """
+    Limit the context and goal combinations PromptInject assembles.
+
+    The context and technique templates are PromptInject's required data, read in full.
+    This configuration holds the goal texts and limits the assembled groups with
+    ``max_total``, keeping at least one context per goal.
+    """
 
     CONTEXT_DATASET_NAME: ClassVar[str] = "prompt_inject_contexts"
     DEFAULT_MAX_DATASET_SIZE: ClassVar[int] = 12
@@ -97,16 +105,6 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
             raise ValueError("goal_texts must not contain duplicate values.")
         self._goal_texts = list(goal_texts)
 
-    async def get_attack_seed_groups_async(self, *, apply_sampling: bool = True) -> list[AttackSeedGroup]:
-        """
-        Resolve flat groups with the same goal coverage as the grouped resolver.
-
-        Returns:
-            list[AttackSeedGroup]: The validated context and goal groups.
-        """
-        groups_by_dataset = await self.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
-        return [group for groups in groups_by_dataset.values() for group in groups]
-
     def _sample_groups_by_dataset(
         self, groups_by_dataset: dict[str, list[AttackSeedGroup]]
     ) -> dict[str, list[AttackSeedGroup]]:
@@ -126,24 +124,31 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
             key=lambda _, group: (group.objective.metadata or {})["goal_text"],
         )
 
+    def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
+        """
+        Describe the shared cap on the assembled context groups.
+
+        Returns:
+            dict: The context population mapped to its configuration cap.
+        """
+        caps: list[tuple[str, int, Literal["dataset", "configuration", "compound"]]] = (
+            [] if self.max_total == "all" else [("combined configuration cap", self.max_total, "configuration")]
+        )
+        return {self.CONTEXT_DATASET_NAME: caps}
+
     def validate_configuration(self) -> None:
         """
-        Check the sources and goal coverage budget without reading contexts.
+        Check the goal coverage budget without reading contexts.
 
         Raises:
-            DatasetConstraintError: If the sources are unsupported or the cap cannot cover all goals.
+            DatasetConstraintError: If the configuration names datasets or the cap cannot cover all goals.
         """
         super().validate_configuration()
-        if any(self.source_limit(source.name) != "all" for source in self.sources):
-            raise DatasetConstraintError("PromptInject ingredient sources must be uncapped; use max_total.")
-        if not self.dataset_names:
+        if self.sources or self.source_kind is DatasetSourceKind.INLINE:
             raise DatasetConstraintError(
-                "PromptInject requires the prompt_inject_contexts dataset; inline seeds are not supported."
-            )
-        required_dataset_names = set(PromptInject.required_datasets())
-        if set(self.dataset_names) != required_dataset_names:
-            raise DatasetConstraintError(
-                f"PromptInject requires exactly these datasets: {sorted(required_dataset_names)}."
+                f"PromptInject reads its templates as required data: {PromptInject.required_datasets()}. "
+                "PromptInjectDatasetConfiguration only takes goal_texts and max_total; "
+                "inline seeds and other datasets are not supported."
             )
         cap = self.max_total
         if cap != "all" and cap < len(self._goal_texts):
@@ -152,15 +157,14 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
                 f"({len(self._goal_texts)})."
             )
 
-    def _build_attack_groups(self, seeds: list[Seed[Any]]) -> list[AttackSeedGroup]:
+    def assemble_groups(self, contexts: list[Seed[Any]]) -> dict[str, list[AttackSeedGroup]]:
         """
-        Create attack groups from the context templates.
+        Create one attack group per context and goal.
 
         Returns:
-            list[AttackSeedGroup]: The context and goal attack groups.
+            dict[str, list[AttackSeedGroup]]: The unsampled groups under the context dataset name.
         """
         groups: list[AttackSeedGroup] = []
-        contexts = [seed for seed in seeds if seed.dataset_name == self.CONTEXT_DATASET_NAME]
         for context in contexts:
             groups.extend(
                 [
@@ -181,7 +185,7 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
                     for goal_text in self._goal_texts
                 ]
             )
-        return groups
+        return {self.CONTEXT_DATASET_NAME: groups}
 
 
 class PromptInjectTechnique(ScenarioTechnique):
@@ -213,7 +217,8 @@ class PromptInject(Scenario):
 
     Each attack places a selected injection technique inside one of 35 benign tasks.
     ``goal_texts`` defines the text that the injection asks the target to return.
-    Responses are scored by checking for that text.
+    Responses are scored by checking for that text. The context and technique
+    templates are required data, always read in full.
     """
 
     VERSION: int = 3
@@ -270,14 +275,21 @@ class PromptInject(Scenario):
             version=self.VERSION,
             technique_class=PromptInjectTechnique,
             default_dataset_config=PromptInjectDatasetConfiguration(
-                sources=[DatasetSource(name=name) for name in self.required_datasets()],
-                max_per_dataset="all",
                 max_total=PromptInjectDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
                 goal_texts=self.DEFAULT_GOAL_TEXTS,
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
+
+    def get_required_data(self) -> ScenarioRequiredData:
+        """
+        Return the context and technique templates, read in full.
+
+        Returns:
+            ScenarioRequiredData: The PromptInject template datasets.
+        """
+        return ScenarioRequiredData(sources=[DatasetSource(name=name) for name in self.required_datasets()])
 
     def _validate_runtime_configuration(self) -> None:
         self._dataset_config = self._get_promptinject_dataset_config(
@@ -302,9 +314,14 @@ class PromptInject(Scenario):
         if self._use_goal_scorers:
             self._objective_scorer = self._build_goal_scorer(goal_texts=goal_texts)
             self._objective_scorer_identifier = self._objective_scorer.get_identifier()
-        self._dataset_config = config
-        groups = await config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
-        self._technique_templates = await self._load_technique_templates_async()
+        templates = await cast("ScenarioRequiredData", self._required_data).load_async()
+        groups = config.select_assembled_groups(
+            groups_by_population=config.assemble_groups(
+                templates[PromptInjectDatasetConfiguration.CONTEXT_DATASET_NAME]
+            ),
+            apply_sampling=apply_sampling,
+        )
+        self._technique_templates = self._select_technique_templates(templates[self.TECHNIQUE_DATASET_NAME])
         return groups
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
@@ -383,9 +400,9 @@ class PromptInject(Scenario):
         config._set_goal_texts(goal_texts=goal_texts)
         return config
 
-    async def _load_technique_templates_async(self) -> dict[str, SeedPrompt]:
+    def _select_technique_templates(self, seeds: list[Seed[Any]]) -> dict[str, SeedPrompt]:
         """
-        Load the selected technique templates from memory.
+        Pick the technique templates by name.
 
         Returns:
             dict[str, SeedPrompt]: Technique templates keyed by technique name.
@@ -393,7 +410,6 @@ class PromptInject(Scenario):
         Raises:
             DatasetConstraintError: If a selected technique has no template.
         """
-        seeds = await self._dataset_config._collect_seeds_for_dataset_async(dataset_name=self.TECHNIQUE_DATASET_NAME)
         templates: dict[str, SeedPrompt] = {}
         for seed in seeds:
             if isinstance(seed, SeedPrompt) and seed.name:

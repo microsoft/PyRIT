@@ -5,7 +5,7 @@
 
 import random
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from end_to_end.test_scenarios import SCENARIO_MAX_TOTAL
@@ -17,8 +17,10 @@ from pyrit.models import AttackSeedGroup, Seed, SeedObjective, SeedPrompt
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetConstraintError,
+    DatasetSource,
     ResolvedDataset,
 )
+from pyrit.scenario.core.required_data import _RequiredDatasetConfiguration
 from pyrit.scenario.scenarios.garak.latent_injection import (
     LatentInjection,
     LatentInjectionDatasetConfiguration,
@@ -28,7 +30,37 @@ from pyrit.score import SubStringScorer
 
 
 def _config(**kwargs: Any) -> LatentInjectionDatasetConfiguration:
-    return LatentInjectionDatasetConfiguration(dataset_names=LatentInjection.required_datasets(), **kwargs)
+    return LatentInjectionDatasetConfiguration(**kwargs)
+
+
+def _read_ingredients(sources: dict[str, list[Seed[Any]]]) -> Any:
+    """Serve the required-data read from the given ingredients."""
+    return patch.object(
+        _RequiredDatasetConfiguration, "_collect_named_seeds_async", new_callable=AsyncMock, return_value=sources
+    )
+
+
+async def _prepare_ingredients_async() -> None:
+    await LatentInjection().get_required_data().prepare_async()
+
+
+async def _resolve_async(
+    config: LatentInjectionDatasetConfiguration,
+    *,
+    apply_sampling: bool = True,
+    sources: dict[str, list[Seed[Any]]] | None = None,
+) -> list[AttackSeedGroup]:
+    """Read the ingredients as the scenario does, then assemble and limit the prompts."""
+    required = LatentInjection().get_required_data()
+    if sources is None:
+        ingredients = await required.load_async()
+    else:
+        with _read_ingredients(sources):
+            ingredients = await required.load_async()
+    grouped = config.select_assembled_groups(
+        groups_by_population=config.assemble_groups(ingredients), apply_sampling=apply_sampling
+    )
+    return [group for groups in grouped.values() for group in groups]
 
 
 @pytest.fixture
@@ -115,12 +147,12 @@ class TestLatentDefaults:
         self, *, kwargs: dict[str, int | str | None], expected_cap: int | str
     ) -> None:
         config = _config(**kwargs)
-        await config.prepare_async()
-        groups = await config.get_attack_seed_groups_async()
+        await _prepare_ingredients_async()
+        groups = await _resolve_async(config)
         assert config.max_dataset_size == expected_cap
         assert len(config.coverage_keys) == 23
         assert {config._coverage_key(group) for group in groups} == set(config.coverage_keys)
-        full = await config.get_attack_seed_groups_async(apply_sampling=False)
+        full = await _resolve_async(config, apply_sampling=False)
         assert len(groups) == (min(expected_cap, len(full)) if isinstance(expected_cap, int) else len(full))
         assert len(full) > 92
 
@@ -179,9 +211,9 @@ class TestLatentDefaults:
             await _initialize_async(LatentInjection(), dataset_config=DatasetAttackConfiguration())
         inline = LatentInjectionDatasetConfiguration(seeds=[SeedObjective(value="test")])
         with pytest.raises(DatasetConstraintError, match="inline seeds"):
-            await inline.get_attack_seed_groups_async()
-        with pytest.raises(DatasetConstraintError, match="requires exactly"):
-            await LatentInjectionDatasetConfiguration(dataset_names=["wrong"]).get_attack_seed_groups_async()
+            inline.validate_configuration()
+        with pytest.raises(DatasetConstraintError, match="required data"):
+            LatentInjectionDatasetConfiguration(sources=[DatasetSource(name="wrong")]).validate_configuration()
 
     @pytest.mark.parametrize("families", [[], ["unknown"]])
     def test_invalid_families(self, families: list[str]) -> None:
@@ -210,18 +242,16 @@ class TestLatentPopulation:
     async def test_budget_coverage_and_full_resolution_async(self) -> None:
         config = _config(families=["whois", "resume"], max_dataset_size=4)
         with patch("pyrit.scenario.core.dataset_sampling.random", random.Random(3)):
-            flat = await config.get_attack_seed_groups_async()
+            flat = await _resolve_async(config)
         with patch("pyrit.scenario.core.dataset_sampling.random", random.Random(3)):
-            grouped = await config.get_attack_groups_by_dataset_async()
-        assert [group.logical_id for group in flat] == [
-            group.logical_id for groups in grouped.values() for group in groups
-        ]
+            again = await _resolve_async(config)
+        assert [group.logical_id for group in flat] == [group.logical_id for group in again]
         assert len(flat) == len(config.coverage_keys) == 4
         assert {config._coverage_key(group) for group in flat} == set(config.coverage_keys)
-        full = await config.get_attack_seed_groups_async(apply_sampling=False)
+        full = await _resolve_async(config, apply_sampling=False)
         assert len(full) == 12
         config.max_dataset_size = "all"
-        assert len(await config.get_attack_seed_groups_async()) == 12
+        assert len(await _resolve_async(config)) == 12
         for group in full:
             assert group.prompts[0].source == "https://example.test/context"
             assert group.objective.metadata["language"] == "en"
@@ -235,7 +265,7 @@ class TestLatentPopulation:
         config = _config(families=["whois", "resume"])
         with pytest.raises(DatasetConstraintError, match=message):
             config.max_total = cap
-            await config.get_attack_seed_groups_async(apply_sampling=False)
+            await _resolve_async(config, apply_sampling=False)
 
     async def test_filters_validators_and_config_identity_async(self, seeded_memory_async: MemoryInterface) -> None:
         seen: list[ResolvedDataset] = []
@@ -256,14 +286,17 @@ class TestLatentPopulation:
         assert scenario._dataset_config is not config
         assert type(scenario._dataset_config) is type(config)
         assert config.families == ["whois"]
+        # Validators see the assembled whois prompts: 6 groups of an objective and a prompt.
         assert len(seen) == 1
-        assert len(seen[0].seeds) == 24
+        assert len(seen[0].seeds) == 12
         assert get_seeds.call_count == 5
         assert all(call.kwargs["data_types"] == ["text"] for call in get_seeds.call_args_list)
         assert len({i for ids in _ids(scenario).values() for i in ids}) == 2
         config.update_filters(filters={"data_types": ["image_path"]})
         with pytest.raises(DatasetConstraintError, match="none match"):
-            await config.get_attack_seed_groups_async()
+            await _initialize_async(
+                LatentInjection(), dataset_config=config, scenario_techniques=[LatentInjectionTechnique.Bare]
+            )
 
     async def test_validator_failure_is_not_discarded_async(self) -> None:
         def reject(_: ResolvedDataset) -> None:
@@ -274,7 +307,7 @@ class TestLatentPopulation:
 
     async def test_missing_selected_family_raises_async(self) -> None:
         with pytest.raises(DatasetConstraintError, match="missing ingredients"):
-            await _config(families=["report"]).get_attack_seed_groups_async()
+            await _resolve_async(_config(families=["report"]))
 
     async def test_source_follows_each_carrier_async(self, seeded_memory_async: MemoryInterface) -> None:
         sources = {
@@ -285,8 +318,7 @@ class TestLatentPopulation:
         for index, seed in enumerate(contexts):
             seed.source = f"https://example.test/context/{index}"
         config = _config(families=["whois"])
-        with patch.object(config, "_collect_named_seeds_async", return_value=sources):
-            groups = await config.get_attack_seed_groups_async()
+        groups = await _resolve_async(config, sources=sources)
         for group in groups:
             context = next(seed for seed in contexts if seed.value.split("<|injection|>")[0] in group.prompts[0].value)
             assert group.prompts[0].source == context.source
@@ -315,9 +347,8 @@ class TestLatentPopulation:
             seed for seed in sources[f"garak_latent_injection_{role}"] if seed.metadata["family"] == "whois"
         ).value = value
         config = _config(families=["whois"])
-        with patch.object(config, "_collect_named_seeds_async", return_value=sources):
-            with pytest.raises(DatasetConstraintError, match=message):
-                await config.get_attack_seed_groups_async()
+        with pytest.raises(DatasetConstraintError, match=message):
+            await _resolve_async(config, sources=sources)
 
     async def test_empty_trigger_raises_async(self, seeded_memory_async: MemoryInterface) -> None:
         sources = {
@@ -327,9 +358,8 @@ class TestLatentPopulation:
         for seed in sources[LatentInjectionDatasetConfiguration.TRIGGER_DATASET_NAME]:
             seed.value = " "
         config = _config(families=["whois"])
-        with patch.object(config, "_collect_named_seeds_async", return_value=sources):
-            with pytest.raises(DatasetConstraintError, match="empty trigger"):
-                await config.get_attack_seed_groups_async()
+        with pytest.raises(DatasetConstraintError, match="empty trigger"):
+            await _resolve_async(config, sources=sources)
 
 
 @pytest.mark.usefixtures("seeded_memory_async")
@@ -372,7 +402,7 @@ class TestLatentAttacks:
         for seed in sources[f"garak_latent_injection_{role}"]:
             seed.value = literal + ("<|trigger|>" if role == "payload_templates" else "")
         config = _config(families=["whois"], max_dataset_size=2)
-        with patch.object(config, "_collect_named_seeds_async", return_value=sources):
+        with _read_ingredients(sources):
             scenario = LatentInjection()
             await _initialize_async(
                 scenario, dataset_config=config, scenario_techniques=[LatentInjectionTechnique.SystemTag]
@@ -470,6 +500,6 @@ class TestLatentAttacks:
         for seed in sources[LatentInjectionDatasetConfiguration.CONTEXT_DATASET_NAME]:
             seed.value += " changed"
         resumed = LatentInjection(scenario_result_id=original._scenario_result_id)
-        with patch.object(args["dataset_config"], "_collect_named_seeds_async", return_value=sources):
+        with _read_ingredients(sources):
             with pytest.raises(ValueError, match="cannot resume"):
                 await _initialize_async(resumed, **args)

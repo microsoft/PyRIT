@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         ResolvedDataset,
         require_nonempty,
     )
+    from pyrit.scenario.core.required_data import ScenarioRequiredData
     from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
     from pyrit.scenario.core.scenario_target_defaults import (
         get_default_adversarial_target,
@@ -70,6 +71,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ResolvedDataset": "pyrit.scenario.core.dataset_configuration",
     "require_nonempty": "pyrit.scenario.core.dataset_configuration",
     "Scenario": "pyrit.scenario.core.scenario",
+    "ScenarioRequiredData": "pyrit.scenario.core.required_data",
     "ScenarioTechnique": "pyrit.scenario.core.scenario_technique",
     "TechniqueRequirements": "pyrit.scenario.core.technique_requirements",
     "IncompatibleTechniqueError": "pyrit.scenario.core.technique_requirements",
