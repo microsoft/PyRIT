@@ -33,6 +33,7 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
 
     HF_DATASET_NAME: str = "PKU-Alignment/BeaverTails"
     HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "adult_content": [HarmCategory.SEXUAL_CONTENT],
         "aiding_and_abetting": [HarmCategory.COORDINATION_HARM],
         "animal_abuse": [HarmCategory.OTHER],
         "banned_substance": [HarmCategory.DRUG_USE, HarmCategory.REGULATED_GOODS],
