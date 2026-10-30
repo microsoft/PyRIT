@@ -9,7 +9,7 @@ import weakref
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import closing
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from sqlite3 import Connection as SQLiteConnection
 from sqlite3 import Cursor as SQLiteCursor
@@ -789,6 +789,10 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                             created_at = datetime.fromisoformat(raw_created_at)
                         else:
                             created_at = raw_created_at
+                        # The raw MIN(timestamp) aggregate bypasses UTCDateTime's result
+                        # processor, so reattach the UTC offset every other read path returns.
+                        if created_at.tzinfo is None:
+                            created_at = created_at.replace(tzinfo=UTC)
 
                     result[conv_id] = ConversationStats(
                         message_count=msg_count,
