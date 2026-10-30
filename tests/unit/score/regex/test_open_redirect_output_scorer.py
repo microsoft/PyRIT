@@ -40,6 +40,30 @@ from pyrit.score import OpenRedirectOutputScorer
         "https://trusted.example@destination.xn--p1ai:000443/path",
         "https://trusted.example@destination.xn--p1ai:/path",
         "https://trusted.example@destination.xn--p1ai",
+        "url=//evil.com/steal",
+        "url: //attacker.com",
+        "?url=//evil.com",
+        "target=//evil.com/redirect",
+        "target: //attacker.com",
+        "target=%2f%2fevil.com",
+        "url=%2f%2fevil.com",
+        "redirect=%252f%252fevil.com",
+        "redirect=%252F%252Fevil.com",
+        "next=%252f%252fattacker.com",
+        "url=%252f%252fevil.com",
+        "target=%252f%252fevil.com",
+        r"redirect=/\evil.com",
+        r"redirect=\/evil.com",
+        r"redirect=\\evil.com",
+        r"redirect=///evil.com",
+        r"url=/\evil.com",
+        r"target=\\evil.com",
+        r"next=/\attacker.example",
+        "redirect=%2f%5cevil.com",
+        "redirect=%5c%2fevil.com",
+        "redirect=%252f%255cevil.com",
+        "return_to=//evil.com",
+        "return=//evil.com",
     ],
 )
 async def test_open_redirect_detected(text: str, patch_central_database):
@@ -69,6 +93,10 @@ async def test_open_redirect_detected(text: str, patch_central_database):
         "https://trusted.example@192.0.2.1:abc",
         "https://trusted.example@destination.example:notaport/test",
         "https://trusted.example@destination.example:abc",
+        "target=normal_value",
+        "url=https://example.com/page",
+        "redirect=/normal/internal/path",
+        "next=/dashboard",
     ],
 )
 async def test_open_redirect_not_detected(text: str, patch_central_database):
@@ -89,6 +117,27 @@ async def test_open_redirect_scorer_userinfo_host_confusion_rationale(patch_cent
     score = (await scorer.score_text_async("https://trusted.com:80@evil.com/login"))[0]
     assert score.get_value() is True
     assert "Userinfo Host Confusion" in score.score_rationale
+
+
+async def test_open_redirect_scorer_double_encoded_slash_rationale(patch_central_database):
+    scorer = OpenRedirectOutputScorer()
+    score = (await scorer.score_text_async("redirect=%252f%252fevil.com/steal"))[0]
+    assert score.get_value() is True
+    assert "Encoded Slash Redirect" in score.score_rationale
+
+
+async def test_open_redirect_scorer_backslash_protocol_relative_rationale(patch_central_database):
+    scorer = OpenRedirectOutputScorer()
+    score = (await scorer.score_text_async(r"redirect=/\evil.com/steal"))[0]
+    assert score.get_value() is True
+    assert "Protocol-Relative Redirect Param" in score.score_rationale
+
+
+async def test_open_redirect_scorer_url_param_rationale(patch_central_database):
+    scorer = OpenRedirectOutputScorer()
+    score = (await scorer.score_text_async("?url=//attacker.example/oauth"))[0]
+    assert score.get_value() is True
+    assert "Protocol-Relative Redirect Param" in score.score_rationale
 
 
 async def test_open_redirect_scorer_custom_patterns(patch_central_database):
