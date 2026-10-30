@@ -197,6 +197,8 @@ filterwarnings = [
     # Ordinary callers must use async memory; compatibility tests capture the warnings.
     "error:MemoryInterface\\.:DeprecationWarning",
     "error:MessageScorableResolver\\.resolve:DeprecationWarning",
+    # True/false verdicts are set through Score.set_value; compatibility tests capture the warning.
+    "error:Assigning Score\\.score_value:DeprecationWarning",
 ]
 
 [tool.ty]

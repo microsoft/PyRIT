@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import numbers
 import uuid
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -22,6 +23,7 @@ from pydantic import (
     model_validator,
 )
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.score.expectation import ScoringExpectation
 from pyrit.models.score.scorable import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
@@ -53,6 +55,9 @@ class ScoreStatus(str, Enum):
 class UndeterminedScoreError(ValueError):
     """Raised when a caller reads the value of a score that has none."""
 
+
+#: The verdicts a true/false score stores, compared case-insensitively.
+_TRUE_FALSE_VALUES = ("true", "false")
 
 # Annotated alias that round-trips ``ComponentIdentifier`` fields through the flat
 # dict storage shape. ``ComponentIdentifier`` is a Pydantic model with a custom flat
@@ -280,7 +285,7 @@ class Score(BaseModel):
             raise ValueError("A complete score requires a score_value. Set status to UNDETERMINED instead.")
 
         score_value = str(self.score_value)
-        if self.score_type == "true_false" and score_value.lower() not in ("true", "false"):
+        if self.score_type == "true_false" and score_value.lower() not in _TRUE_FALSE_VALUES:
             raise ValueError(f"True False scorers must have a score value of 'true' or 'false' not {score_value}")
         if self.score_type == "float_scale":
             try:
@@ -293,6 +298,64 @@ class Score(BaseModel):
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
+    def __setattr__(self, name: str, value: Any) -> None:
+        """
+        Deprecate direct writes to a true/false score's value, and keep them valid.
+
+        A true/false verdict is set through ``set_value`` so the value and ``status`` change
+        together. Direct assignment keeps working until 2.0 but rejects a string that is not
+        a verdict. Float scores are unchanged.
+
+        Args:
+            name (str): The attribute being set.
+            value (Any): The new value.
+
+        Raises:
+            ValueError: If a true/false score is assigned a value other than true, false or None.
+        """
+        if name == "score_value" and getattr(self, "score_type", None) == "true_false":
+            print_deprecation_message(
+                old_item="Assigning Score.score_value on a true/false score",
+                new_item="Score.set_value",
+                removed_in="2.0.0",
+            )
+            if value is not None and str(value).lower() not in _TRUE_FALSE_VALUES:
+                raise ValueError(f"True False scorers must have a score value of 'true' or 'false' not {value}")
+        super().__setattr__(name, value)
+
+    def set_value(self, value: bool | float | None) -> None:
+        """
+        Set this score's verdict, keeping ``score_value`` and ``status`` consistent.
+
+        A true/false score takes a bool and stores ``"true"`` or ``"false"``. A float scale score
+        takes a number in [0, 1]. ``None`` marks either type undetermined. Nothing changes if
+        the value is rejected.
+
+        Args:
+            value (bool | float | None): The verdict, or None when no verdict was reachable.
+
+        Raises:
+            TypeError: If the value does not match the score type, or the score type is neither.
+            ValueError: If a float scale value is outside [0, 1].
+        """
+        if value is None:
+            new_value, status = None, ScoreStatus.UNDETERMINED
+        elif self.score_type == "true_false":
+            if not isinstance(value, bool):
+                raise TypeError(f"A true/false score takes a bool, got {type(value).__name__}.")
+            new_value, status = ("true" if value else "false"), ScoreStatus.COMPLETE
+        elif self.score_type == "float_scale":
+            if isinstance(value, bool) or not isinstance(value, numbers.Real):
+                raise TypeError(f"A float scale score takes a number, got {type(value).__name__}.")
+            if not 0 <= value <= 1:
+                raise ValueError(f"Float scale scorers must have a score value between 0 and 1. Got {value}")
+            new_value, status = str(float(value)), ScoreStatus.COMPLETE
+        else:
+            raise TypeError(f"set_value supports true_false and float_scale scores, not {self.score_type!r}.")
+        # BaseModel.__setattr__ records both fields as set without the deprecated-write path.
+        BaseModel.__setattr__(self, "score_value", new_value)
+        BaseModel.__setattr__(self, "status", status)
+
     @property
     def is_undetermined(self) -> bool:
         """Whether no verdict was reachable for this score."""

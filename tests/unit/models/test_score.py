@@ -7,7 +7,14 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models import ComponentIdentifier, MatchesObjective, MessageScorable, Score, ScoringExpectation
+from pyrit.models import (
+    ComponentIdentifier,
+    MatchesObjective,
+    MessageScorable,
+    Score,
+    ScoreStatus,
+    ScoringExpectation,
+)
 from pyrit.models.score import UnvalidatedScore
 
 
@@ -100,12 +107,99 @@ def test_unknown_type_skips_value_validation():
     assert score.score_value == "anything"
 
 
-def test_assignment_is_not_revalidated():
-    # validate_assignment=False — scorers mutate score_value after construction
-    # (e.g. true_false_inverter_scorer / float_scale_threshold_scorer).
+def test_direct_true_false_assignment_is_deprecated_but_still_works():
     score = _make_score(score_type="true_false", score_value="true")
-    score.score_value = "maybe"
-    assert score.score_value == "maybe"
+    with pytest.warns(DeprecationWarning, match=r"Assigning Score\.score_value on a true/false score.*set_value"):
+        score.score_value = "false"
+    assert score.get_value() is False
+
+
+def test_direct_true_false_assignment_rejects_a_non_verdict():
+    score = _make_score(score_type="true_false", score_value="true")
+    with (
+        pytest.warns(DeprecationWarning),
+        pytest.raises(ValueError, match="must have a score value of 'true' or 'false' not maybe"),
+    ):
+        score.score_value = "maybe"
+    assert score.score_value == "true"
+
+
+def test_direct_float_scale_assignment_is_unchanged(recwarn: pytest.WarningsRecorder):
+    score = _make_score(score_type="float_scale", score_value="0.5")
+    score.score_value = "0.75"
+    assert score.get_value() == 0.75
+    assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
+
+
+@pytest.mark.parametrize(("value", "stored"), [(True, "true"), (False, "false")])
+def test_set_value_stores_a_canonical_true_false_verdict(value: bool, stored: str):
+    score = _make_score(score_type="true_false", score_value="True")
+    score.set_value(value)
+    assert score.score_value == stored
+    assert score.get_value() is value
+    assert score.status is ScoreStatus.COMPLETE
+
+
+def test_set_value_none_marks_the_score_undetermined_in_one_step():
+    score = _make_score(score_type="true_false", score_value="false")
+    score.set_value(None)
+    assert score.score_value is None
+    assert score.status is ScoreStatus.UNDETERMINED
+    assert score.is_undetermined
+
+
+def test_set_value_completes_an_undetermined_score():
+    score = _make_score(score_type="true_false", score_value=None, status=ScoreStatus.UNDETERMINED)
+    score.set_value(True)
+    assert score.status is ScoreStatus.COMPLETE
+    assert score.get_value() is True
+
+
+@pytest.mark.parametrize(
+    ("score_type", "score_value", "value", "error"),
+    [
+        ("true_false", "true", "false", TypeError),
+        ("true_false", "true", 1, TypeError),
+        ("float_scale", "0.5", True, TypeError),
+        ("float_scale", "0.5", "0.2", TypeError),
+        ("float_scale", "0.5", 1.5, ValueError),
+    ],
+)
+def test_set_value_rejects_a_mismatched_value_and_changes_nothing(
+    score_type: str, score_value: str, value: object, error: type[Exception]
+):
+    score = _make_score(score_type=score_type, score_value=score_value)
+    with pytest.raises(error):
+        score.set_value(value)  # type: ignore[arg-type]
+    assert score.score_value == score_value
+    assert score.status is ScoreStatus.COMPLETE
+
+
+def test_set_value_sets_a_float_scale_value():
+    score = _make_score(score_type="float_scale", score_value="0.5")
+    score.set_value(0.25)
+    assert score.get_value() == 0.25
+
+
+def test_set_value_marks_both_fields_as_set():
+    score = Score(score_value="true", score_type="true_false")
+    score.set_value(None)
+    dumped = score.model_dump(exclude_unset=True)
+    assert dumped["status"] is ScoreStatus.UNDETERMINED
+    assert Score.model_validate(dumped).is_undetermined
+
+
+def test_set_value_rejects_an_unsupported_score_type():
+    score = Score.model_construct(score_type="unknown", score_value="x", status=ScoreStatus.COMPLETE)
+    with pytest.raises(TypeError, match="supports true_false and float_scale"):
+        score.set_value(0.5)
+    assert score.score_value == "x"
+
+
+def test_assignment_on_a_constructed_score_without_type_still_works():
+    score = Score.model_construct(score_value="true")
+    score.score_value = "false"
+    assert score.score_value == "false"
 
 
 def test_message_scorable_derives_message_piece_id():

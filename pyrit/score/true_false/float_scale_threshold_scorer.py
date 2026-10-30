@@ -229,8 +229,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
 
         score = self._create_wrapper_score(scores[0])
         score.score_type = "true_false"
-        score.score_value = str(threshold_result)
-        score.status = ScoreStatus.COMPLETE
+        score.set_value(bool(threshold_result))
         # Carry the aggregate's category, metadata and rationale rather than the first
         # constituent score's. The threshold decision is made on the aggregate, so
         # describing it with scores[0] mislabels the result whenever the wrapped scorer
