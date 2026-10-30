@@ -154,7 +154,7 @@ describe('ScenarioPresetRegistry', () => {
     expect(await screen.findByText(MISSING_PRESET_ISSUE)).toBeInTheDocument()
     expect(within(screen.getByTestId('suite-status-nightly_suite')).getByText('1 advisory issue')).toBeInTheDocument()
     expect(await screen.findByTestId('empty-state')).toBeInTheDocument()
-    expect(mockPresetRemove).toHaveBeenCalledWith('nightly_probe')
+    expect(mockPresetRemove).toHaveBeenCalledWith('nightly_probe', 'v1')
     expect(mockSuiteList).toHaveBeenCalledTimes(2)
   })
 

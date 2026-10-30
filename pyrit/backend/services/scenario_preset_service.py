@@ -104,17 +104,26 @@ class ScenarioPresetService:
         )
         return await self._to_response_async(preset=stored.preset, version=stored.version, origin="stored")
 
-    async def delete_preset_async(self, *, name: str) -> bool:
+    async def delete_preset_async(self, *, name: str, expected_version: str | None = None) -> bool:
         """
         Delete one stored preset.
 
         Args:
             name (str): The preset name.
+            expected_version (str | None): The version the caller read, or ``None`` to
+                delete whatever is stored. Defaults to ``None``.
 
         Returns:
             bool: True if a preset was stored under *name*, False if nothing was.
+
+        Raises:
+            ScenarioPresetConflictError: If the stored version does not match *expected_version*.
         """
-        return await asyncio.to_thread(ScenarioPresetRegistry.get_registry_singleton().delete_preset, name=name)
+        return await asyncio.to_thread(
+            ScenarioPresetRegistry.get_registry_singleton().delete_preset,
+            name=name,
+            expected_version=expected_version,
+        )
 
     async def resolve_run_request_async(
         self, *, name: str, launch: ResolveScenarioPresetRequest

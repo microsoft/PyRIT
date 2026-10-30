@@ -103,11 +103,20 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
     setDeleting(true)
     setActionError(null)
     try {
-      await scenarioSuitesApi.remove(pendingDelete.suite.name)
+      await scenarioSuitesApi.remove(pendingDelete.suite.name, pendingDelete.version ?? undefined)
       setPendingDelete(null)
       refresh()
     } catch (err: unknown) {
-      setActionError(toApiError(err).detail)
+      const apiError = toApiError(err)
+      if (apiError.status === 409) {
+        setPendingDelete(null)
+        refresh()
+        setActionError(
+          `Suite '${pendingDelete.suite.name}' changed since it was loaded. Review it and try again.`,
+        )
+        return
+      }
+      setActionError(apiError.detail)
     } finally {
       setDeleting(false)
     }

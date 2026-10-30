@@ -135,12 +135,21 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
     setDeleting(true)
     setActionError(null)
     try {
-      await scenarioPresetsApi.remove(pendingDelete.preset.name)
+      await scenarioPresetsApi.remove(pendingDelete.preset.name, pendingDelete.version ?? undefined)
       setPendingDelete(null)
       refresh()
       onPresetDeleted()
     } catch (err) {
-      setActionError(toApiError(err).detail)
+      const apiError = toApiError(err)
+      if (apiError.status === 409) {
+        setPendingDelete(null)
+        refresh()
+        setActionError(
+          `Preset '${pendingDelete.preset.name}' changed since it was loaded. Review it and try again.`,
+        )
+        return
+      }
+      setActionError(apiError.detail)
     } finally {
       setDeleting(false)
     }

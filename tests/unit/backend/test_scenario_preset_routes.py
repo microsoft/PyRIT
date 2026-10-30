@@ -456,6 +456,29 @@ class TestDeletePreset:
         response = client.delete(f"/api/scenario-presets/{PRESET_NAME}")
 
         assert response.status_code == 204
+        service.delete_preset_async.assert_awaited_once_with(name=PRESET_NAME, expected_version=None)
+
+    def test_delete_forwards_the_version_that_was_read(self, client: TestClient, service: MagicMock) -> None:
+        service.delete_preset_async = AsyncMock(return_value=True)
+
+        response = client.delete(f"/api/scenario-presets/{PRESET_NAME}", params={"expected_version": "v1"})
+
+        assert response.status_code == 204
+        service.delete_preset_async.assert_awaited_once_with(name=PRESET_NAME, expected_version="v1")
+
+    def test_delete_of_a_changed_preset_is_a_conflict(self, client: TestClient, service: MagicMock) -> None:
+        service.delete_preset_async = AsyncMock(
+            side_effect=ScenarioPresetConflictError(
+                name=PRESET_NAME, expected_version="v1", actual_version="v2", action="deleted"
+            )
+        )
+
+        response = client.delete(f"/api/scenario-presets/{PRESET_NAME}", params={"expected_version": "v1"})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == (
+            f"Scenario preset '{PRESET_NAME}' changed since it was read; re-read it and retry"
+        )
 
     def test_delete_reports_a_missing_preset(self, client: TestClient, service: MagicMock) -> None:
         service.delete_preset_async = AsyncMock(return_value=False)

@@ -152,6 +152,20 @@ describe("api service", () => {
         signal: controller.signal,
       });
     });
+
+    it("deletes an encoded name only at the version that was read", async () => {
+      (apiClient.delete as jest.Mock).mockResolvedValue({ data: undefined });
+
+      await scenarioPresetsApi.remove("a/b", "v1");
+      await scenarioPresetsApi.remove("a/b");
+
+      expect(apiClient.delete).toHaveBeenNthCalledWith(1, "/scenario-presets/a%2Fb", {
+        params: { expected_version: "v1" },
+      });
+      expect(apiClient.delete).toHaveBeenNthCalledWith(2, "/scenario-presets/a%2Fb", {
+        params: { expected_version: undefined },
+      });
+    });
   });
 
   describe("scenarioSuitesApi", () => {
@@ -186,8 +200,10 @@ describe("api service", () => {
         suite,
         expected_version: "v1",
       });
-      await scenarioSuitesApi.remove("a/b");
-      expect(apiClient.delete).toHaveBeenCalledWith("/scenario-suites/a%2Fb");
+      await scenarioSuitesApi.remove("a/b", "v1");
+      expect(apiClient.delete).toHaveBeenCalledWith("/scenario-suites/a%2Fb", {
+        params: { expected_version: "v1" },
+      });
       await expect(scenarioSuitesApi.launch("a/b", launch)).resolves.toEqual(execution);
       expect(apiClient.post).toHaveBeenCalledWith("/scenario-suites/a%2Fb/launch", launch);
       await expect(scenarioSuitesApi.getExecution("execution/id", controller.signal)).resolves.toEqual(execution);

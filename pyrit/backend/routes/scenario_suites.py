@@ -7,7 +7,7 @@ from typing import Annotated
 from uuid import UUID
 
 from azure.core.exceptions import AzureError
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from pyrit.backend.middleware.auth import current_user_name, require_admin
 from pyrit.backend.models.common import ProblemDetail
@@ -300,12 +300,29 @@ async def update_scenario_suite(  # pyrit-async-suffix-exempt
     "/{name}",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_admin)],
-    responses={404: {"model": ProblemDetail, "description": "Scenario suite not found"}},
+    responses={
+        404: {"model": ProblemDetail, "description": "Scenario suite not found"},
+        409: {"model": ProblemDetail, "description": "The suite changed after it was read"},
+    },
 )
-async def delete_scenario_suite(name: str) -> None:  # pyrit-async-suffix-exempt
-    """Delete one stored scenario suite."""
+async def delete_scenario_suite(  # pyrit-async-suffix-exempt
+    name: str,
+    expected_version: str | None = Query(None, description="Delete only if the stored suite still has this version"),
+) -> None:
+    """
+    Delete one stored scenario suite, optionally only while it holds the version the caller read.
+
+    Raises:
+        HTTPException: 404 if no suite is stored, 409 if the stored version moved,
+            400 for an illegal name, 503 if storage fails.
+    """
     try:
-        deleted = await get_scenario_suite_service().delete_suite_async(name=name)
+        deleted = await get_scenario_suite_service().delete_suite_async(name=name, expected_version=expected_version)
+    except ScenarioSuiteConflictError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Scenario suite '{name}' changed since it was read; re-read it and retry",
+        ) from None
     except AzureError as exc:
         raise _storage_unavailable() from exc
     except ValueError as exc:
