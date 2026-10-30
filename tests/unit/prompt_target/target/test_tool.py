@@ -11,7 +11,7 @@ from pydantic import BaseModel, ValidationError
 from tenacity import wait_none
 
 from pyrit.exceptions import RateLimitException
-from pyrit.models import JsonResponseConfig, Message, MessagePiece
+from pyrit.models import JsonResponseConfig, Message, MessagePiece, ToolExecutionMetadata
 from pyrit.prompt_target import (
     FunctionTool,
     MCPToolProvider,
@@ -57,6 +57,12 @@ async def test_tool_validates_arguments_and_returns_scalar() -> None:
 
     with pytest.raises(ValidationError):
         await add.execute_async(arguments={"x": 2, "unexpected": True})
+
+
+@pytest.mark.parametrize("arguments", [{"x": "two"}, {"y": 3}, {"x": 2, "unexpected": True}])
+def test_function_tool_validate_arguments_rejects_mismatched_arguments(arguments: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        add.validate_arguments(arguments=arguments)
 
 
 async def test_tool_preserves_validated_structured_argument_type() -> None:
@@ -395,6 +401,55 @@ async def test_malformed_arguments_reach_model_as_tool_error(*, arguments: str, 
             with pytest.raises(ValueError):
                 target.validate_tool_history(result)
         execute.assert_not_called()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("arguments", ['{"value": "one"}', "{}", '{"value": 1, "unexpected": true}'])
+@pytest.mark.parametrize("strict", [False, True])
+async def test_mismatched_arguments_reach_model_as_tool_error(*, arguments: str, strict: bool) -> None:
+    executed: list[int] = []
+
+    async def record_async(*, value: int) -> int:
+        executed.append(value)
+        return value
+
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://example.invalid",
+        api_key="not-a-key",
+        tools=[FunctionTool(function=record_async)],
+        fail_on_missing_function=strict,
+    )
+    call = MessagePiece(
+        role="assistant",
+        original_value=json.dumps(
+            {"type": "function_call", "call_id": "call-1", "name": "record_async", "arguments": arguments}
+        ),
+        original_value_data_type="function_call",
+    ).to_message()
+    final = Message.from_prompt(prompt="Please supply valid arguments.", role="assistant")
+    with (
+        patch.object(target, "_handle_openai_request_async", new_callable=AsyncMock, side_effect=[call, final]) as send,
+        patch.object(target._client.responses, "create", new_callable=AsyncMock) as create,
+    ):
+        if strict:
+            with pytest.raises(ValidationError):
+                await target.send_prompt_async(message=Message.from_prompt(prompt="Record", role="user"))
+            send.assert_awaited_once()
+        else:
+            result = await target.send_prompt_async(message=Message.from_prompt(prompt="Record", role="user"))
+            assert [message.api_role for message in result] == ["assistant", "tool", "assistant"]
+            assert send.await_count == 2
+            await send.call_args.kwargs["api_call"]()
+            assert json.loads(create.call_args.kwargs["input"][-1]["output"]) == {
+                "error": "malformed_arguments",
+                "function": "record_async",
+                "raw_arguments": arguments,
+            }
+            execution = ToolExecutionMetadata.from_metadata(metadata=result[1].get_piece().prompt_metadata)
+            assert execution == ToolExecutionMetadata(invoked=False)
+            target.validate_tool_history(result)
+    assert executed == []
 
 
 async def test_collect_tools_async_preserves_direct_and_provider_order() -> None:
