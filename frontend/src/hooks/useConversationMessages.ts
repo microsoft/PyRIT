@@ -182,7 +182,15 @@ export function useConversationMessages({
     // Preserve that local result unless the user explicitly requests a refresh.
     const force = forceLoadRef.current
     forceLoadRef.current = false
-    if (!force && (
+    // A send in flight owns this conversation's optimistic transcript, but only
+    // while the hook still holds it. Once another conversation is loaded, the
+    // optimistic copy is gone and returning here must load server state rather
+    // than keep rendering the other conversation under this URL.
+    const holdsAnotherConversation = (
+      loadedConversationIdRef.current !== null
+      && loadedConversationIdRef.current !== activeConversationId
+    )
+    if (!force && !holdsAnotherConversation && (
       sendCallbacksRef.current.isSendInFlight(activeConversationId)
       || (
         loadedConversationIdRef.current === activeConversationId
