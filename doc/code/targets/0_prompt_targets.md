@@ -57,154 +57,49 @@ Target-side rate limiting remains independent and continues to use `limit_reques
 `_send_prompt_to_target_async(*, normalized_conversation: list[Message]) -> list[Message]` instead of
 overriding `send_prompt_async`.
 
-## Runtime temperature (initial implementation)
+## Runtime temperature
 
-A target's constructor temperature remains its default and part of its configuration identity.
-For an individual send, attach `RequestGenerationConfig` to the current message:
+Use `RequestGenerationConfig` to set temperature for one send without changing the
+target's configured default or identity. `OpenAIChatTarget` supports this when
+`target.capabilities.supports_temperature` is true. See [Target Capabilities](./6_1_target_capabilities.ipynb)
+for inspecting and configuring support.
 
 ```python
 from pyrit.models import Message, MessagePiece, RequestGenerationConfig
 from pyrit.prompt_normalizer import PromptNormalizer
 
-message = Message(message_pieces=[
-    MessagePiece(
-        role="user",
-        original_value="Describe this scene.",
-        prompt_metadata=RequestGenerationConfig(temperature=0).to_metadata(),
-    )
-])
+message = Message(
+    message_pieces=[
+        MessagePiece(
+            role="user",
+            original_value="Describe this scene.",
+            prompt_metadata=RequestGenerationConfig(temperature=0).to_metadata(),
+        )
+    ]
+)
 response = await PromptNormalizer().send_prompt_async(
-    message=message, target=target, conversation_id=conversation_id,
+    message=message, target=target, conversation_id=conversation_id
 )
 ```
 
-Check `target.capabilities.supports_temperature` before offering this control.
-`OpenAIChatTarget` uses the existing known-capability profiles or an explicit
-`custom_configuration`, rather than a model-name allowlist in the adapter.
-The existing `gpt-4o` and `gpt-5.1` profiles declare temperature support. For an
-Azure alias, `underlying_model` can select a known profile. The effective model
-in top-level or nested passthrough settings takes precedence for this lookup.
+The metadata shape is `{"request_generation_config": {"temperature": 0}}`.
+OpenAI Chat accepts finite numbers from 0 through 2, including zero, but not booleans
+or numeric strings. Put the override on one current message piece or repeat the
+same value on several pieces. Conflicting values and unsupported target/model modes
+fail before provider I/O; conversation history does not select the temperature.
 
-For deployments without a matching profile (including unlisted model versions),
-declare support explicitly when the deployed model/mode accepts temperature:
+Missing or null temperature preserves the target's configured behavior. An explicit
+override takes precedence over configured temperature values, including nested
+`extra_body` settings. If neither a request value nor a configured value exists,
+the provider parameter is omitted. Transport retries retain the resolved value;
+each new send can select a different one.
 
-```python
-from pyrit.prompt_target import OpenAIChatTarget, TargetConfiguration
-
-configuration = TargetConfiguration(
-    capabilities=OpenAIChatTarget.get_default_configuration().capabilities.model_copy(
-        update={"supports_temperature": True}
-    )
-)
-target = OpenAIChatTarget(
-    model_name="my-deployment",
-    endpoint=endpoint,
-    api_key=api_key,
-    custom_configuration=configuration,
-)
-```
-
-An explicit capability declaration is the deployment owner's assertion, not a
-provider probe. Unknown models without that declaration do not advertise support.
-Explicit `False` disables support even for a known profile. Existing profile lookup
-rules are unchanged; no new model aliases alter historical normalization or hashes.
-Other adapters do not acquire runtime support merely by using a capable model.
-
-The adapter also checks the effective sampling mode: `reasoning_effort="none"` is
-allowed, while active reasoning, audio configurations, and streaming remain
-unsupported in this implementation. Nested settings take precedence over top-level
-settings. Omitted effort relies on the profile or deployment declaration covering
-the model's default mode. Support is refreshed during construction and whenever
-`set_model_name()` is called, retaining explicit deployment declarations and
-effective underlying-model/passthrough precedence. `apply_capabilities()` can
-declare support for the current model, but cannot bypass the adapter's mode checks;
-changing models re-resolves support from the profile and constructor overrides.
-The same native-capability and mode checks run before generation I/O.
-
-The canonical input is `{"request_generation_config": {"temperature": 0}}`.
-`RequestGenerationConfig` owns this envelope and currently accepts only temperature.
-Zero is valid. Missing or null temperature uses the target's configured settings.
-Values must be finite numbers (not booleans
-or numeric strings); this adapter accepts the range 0 through 2. Put the value on
-one current message piece or the same value on several pieces; conflicting values
-are rejected before normalization. History never selects the next temperature.
-An explicit override wins over top-level and nested `extra_body` temperature settings,
-without mutating those settings. `_send_prompt_to_target_async` retains both
-`@pyrit_target_retry` and `@limit_requests_per_minute`, so each attempt is paced.
-Transport retries reuse the first attempt's recorded temperature resolution, even
-if request options or configured defaults change before a retry. A later logical
-send resolves afresh; the public send boundary clears copied or stale evidence.
-
-`RequestGenerationInfo` reads the framework-authored `_pyrit_generation` metadata
-on the saved request and responses. Its `temperature` field is a `ParameterResolution`
-containing `requested`, `resolved`, and `source` (`request`, `target_default`, or
-`provider_default`). The originating `request_piece_ids` belong to the outer record:
-
-```json
-{
-  "_pyrit_generation": {
-    "temperature": {"requested": 0, "resolved": 0, "source": "request"},
-    "request_piece_ids": ["originating-piece-id"]
-  }
-}
-```
-
-This records submitted parameters, not provider success or internal sampling behavior.
-Configured passthrough values count as target defaults. When no temperature is
-specified, `requested` and `resolved` are null with source `provider_default` if
-the target also has no default. The provider's numeric default stays unknown. Old messages
-without evidence remain readable and show **not recorded**, not a guessed value.
-Use `PromptNormalizer` for persistence; direct target sends return evidence but do
-not themselves write messages to memory.
-
-Only `request_generation_config` and `_pyrit_generation` are supported. The earlier,
-unreleased draft keys `request_temperature` and `_pyrit_temperature` are not interpreted.
-Messages without canonical evidence remain readable and show **not recorded**.
-Reading history does not rewrite it; canonical evidence is cleared before a new send.
-
-Future supported generation parameters can add explicit typed fields to
-`RequestGenerationConfig` and their own resolution records to `RequestGenerationInfo`.
-`RequestGenerationConfig.FIELD_CAPABILITIES` maps each option to its own
-`CapabilityName` / `supports_*` flag. The shared code merges non-null values across
-pieces, rejects per-field conflicts, and checks native capabilities with `includes()`.
-Each parameter uses `ParameterResolution` for its requested/resolved value and source.
-Adapters implement provider/mode validation, payload application, and retry resolution;
-no new base-target hook is needed for each parameter. Capability discovery copies the
-declared model and updates probe results, preserving additional flags.
-This is not an arbitrary provider-options dictionary; JSON response and web-search
-policies remain separate contracts. Only temperature is implemented.
-
-In Chat, the top temperature control applies to future sends; clearing it restores
-the target default. It does not build a temporary target or change an attack's target
-binding. Existing saved temporary variants also accept overrides: their bound
-temperature remains the default. Switching attacks/targets or refreshing resets the
-control; the initial lazy creation of an attack does not. History editing disables
-the future-send control, and copying text/media does not carry old temperature
-options or evidence into a new send.
-
-This is a draft vertical slice, **not completion of the runtime-temperature story**.
-Still to decide/implement:
-
-- Approve the public model/key names and extend the tested provider/model/mode matrix.
-- Add Responses tool-continuation, LiteLLM, HuggingFace, other provider, composite/wrapper,
-  and streaming support before advertising their capability.
-- Define attack-owned fixed/adaptive temperature configuration, including objective versus
-  adversarial roles and fallback defaults. Keep policy identity stable during execution.
-- Update effective-value evaluation grouping, resume checks, and replay compatibility together;
-  equivalent fixed defaults/overrides must group consistently without relabeling adaptive paths.
-- Agree on richer history-editor/copy/replay UX and whether to persist composer preferences.
-  The editor's legacy `buildTemperatureTarget` save path still exists; this draft disables
-  its temperature control rather than removing all temporary-target construction.
-  Saved-binding reconstruction and generic registry construction remain supported.
-- Extend scorer-isolation and cross-provider regression coverage and confirm the release split
-  with the story owners. Existing target hashes are preserved by excluding the additive
-  runtime-support flag from configuration identity; no historical identifiers are rewritten.
-
-Custom adapter implementations declare a
-`_SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]]`
-(for example, `frozenset({CapabilityName.TEMPERATURE})`), validate ranges and joint
-restrictions in `_validate_request_generation_config`, and apply and record resolved
-settings in their send hook. A model profile alone cannot enable an unimplemented adapter.
+`PromptNormalizer` saves generation evidence with the request and its responses.
+Read it using `RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)`.
+Its `temperature` record contains the `requested` override, `resolved` parameter sent,
+and `source`: `request`, `target_default`, or `provider_default`. Unknown provider
+defaults remain `None`; messages without evidence return `None` rather than a
+guessed temperature.
 
 ## Chat-style targets vs general targets
 
