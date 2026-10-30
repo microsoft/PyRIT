@@ -30,6 +30,7 @@ from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.scenarios.airt.jailbreak import (
     _DEFAULT_NUM_JAILBREAKS,
     _DEFAULT_TECHNIQUES,
+    _JAILBREAK_MULTI_TURN,
     _JAILBREAK_SYSTEM_PROMPT,
     _JAILBREAK_TEMPLATES_METADATA_KEY,
     _PROMPT_SENDING,
@@ -827,6 +828,50 @@ class TestJailbreakResumePersistence:
 
 
 @pytest.mark.usefixtures(*FIXTURES)
+class TestJailbreakMultiTurnDelivery:
+    """Tests for the ``jailbreak_multi_turn`` two-turn user-handshake delivery."""
+
+    async def test_multi_turn_delivery_end_to_end_sends_framing_then_objective_and_scores_turn_two(
+        self, mock_memory_seed_groups
+    ):
+        from unit.mocks import MockPromptTarget
+
+        from pyrit.memory import CentralMemory
+        from pyrit.score import SubStringScorer
+
+        target = MockPromptTarget()
+        technique_class = _build_jailbreak_technique()
+        scorer = SubStringScorer(substring="default")
+
+        with _patch_seed_groups(mock_memory_seed_groups[:1]):
+            scenario = Jailbreak(objective_scorer=scorer)
+            scenario.set_params_from_args(
+                args=_default_args(
+                    target,
+                    scenario_techniques=[technique_class(_JAILBREAK_MULTI_TURN)],
+                    jailbreak_names=["aim.yaml"],
+                )
+            )
+            await scenario.initialize_async()
+            result = await scenario._atomic_attacks[0].run_async()
+
+        assert scenario._atomic_attacks[0].atomic_attack_name == f"{_JAILBREAK_MULTI_TURN}_aim_harmbench"
+        attack_result = result.completed_results[0]
+        assert attack_result.executed_turns == 2
+        pieces = await CentralMemory.get_memory_instance().get_message_pieces_async(
+            conversation_id=attack_result.conversation_id
+        )
+        user_values = [p.converted_value for p in pieces if p.role == "user"]
+        assistant_pieces = [p for p in pieces if p.role == "assistant"]
+        assert len(user_values) == 2
+        assert "Niccolo" in user_values[0]
+        assert user_values[1] == mock_memory_seed_groups[0].objective.value
+        assert attack_result.automated_score is not None
+        assert attack_result.automated_score.get_value() is True
+        assert str(attack_result.automated_score.message_piece_id) == str(assistant_pieces[1].id)
+
+
+@pytest.mark.usefixtures(*FIXTURES)
 class TestJailbreakTechniqueModel:
     """Tests for the dynamically-built JailbreakTechnique class."""
 
@@ -839,11 +884,11 @@ class TestJailbreakTechniqueModel:
     def test_only_scenario_delivery_techniques_are_available(self):
         technique_class = _technique_class()
         available = {t.value for t in technique_class.get_all_techniques()}
-        assert available == {_PROMPT_SENDING, _JAILBREAK_SYSTEM_PROMPT}
+        assert available == {_PROMPT_SENDING, _JAILBREAK_SYSTEM_PROMPT, _JAILBREAK_MULTI_TURN}
 
     def test_registry_metadata_lists_only_scenario_deliveries(self):
         metadata = ScenarioRegistry()._build_metadata("airt.jailbreak", Jailbreak)
-        assert set(metadata.all_techniques) == {_PROMPT_SENDING, _JAILBREAK_SYSTEM_PROMPT}
+        assert set(metadata.all_techniques) == {_PROMPT_SENDING, _JAILBREAK_SYSTEM_PROMPT, _JAILBREAK_MULTI_TURN}
 
     def test_scenario_version_is_four(self):
         assert Jailbreak.VERSION == 4

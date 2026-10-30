@@ -12,6 +12,7 @@ from pyrit.common import apply_defaults
 from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.converter import TextJailbreakConverter
 from pyrit.datasets import TextJailBreak
+from pyrit.executor.attack.multi_turn.multi_prompt_sending import MultiPromptSendingAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import (
     AttackTechniqueSeedGroup,
@@ -19,6 +20,7 @@ from pyrit.models import (
     Parameter,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
+    SeedPrompt,
 )
 from pyrit.prompt_target import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
@@ -67,6 +69,7 @@ _DEFAULT_NUM_JAILBREAKS = 2
 # both are injected locally (like Leakage's ``first_letter`` / ``image``) and form the default set.
 _PROMPT_SENDING = "prompt_sending"
 _JAILBREAK_SYSTEM_PROMPT = "jailbreak_system_prompt"
+_JAILBREAK_MULTI_TURN = "jailbreak_multi_turn"
 _DEFAULT_TECHNIQUES: frozenset[str] = frozenset({_PROMPT_SENDING, _JAILBREAK_SYSTEM_PROMPT})
 
 
@@ -118,11 +121,31 @@ def _jailbreak_system_prompt_factory() -> AttackTechniqueFactory:
     )
 
 
+@cache
+def _jailbreak_multi_turn_factory() -> AttackTechniqueFactory:
+    """
+    Build the scenario-local ``jailbreak_multi_turn`` delivery technique factory.
+
+    Returns:
+        AttackTechniqueFactory: A ``MultiPromptSendingAttack`` placeholder factory.
+    """
+    return AttackTechniqueFactory(
+        name=_JAILBREAK_MULTI_TURN,
+        attack_class=MultiPromptSendingAttack,
+        description=(
+            "Sends the jailbreak template as the first user turn and the objective as a follow-up "
+            "user turn in the same conversation, scoring only the final response."
+        ),
+        technique_tags=["multi_turn"],
+    )
+
+
 def _extra_default_factories() -> dict[str, AttackTechniqueFactory]:
-    """Return the scenario-local default technique factories keyed by name."""
+    """Return the scenario-local delivery technique factories keyed by name."""
     return {
         _PROMPT_SENDING: _prompt_sending_factory(),
         _JAILBREAK_SYSTEM_PROMPT: _jailbreak_system_prompt_factory(),
+        _JAILBREAK_MULTI_TURN: _jailbreak_multi_turn_factory(),
     }
 
 
@@ -285,7 +308,7 @@ class Jailbreak(Scenario):
                 values = [getattr(item, "value", repr(item)) for item in incompatible]
                 raise ValueError(
                     "Jailbreak received stale or incompatible techniques "
-                    f"{values}. Select 'prompt_sending' or 'jailbreak_system_prompt'."
+                    f"{values}. Select 'prompt_sending', 'jailbreak_system_prompt', or 'jailbreak_multi_turn'."
                 )
         return super()._resolve_scenario_techniques(scenario_techniques=scenario_techniques)
 
@@ -559,6 +582,28 @@ class Jailbreak(Scenario):
                     self._build_delivery_attacks(
                         builder=builder,
                         technique_factories={_JAILBREAK_SYSTEM_PROMPT: system_factory},
+                        technique_converters={},
+                        dataset_groups=context.seed_groups_by_dataset,
+                        template_stem=template_stem,
+                        num_attempts=num_attempts,
+                    )
+                )
+
+            if _JAILBREAK_MULTI_TURN in technique_factories:
+                framing = TextJailBreak(template_file_name=template_file_name).get_jailbreak_system_prompt()
+                multi_turn_factory = AttackTechniqueFactory(
+                    name=_JAILBREAK_MULTI_TURN,
+                    attack_class=MultiPromptSendingAttack,
+                    technique_tags=["multi_turn"],
+                    seed_technique=AttackTechniqueSeedGroup(
+                        seeds=[SeedPrompt(value=framing, data_type="text", role="user", is_general_technique=True)],
+                        prompt_placement="prepend",
+                    ),
+                )
+                atomic_attacks.extend(
+                    self._build_delivery_attacks(
+                        builder=builder,
+                        technique_factories={_JAILBREAK_MULTI_TURN: multi_turn_factory},
                         technique_converters={},
                         dataset_groups=context.seed_groups_by_dataset,
                         template_stem=template_stem,
