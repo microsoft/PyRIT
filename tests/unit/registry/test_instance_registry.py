@@ -9,6 +9,7 @@ registry exposes as its ``.instances`` property, plus the ``InstanceRegistry`` a
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
+from typing import assert_type
 from unittest.mock import patch
 
 import pytest
@@ -263,6 +264,27 @@ class TestGet:
     def test_get_entry_nonexistent_returns_none(self, registry: DefaultInstanceRegistry[_TestItem]):
         assert registry.get_entry("missing") is None
 
+    def test_get_and_get_entry_preserve_return_types(self, registry: DefaultInstanceRegistry[_TestItem]) -> None:
+        item = _item("value1")
+        registry.register(item, name="name1")
+
+        retrieved = registry.get("name1")
+        assert_type(retrieved, _TestItem | None)
+        assert retrieved is item
+
+        missing = registry.get("missing")
+        assert_type(missing, _TestItem | None)
+        assert missing is None
+
+        entry = registry.get_entry("name1")
+        assert_type(entry, RegistryEntry[_TestItem] | None)
+        assert entry is not None
+        assert entry.instance is item
+
+        missing_entry = registry.get_entry("missing")
+        assert_type(missing_entry, RegistryEntry[_TestItem] | None)
+        assert missing_entry is None
+
 
 class TestUnregister:
     """Tests for unregistering instances."""
@@ -324,6 +346,14 @@ class TestGetNamesAndAllInstances:
 
     def test_get_all_instances_empty_registry(self, registry: DefaultInstanceRegistry[_TestItem]):
         assert registry.get_all_instances() == []
+
+    def test_get_all_instances_preserves_return_type(self, registry: DefaultInstanceRegistry[_TestItem]) -> None:
+        registry.register(_item("v1"), name="zeta")
+        registry.register(_item("v2"), name="alpha")
+
+        all_instances = registry.get_all_instances()
+        assert_type(all_instances, list[RegistryEntry[_TestItem]])
+        assert [e.name for e in all_instances] == ["alpha", "zeta"]
 
 
 class TestListMetadata:
@@ -598,6 +628,32 @@ class TestProtocolConformance:
         holder: SupportsInstances[_TestItem] = _Holder(registry)
         holder.instances.register(_item("v1"), name="n1")
         assert holder.instances.get("n1") == "v1"
+
+    def test_instance_registry_consumer_preserves_types(self, registry: DefaultInstanceRegistry[_TestItem]) -> None:
+        consumer: InstanceRegistry[_TestItem] = registry
+        item = _item("v1")
+        consumer.register(item, name="n1")
+
+        retrieved = consumer.get("n1")
+        assert_type(retrieved, _TestItem | None)
+        assert retrieved is item
+
+        missing = consumer.get("missing")
+        assert_type(missing, _TestItem | None)
+        assert missing is None
+
+        entry = consumer.get_entry("n1")
+        assert_type(entry, RegistryEntry[_TestItem] | None)
+        assert entry is not None
+        assert entry.instance is item
+
+        missing_entry = consumer.get_entry("missing")
+        assert_type(missing_entry, RegistryEntry[_TestItem] | None)
+        assert missing_entry is None
+
+        all_instances = consumer.get_all_instances()
+        assert_type(all_instances, list[RegistryEntry[_TestItem]])
+        assert [e.name for e in all_instances] == ["n1"]
 
 
 class TestNoBackendDependency:
