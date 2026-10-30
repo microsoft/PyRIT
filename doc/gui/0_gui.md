@@ -135,8 +135,10 @@ This is a cross-result report, not the progress dashboard for one scanner run.
 ## Operations
 
 Operations organize human findings for an engagement. Create an operation,
-record findings with severity and description, and attach saved attacks as
-evidence. A model score does not create a finding automatically.
+record findings, and attach saved attacks as evidence. Findings use the
+deployment's [finding fields](../code/setup/finding_fields.md), which by default
+are severity, harm type, and description. A model score does not create a
+finding automatically.
 
 Select an operation in the labels bar to associate new chats and scans with it.
 The operation page brings its findings, linked evidence, and execution history

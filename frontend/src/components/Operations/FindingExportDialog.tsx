@@ -8,9 +8,10 @@ import { ArrowDownloadRegular } from '@fluentui/react-icons'
 
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { FindingExportFormat, FindingListItem, Operation } from '@/types'
+import type { FindingExportFormat, FindingFields, FindingListItem, Operation } from '@/types'
 import { downloadFile } from '@/utils/downloadFile'
 import { findingExportFilename } from '@/utils/findingExportFilename'
+import { splitRetiredValues } from '@/utils/findingFields'
 
 import { useFindingExportDialogStyles } from './FindingExportDialog.styles'
 import FindingSeverityBadge from './FindingSeverityBadge'
@@ -40,11 +41,18 @@ function removedNotice(titles: readonly string[]): string {
   return `${names} ${verb} removed from your selection. Review the list and download again.`
 }
 
-interface FindingExportDialogProps {
-  operation: Operation
+function retiredNotice(count: number): string {
+  const subject = count === 1 ? '1 selected finding has' : `${count} selected findings have`
+  return `Retired fields aren't included in the export. ${subject} retired values.`
 }
 
-export default function FindingExportDialog({ operation }: FindingExportDialogProps) {
+interface FindingExportDialogProps {
+  operation: Operation
+  /** The active finding fields, which decide the severity badges and which stored values are retired. */
+  fields: FindingFields
+}
+
+export default function FindingExportDialog({ operation, fields }: FindingExportDialogProps) {
   const styles = useFindingExportDialogStyles()
   const [open, setOpen] = useState(false)
   const [loadRevision, setLoadRevision] = useState(0)
@@ -66,6 +74,8 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
   const selectedIds = findings.filter(finding => selected.has(finding.id)).map(finding => finding.id)
   const allSelected = selectedIds.length === findings.length
   const selectAllChecked = allSelected ? true : selectedIds.length === 0 ? false : 'mixed'
+  const selectedWithRetired = findings.filter(finding => selected.has(finding.id)
+    && splitRetiredValues(fields, finding.field_values).retired.length > 0).length
   // A natively disabled button drops keyboard focus out of the dialog, so while an export runs, and while the list
   // reloads or shows nothing selected after a deleted finding, Download stays focusable but unavailable.
   const downloadKeepsFocus = exporting || (selectedIds.length === 0 && (recovering || removedTitles.length > 0))
@@ -206,7 +216,7 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
                 <Checkbox className={styles.checkbox} label={{ children: finding.title, className: styles.label }}
                   aria-describedby={createdId} checked={selected.has(finding.id)} disabled={exporting}
                   onChange={(_, data) => { toggle(finding.id, data.checked === true) }} />
-                <FindingSeverityBadge finding={finding} />
+                <FindingSeverityBadge fields={fields} severity={finding.severity} />
                 <Text size={200} className={styles.created}>
                   <time id={createdId} dateTime={finding.created_at}>
                     {new Date(finding.created_at).toLocaleString()}
@@ -236,6 +246,11 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
               Findings, attack objectives and score rationales can contain sensitive content. Nothing is redacted
               automatically.
             </MessageBarBody></MessageBar>
+            {selectedWithRetired > 0 && (
+              <MessageBar className={styles.messageBar} intent="warning" aria-live="polite"><MessageBarBody>
+                {retiredNotice(selectedWithRetired)}
+              </MessageBarBody></MessageBar>
+            )}
             {exportError && <MessageBar className={styles.messageBar} intent="error" aria-live="polite"><MessageBarBody>
               Could not export findings: {exportError}
             </MessageBarBody></MessageBar>}

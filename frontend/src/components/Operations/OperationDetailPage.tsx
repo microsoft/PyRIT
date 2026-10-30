@@ -7,10 +7,12 @@ import {
 import { AddRegular, ArrowLeftRegular } from '@fluentui/react-icons'
 
 import { DEFAULT_HISTORY_FILTERS, filtersToSearchParams } from '@/components/History/historyFilters'
+import { useFindingFields } from '@/hooks/useFindingFields'
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { Finding, FindingCreate, FindingListItem, FindingListResponse, OperationDetail } from '@/types'
-import FindingDialog, { type FindingSaveAttempt } from './FindingDialog'
+import type { Finding, FindingFields, FindingListItem, FindingListResponse, OperationDetail } from '@/types'
+import FindingCardValues from './FindingCardValues'
+import FindingDialog, { type FindingDraft, type FindingSaveAttempt } from './FindingDialog'
 import FindingEvidenceList from './FindingEvidenceList'
 import FindingExportDialog from './FindingExportDialog'
 import FindingSeverityBadge from './FindingSeverityBadge'
@@ -38,6 +40,7 @@ export default function OperationDetailPage({ onOperationChanged }: OperationDet
 function OperationDetailContent({ operationId, onOperationChanged }: { operationId: string } & OperationDetailPageProps) {
   const styles = useOperationsStyles()
   const navigate = useNavigate()
+  const { fields, error: fieldsError, retry: retryFields, orderRevision } = useFindingFields()
   const [params, setParams] = useSearchParams()
   const rawOffset = Number(params.get('offset') ?? 0)
   const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0
@@ -49,7 +52,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
   const [evidenceRevision, setEvidenceRevision] = useState(0)
   const [settledKey, setSettledKey] = useState('')
   const [error, setError] = useState('')
-  const requestKey = JSON.stringify([operationId, offset, revision])
+  const requestKey = JSON.stringify([operationId, offset, revision, orderRevision])
   const [notice, setNotice] = useState('')
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Finding | null>(null)
@@ -98,9 +101,11 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
     setParams(nextOffset > 0 ? { offset: String(nextOffset) } : {})
   }
 
-  const save = async (draft: FindingCreate, attempt: FindingSaveAttempt): Promise<void> => {
+  const save = async (draft: FindingDraft, attempt: FindingSaveAttempt): Promise<void> => {
     const saved = editing
-      ? await operationsApi.updateFinding(operationId, editing.id, draft)
+      ? await operationsApi.updateFinding(operationId, editing.id, {
+        ...draft, remove_retired_keys: draft.remove_retired_keys ?? [],
+      })
       : await operationsApi.createFinding(operationId, {
         ...draft, id: attempt.id, ...(attempt.attackResultId ? { attack_result_id: attempt.attackResultId } : {}),
       })
@@ -159,15 +164,14 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
     )
   }
 
-  const renderFinding = (finding: FindingListItem): React.ReactNode => (
+  const renderFinding = (finding: FindingListItem, findingFields: FindingFields): React.ReactNode => (
     <li key={finding.id} className={styles.item}>
       <h2 className={styles.title}>{finding.title}</h2>
       <div className={styles.metadata}>
-        <FindingSeverityBadge finding={finding} />
+        <FindingSeverityBadge fields={findingFields} severity={finding.severity} />
         <time dateTime={finding.created_at}>{new Date(finding.created_at).toLocaleString()}</time>
       </div>
-      {finding.harm_type && <Text>Harm-type: {finding.harm_type === 'Other' ? finding.harm_type_other : finding.harm_type}</Text>}
-      {finding.description && <p className={styles.description}>{finding.description}</p>}
+      <FindingCardValues fields={findingFields} finding={finding} />
       <FindingEvidenceList operationId={operationId} findingId={finding.id} count={finding.evidence_count}
         onDetached={() => { setEvidenceRevision(value => value + 1) }} actions={<>
           <Button className={styles.button} aria-label={`Edit finding: ${finding.title}`} onClick={event => {
@@ -203,18 +207,19 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
               onOperationChanged?.()
               void navigate('/operations')
             }} />
-          <FindingExportDialog key={current.operation.id} operation={current.operation} />
-          <Button ref={newFindingRef} appearance="primary" className={styles.button} icon={<AddRegular />} onClick={event => {
-            returnFocusRef.current = event.currentTarget
-            setEditing(null)
-            setOpen(true)
-          }}>New finding</Button>
+          {fields !== null && <FindingExportDialog key={current.operation.id} operation={current.operation}
+            fields={fields} />}
+          <Button ref={newFindingRef} appearance="primary" className={styles.button} icon={<AddRegular />}
+            disabled={fields === null} onClick={event => {
+              returnFocusRef.current = event.currentTarget
+              setEditing(null)
+              setOpen(true)
+            }}>New finding</Button>
         </div>
-        {open && <FindingDialog editing={editing !== null} evidenceField={editing === null}
+        {open && fields !== null && <FindingDialog fields={fields} editing={editing !== null}
+          evidenceField={editing === null}
           initialValues={editing ? {
-            title: editing.title, description: editing.description, severity: editing.severity,
-            severity_other: editing.severity_other ?? null, harm_type: editing.harm_type ?? null,
-            harm_type_other: editing.harm_type_other ?? null,
+            title: editing.title, severity: editing.severity, field_values: editing.field_values,
           } : undefined}
           onSave={save} onClose={() => { setOpen(false); setEditing(null) }} />}
       </header>
@@ -243,7 +248,12 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
       {notice && <MessageBar className={styles.notice} intent="success" aria-live="polite">
         <MessageBarBody>{notice}</MessageBarBody>
       </MessageBar>}
-      {settledKey !== requestKey ? <Spinner label="Loading findings…" /> : error ? (
+      {fieldsError ? (
+        <MessageBar intent="error"><MessageBarBody>
+          Could not load finding fields: {fieldsError}{' '}
+          <Button className={styles.button} aria-label="Retry finding fields" onClick={retryFields}>Retry</Button>
+        </MessageBarBody></MessageBar>
+      ) : fields === null || settledKey !== requestKey ? <Spinner label="Loading findings…" /> : error ? (
         <MessageBar intent="error"><MessageBarBody>
           Could not load findings: {error}{' '}
           <Button className={styles.button} onClick={() => { setRevision(value => value + 1) }}>Retry</Button>
@@ -251,7 +261,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
       ) : (
         <>
           {page.items.length === 0 ? <Text>No findings in this operation yet. Create one to record an assessment.</Text>
-            : <ul className={styles.list}>{page.items.map(renderFinding)}</ul>}
+            : <ul className={styles.list}>{page.items.map(finding => renderFinding(finding, fields))}</ul>}
           <div className={styles.header}>
             <Button className={styles.button} disabled={offset === 0} onClick={() => { navigatePage(0) }}>First</Button>
             <Text>Page {Math.floor(offset / PAGE_SIZE) + 1}</Text>

@@ -29,8 +29,7 @@ from pyrit.backend.models.operations import (
     FindingExportRequest,
 )
 from pyrit.backend.services.operation_service import OperationService
-from pyrit.models import Finding, FindingSeverity, ScoreStatus
-from pyrit.models.harm_category import HarmCategory
+from pyrit.models import Finding, FindingFields, ScoreStatus
 from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
 from pyrit.output.finding_report.report import (
     DETAIL_SEPARATOR,
@@ -44,6 +43,7 @@ from pyrit.output.finding_report.report import (
     FindingReportField,
     plain_text,
 )
+from pyrit.setup.finding_fields import get_active_finding_fields
 
 _MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"
 _DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -113,14 +113,15 @@ async def _build_report_async(*, operation_id: UUID, request: FindingExportReque
     selected = await service.get_findings_with_evidence_async(
         operation_id=operation_id, finding_ids=request.finding_ids
     )
+    fields = get_active_finding_fields()
     report_findings = []
     for finding, evidence in selected:
-        severity, fields = _project_finding_fields(finding)
+        severity, projected = _project_finding_fields(finding, fields=fields)
         report_findings.append(
             FindingReportEntry(
                 title=finding.title,
                 severity=severity,
-                fields=fields,
+                fields=projected,
                 evidence=tuple(
                     _project_evidence(item=item, operation_id=operation_id, dashboard_origin=request.dashboard_origin)
                     for item in evidence
@@ -130,28 +131,29 @@ async def _build_report_async(*, operation_id: UUID, request: FindingExportReque
     return FindingReport(operation_name=operation.name, findings=tuple(report_findings))
 
 
-def _project_finding_fields(finding: Finding) -> tuple[FindingReportField, tuple[FindingReportField, ...]]:
+def _project_finding_fields(
+    finding: Finding, *, fields: FindingFields
+) -> tuple[FindingReportField, tuple[FindingReportField, ...]]:
     """
-    Label a finding's severity and its populated fields, in report order, and place each in a Word column.
+    Label a finding's severity and its filled fields, in configured order, and place each in a Word column.
 
-    Narrative text goes in the Finding column and classifications in the Assessment column.
+    Multiline text goes in the Finding column; choices and single-line text go in the Assessment column.
+    Internal fields and retired values are left out.
 
     Returns:
-        tuple[FindingReportField, tuple[FindingReportField, ...]]: The severity, then the populated fields.
+        tuple[FindingReportField, tuple[FindingReportField, ...]]: The severity, then the filled fields.
     """
-    severity = (
-        finding.severity_other or "Other"
-        if finding.severity == FindingSeverity.OTHER
-        else finding.severity.value.capitalize()
+    description = fields.describe_values(severity=finding.severity, field_values=finding.field_values)
+    projected = tuple(
+        FindingReportField(
+            label=row.label,
+            value=row.value,
+            column=FindingReportColumn.FINDING if row.multiline else FindingReportColumn.ASSESSMENT,
+        )
+        for row in description.rows
+        if not row.internal
     )
-    harm_type = finding.harm_type_other if finding.harm_type == HarmCategory.OTHER else finding.harm_type
-    fields = [
-        FindingReportField(label="Harm-type", value=str(harm_type), column=FindingReportColumn.ASSESSMENT)
-        if harm_type
-        else None,
-        FindingReportField(label="Description", value=finding.description) if finding.description else None,
-    ]
-    return FindingReportField(label="Severity", value=severity), tuple(field for field in fields if field)
+    return FindingReportField(label=fields.severity.label, value=description.severity_label), projected
 
 
 def _project_evidence(

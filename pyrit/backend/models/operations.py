@@ -7,29 +7,22 @@ from uuid import UUID
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
 
 from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models.common import MAX_ITEMS, IdentifierStr, TextStr
 from pyrit.models import (
     AttackOutcome,
     Finding,
     FindingCreate,
     FindingEvidence,
-    FindingSeverity,
     Operation,
     OperationUsage,
 )
-from pyrit.models.harm_category import HarmCategory
 from pyrit.models.operation import OperationName
 
 
-class FindingOptionsResponse(BaseModel):
-    """Harm categories a finding can use."""
-
-    harm_types: list[HarmCategory]
-
-
 class OperationListItem(Operation):
-    """An operation with its finding counts by severity. Severities with no findings are omitted."""
+    """An operation with its finding counts by stored severity value. Severities with no findings are omitted."""
 
-    finding_counts: dict[FindingSeverity, int]
+    finding_counts: dict[str, int]
 
 
 class OperationListResponse(BaseModel):
@@ -67,15 +60,38 @@ class FindingListResponse(BaseModel):
     next_offset: int | None
 
 
-class FindingCreateRequest(FindingCreate):
+class _FindingRequestFields(FindingCreate):
+    """A finding's values as a request carries them, within the request limits."""
+
+    title: TextStr
+    severity: TextStr = Field(
+        description="The key of a severity option, or Other text; surrounding whitespace is removed"
+    )
+    field_values: dict[IdentifierStr, TextStr] = Field(
+        default_factory=dict,
+        max_length=MAX_ITEMS,
+        description="Values by field or level key, each an option's key or text; blank values are dropped",
+    )
+
+
+class FindingCreateRequest(_FindingRequestFields):
     """
     A finding to record, optionally with one saved attack result as evidence.
 
-    Sending the same ``id`` and content again returns the saved finding, so a client can retry safely.
+    Sending the same ``id`` and content again returns the saved finding, as long as it still fits the active finding
+    fields, so a client can retry safely.
     """
 
     id: UUID | None = None
     attack_result_id: UUID | None = Field(None, description="A saved attack result to link as evidence")
+
+
+class FindingUpdateRequest(_FindingRequestFields):
+    """A finding's new editable values, and any retired values to remove."""
+
+    remove_retired_keys: list[IdentifierStr] = Field(
+        default_factory=list, max_length=MAX_ITEMS, description="Keys of the retired values to delete from the finding"
+    )
 
 
 class FindingEvidenceCreateRequest(BaseModel):
