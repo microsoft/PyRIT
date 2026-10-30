@@ -57,8 +57,13 @@ export function useScenarioRunEstimate({
   const [lastGoodEstimate, setLastGoodEstimate] = useState<SuccessfulEstimateResult | null>(null)
   const [datasetProjection, setDatasetProjection] = useState<ScenarioRunSizeEstimateResponse | null>(null)
   const sequenceRef = useRef(0)
+  // Drive estimation off the request key, not the request object, so launch-only
+  // edits that rebuild an identical request don't re-POST the same estimate.
+  const requestRef = useRef(request)
+  useEffect(() => { requestRef.current = request }, [request])
 
   useEffect(() => {
+    const request = requestRef.current
     if (!ready || paused || request === null || requestKey === null) {
       return
     }
@@ -105,7 +110,7 @@ export function useScenarioRunEstimate({
       window.clearTimeout(debounceTimer)
       controller.abort()
     }
-  }, [request, requestKey, scenarioName, ready, paused])
+  }, [requestKey, scenarioName, ready, paused])
 
   const current = requestState?.requestKey === requestKey ? requestState : null
   return {

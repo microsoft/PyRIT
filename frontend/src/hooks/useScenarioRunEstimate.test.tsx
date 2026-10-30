@@ -63,6 +63,28 @@ describe('useScenarioRunEstimate', () => {
   })
   afterEach(() => jest.useRealTimers())
 
+  it('ignores a new request object that keeps the same key', async () => {
+    estimateRun.mockResolvedValue(response(5))
+    const view = renderHook(
+      ({ request }: { request: ScenarioRunSizeEstimateRequest }) => useScenarioRunEstimate({
+        scenarioName: 'scenario',
+        request,
+        requestKey: 'stable',
+        invalidReason: null,
+        ready: true,
+        paused: false,
+      }),
+      { initialProps: { request: { techniques: ['a'] } } },
+    )
+    await settle()
+    expect(estimateRun).toHaveBeenCalledTimes(1)
+
+    view.rerender({ request: { techniques: ['a'] } })
+    await settle()
+
+    expect(estimateRun).toHaveBeenCalledTimes(1)
+  })
+
   it('sends only the last request after rapid changes', async () => {
     estimateRun.mockResolvedValue(response(5))
     const view = renderEstimate({ request: { techniques: ['a'] } })
