@@ -48,8 +48,10 @@ from pyrit.converter import (
 from pyrit.converter.converter import get_converter_modalities
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
+from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.registry.components import ConverterRegistry, TargetRegistry
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
 _TOKEN_BIJECTION_VOCAB = (
@@ -108,6 +110,152 @@ async def upload_service() -> AsyncGenerator[ConverterService, None]:
         yield service
     finally:
         await service.close_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestSaveSourceConverter:
+    async def test_source_can_be_resolved_after_rename(self, upload_service: ConverterService) -> None:
+        source = CaesarConverter(caesar_offset=1)
+        registry = upload_service._registry
+        registry.instances.register(source, name="renamed")
+        spec = SourceInstanceSpec(
+            source_name="old_name", source_hash=source.get_identifier().hash, params={"caesar_offset": 7}
+        )
+        saved = await upload_service.create_converter_async(
+            request=CreateConverterRequest(name="saved", type="CaesarConverter", source=spec)
+        )
+        assert saved.identifier.params["caesar_offset"] == 7
+        assert registry.instances.get("renamed") is source
+
+    async def test_save_retains_source_inputs_without_changing_source(self, upload_service: ConverterService) -> None:
+        target = MockPromptTarget()
+        source = TranslationConverter(converter_target=target, language="French", max_retries=7)
+        registry = upload_service._registry
+        registry.instances.register(source, name="translation")
+        spec = SourceInstanceSpec(
+            source_name="translation", source_hash=source.get_identifier().hash, params={"language": "Spanish"}
+        )
+        built = await upload_service.create_converter_async(
+            request=CreateConverterRequest(type="TranslationConverter", register=False, source=spec)
+        )
+        spec.effective_hash = built.identifier.hash
+        saved = await upload_service.create_converter_async(
+            request=CreateConverterRequest(name="saved", type="TranslationConverter", source=spec)
+        )
+        stored = registry.instances.get("saved")
+        assert stored is not source
+        assert stored.converter_target is target
+        assert stored.get_reconstruction_parameters()["max_retries"] == 7
+        assert saved.identifier.hash == built.identifier.hash
+        assert source.language == "french"
+        assert registry.instances.get("translation") is source
+        assert registry.instances.get_names() == ["saved", "translation"]
+
+    @pytest.mark.parametrize("failure", ["missing", "changed", "duplicate"])
+    async def test_invalid_source_save_registers_nothing(
+        self, *, upload_service: ConverterService, failure: str
+    ) -> None:
+        registry = upload_service._registry
+        source = CaesarConverter(caesar_offset=1)
+        registry.instances.register(source, name="source")
+        spec = SourceInstanceSpec(
+            source_name="source", source_hash=source.get_identifier().hash, params={"caesar_offset": 7}
+        )
+        name = "saved"
+        if failure == "missing":
+            registry.instances.unregister("source")
+        elif failure == "changed":
+            spec.source_hash = "changed"
+        elif failure == "duplicate":
+            name = "source"
+        before = registry.instances.get_names()
+        with pytest.raises(ValueError):
+            await upload_service.create_converter_async(
+                request=CreateConverterRequest(name=name, type="CaesarConverter", source=spec)
+            )
+        assert registry.instances.get_names() == before
+        assert source.get_identifier().params["caesar_offset"] == 1
+
+    def test_source_registration_rejects_two_parameter_forms(self) -> None:
+        with pytest.raises(ValidationError, match="Use source.params"):
+            CreateConverterRequest(
+                name="saved",
+                type="CaesarConverter",
+                params={"caesar_offset": 3},
+                source=SourceInstanceSpec(source_name="source", source_hash="hash", params={}),
+            )
+
+    @pytest.mark.parametrize("first_deleted", ["source", "saved"])
+    async def test_source_upload_remains_until_last_owner_is_deleted(
+        self, *, upload_service: ConverterService, first_deleted: str
+    ) -> None:
+        source = await upload_service.create_converter_async(
+            request=CreateConverterRequest(
+                name="source",
+                type="ImageOverlayConverter",
+                params={"base_image": _make_data_uri(mime_type="image/png", content=b"image")},
+            )
+        )
+        spec = SourceInstanceSpec(
+            source_name="source", source_hash=source.identifier.hash, params={}, effective_hash=source.identifier.hash
+        )
+        saved = await upload_service.create_converter_async(
+            request=CreateConverterRequest(name="saved", type="ImageOverlayConverter", source=spec)
+        )
+        path = Path(saved.identifier.model_dump()["base_image"])
+        assert saved.identifier.hash == source.identifier.hash
+        assert await upload_service.delete_converter_async(converter_id=first_deleted)
+        assert path.read_bytes() == b"image"
+        remaining = "saved" if first_deleted == "source" else "source"
+        assert await upload_service.delete_converter_async(converter_id=remaining)
+        assert not path.exists()
+
+    async def test_save_during_upload_deletion_does_not_register_a_broken_converter(
+        self, upload_service: ConverterService
+    ) -> None:
+        source = await upload_service.create_converter_async(
+            request=CreateConverterRequest(
+                name="source",
+                type="ImageOverlayConverter",
+                params={"base_image": _make_data_uri(mime_type="image/png", content=b"image")},
+            )
+        )
+        spec = SourceInstanceSpec(source_name="source", source_hash=source.identifier.hash, params={})
+        deleting = asyncio.Event()
+        built = asyncio.Event()
+        release = asyncio.Event()
+        remove = upload_service._remove_owned_artifacts_async
+        build = upload_service._build_instance_from_object
+
+        async def pause_deletion_async(*, paths: list[Path]) -> None:
+            deleting.set()
+            await asyncio.wait_for(release.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            await remove(paths=paths)
+
+        def signal_build(*, converter_id: str, converter_obj: object) -> object:
+            result = build(converter_id=converter_id, converter_obj=converter_obj)
+            built.set()
+            return result
+
+        with (
+            patch.object(upload_service, "_remove_owned_artifacts_async", side_effect=pause_deletion_async),
+            patch.object(upload_service, "_build_instance_from_object", side_effect=signal_build),
+        ):
+            deletion = asyncio.create_task(upload_service.delete_converter_async(converter_id="source"))
+            await asyncio.wait_for(deleting.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            save = asyncio.create_task(
+                upload_service.create_converter_async(
+                    request=CreateConverterRequest(name="saved", type="ImageOverlayConverter", source=spec)
+                )
+            )
+            try:
+                await asyncio.wait_for(built.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            finally:
+                release.set()
+            assert await asyncio.wait_for(deletion, timeout=TEST_WATCHDOG_SECONDS)
+            with pytest.raises(ValueError, match="missing or ambiguous"):
+                await asyncio.wait_for(save, timeout=TEST_WATCHDOG_SECONDS)
+        assert upload_service._registry.instances.get_names() == []
 
 
 @pytest.mark.parametrize(

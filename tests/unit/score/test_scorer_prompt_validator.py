@@ -217,8 +217,8 @@ class TestScorerPromptValidatorValidate:
         # Should not raise
         validator.validate(response, objective=None)
 
-    def test_validate_raises_when_objective_required_but_missing(self):
-        """Test that validate raises error when objective is required but not provided."""
+    def test_validate_leaves_objective_enforcement_to_scorer(self):
+        """The flag declares a condition; message validation does not enforce it."""
         validator = ScorerPromptValidator(is_objective_required=True)
 
         text_piece = MessagePiece(
@@ -226,8 +226,8 @@ class TestScorerPromptValidatorValidate:
         )
         response = Message(message_pieces=[text_piece])
 
-        with pytest.raises(ValueError, match="Objective is required but not provided"):
-            validator.validate(response, objective=None)
+        validator.validate(response, objective=None)
+        assert validator.is_objective_required is True
 
     def test_validate_passes_when_objective_provided(self):
         """Test that validate passes when objective is required and provided."""
@@ -301,9 +301,7 @@ class TestScorerPromptValidatorCombined:
         # Should pass with valid objective and mixed pieces (enforce_all_pieces_valid=False)
         validator.validate(response, objective="test objective")
 
-        # Should fail without objective
-        with pytest.raises(ValueError, match="Objective is required"):
-            validator.validate(response, objective=None)
+        validator.validate(response, objective=None)
 
 
 class TestScorerPromptValidatorMaxTextLength:

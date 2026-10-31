@@ -323,11 +323,8 @@ async def test_evaluate_async_raises_for_all_categories():
 
 
 async def test_evaluate_async_sets_file_mapping_for_single_category(patch_central_database):
-    """Test that evaluate_async sets evaluation_file_mapping for single category."""
+    """Test that a single-category scorer evaluates against its category's files."""
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
-
-    # Initially no file mapping
-    assert scorer.evaluation_file_mapping is None
 
     # Mock the parent evaluate_async to avoid actual evaluation
     with patch.object(FloatScaleScorer, "evaluate_async", AsyncMock(return_value=None)) as mock_eval:
@@ -351,6 +348,36 @@ async def test_evaluate_async_uses_canonical_sexual_category(patch_central_datab
     assert scorer.evaluation_file_mapping is not None
     assert scorer.evaluation_file_mapping.harm_category == "SEXUAL_CONTENT"
     assert scorer.evaluation_file_mapping.result_file == "harm/sexual_metrics.jsonl"
+
+
+@pytest.mark.parametrize(
+    ("category", "harm_category"),
+    [
+        (TextCategory.HATE, "hate_speech"),
+        (TextCategory.SELF_HARM, "self_harm"),
+        (TextCategory.SEXUAL, "SEXUAL_CONTENT"),
+        (TextCategory.VIOLENCE, "violence"),
+    ],
+)
+def test_single_category_scorer_finds_its_metrics_without_evaluating(
+    *, category: TextCategory, harm_category: str
+) -> None:
+    scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[category])
+
+    metrics = scorer.get_scorer_metrics()
+
+    assert scorer.evaluation_file_mapping is not None
+    assert scorer.evaluation_file_mapping.harm_category == harm_category
+    assert metrics is not None
+    assert metrics.num_responses > 0
+
+
+@pytest.mark.parametrize("categories", [None, [TextCategory.HATE, TextCategory.VIOLENCE]])
+def test_multi_category_scorer_has_no_single_metrics(*, categories: list[TextCategory] | None) -> None:
+    scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=categories)
+
+    assert scorer.evaluation_file_mapping is None
+    assert scorer.get_scorer_metrics() is None
 
 
 def test_init_raises_runtime_error_when_api_key_not_string():
