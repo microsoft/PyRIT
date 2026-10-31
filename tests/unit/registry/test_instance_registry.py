@@ -630,30 +630,32 @@ class TestProtocolConformance:
         assert holder.instances.get("n1") == "v1"
 
     def test_instance_registry_consumer_preserves_types(self, registry: DefaultInstanceRegistry[_TestItem]) -> None:
-        consumer: InstanceRegistry[_TestItem] = registry
-        item = _item("v1")
-        consumer.register(item, name="n1")
+        def check_consumer(consumer: InstanceRegistry[_TestItem]) -> None:
+            item = _item("v1")
+            consumer.register(item, name="n1")
 
-        retrieved = consumer.get("n1")
-        assert_type(retrieved, _TestItem | None)
-        assert retrieved is item
+            retrieved = consumer.get("n1")
+            assert_type(retrieved, _TestItem | None)
+            assert retrieved is item
 
-        missing = consumer.get("missing")
-        assert_type(missing, _TestItem | None)
-        assert missing is None
+            missing = consumer.get("missing")
+            assert_type(missing, _TestItem | None)
+            assert missing is None
 
-        entry = consumer.get_entry("n1")
-        assert_type(entry, RegistryEntry[_TestItem] | None)
-        assert entry is not None
-        assert entry.instance is item
+            entry = consumer.get_entry("n1")
+            assert_type(entry, RegistryEntry[_TestItem] | None)
+            assert entry is not None
+            assert entry.instance is item
 
-        missing_entry = consumer.get_entry("missing")
-        assert_type(missing_entry, RegistryEntry[_TestItem] | None)
-        assert missing_entry is None
+            missing_entry = consumer.get_entry("missing")
+            assert_type(missing_entry, RegistryEntry[_TestItem] | None)
+            assert missing_entry is None
 
-        all_instances = consumer.get_all_instances()
-        assert_type(all_instances, list[RegistryEntry[_TestItem]])
-        assert [e.name for e in all_instances] == ["n1"]
+            all_instances = consumer.get_all_instances()
+            assert_type(all_instances, list[RegistryEntry[_TestItem]])
+            assert [e.name for e in all_instances] == ["n1"]
+
+        check_consumer(registry)
 
 
 class TestNoBackendDependency:
