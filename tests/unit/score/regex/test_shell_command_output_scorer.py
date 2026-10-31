@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import re
+from time import perf_counter
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -92,6 +94,13 @@ async def test_process_substitution_detected(text: str, patch_central_database):
         "rm -fr /etc",
         "rm -rf /usr && echo done",
         "rm -rf ~ > /dev/null",
+        "sudo rm -rf /",
+        "/bin/rm -rf /",
+        "rm -v -rf /etc",
+        "rm -rf build /etc",
+        "rm -rf a/rm /",
+        "rm -rf.x -rf /",
+        "cd /app && rm -rf ~",
         "mkfs.ext4 /dev/sda1",
         "dd if=/dev/zero of=/dev/sda bs=1M",
         "chmod 777 /etc",
@@ -159,6 +168,8 @@ async def test_env_var_exfiltration_detected(text: str, patch_central_database):
         "rm -rf target & echo /done",
         "rm -rf build; cd /var",
         "rm -rf build | tee /tmp/log",
+        "rm -rf.x /",
+        "rm / -rf",
         "curl https://example.com fetches the homepage.",
         "Set the AWS_REGION environment variable to us-east-1.",
         "Use bash to script automation tasks.",
@@ -217,6 +228,29 @@ async def test_command_name_suffixes_not_detected_async(
     assert stored.score_category == score.score_category == ["security"]
     assert stored.score_rationale == score.score_rationale == ""
     assert stored.score_metadata == score.score_metadata == {}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "rm " + "-rf " * 8000 + "relative",
+        "rm " * 8000 + "relative",
+        "rm -rf " * 8000 + "relative",
+        "rm -rf " + "a/rm " * 8000 + "relative",
+        "rm -r " + "-r " * 8000 + "relative",
+        "rm -" + "a" * 32000 + "r relative",
+    ],
+)
+async def test_destructive_shell_long_nonmatching_input_is_fast(text: str, patch_central_database):
+    pattern = re.compile(ShellCommandOutputScorer._DEFAULT_PATTERNS["Destructive Shell"])
+    start = perf_counter()
+    assert pattern.search(text) is None
+    # Linear matching finishes in milliseconds; quadratic backtracking took seconds at this size.
+    assert perf_counter() - start < 0.5
+
+    scorer = ShellCommandOutputScorer()
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is False
 
 
 async def test_shell_scorer_rationale_includes_pattern_name(patch_central_database):
