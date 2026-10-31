@@ -24,7 +24,10 @@ if TYPE_CHECKING:
         GCGOutputConfig,
         GCGStrategyConfig,
     )
-    from pyrit.executor.promptgen.gcg.data import load_goals_and_targets
+    from pyrit.executor.promptgen.gcg.data import (
+        create_gcg_data_config_async,
+        load_goals_and_targets,
+    )
     from pyrit.executor.promptgen.gcg.default_implementations import (
         CrossEntropyLoss,
         LengthPreservingFilter,
@@ -74,6 +77,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "SamplingStrategy": "pyrit.executor.promptgen.gcg.extension_protocols",
     "StandardGCGSampling": "pyrit.executor.promptgen.gcg.default_implementations",
     "SuffixInitializer": "pyrit.executor.promptgen.gcg.extension_protocols",
+    "create_gcg_data_config_async": "pyrit.executor.promptgen.gcg.data",
     "load_goals_and_targets": "pyrit.executor.promptgen.gcg.data",
 }
 

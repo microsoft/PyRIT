@@ -18,7 +18,7 @@ get_goals_and_targets = attack_manager_mod.get_goals_and_targets
 
 data_mod = pytest.importorskip(
     "pyrit.executor.promptgen.gcg.data",
-    reason="GCG data module requires torch (transitive via attack_manager)",
+    reason="GCG data module not available",
 )
 load_goals_and_targets = data_mod.load_goals_and_targets
 
@@ -37,38 +37,36 @@ GCGGenerator = generator_mod.GCGGenerator
 
 
 class TestLoadGoalsAndTargetsHelper:
-    """Tests for the public ``load_goals_and_targets`` helper that wraps the legacy CSV loader."""
+    """Tests for the public ``load_goals_and_targets`` helper (inline pass-through)."""
 
-    def test_loads_goals_and_targets_from_train_csv(self) -> None:
-        csv_content = "goal,target\ngoal1,target1\ngoal2,target2\ngoal3,target3\n"
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            f.write(csv_content)
-            csv_path = f.name
+    def test_returns_inline_train_and_test_lists(self) -> None:
+        data = GCGDataConfig(
+            train_goals=["train goal 1", "train goal 2"],
+            train_targets=["Sure 1", "Sure 2"],
+            test_goals=["test goal 1"],
+            test_targets=["Sure test 1"],
+        )
+        train_goals, train_targets, test_goals, test_targets = load_goals_and_targets(data=data)
+        assert train_goals == ["train goal 1", "train goal 2"]
+        assert train_targets == ["Sure 1", "Sure 2"]
+        assert test_goals == ["test goal 1"]
+        assert test_targets == ["Sure test 1"]
 
-        try:
-            data = GCGDataConfig(train_data=csv_path, n_train_data=2)
-            train_goals, train_targets, test_goals, test_targets = load_goals_and_targets(data=data, random_seed=42)
-            assert len(train_goals) == 2
-            assert len(train_targets) == 2
-            assert test_goals == []
-            assert test_targets == []
-        finally:
-            os.unlink(csv_path)
+    def test_returns_copies_not_config_lists(self) -> None:
+        """Mutating the returned lists must not corrupt the config."""
+        data = GCGDataConfig(train_goals=["g1"], train_targets=["t1"])
+        train_goals, train_targets, _, _ = load_goals_and_targets(data=data)
+        train_goals.append("mutated")
+        train_targets.append("mutated")
+        assert data.train_goals == ["g1"]
+        assert data.train_targets == ["t1"]
 
-    def test_seed_is_reproducible_via_helper(self) -> None:
-        csv_content = "goal,target\n" + "\n".join(f"goal{i},target{i}" for i in range(20)) + "\n"
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            f.write(csv_content)
-            csv_path = f.name
-
-        try:
-            data = GCGDataConfig(train_data=csv_path, n_train_data=10)
-            g1, t1, _, _ = load_goals_and_targets(data=data, random_seed=42)
-            g2, t2, _, _ = load_goals_and_targets(data=data, random_seed=42)
-            assert g1 == g2
-            assert t1 == t2
-        finally:
-            os.unlink(csv_path)
+    def test_empty_config_returns_empty_lists(self) -> None:
+        train_goals, train_targets, test_goals, test_targets = load_goals_and_targets(data=GCGDataConfig())
+        assert train_goals == []
+        assert train_targets == []
+        assert test_goals == []
+        assert test_targets == []
 
 
 class TestGetGoalsAndTargetsLegacy:
@@ -158,7 +156,7 @@ class TestMainAsyncCli:
         config = GCGConfig(models=[GCGModelConfig(name="org/model")])
         config_path = tmp_path / "config.json"
         config.to_json_file(config_path)
-        data_config = GCGDataConfig(train_data="some-csv", n_train_data=1)
+        data_config = GCGDataConfig(train_goals=["g1"], train_targets=["t1"])
         data_path = tmp_path / "data.json"
         data_config.to_json_file(data_path)
 
@@ -179,7 +177,7 @@ class TestMainAsyncCli:
         config = GCGConfig(models=[GCGModelConfig(name="org/model")])
         config_path = tmp_path / "config.json"
         config.to_json_file(config_path)
-        data_config = GCGDataConfig(train_data="some-csv", n_train_data=1)
+        data_config = GCGDataConfig(train_goals=["g1"], train_targets=["t1"])
         data_path = tmp_path / "data.json"
         data_config.to_json_file(data_path)
 

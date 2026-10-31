@@ -21,6 +21,7 @@ from pyrit.executor.promptgen.gcg.config import (
     GCGOutputConfig,
     GCGStrategyConfig,
 )
+from pyrit.models import SeedDataset, SeedObjective
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -175,17 +176,25 @@ def test_algorithm_accepts_protocol_implementations() -> None:
     assert config.suffix_init is not None
 
 
-@pytest.mark.parametrize("field_name", ["n_train_data", "n_test_data"])
-def test_data_negative_count_raises(field_name: str) -> None:
-    with pytest.raises(ValueError, match=f"GCGDataConfig.{field_name} must be >= 0"):
-        GCGDataConfig(**{field_name: -1})
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"train_goals": ["g1", "g2"], "train_targets": ["t1"]},
+        {"test_goals": ["g1"], "test_targets": ["t1", "t2"]},
+    ],
+)
+def test_data_mismatched_lengths_raise(kwargs: dict[str, list[str]]) -> None:
+    with pytest.raises(ValueError, match="must have equal length"):
+        GCGDataConfig(**kwargs)
 
 
-def test_data_zero_train_data_is_allowed() -> None:
-    """Zero training rows is a degenerate but legal configuration we don't
-    want validators to reject (some smoke tests rely on it)."""
-    config = GCGDataConfig(n_train_data=0)
-    assert config.n_train_data == 0
+def test_data_empty_config_is_allowed() -> None:
+    """An empty data config is a legal (degenerate) default."""
+    config = GCGDataConfig()
+    assert config.train_goals == []
+    assert config.train_targets == []
+    assert config.test_goals == []
+    assert config.test_targets == []
 
 
 def test_strategy_progressive_without_transfer_raises() -> None:
@@ -240,12 +249,12 @@ def test_to_json_round_trip_preserves_all_fields() -> None:
 
 
 def test_data_config_json_round_trip(tmp_path: Path) -> None:
-    """GCGDataConfig now has its own to_json/from_json (it travels separately for AML)."""
+    """GCGDataConfig has its own to_json/from_json (it travels separately for AML)."""
     original = GCGDataConfig(
-        train_data="https://example/train.csv",
-        test_data="https://example/test.csv",
-        n_train_data=10,
-        n_test_data=5,
+        train_goals=["train goal 1", "train goal 2"],
+        train_targets=["Sure, here is 1", "Sure, here is 2"],
+        test_goals=["test goal 1"],
+        test_targets=["Sure, here is test 1"],
     )
     restored = GCGDataConfig.from_json(original.to_json())
     assert restored == original
@@ -285,3 +294,96 @@ def test_to_json_file_round_trip(tmp_path: Path) -> None:
     config.to_json_file(target)
     restored = GCGConfig.from_json_file(target)
     assert restored.models[0].name == _LLAMA_2
+
+
+def _seed_dataset_with_targets(pairs: list[tuple[str, str]]) -> SeedDataset:
+    return SeedDataset(seeds=[SeedObjective(value=goal, metadata={"gcg_target": target}) for goal, target in pairs])
+
+
+def test_from_seed_dataset_materializes_train_goals_and_targets() -> None:
+    dataset = _seed_dataset_with_targets([("goal a", "Sure, a"), ("goal b", "Sure, b")])
+    config = GCGDataConfig.from_seed_dataset(dataset)
+    assert config.train_goals == ["goal a", "goal b"]
+    assert config.train_targets == ["Sure, a", "Sure, b"]
+    assert config.test_goals == []
+    assert config.test_targets == []
+
+
+def test_from_seed_dataset_includes_test_dataset() -> None:
+    train = _seed_dataset_with_targets([("goal a", "Sure, a")])
+    test = _seed_dataset_with_targets([("goal t", "Sure, t")])
+    config = GCGDataConfig.from_seed_dataset(train, test_dataset=test)
+    assert config.train_goals == ["goal a"]
+    assert config.test_goals == ["goal t"]
+    assert config.test_targets == ["Sure, t"]
+
+
+def test_from_seed_dataset_honors_custom_metadata_key() -> None:
+    dataset = SeedDataset(seeds=[SeedObjective(value="goal a", metadata={"completion": "Sure, a"})])
+    config = GCGDataConfig.from_seed_dataset(dataset, target_metadata_key="completion")
+    assert config.train_targets == ["Sure, a"]
+
+
+def test_from_seed_dataset_missing_target_metadata_raises() -> None:
+    dataset = SeedDataset(seeds=[SeedObjective(value="goal a", metadata={"unrelated": "x"})])
+    with pytest.raises(ValueError, match="missing metadata"):
+        GCGDataConfig.from_seed_dataset(dataset)
+
+
+def test_from_seed_dataset_round_trips_through_json() -> None:
+    dataset = _seed_dataset_with_targets([("goal a", "Sure, a"), ("goal b", "Sure, b")])
+    config = GCGDataConfig.from_seed_dataset(dataset)
+    assert GCGDataConfig.from_json(config.to_json()) == config
+
+
+@pytest.mark.parametrize("field_name", ["train_goals", "train_targets", "test_goals", "test_targets"])
+@pytest.mark.parametrize("value", ["abc", None, {"0": "goal"}, [""], [" "], [False], [1], [None], [{}]])
+def test_data_config_rejects_invalid_lists_and_values(field_name: str, value: Any) -> None:
+    fields: dict[str, Any] = {
+        "train_goals": ["train goal"],
+        "train_targets": ["train target"],
+        "test_goals": ["test goal"],
+        "test_targets": ["test target"],
+    }
+    fields[field_name] = value
+
+    with pytest.raises(ValueError, match=field_name):
+        GCGDataConfig(**fields)
+    with pytest.raises(ValueError, match=field_name):
+        GCGDataConfig.from_json(json.dumps(fields))
+
+
+@pytest.mark.parametrize("payload", ["[]", "null", '"abc"', "42"])
+def test_data_config_json_requires_object(payload: str) -> None:
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        GCGDataConfig.from_json(payload)
+
+
+def test_data_config_json_rejects_invalid_syntax() -> None:
+    with pytest.raises(ValueError, match="not valid JSON"):
+        GCGDataConfig.from_json("{not-json")
+
+
+def test_data_config_json_rejects_unknown_fields() -> None:
+    with pytest.raises(ValueError, match="unknown fields"):
+        GCGDataConfig.from_json('{"goals": ["goal"]}')
+
+
+def test_data_config_json_explains_legacy_migration() -> None:
+    with pytest.raises(ValueError, match="Load a SeedDataset"):
+        GCGDataConfig.from_json('{"train_data": "goals.csv", "n_train_data": 50}')
+
+
+@pytest.mark.parametrize("target", ["", " ", False, 1, [], {"wrong": "schema"}])
+def test_from_seed_dataset_rejects_invalid_target_metadata(target: object) -> None:
+    dataset = SeedDataset(seeds=[SeedObjective(value="goal", metadata={"gcg_target": target})])
+
+    with pytest.raises(ValueError, match="metadata"):
+        GCGDataConfig.from_seed_dataset(dataset)
+
+
+def test_from_seed_dataset_rejects_blank_goal() -> None:
+    dataset = SeedDataset(seeds=[SeedObjective(value=" ", metadata={"gcg_target": "target"})])
+
+    with pytest.raises(ValueError, match="Seed goal must be a nonblank string"):
+        GCGDataConfig.from_seed_dataset(dataset)
