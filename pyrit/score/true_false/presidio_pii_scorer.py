@@ -66,8 +66,7 @@ class PresidioPiiScorer(MessageTrueFalseScorer):
             from presidio_analyzer import AnalyzerEngine as _AnalyzerEngine
         except ImportError:
             raise ImportError(
-                "presidio-analyzer is required for PresidioPiiScorer. "
-                "Install it with: pip install pyrit[presidio]"
+                "presidio-analyzer is required for PresidioPiiScorer. Install it with: pip install pyrit[presidio]"
             ) from None
         self._analyzer = _AnalyzerEngine()
         return self._analyzer

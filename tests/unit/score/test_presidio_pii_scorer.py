@@ -58,9 +58,11 @@ async def test_false_when_no_entity_found(patch_central_database) -> None:
 
 
 async def test_entity_filter_respected(patch_central_database) -> None:
-    analyzer = _make_analyzer([
-        FakeRecognizerResult("EMAIL_ADDRESS", 0, 15, 0.9),
-    ])
+    analyzer = _make_analyzer(
+        [
+            FakeRecognizerResult("EMAIL_ADDRESS", 0, 15, 0.9),
+        ]
+    )
     scorer = PresidioPiiScorer(entities=["US_SSN"], analyzer=analyzer)
 
     await scorer.score_text_async("user@example.com")
@@ -81,11 +83,13 @@ async def test_threshold_respected(patch_central_database) -> None:
 
 
 async def test_metadata_contains_types_and_counts_never_values(patch_central_database) -> None:
-    analyzer = _make_analyzer([
-        FakeRecognizerResult("CREDIT_CARD", 0, 19, 0.95),
-        FakeRecognizerResult("CREDIT_CARD", 25, 44, 0.95),
-        FakeRecognizerResult("US_SSN", 50, 61, 0.85),
-    ])
+    analyzer = _make_analyzer(
+        [
+            FakeRecognizerResult("CREDIT_CARD", 0, 19, 0.95),
+            FakeRecognizerResult("CREDIT_CARD", 25, 44, 0.95),
+            FakeRecognizerResult("US_SSN", 50, 61, 0.85),
+        ]
+    )
     scorer = PresidioPiiScorer(analyzer=analyzer)
 
     scores = await scorer.score_text_async("4111-1111-1111-1111 and 4222-2222-2222-2222 and 123-45-6789")
@@ -132,10 +136,12 @@ async def test_empty_input(patch_central_database) -> None:
 
 
 async def test_multiple_entity_types_detected(patch_central_database) -> None:
-    analyzer = _make_analyzer([
-        FakeRecognizerResult("EMAIL_ADDRESS", 0, 15, 0.9),
-        FakeRecognizerResult("PHONE_NUMBER", 20, 32, 0.7),
-    ])
+    analyzer = _make_analyzer(
+        [
+            FakeRecognizerResult("EMAIL_ADDRESS", 0, 15, 0.9),
+            FakeRecognizerResult("PHONE_NUMBER", 20, 32, 0.7),
+        ]
+    )
     scorer = PresidioPiiScorer(entities=["EMAIL_ADDRESS", "PHONE_NUMBER"], analyzer=analyzer)
 
     scores = await scorer.score_text_async("user@example.com 555-123-4567")
