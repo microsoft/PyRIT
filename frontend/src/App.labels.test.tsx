@@ -294,7 +294,7 @@ describe('Shared new run labels', () => {
   it('hosts Chat controls below the labels and above the objective, and removes them when navigating away', async () => {
     const user = userEvent.setup()
     jest.mocked(targetsApi.listTargets).mockResolvedValue({
-      items: [{ ...TARGET, supports_temperature_override: true }],
+      items: [{ ...TARGET, capabilities: { ...TARGET.capabilities, supports_temperature: true } }],
       pagination: { limit: 200, has_more: false },
     })
     renderApp('/chat')
@@ -309,9 +309,14 @@ describe('Shared new run labels', () => {
     await waitFor(() => expect(targetPicker).toBeEnabled())
     await user.selectOptions(targetPicker, 'test_target')
     expect(targetPicker).toHaveValue('test_target')
-    const temperature = within(settings).getByRole('spinbutton', { name: 'Temperature' })
+    expect(within(settings).queryByRole('spinbutton', { name: 'Temperature' })).not.toBeInTheDocument()
+    const generation = screen.getByRole('button', { name: 'Generation settings' })
+    await user.click(generation)
+    await user.click(screen.getByRole('checkbox', { name: 'Use target default for temperature' }))
+    const temperature = screen.getByRole('spinbutton', { name: 'Temperature' })
     await user.type(temperature, '0.7')
     expect(temperature).toHaveValue(0.7)
+    await user.click(generation)
     expect(within(settings).getByRole('button', { name: 'Edit Conversation' })).toBeEnabled()
     expect(within(screen.getByTestId('chat-area')).queryByRole('group', { name: 'Chat controls' }))
       .not.toBeInTheDocument()
@@ -324,6 +329,7 @@ describe('Shared new run labels', () => {
 
     await user.click(screen.getByRole('button', { name: 'Home', exact: true }))
     expect(screen.queryByRole('group', { name: 'Chat controls' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Generation settings' })).not.toBeInTheDocument()
     expect(screen.getAllByTestId('labels-bar')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Scanner', exact: true }))
     expect(screen.queryByRole('group', { name: 'Chat controls' })).not.toBeInTheDocument()

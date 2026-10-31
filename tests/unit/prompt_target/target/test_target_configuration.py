@@ -378,7 +378,7 @@ async def test_normalize_async_adapts_multi_turn(adapt_all_policy, make_message)
 # ---------------------------------------------------------------------------
 
 
-def test_capabilities_to_identifier_params_includes_all_fields():
+def test_capabilities_to_identifier_params_excludes_request_only_availability():
     caps = TargetCapabilities(
         supports_multi_turn=True,
         supports_multi_message_pieces=True,
@@ -390,8 +390,7 @@ def test_capabilities_to_identifier_params_includes_all_fields():
 
     params = TargetConfiguration._capabilities_to_identifier_params(caps)
 
-    # Every model field on TargetCapabilities must appear in the params.
-    assert set(params.keys()) == set(type(caps).model_fields)
+    assert set(params.keys()) == set(type(caps).model_fields) - {"supports_temperature"}
 
 
 def test_capabilities_to_identifier_params_scalar_fields_passthrough():

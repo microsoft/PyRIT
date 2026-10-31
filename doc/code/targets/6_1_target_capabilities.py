@@ -98,6 +98,27 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 # `get_known_capabilities` — for example, `gpt-5` gains `supports_json_schema=True`
 # and other models pick up the right modality combinations automatically. Unknown models fall back to
 # the class default.
+#
+# `OpenAIChatTarget` resolves `supports_temperature` separately from full model profiles,
+# using shared sampling rules and the effective model and reasoning settings:
+#
+# | Model family | Runtime temperature |
+# | --- | --- |
+# | GPT-4 / Turbo, GPT-4o / mini, GPT-4.1 / mini / nano | Supported |
+# | GPT-5, GPT-5 mini / nano | Unsupported, including with `minimal` or `none` |
+# | GPT-5.1, GPT-5.2, GPT-5.4 / mini / nano | Supported with `reasoning_effort="none"` (the model default) |
+# | GPT-5.5, GPT-5.6 / sol / terra / luna | Requires explicit `reasoning_effort="none"`; default is `medium` |
+#
+# Dated snapshots inherit their named model's rule; arbitrary suffixes do not.
+# Pro, Codex, audio/realtime, and o-series models do not inherit standard-family support.
+# Unknown deployments require an explicit capability declaration, which cannot bypass
+# known model restrictions. Audio output and streaming disable runtime support in this adapter.
+# Support refreshes when `set_model_name()` is called and is checked again before sending.
+# These rules do not change constructor defaults or requests without runtime overrides.
+#
+# Reasoning defaults follow OpenAI's [GPT-5.4](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.4),
+# [GPT-5.5](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.5), and
+# [GPT-5.6](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6) guides.
 
 # %%
 class_default = OpenAIChatTarget._DEFAULT_CONFIGURATION.capabilities

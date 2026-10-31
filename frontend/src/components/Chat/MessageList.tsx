@@ -727,6 +727,19 @@ export default function MessageList({
                 <Text className={styles.timestamp}>{timestamp}</Text>
                 <div className={styles.footerDetails}>
                   <Text className={styles.role}>{message.role}</Text>
+                  {message.generationDescription && (message.generationDetails ? (
+                    <Popover positioning="above-end">
+                      <PopoverTrigger disableButtonEnhancement>
+                        <Button appearance="transparent" size="small" className={styles.messageActionButton}
+                          aria-label={`Generation details: ${message.generationDescription}`}>
+                          {message.generationDescription}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverSurface className={styles.generationDetails} role="dialog" aria-label="Saved generation details">
+                        <Text>{message.generationDetails}</Text>
+                      </PopoverSurface>
+                    </Popover>
+                  ) : <Text size={100}>{message.generationDescription}</Text>)}
                 </div>
               </div>
             </div>

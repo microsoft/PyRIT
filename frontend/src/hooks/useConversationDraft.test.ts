@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react'
 import { attacksApi, targetsApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { AddMessageResponse, ConversationSaveInput, NewAttackContext, PieceConversion, TargetInstance } from '@/types'
+import * as conversationDraft from '@/utils/conversationDraft'
 
 import { useConversationDraft } from './useConversationDraft'
 
@@ -18,101 +19,111 @@ const initial: ConversationSaveInput = {
 
 describe('useConversationDraft', () => {
   beforeEach(() => jest.resetAllMocks())
+  afterEach(() => jest.restoreAllMocks())
 
-  const temperatureTarget: TargetInstance = {
-    ...makeTarget({
-      target_registry_name: 'source', target_type: 'OpenAIChatTarget', temperature: 0.2,
-      capabilities: { supports_multi_turn: true, supports_editable_history: true, supported_input_modalities: ['text'] },
-    }),
-    supports_temperature_override: true,
+  const registeredTarget = makeTarget({
+    target_registry_name: 'source', target_type: 'OpenAIChatTarget', temperature: 0.2,
+    capabilities: { supports_multi_turn: true, supports_editable_history: true, supported_input_modalities: ['text'] },
+  })
+  const savedResponse: AddMessageResponse = {
+    attack: {
+      attack_result_id: 'saved', conversation_id: 'saved', attack_type: 'ManualAttack', objective: 'Objective',
+      converters: [], message_count: 1, related_conversation_ids: [], labels: {}, created_at: '', updated_at: '',
+    },
+    messages: { conversation_id: 'saved', messages: [], target_response_status: null },
   }
 
-  it('saves a new attack with a private temperature and returns its target to chat', async () => {
-    jest.mocked(targetsApi.buildTarget).mockResolvedValue({
-      identifier: { ...temperatureTarget.identifier, hash: 'effective-hash', temperature: 0.8 },
-      capabilities: temperatureTarget.capabilities,
-    })
-    jest.mocked(attacksApi.saveConversation).mockResolvedValue({
-      attack: {
-        attack_result_id: 'saved', conversation_id: 'saved', attack_type: 'ManualAttack', objective: 'Objective',
-        converters: [], message_count: 1, related_conversation_ids: [], labels: {}, created_at: '', updated_at: '',
-      },
-      messages: { conversation_id: 'saved', messages: [], target_response_status: null },
-    })
-    const onSaved = jest.fn()
-    const { result } = renderHook(() => useConversationDraft())
-    act(() => result.current.begin({ ...initial, target: temperatureTarget }))
-    act(() => result.current.changeTemperature('0.8'))
-    await act(async () => { await result.current.save('new_attack', onSaved) })
-    const binding = {
-      version: 1, source_name: 'source', source_hash: temperatureTarget.identifier.hash,
-      temperature: 0.8, effective_hash: 'effective-hash',
-    }
-    expect(jest.mocked(attacksApi.saveConversation).mock.calls[0][0].target_binding).toEqual(binding)
-    expect(onSaved.mock.calls[0][1].binding).toEqual(binding)
-    expect(temperatureTarget.identifier.temperature).toBe(0.2)
-  })
+  it.each(['same_attack', 'new_attack'] as const)(
+    'saves %s with the selected target without constructing a variant',
+    async (destination) => {
+      jest.mocked(attacksApi.saveConversation).mockResolvedValue(savedResponse)
+      const onSaved = jest.fn()
+      const { result } = renderHook(() => useConversationDraft())
+      act(() => result.current.begin({ ...initial, target: registeredTarget }))
+      await act(async () => { await result.current.save(destination, onSaved) })
+      const request = jest.mocked(attacksApi.saveConversation).mock.calls[0][0]
+      expect(request.target_registry_name).toBe('source')
+      expect(request).not.toHaveProperty('target_binding')
+      expect(targetsApi.buildTarget).not.toHaveBeenCalled()
+      expect(onSaved).toHaveBeenCalledWith(savedResponse)
+      expect(registeredTarget.identifier.temperature).toBe(0.2)
+    },
+  )
 
-  it('rejects temperature changes in the same attack and retains the draft', async () => {
-    const { result } = renderHook(() => useConversationDraft())
-    act(() => result.current.begin({ ...initial, target: temperatureTarget }))
-    act(() => result.current.changeTemperature('0.8'))
-    await act(async () => { await result.current.save('same_attack', jest.fn()) })
-    expect(result.current.error).toBe('Choose New attack to change the temperature.')
-    expect(targetsApi.buildTarget).not.toHaveBeenCalled()
-    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
-    expect(result.current.draft?.temperature).toBe('0.8')
-  })
+  it.each(['same_attack', 'new_attack'] as const)(
+    'preserves an existing binding and historical generation metadata when saving %s',
+    async (destination) => {
+      const binding = {
+        version: 1 as const, source_name: 'source', source_hash: registeredTarget.identifier.hash,
+        temperature: 0.8, effective_hash: 'effective-hash',
+      }
+      const target: TargetInstance = {
+        ...registeredTarget, binding,
+        identifier: { ...registeredTarget.identifier, hash: binding.effective_hash, temperature: 0.8 },
+      }
+      const metadata = {
+        request_generation_config: { temperature: 0 },
+        _pyrit_generation: {
+          temperature: { requested: 0, resolved: 0, source: 'request' },
+          request_piece_ids: ['original-piece'],
+        },
+        custom: 'preserved',
+      }
+      jest.mocked(attacksApi.saveConversation).mockResolvedValue(savedResponse)
+      const { result } = renderHook(() => useConversationDraft())
+      act(() => result.current.begin({
+        ...initial, target,
+        messages: [{ ...initial.messages[0], pieces: [{
+          ...initial.messages[0].pieces[0], source_piece_id: 'original-piece', prompt_metadata: metadata,
+        }] }],
+      }))
+      await act(async () => { await result.current.save(destination, jest.fn()) })
+      const request = jest.mocked(attacksApi.saveConversation).mock.calls[0][0]
+      expect(request.target_binding).toEqual(binding)
+      expect(request.messages[0].pieces[0].prompt_metadata).toEqual(metadata)
+      expect(target.binding).toEqual(binding)
+      expect(target.identifier.temperature).toBe(0.8)
+      expect(targetsApi.buildTarget).not.toHaveBeenCalled()
+    },
+  )
 
   it.each([
     { generation: 'gen-1', ready: false },
     { generation: 'gen-2', ready: true },
-  ])('preserves the draft when context becomes %j during temperature construction', async (next: NewAttackContext) => {
-    const built = {
-      identifier: { ...temperatureTarget.identifier, hash: 'effective-hash', temperature: 0.8 },
-      capabilities: temperatureTarget.capabilities,
-    }
-    let finish: (value: typeof built) => void = () => {}
-    jest.mocked(targetsApi.buildTarget).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
-    jest.mocked(targetsApi.buildTarget).mockResolvedValue(built)
+  ])('preserves the draft when context becomes %j during serialization', async (next: NewAttackContext) => {
+    let finish: (value: Awaited<ReturnType<typeof conversationDraft.serializeDraft>>) => void = () => {}
+    jest.spyOn(conversationDraft, 'serializeDraft').mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
     const onSaved = jest.fn()
     const { result, rerender } = renderHook(
       (context: NewAttackContext) => useConversationDraft(context),
       { initialProps: { generation: 'gen-1', ready: true, labels: { operation: 'original' } } },
     )
     act(() => {
-      result.current.begin({ ...initial, target: temperatureTarget })
-      result.current.changeTemperature('0.8')
+      result.current.begin({ ...initial, target: registeredTarget })
+      result.current.changeObjective('Edited objective')
     })
-    let pending: Promise<void>
+    let pending: Promise<boolean>
     await act(async () => { pending = result.current.save('new_attack', onSaved) })
     rerender({ ...next, labels: { operation: 'replacement' } })
-    await act(async () => { finish(built); await pending })
+    await act(async () => { finish([{ role: 'user', pieces: [{ data_type: 'text', original_value: 'Prompt' }] }]); await pending })
     expect(result.current.error).toContain('Runtime or default labels changed')
-    expect(result.current.draft?.temperature).toBe('0.8')
+    expect(result.current.draft?.objective).toBe('Edited objective')
     expect(result.current.saving).toBe(false)
     expect(attacksApi.saveConversation).not.toHaveBeenCalled()
     expect(onSaved).not.toHaveBeenCalled()
     rerender({ generation: 'gen-2', ready: true, labels: { operation: 'replacement' } })
-    jest.mocked(attacksApi.saveConversation).mockResolvedValue({
-      attack: {
-        attack_result_id: 'saved', conversation_id: 'saved', attack_type: 'ManualAttack', objective: 'Objective',
-        converters: [], message_count: 1, related_conversation_ids: [], labels: {}, created_at: '', updated_at: '',
-      },
-      messages: { conversation_id: 'saved', messages: [], target_response_status: null },
-    })
+    jest.mocked(attacksApi.saveConversation).mockResolvedValue(savedResponse)
     await act(async () => { await result.current.save('new_attack', onSaved) })
     expect(attacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
-      labels: { operation: 'replacement' }, target_binding: expect.objectContaining({ temperature: 0.8 }),
+      labels: { operation: 'replacement' }, target_registry_name: 'source', objective: 'Edited objective',
     }))
     expect(onSaved).toHaveBeenCalledTimes(1)
   })
 
-  it('does not build a temperature target while defaults are loading', async () => {
+  it('does not save while defaults are loading', async () => {
     const { result } = renderHook(() => useConversationDraft({ generation: 'gen-1', ready: false }))
     act(() => {
-      result.current.begin({ ...initial, target: temperatureTarget })
-      result.current.changeTemperature('0.8')
+      result.current.begin({ ...initial, target: registeredTarget })
     })
     await act(async () => { await result.current.save('new_attack', jest.fn()) })
     expect(result.current.error).toContain('Default labels are not ready')

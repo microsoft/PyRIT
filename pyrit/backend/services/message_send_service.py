@@ -331,7 +331,10 @@ class MessageSendService:
         ar = results[0]
         binding = TargetBinding.from_metadata(ar.metadata)
         if request.target_binding is not None and request.target_binding != binding:
-            raise ValueError("This attack's temperature is read-only. Create a new attack to change it.")
+            raise ValueError(
+                "This attack's saved target binding is read-only. "
+                "Use request temperature metadata for per-send changes."
+            )
         policy = get_chat_scoring_service()
         policy.require_manual(ar)
         target_registry_name = request.target_registry_name
@@ -342,6 +345,10 @@ class MessageSendService:
         )
         if binding is None:
             self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
+        if target is not None:
+            target.validate_request_generation_config(
+                request_to_pyrit_message(request=request, conversation_id=request.target_conversation_id, sequence=0)
+            )
 
         msg_conversation_id = request.target_conversation_id
 
@@ -361,6 +368,9 @@ class MessageSendService:
             target = await get_target_service().resolve_binding_async(binding)
             try:
                 self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
+                target.validate_request_generation_config(
+                    request_to_pyrit_message(request=request, conversation_id=msg_conversation_id, sequence=0)
+                )
                 if isinstance(request, MessageSendRequest) and request.count > 1:
                     history = await self._memory.get_conversation_messages_async(conversation_id=msg_conversation_id)
                     validate_history_replay(target=target, messages=history)

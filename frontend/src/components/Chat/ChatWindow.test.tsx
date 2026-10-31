@@ -123,6 +123,18 @@ async function findRecoveryAction(user: ReturnType<typeof userEvent.setup>): Pro
   return screen.findByRole("menuitem", { name: "Branch conversation" });
 }
 
+async function chooseTemperature(user: ReturnType<typeof userEvent.setup>, value?: string): Promise<void> {
+  await user.click(screen.getByRole("button", { name: "Generation settings" }));
+  const defaults = screen.getByRole<HTMLInputElement>("checkbox", { name: "Use target default for temperature" });
+  if (defaults.checked !== (value === undefined)) await user.click(defaults);
+  if (value !== undefined) {
+    const input = screen.getByRole("spinbutton", { name: "Temperature" });
+    await user.clear(input);
+    await user.type(input, value);
+  }
+  await user.keyboard("{Escape}");
+}
+
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => (
@@ -2254,6 +2266,10 @@ describe("ChatWindow Integration", () => {
 
   it.each(["Same attack", "New attack"])("edits locally, restores the composer on Cancel, and saves to %s", async (destination: string) => {
     const user = userEvent.setup();
+    const target = {
+      ...mockTarget,
+      capabilities: buildCapabilities({ ...mockTarget.capabilities, supports_temperature: true }),
+    };
     mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
     mockedMapper.backendMessagesToFrontend.mockReturnValue(mockMessages);
     const onConversationCreated = jest.fn();
@@ -2270,6 +2286,7 @@ describe("ChatWindow Integration", () => {
     const router = createMemoryRouter([{
       path: "/",
       element: <ChatWindow {...defaultProps} attackResultId="existing" conversationId="source"
+        activeTarget={target}
         activeConversationId="source" onConversationCreated={onConversationCreated}
         onSelectConversation={onSelectConversation} />,
     }]);
@@ -2279,12 +2296,15 @@ describe("ChatWindow Integration", () => {
       </UserPreferencesProvider></FluentProvider>
     );
     await user.type(await screen.findByPlaceholderText("Type prompt here"), "Keep this unsent prompt");
+    await chooseTemperature(user, "0.7");
     await user.click(screen.getByRole("button", { name: "Edit Conversation", exact: true }));
     expect(await screen.findByRole("button", { name: "Convert Conversation" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Draft objective" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Generation settings" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel", exact: true }));
     expect(await screen.findByPlaceholderText("Type prompt here")).toHaveValue("Keep this unsent prompt");
+    expect(screen.getByText("Temperature: 0.7")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Edit Conversation", exact: true }));
     await screen.findByRole("button", { name: "Convert Conversation" });
     await user.click(screen.getByRole("button", { name: "Add objective" }));
@@ -2295,7 +2315,10 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledTimes(1));
     expect(await screen.findByPlaceholderText("Type prompt here")).toBeInTheDocument();
     if (destination === "Same attack") expect(onSelectConversation).toHaveBeenCalledWith("saved");
-    else expect(onConversationCreated).toHaveBeenCalledWith("new", "saved", "Draft goal", mockTarget);
+    else expect(onConversationCreated).toHaveBeenCalledWith("new", "saved", "Draft goal", target);
+    expect(targetsApi.buildTarget).not.toHaveBeenCalled();
+    expect(mockedAttacksApi.saveConversation.mock.calls[0][0]).not.toHaveProperty("target_binding");
+    expect(screen.getByText("Temperature: 0.7")).toBeInTheDocument();
     expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
   });
 
@@ -3069,148 +3092,216 @@ describe("ChatWindow Integration", () => {
   // First message → create attack + send
   // -----------------------------------------------------------------------
 
-  it("builds a private temperature setting before creating the attack", async () => {
+  it("sends runtime temperature without building a private target", async () => {
     const user = userEvent.setup();
-    const source = { ...mockTarget, supports_temperature_override: true };
+    const source = { ...mockTarget, capabilities: buildCapabilities({ supports_temperature: true }) };
     const onConversationCreated = jest.fn();
-    jest.mocked(targetsApi.buildTarget).mockResolvedValue({
-      identifier: { ...source.identifier, hash: "private-hash", temperature: 0.8 },
-      capabilities: source.capabilities,
-    });
     mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
     mockedMapper.buildMessagePieces.mockResolvedValue([{ data_type: "text", original_value: "Hello" }]);
     mockSendResult.mockResolvedValue({
       ...makeTextResponse("Reply"),
       attack: { attack_result_id: "default-created-attack", conversation_id: "default-created-conversation" },
     } as never);
-    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
+    const rendered = render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
       onConversationCreated={onConversationCreated} /></TestWrapper>);
-    expect(screen.getByText("Temperature:")).toBeInTheDocument();
-    expect(screen.queryByText("Empty keeps the source setting.")).not.toBeInTheDocument();
-    await user.type(screen.getByLabelText("Temperature"), "0.8");
+    expect(within(screen.getByTestId("prompt-editor")).getByRole("button", { name: "Generation settings" })).toBeInTheDocument();
+    expect(within(screen.getByRole("group", { name: "Chat controls" })).queryByRole("spinbutton")).not.toBeInTheDocument();
+    await chooseTemperature(user, "0.8");
     await user.type(screen.getByRole("textbox"), "Hello");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledTimes(1));
-    const binding = {
-      version: 1, source_name: source.target_registry_name, source_hash: source.identifier.hash,
-      temperature: 0.8, effective_hash: "private-hash",
-    };
-    expect(targetsApi.buildTarget).toHaveBeenCalledWith("OpenAIChatTarget", {
-      source_name: source.target_registry_name, source_hash: source.identifier.hash,
-      params: { temperature: 0.8 },
-    });
-    expect(mockedAttacksApi.createAttack.mock.calls[0][0].target_binding).toEqual(binding);
-    expect(onConversationCreated.mock.calls[0][3].binding).toEqual(binding);
+    await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1));
+    expect(targetsApi.buildTarget).not.toHaveBeenCalled();
+    expect(mockedAttacksApi.createAttack.mock.calls[0][0].target_binding).toBeUndefined();
+    expect(mockedAttacksApi.submitMessageSend.mock.calls[0][1].pieces[0].prompt_metadata)
+      .toEqual({ request_generation_config: { temperature: 0.8 } });
+    expect(onConversationCreated.mock.calls[0][3]).toBeUndefined();
     expect(source.identifier.hash).not.toBe("private-hash");
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
+      attackResultId="default-created-attack" conversationId="default-created-conversation"
+      onConversationCreated={onConversationCreated} /></TestWrapper>);
+    expect(screen.getByText("Temperature: 0.8")).toBeInTheDocument();
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
+      attackResultId="another-attack" conversationId="another-conversation"
+      onConversationCreated={onConversationCreated} /></TestWrapper>);
+    expect(screen.queryByText("Temperature: 0.8")).not.toBeInTheDocument();
   });
 
   it.each([
     { ready: true, generation: "gen-1", defaultsReady: false },
     { ready: true, generation: "gen-2", defaultsReady: true },
     { ready: false, generation: "gen-1", defaultsReady: true },
-  ])("preserves the first-send draft when launch state becomes %j during temperature construction", async (
+  ])("preserves the first-send draft when launch state becomes %j during message preparation", async (
     next: { ready: boolean; generation: string; defaultsReady: boolean },
   ) => {
     const user = userEvent.setup();
     const runtime = jest.spyOn(runtimeHooks, "useRuntime").mockReturnValue({
       ready: true, state: "ready", generation: "gen-1",
     });
-    const source = { ...mockTarget, supports_temperature_override: true };
-    const built = {
-      identifier: { ...source.identifier, hash: "private-hash", temperature: 0.8 },
-      capabilities: source.capabilities,
-    };
-    let finish: (value: typeof built) => void = () => {};
-    jest.mocked(targetsApi.buildTarget).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-    mockedMapper.buildMessagePieces.mockResolvedValue([{ data_type: "text", original_value: "Prepared prompt" }]);
+    const source = { ...mockTarget, capabilities: buildCapabilities({ supports_temperature: true }) };
+    const pieces = [{ data_type: "text", original_value: "Prepared prompt" }];
+    let finish: (value: typeof pieces) => void = () => {};
+    mockedMapper.buildMessagePieces.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const rendered = render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source} /></TestWrapper>);
-    await user.type(screen.getByLabelText("Temperature"), "0.8");
+    await chooseTemperature(user, "0.8");
     const input = screen.getByRole("textbox");
     await user.type(input, "Prepared prompt");
     await user.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(targetsApi.buildTarget).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockedMapper.buildMessagePieces).toHaveBeenCalledTimes(1));
     runtime.mockReturnValue({
       ready: next.ready, state: next.ready ? "ready" : "unavailable", generation: next.generation,
     });
     rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
       defaultsReady={next.defaultsReady} labels={{ operation: "replacement" }} /></TestWrapper>);
-    await act(async () => { finish(built); });
+    await act(async () => { finish(pieces); });
     expect(await screen.findByText(/Runtime or default labels changed while preparing this message/)).toBeInTheDocument();
     expect(input).toHaveValue("Prepared prompt");
-    expect(screen.getByLabelText("Temperature")).toHaveValue(0.8);
+    expect(screen.getByText("Temperature: 0.8")).toBeInTheDocument();
     expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled();
     expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
   });
 
-  it("shows saved temperature as read-only", () => {
+  it("allows an override on a saved target variant without changing its default", async () => {
+    const user = userEvent.setup();
     const target = {
-      ...mockTarget, supports_temperature_override: true,
+      ...mockTarget, capabilities: buildCapabilities({ supports_temperature: true }),
       identifier: { ...mockTarget.identifier, temperature: 0.8 },
+      binding: { version: 1 as const, source_name: "source", source_hash: "source-hash", temperature: 0.8, effective_hash: "variant" },
     };
     render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
       attackResultId="existing" conversationId="conversation" /></TestWrapper>);
-    expect(screen.getByLabelText("Temperature")).toHaveAttribute("readonly");
-    expect(screen.getByLabelText("Temperature")).toHaveValue(0.8);
+    const settings = screen.getByRole("button", { name: "Generation settings" });
+    await waitFor(() => expect(settings).toBeEnabled());
+    await user.click(settings);
+    expect(screen.getByRole("checkbox", { name: "Use target default for temperature" })).toBeChecked();
+    expect(screen.getByLabelText("Temperature")).toBeDisabled();
+    expect(screen.getByLabelText("Temperature")).toHaveValue(null);
+    expect(screen.getByLabelText("Temperature")).toHaveAttribute("placeholder", "0.8");
     expect(screen.queryByText("Read-only for this attack.")).not.toBeInTheDocument();
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Use target default for temperature" }));
+    await user.type(screen.getByLabelText("Temperature"), "0");
+    expect(screen.getByLabelText("Temperature")).toHaveValue(0);
+    expect(target.identifier.temperature).toBe(0.8);
   });
 
-  it.each([
-    { interaction: "hover", reconstructionError: "The selected target cannot be recreated with its current settings." },
-    { interaction: "keyboard", reconstructionError: "The selected target cannot be recreated with its current settings." },
-    { interaction: "hover", reconstructionError: undefined },
-    { interaction: "keyboard", reconstructionError: undefined },
-  ])("explains unavailable temperature only on $interaction: $reconstructionError", async ({
-    interaction, reconstructionError,
-  }: { interaction: string; reconstructionError: string | undefined }) => {
+  it("does not infer runtime temperature support from a target default", async () => {
     const user = userEvent.setup();
     const target = {
       ...mockTarget,
-      supports_temperature_override: false,
-      reconstruction_error: reconstructionError,
-    };
-    const explanation = reconstructionError ?? "This target does not support a separate temperature setting.";
-    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target} /></TestWrapper>);
-    const input = screen.getByRole("spinbutton", { name: "Temperature" });
-    expect(input).toBeDisabled();
-    expect(screen.getByText(explanation)).not.toBeVisible();
-    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
-    if (interaction === "hover") await user.hover(input);
-    else {
-      await user.click(screen.getByRole("combobox", { name: "Chat target" }));
-      await user.tab();
-    }
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(explanation);
-    expect(targetsApi.buildTarget).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    { interaction: "hover", supportsOverride: true },
-    { interaction: "click", supportsOverride: true },
-    { interaction: "hover", supportsOverride: false },
-    { interaction: "click", supportsOverride: false },
-  ])("explains read-only temperature on $interaction with override support $supportsOverride", async ({
-    interaction, supportsOverride,
-  }: { interaction: string; supportsOverride: boolean }) => {
-    const user = userEvent.setup();
-    const target = {
-      ...mockTarget, supports_temperature_override: supportsOverride,
       identifier: { ...mockTarget.identifier, temperature: 0.8 },
     };
     render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
       attackResultId="existing" conversationId="conversation" /></TestWrapper>);
+    const settings = screen.getByRole("button", { name: "Generation settings" });
+    await waitFor(() => expect(settings).toBeEnabled());
+    await user.click(settings);
     const input = screen.getByLabelText("Temperature");
-    expect(screen.queryByText("Read-only for this attack.")).not.toBeInTheDocument();
-    if (interaction === "hover") await user.hover(input);
-    else await user.click(input);
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      supportsOverride
-        ? "Temperature can only be modified in a new attack"
-        : "This target does not support a separate temperature setting."
-    );
-    expect(input).toHaveAttribute("readonly");
-    expect(input).toHaveValue(0.8);
+    expect(screen.getByText("This target does not support runtime temperature.")).toBeInTheDocument();
+    expect(input).toBeDisabled();
     expect(targetsApi.buildTarget).not.toHaveBeenCalled();
+  });
+
+  it.each(["click", "keyboard"])("explains unavailable runtime temperature on %s", async (interaction: string) => {
+    const user = userEvent.setup();
+    const explanation = "This target does not support runtime temperature.";
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={mockTarget} /></TestWrapper>);
+    const button = screen.getByRole("button", { name: "Generation settings" });
+    if (interaction === "click") await user.click(button);
+    else {
+      act(() => button.focus());
+      await user.keyboard("{Enter}");
+    }
+    expect(screen.getByRole("spinbutton", { name: "Temperature" })).toBeDisabled();
+    expect(screen.getByRole("dialog", { name: "Generation settings" })).toHaveTextContent(explanation);
+    expect(targetsApi.buildTarget).not.toHaveBeenCalled();
+  });
+
+  it("changes per-send temperature on a saved variant and clears back to its default", async () => {
+    const user = userEvent.setup();
+    const binding = {
+      version: 1 as const, source_name: "source", source_hash: "source-hash",
+      temperature: 0.8, effective_hash: "variant",
+    };
+    const target = {
+      ...mockTarget, binding,
+      identifier: { ...mockTarget.identifier, hash: binding.effective_hash, temperature: 0.8 },
+      capabilities: buildCapabilities({ supports_temperature: true }),
+    };
+    mockedMapper.buildMessagePieces.mockResolvedValue([{ data_type: "text", original_value: "Hello" }]);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      conversation_id: "conversation", messages: [], target_response_status: null,
+    });
+    mockSendResult.mockResolvedValue({
+      ...makeTextResponse("Reply"),
+      attack: { attack_result_id: "existing", conversation_id: "conversation" },
+    } as never);
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
+      attackResultId="existing" conversationId="conversation" /></TestWrapper>);
+    await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+    for (const [index, value] of ["0", "1.3", undefined].entries()) {
+      await waitFor(() => expect(screen.getByRole("button", { name: "Generation settings" })).toBeEnabled());
+      await chooseTemperature(user, value);
+      await user.type(screen.getByRole("textbox"), "Hello");
+      await user.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(index + 1));
+      const sent = mockedAttacksApi.submitMessageSend.mock.calls[index][1];
+      expect(sent.pieces[0].prompt_metadata).toEqual(
+        value ? { request_generation_config: { temperature: Number(value) } } : undefined,
+      );
+      expect(sent.target_binding).toBeUndefined();
+    }
+    expect(target.binding).toEqual(binding);
+    expect(targetsApi.buildTarget).not.toHaveBeenCalled();
+    expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled();
+  });
+
+  it("keeps the generation selection across consecutive sends and snapshots it before preparing pieces", async () => {
+    const user = userEvent.setup();
+    const target = { ...mockTarget, capabilities: buildCapabilities({ supports_temperature: true }) };
+    const pieces = [{ data_type: "text", original_value: "Hello" }];
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      conversation_id: "conversation", messages: [], target_response_status: null,
+    });
+    mockSendResult.mockResolvedValue({
+      ...makeTextResponse("Reply"), attack: { attack_result_id: "existing", conversation_id: "conversation" },
+    } as never);
+    let finish: (value: typeof pieces) => void = () => {};
+    mockedMapper.buildMessagePieces.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    mockedMapper.buildMessagePieces.mockResolvedValue(pieces);
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
+      attackResultId="existing" conversationId="conversation" /></TestWrapper>);
+    await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+    await chooseTemperature(user, "0");
+    await user.type(screen.getByRole("textbox"), "Hello");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(mockedMapper.buildMessagePieces).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Generation settings" })).toBeDisabled();
+    await act(async () => finish(pieces));
+    await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+    expect(screen.getByText("Temperature: 0")).toBeInTheDocument();
+    await user.type(screen.getByRole("textbox"), "Again");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(2));
+    for (const [, request] of mockedAttacksApi.submitMessageSend.mock.calls) {
+      expect(request.pieces[0].prompt_metadata).toEqual({ request_generation_config: { temperature: 0 } });
+    }
+  });
+
+  it("blocks an invalid explicit generation value without preparing or submitting the message", async () => {
+    const user = userEvent.setup();
+    const target = { ...mockTarget, capabilities: buildCapabilities({ supports_temperature: true }) };
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target} /></TestWrapper>);
+    await chooseTemperature(user, "2.1");
+    await user.type(screen.getByRole("textbox"), "Hello");
+    await user.keyboard("{Enter}");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(mockedMapper.buildMessagePieces).not.toHaveBeenCalled();
+    expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Generation settings" }));
+    expect(screen.getByText("Temperature must be a finite number between 0 and 2.")).toBeVisible();
   });
 
   it("should preserve operation attribution when the first message creates the attack", async () => {

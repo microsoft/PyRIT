@@ -59,6 +59,52 @@ describe("MessageList", () => {
     ).toBeInTheDocument();
   });
 
+  describe("generation evidence", () => {
+    it.each([
+      [0, "request", "Temperature: 0 (request override)"],
+      [0.8, "target_default", "Temperature: 0.8 (target default)"],
+      [null, "provider_default", "Temperature: provider default (unknown)"],
+      [undefined, undefined, "Temperature: not recorded"],
+    ])("renders persisted temperature %s from %s", (
+      value: number | null | undefined, source: string | undefined, expected: string,
+    ) => {
+      const backendMessage: BackendMessage = {
+        turn_number: 0, role: "user", created_at: "2026-02-15T00:00:00Z",
+        message_pieces: [{
+          id: "request-piece", original_value_data_type: "text", converted_value_data_type: "text",
+          original_value: "hello", converted_value: "hello", scores: [],
+          prompt_metadata: source === undefined ? {} : {
+            _pyrit_generation: {
+              temperature: { requested: source === "request" ? value : null, resolved: value, source },
+              request_piece_ids: ["request-piece"],
+            },
+          },
+        }],
+      };
+      render(<TestWrapper><MessageList messages={[backendMessageToFrontend(backendMessage)]} /></TestWrapper>);
+      expect(screen.getByText(expected)).toBeInTheDocument();
+    });
+
+    it.each(["user", "assistant"] as const)("shows read-only requested and resolved evidence on a %s message", async (role: "user" | "assistant") => {
+      const user = userEvent.setup();
+      const backendMessage: BackendMessage = {
+        turn_number: 0, role, created_at: "2026-02-15T00:00:00Z",
+        message_pieces: [{
+          id: "piece", original_value_data_type: "text", converted_value_data_type: "text",
+          original_value: "hello", converted_value: "hello", scores: [],
+          prompt_metadata: { _pyrit_generation: {
+            temperature: { requested: 0, resolved: 0, source: "request" }, request_piece_ids: ["request-piece"],
+          } },
+        }],
+      };
+      render(<TestWrapper><MessageList messages={[backendMessageToFrontend(backendMessage)]} /></TestWrapper>);
+      await user.click(screen.getByRole("button", { name: "Generation details: Temperature: 0 (request override)" }));
+      const details = screen.getByRole("dialog", { name: "Saved generation details" });
+      expect(details).toHaveTextContent("Requested override: 0. Sent parameter: 0. Source: request override.");
+      expect(within(details).queryByRole("spinbutton")).not.toBeInTheDocument();
+    });
+  });
+
   it.each(["Copy to next message", "Branch conversation", "Branch attack"])("copies through one menu to %s", async (destination: string) => {
     const user = userEvent.setup();
     const onCopyToInput = jest.fn();
