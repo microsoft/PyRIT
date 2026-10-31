@@ -5,7 +5,9 @@
 
 import asyncio
 import json
+import os
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -95,7 +97,10 @@ async def _get_snapshot_async(*, read_model: ScenarioProgressReadModel, run_id: 
     )
 
 
-def _write_objective_metrics(*, file_path: Path, scorer_identifier: ComponentIdentifier, accuracy: float) -> None:
+def _write_objective_metrics(
+    *, file_path: Path, scorer_identifier: ComponentIdentifier, accuracy: float, age_seconds: int | None = None
+) -> None:
+    """Write one metrics entry, optionally backdating the file so the read model may cache it."""
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(
         json.dumps(
@@ -115,6 +120,9 @@ def _write_objective_metrics(*, file_path: Path, scorer_identifier: ComponentIde
         + "\n",
         encoding="utf-8",
     )
+    if age_seconds is not None:
+        mtime_ns = time.time_ns() - age_seconds * 1_000_000_000
+        os.utime(file_path, ns=(mtime_ns, mtime_ns))
 
 
 @pytest.mark.parametrize("terminal", [False, True])
@@ -130,6 +138,7 @@ async def test_progress_reuses_metrics_until_file_changes_even_for_finished_runs
         file_path=file_path,
         scorer_identifier=scorer_identifier,
         accuracy=initial_accuracy,
+        age_seconds=30,
     )
     memory = MagicMock(spec=MemoryInterface)
     memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=([], False))
@@ -165,6 +174,7 @@ async def test_progress_reuses_metrics_until_file_changes_even_for_finished_runs
             file_path=file_path,
             scorer_identifier=scorer_identifier,
             accuracy=updated_accuracy,
+            age_seconds=20,
         )
         updated = await read_progress_async()
         assert updated.summary.objective_scorer.metrics.accuracy == updated_accuracy
@@ -183,10 +193,57 @@ async def test_progress_reuses_metrics_until_file_changes_even_for_finished_runs
             file_path=file_path,
             scorer_identifier=scorer_identifier,
             accuracy=initial_accuracy,
+            age_seconds=10,
         )
         restored = await read_progress_async()
         assert restored.summary.objective_scorer.metrics.accuracy == initial_accuracy
         assert load_metrics.call_count == 4
+
+
+def test_load_objective_metrics_rereads_recent_file_with_unchanged_metadata(tmp_path: Path) -> None:
+    file_path = tmp_path / "objective" / "objective_achieved_metrics.jsonl"
+    scorer_identifier = ComponentIdentifier(class_name="RecentScorer", class_module="tests")
+    eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
+    _write_objective_metrics(file_path=file_path, scorer_identifier=scorer_identifier, accuracy=0.75)
+    # A same-length rewrite within one timestamp tick leaves every field the cache key reads unchanged.
+    tick_stat = file_path.stat()
+    real_stat = Path.stat
+
+    def stat_within_tick(path: Path, **kwargs: bool) -> os.stat_result:
+        return tick_stat if path == file_path else real_stat(path, **kwargs)
+
+    with (
+        patch.object(progress_module, "SCORER_EVALS_PATH", tmp_path),
+        patch.object(Path, "stat", autospec=True, side_effect=stat_within_tick),
+    ):
+        first = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
+        _write_objective_metrics(file_path=file_path, scorer_identifier=scorer_identifier, accuracy=0.85)
+        rewritten = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
+
+    assert first.accuracy == 0.75
+    assert rewritten.accuracy == 0.85
+
+
+def test_load_objective_metrics_reuses_cache_once_file_is_older_than_recent_window(tmp_path: Path) -> None:
+    file_path = tmp_path / "objective" / "objective_achieved_metrics.jsonl"
+    scorer_identifier = ComponentIdentifier(class_name="SettledScorer", class_module="tests")
+    eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
+    _write_objective_metrics(file_path=file_path, scorer_identifier=scorer_identifier, accuracy=0.75, age_seconds=10)
+
+    with (
+        patch.object(progress_module, "SCORER_EVALS_PATH", tmp_path),
+        patch.object(
+            progress_module,
+            "find_objective_metrics_by_eval_hash",
+            wraps=progress_module.find_objective_metrics_by_eval_hash,
+        ) as load_metrics,
+    ):
+        first = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
+        second = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
+
+    assert first is second
+    assert first.accuracy == 0.75
+    load_metrics.assert_called_once()
 
 
 async def test_progress_updates_scorer_identity_without_new_results(tmp_path: Path) -> None:
