@@ -157,6 +157,47 @@ describe("ConversationPanel", () => {
     });
   });
 
+  it("clears the previous attack's conversations while switching attacks", async () => {
+    mockedAttacksApi.getConversations.mockResolvedValue({
+      attack_result_id: "ar-attack-123",
+      main_conversation_id: "attack-123",
+      conversations: [
+        {
+          conversation_id: "branch-1",
+          message_count: 2,
+          last_message_preview: "Branched",
+          created_at: "2026-02-18T11:00:00Z",
+        },
+      ],
+    });
+
+    const { rerender } = render(
+      <TestWrapper>
+        <ConversationPanel {...defaultProps} />
+      </TestWrapper>
+    );
+    await waitFor(() => {
+      expect(screen.getByText("branch-1")).toBeInTheDocument();
+    });
+
+    // Switch to a second attack whose conversations never resolve: the old
+    // attack's row must not linger under the new attack.
+    let resolveSecond: (value: never) => void = () => {};
+    mockedAttacksApi.getConversations.mockReturnValue(
+      new Promise((resolve) => { resolveSecond = resolve }) as never
+    );
+    rerender(
+      <TestWrapper>
+        <ConversationPanel {...defaultProps} attackResultId="ar-attack-456" activeConversationId="attack-456" />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByText("branch-1")).not.toBeInTheDocument();
+    expect(mockedAttacksApi.getConversations).toHaveBeenCalledWith("ar-attack-456");
+
+    resolveSecond(undefined as never);
+  });
+
   it("should show message count badge", async () => {
     mockedAttacksApi.getConversations.mockResolvedValue({
       attack_result_id: "ar-attack-123",
