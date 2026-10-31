@@ -379,6 +379,14 @@ export default function ConverterPanel({
     return () => {
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
+      // Unmounting mid drag removes the mouseup listener before it can fire,
+      // so the body wide cursor and selection lock have to be released here or
+      // they stick until a full page reload.
+      if (isResizing.current) {
+        isResizing.current = false
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
     }
   }, [])
 

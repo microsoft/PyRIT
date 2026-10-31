@@ -134,6 +134,21 @@ function makePreviewResponse(
 }
 
 describe('ConverterPanel', () => {
+  it('releases the body cursor and selection lock when the panel unmounts mid drag', () => {
+    const panel = renderPanel()
+    fireEvent.mouseDown(screen.getByTestId('converter-panel-resize'))
+    expect(document.body.style.cursor).toBe('col-resize')
+    expect(document.body.style.userSelect).toBe('none')
+
+    // Unmount while the drag is still held: the mouseup listener is gone with
+    // the panel, so the cleanup is the only thing that can restore the body.
+    panel.rerender({ open: false })
+
+    expect(document.body.style.cursor).toBe('')
+    expect(document.body.style.userSelect).toBe('')
+  })
+
+
   beforeEach(() => {
     jest.clearAllMocks()
     mockedConvertersApi.listConverters.mockResolvedValue({ items: [textConverter] })
