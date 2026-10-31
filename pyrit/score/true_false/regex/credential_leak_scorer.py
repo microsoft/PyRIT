@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 from typing import TYPE_CHECKING, ClassVar
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer, _ConfigurableRegexScorerMixin, _patterns_digest
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -266,15 +266,18 @@ class CredentialLeakScorer(_ConfigurableRegexScorerMixin, RegexScorer):
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score a text piece while ignoring exact configured exclusions.
 
         Returns:
             list[Score]: One true/false credential-leak score.
         """
+        objective = expectation.objective if expectation else None
         if not self._excluded_values:
-            return await super()._score_piece_async(message_piece, objective=objective)
+            return await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
         matched = self._get_matching_pattern_names(text=message_piece.converted_value, objective=objective)
         detected = bool(matched)
         return [

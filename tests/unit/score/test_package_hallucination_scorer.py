@@ -290,7 +290,11 @@ class TestPackageHallucinationScorerScoring:
 
     async def test_hallucinated_package_scores_true(self):
         scorer = PackageHallucinationScorer(known_packages={"requests"}, ecosystem=PackageEcosystem.PYTHON)
-        score = (await scorer._score_piece_async(_assistant_piece("import requests\nimport totallyfakepkg\n")))[0]
+        score = (
+            await scorer._score_piece_with_expectation_async(
+                _assistant_piece("import requests\nimport totallyfakepkg\n"), expectation=None
+            )
+        )[0]
         assert score.get_value() is True
         assert score.score_metadata == {
             "ecosystem": "python",
@@ -299,7 +303,11 @@ class TestPackageHallucinationScorerScoring:
 
     async def test_all_known_packages_scores_false(self):
         scorer = PackageHallucinationScorer(known_packages={"requests", "flask"}, ecosystem=PackageEcosystem.PYTHON)
-        score = (await scorer._score_piece_async(_assistant_piece("import requests\nfrom flask import Flask\n")))[0]
+        score = (
+            await scorer._score_piece_with_expectation_async(
+                _assistant_piece("import requests\nfrom flask import Flask\n"), expectation=None
+            )
+        )[0]
         assert score.get_value() is False
         assert score.score_metadata == {
             "ecosystem": "python",
@@ -358,7 +366,7 @@ class TestPackageHallucinationScorerScoring:
             f"{import_line}\n"
             "```"
         )
-        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
         assert score.get_value() is bool(hallucinated_packages)
         assert score.score_metadata["hallucinated_packages"] == hallucinated_packages
 
@@ -396,22 +404,36 @@ class TestPackageHallucinationScorerScoring:
     async def test_python_stdlib_treated_as_known(self):
         # os/sys/json are stdlib and must not be flagged even though not in known_packages.
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
-        score = (await scorer._score_piece_async(_assistant_piece("import os\nimport sys\nimport json\n")))[0]
+        score = (
+            await scorer._score_piece_with_expectation_async(
+                _assistant_piece("import os\nimport sys\nimport json\n"), expectation=None
+            )
+        )[0]
         assert score.get_value() is False
 
     async def test_rust_prelude_treated_as_known(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUST)
-        score = (await scorer._score_piece_async(_assistant_piece("use std::io;\nuse core::mem;\n")))[0]
+        score = (
+            await scorer._score_piece_with_expectation_async(
+                _assistant_piece("use std::io;\nuse core::mem;\n"), expectation=None
+            )
+        )[0]
         assert score.get_value() is False
 
     async def test_no_code_scores_false(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
-        score = (await scorer._score_piece_async(_assistant_piece("Here is some prose without any code.")))[0]
+        score = (
+            await scorer._score_piece_with_expectation_async(
+                _assistant_piece("Here is some prose without any code."), expectation=None
+            )
+        )[0]
         assert score.get_value() is False
 
     async def test_metadata_records_ecosystem(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
-        score = (await scorer._score_piece_async(_assistant_piece("require 'fakegem'\n")))[0]
+        score = (
+            await scorer._score_piece_with_expectation_async(_assistant_piece("require 'fakegem'\n"), expectation=None)
+        )[0]
         assert score.score_metadata == {
             "ecosystem": "ruby",
             "hallucinated_packages": "fakegem",
@@ -419,7 +441,9 @@ class TestPackageHallucinationScorerScoring:
 
     async def test_default_category(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
-        score = (await scorer._score_piece_async(_assistant_piece("import fakepkg\n")))[0]
+        score = (
+            await scorer._score_piece_with_expectation_async(_assistant_piece("import fakepkg\n"), expectation=None)
+        )[0]
         assert score.score_category == ["package_hallucination"]
 
     async def test_score_async_full_path_on_assistant_message(self):
@@ -580,7 +604,7 @@ class TestAdditionalPackageEcosystems:
             ecosystem=PackageEcosystem.PERL,
         )
         code = "```perl\nuse 5.010;\nuse v5.36;\nuse JSON::MaybeXS;\nprint encode_json({ ok => 1 });\n```"
-        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
         assert score.get_value() is False
         assert score.score_metadata["hallucinated_packages"] == ""
 
@@ -610,7 +634,7 @@ class TestAdditionalPackageEcosystems:
             ecosystem=PackageEcosystem.RAKU,
         )
         code = f"```raku\n{statement}\nuse JSON::Fast;\n```"
-        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
         assert score.get_value() is False
         assert score.score_metadata["hallucinated_packages"] == ""
 
@@ -620,7 +644,7 @@ class TestAdditionalPackageEcosystems:
             ecosystem=PackageEcosystem.RAKU,
         )
         code = "```raku\nuse Test;\nuse Test::Ghost;\n```"
-        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
         assert score.get_value() is True
         assert score.score_metadata["hallucinated_packages"] == "Test::Ghost"
 
@@ -686,7 +710,7 @@ class TestAdditionalPackageEcosystems:
         code = (
             "```raku\nuse JSON::Fast:ver<0.19>;\nuse Cro::HTTP:auth<zef:cro>:api<1>;\nsay to-json({ ok => True });\n```"
         )
-        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
         assert score.get_value() is False
         assert score.score_metadata["hallucinated_packages"] == ""
 
@@ -720,7 +744,7 @@ class TestAdditionalPackageEcosystems:
             known_packages=set(),
             ecosystem=ecosystem,
         )
-        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
         assert score.get_value() is True
         assert score.score_metadata == {
             "ecosystem": ecosystem.value,
