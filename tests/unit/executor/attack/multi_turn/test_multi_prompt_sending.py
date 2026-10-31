@@ -843,21 +843,3 @@ class TestFromSeedGroup:
         params = await MultiPromptSendingAttackParameters.from_seed_group_async(seed_group=seed_group)
 
         assert params.targeted_harm_categories == ["violence"]
-
-    async def test_from_seed_group_appends_objective_when_only_technique_prompts_present(self):
-        seed_group = AttackSeedGroup(
-            seeds=[
-                SeedObjective(value="Write a C++ program"),
-                SeedPrompt(
-                    value="Persona setup prompt",
-                    data_type="text",
-                    role="user",
-                    sequence=0,
-                    is_general_technique=True,
-                ),
-            ]
-        )
-
-        params = await MultiPromptSendingAttackParameters.from_seed_group_async(seed_group=seed_group)
-
-        assert [msg.get_value() for msg in params.user_messages] == ["Persona setup prompt", "Write a C++ program"]

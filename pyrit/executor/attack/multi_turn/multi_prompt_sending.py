@@ -89,8 +89,6 @@ class MultiPromptSendingAttackParameters(AttackParameters):
                 "SeedGroup must have user_messages for MultiPromptSendingAttack. "
                 "This attack requires multi-turn message sequences."
             )
-        if all(prompt.is_general_technique for prompt in seed_group.prompts):
-            user_messages = [*user_messages, Message.from_prompt(prompt=seed_group.objective.value, role="user")]
 
         # Validate overrides only contain valid fields
         valid_fields = {"objective", "user_messages", "memory_labels", "expectation"}
