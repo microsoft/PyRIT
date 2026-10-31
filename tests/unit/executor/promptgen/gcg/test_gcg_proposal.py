@@ -248,6 +248,27 @@ class TestGCGCandidateProposer:
         expected_norm = 3 - len(group_worker_indices)
         assert torch.allclose(norms, torch.full_like(norms, float(expected_norm)))
 
+    def test_vocabularies_are_read_once_per_worker_across_steps(self) -> None:
+        workers = [_create_mock_worker((1, 3, 4)), _create_mock_worker((1, 3, 4))]
+        sampling = MagicMock(spec=SamplingStrategy)
+        sampling.sample_candidates.return_value = torch.tensor([[10]])
+        candidate_filter = MagicMock(spec=CandidateFilter)
+        candidate_filter.filter_candidates.return_value = ["res"]
+        proposer = GCGCandidateProposer(
+            workers=workers,
+            prompts=[_create_mock_prompt_manager(), _create_mock_prompt_manager()],
+            sampling=sampling,
+            candidate_filter=candidate_filter,
+            main_device=torch.device("cpu"),
+        )
+
+        for _ in range(3):
+            batch = proposer.propose_candidates(batch_size=1, topk=2, current_control_str="test")
+            assert batch.group_worker_indices == [1]
+
+        for worker in workers:
+            worker.tokenizer.get_vocab.assert_called_once_with()
+
 
 @pytest.mark.parametrize(
     ("added_tokens", "embedding_rows", "representatives", "expected_candidates"),

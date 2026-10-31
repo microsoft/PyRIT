@@ -34,6 +34,10 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E
     get_embedding_matrix,
     get_embeddings,
 )
+from pyrit.executor.promptgen.gcg.attack.base.model_adapters import (  # noqa: E402
+    GCGModelAdapter,
+    GCGTokenizerAdapter,
+)
 from pyrit.executor.promptgen.gcg.config import GCGAlgorithmConfig, GCGModelConfig, GCGStrategyConfig  # noqa: E402
 from pyrit.executor.promptgen.gcg.extension_protocols import SuffixInitializer  # noqa: E402
 
@@ -1175,10 +1179,85 @@ class TestGetWorkersChatTemplateValidation:
         worker.start.assert_not_called()
 
 
+class TestModelAdapters:
+    def test_model_adapter_exposes_the_embedding_contract(self) -> None:
+        model = _tiny_model("llama")
+        weight = model.get_input_embeddings().weight
+        adapter = GCGModelAdapter(model)
+
+        assert adapter.embedding_matrix is weight
+        assert (adapter.device, adapter.dtype, adapter.num_embeddings) == (weight.device, weight.dtype, 256)
+        assert adapter.supports_selective_logits
+        assert adapter.supports_prefix_cache
+
+    def test_model_adapter_reports_forward_without_cache_or_selective_logits(self) -> None:
+        model = MagicMock()
+        model.forward = lambda input_ids, attention_mask=None: None
+        adapter = GCGModelAdapter(model)
+
+        assert not adapter.supports_selective_logits
+        assert not adapter.supports_prefix_cache
+
+    @pytest.mark.parametrize(
+        ("added_token", "num_embeddings", "same_identity"),
+        [
+            (None, 27, True),
+            # new_domain_term gets id 27, so it is only sampleable with a 28th embedding row.
+            ("new_domain_term", 27, True),
+            ("new_domain_term", 28, False),
+        ],
+    )
+    def test_vocabulary_identity_covers_only_sampleable_ids(
+        self, added_token: str | None, num_embeddings: int, same_identity: bool
+    ) -> None:
+        other = _fast_tokenizer()
+        if added_token is not None:
+            other.add_tokens([added_token])
+
+        identity = GCGTokenizerAdapter(_fast_tokenizer()).vocabulary_identity(num_embeddings=num_embeddings)
+        other_identity = GCGTokenizerAdapter(other).vocabulary_identity(num_embeddings=num_embeddings)
+
+        assert (identity == other_identity) is same_identity
+
+    def test_vocabulary_identity_differs_for_a_different_vocabulary(self) -> None:
+        words = GCGTokenizerAdapter(_fast_tokenizer()).vocabulary_identity(num_embeddings=27)
+        bytes_ = GCGTokenizerAdapter(_fast_tokenizer(byte_level=True)).vocabulary_identity(num_embeddings=27)
+
+        assert words != bytes_
+
+
 class TestCheckGcgCapabilities:
+    def test_rejects_control_that_does_not_round_trip(self) -> None:
+        from tokenizers import decoders
+
+        tokenizer = _fast_tokenizer()
+        # Decoding without spaces turns the control "hello world" into the unknown word "helloworld".
+        tokenizer.backend_tokenizer.decoder = decoders.Fuse()
+        prompt = AttackPrompt(goal="Say it", target="Sure", tokenizer=tokenizer, control_init="hello world")
+
+        with pytest.raises(ValueError, match="'hello world' does not survive .* comes back as 'helloworld'"):
+            attack_manager_mod._check_gcg_capabilities(
+                model=_tiny_model("llama"), tokenizer=tokenizer, model_path="fake/model", prompts=[prompt]
+            )
+
     def test_accepts_tiny_model_with_fast_tokenizer(self) -> None:
         attack_manager_mod._check_gcg_capabilities(
             model=_tiny_model("llama"), tokenizer=_fast_tokenizer(), model_path="fake/model"
+        )
+
+    def test_round_trip_check_leaves_the_prompt_unchanged(self) -> None:
+        tokenizer = _fast_tokenizer()
+        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="! !")
+        control, input_ids, control_slice = prompt.control, prompt.input_ids.tolist(), prompt._control_slice
+
+        attack_manager_mod._check_gcg_capabilities(
+            model=_tiny_model("llama"), tokenizer=tokenizer, model_path="fake/model", prompts=[prompt]
+        )
+
+        assert (prompt.control, prompt.input_ids.tolist(), prompt._control_slice) == (
+            control,
+            input_ids,
+            control_slice,
         )
 
     def test_accepts_unused_added_tokens_beyond_embeddings(self) -> None:
