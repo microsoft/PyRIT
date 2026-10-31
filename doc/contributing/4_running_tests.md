@@ -108,6 +108,21 @@ Use `wait_for_event_async` to observe readiness and `wait_for_completion_async` 
 observe the outcome, including failures after readiness. Observation timeouts do
 not cancel owned work. Release gates before calling `settle_tasks_async` in `finally`.
 
+For held thread workers, release the gate in `finally` and use `drain_tasks_async`
+while patches and fixtures remain active. Unlike `settle_tasks_async`, this helper
+does not cancel worker-owning tasks when the observer is cancelled or its watchdog
+expires: cancelling `asyncio.to_thread` cannot stop the underlying thread. It waits
+through repeated observer cancellation and then propagates the original cancellation
+message. Watchdog expiry explicitly reports incomplete cleanup; it cannot force a
+worker that never returns to finish.
+
+Use `wait_for_event_async` to observe the readiness event and its owning task together,
+so failures before readiness are reported immediately. For a worker held behind a
+gate, check the owner is still pending after observation; call `task.result()` first
+if it has finished so its original exception is preserved. Keep the outer test timeout
+larger than the combined readiness and cleanup watchdogs, allowing `finally` to release
+and drain workers before mocks are removed.
+
 The discovery provider-state test and Copilot cancellation-test startup use the
 shared `TEST_WATCHDOG_SECONDS` backstop in `tests/unit/async_utils.py`. Discovery
 timeout coverage expires the real cancellation path only after the request starts.
