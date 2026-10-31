@@ -2,11 +2,12 @@
 # Licensed under the MIT license.
 
 
+import hashlib
 import json
 import logging
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
 import httpx
@@ -33,6 +34,18 @@ class HTTPTarget(PromptTarget):
     HTTP_Target is for endpoints that do not have an API and instead require HTTP request(s) to send a prompt.
 
     """
+
+    _CREDENTIAL_HEADERS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "authorization",
+            "proxy-authorization",
+            "x-api-key",
+            "api-key",
+            "ocp-apim-subscription-key",
+            "cookie",
+            "set-cookie",
+        }
+    )
 
     def __init__(
         self,
@@ -112,8 +125,29 @@ class HTTPTarget(PromptTarget):
                 "prompt_regex_string": self.prompt_regex_string,
                 "callback_function": getattr(self.callback_function, "__name__", None),
                 "follow_redirects": self.follow_redirects,
+                "http_request_template_hash": self._http_request_template_hash(),
             },
         )
+
+    def _http_request_template_hash(self) -> str:
+        """
+        Hash the request template that shapes every send, without its credential headers.
+
+        The method, path, non-credential headers and body all change what the endpoint is asked, so
+        they belong to the target's identity. Credential header lines are left out so a secret never
+        reaches the identifier and rotating it does not change the identity.
+
+        Returns:
+            str: The first 16 hex characters of the SHA-256 of the canonical template.
+        """
+        head, *rest = re.split(r"\r?\n\r?\n", self.http_request, maxsplit=1)
+        body = rest[0] if rest else ""
+        request_line, *header_lines = head.replace("\r\n", "\n").strip().split("\n")
+        kept_headers = [
+            line for line in header_lines if line.split(":", 1)[0].strip().lower() not in self._CREDENTIAL_HEADERS
+        ]
+        canonical = "\n".join([request_line, *kept_headers]) + "\n\n" + body
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
     @classmethod
     def with_client(
