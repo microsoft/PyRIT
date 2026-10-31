@@ -367,6 +367,14 @@ export const runtimeApi = {
 }
 
 export const targetsApi = {
+  detectCapabilities: async (target: TargetInstance): Promise<TargetInstance> => {
+    const response = await apiClient.post<TargetInstance>(
+      `/targets/${encodeURIComponent(target.target_registry_name)}/detect-capabilities`,
+      { expected_hash: target.identifier.hash },
+    )
+    return response.data
+  },
+
   listTargetTypes: async (): Promise<TargetTypeListResponse> => {
     const response = await apiClient.get('/targets/types')
     return response.data

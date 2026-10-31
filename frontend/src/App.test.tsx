@@ -27,7 +27,10 @@ jest.mock("./hooks/useTargetRegistry", () => ({
       error: null,
       refresh: jest.fn(),
       rememberTarget: (target: import("./types").TargetInstance) => {
-        setTargets((current) => [...current, target]);
+        setTargets((current) => [
+          ...current.filter((item) => item.target_registry_name !== target.target_registry_name),
+          target,
+        ]);
       },
     };
   },
@@ -83,6 +86,7 @@ jest.mock("./services/api", () => ({
   targetsApi: {
     listTargets: jest.fn(),
     getTarget: jest.fn(),
+    detectCapabilities: jest.fn(),
   },
   convertersApi: {
     listConverters: jest.fn().mockResolvedValue({ items: [] }),
@@ -336,16 +340,36 @@ jest.mock("./components/Config/TargetConfig", () => {
   const { makeTarget } = jest.requireActual("@/test-utils/targetFixtures") as typeof import("@/test-utils/targetFixtures");
   const MockTargetConfig = ({
     defaultObjectiveTarget,
+    defaultAdversarialTarget,
     onSetDefaultObjectiveTarget,
-  }: {
-    defaultObjectiveTarget: unknown;
-    onSetDefaultObjectiveTarget: (t: unknown) => void;
-  }) => {
+    onSetDefaultAdversarialTarget,
+    detection,
+  }: React.ComponentProps<typeof import("./components/Config/TargetConfig").default>) => {
     return (
       <div data-testid="target-config">
         <span data-testid="active-target-name">
-          {(defaultObjectiveTarget as { target_registry_name?: string })?.target_registry_name ?? "none"}
+          {defaultObjectiveTarget?.target_registry_name ?? "none"}
         </span>
+        <output aria-label="Objective multi-turn">{String(defaultObjectiveTarget?.capabilities?.supports_multi_turn)}</output>
+        <output aria-label="Adversarial target">{defaultAdversarialTarget?.target_registry_name ?? "none"}</output>
+        <output aria-label="Detection results">{JSON.stringify(detection.results)}</output>
+        <button onClick={() => {
+          const target = makeTarget({
+            target_registry_name: "test_target",
+            capabilities: {
+              supports_multi_turn: true, supports_system_prompt: true,
+              supports_json_schema: false, supports_json_output: false,
+              supported_input_modalities: ["text"], supported_output_modalities: ["text"],
+            },
+          });
+          onSetDefaultObjectiveTarget(target);
+          onSetDefaultAdversarialTarget(target);
+        }}>Set detection defaults</button>
+        <button disabled={!defaultObjectiveTarget || detection.running} onClick={() => {
+          if (defaultObjectiveTarget) void detection.start([
+            defaultObjectiveTarget, makeTarget({ target_registry_name: "second_target" }),
+          ]);
+        }}>Detect capabilities</button>
         <button
           onClick={() =>
             onSetDefaultObjectiveTarget(makeTarget({
@@ -682,6 +706,37 @@ describe("App", () => {
     });
     mockGetTarget.mockRejectedValue({ isAxiosError: true, response: { status: 404 } });
     window.localStorage.clear();
+  });
+
+  it("continues detection after leaving Targets and keeps results and defaults when returning", async () => {
+    const user = userEvent.setup();
+    let finishFirst!: (target: import("./types").TargetInstance) => void;
+    let finishSecond!: (target: import("./types").TargetInstance) => void;
+    const detect = jest.mocked(targetsApi.detectCapabilities);
+    detect.mockReset();
+    detect
+      .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { finishSecond = resolve; }));
+    renderApp("/registry/targets");
+    await user.click(screen.getByRole("button", { name: "Set detection defaults" }));
+    expect(screen.getByLabelText("Adversarial target")).toHaveTextContent("test_target");
+    await user.click(screen.getByRole("button", { name: "Detect capabilities" }));
+    expect(detect).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByTestId("nav-home"));
+    expect(screen.queryByTestId("target-config")).not.toBeInTheDocument();
+    const first = detect.mock.calls[0][0];
+    await act(async () => finishFirst({
+      ...first, capabilities: { ...first.capabilities, supports_multi_turn: false },
+    }));
+    expect(detect).toHaveBeenCalledTimes(2);
+    await act(async () => finishSecond(detect.mock.calls[1][0]));
+    await user.click(screen.getByTestId("nav-config"));
+    expect(screen.getByLabelText("Objective multi-turn")).toHaveTextContent("false");
+    expect(screen.getByLabelText("Adversarial target")).toHaveTextContent("none");
+    const results = JSON.parse(screen.getByLabelText("Detection results").textContent!);
+    expect(results.test_target.state).toBe("Saved");
+    expect(results.second_target.state).toBe("Saved");
+    expect(detect).toHaveBeenCalledTimes(2);
   });
 
   it("opens Analytics and restores its fragment after inspecting a saved attack", async () => {

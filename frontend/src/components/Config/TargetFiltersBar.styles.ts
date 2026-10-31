@@ -9,6 +9,7 @@ import {
 const FILTER_WIDTH = '17rem'
 // The touch-sized open button takes more of the width.
 const TOUCH_FILTER_WIDTH = '18.5rem'
+export const TARGET_FILTER_RESET_WIDTH = tokens.spacingHorizontalXXL
 
 export const useTargetFiltersBarStyles = makeStyles({
   root: {
@@ -24,6 +25,11 @@ export const useTargetFiltersBarStyles = makeStyles({
     display: 'flex',
     alignItems: 'center',
     minHeight: '32px',
+    width: TARGET_FILTER_RESET_WIDTH,
+    flexShrink: 0,
+    [TOUCH_INPUT_QUERY]: {
+      width: MINIMUM_TOUCH_TARGET_SIZE,
+    },
   },
   filters: {
     // Wrapped dropdowns line up under the first one instead of under the reset button.
