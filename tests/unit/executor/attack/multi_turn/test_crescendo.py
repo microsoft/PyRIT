@@ -1069,6 +1069,27 @@ class TestPromptGeneration:
         assert call_args.kwargs["message"] is custom_message
         assert result is target_response
 
+    async def test_write_only_delivery_is_rejected(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        basic_context: CrescendoAttackContext,
+    ):
+        """A request handed back for a write-only target is rejected instead of treated as a response."""
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+        attack_message = Message.from_prompt(prompt="My attack prompt", role="user")
+        mock_prompt_normalizer.send_prompt_async.return_value = Message.from_prompt(
+            prompt="My attack prompt", role="user"
+        )
+
+        with pytest.raises(ValueError, match="cannot run against a write-only target"):
+            await attack._send_prompt_to_objective_target_async(attack_message=attack_message, context=basic_context)
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestResponseScoring:

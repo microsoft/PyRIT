@@ -259,6 +259,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
 
         response = None
         score = None
+        delivered_without_response = False
 
         for message_index, current_message in enumerate(context.params.user_messages):
             logger.info(f"Processing message {message_index + 1}/{len(context.params.user_messages)}")
@@ -267,6 +268,12 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             response_message = await self._send_prompt_to_objective_target_async(
                 current_message=current_message, context=context
             )
+
+            if response_message and PromptNormalizer.is_write_only_delivery(response_message):
+                # Keep delivering the sequence, but the returned request is not a response to score.
+                delivered_without_response = True
+                context.executed_turns += 1
+                continue
 
             # Update context with latest response (may be None if sending failed)
             if response_message:
@@ -297,7 +304,10 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             score = None
 
         # Determine the outcome
-        outcome, outcome_reason = self._determine_attack_outcome(response=response, score=score, context=context)
+        if delivered_without_response:
+            outcome, outcome_reason = AttackOutcome.UNDETERMINED, "Objective target returned no response to score"
+        else:
+            outcome, outcome_reason = self._determine_attack_outcome(response=response, score=score, context=context)
 
         return AttackResult(
             conversation_id=context.session.conversation_id,

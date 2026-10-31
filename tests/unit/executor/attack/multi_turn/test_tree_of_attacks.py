@@ -2361,6 +2361,25 @@ class TestTreeOfAttacksNode:
 
         assert node.objective_target_conversation_id == original_conv_id
 
+    async def test_node_write_only_delivery_is_not_scored(self, node_components):
+        """A request handed back for a write-only target fails the node instead of being scored."""
+        node = _TreeOfAttacksNode(**node_components)
+        delivered_request = Message.from_prompt(prompt="test prompt", role="user")
+        node._prompt_normalizer.send_prompt_async = AsyncMock(return_value=delivered_request)
+
+        with (
+            patch.object(node, "_generate_adversarial_prompt_async", new_callable=AsyncMock, return_value="prompt"),
+            patch.object(node, "_score_response_async", new_callable=AsyncMock) as mock_score,
+        ):
+            await node.send_prompt_async(objective="test objective")
+
+        mock_score.assert_not_awaited()
+        assert node.error_message is not None
+        assert "cannot run against a write-only target" in node.error_message
+        assert node.completed is False
+        assert node.last_response is None
+        assert node.objective_score is None
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestTreeOfAttacksErrorHandling:
@@ -3496,6 +3515,21 @@ class TestModalityRouterIntegration:
         sent = captured_message["message"]
         assert sent is not None
         assert sent.get_value() == "concrete seed prompt"
+
+    async def test_node_send_initial_prompt_rejects_write_only_delivery(self, node_components):
+        """The initial-prompt path rejects a delivered request returned in place of a response."""
+        node = _TreeOfAttacksNode(**node_components)
+        node._objective = "test"
+        node._adversarial_chat_system_seed_prompt.response_json_schema = None
+        node._initial_prompt = Message.from_prompt(prompt="concrete seed prompt", role="user")
+        node._prompt_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt="concrete seed prompt", role="user")
+        )
+
+        with pytest.raises(ValueError, match="cannot run against a write-only target"):
+            await node._send_initial_prompt_to_target_async()
+
+        assert node.last_response is None
 
     def test_validate_context_raises_when_edit_only_target_has_no_seed(self, attack_builder):
         """Edit-only objective without seed in next_message fails validation early."""

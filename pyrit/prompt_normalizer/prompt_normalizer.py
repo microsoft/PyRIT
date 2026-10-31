@@ -93,6 +93,23 @@ class PromptNormalizer:
         self._converter_guard = converter_guard
         self.id = str(uuid4())
 
+    @staticmethod
+    def is_write_only_delivery(message: Message) -> bool:
+        """
+        Check whether ``send_prompt_async`` returned the sent request instead of a target response.
+
+        Write-only targets (e.g., TextTarget) deliver the request without producing a response,
+        so the normalizer hands the request back. Every target response, including error and
+        empty responses, carries the assistant role, so any other role means nothing was received.
+
+        Args:
+            message (Message): The message returned by ``send_prompt_async``.
+
+        Returns:
+            bool: True if the message is the delivered request rather than a target response.
+        """
+        return message.api_role != "assistant"
+
     async def send_prompt_async(
         self,
         *,
@@ -120,7 +137,9 @@ class PromptNormalizer:
                 history selection and send lifecycle state.
 
         Returns:
-            Message: The response received from the target.
+            Message: The response received from the target. For a write-only target that returns
+                no response, this is the sent request; check it with ``is_write_only_delivery``
+                before treating it as a response.
 
         Raises:
             Exception: If an error occurs during the request processing.

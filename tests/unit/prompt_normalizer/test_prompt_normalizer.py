@@ -720,6 +720,74 @@ async def test_send_prompt_async_none_in_list_response_returns_empty(mock_memory
     assert response.message_pieces[0].original_value == ""
 
 
+async def test_send_prompt_async_write_only_target_returns_request_as_write_only_delivery(mock_memory_instance):
+    prompt_target = MagicMock()
+    prompt_target.send_prompt_async = AsyncMock(return_value=[])
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+    message = Message.from_prompt(prompt="write-only request", role="user")
+
+    response = await PromptNormalizer().send_prompt_async(message=message, target=prompt_target)
+
+    assert PromptNormalizer.is_write_only_delivery(response)
+    assert response.api_role == "user"
+    assert response.get_value() == "write-only request"
+    # Only the request is persisted; no response is fabricated for the write-only target.
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 1
+    persisted = mock_memory_instance.add_message_to_memory_async.call_args.kwargs["request"]
+    assert [piece.role for piece in persisted.message_pieces] == ["user"]
+
+
+@pytest.mark.parametrize(
+    "target_return",
+    [
+        pytest.param([Message.from_prompt(prompt="reply", role="assistant")], id="assistant-response"),
+        pytest.param(None, id="none-response"),
+        pytest.param([None], id="none-in-list-response"),
+    ],
+)
+async def test_send_prompt_async_target_response_is_not_write_only_delivery(mock_memory_instance, target_return):
+    prompt_target = MagicMock()
+    prompt_target.send_prompt_async = AsyncMock(return_value=target_return)
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+
+    response = await PromptNormalizer().send_prompt_async(
+        message=Message.from_prompt(prompt="request", role="user"), target=prompt_target
+    )
+
+    assert not PromptNormalizer.is_write_only_delivery(response)
+
+
+async def test_send_prompt_async_empty_response_exception_is_not_write_only_delivery(mock_memory_instance):
+    prompt_target = MagicMock()
+    prompt_target.send_prompt_async = AsyncMock(side_effect=EmptyResponseException(message="Empty response"))
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+
+    response = await PromptNormalizer().send_prompt_async(
+        message=Message.from_prompt(prompt="request", role="user"), target=prompt_target
+    )
+
+    assert response.get_piece().response_error == "empty"
+    assert not PromptNormalizer.is_write_only_delivery(response)
+
+
+@pytest.mark.parametrize(
+    ("role", "expected"),
+    [
+        ("user", True),
+        ("system", True),
+        ("developer", True),
+        ("tool", True),
+        ("simulated_tool", True),
+        ("assistant", False),
+        ("simulated_assistant", False),
+    ],
+)
+def test_is_write_only_delivery_checks_api_role(role, expected):
+    message = Message(message_pieces=[MessagePiece(role=role, original_value="value")])
+
+    assert PromptNormalizer.is_write_only_delivery(message) is expected
+
+
 async def test_build_message(mock_memory_instance, seed_group):
     # This test is obsolete since _build_message was removed and message preparation
     # is now done inline in send_prompt_async. The functionality is tested by

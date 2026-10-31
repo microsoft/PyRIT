@@ -248,6 +248,19 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 self._logger.warning(f"No response received on attempt {attempt + 1} (likely filtered)")
                 continue  # Retry if no response (filtered or error)
 
+            if PromptNormalizer.is_write_only_delivery(response):
+                # The request was delivered but the target returned nothing to score. Retrying would
+                # deliver it again without ever producing a response, and scoring the request itself
+                # would measure the attacker's own prompt.
+                return self._create_attack_result(
+                    context=context,
+                    response=None,
+                    score=None,
+                    outcome=AttackOutcome.UNDETERMINED,
+                    outcome_reason="Objective target returned no response to score",
+                    executed_turns=1,
+                )
+
             # Score the response including auxiliary and objective scoring
             score = await self._evaluate_response_async(
                 response=response, objective=context.objective, expectation=context.expectation

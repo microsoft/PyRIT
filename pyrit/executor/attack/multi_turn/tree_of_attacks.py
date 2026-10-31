@@ -722,6 +722,8 @@ class _TreeOfAttacksNode:
                 send_context=self._prepended_history_send_context,
             )
 
+        self._raise_if_write_only_delivery(response)
+
         # Store the full response so subsequent turns can forward media when supported.
         self.last_response = response
         logger.debug(f"Node {self.node_id}: Received response from target")
@@ -759,7 +761,8 @@ class _TreeOfAttacksNode:
             - Sets self.last_response to the target's response
 
         Raises:
-            ValueError: If _initial_prompt is None when this method is called
+            ValueError: If _initial_prompt is None when this method is called, or if the
+                objective target returned no response.
         """
         if self._initial_prompt is None:
             raise ValueError("_initial_prompt must be set before calling this method")
@@ -811,11 +814,26 @@ class _TreeOfAttacksNode:
                 send_context=self._prepended_history_send_context,
             )
 
+        self._raise_if_write_only_delivery(response)
+
         # Store the full response so subsequent turns can forward media when supported.
         self.last_response = response
         logger.debug(f"Node {self.node_id}: Received response from target")
 
         return response
+
+    def _raise_if_write_only_delivery(self, response: Message) -> None:
+        """
+        Reject a delivered request that the normalizer returned in place of a target response.
+
+        Raises:
+            ValueError: If the objective target returned no response.
+        """
+        if PromptNormalizer.is_write_only_delivery(response):
+            raise ValueError(
+                "The objective target returned no response. Tree of attacks needs a target response "
+                "to score each node, so it cannot run against a write-only target."
+            )
 
     def _rotate_unseeded_single_turn_conversation(self) -> None:
         """Isolate unseeded single-turn sends without discarding an explicit branch boundary."""
