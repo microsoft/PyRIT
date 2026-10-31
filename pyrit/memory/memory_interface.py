@@ -290,6 +290,19 @@ def _operation_ids(items: Sequence[object]) -> set[uuid.UUID]:
     }
 
 
+def _contains_pattern(value: str) -> str:
+    """
+    Build a LIKE pattern that matches ``value`` as a literal substring, for use with ``escape="/"``.
+
+    SQL Server also treats "[" as a LIKE wildcard, so it is escaped along with "%" and "_".
+
+    Returns:
+        str: The pattern, wrapped in "%" on both sides.
+    """
+    escaped = value.replace("/", "//").replace("%", "/%").replace("_", "/_").replace("[", "/[")
+    return f"%{escaped}%"
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _PreparedScorableContent:
     """A loose-content value prepared for durable database persistence."""
@@ -1060,9 +1073,7 @@ class MemoryInterface(abc.ABC):
         if operation_id is not None:
             statement = statement.where(FindingEntry.operation_id == operation_id)
         if title_query:
-            # SQL Server also treats "[" as a LIKE wildcard.
-            escaped_title = title_query.replace("/", "//").replace("%", "/%").replace("_", "/_").replace("[", "/[")
-            statement = statement.where(FindingEntry.title.ilike(f"%{escaped_title}%", escape="/"))
+            statement = statement.where(FindingEntry.title.ilike(_contains_pattern(title_query), escape="/"))
         statement = statement.order_by(*self._finding_order()).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
@@ -6552,7 +6563,7 @@ class MemoryInterface(abc.ABC):
         if query.conversation_id:
             conditions.append(AttackResultEntry.conversation_id == query.conversation_id)
         if query.objective:
-            conditions.append(AttackResultEntry.objective.contains(query.objective))
+            conditions.append(AttackResultEntry.objective.like(_contains_pattern(query.objective), escape="/"))
         if query.outcome:
             conditions.append(AttackResultEntry.outcome == query.outcome)
         if query.operator:
@@ -8591,7 +8602,7 @@ class MemoryInterface(abc.ABC):
 
         if scenario_name:
             normalized_name = ScenarioResult.normalize_scenario_name(scenario_name)
-            conditions.append(ScenarioResultEntry.scenario_name.contains(normalized_name))
+            conditions.append(ScenarioResultEntry.scenario_name.like(_contains_pattern(normalized_name), escape="/"))
 
         if scenario_version is not None:
             conditions.append(ScenarioResultEntry.scenario_version == scenario_version)
