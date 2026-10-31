@@ -283,6 +283,10 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Scorers with input limits use shared chunking to cover the scored content; each scorer owns context formatting, result aggregation, and uncertainty handling without changing the attack conversation.
 - A scorer is not limited to a message, it could be anything (e.g. was this tool called or was this file written). It receives a `Scorable`, which identifies that evidence, and an optional `ScoringExpectation`.
 - `TrueFalseScorer` and `FloatScaleScorer` define result families. `MessageScorer` adds message resolution and message-only policy on top of them.
+- `MultiLabelTrueFalseScorer` defines independent labeled boolean results. Its message
+  family aggregates pieces within each label. `TrueFalseScoreSelector` projects one
+  named verdict for attacks and evaluation while retaining the other labels as
+  intermediate scores. See [multiple labeled verdicts](./scoring/multi_label_true_false.md).
 - A scorer declares which evidence it reads, rather than the caller filtering evidence for it. A `MessageScorer` states the conversation roles and data types it reads on its `ScorerPromptValidator`.
 - Injected calls and results use simulated response roles and are excluded from message scoring
   unless explicitly selected. Prepended history is not an outbound request; execution scoring
