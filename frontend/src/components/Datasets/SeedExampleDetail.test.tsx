@@ -437,4 +437,77 @@ describe('SeedExampleDetail', () => {
     expect(screen.getByRole('button', { name: 'Retry audio' })).toBeInTheDocument()
     expect(screen.queryByAltText('picture')).not.toBeInTheDocument()
   })
+
+  it('renders Import into Chat and invokes onImport with selected destination', async () => {
+    const user = userEvent.setup()
+    const handleImport = jest.fn()
+
+    render(
+      <FluentProvider theme={webLightTheme}>
+        <SeedExampleDetail
+          detail={DETAIL}
+          hasActiveAttack={true}
+          hasActiveConversation={true}
+          onImport={handleImport}
+        />
+      </FluentProvider>,
+    )
+
+    const importBtn = screen.getByTestId('import-into-chat-button')
+    expect(importBtn).toBeInTheDocument()
+
+    await user.click(importBtn)
+
+    const newAttackItem = await screen.findByTestId('import-new-attack-item')
+    const currentConvItem = await screen.findByTestId('import-current-conversation-item')
+    const newConvItem = await screen.findByTestId('import-new-conversation-item')
+
+    expect(newAttackItem).not.toBeDisabled()
+    expect(currentConvItem).not.toBeDisabled()
+    expect(newConvItem).not.toBeDisabled()
+
+    await user.click(newAttackItem)
+    expect(handleImport).toHaveBeenCalledWith('new_attack')
+  })
+
+  it('disables current conversation and new conversation when there is no active attack', async () => {
+    const user = userEvent.setup()
+    const handleImport = jest.fn()
+
+    render(
+      <FluentProvider theme={webLightTheme}>
+        <SeedExampleDetail
+          detail={DETAIL}
+          hasActiveAttack={false}
+          hasActiveConversation={false}
+          onImport={handleImport}
+        />
+      </FluentProvider>,
+    )
+
+    await user.click(screen.getByTestId('import-into-chat-button'))
+
+    const newAttackItem = await screen.findByTestId('import-new-attack-item')
+    const currentConvItem = await screen.findByTestId('import-current-conversation-item')
+    const newConvItem = await screen.findByTestId('import-new-conversation-item')
+
+    expect(newAttackItem).not.toBeDisabled()
+    expect(currentConvItem).toHaveAttribute('aria-disabled', 'true')
+    expect(newConvItem).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('shows import error message bar when importError is provided', () => {
+    render(
+      <FluentProvider theme={webLightTheme}>
+        <SeedExampleDetail
+          detail={DETAIL}
+          importError="This example contains simulated conversation configuration."
+        />
+      </FluentProvider>,
+    )
+
+    expect(screen.getByTestId('import-error-bar')).toHaveTextContent(
+      'This example contains simulated conversation configuration.',
+    )
+  })
 })

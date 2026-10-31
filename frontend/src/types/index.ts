@@ -98,6 +98,15 @@ export interface ChatConverterSnapshot {
   applied: Record<string, PieceConversion>
 }
 
+export interface ConversationEditState {
+  messages: ConversationDraftMessage[]
+  objective?: string
+  initialObjective?: string
+  sourceConversationId?: string | null
+  sourceAttackId?: string | null
+  temperature?: string
+}
+
 export interface ChatDraftContent {
   text: string
   attachments: MessageAttachment[]
@@ -105,6 +114,7 @@ export interface ChatDraftContent {
   target?: TargetReference | null
   converters?: ChatConverterSnapshot
   textMetadata?: Record<string, unknown>
+  conversation?: ConversationEditState
 }
 
 export interface ChatDraftContextState {
@@ -119,6 +129,12 @@ export interface ChatDraftContextState {
 
 export type ImportDestinationType = 'new_attack' | 'current_conversation' | 'new_conversation' | 'any'
 
+export interface PendingImportConversation {
+  messages: ConversationDraftMessage[]
+  objective?: string
+  systemPrompt?: string
+}
+
 export interface PendingImportPayload {
   id: string
   sequence: number
@@ -130,6 +146,7 @@ export interface PendingImportPayload {
     attachments?: MessageAttachment[]
     textMetadata?: Record<string, unknown>
   }
+  conversation?: PendingImportConversation
   replaceDirty?: boolean
   focus?: boolean
   stagedAt: number

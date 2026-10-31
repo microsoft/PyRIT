@@ -95,6 +95,19 @@ Browse datasets already loaded into backend memory. Open a dataset to inspect
 its examples, search text, or filter by seed type. Supported media can be
 previewed on request.
 
+Use **Import into Chat** to stage an example directly into Chat without copying
+text or reattaching files:
+- **Single prompt or multimodal message**: loads the text and attachments into the
+  editable composer.
+- **Multi-turn conversation**: opens the conversation editor with all turns intact,
+  mapping assistant and tool messages to simulated roles. If the conversation ends
+  in a user turn, earlier turns become prepended history while the final user turn
+  remains editable in the composer.
+- **Import destinations**: choose between starting a new attack, continuing the
+  current conversation, or creating a new conversation within the current attack.
+- **No automatic sending**: importing and saving do not make model calls or execute
+  tools; edits remain under your control until you explicitly send or save.
+
 Load data through PyRIT before refreshing this catalog. See
 [datasets](../code/datasets/0_dataset.md) for loading options.
 

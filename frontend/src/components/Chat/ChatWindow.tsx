@@ -714,6 +714,18 @@ export default function ChatWindow({
     target: draftTargetReference !== undefined
       ? draftTargetReference : activeTarget ? targetReference(activeTarget) : null,
     converters: converters.snapshot(),
+    ...(editDraft
+      ? {
+          conversation: {
+            messages: editDraft.messages,
+            objective: editDraft.objective,
+            initialObjective: editDraft.initialObjective,
+            sourceConversationId: editDraft.sourceConversationId,
+            sourceAttackId: editDraft.sourceAttackId,
+            temperature: editDraft.temperature,
+          },
+        }
+      : {}),
   }
   const isActiveDraftDirty = isChatDraftDirty(activeDraft)
   useLayoutEffect(() => {
@@ -827,20 +839,48 @@ export default function ChatWindow({
       if (!consumed) return
       handoffRestoredRef.current = preserved.sequence
       draft = { ...consumed, systemPrompt: consumed.systemPrompt ?? '' }
+      if (consumed.conversation) {
+        editor.begin({
+          messages: consumed.conversation.messages,
+          objective: consumed.conversation.objective ?? currentObjective,
+          initialObjective: consumed.conversation.initialObjective ?? currentObjective,
+          sourceConversationId: consumed.conversation.sourceConversationId ?? null,
+          sourceAttackId: consumed.conversation.sourceAttackId ?? draftAttackId,
+          target: activeTarget,
+          labels,
+        })
+      }
     } else {
       if (!canApplyImportNow || !pending) return
       const consumed = draftHandoff.consumePendingImport(pending.id, draftAttackId, draftConversationId)
       if (!consumed) return
       converters.clearAll()
+      if (consumed.conversation) {
+        editor.begin({
+          messages: consumed.conversation.messages,
+          objective: consumed.conversation.objective ?? currentObjective,
+          initialObjective: consumed.conversation.objective ?? currentObjective,
+          sourceConversationId: null,
+          sourceAttackId: draftAttackId,
+          target: activeTarget,
+          labels,
+        })
+        if (consumed.conversation.systemPrompt) {
+          if (systemPrompt && systemPrompt.trim() !== consumed.conversation.systemPrompt.trim()) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            setEditorNotice('The imported example includes a system prompt that differs from the existing system prompt. The existing system prompt was preserved.')
+          }
+        }
+      }
       draft = {
         text: consumed.content.text,
         attachments: consumed.content.attachments ?? [],
         textMetadata: consumed.content.textMetadata,
+        ...(consumed.conversation?.systemPrompt && !systemPrompt ? { systemPrompt: consumed.conversation.systemPrompt } : {}),
       }
       focus = consumed.focus === true
     }
     // Claiming a handoff synchronizes the imperative input and its parent-owned draft atomically.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     const attachments = restoreComposerDraft(draft)
     if (restoringPreserved) {
       if (draft.converters?.generation === runtime.generation) {
@@ -858,6 +898,7 @@ export default function ChatWindow({
     canApplyImportNow, pending, draftHandoff, draftAttackId, draftConversationId, converters,
     isDraftDestinationReady, matchingPreservedDraft, isActiveDraftDirty, runtime.ready, runtime.generation,
     restoreComposerDraft, restoreConverterSnapshot, restoreConversions,
+    activeTarget, currentObjective, editor, labels, setEditorNotice, systemPrompt,
   ])
 
   // Handle conversation selection from the panel

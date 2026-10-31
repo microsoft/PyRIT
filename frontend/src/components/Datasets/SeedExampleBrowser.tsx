@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 
 import {
@@ -18,10 +18,14 @@ import {
   Text,
 } from '@fluentui/react-components'
 import { ArrowSyncRegular, ChevronLeftRegular, ChevronRightRegular, SearchRegular } from '@fluentui/react-icons'
+import { useNavigate } from 'react-router'
 
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
+import { useChatDraftHandoff } from '@/hooks/useChatDraftHandoff'
 import { useSeedExampleDetail, useSeedExamples } from '@/hooks/useSeedExamples'
-import type { DatasetInfo, FilterOption, SeedExampleSummary } from '@/types'
+import type { DatasetInfo, FilterOption, ImportDestinationType, SeedExampleSummary } from '@/types'
+import { attackConversationRoutePath, attackRoutePath } from '@/utils/routeParams'
+import { buildSeedImport } from '@/utils/seedImport'
 
 import SeedExampleDetail from './SeedExampleDetail'
 import { useSeedExampleBrowserStyles } from './SeedExampleBrowser.styles'
@@ -47,6 +51,8 @@ const SEARCH_HELP = 'Search looks through stored text prompts and objectives. Si
 interface SeedExampleBrowserProps {
   dataset: DatasetInfo
   onCatalogStale: () => void
+  activeAttackId?: string | null
+  activeConversationId?: string | null
 }
 
 function toOptions(values: readonly string[]): FilterOption[] {
@@ -90,18 +96,39 @@ function pageSizeChoices(limit: number): number[] {
 }
 
 /** Read-only example table for one loaded dataset. */
-export default function SeedExampleBrowser({ dataset, onCatalogStale }: SeedExampleBrowserProps) {
+export default function SeedExampleBrowser({
+  dataset,
+  onCatalogStale,
+  activeAttackId,
+  activeConversationId,
+}: SeedExampleBrowserProps) {
   const browserState = useSeedExampleBrowserState(dataset.selection_key)
-  return <SeedExampleBrowserView dataset={dataset} onCatalogStale={onCatalogStale} browserState={browserState} />
+  return (
+    <SeedExampleBrowserView
+      dataset={dataset}
+      onCatalogStale={onCatalogStale}
+      browserState={browserState}
+      activeAttackId={activeAttackId}
+      activeConversationId={activeConversationId}
+    />
+  )
 }
 
 export function SeedExampleBrowserView({
   dataset,
   onCatalogStale,
   browserState,
+  activeAttackId,
+  activeConversationId,
 }: SeedExampleBrowserProps & { browserState: SeedExampleBrowserState }) {
   const styles = useSeedExampleBrowserStyles()
   const helpId = useId()
+  const navigate = useNavigate()
+  const draftHandoff = useChatDraftHandoff()
+  const [importError, setImportError] = useState<string | null>(null)
+
+  const effectiveAttackId = activeAttackId ?? draftHandoff.preservedDraft?.originatingAttackId ?? null
+  const effectiveConversationId = activeConversationId ?? draftHandoff.preservedDraft?.originatingConversationId ?? null
   const { query, visitedCursors, generation, commit } = browserState
   const pageState = useSeedExamples(dataset.selection_key, query, generation)
   const detailState = useSeedExampleDetail(
@@ -228,6 +255,81 @@ export function SeedExampleBrowserView({
     selectExample(next.example_id, false)
     buttonRefs.current.get(nextKey)?.focus()
   }
+
+  const handleImport = useCallback(
+    (destination: ImportDestinationType) => {
+      setImportError(null)
+      if (!detailState.detail?.members) return
+
+      const outcome = buildSeedImport(detailState.detail.members)
+      if (outcome.type === 'unsupported') {
+        setImportError(outcome.reason)
+        return
+      }
+
+      const expectedSeq = draftHandoff.activeSequence
+      if (outcome.type === 'single_prompt') {
+        const staged = draftHandoff.stagePendingImport(
+          {
+            destinationType: destination,
+            targetAttackId: destination === 'new_attack' ? null : effectiveAttackId,
+            targetConversationId:
+              destination === 'current_conversation' ? effectiveConversationId : null,
+            content: {
+              text: outcome.text,
+              attachments: outcome.attachments,
+              textMetadata: outcome.textMetadata,
+            },
+            focus: true,
+            replaceDirty: false,
+          },
+          expectedSeq,
+        )
+        if (!staged) {
+          setImportError('Import staging was superseded by another action.')
+          return
+        }
+      } else {
+        const staged = draftHandoff.stagePendingImport(
+          {
+            destinationType: destination,
+            targetAttackId: destination === 'new_attack' ? null : effectiveAttackId,
+            targetConversationId:
+              destination === 'current_conversation' ? effectiveConversationId : null,
+            content: {
+              text: '',
+              attachments: [],
+            },
+            conversation: {
+              messages: outcome.messages,
+              objective: outcome.objective,
+              systemPrompt: outcome.systemPrompt,
+            },
+            focus: true,
+            replaceDirty: false,
+          },
+          expectedSeq,
+        )
+        if (!staged) {
+          setImportError('Import staging was superseded by another action.')
+          return
+        }
+      }
+
+      if (destination === 'new_attack') {
+        navigate('/chat')
+      } else if (
+        destination === 'current_conversation' &&
+        effectiveAttackId &&
+        effectiveConversationId
+      ) {
+        navigate(attackConversationRoutePath(effectiveAttackId, effectiveConversationId))
+      } else if (destination === 'new_conversation' && effectiveAttackId) {
+        navigate(attackRoutePath(effectiveAttackId))
+      }
+    },
+    [detailState.detail, draftHandoff, effectiveAttackId, effectiveConversationId, navigate],
+  )
 
   return (
     <div className={styles.root} data-selected-example={choice ? `${choice.selectionKey} ${choice.exampleId}` : ''}>
@@ -470,6 +572,10 @@ export function SeedExampleBrowserView({
           detail={detailState.detail}
           headingRef={detailHeadingRef}
           onRefreshUrls={detailState.refreshDisplayUrls}
+          hasActiveAttack={Boolean(effectiveAttackId)}
+          hasActiveConversation={Boolean(effectiveAttackId && effectiveConversationId)}
+          onImport={handleImport}
+          importError={importError}
         />
       )}
     </div>

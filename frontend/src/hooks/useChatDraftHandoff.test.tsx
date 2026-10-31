@@ -91,6 +91,23 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         }),
       ).toBe(true)
     })
+
+    it('returns true when conversation draft messages are present', () => {
+      expect(
+        isChatDraftDirty({
+          text: '',
+          conversation: {
+            messages: [
+              {
+                id: 'm1',
+                role: 'user',
+                pieces: [{ draftId: 'p1', data_type: 'text', original_value: 'hello' }],
+              },
+            ],
+          },
+        }),
+      ).toBe(true)
+    })
   })
 
   it('preserves target and unapplied setup without marking prompt content dirty', () => {

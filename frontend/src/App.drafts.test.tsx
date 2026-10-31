@@ -69,6 +69,18 @@ jest.mock('@/components/Layout/MainLayout', () => {
           content: { text: 'Import for saved main' },
           replaceDirty: true,
         })}>Stage saved import</button>
+        <button onClick={() => handoff.stagePendingImport({
+          destinationType: 'new_attack',
+          content: { text: '' },
+          conversation: {
+            messages: [
+              { id: 'm1', role: 'user', pieces: [{ draftId: 'p1', data_type: 'text', original_value: 'Imported user turn' }] },
+              { id: 'm2', role: 'simulated_assistant', pieces: [{ draftId: 'p2', data_type: 'text', original_value: 'Imported assistant turn' }] },
+            ],
+            objective: 'Imported test objective',
+          },
+          replaceDirty: true,
+        })}>Stage conversation import</button>
         <output aria-label="Pending import">{handoff.pendingImport ? 'waiting' : 'none'}</output>
         <output aria-label="Current route">{location.pathname}</output>
         {children}
@@ -676,5 +688,15 @@ describe('App draft handoff with the real chat and composer', () => {
     await screen.findByRole('heading', { name: 'Example dataset' })
     expect(screen.getByRole('link', { name: 'Back to datasets' })).toHaveAttribute('href', '/datasets?q=example&sort=name')
     expect(screen.getByRole('button', { name: 'Previous page' })).toBeEnabled()
+  })
+
+  it('should consume a conversation import and open ConversationEditor', async () => {
+    const user = userEvent.setup()
+    renderChat('/chat')
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Stage conversation import' }))
+    expect(screen.getByLabelText('Pending import')).toHaveTextContent('none')
+    await waitFor(() => expect(screen.getByText('Imported user turn')).toBeInTheDocument())
+    expect(screen.getByText('Imported assistant turn')).toBeInTheDocument()
   })
 })
