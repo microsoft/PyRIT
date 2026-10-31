@@ -51,6 +51,7 @@ import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
+  ScenarioHierarchyNode,
   ScenarioProgressCounts,
   ScenarioProgressHeader,
   ScenarioProgressResult,
@@ -75,6 +76,7 @@ import { ObjectiveDetailsDialog, TechniqueDetailsDialog } from './ScenarioRunDia
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
 import ScenarioQueue from './ScenarioQueue'
 import PairedOutcomes from './PairedOutcomes'
+import ScenarioResultHierarchy from './ScenarioResultHierarchy'
 
 const CLOCK_REFRESH_INTERVAL_MS = 1_000
 const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
@@ -129,6 +131,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   const [atomicGroupsExpandedChoice, setAtomicGroupsExpandedChoice] = useState<boolean | null>(null)
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set())
   const detailsTriggerRef = useRef<HTMLElement | null>(null)
+  const [hierarchySelection, setHierarchySelection] = useState<ScenarioHierarchyNode | null>(null)
   const navigationState = location.state as {
     fromScenarioHistory?: boolean
     scenarioHistorySearch?: string
@@ -163,9 +166,12 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     () => new Map(state.summary?.atomic_groups.map((group) => [group.id, group]) ?? []),
     [state.summary],
   )
-  const selectedAttempt = useMemo(
-    () => state.results.find((attempt) => attempt.attack_result_id === attackResultId) ?? null,
-    [attackResultId, state.results],
+  // A hierarchy node can be opened before the paged progress feed has delivered it.
+  const selectedAttempt = useMemo<ScenarioProgressResult | null>(
+    () =>
+      state.results.find((attempt) => attempt.attack_result_id === attackResultId) ??
+      (hierarchySelection?.attack_result_id === attackResultId ? hierarchySelection : null),
+    [attackResultId, state.results, hierarchySelection],
   )
   const selectedAttemptGroup = selectedAttempt
     ? plannedAtomicGroups.get(selectedAttempt.atomic_group_id)
@@ -197,6 +203,12 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   ): void => {
     detailsTriggerRef.current = trigger
     navigate(scenarioRunAttackRoutePath(scenarioResultId, attempt.attack_result_id), { state: location.state })
+  }
+
+  const openResultDetails = (node: ScenarioHierarchyNode, trigger: HTMLElement): void => {
+    detailsTriggerRef.current = trigger
+    setHierarchySelection(node)
+    navigate(scenarioRunAttackRoutePath(scenarioResultId, node.attack_result_id), { state: location.state })
   }
 
   const toggleDisplayGroup = (groupId: string): void => {
@@ -638,6 +650,18 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
           </div>
         </section>
 
+        <section className={styles.section} aria-labelledby="result-hierarchy-heading">
+          <Text as="h2" id="result-hierarchy-heading" size={500} weight="semibold">
+            Result hierarchy
+          </Text>
+          <ScenarioResultHierarchy
+            key={scenarioResultId}
+            scenarioResultId={scenarioResultId}
+            runStatus={run.status}
+            onOpenResult={openResultDetails}
+          />
+        </section>
+
         <section className={styles.section} aria-labelledby="objective-scorer-heading">
           <Text as="h2" id="objective-scorer-heading" size={500} weight="semibold">
             Objective Scorer
@@ -790,7 +814,13 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
               <DialogContent className={styles.attackDetailDialogContent}>
                 <AttackAttemptDetails
                   attempt={selectedAttempt}
-                  objective={seedObjectives.get(selectedAttempt.seed_group_id) ?? null}
+                  objective={
+                    seedObjectives.get(selectedAttempt.seed_group_id) ??
+                    // The progress row for this result carries no objective; the hierarchy node does.
+                    (hierarchySelection?.attack_result_id === selectedAttempt.attack_result_id
+                      ? hierarchySelection.objective
+                      : null)
+                  }
                   atomicGroup={selectedAttemptGroup}
                   techniqueDetails={progressAtomicGroups.get(selectedAttempt.atomic_group_id)?.technique_details}
                   objectiveScorer={objectiveScorer}

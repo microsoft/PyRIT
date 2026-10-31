@@ -75,7 +75,8 @@ and transcript reads, including hierarchy node expansion.
 ### Scenario result hierarchy
 
 These read-only APIs provide the backend foundation for compound-attack browsing.
-The hierarchy GUI is separate work; the current scanner still shows flat executions.
+The Scenario run page's "Result hierarchy" section browses them read-only; saved
+conversation evidence for each node is separate follow-up work.
 
 `GET /api/scenarios/runs/{scenario_result_id}/hierarchy?max_nodes=1000` returns a
 bounded tree preview grouped by atomic attack group. Roots are saved results with

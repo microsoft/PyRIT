@@ -14,6 +14,7 @@ import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { scenariosApi } from '@/services/api'
 import type {
   ScenarioComponentIdentity,
+  ScenarioHierarchyNode,
   ScenarioProgressHeader,
   ScenarioProgressSummary,
   ScenarioProgressResult,
@@ -43,6 +44,9 @@ jest.mock('@/services/api', () => ({
     cancelRun: jest.fn(),
     resumeRun: jest.fn(),
     getRunProgress: jest.fn(),
+    // The hierarchy section has its own tests; keep it loading so these tests cover the rest of the page.
+    getRunHierarchy: jest.fn(() => new Promise(() => {})),
+    getRunHierarchyNode: jest.fn(),
   },
 }))
 
@@ -149,6 +153,47 @@ const ATTEMPT: ScenarioProgressResult = {
     score_value: 'true',
     score_rationale: 'The response achieved the objective.',
   },
+}
+
+function hierarchyNode(overrides: Partial<ScenarioHierarchyNode> = {}): ScenarioHierarchyNode {
+  return {
+    attack_result_id: 'hierarchy-only',
+    conversation_id: 'conversation-h',
+    result_role: 'orchestration',
+    atomic_attack_name: 'sequential-parent',
+    atomic_group_id: 'atomic-1',
+    seed_group_id: 'seed-unplanned',
+    objective: 'Objective carried by the hierarchy node',
+    outcome: 'failure',
+    execution_time_ms: 1200,
+    executed_turns: 0,
+    timestamp: '2026-01-01T00:00:00Z',
+    total_retries: 0,
+    retries: [],
+    retries_truncated: false,
+    child_attack_result_ids: [],
+    child_references_truncated: false,
+    children: [],
+    children_truncated: false,
+    child_offset: 0,
+    unresolved_child_attack_result_ids: [],
+    unresolved_child_references_truncated: false,
+    conversations: [],
+    conversations_truncated: false,
+    ...overrides,
+  }
+}
+
+function mockHierarchy(roots: ScenarioHierarchyNode[], status: ScenarioRunState = 'COMPLETED'): void {
+  const counts = { completed: 1, planned: 1, succeeded: 0, success_percentage: 0, errors: 0, retries: 0 }
+  ;(scenariosApi.getRunHierarchy as jest.Mock).mockResolvedValueOnce({
+    status,
+    groups: [{ atomic_group_id: 'atomic-1', atomic_attack_name: 'a', display_group: 'Group', roots, counts }],
+    overall_counts: counts,
+    diagnostics: { rootless_results_count: 0 },
+    truncated: false,
+    has_more: false,
+  })
 }
 
 const SUMMARY: ScenarioProgressSummary = {
@@ -687,6 +732,7 @@ describe('ScenarioRunPage', () => {
       'Overall progress',
       'Paired outcomes',
       'Atomic attack groups',
+      'Result hierarchy',
       'Objective Scorer',
       'Techniques',
       'Objectives',
@@ -1217,6 +1263,59 @@ describe('ScenarioRunPage', () => {
       act(() => { jest.runOnlyPendingTimers() })
       jest.useRealTimers()
     }
+  })
+
+  it('opens details for a hierarchy result that the progress feed has not delivered yet', async () => {
+    const user = userEvent.setup()
+    mockHierarchy([hierarchyNode()])
+    renderPage()
+
+    await user.click(await screen.findByRole('button', { name: 'Open details for sequential-parent: Objective carried by the hierarchy node' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'sequential-parent' })
+    expect(within(dialog).getByText('Objective carried by the hierarchy node')).toBeInTheDocument()
+  })
+
+  it('keeps the hierarchy objective when the progress row for an unplanned seed is already loaded', async () => {
+    const user = userEvent.setup()
+    // The progress row wins as the selected attempt, but it carries no objective and its seed is not in the plan.
+    const progressRow = { ...ATTEMPT, attack_result_id: 'unplanned-result', seed_group_id: 'seed-unplanned' }
+    mockHookState(makeState({ results: [ATTEMPT, progressRow] }))
+    mockHierarchy([
+      hierarchyNode({
+        attack_result_id: 'unplanned-result',
+        atomic_attack_name: 'attack-technique',
+        objective: 'Objective stored on the saved result',
+      }),
+    ])
+    renderPage()
+
+    await user.click(await screen.findByRole('button', { name: 'Open details for attack-technique: Objective stored on the saved result' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'attack-technique' })
+    expect(within(dialog).getByText('Objective stored on the saved result')).toBeInTheDocument()
+    expect(within(dialog).queryByText(/Objective text unavailable/)).not.toBeInTheDocument()
+  })
+
+  it('offers to reload the result hierarchy after a failed run is resumed', async () => {
+    const user = userEvent.setup()
+    const failedState = makeState({ run: { ...makeState().run, status: 'FAILED' } })
+    mockHookState(failedState)
+    mockResumeRun.mockResolvedValueOnce({ ...failedState.run, status: 'QUEUED' })
+    mockApplyRunSummary.mockImplementationOnce(() => {
+      mockHookState({ ...failedState, run: { ...failedState.run, status: 'QUEUED' } })
+    })
+    mockHierarchy([hierarchyNode()], 'FAILED')
+    renderPage()
+
+    const hierarchy = screen.getByRole('region', { name: 'Result hierarchy' })
+    await within(hierarchy).findByText('Objective carried by the hierarchy node')
+    expect(within(hierarchy).queryByRole('button', { name: 'Reload hierarchy' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Resume run' }))
+
+    expect(await within(hierarchy).findByRole('button', { name: 'Reload hierarchy' })).toBeInTheDocument()
+    expect(within(hierarchy).getByText(/This run is still in progress/)).toBeInTheDocument()
   })
 
   it('shows descriptive technique details without result metrics', async () => {
