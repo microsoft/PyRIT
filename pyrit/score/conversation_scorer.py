@@ -242,12 +242,20 @@ class ConversationScorer(MessageScorer, ABC):
 
         Returns:
             str: The fenced transcript.
+
+        Raises:
+            ValueError: If strict validation rejects a role-supported conversation piece.
         """
         lines = []
         turn_index = 0
         for piece in pieces:
             if piece.api_role not in ("user", "assistant", "tool") or not self._validator.is_role_supported(piece):
                 continue
+            if self._validator._enforce_all_pieces_valid and not self._validator.is_message_piece_supported(piece):
+                raise ValueError(
+                    f"Conversation piece {piece.id} with data type {piece.converted_value_data_type} "
+                    "is not supported by this conversation scorer."
+                )
             role = piece.api_role.capitalize()
             if piece.is_simulated:
                 role += " (simulated)"
@@ -374,6 +382,16 @@ def create_conversation_scorer(
                     "rendering_version": 2,
                     "supported_roles": self._validator._supported_roles,
                     "should_score_blocked_content": self.should_score_blocked_content,
+                    **(
+                        {
+                            "enforce_all_pieces_valid": True,
+                            "supported_data_types": self._validator._supported_data_types,
+                            "required_metadata": self._validator._required_metadata,
+                            "max_text_length": self._validator._max_text_length,
+                        }
+                        if self._validator._enforce_all_pieces_valid
+                        else {}
+                    ),
                 },
                 sub_scorers=[self._wrapped_scorer.get_identifier()],
                 children={"source": self._source.get_identifier()},
