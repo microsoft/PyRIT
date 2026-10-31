@@ -155,6 +155,49 @@ class TestPackageHallucinationScorerExtraction:
         text = "require 'json'\ngem 'rails'\n"
         assert scorer._extract_package_references(text) == {"json", "rails"}
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("require 'active_support/core_ext'", {"active_support"}),
+            ("require 'active_support/core_ext/string'", {"active_support"}),
+            ('require "aws-sdk-s3/resource"', {"aws-sdk-s3"}),
+            ('require("rails")', {"rails"}),
+            ('require ("rails")', {"rails"}),
+            ("require('json')", {"json"}),
+            ('require("google/cloud/storage")', {"google"}),
+            ('require ("faraday/multipart")', {"faraday"}),
+            ('gem("rails")', {"rails"}),
+            ('gem ("rails")', {"rails"}),
+            ('gem("rails", "~> 7.0")', {"rails"}),
+            ("gem 'rails', '>= 1.0'", {"rails"}),
+            ("  require 'indented_gem'", {"indented_gem"}),
+            ("    require('indented_paren')", {"indented_paren"}),
+        ],
+    )
+    def test_ruby_extracts_subpath_and_parenthesized_requires(self, text: str, expected: set[str]) -> None:
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
+        assert scorer._extract_package_references(text) == expected
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "require './local_file'",
+            "require './lib/helper'",
+            "require '../spec_helper'",
+            "require '../../config/environment'",
+            "require '/opt/app/lib'",
+            "require('/etc/secret')",
+            "require_relative 'local_file'",
+            "require_relative './local_file'",
+            "require_relative('local_file')",
+            "# require 'commented_gem'",
+            "text = 'require json'",
+        ],
+    )
+    def test_ruby_ignores_relative_and_absolute_paths(self, text: str) -> None:
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
+        assert scorer._extract_package_references(text) == set()
+
     def test_javascript_extracts_import_and_require(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.JAVASCRIPT)
         text = "import React from 'react';\nconst lodash = require('lodash');\n"
@@ -416,6 +459,22 @@ class TestPackageHallucinationScorerScoring:
             "ecosystem": "ruby",
             "hallucinated_packages": "fakegem",
         }
+
+    async def test_ruby_scores_hallucinated_subpath_package_async(self):
+        scorer = PackageHallucinationScorer(known_packages={"rails", "json"}, ecosystem=PackageEcosystem.RUBY)
+        known_score = (await scorer._score_piece_async(_assistant_piece("require 'rails/all'\nrequire 'json'\n")))[0]
+        assert known_score.get_value() is False
+        assert known_score.score_metadata["hallucinated_packages"] == ""
+
+        hallucinated_score = (
+            await scorer._score_piece_async(_assistant_piece("require 'fake_gem/core'\nrequire('fake_gem/helpers')\n"))
+        )[0]
+        assert hallucinated_score.get_value() is True
+        assert hallucinated_score.score_metadata == {
+            "ecosystem": "ruby",
+            "hallucinated_packages": "fake_gem",
+        }
+        assert "Hallucinated ruby packages: fake_gem" in hallucinated_score.score_rationale
 
     async def test_default_category(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
