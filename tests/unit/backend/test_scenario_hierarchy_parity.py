@@ -1214,20 +1214,23 @@ def test_hierarchy_traversal_halts_immediately_on_budget_exhaustion() -> None:
 
     snapshot = _make_test_snapshot(deltas=deltas)
 
-    import time
+    # Count the nodes built instead of timing the call: a wall-clock bound fails on loaded CI runners.
+    with patch.object(
+        ScenarioProgressReadModel,
+        "_map_hierarchy_node",
+        wraps=ScenarioProgressReadModel._map_hierarchy_node,
+    ) as map_node:
+        projection = ScenarioProgressReadModel.build_scenario_hierarchy(
+            scenario_result_id="scenario-run-1",
+            scenario_name="TestScenario",
+            scenario_version=1,
+            status=ScenarioRunState.COMPLETED,
+            snapshot=snapshot,
+            max_nodes=1,
+        )
 
-    start_time = time.perf_counter()
-    projection = ScenarioProgressReadModel.build_scenario_hierarchy(
-        scenario_result_id="scenario-run-1",
-        scenario_name="TestScenario",
-        scenario_version=1,
-        status=ScenarioRunState.COMPLETED,
-        snapshot=snapshot,
-        max_nodes=1,
-    )
-    elapsed = time.perf_counter() - start_time
-
-    assert elapsed < 0.05, f"Expected <0.05s, got {elapsed:.4f}s"
+    # Only the one node the budget allows is built; the other 999 roots are never mapped.
+    assert map_node.call_count == 1
     assert projection.truncated is True
     # Count total nodes in projection
     node_count = sum(len(g.roots) for g in projection.groups)
