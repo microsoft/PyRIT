@@ -59,6 +59,7 @@ function parsePreferences(raw: string): UserPreferences {
     || !Object.values(value.labels).every((label: unknown) => label === null || typeof label === 'string')
     || !isThemeMode(value.theme)
     || typeof value.chatMarkdown !== 'boolean'
+    || (value.sidebarExpanded !== undefined && typeof value.sidebarExpanded !== 'boolean')
     || (value.chatScorer !== undefined && !isScorerReference(value.chatScorer))
     || (value.operation !== undefined && !isOperationSelection(value.operation))
     || (
@@ -80,6 +81,7 @@ function parsePreferences(raw: string): UserPreferences {
     ...(value.operation !== undefined ? { operation: value.operation } : {}),
     theme: value.theme,
     chatMarkdown: value.chatMarkdown,
+    ...(value.sidebarExpanded !== undefined ? { sidebarExpanded: value.sidebarExpanded } : {}),
     ...(value.chatScorer !== undefined ? { chatScorer: value.chatScorer } : {}),
   }
 }

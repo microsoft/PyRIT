@@ -237,10 +237,10 @@ test.describe("Chat processing recovery @seeded", () => {
 
   test.beforeEach(async ({ page, localTarget }) => {
     await page.goto("/");
-    await page.getByTitle("Registry", { exact: true }).click();
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
     await page.getByRole("combobox", { name: "Default objective target", exact: true })
       .selectOption(localTarget.registryName);
-    await page.getByTitle("Technique.execute", { exact: true }).click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
   });
 
   test("keeps the drawer closed when a delayed send refresh discovers another conversation", async ({
@@ -478,7 +478,7 @@ test.describe("Chat processing recovery @seeded", () => {
     expect((await live.json()).state).toBe("sending");
     await expect(page).toHaveURL((url: URL) => url.pathname.includes(accepted.attack_result_id));
     const chatUrl = page.url();
-    await page.getByTitle("Registry", { exact: true }).click();
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
     localTarget.releaseResponse();
     const result = await readMessageSendResult(request, accepted);
     expect(result.messages.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
