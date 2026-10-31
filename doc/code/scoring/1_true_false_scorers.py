@@ -258,6 +258,23 @@ print(f"[package] real imports only  -> {clean.get_value()}")
 # `DivergenceScorer` detects meaningful continuation following the repetition named by an expectation
 # (adapted from Garak's repetition-induced divergence checks). It backs the Garak divergence scenario.
 # %% [markdown]
+# ### PresidioPiiScorer
+#
+# `PresidioPiiScorer` uses `presidio-analyzer` to flag PII entity types (SSN, credit card,
+# email, phone, geographic coordinates, and others) in a response. It returns True when any
+# requested entity is found above a configurable confidence threshold. Score metadata carries
+# entity types and counts, never the matched values. Requires the optional `presidio` extra
+# (`pip install pyrit[presidio]`). The analyzer is injectable for testing.
+#
+# ```python
+# from pyrit.score import PresidioPiiScorer
+#
+# scorer = PresidioPiiScorer(entities=["US_SSN", "CREDIT_CARD"], score_threshold=0.5)
+# scores = await scorer.score_text_async("My SSN is 123-45-6789")
+# print(f"PII detected: {scores[0].get_value()}")
+# print(f"Metadata: {scores[0].score_metadata}")
+# ```
+# %% [markdown]
 # ## Slow scorers (LLM self-ask)
 #
 # `SelfAsk*` scorers ask a chat target to reason about a response. They are flexible and
