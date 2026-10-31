@@ -57,12 +57,16 @@ Target-side rate limiting remains independent and continues to use `limit_reques
 `_send_prompt_to_target_async(*, normalized_conversation: list[Message]) -> list[Message]` instead of
 overriding `send_prompt_async`.
 
-## Runtime temperature
+## Runtime generation configuration
 
-Use `RequestGenerationConfig` to set temperature for one send without changing the
-target's configured default or identity. `OpenAIChatTarget` supports this when
-`target.capabilities.supports_temperature` is true. See [Target Capabilities](./6_1_target_capabilities.ipynb)
-for inspecting and configuring support.
+Use `RequestGenerationConfig` to attach typed generation overrides to one outbound
+request without changing the target's configured defaults or identity. Support is
+declared per parameter and depends on the adapter, model, and effective sampling
+mode. See [Target Capabilities](./6_1_target_capabilities.ipynb) for inspecting support
+and OpenAI model-family rules.
+
+The config currently exposes `temperature`. For example, with an `OpenAIChatTarget`
+whose `target.capabilities.supports_temperature` is true:
 
 ```python
 from pyrit.models import Message, MessagePiece, RequestGenerationConfig
@@ -82,24 +86,26 @@ response = await PromptNormalizer().send_prompt_async(
 )
 ```
 
-The metadata shape is `{"request_generation_config": {"temperature": 0}}`.
-OpenAI Chat accepts finite numbers from 0 through 2, including zero, but not booleans
-or numeric strings. Put the override on one current message piece or repeat the
-same value on several pieces. Conflicting values and unsupported target/model modes
-fail before provider I/O; conversation history does not select the temperature.
+`to_metadata()` produces `{"request_generation_config": {"temperature": 0}}` in
+this example. Put overrides on one current message piece or repeat matching
+values across pieces. Conflicting values, invalid inputs, and unsupported
+parameters or model modes fail before provider I/O. Only the current outbound
+message supplies overrides, not conversation history. Parameter limits are
+adapter-specific: OpenAI Chat accepts finite temperatures from 0 through 2,
+including zero, but not booleans or numeric strings.
 
-Missing or null temperature preserves the target's configured behavior. An explicit
-override takes precedence over configured temperature values, including nested
+Missing or null fields preserve the target's configured behavior. Explicit
+overrides take precedence over provider passthrough values, including nested
 `extra_body` settings. If neither a request value nor a configured value exists,
-the provider parameter is omitted. Transport retries retain the resolved value;
-each new send can select a different one.
+the parameter is omitted rather than assigning a guessed provider default.
+Transport retries retain the resolved settings; a new send can select new values.
 
 `PromptNormalizer` saves generation evidence with the request and its responses.
 Read it using `RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)`.
-Its `temperature` record contains the `requested` override, `resolved` parameter sent,
-and `source`: `request`, `target_default`, or `provider_default`. Unknown provider
-defaults remain `None`; messages without evidence return `None` rather than a
-guessed temperature.
+Each parameter record, such as `info.temperature`, contains the `requested`
+override, `resolved` value sent, and `source`: `request`, `target_default`, or
+`provider_default`. Unknown provider defaults remain `None`; reading a message
+without generation evidence returns `None`.
 
 ## Chat-style targets vs general targets
 

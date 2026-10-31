@@ -35,7 +35,12 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     detect_response_content,
     save_audio_response_async,
 )
-from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities, get_known_capabilities
+from pyrit.prompt_target.common.target_capabilities import (
+    CapabilityName,
+    OpenAIModelSampling,
+    TargetCapabilities,
+    get_known_capabilities,
+)
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
@@ -201,9 +206,8 @@ class OpenAIChatTarget(OpenAITarget):
         super().apply_capabilities(capabilities=self._generation_capabilities_for_mode(capabilities))
 
     def _refresh_generation_capabilities(self) -> None:
-        parameters = self._extra_body_parameters or {}
-        nested = parameters.get("extra_body") or {}
-        model = nested.get("model", parameters.get("model", self._underlying_model or self._model_name))
+        parameters = self._effective_generation_parameters()
+        model = parameters["model"]
         known = get_known_capabilities(model) if isinstance(model, str) else None
         support = {
             capability.value: self._generation_capability_overrides.get(
@@ -211,18 +215,37 @@ class OpenAIChatTarget(OpenAITarget):
             )
             for capability in self._SUPPORTED_GENERATION_CAPABILITIES
         }
+        if (
+            CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES
+            and CapabilityName.TEMPERATURE not in self._generation_capability_overrides
+        ):
+            support["supports_temperature"] = OpenAIModelSampling.supports_temperature(
+                model_name=model,
+                reasoning_effort=parameters.get("reasoning_effort"),
+                declared_support=True if support["supports_temperature"] else None,
+            )
         self.apply_capabilities(capabilities=self.capabilities.model_copy(update=support))
 
-    def _generation_capabilities_for_mode(self, capabilities: TargetCapabilities) -> TargetCapabilities:
+    def _effective_generation_parameters(self) -> dict[str, Any]:
         parameters = self._extra_body_parameters or {}
-        nested = parameters.get("extra_body") or {}
+        return {
+            "model": self._underlying_model or self._model_name,
+            **parameters,
+            **(parameters.get("extra_body") or {}),
+        }
+
+    def _generation_capabilities_for_mode(self, capabilities: TargetCapabilities) -> TargetCapabilities:
+        parameters = self._effective_generation_parameters()
         temperature_supported = (
             CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES
-            and capabilities.includes(capability=CapabilityName.TEMPERATURE)
-            and nested.get("reasoning_effort", parameters.get("reasoning_effort")) in (None, "none")
+            and OpenAIModelSampling.supports_temperature(
+                model_name=parameters["model"],
+                reasoning_effort=parameters.get("reasoning_effort"),
+                declared_support=capabilities.includes(capability=CapabilityName.TEMPERATURE),
+            )
             and self._audio_response_config is None
-            and "audio" not in (nested.get("modalities", parameters.get("modalities")) or [])
-            and not nested.get("stream", parameters.get("stream", False))
+            and "audio" not in (parameters.get("modalities") or [])
+            and not parameters.get("stream", False)
         )
         return capabilities.model_copy(update={"supports_temperature": temperature_supported})
 

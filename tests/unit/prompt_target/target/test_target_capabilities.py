@@ -12,6 +12,7 @@ from pyrit.prompt_target.common.conversation_normalization_pipeline import NORMA
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
     CapabilityName,
+    OpenAIModelSampling,
     TargetCapabilities,
     UnsupportedCapabilityBehavior,
     get_known_capabilities,
@@ -403,7 +404,7 @@ class TestGetKnownCapabilities:
     """Test get_known_capabilities for every recognized model."""
 
     @pytest.mark.parametrize(
-        ("model", "supported"), [("gpt-4o", True), ("gpt-5.1", True), ("gpt-5", False), ("gpt-5.4", False)]
+        ("model", "supported"), [("gpt-4o", True), ("gpt-5.1", True), ("gpt-5", False), ("gpt-5.4", True)]
     )
     def test_temperature_profile(self, model: str, supported: bool) -> None:
         caps = get_known_capabilities(model)
@@ -495,6 +496,115 @@ class TestGetKnownCapabilities:
 
     def test_empty_string_returns_none(self):
         assert get_known_capabilities("") is None
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-4",
+        "gpt-4-0314",
+        "gpt-4-0613",
+        "gpt-4-32k",
+        "gpt-4-32k-0613",
+        "gpt-4-turbo",
+        "gpt-4-turbo-2024-04-09",
+        "gpt-4-turbo-preview",
+        "gpt-4-1106-preview",
+        "gpt-4-0125-preview",
+        "gpt-4-vision-preview",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4o-2024-08-06",
+        "gpt-4o-mini-2024-07-18",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "gpt-4.1-mini-2025-04-14",
+    ],
+)
+def test_openai_non_reasoning_sampling_families(model: str) -> None:
+    assert OpenAIModelSampling.supports_temperature(model_name=model)
+    assert not OpenAIModelSampling.supports_temperature(model_name=model, declared_support=False)
+
+
+@pytest.mark.parametrize(
+    ("model", "default_supported"),
+    [
+        ("gpt-5.1", True),
+        ("gpt-5.1-2025-11-13", True),
+        ("gpt-5.2", True),
+        ("gpt-5.4", True),
+        ("gpt-5.4-mini", True),
+        ("gpt-5.4-nano-2026-03-17", True),
+        ("gpt-5.5", False),
+        ("gpt-5.6", False),
+        ("gpt-5.6-sol", False),
+        ("gpt-5.6-terra", False),
+        ("gpt-5.6-luna", False),
+    ],
+)
+@pytest.mark.parametrize("effort", [None, "none", "minimal", "low", "medium", "high", "xhigh", "max", ""])
+def test_openai_conditional_sampling_uses_model_reasoning_default(
+    model: str, default_supported: bool, effort: str | None
+) -> None:
+    expected = default_supported if effort is None else effort == "none"
+    assert OpenAIModelSampling.supports_temperature(model_name=model, reasoning_effort=effort) is expected
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-nano-2025-08-07",
+        "gpt-5.2-pro",
+        "gpt-5.4-pro",
+        "gpt-5.1-codex",
+        "gpt-5.3-codex",
+        "o1",
+        "o3",
+        "o3-mini",
+        "o4-mini",
+        "gpt-4o-audio-preview-2024-12-17",
+        "gpt-4o-mini-realtime-preview",
+    ],
+)
+def test_known_unsupported_sampling_cannot_be_enabled_by_declaration(model: str) -> None:
+    assert not OpenAIModelSampling.supports_temperature(
+        model_name=model, reasoning_effort="none", declared_support=True
+    )
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "private-deployment",
+        "gpt-4o-custom",
+        "gpt-4o-search-preview",
+        "gpt-4.1-future",
+        "gpt-5.4-custom-2026-01-01",
+        "gpt-5.4-mini-extra",
+        "gpt-5.99",
+        "gpt-4o-2024-08-06-custom",
+        "",
+    ],
+)
+def test_unknown_sampling_variants_require_explicit_support(model: str) -> None:
+    assert not OpenAIModelSampling.supports_temperature(model_name=model)
+    assert OpenAIModelSampling.supports_temperature(model_name=model, declared_support=True)
+    assert not OpenAIModelSampling.supports_temperature(
+        model_name=model, declared_support=True, reasoning_effort="high"
+    )
+
+
+def test_sampling_rules_do_not_invent_full_model_profiles() -> None:
+    assert get_known_capabilities("gpt-4.1-nano") is None
+    gpt_5 = get_known_capabilities("gpt-5")
+    gpt_5_1 = get_known_capabilities("gpt-5.1")
+    gpt_5_4 = get_known_capabilities("gpt-5.4")
+    assert gpt_5 is not None and gpt_5_1 is not None and gpt_5_4 is not None
+    assert gpt_5_1.model_copy(update={"supports_temperature": False}) == gpt_5
+    assert gpt_5_4.model_copy(update={"supports_temperature": False}) == gpt_5
 
 
 @pytest.mark.usefixtures("patch_central_database")
