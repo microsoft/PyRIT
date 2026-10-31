@@ -415,10 +415,14 @@ class KeywordSelectionStrategy(TextSelectionStrategy):
             tuple[int, int]: A tuple of (start_index, end_index) including context,
                 or (0, 0) if keyword not found.
         """
-        search_text = text if self._case_sensitive else text.lower()
-        search_keyword = self._keyword if self._case_sensitive else self._keyword.lower()
-
-        index = search_text.find(search_keyword)
+        if self._case_sensitive:
+            index = text.find(self._keyword)
+        else:
+            # Match on the original text: lowercasing can change length (for
+            # example a dotted capital I becomes two code points), so an index
+            # found in the lowered string points at the wrong characters here.
+            match = re.search(re.escape(self._keyword), text, re.IGNORECASE)
+            index = match.start() if match else -1
         if index == -1:
             return (0, 0)
 

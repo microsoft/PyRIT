@@ -1,7 +1,7 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { InteractionRequiredAuthError, type PublicClientApplication } from '@azure/msal-browser'
 import { generateClientId } from '@/utils/clientId'
-import { toApiError } from './errors'
+import { decodeBlobErrorAsync, toApiError } from './errors'
 import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
@@ -49,12 +49,13 @@ import type {
   ChangeMainConversationResponse,
   ListRegisteredScenariosResponse,
   RegisteredScenario,
-  ResolveScenarioPresetRequest,
   RunScenarioRequest,
   ScenarioPreset,
   ScenarioPresetListResponse,
   ScenarioPresetResponse,
   ScenarioSuite,
+  LaunchScenarioSuiteRequest,
+  ScenarioSuiteExecutionSummary,
   ScenarioSuiteListResponse,
   ScenarioSuiteResponse,
   UpdateScenarioPresetRequest,
@@ -86,6 +87,7 @@ import type {
   FindingEvidenceCreateRequest,
   FindingEvidenceAttachResponse,
   FindingEvidenceListResponse,
+  FindingExportRequest,
   Operation,
   OperationCreate,
   OperationDetail,
@@ -154,6 +156,13 @@ export const operationsApi = {
     await apiClient.delete(
       `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence/${encodeURIComponent(evidenceId)}`,
     )
+  },
+  exportFindings: async (
+    operationId: string, request: FindingExportRequest, signal?: AbortSignal,
+  ): Promise<Blob> => {
+    return (await apiClient.post<Blob>(
+      `${operationPath(operationId)}/findings/export`, request, { responseType: 'blob', signal },
+    )).data
   },
 }
 
@@ -231,6 +240,8 @@ apiClient.interceptors.request.use(async (config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
+    // File downloads receive error bodies as Blobs; read them before any check below.
+    await decodeBlobErrorAsync(error)
     const problem = error?.response?.data
     if (
       (error?.response?.status === 400 && problem?.type === 'urn:pyrit:compatibility:invalid') ||
@@ -784,22 +795,6 @@ export const scenarioPresetsApi = {
   remove: async (name: string): Promise<void> => {
     await apiClient.delete(`/scenario-presets/${encodeURIComponent(name)}`)
   },
-
-  /**
-   * Combines a stored preset with the launch-owned fields it omits into a runnable request.
-   * Sending `expected_version` fails with 409 when the preset changed after it was read,
-   * so a launch cannot silently run a configuration the operator never saw.
-   */
-  resolve: async (
-    name: string,
-    request: ResolveScenarioPresetRequest,
-  ): Promise<RunScenarioRequest> => {
-    const response = await apiClient.post(
-      `/scenario-presets/${encodeURIComponent(name)}/resolve`,
-      request,
-    )
-    return response.data
-  },
 }
 
 export const scenarioSuitesApi = {
@@ -835,6 +830,40 @@ export const scenarioSuitesApi = {
 
   remove: async (name: string): Promise<void> => {
     await apiClient.delete(`/scenario-suites/${encodeURIComponent(name)}`)
+  },
+
+  launch: async (
+    name: string,
+    request: LaunchScenarioSuiteRequest,
+  ): Promise<ScenarioSuiteExecutionSummary> => {
+    const response = await apiClient.post(
+      `/scenario-suites/${encodeURIComponent(name)}/launch`,
+      request,
+    )
+    return response.data
+  },
+
+  getExecution: async (
+    executionId: string,
+    signal?: AbortSignal,
+  ): Promise<ScenarioSuiteExecutionSummary> => {
+    const response = await apiClient.get(
+      `/scenario-suites/executions/${encodeURIComponent(executionId)}`,
+      { signal },
+    )
+    return response.data
+  },
+
+  cancelExecution: async (
+    executionId: string,
+    signal?: AbortSignal,
+  ): Promise<ScenarioSuiteExecutionSummary> => {
+    const response = await apiClient.post(
+      `/scenario-suites/executions/${encodeURIComponent(executionId)}/cancel`,
+      undefined,
+      { signal },
+    )
+    return response.data
   },
 }
 

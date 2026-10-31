@@ -48,12 +48,11 @@ from pyrit.score.observation.execution import (
     _get_current_scored_message_piece,
     _ObservationEvidence,
     _scoring_collection,
-    _scoring_expectation_context,
     _scoring_message_context,
     _scoring_scorable_context,
     _suppress_observation_collection,
 )
-from pyrit.score.scorer import LEGACY_SCORE_ASYNC_REMOVED_IN, Scorer
+from pyrit.score.scorer import LEGACY_SCORE_ASYNC_REMOVED_IN, LegacyScorerHookError, Scorer
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -283,6 +282,14 @@ def _normalize_scoring_expectation(
     return expectation if expectation is not None else ScoringExpectation(objective=objective)
 
 
+_PIPELINE_HOOKS = (
+    "_score_scorable_async",
+    "_score_message_scorable_async",
+    "_score_resolved_message_async",
+    "_score_prepared_message_async",
+)
+
+
 class MessageScorer(Scorer):
     """
     Base class for scorers whose evidence is a single message.
@@ -339,7 +346,8 @@ class MessageScorer(Scorer):
             message_resolver (MessageScorableResolver | None): Evidence resolver.
 
         Raises:
-            TypeError: If a legacy piece override would be hidden by an inherited typed hook.
+            LegacyScorerHookError: If a legacy piece override would be hidden by an inherited typed hook,
+                or the declared condition can only reach a legacy hook.
         """
         typed_hook_owner = next(
             cls for cls in type(self).__mro__ if "_score_piece_with_expectation_async" in cls.__dict__
@@ -351,10 +359,11 @@ class MessageScorer(Scorer):
                 if "_score_piece_async" in cls.__dict__ or "_score_piece_with_expectation_async" in cls.__dict__
             )
             if "_score_piece_with_expectation_async" not in hook_owner.__dict__:
-                raise TypeError(
+                raise LegacyScorerHookError(
                     f"{type(self).__name__} overrides _score_piece_async below an expectation-aware scorer. "
                     "Move the custom policy to _score_piece_with_expectation_async."
                 )
+        self._check_typed_condition_reaches_hook()
         self._validator = validator
         self._message_resolver = message_resolver or MessageScorableResolver()
         super().__init__(chat_target=chat_target)
@@ -375,6 +384,42 @@ class MessageScorer(Scorer):
         scoped = copy.copy(self)
         scoped.raise_if_scorer_blocks = raise_if_scorer_blocks
         return scoped
+
+    def _check_typed_condition_reaches_hook(self) -> None:
+        """
+        Reject incompatible legacy hooks on the standard message pipeline.
+
+        Custom pipeline hooks may evaluate the expectation themselves, so their dispatch
+        cannot be inferred here. Runtime guards still reject typed criteria that reach a
+        legacy hook through such a pipeline.
+
+        Raises:
+            LegacyScorerHookError: If the declared condition can only reach a legacy hook.
+        """
+        from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
+
+        condition_type = type(self).CONDITION_TYPE
+        if condition_type is None or condition_type is MatchesObjective:
+            return
+        mro = type(self).__mro__
+        own_bases = mro[: mro.index(MessageScorer)]
+        if any(name in base.__dict__ for base in own_bases for name in _PIPELINE_HOOKS):
+            return
+        score_async = type(self)._score_async
+        score_async_owner = next(base for base in mro if "_score_async" in base.__dict__)
+        if "expectation" not in inspect.signature(score_async).parameters:
+            replacement = "_score_async(..., expectation=...)"
+        elif score_async_owner in (MessageScorer, MessageTrueFalseScorer) and not any(
+            "_score_piece_with_expectation_async" in base.__dict__ for base in own_bases
+        ):
+            replacement = "_score_piece_with_expectation_async"
+        else:
+            return
+        raise LegacyScorerHookError(
+            f"{type(self).__name__} declares {condition_type.__name__}, which its legacy objective-only "
+            f"hook cannot receive. Implement {replacement}. Legacy hooks support objective-based "
+            "scoring only, until 2.0."
+        )
 
     def _get_condition_type(self) -> type[Condition] | None:
         """Return the declared criterion, using the objective validator only for undeclared leaves."""
@@ -524,7 +569,7 @@ class MessageScorer(Scorer):
         """
         self._validate_expectation(expectation=expectation)
         anchor = await self._context_scorable_from_message_async(message=message)
-        with _scoring_scorable_context(anchor), _scoring_expectation_context(expectation):
+        with _scoring_scorable_context(anchor):
             scores = await self._score_resolved_message_async(
                 message=message,
                 expectation=expectation,
@@ -986,6 +1031,7 @@ class MessageScorer(Scorer):
             ScorerLLMResponseBlockedException: If the scorer's own LLM response is blocked by
                 content filtering and ``raise_if_scorer_blocks`` is True (the default).
             PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
+            LegacyScorerHookError: If a legacy hook cannot receive the typed criteria.
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
         objective = expectation.objective if expectation else None
@@ -1039,11 +1085,7 @@ class MessageScorer(Scorer):
             nullcontext() if scoring_view_matches_acquired_message else _suppress_observation_collection()
         )
         try:
-            with (
-                observation_context,
-                _scoring_message_context(scoring_message),
-                _scoring_expectation_context(effective_expectation),
-            ):
+            with observation_context, _scoring_message_context(scoring_message):
                 scores = await self._score_prepared_message_async(
                     message=scoring_message,
                     expectation=effective_expectation,
@@ -1061,6 +1103,8 @@ class MessageScorer(Scorer):
             # Re-raise PyRIT exceptions with enhanced context while preserving type for retry decorators
             e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
             e.args = (f"Status Code: {e.status_code}, Message: {e.message}",)
+            raise
+        except LegacyScorerHookError:
             raise
         except Exception as e:
             # Wrap non-PyRIT exceptions for better error tracing

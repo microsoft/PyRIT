@@ -4,7 +4,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
-import { scenariosApi, targetsApi } from '@/services/api'
+import { scenarioPresetsApi, scenariosApi, scenarioSuitesApi, targetsApi } from '@/services/api'
 import type {
   RegisteredScenario,
   ScenarioRunSizeEstimateResponse,
@@ -28,6 +28,12 @@ jest.mock('@/services/api', () => ({
     listCatalog: jest.fn(),
     startRun: jest.fn(),
   },
+  scenarioPresetsApi: {
+    list: jest.fn(),
+  },
+  scenarioSuitesApi: {
+    list: jest.fn(),
+  },
   targetsApi: {
     listTargets: jest.fn(),
   },
@@ -38,6 +44,8 @@ const mockEstimateRun = scenariosApi.estimateRun as jest.Mock
 const mockGetScenario = scenariosApi.getScenario as jest.Mock
 const mockListCatalog = scenariosApi.listCatalog as jest.Mock
 const mockStartRun = scenariosApi.startRun as jest.Mock
+const mockListPresets = scenarioPresetsApi.list as jest.Mock
+const mockListSuites = scenarioSuitesApi.list as jest.Mock
 const mockListTargets = targetsApi.listTargets as jest.Mock
 
 const SCENARIO_NAME = 'foundry.red_team_agent'
@@ -149,7 +157,19 @@ function renderFlow(): void {
       <MemoryRouter initialEntries={['/scanner']}>
         <LocationProbe />
         <Routes>
-          <Route path="/scanner" element={<ScenarioCatalog />} />
+          <Route
+            path="/scanner"
+            element={(
+              <ScenarioCatalog
+                targets={[TARGET]}
+                defaultObjectiveTarget={TARGET}
+                defaultAdversarialTarget={null}
+                labels={{ operator: 'integration-test' }}
+                operationId={null}
+                defaultsReady
+              />
+            )}
+          />
           <Route
             path="/scanner/:scenarioName"
             element={(
@@ -177,6 +197,8 @@ describe('Scenario catalog-to-run integration', () => {
       items: [SCENARIO],
       pagination: { limit: 200, has_more: false },
     })
+    mockListSuites.mockResolvedValue({ source: '', items: [] })
+    mockListPresets.mockResolvedValue({ source: '', items: [] })
     mockGetScenario.mockResolvedValue(SCENARIO)
     mockEstimateRun.mockResolvedValue(ESTIMATE)
     mockStartRun.mockResolvedValue({ scenario_result_id: RUN_ID })

@@ -1412,7 +1412,13 @@ class TestScenarioResultRoles:
         ),
         ({"parent_collection": "attack", "attempt_index": True}, {}, "unknown", [], None),
         ({"parent_collection": "attack", "attempt_index": "2"}, {"child_attack_result_ids": "c1"}, "unknown", [], None),
-        ({"parent_collection": "attack"}, {"child_attack_result_ids": ["c1", 7]}, "unknown", [], None),
+        (
+            {"parent_collection": "attack"},
+            {"child_attack_result_ids": ["c1", 7]},
+            "unknown",
+            ["c1", "<invalid child reference at position 1>"],
+            None,
+        ),
     ],
 )
 def test_map_progress_delta_reads_legacy_and_malformed_rows_conservatively(

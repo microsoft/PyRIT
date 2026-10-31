@@ -1304,6 +1304,21 @@ describe('ScenarioRunPage', () => {
     }
   })
 
+  it('links child runs back to their transient suite execution', () => {
+    renderPage(
+      `/scanner-history/${SCENARIO_RESULT_ID}`,
+      {
+        suiteExecutionId: 'execution-1',
+        suiteName: 'nightly_suite',
+      },
+    )
+
+    expect(screen.getByRole('link', { name: 'Back to nightly_suite' })).toHaveAttribute(
+      'href',
+      '/scanner/suites/executions/execution-1',
+    )
+  })
+
   it('renders one expandable parent for attacks that share a display group', async () => {
     const user = userEvent.setup()
     const secondAttempt = {

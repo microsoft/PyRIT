@@ -8,21 +8,21 @@ Scenario preset service for CRUD and launch resolution.
 import asyncio
 import logging
 from functools import lru_cache
-from typing import Any, Literal
+from typing import Literal
 
 from pyrit.backend.models.scenario_presets import (
-    ResolveScenarioPresetRequest,
     ScenarioPresetListResponse,
     ScenarioPresetResponse,
 )
 from pyrit.backend.services.scenario_service import get_scenario_service
 from pyrit.models.catalog import (
+    ResolveScenarioPresetRequest,
     RunScenarioRequest,
     ScenarioPreset,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
 )
-from pyrit.registry import ScenarioPresetRegistry
+from pyrit.registry import ScenarioPresetRegistry, resolve_scenario_preset_run_request
 
 logger = logging.getLogger(__name__)
 
@@ -143,44 +143,7 @@ class ScenarioPresetService:
             name=name,
             expected_version=launch.expected_version,
         )
-        return None if stored is None else self.resolve_run_request(preset=stored.preset, launch=launch)
-
-    @staticmethod
-    def resolve_run_request(*, preset: ScenarioPreset, launch: ResolveScenarioPresetRequest) -> RunScenarioRequest:
-        """
-        Combine a preset with the launch-owned fields it omits.
-
-        ``max_concurrency`` and ``max_retries`` are the only run fields that are not
-        tri-state, so an unset value is dropped rather than passed as None. Passing it
-        through would pin the run default at resolution time instead of letting the
-        request model supply it.
-
-        Args:
-            preset (ScenarioPreset): The preset supplying the scenario-owned fields.
-            launch (ResolveScenarioPresetRequest): The target and execution fields for this launch.
-
-        Returns:
-            RunScenarioRequest: The request to post to the existing scenario run endpoint.
-        """
-        run_defaults: dict[str, Any] = {
-            "max_concurrency": launch.max_concurrency,
-            "max_retries": launch.max_retries,
-        }
-
-        return RunScenarioRequest(
-            scenario_name=preset.scenario_name,
-            techniques=preset.techniques,
-            datasets=preset.datasets,
-            include_baseline=preset.include_baseline,
-            scenario_params=preset.scenario_params,
-            target_name=launch.target_name,
-            adversarial_target_name=launch.adversarial_target_name,
-            initializers=launch.initializers,
-            initializer_args=launch.initializer_args,
-            operation_id=launch.operation_id,
-            labels=launch.labels,
-            **{name: value for name, value in run_defaults.items() if value is not None},
-        )
+        return None if stored is None else resolve_scenario_preset_run_request(preset=stored.preset, launch=launch)
 
     @staticmethod
     def _read_responses(registry: ScenarioPresetRegistry) -> list[ScenarioPresetResponse]:

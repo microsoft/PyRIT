@@ -48,6 +48,71 @@ Missing IDs, standalone conversations, and internal conversations return 404.
 Saving from the scanner creates a copy through `POST /api/attacks/save-conversation`;
 it does not change the source or send to a target.
 
+For on-demand saved-result browsing, use
+`GET /api/attacks/{attack_result_id}/conversations?limit=50` to page main and pruned
+references in saved-reference order. This reads counts
+and previews, not conversation bodies. The limit is 1-200; follow
+`pagination.next_cursor` while `pagination.has_more` is true.
+
+Load only the selected conversation with
+`GET /api/attacks/{attack_result_id}/messages?conversation_id={conversation_id}&limit=100`.
+Here the limit is 1-500 **message pieces**, not turns or bytes. Results use the
+canonical message, piece, and score views, ordered by sequence, timestamp, and ID.
+A page can split a multimodal turn: `partial_message_sequences` identifies partial
+turns. Append pieces by ID to their turn across pages, and follow
+`pagination.next_cursor`. A page does not infer a final target-response status
+from an incomplete transcript.
+
+Message cursors belong to one attack and conversation. Reference cursors also
+validate the saved ordering and timestamp; restart reference paging if the saved
+attack changes. Invalid or mismatched cursors return 400. Passing a cursor requires
+a limit. Omitting both preserves the existing active-conversation listing and
+full-transcript behavior.
+Both paged and unpaged reads expose only main and pruned conversations.
+Adversarial and preparation contexts are excluded from lists, reference totals,
+and transcript reads, including hierarchy node expansion.
+
+### Scenario result hierarchy
+
+These read-only APIs provide the backend foundation for compound-attack browsing.
+The hierarchy GUI is separate work; the current scanner still shows flat executions.
+
+`GET /api/scenarios/runs/{scenario_result_id}/hierarchy?max_nodes=1000` returns a
+bounded tree preview grouped by atomic attack group. Roots are saved results with
+no incoming child reference from the same run, not results inferred from their
+attempt indexes. The node budget is 1-5000, with at most 500 roots per page and
+bounded descendant queries through depth 10. `has_more` and `next_cursor` refer
+only to **root continuation**. `truncated` also covers deferred descendants,
+depth limits, and other results not represented by the preview.
+
+Run/group completion, outcomes, producer counts, and raw error/retry diagnostics
+use the shared exact accounting path independently of the selected page. Exact
+statistics may scan lightweight summaries; a small tree request does not hydrate
+the full progress snapshot, attack results, or conversation bodies.
+
+Expand one result with
+`GET /api/scenarios/runs/{scenario_result_id}/hierarchy/nodes/{attack_result_id}?limit=200`.
+The limit is 1-500 saved child-reference positions. Follow `next_children_cursor`
+using `children_cursor`; `children_count` is the full reference count and
+`child_offset` locates this page. `child_index` remains the absolute position under
+the immediate parent. Missing, malformed, duplicate, cyclic, or cross-run references
+remain explicit and consume positions, so even a wholly unresolved page can advance.
+Child cursors validate the run, node, timestamp, and saved reference ordering;
+restart child paging after those references change.
+
+Tree previews leave conversation metadata deferred: `conversations` is empty,
+`conversations_count` is unknown, and `conversations_truncated` is true when saved
+references exist. The node's `conversation_id` still links to its main conversation.
+Node expansion returns up to 50 main/pruned conversation summaries, the exact reference
+count, and a clipping flag. These use the same metadata model as the generic attack API.
+Use the saved-conversation APIs above for reference continuation and all transcript
+bodies. There is no hierarchy-specific transcript format or conversation-preview mode.
+
+An entirely rootless saved graph, such as a closed cycle, returns a bounded
+`diagnostics.rootless_result_ids` sample with its total count and clipping flag.
+It does not invent lineage or promote a cycle member to a true root. The sampled
+IDs remain available through the single-node and saved-conversation APIs.
+
 ### Techniques
 
 | Endpoint | Result |

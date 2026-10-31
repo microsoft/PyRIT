@@ -274,8 +274,8 @@ def _parameters_from_signature(
             registry references keyed by constructor parameter name.
         sensitive_parameter_names (frozenset[str]): Identifier-declared names
             whose values must be obscured in user interfaces.
-        multiline_parameter_names (frozenset[str]): Identifier-declared names
-            whose values require multiline controls.
+        multiline_parameter_names (frozenset[str]): Identifier- or component-declared
+            names whose values require multiline controls.
         identity_conflicting_parameter_names (frozenset[str]): Identifier-declared
             names that must be omitted for identity-based authentication.
 
@@ -304,18 +304,19 @@ def _parameters_from_signature(
             continue
 
         param_type = None if param.annotation is inspect.Parameter.empty else param.annotation
-        parameters.append(
-            Parameter(
-                name=name,
-                description=descriptions.get(name, ""),
-                default=_default_for(param),
-                param_type=param_type,
-                variants=_structured_variant_parameters(param_type),
-                sensitive=name in sensitive_parameter_names,
-                multiline=name in multiline_parameter_names,
-                identity_conflicting=name in identity_conflicting_parameter_names,
-            )
+        parameter = Parameter(
+            name=name,
+            description=descriptions.get(name, ""),
+            default=_default_for(param),
+            param_type=param_type,
+            variants=_structured_variant_parameters(param_type),
+            sensitive=name in sensitive_parameter_names,
+            multiline=name in multiline_parameter_names,
+            identity_conflicting=name in identity_conflicting_parameter_names,
         )
+        if parameter.is_seed_prompt:
+            parameter = parameter.model_copy(update={"multiline": True})
+        parameters.append(parameter)
     return parameters
 
 
@@ -334,6 +335,10 @@ def derive_parameters(
     explicitly declares that its ``**kwargs`` are forwarded, the next constructor
     in MRO order is merged. Child declarations take precedence over same-named
     base declarations.
+
+    A component can declare ``MULTILINE_PARAMETER_NAMES`` as a ``frozenset[str]``
+    of constructor parameters whose controls must preserve line breaks. These
+    names supplement the identifier's shared multiline names for that component only.
 
     A non-required reference parameter declared by ``seam_base_type`` is a
     construction seam, not a build input of every subclass: the base accepts it so
@@ -366,6 +371,7 @@ def derive_parameters(
     multiline_parameter_names = (
         identifier_type.get_multiline_parameter_names() if identifier_type is not None else frozenset[str]()
     )
+    multiline_parameter_names |= getattr(cls, "MULTILINE_PARAMETER_NAMES", frozenset[str]())
     identity_conflicting_parameter_names = (
         identifier_type.get_identity_conflicting_parameter_names() if identifier_type is not None else frozenset[str]()
     )
@@ -697,7 +703,8 @@ def resolve_constructor_args(
         elif param.variants is not None:
             resolved[name] = _resolve_structured_input(parameter=param, value=value)
         elif (
-            param.choices
+            param.is_seed_prompt
+            or param.choices
             or (isinstance(value, str) and param.is_string_coercible)
             or (isinstance(value_type, type) and issubclass(value_type, Enum))
         ):

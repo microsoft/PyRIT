@@ -732,3 +732,18 @@ def test_identifier_keeps_default_hash() -> None:
 def test_init_rejects_invalid_font_color(font_color: Any) -> None:
     with pytest.raises(ValueError, match="Invalid font_color"):
         PDFConverter(font_color=font_color)
+
+
+def test_constructor_sets_no_underscore_existing_pdf_attribute(mock_pdf_path):
+    """Only the documented _existing_pdf_path and _existing_pdf_bytes exist.
+
+    The no path branch used to create a stray _existing_pdf attribute that the
+    with path never set, so any code touching it raised AttributeError exactly
+    when a PDF had been supplied.
+    """
+    without_pdf = PDFConverter()
+    assert not hasattr(without_pdf, "_existing_pdf")
+
+    with_pdf = PDFConverter(existing_pdf=mock_pdf_path)
+    assert not hasattr(with_pdf, "_existing_pdf")
+    assert hasattr(with_pdf, "_existing_pdf_bytes")

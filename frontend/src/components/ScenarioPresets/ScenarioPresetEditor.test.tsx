@@ -158,6 +158,27 @@ describe('ScenarioPresetEditor create mode', () => {
     }))
   })
 
+  it('creates a preset hidden from the Scanner when the operator turns that off', async () => {
+    const user = userEvent.setup()
+    renderCreate()
+
+    await user.type(await screen.findByTestId('preset-name-input'), 'nightly_probe')
+    await user.click(screen.getByTestId('preset-scenario-select'))
+    await user.click(await screen.findByRole('option', { name: 'foundry.red_team_agent' }))
+    const visibility = screen.getByRole('switch', { name: /add to scanner/i })
+    expect(visibility).toBeChecked()
+    await user.click(visibility)
+
+    await waitFor(() => expect(screen.getByTestId('save-preset-btn')).toBeEnabled())
+    await user.click(screen.getByTestId('save-preset-btn'))
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledWith({
+      name: 'nightly_probe',
+      scenario_name: 'foundry.red_team_agent',
+      show_in_scanner: false,
+    }))
+  })
+
   it('rejects a name the server pattern would reject, without calling the API', async () => {
     const user = userEvent.setup()
     renderCreate()
@@ -417,6 +438,43 @@ describe('ScenarioPresetEditor edit mode', () => {
       expect.objectContaining({ description: 'Weekly smoke test.' }),
       'v1',
     ))
+  })
+
+  it('keeps a hidden preset hidden through an unrelated edit', async () => {
+    const user = userEvent.setup()
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, show_in_scanner: false },
+      version: 'v1',
+      issues: [],
+    })
+    renderEdit()
+
+    const description = await screen.findByTestId('preset-description-input')
+    expect(screen.getByRole('switch', { name: /add to scanner/i })).not.toBeChecked()
+    await user.type(description, ' Suite only.')
+    await user.click(screen.getByTestId('save-preset-btn'))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
+      'nightly_probe',
+      expect.objectContaining({ show_in_scanner: false }),
+      'v1',
+    ))
+  })
+
+  it('lists a hidden preset in the Scanner again when the operator turns that on', async () => {
+    const user = userEvent.setup()
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, show_in_scanner: false },
+      version: 'v1',
+      issues: [],
+    })
+    renderEdit()
+
+    await user.click(await screen.findByRole('switch', { name: /add to scanner/i }))
+    await user.click(screen.getByTestId('save-preset-btn'))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls.at(-1)?.[1]).not.toHaveProperty('show_in_scanner')
   })
 
   it('saves the techniques and baseline choice the operator changed', async () => {

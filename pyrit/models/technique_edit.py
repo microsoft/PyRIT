@@ -7,6 +7,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, SerializerFunctionWrapHandler, model_serializer
 
+from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
 
 _Name = Annotated[str, Field(min_length=1, max_length=MAX_IDENTIFIER_LENGTH)]
@@ -47,8 +48,8 @@ class _TechniqueFields(_ChangesModel):
 
     description: str | None = None
     params: dict[_Name, JsonValue] = Field(default_factory=dict, max_length=MAX_ITEMS)
-    request_converters: list[_Name] | None = Field(default=None, max_length=MAX_ITEMS)
-    response_converters: list[_Name] | None = Field(default=None, max_length=MAX_ITEMS)
+    request_converters: list[_Name | SourceInstanceSpec] | None = Field(default=None, max_length=MAX_ITEMS)
+    response_converters: list[_Name | SourceInstanceSpec] | None = Field(default=None, max_length=MAX_ITEMS)
     adversarial_chat: _Name | None = None
     adversarial_system_prompt: str | None = None
     adversarial_seed_prompt: str | None = None

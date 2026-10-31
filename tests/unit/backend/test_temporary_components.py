@@ -572,7 +572,10 @@ class TestTemporaryComponents:
             await sender.shutdown_async()
             await source.cleanup_target_async()
 
-    async def test_reconstruction_rejects_wrong_type_unknown_override_and_effective_hash_async(self) -> None:
+    @pytest.mark.parametrize("register", [False, True])
+    async def test_reconstruction_rejects_wrong_type_unknown_override_and_effective_hash_async(
+        self, register: bool
+    ) -> None:
         source = CaesarConverter(caesar_offset=1)
         ConverterRegistry.get_registry_singleton().instances.register(source, name="source")
         spec = SourceInstanceSpec(
@@ -587,7 +590,8 @@ class TestTemporaryComponents:
                     request=CreateConverterRequest(
                         type="CaesarConverter",
                         source=spec,
-                        register=False,
+                        register=register,
+                        name="saved" if register else None,
                     )
                 )
             with pytest.raises(ValueError, match="type does not match"):
@@ -595,7 +599,8 @@ class TestTemporaryComponents:
                     request=CreateConverterRequest(
                         type="Base64Converter",
                         source=spec,
-                        register=False,
+                        register=register,
+                        name="saved" if register else None,
                     )
                 )
             spec.params = {}
@@ -605,7 +610,8 @@ class TestTemporaryComponents:
                     request=CreateConverterRequest(
                         type="CaesarConverter",
                         source=spec,
-                        register=False,
+                        register=register,
+                        name="saved" if register else None,
                     )
                 )
         finally:
