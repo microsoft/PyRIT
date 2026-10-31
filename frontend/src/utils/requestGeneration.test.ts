@@ -1,5 +1,5 @@
 import type { MessagePieceRequest } from '@/types'
-import { temperatureDescription, withRequestTemperature } from './requestGeneration'
+import { generationDisplay, parseGenerationConfig, withRequestGenerationConfig } from './requestGeneration'
 
 describe('request temperature', () => {
   it.each(['0', '0.8', '2'])('attaches numeric %s to only one piece', (input: string) => {
@@ -7,7 +7,7 @@ describe('request temperature', () => {
       { data_type: 'text', original_value: 'hello' },
       { data_type: 'image_path', original_value: 'image.png', prompt_metadata: { video_id: 'keep' } },
     ]
-    const result = withRequestTemperature(pieces, input)
+    const result = withRequestGenerationConfig(pieces, { temperature: Number(input) })
     expect(result[0].prompt_metadata).toEqual({ request_generation_config: { temperature: Number(input) } })
     expect(result[1].prompt_metadata).toEqual({ video_id: 'keep' })
     expect(pieces[0].prompt_metadata).toBeUndefined()
@@ -22,7 +22,7 @@ describe('request temperature', () => {
       },
     }
     const original = JSON.parse(JSON.stringify(piece))
-    const result = withRequestTemperature([piece, piece], input)
+    const result = withRequestGenerationConfig([piece, piece], input ? { temperature: Number(input) } : {})
     expect(result[0].prompt_metadata).toEqual({
       video_id: 'keep', ...(input ? { request_generation_config: { temperature: Number(input) } } : {}),
     })
@@ -30,8 +30,17 @@ describe('request temperature', () => {
     expect(piece).toEqual(original)
   })
 
-  it.each(['NaN', 'Infinity', '-0.1', '2.1', 'not a number'])('rejects %s', (input: string) => {
-    expect(() => withRequestTemperature([], input)).toThrow(/finite number between 0 and 2/)
+  it.each(['', ' ', 'NaN', 'Infinity', '-0.1', '2.1', 'not a number'])('rejects %s', (input: string) => {
+    expect(() => parseGenerationConfig({ temperature: input }, { supports_temperature: true }))
+      .toThrow(/finite number between 0 and 2/)
+  })
+
+  it('omits defaults and preserves explicit zero', () => {
+    expect(parseGenerationConfig({})).toEqual({})
+    expect(parseGenerationConfig({ temperature: '0' }, { supports_temperature: true })).toEqual({ temperature: 0 })
+    expect(withRequestGenerationConfig([{ data_type: 'text', original_value: 'hi' }], { temperature: null })[0].prompt_metadata)
+      .toBeUndefined()
+    expect(() => parseGenerationConfig({ temperature: '0' })).toThrow(/does not support runtime temperature/)
   })
 
   it.each([
@@ -46,17 +55,19 @@ describe('request temperature', () => {
         request_piece_ids: ['request-id'],
       },
     }
-    expect(temperatureDescription(current)).toBe(expected)
+    expect(generationDisplay(current).generationDescription).toBe(expected)
+    expect(generationDisplay(current).generationDetails).toContain(`Requested override: ${requested ?? 'none'}`)
+    expect(generationDisplay(current).generationDetails).toContain(`Sent parameter: ${value ?? 'omitted (provider default unknown)'}`)
   })
 
   it('does not guess the temperature of historical records', () => {
-    expect(temperatureDescription({})).toBe('Temperature: not recorded')
-    expect(temperatureDescription({ request_temperature: 1 })).toBe('Temperature: not recorded')
-    expect(temperatureDescription({ request_generation_config: { temperature: 1 } })).toBe('Temperature: not recorded')
-    expect(temperatureDescription({ _pyrit_generation: null })).toBe('Temperature: not recorded')
-    expect(temperatureDescription({
+    expect(generationDisplay({}).generationDescription).toBe('Temperature: not recorded')
+    expect(generationDisplay({ request_temperature: 1 }).generationDescription).toBe('Temperature: not recorded')
+    expect(generationDisplay({ request_generation_config: { temperature: 1 } }).generationDescription).toBe('Temperature: not recorded')
+    expect(generationDisplay({ _pyrit_generation: null }).generationDescription).toBe('Temperature: not recorded')
+    expect(generationDisplay({
       _pyrit_temperature: { requested_temperature: 0, resolved_temperature: 0, source: 'request' },
-    })).toBe('Temperature: not recorded')
+    }).generationDescription).toBe('Temperature: not recorded')
   })
 
   it.each([
@@ -69,6 +80,6 @@ describe('request temperature', () => {
     { temperature: { requested: 0, resolved: 0, source: 'request' }, request_piece_ids: [1] },
     { temperature: { requested: 0, resolved: 0, source: 'request' }, request_piece_ids: null },
   ])('shows invalid evidence for %j', (value: unknown) => {
-    expect(temperatureDescription({ _pyrit_generation: value })).toBe('Temperature: invalid record')
+    expect(generationDisplay({ _pyrit_generation: value }).generationDescription).toBe('Temperature: invalid record')
   })
 })

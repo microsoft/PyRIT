@@ -9,7 +9,7 @@ import type {
   MessageError,
   MessagePieceRequest,
 } from '../types'
-import { temperatureDescription } from './requestGeneration'
+import { generationDisplay } from './requestGeneration'
 
 /**
  * Read a File or Blob and return its contents as a base64-encoded string (no data URI prefix).
@@ -371,8 +371,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     role: role as Message['role'],
     content: convertedContent,
     timestamp: msg.created_at,
-    temperatureDescription: role === 'user' || role === 'assistant'
-      ? temperatureDescription(msg.message_pieces[0]?.prompt_metadata) : undefined,
+    ...(role === 'user' || role === 'assistant' ? generationDisplay(msg.message_pieces[0]?.prompt_metadata) : {}),
     attachments: attachments.length > 0 ? attachments : undefined,
     displayPieces: displayPieces.length > 0 ? displayPieces : undefined,
     error,

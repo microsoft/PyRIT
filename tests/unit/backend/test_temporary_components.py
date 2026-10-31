@@ -300,31 +300,44 @@ class TestTemporaryComponents:
             await source.cleanup_target_async()
 
     @pytest.mark.parametrize("client_setting", ["default", "none", "custom"])
-    async def test_temperature_support_with_http_client_async(self, client_setting: str) -> None:
+    async def test_runtime_temperature_is_independent_of_reconstruction_async(self, client_setting: str) -> None:
         async with httpx.AsyncClient() as client:
             client_kwargs: dict[str, Any] = {}
             if client_setting != "default":
                 client_kwargs["http_client"] = client if client_setting == "custom" else None
             source = OpenAIChatTarget(
                 endpoint="https://example.test/v1",
-                model_name="test",
+                model_name="gpt-4o",
                 api_key="test-only-key",
                 httpx_client_kwargs=client_kwargs,
             )
             try:
                 descriptor = target_object_to_instance("source", source)
+                assert descriptor.capabilities.supports_temperature
+                schema = type(descriptor).model_json_schema()
+                assert (
+                    not {
+                        "reconstructable",
+                        "reconstruction_error",
+                        "supports_temperature_override",
+                    }
+                    & descriptor.model_dump().keys()
+                )
+                assert (
+                    not {
+                        "reconstructable",
+                        "reconstruction_error",
+                        "supports_temperature_override",
+                    }
+                    & schema["$defs"]["TargetInstance"]["properties"].keys()
+                )
+                registry = TargetRegistry.get_registry_singleton()
                 if client_setting == "custom":
-                    assert not descriptor.reconstructable
-                    assert not descriptor.supports_temperature_override
-                    assert descriptor.reconstruction_error == (
-                        "OpenAIChatTarget cannot be recreated with different settings because it uses a custom "
-                        "HTTP client supplied through httpx_client_kwargs['http_client']."
-                    )
+                    with pytest.raises(ValueError, match="custom HTTP client"):
+                        registry.get_reconstruction_parameters(source)
                     assert not client.is_closed
                 else:
-                    assert descriptor.reconstructable
-                    assert descriptor.supports_temperature_override
-                    assert descriptor.reconstruction_error is None
+                    assert registry.get_reconstruction_parameters(source)["model_name"] == "gpt-4o"
             finally:
                 await source.cleanup_target_async()
 
@@ -457,18 +470,17 @@ class TestTemporaryComponents:
         finally:
             await target.cleanup_target_async()
 
-    async def test_target_settings_capability_rejects_undeclared_inputs_async(self) -> None:
+    async def test_target_reconstruction_rejects_undeclared_inputs_async(self) -> None:
         target = source_target()
-        TargetRegistry.get_registry_singleton().instances.register(target, name="source")
+        registry = TargetRegistry.get_registry_singleton()
+        registry.instances.register(target, name="source")
         try:
             with patch.dict(target._reconstruction_parameters, {"opaque_setting": "preserve"}):
                 descriptor = await TargetService().get_target_async(target_registry_name="source")
                 assert descriptor is not None
-                assert not descriptor.reconstructable
-                assert not descriptor.supports_temperature_override
-                assert descriptor.reconstruction_error == (
-                    "The source uses undeclared constructor inputs: opaque_setting"
-                )
+                assert descriptor.identifier.hash == target.get_identifier().hash
+                with pytest.raises(ValueError, match="undeclared constructor inputs: opaque_setting"):
+                    registry.recreate_instance(source=target, params={})
         finally:
             await target.cleanup_target_async()
 

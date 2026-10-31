@@ -164,6 +164,11 @@ export interface RequestGenerationConfig {
   readonly temperature?: number | null
 }
 
+/** Editable text is validated and converted to numeric request options at submission. */
+export type RequestGenerationDraft = {
+  readonly [Field in keyof RequestGenerationConfig]?: string
+}
+
 export interface ParameterResolution {
   readonly requested: number | null
   readonly resolved: number | null
@@ -202,7 +207,8 @@ export interface Message {
   /** Original media attachments before conversion (when different from converted). */
   originalAttachments?: MessageAttachment[]
   /** Saved provider parameter evidence, not a new request option. */
-  temperatureDescription?: string
+  generationDescription?: string
+  generationDetails?: string
 }
 
 export interface MessageError {
@@ -358,9 +364,6 @@ export interface TargetIdentifier {
 
 export interface TargetInstance {
   target_registry_name: string
-  reconstructable?: boolean
-  reconstruction_error?: string | null
-  supports_temperature_override?: boolean
   binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier

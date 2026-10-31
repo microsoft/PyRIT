@@ -199,66 +199,28 @@ A warning beside the recovered draft tells you to select and apply converters ag
 
 When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
 
-#### Temperature
+#### Generation settings
 
-Select a target, then use **Temperature** to choose the value for the next and
-subsequent sends. You can change it between turns in the same attack. Leave it
-empty to use the configured target settings. Zero is valid; the OpenAI Chat
-adapter accepts 0 through 2. Changing this control does not create a private
-target, change the saved target binding, or rewrite earlier messages.
+Open **Generation settings** in the message composer to override supported
+parameters for outgoing messages. For example, to set **Temperature**, uncheck
+**Use target default for temperature** and enter a value within the limits shown.
+Active overrides stay visible beside the button. Select **Use target default**
+to omit an override and use the configured target/provider settings. Unsupported
+controls are disabled with an explanation.
 
-The control is enabled only when the configured target advertises
-`supports_temperature`. `OpenAIChatTarget` derives this from known capability
-profiles or an explicit deployment configuration, with sampling-mode checks.
-Other adapters do not support runtime overrides yet. Hover over a disabled
-unsupported field or focus it with the keyboard to see the reason. See
-[runtime temperature](../code/targets/0_prompt_targets.md#runtime-temperature-initial-implementation)
-for capability configuration, model defaults, and unsupported modes.
+Settings apply to the whole outbound message, including attachments, and remain
+selected across sends until changed. They reset when you switch attacks or
+targets, or refresh the page. Controls are disabled while sending or editing
+history; repeated sends use the settings captured at submission. Overrides do
+not change target defaults, saved bindings, or earlier messages.
 
-The field is disabled while sending or editing history. The selection resets
-when you change attacks/targets or refresh the page, but not when the first send
-creates the attack. Repeated sends capture the same selection at submission.
-Copying an old message does not copy its temperature into the next-send control.
+Request and response footers show the saved parameter values and their sources.
+Select a footer for read-only details of requested overrides and values sent.
+**Provider default (unknown)** means a parameter was omitted and its provider
+default is unknown; **not recorded** means no generation evidence was saved.
 
-Saved request and response footers show the resolved temperature and whether it
-came from a request override or target default. If no parameter was selected,
-they show **Temperature: provider default (unknown)**. Historical messages without
-evidence show **Temperature: not recorded**.
-
-Older attacks with saved temporary target bindings still reconstruct their target
-from a matching registered source. Their bound temperature remains the default,
-and the next-send control can override it when supported. Missing or changed
-sources still block continuation; the binding and source checks are not bypassed.
-
-##### Trying the runtime-temperature flow
-
-Use a configured `OpenAIChatTarget` that advertises temperature support, with a
-known default such as `0.2` and no conflicting passthrough defaults. In the same
-chat, send a short prompt after each of these changes:
-
-| Control before sending | Expected saved footer |
-| --- | --- |
-| Empty | `Temperature: 0.2 (target default)` |
-| `0` | `Temperature: 0 (request override)` |
-| `0.9` | `Temperature: 0.9 (request override)` |
-| Cleared | `Temperature: 0.2 (target default)` |
-
-Keep the same attack and selected target throughout. Reopen the conversation
-after a refresh: its footers must remain, while the input resets to empty.
-For a target with no configured or passthrough temperature, an empty input should
-produce **provider default (unknown)** rather than a guessed number.
-
-An unsupported target should disable the control with an explanation. An
-out-of-range value such as `2.1` must not reach the target. To inspect transport,
-use browser developer tools: a send with `0` has
-`request_generation_config: {"temperature": 0}` in one
-piece's `prompt_metadata`, and changing the control makes no temperature-only
-target-construction request. Response wording alone is not evidence of which
-temperature was sent.
-
-The message footers read `_pyrit_generation` evidence. Messages without it show
-**not recorded**, including those using the earlier, unreleased `_pyrit_temperature`
-draft format. Existing saved messages are not rewritten.
+See [Runtime generation configuration](../code/targets/0_prompt_targets.md#runtime-generation-configuration)
+for SDK usage and supported target behavior.
 
 #### Repeating a Message
 

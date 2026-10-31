@@ -3,8 +3,6 @@ import type { ChangeEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Button,
-  Field,
-  Input,
   Breadcrumb,
   BreadcrumbDivider,
   BreadcrumbItem,
@@ -38,7 +36,7 @@ import TargetBadge from './TargetBadge'
 import ChatTargetPicker from './ChatTargetPicker'
 import { generateClientId } from '@/utils/clientId'
 import ObjectiveHeader from './ObjectiveHeader'
-import type { RegisteredComponentReference, ScoringFailure, ManualContinuation, ScorerInstance } from '@/types'
+import type { RegisteredComponentReference, ScoringFailure, ManualContinuation, ScorerInstance, RequestGenerationDraft } from '@/types'
 import ConversationEditor from './ConversationEditor'
 import type { ConversationEditorHandle } from './ConversationEditor'
 import {
@@ -54,7 +52,7 @@ import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
 import { useRuntime } from '@/hooks/useRuntime'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
-import { withRequestTemperature } from '@/utils/requestGeneration'
+import { generationConfigError, parseGenerationConfig, withRequestGenerationConfig } from '@/utils/requestGeneration'
 import {
   basenameFromValue,
   applyConvertedValues,
@@ -133,7 +131,7 @@ interface RecoverableSendDraft {
 }
 
 interface PendingSend {
-  readonly temperature: string
+  readonly generationDraft: RequestGenerationDraft
   readonly submissionId: string
   readonly controller: AbortController
   readonly draftRevision: number | undefined
@@ -384,15 +382,14 @@ export default function ChatWindow({
   const navigate = useNavigate()
   const [isFindingDialogOpen, setIsFindingDialogOpen] = useState(false)
   const outcomeButtonRef = useRef<HTMLButtonElement>(null)
-  const [temperature, setTemperature] = useState('')
-  const [temperatureExplanationId, setTemperatureExplanationId] = useState<string | null>(null)
-  const [temperatureAttackId, setTemperatureAttackId] = useState(attackResultId)
-  const [createdTemperatureAttackId, setCreatedTemperatureAttackId] = useState<string | null>(null)
-  if (temperatureAttackId !== attackResultId) {
-    setTemperatureAttackId(attackResultId)
+  const [generationDraft, setGenerationDraft] = useState<RequestGenerationDraft>({})
+  const [generationAttackId, setGenerationAttackId] = useState(attackResultId)
+  const [createdGenerationAttackId, setCreatedGenerationAttackId] = useState<string | null>(null)
+  if (generationAttackId !== attackResultId) {
+    setGenerationAttackId(attackResultId)
     // Creating the first attack is not navigation; retain the next-send setting.
-    if (attackResultId !== createdTemperatureAttackId) setTemperature('')
-    setCreatedTemperatureAttackId(null)
+    if (attackResultId !== createdGenerationAttackId) setGenerationDraft({})
+    setCreatedGenerationAttackId(null)
   }
   const [conversationScoringFailure, setConversationScoringFailure] = useState<ScoringFailure | null>(null)
   const [draftScorer, setDraftScorer] = useState<RegisteredComponentReference | null | undefined>(undefined)
@@ -1093,7 +1090,7 @@ export default function ChatWindow({
     const converterMode = options?.requestConverterMode ?? 'shared'
     const pipelines = count > 1 ? { ...converters.pipelines } : undefined
     const operation: PendingSend = {
-      temperature,
+      generationDraft: { ...generationDraft },
       submissionId: generateClientId(),
       controller: new AbortController(),
       draftRevision: inputBoxRef.current?.getDraftRevision(),
@@ -1165,20 +1162,18 @@ export default function ChatWindow({
     setMessages(prev => [...prev, loadingMessage])
 
     try {
+      const generationConfig = parseGenerationConfig(operation.generationDraft, activeTarget.capabilities)
       // Build message pieces from text + attachments — always use original text
       const pieceIds = buildDraftPieceIds(originalValue, attachments, conversions)
       const originalPieces = await buildMessagePieces(originalValue, attachments, operation.textMetadata)
       if (textConversion && !originalValue.trim()) {
         originalPieces.unshift({ data_type: 'text', original_value: originalValue })
       }
-      const pieces = withRequestTemperature(applyConvertedValues(
+      const pieces = withRequestGenerationConfig(applyConvertedValues(
         originalPieces,
         pieceIds,
         conversions,
-      ), operation.temperature)
-      if (operation.temperature.trim() && !activeTarget.capabilities?.supports_temperature) {
-        throw new Error('This target does not support runtime temperature.')
-      }
+      ), generationConfig)
       const requestConfigurations = count > 1 && converterMode === 'per_branch' ? buildRequestConverterConfigurations(
         buildConverterInputs(originalValue, attachments), pieceIds, pipelines ?? {}, conversions,
       ) : []
@@ -1207,7 +1202,7 @@ export default function ChatWindow({
         const createResponse = await attacksApi.createAttack(createRequest)
         if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
         currentAttackResultId = createResponse.attack_result_id
-        setCreatedTemperatureAttackId(createResponse.attack_result_id)
+        setCreatedGenerationAttackId(createResponse.attack_result_id)
         currentConversationId = createResponse.conversation_id
         currentActiveConversationId = currentConversationId
         // Mark new ID in synchronous ref *before* triggering the state
@@ -1582,7 +1577,7 @@ export default function ChatWindow({
     }
   }
 
-  const handleEditorSaved = (response: AddMessageResponse, savedTarget?: TargetInstance | null): void => {
+  const handleEditorSaved = (response: AddMessageResponse): void => {
     editor.discard()
     setEditorNotice('Conversation saved.')
     setMessages(backendMessagesToFrontend(response.messages.messages))
@@ -1590,7 +1585,7 @@ export default function ChatWindow({
     if (response.attack.attack_result_id === attackResultId) {
       onSelectConversation(response.messages.conversation_id)
     } else {
-      onConversationCreated(response.attack.attack_result_id, response.messages.conversation_id, response.attack.objective, savedTarget ?? editorTarget)
+      onConversationCreated(response.attack.attack_result_id, response.messages.conversation_id, response.attack.objective, editorTarget)
     }
 
     onAttackChange?.(response.attack)
@@ -1630,8 +1625,8 @@ export default function ChatWindow({
     const pendingPrompt = lastMessage?.role === 'user'
       ? draftMessageToComposer(lastMessage, snapshot) : undefined
     const history = pendingPrompt ? editDraft.messages.slice(0, -1) : editDraft.messages
-    return editor.save(destination, (response: AddMessageResponse, target?: TargetInstance | null) => {
-      handleEditorSaved(response, target)
+    return editor.save(destination, (response: AddMessageResponse) => {
+      handleEditorSaved(response)
       restoreEditorPrompt(pendingPrompt, snapshot)
     }, history, reuseUnsentConversation && destination === 'same_attack'
       && Boolean(editDraft.sourceConversationId && editDraft.sourceAttackId === attackResultId))
@@ -1752,7 +1747,6 @@ export default function ChatWindow({
 
   const sameAttackDisabledReason = !attackResultId ? 'No saved attack exists yet.'
     : executionReadOnly ? 'Automated results are read-only. Choose Continue manually.'
-    : editDraft?.temperature.trim() ? 'Choose New attack to change the temperature.'
     : attackOperator && attackOperator !== currentOperator ? 'This attack belongs to another operator.'
     : attackTarget && (!editorTarget || !targetInfoMatchesTarget(attackTarget, editorTarget))
       ? 'The selected target differs from this attack. Choose New attack.'
@@ -1765,10 +1759,6 @@ export default function ChatWindow({
     ? newActivityBlockedReason ?? 'Default labels are not ready. Retry after default labels finish loading.'
     : undefined
   const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
-  const temperatureTarget = editDraft !== null ? editorTarget : activeTarget
-  const temperatureExplanation = temperatureTarget && !temperatureTarget.capabilities?.supports_temperature
-    ? 'This target does not support runtime temperature.' : ''
-  const temperatureExplanationContext = attackResultId ?? temperatureTarget?.identifier.hash
   const unboundHistoryError = targetResolutionStatus === 'unbound' && activeTarget
     ? historyReplayDisabledReason(activeTarget, messages) : undefined
   const repeatDisabledReason = converters.repeatDisabledReason
@@ -1883,7 +1873,9 @@ export default function ChatWindow({
       ? ['This conversation contains a target error. Use Copy or Branch on the failed prompt to branch into a new conversation or attack.']
       : []),
   ]
+  const generationError = generationConfigError(generationDraft, activeTarget?.capabilities)
   const sendDisabledReasons = [
+    ...(generationError ? [generationError] : []),
     ...(!activeTarget ? ['Select a target to send a message.'] : []),
     ...(!attackResultId && !defaultsReady
       ? [newActivityBlockedReason ?? 'Default labels are not ready. Wait for them to load.'] : []),
@@ -1920,7 +1912,7 @@ export default function ChatWindow({
               error={targetsError}
               disabled={isSending || isSavingEditor}
               onSelect={(target) => {
-                setTemperature('')
+                setGenerationDraft({})
                 if (editDraft !== null) editor.changeTarget(target)
                 else onSelectTarget(target)
               }}
@@ -1937,28 +1929,6 @@ export default function ChatWindow({
             </Text>
           )}
         </div>
-        {temperatureTarget && (
-          <Field label="Temperature:" orientation="horizontal" size="small" className={styles.temperatureField}
-            hint={editDraft !== null ? 'Finish editing history to set the next request temperature.'
-              : temperatureTarget.capabilities?.supports_temperature
-                ? 'Applies to future sends. Empty uses the target default.'
-                : undefined}>
-            <Tooltip content={temperatureExplanation} relationship="description"
-              visible={Boolean(temperatureExplanation) && temperatureExplanationId === temperatureExplanationContext}
-              onVisibleChange={(_, data) => {
-                setTemperatureExplanationId(data.visible ? temperatureExplanationContext ?? null : null)
-              }}>
-              <span tabIndex={!temperatureTarget.capabilities?.supports_temperature ? 0 : undefined}>
-                <Input type="number" min={0} max={2} step={0.1} size="small" className={styles.temperatureInput}
-                  aria-label="Temperature"
-                  value={temperature}
-                  placeholder={String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? 'Default')}
-                  disabled={isSending || isSavingEditor || editDraft !== null || !temperatureTarget.capabilities?.supports_temperature}
-                  onChange={(_, data) => setTemperature(data.value)} />
-              </span>
-            </Tooltip>
-          </Field>
-        )}
         <div className={styles.editActions}>
           <Button appearance="subtle" className={styles.ribbonAction} icon={<EditRegular />}
             disabled={executionReadOnly || editDraft !== null || isSending || isLoadingEdit || isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
@@ -2243,6 +2213,8 @@ export default function ChatWindow({
         )}
         <ChatInputArea
           ref={inputBoxRef}
+          generationDraft={generationDraft}
+          onGenerationDraftChange={setGenerationDraft}
           undoLastSend={showUndoLastSend ? {
             disabledReason: undoDisabledReason,
             isUndoing: isUndoingSend,
