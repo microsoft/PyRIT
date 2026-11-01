@@ -374,7 +374,10 @@ describe("ChatWindow Integration", () => {
   it("keeps an automated result read-only until Continue manually creates a separate attack", async () => {
     const user = userEvent.setup();
     const original = makeTextResponse("Original automated response").messages;
-    mockedAttacksApi.getMessages.mockResolvedValue(original);
+    mockedAttacksApi.getMessages.mockResolvedValue(original).mockResolvedValueOnce({
+      ...original, conversation_id: "original",
+      pagination: { limit: 100, has_more: false, next_cursor: null }, partial_message_sequences: [],
+    });
     mockedAttacksApi.saveConversation.mockResolvedValue({
       attack: {
         attack_result_id: "manual-copy", conversation_id: "manual-conversation", attack_type: "ManualAttack",
@@ -521,6 +524,140 @@ describe("ChatWindow Integration", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  describe("bounded saved evidence", () => {
+    const props = {
+      ...defaultProps, attackResultId: "saved-attack", conversationId: "saved-main",
+      activeConversationId: "saved-main", executionReadOnly: true, objective: "Saved objective",
+      lastResponseMessagePieceId: "p-img2",
+    };
+    const request: BackendMessage = {
+      turn_number: 0, role: "user", created_at: "2026-01-01T00:00:00Z",
+      message_pieces: [{
+        id: "saved-request", original_value: "Saved request", converted_value: "Saved request",
+        original_value_data_type: "text", converted_value_data_type: "text", scores: [], response_error: "none",
+      }],
+    };
+    const reply = makeMultiModalResponse().messages.messages[0];
+    function page(
+      messages: BackendMessage[], cursor: string | null, conversationId = props.activeConversationId,
+      partialSequences: number[] = [],
+    ): ConversationMessagesResponse {
+      return {
+        conversation_id: conversationId, messages, target_response_status: null,
+        pagination: { limit: 100, has_more: cursor !== null, next_cursor: cursor },
+        partial_message_sequences: partialSequences,
+      };
+    }
+    const first = page([request, { ...reply, message_pieces: [reply.message_pieces[0]] }], "message-cursor", props.activeConversationId, [1]);
+    const final = page([reply], null, props.activeConversationId, [1]);
+    const unavailable = { isAxiosError: true, response: { status: 503, data: { detail: "Saved read temporarily unavailable" } } };
+
+    it("should wait for saved metadata, bound every read, and complete a split multimodal turn without enabling partial-history actions", async () => {
+      const user = userEvent.setup();
+      let finishPage: (response: ConversationMessagesResponse) => void = () => { throw new Error("No pending saved page"); };
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockImplementationOnce(
+        () => new Promise<ConversationMessagesResponse>((resolve) => { finishPage = resolve; }),
+      );
+      const rendered = render(<TestWrapper><ChatWindow {...props} attackResultId={null} isLoadingAttack /></TestWrapper>);
+      expect(mockedAttacksApi.getMessages).not.toHaveBeenCalled();
+      rendered.rerender(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      expect(await screen.findByText("Saved request", { exact: true })).toBeInTheDocument();
+      const originalBubble = screen.getByTestId("message-bubble-0");
+      expect(screen.getByText("Incomplete turn")).toBeVisible();
+      expect(screen.getByRole("region", { name: "Saved transcript paging" })).toHaveTextContent("2 message pieces loaded");
+      expect(mockedAttacksApi.getMessages.mock.calls).toEqual([["saved-attack", "saved-main", { limit: 100 }]]);
+      expect(screen.getByRole("button", { name: "Continue manually" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Export conversation" })).toBeDisabled();
+      expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-disabled", "true");
+      await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[0]);
+      for (const name of ["Copy to next message", "Branch conversation", "Branch attack", "Use in scan"]) {
+        const item = screen.getByRole("menuitem", { name, exact: true });
+        expect(item).toHaveAttribute("aria-disabled", "true");
+        expect(item).toHaveAccessibleDescription(/Load the complete saved transcript/);
+        await user.click(item);
+      }
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1);
+      expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
+      expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
+      await user.keyboard("{Escape}");
+      screen.getByRole("button", { name: "Load more message pieces" }).focus();
+      await user.keyboard("{Enter}");
+      const loadingButton = screen.getByRole("button", { name: "Loading more message pieces..." });
+      expect(loadingButton).toBeDisabled();
+      await user.click(loadingButton);
+      expect(mockedAttacksApi.getMessages.mock.calls[1]).toEqual(["saved-attack", "saved-main", { limit: 100, cursor: "message-cursor" }]);
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("Saved request", { exact: true })).toBeVisible();
+      await act(async () => { finishPage(final); });
+      expect(screen.getByRole("region", { name: "Saved transcript paging" })).toHaveTextContent("End of saved transcript. 3 message pieces loaded.");
+      expect(screen.queryByText("Incomplete turn")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Load more message pieces" })).not.toBeInTheDocument();
+      expect(screen.getAllByTestId(/message-bubble-/)).toHaveLength(2);
+      expect(screen.getByTestId("message-bubble-0")).toBe(originalBubble);
+      expect(screen.getByText("Here is the result:", { exact: true })).toBeVisible();
+      expect(screen.getByAltText("generated.jpeg")).toHaveAttribute("src", "/api/media?path=generated.jpeg");
+      expect(screen.getByRole("button", { name: "Continue manually" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Export conversation" })).toBeEnabled();
+      expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-disabled", "false");
+      expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("should keep loaded evidence and retry only the failed continuation cursor", async () => {
+      const user = userEvent.setup();
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockRejectedValueOnce(unavailable).mockResolvedValueOnce(final);
+      render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      await user.click(await screen.findByRole("button", { name: "Load more message pieces" }));
+      expect(await screen.findByText(/Could not load more messages: Saved read temporarily unavailable/)).toBeVisible();
+      expect(screen.getByText("Saved request", { exact: true })).toBeVisible();
+      expect(screen.getByRole("button", { name: "Continue manually" })).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: "Retry more message pieces" }));
+      expect(await screen.findByText("End of saved transcript. 3 message pieces loaded.")).toBeVisible();
+      expect(mockedAttacksApi.getMessages.mock.calls).toEqual([
+        ["saved-attack", "saved-main", { limit: 100 }],
+        ["saved-attack", "saved-main", { limit: 100, cursor: "message-cursor" }],
+        ["saved-attack", "saved-main", { limit: 100, cursor: "message-cursor" }],
+      ]);
+    });
+
+    it("should restart a rejected cursor with a bounded initial read and retain evidence if that restart fails", async () => {
+      const user = userEvent.setup();
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockRejectedValueOnce({
+        isAxiosError: true, response: { status: 400, data: { detail: "Saved message cursor expired" } },
+      }).mockRejectedValueOnce(unavailable).mockResolvedValueOnce(page([request, reply], null));
+      render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      await user.click(await screen.findByRole("button", { name: "Load more message pieces" }));
+      await user.click(await screen.findByRole("button", { name: "Restart transcript loading" }));
+      expect(await screen.findByText(/Could not load conversation: Saved read temporarily unavailable/)).toBeVisible();
+      expect(screen.getByText("Saved request", { exact: true })).toBeVisible();
+      expect(screen.getByRole("button", { name: "Continue manually" })).toBeDisabled();
+      expect(screen.queryByRole("button", { name: "Retry more message pieces" })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Restart transcript loading" }));
+      expect(await screen.findByText("End of saved transcript. 3 message pieces loaded.")).toBeVisible();
+      expect(mockedAttacksApi.getMessages.mock.calls.slice(2)).toEqual([
+        ["saved-attack", "saved-main", { limit: 100 }], ["saved-attack", "saved-main", { limit: 100 }],
+      ]);
+    });
+
+    it("should discard late continuation evidence after a rapid conversation switch and never reuse its cursor", async () => {
+      const user = userEvent.setup();
+      let finishOld: (response: ConversationMessagesResponse) => void = () => { throw new Error("No old saved read"); };
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockImplementationOnce(
+        () => new Promise<ConversationMessagesResponse>((resolve) => { finishOld = resolve; }),
+      ).mockResolvedValueOnce(page([{
+        ...request, message_pieces: [{ ...request.message_pieces[0], id: "other-request", original_value: "Other saved request", converted_value: "Other saved request" }],
+      }], null, "other-saved"));
+      const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      await user.click(await screen.findByRole("button", { name: "Load more message pieces" }));
+      rendered.rerender(<TestWrapper><ChatWindow {...props} activeConversationId="other-saved" /></TestWrapper>);
+      expect(await screen.findByText("Other saved request", { exact: true })).toBeVisible();
+      await act(async () => { finishOld(final); });
+      expect(screen.queryByText("Saved request", { exact: true })).not.toBeInTheDocument();
+      expect(screen.queryByAltText("generated.jpeg")).not.toBeInTheDocument();
+      expect(screen.getByRole("region", { name: "Saved transcript paging" })).toHaveTextContent("End of saved transcript. 1 message piece loaded.");
+      expect(mockedAttacksApi.getMessages.mock.calls[2]).toEqual(["saved-attack", "other-saved", { limit: 100 }]);
+    });
   });
 
   describe("asynchronous sending", () => {

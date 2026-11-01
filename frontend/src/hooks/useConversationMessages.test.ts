@@ -477,11 +477,15 @@ describe('useConversationMessages', () => {
       expect(result.current.isLoadingMoreMessages).toBe(false)
     })
 
-    it.each(['missing', 'missing-cursor', 'wrong-conversation'])('should fail closed for %s initial paging metadata', async (shape: string) => {
+    it.each(['missing', 'missing-cursor', 'wrong-conversation', 'missing-has-more', 'missing-limit', 'invalid-limit'])(
+      'should fail closed for %s initial paging metadata', async (shape: string) => {
       const response = first()
       if (shape === 'missing') response.pagination = null
       if (shape === 'missing-cursor' && response.pagination) response.pagination.next_cursor = null
       if (shape === 'wrong-conversation') response.conversation_id = 'other'
+      if (shape === 'missing-has-more' && response.pagination) Reflect.deleteProperty(response.pagination, 'has_more')
+      if (shape === 'missing-limit' && response.pagination) Reflect.deleteProperty(response.pagination, 'limit')
+      if (shape === 'invalid-limit' && response.pagination) response.pagination.limit = 501
       getMessages.mockResolvedValueOnce(response)
       const { result } = renderSaved()
       await waitFor(() => expect(result.current.conversationLoadIssue?.detail).toContain('invalid transcript pagination'))
@@ -490,6 +494,34 @@ describe('useConversationMessages', () => {
       expect(result.current.awaitingConversationLoad).toBe(false)
       expect(getMessages).toHaveBeenCalledTimes(1)
       expect(getMessages).toHaveBeenCalledWith('attack', 'main', { limit: 100 })
+    })
+
+    it('should not mistake missing continuation metadata for the end of the transcript', async () => {
+      const incompleteEnd = page('main', [{ sequence: 0, ids: ['missing-end'] }], null)
+      if (incompleteEnd.pagination) Reflect.deleteProperty(incompleteEnd.pagination, 'has_more')
+      getMessages.mockResolvedValueOnce(first()).mockResolvedValueOnce(incompleteEnd)
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(2))
+      await continueLoading(result)
+      expect(result.current.isTranscriptIncomplete).toBe(true)
+      expect(result.current.loadedPieceCount).toBe(2)
+      expect(result.current.messageContinuationIssue?.restartRequired).toBe(true)
+    })
+
+    it.each(['initial', 'continuation'])('should keep a selected %s read valid when only the main-conversation metadata changes', async (phase: string) => {
+      const pending = deferred<ConversationMessagesResponse>()
+      if (phase === 'continuation') getMessages.mockResolvedValueOnce(first())
+      getMessages.mockReturnValueOnce(pending.promise)
+      const { result, rerender } = renderSaved()
+      if (phase === 'continuation') {
+        await waitFor(() => expect(result.current.loadedPieceCount).toBe(2))
+        act(() => { void result.current.loadMoreMessages() })
+      }
+      rerender({ messagePageSize: pageSize, conversationId: 'new-main', activeConversationId: 'main' })
+      await act(async () => { pending.resolve(page('main', [{ sequence: -1, ids: ['c'] }], null, [-1])) })
+      expect(contents(result.current.messages)).toEqual([phase === 'initial' ? 'c' : 'a\nb\nc'])
+      expect(result.current.isTranscriptIncomplete).toBe(false)
+      expect(getMessages).toHaveBeenCalledTimes(phase === 'initial' ? 1 : 2)
     })
 
     it('should keep a repeated cursor from silently ending or extending a transcript', async () => {

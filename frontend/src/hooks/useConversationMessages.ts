@@ -31,7 +31,8 @@ function mergeTranscriptPage(
   cursor?: string, consumedCursors?: ReadonlySet<string>,
 ): ConversationMessagesResponse {
   const pagination = incoming.pagination
-  if (incoming.conversation_id !== conversationId || !pagination
+  if (incoming.conversation_id !== conversationId || !pagination || typeof pagination.has_more !== 'boolean'
+    || !Number.isInteger(pagination.limit) || pagination.limit < 1 || pagination.limit > 500
     || (pagination.has_more && (!pagination.next_cursor || pagination.next_cursor === cursor
       || consumedCursors?.has(pagination.next_cursor)))) {
     throw new Error('The server returned invalid transcript pagination. Restart transcript loading.')
@@ -180,13 +181,13 @@ export function useConversationMessages({
   useLayoutEffect(() => {
     viewRevisionRef.current += 1
     viewedAttackRef.current = attackResultId
-    viewedConvRef.current = activeConversationId ?? conversationId
+    viewedConvRef.current = viewedConversationId
     return () => {
       viewRevisionRef.current += 1
       viewedAttackRef.current = null
       viewedConvRef.current = null
     }
-  }, [activeConversationId, conversationId, attackResultId, messagePageSize])
+  }, [viewedConversationId, attackResultId, messagePageSize])
 
   const resetConversationMessages = useCallback((): void => {
     setMessages([])

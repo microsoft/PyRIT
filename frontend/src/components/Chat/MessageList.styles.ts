@@ -73,6 +73,7 @@ export const useMessageListStyles = makeStyles({
   footerDetails: {
     display: 'flex',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: tokens.spacingHorizontalXS,
   },
   pieceRow: {
