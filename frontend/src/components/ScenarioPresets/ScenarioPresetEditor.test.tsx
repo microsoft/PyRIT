@@ -1,11 +1,21 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import type { ReactNode } from 'react'
+
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 
+import * as scenarioConfigForm from '@/components/Scenarios/scenarioConfigForm'
 import { scenarioPresetsApi, scenariosApi } from '@/services/api'
+import { deferred } from '@/test-utils/deferred'
 import { makeScenario } from '@/test-utils/scenarioFixtures'
-import type { ScenarioDatasetSettings, ScenarioPreset, ScenarioRunSizeEstimateResponse } from '@/types'
+import type {
+  RegisteredScenario,
+  ScenarioDatasetSettings,
+  ScenarioPreset,
+  ScenarioPresetResponse,
+  ScenarioRunSizeEstimateResponse,
+} from '@/types'
 
 import ScenarioPresetEditor from './ScenarioPresetEditor'
 
@@ -42,9 +52,10 @@ const mockNavigate = jest.fn()
 
 jest.mock('react-router', () => ({
   ...jest.requireActual('react-router'),
-  useNavigate: () => mockNavigate,
+  useNavigate: jest.fn(() => mockNavigate),
 }))
 
+const mockUseNavigate = jest.mocked(useNavigate)
 const SCENARIO = makeScenario()
 
 const STORED_PRESET: ScenarioPreset = {
@@ -62,6 +73,21 @@ function apiError(status: number, detail: string): unknown {
   }
 }
 
+function TestWrapper({ children }: { children: ReactNode }) {
+  return <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
+}
+
+async function selectScenario(user: ReturnType<typeof userEvent.setup>, scenarioName: string): Promise<void> {
+  await user.click(screen.getByRole('combobox', { name: 'Scenario' }))
+  await user.click(await screen.findByRole('option', { name: scenarioName, exact: true }))
+}
+
+function submitPresetForm(): void {
+  const form = screen.getByRole('button', { name: /^(Save preset|Saving\.\.\.)$/ }).closest('form')
+  if (!form) throw new Error('Save preset must submit the preset form.')
+  fireEvent.submit(form)
+}
+
 /** Drives the shared dataset table's limit popover the same way its own suite does. */
 async function editLimit(user: ReturnType<typeof userEvent.setup>, label: string, value: string): Promise<void> {
   await user.click(await screen.findByRole('button', { name: `Edit ${label}` }))
@@ -74,33 +100,36 @@ async function editLimit(user: ReturnType<typeof userEvent.setup>, label: string
 
 function renderCreate() {
   return render(
-    <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={['/registry/scenario-presets/new']}>
-        <Routes>
-          <Route path="/registry/scenario-presets/new" element={<ScenarioPresetEditor mode="create" />} />
-        </Routes>
-      </MemoryRouter>
-    </FluentProvider>,
+    <MemoryRouter initialEntries={['/registry/scenario-presets/new']}>
+      <Routes>
+        <Route path="/registry/scenario-presets/new" element={<ScenarioPresetEditor mode="create" />} />
+        <Route path="/registry/scenario-presets" element={<h1>Preset library</h1>} />
+      </Routes>
+    </MemoryRouter>,
+    { wrapper: TestWrapper },
   )
 }
 
 function renderEdit(name = 'nightly_probe') {
   return render(
-    <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={[`/registry/scenario-presets/${name}/edit`]}>
-        <Routes>
-          <Route
-            path="/registry/scenario-presets/:presetName/edit"
-            element={<ScenarioPresetEditor mode="edit" />}
-          />
-        </Routes>
-      </MemoryRouter>
-    </FluentProvider>,
+    <MemoryRouter initialEntries={[`/registry/scenario-presets/${name}/edit`]}>
+      <Routes>
+        <Route
+          path="/registry/scenario-presets/:presetName/edit"
+          element={<ScenarioPresetEditor mode="edit" />}
+        />
+      </Routes>
+    </MemoryRouter>,
+    { wrapper: TestWrapper },
   )
 }
 
 beforeEach(() => {
   jest.clearAllMocks()
+  for (const mock of [mockGet, mockCreate, mockUpdate, mockListCatalog, mockGetScenario, mockEstimateRun]) {
+    mock.mockReset()
+  }
+  mockUseNavigate.mockReturnValue(mockNavigate)
   mockListCatalog.mockResolvedValue({
     items: [SCENARIO],
     pagination: { has_more: false, next_cursor: null },
@@ -260,6 +289,266 @@ describe('ScenarioPresetEditor create mode', () => {
   })
 })
 
+describe('ScenarioPresetEditor scenario selection ownership', () => {
+  const REPLACEMENT_SCENARIO = makeScenario({
+    scenario_name: 'airt.multilingual',
+    all_techniques: ['multilingual'],
+    default_techniques: ['multilingual'],
+    supported_parameters: [
+      { name: 'languages', type_name: 'list[str]', is_list: true, required: false, default: ['Spanish'] },
+    ],
+  })
+  const LATEST_SCENARIO = makeScenario({
+    scenario_name: 'garak.prompt_inject',
+    all_techniques: ['prompt_inject'],
+    default_techniques: ['prompt_inject'],
+  })
+
+  beforeEach(() => {
+    mockListCatalog.mockResolvedValue({
+      items: [SCENARIO, REPLACEMENT_SCENARIO, LATEST_SCENARIO],
+      pagination: { has_more: false, next_cursor: null },
+    })
+  })
+
+  async function renderSelectedCreate(
+    user: ReturnType<typeof userEvent.setup>,
+  ): Promise<ReturnType<typeof renderCreate>> {
+    const view = renderCreate()
+    await user.type(await screen.findByRole('textbox', { name: 'Name' }), 'nightly_probe')
+    await selectScenario(user, SCENARIO.scenario_name)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save preset' })).toBeEnabled())
+    return view
+  }
+
+  it('disables Save during a pending replacement and saves only the replacement configuration', async () => {
+    const user = userEvent.setup()
+    await renderSelectedCreate(user)
+    await user.click(screen.getByTestId('technique-crescendo'))
+    const replacement = deferred<RegisteredScenario>()
+    mockGetScenario.mockReturnValueOnce(replacement.promise)
+
+    await selectScenario(user, REPLACEMENT_SCENARIO.scenario_name)
+
+    expect(screen.getByText('Loading scenario...')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Scenario' })).toHaveValue(REPLACEMENT_SCENARIO.scenario_name)
+    const save = screen.getByRole('button', { name: 'Save preset' })
+    expect(save).toBeDisabled()
+    await user.click(save)
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect(mockNavigate).not.toHaveBeenCalled()
+
+    await act(async () => { replacement.resolve(REPLACEMENT_SCENARIO) })
+    expect(await screen.findByRole('textbox', { name: 'languages' })).toHaveValue('Spanish')
+    expect(save).toBeEnabled()
+    await user.click(save)
+    expect(mockCreate).toHaveBeenCalledWith({
+      name: 'nightly_probe',
+      scenario_name: REPLACEMENT_SCENARIO.scenario_name,
+    })
+    expect(mockNavigate).toHaveBeenCalledWith('/registry/scenario-presets')
+  })
+
+  it('guards a programmatic submit during pending replacement metadata', async () => {
+    const user = userEvent.setup()
+    await renderSelectedCreate(user)
+    const replacement = deferred<RegisteredScenario>()
+    mockGetScenario.mockReturnValueOnce(replacement.promise)
+    await selectScenario(user, REPLACEMENT_SCENARIO.scenario_name)
+
+    submitPresetForm()
+
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect(mockUpdate).not.toHaveBeenCalled()
+    expect(mockNavigate).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent('Wait for the selected scenario to finish loading.')
+    await act(async () => { replacement.resolve(REPLACEMENT_SCENARIO) })
+  })
+
+  it('guards a programmatic submit before the selection event finishes rendering', async () => {
+    const user = userEvent.setup()
+    await renderSelectedCreate(user)
+    const replacement = deferred<RegisteredScenario>()
+    mockGetScenario.mockReturnValueOnce(replacement.promise)
+    await user.click(screen.getByRole('combobox', { name: 'Scenario' }))
+    const option = await screen.findByRole('option', { name: REPLACEMENT_SCENARIO.scenario_name, exact: true })
+    let selectionStarted = false
+    const submitDuringSelection = (): void => {
+      selectionStarted = mockGetScenario.mock.calls.length === 2
+      submitPresetForm()
+    }
+    document.addEventListener('click', submitDuringSelection, { once: true })
+    try {
+      await user.click(option)
+
+      expect(selectionStarted).toBe(true)
+      expect(mockCreate).not.toHaveBeenCalled()
+      expect(mockNavigate).not.toHaveBeenCalled()
+    } finally {
+      document.removeEventListener('click', submitDuringSelection)
+      await act(async () => { replacement.resolve(REPLACEMENT_SCENARIO) })
+    }
+  })
+
+  it('rejects resolved metadata that does not match the selected identity', async () => {
+    const user = userEvent.setup()
+    await renderSelectedCreate(user)
+    mockGetScenario.mockResolvedValueOnce(SCENARIO)
+
+    await selectScenario(user, REPLACEMENT_SCENARIO.scenario_name)
+
+    expect(await screen.findByText(/metadata does not match the selected scenario/i)).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Scenario' })).toHaveValue(REPLACEMENT_SCENARIO.scenario_name)
+    expect(screen.getByRole('button', { name: 'Save preset' })).toBeDisabled()
+    submitPresetForm()
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect(mockNavigate).not.toHaveBeenCalled()
+  })
+
+  it('keeps the latest selection and its edits when responses arrive in reverse order', async () => {
+    const user = userEvent.setup()
+    await renderSelectedCreate(user)
+    const older = deferred<RegisteredScenario>()
+    const latest = deferred<RegisteredScenario>()
+    mockGetScenario.mockReturnValueOnce(older.promise).mockReturnValueOnce(latest.promise)
+
+    await selectScenario(user, REPLACEMENT_SCENARIO.scenario_name)
+    expect(screen.getByRole('combobox', { name: 'Scenario' })).toBeEnabled()
+    await selectScenario(user, LATEST_SCENARIO.scenario_name)
+    await act(async () => { latest.resolve(LATEST_SCENARIO) })
+    await user.click(screen.getByRole('checkbox', { name: /^baseline$/i }))
+    await act(async () => { older.resolve(REPLACEMENT_SCENARIO) })
+
+    expect(screen.getByRole('combobox', { name: 'Scenario' })).toHaveValue(LATEST_SCENARIO.scenario_name)
+    expect(screen.getByRole('checkbox', { name: /^baseline$/i })).not.toBeChecked()
+    expect(screen.queryByRole('textbox', { name: 'languages' })).not.toBeInTheDocument()
+    const save = screen.getByRole('button', { name: 'Save preset' })
+    expect(save).toBeEnabled()
+    await user.click(save)
+    expect(mockCreate).toHaveBeenCalledWith({
+      name: 'nightly_probe',
+      scenario_name: LATEST_SCENARIO.scenario_name,
+      include_baseline: false,
+    })
+  })
+
+  it.each(['resolve', 'reject'] as const)(
+    'ignores an older request that %ss while the latest selection is pending',
+    async (outcome: 'resolve' | 'reject') => {
+      const user = userEvent.setup()
+      await renderSelectedCreate(user)
+      const older = deferred<RegisteredScenario>()
+      const latest = deferred<RegisteredScenario>()
+      mockGetScenario.mockReturnValueOnce(older.promise).mockReturnValueOnce(latest.promise)
+
+      await selectScenario(user, REPLACEMENT_SCENARIO.scenario_name)
+      expect(screen.getByRole('combobox', { name: 'Scenario' })).toBeEnabled()
+      await selectScenario(user, LATEST_SCENARIO.scenario_name)
+      await act(async () => {
+        if (outcome === 'resolve') older.resolve(REPLACEMENT_SCENARIO)
+        else older.reject(apiError(503, 'Older scenario request failed.'))
+      })
+
+      expect(screen.getByText('Loading scenario...')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: 'Scenario' })).toHaveValue(LATEST_SCENARIO.scenario_name)
+      expect(screen.getByRole('button', { name: 'Save preset' })).toBeDisabled()
+      expect(screen.queryByText('Older scenario request failed.')).not.toBeInTheDocument()
+      submitPresetForm()
+      expect(mockCreate).not.toHaveBeenCalled()
+      await act(async () => { latest.resolve(LATEST_SCENARIO) })
+      expect(screen.getByRole('button', { name: 'Save preset' })).toBeEnabled()
+    },
+  )
+
+  it('keeps a failed selection and its error without saving the old configuration, then permits retry', async () => {
+    const user = userEvent.setup()
+    await renderSelectedCreate(user)
+    await user.type(screen.getByRole('textbox', { name: 'Description' }), 'Keep this draft.')
+    mockGetScenario.mockRejectedValueOnce(apiError(503, 'Replacement scenario is unavailable.'))
+
+    await selectScenario(user, REPLACEMENT_SCENARIO.scenario_name)
+
+    expect(await screen.findByText('Replacement scenario is unavailable.')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Scenario' })).toHaveValue(REPLACEMENT_SCENARIO.scenario_name)
+    expect(screen.queryByText('Loading scenario...')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save preset' })).toBeDisabled()
+    submitPresetForm()
+    expect(screen.getByText('Replacement scenario is unavailable.')).toBeInTheDocument()
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect(mockNavigate).not.toHaveBeenCalled()
+
+    mockGetScenario.mockResolvedValueOnce(REPLACEMENT_SCENARIO)
+    await selectScenario(user, REPLACEMENT_SCENARIO.scenario_name)
+    expect(await screen.findByRole('textbox', { name: 'languages' })).toHaveValue('Spanish')
+    expect(screen.queryByText('Replacement scenario is unavailable.')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Save preset' }))
+    expect(mockCreate).toHaveBeenCalledWith({
+      name: 'nightly_probe',
+      scenario_name: REPLACEMENT_SCENARIO.scenario_name,
+      description: 'Keep this draft.',
+    })
+  })
+
+  it('leaves pending replacement metadata behind when Cancel navigates to the library', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    await renderSelectedCreate(user)
+    const replacement = deferred<RegisteredScenario>()
+    mockGetScenario.mockReturnValueOnce(replacement.promise)
+    await selectScenario(user, REPLACEMENT_SCENARIO.scenario_name)
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(await screen.findByRole('heading', { name: 'Preset library' })).toBeInTheDocument()
+    await act(async () => { replacement.resolve(REPLACEMENT_SCENARIO) })
+
+    expect(screen.getByRole('heading', { name: 'Preset library' })).toBeInTheDocument()
+    expect(screen.queryByText('Loading scenario...')).not.toBeInTheDocument()
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect(mockUpdate).not.toHaveBeenCalled()
+  })
+
+  it('does not apply replacement metadata after unmount', async () => {
+    const user = userEvent.setup()
+    const view = await renderSelectedCreate(user)
+    const replacement = deferred<RegisteredScenario>()
+    mockGetScenario.mockReturnValueOnce(replacement.promise)
+    const initializeConfig = jest.spyOn(scenarioConfigForm, 'initialScenarioConfigState')
+    try {
+      await selectScenario(user, REPLACEMENT_SCENARIO.scenario_name)
+      view.unmount()
+      await act(async () => { replacement.resolve(REPLACEMENT_SCENARIO) })
+
+      expect(initializeConfig).not.toHaveBeenCalled()
+      expect(mockCreate).not.toHaveBeenCalled()
+      expect(mockUpdate).not.toHaveBeenCalled()
+      expect(mockNavigate).not.toHaveBeenCalled()
+    } finally {
+      initializeConfig.mockRestore()
+    }
+  })
+
+  it('does not cancel an accepted save on unmount or accept a duplicate programmatic submit', async () => {
+    const user = userEvent.setup()
+    const view = await renderSelectedCreate(user)
+    const saving = deferred<ScenarioPresetResponse>()
+    mockCreate.mockReturnValueOnce(saving.promise)
+
+    await user.click(screen.getByRole('button', { name: 'Save preset' }))
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: 'Scenario' })).toBeDisabled()
+    submitPresetForm()
+    view.unmount()
+    await act(async () => { saving.resolve({ preset: STORED_PRESET, version: 'v1', issues: [] }) })
+
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    expect(mockNavigate).toHaveBeenCalledTimes(1)
+    expect(mockNavigate).toHaveBeenCalledWith('/registry/scenario-presets')
+  })
+})
+
 describe('ScenarioPresetEditor edit mode', () => {
   it('loads the stored preset and pins its name and scenario', async () => {
     renderEdit()
@@ -283,6 +572,37 @@ describe('ScenarioPresetEditor edit mode', () => {
     ))
     expect(mockCreate).not.toHaveBeenCalled()
     expect(mockNavigate).toHaveBeenCalledWith('/registry/scenario-presets')
+  })
+
+  it('preserves stored list values when edit metadata finishes loading', async () => {
+    const user = userEvent.setup()
+    const metadata = deferred<RegisteredScenario>()
+    const languages = ['French', 'German']
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, scenario_params: { languages } },
+      version: 'v1',
+      issues: [],
+    })
+    mockGetScenario.mockReturnValueOnce(metadata.promise)
+    renderEdit()
+
+    expect(await screen.findByRole('button', { name: 'Save preset' })).toBeDisabled()
+    await act(async () => {
+      metadata.resolve(makeScenario({
+        supported_parameters: [
+          { name: 'languages', type_name: 'list[str]', is_list: true, required: false, default: ['English'] },
+        ],
+      }))
+    })
+    expect(await screen.findByRole('textbox', { name: 'languages' })).toHaveValue('French, German')
+    await user.type(screen.getByRole('textbox', { name: 'Description' }), ' Updated.')
+    await user.click(screen.getByRole('button', { name: 'Save preset' }))
+
+    expect(mockUpdate).toHaveBeenCalledWith(
+      STORED_PRESET.name,
+      expect.objectContaining({ techniques: STORED_PRESET.techniques, scenario_params: { languages } }),
+      'v1',
+    )
   })
 
   it('reports a version conflict instead of navigating away', async () => {

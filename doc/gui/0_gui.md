@@ -82,6 +82,9 @@ on this page. Target defaults apply to new chats and scans.
 **Scenario presets** save a scenario configuration for reuse with a target
 chosen at launch. **Suites** maintain ordered collections of preset definitions.
 They are stored separately from live component instances.
+In the preset editor, **Save preset** is unavailable until the selected scenario's
+configuration loads. A failed load keeps your selection and shows an error rather
+than saving the previous configuration.
 
 Targets, converters, and techniques added only to the live registry must be
 recreated after a backend restart or reinitialization. Use
