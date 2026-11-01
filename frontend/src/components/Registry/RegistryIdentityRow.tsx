@@ -1,6 +1,6 @@
 import { useId, type ReactNode } from 'react'
 
-import { Button, TableCell, TableRow } from '@fluentui/react-components'
+import { Button, TableCell, TableRow, mergeClasses } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
 
 import { useRegistryIdentityRowStyles } from './RegistryIdentityRow.styles'
@@ -12,24 +12,33 @@ interface RegistryIdentityRowProps {
   readonly expanded: boolean
   readonly onToggle: () => void
   readonly children: ReactNode
+  readonly additionalRows?: ReactNode
+  readonly leadingCell?: ReactNode
+  readonly nameContent?: ReactNode
+  readonly nameCellClassName?: string
+  readonly rowClassName?: string
+  readonly rowTestId?: string
 }
 
 export default function RegistryIdentityRow({
-  name, identity, columns, expanded, onToggle, children,
+  name, identity, columns, expanded, onToggle, children, additionalRows, leadingCell,
+  nameContent, nameCellClassName, rowClassName, rowTestId,
 }: RegistryIdentityRowProps) {
   const styles = useRegistryIdentityRowStyles()
   const detailsId = useId()
 
   return (
     <>
-      <TableRow className={styles.row}>
-        <TableCell>
+      <TableRow className={mergeClasses(styles.row, rowClassName)} data-testid={rowTestId}>
+        {leadingCell}
+        <TableCell className={nameCellClassName}>
           <Button appearance="transparent" className={styles.name}
             icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
             aria-expanded={expanded} aria-controls={detailsId}
             aria-label={`Identity for ${name}`} onClick={onToggle}>
             {name}
           </Button>
+          {nameContent}
         </TableCell>
         {children}
       </TableRow>
@@ -40,6 +49,7 @@ export default function RegistryIdentityRow({
           </div>
         </TableCell>
       </TableRow>}
+      {additionalRows}
     </>
   )
 }

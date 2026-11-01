@@ -49,6 +49,10 @@ Use **New attack** to start a blank draft. The **History** tab
 are read-only; **Continue manually** creates a separate manual attack. Export
 a conversation when you need a transcript.
 
+Older `/attacks/{attackId}` and
+`/attacks/{attackId}/conversations/{conversationId}` links redirect to the
+corresponding Chat route while retaining query parameters and fragments.
+
 ![Chat workspace with a prompt and target response](images/chat.png)
 
 ## Scanner
@@ -91,9 +95,11 @@ adversarial-target order is a saved Registry default, the registered
 `adversarial_chat` target, then last use. Objective targets do not have a Registry
 default. Existing chats and runs keep their settings.
 
-Expand a scorer, technique, or converter name to inspect its identity JSON.
-Converter inputs and outputs stay visible in the table. Use the small red X
-to remove a converter from the live registry; confirmation is required.
+Expand a target, scorer, technique, or converter name to inspect its identity
+JSON. Target identity inspection is independent of expanding composite target
+members; defaults, visibility, and the target's configuration columns remain
+available. Converter inputs and outputs stay visible in the table. Use the small
+red X to remove a converter from the live registry; confirmation is required.
 
 **Scenario presets** save a scenario configuration for reuse with a target
 chosen at launch. **Suites** maintain ordered collections of preset definitions.

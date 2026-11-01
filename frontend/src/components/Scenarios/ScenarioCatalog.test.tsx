@@ -238,13 +238,13 @@ describe('ScenarioCatalog', () => {
 
     expect(await screen.findByText('foundry.red_team_agent')).toBeInTheDocument()
     expect(screen.getByText('encoding.base64')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Scanner' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Scanner' })).toHaveAttribute(
+    expect(screen.getByRole('heading', { name: 'Launch a scan' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Launch a scan' })).toHaveAttribute(
       'href',
       'https://microsoft.github.io/PyRIT/latest/scanner/scanner/',
     )
     expect(
-      screen.getByText('Launch comprehensive testing campaigns with multiple attack techniques against a target.'),
+      screen.getByText('Select a scenario to configure a scan.'),
     ).toBeInTheDocument()
     expect(screen.queryByText(/Browse registered scenarios/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/Read the scanner documentation/i)).not.toBeInTheDocument()
@@ -426,7 +426,7 @@ describe('ScenarioCatalog', () => {
 
     const table = await screen.findByRole('table', { name: 'Individual scanners' })
     expect(
-      screen.getByText('Launch comprehensive testing campaigns with multiple attack techniques against a target.'),
+      screen.getByText('Select a scenario to configure a scan.'),
     ).toBeInTheDocument()
     const headers = within(table).getAllByRole('columnheader')
     expect(headers).toHaveLength(4)

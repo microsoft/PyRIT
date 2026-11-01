@@ -79,7 +79,10 @@ def _record(*, planned: bool) -> ScenarioHistoryRunRecord:
     )
 
 
-async def test_get_scenario_run_history_page_delegates_to_component_async(sqlite_instance: MemoryInterface) -> None:
+@pytest.mark.parametrize("reference_id", [None, uuid.UUID("00000000-0000-0000-0000-000000000001")])
+async def test_get_scenario_run_history_page_delegates_to_component_async(
+    *, sqlite_instance: MemoryInterface, reference_id: uuid.UUID | None
+) -> None:
     """Public method forwards the component's records and has_more, then derives aggregate IDs itself."""
     planned, unplanned = _record(planned=True), _record(planned=False)
     records = [planned, unplanned]
@@ -88,10 +91,18 @@ async def test_get_scenario_run_history_page_delegates_to_component_async(sqlite
         patch.object(_ScenarioHistoryQueries, "get_page", return_value=(records, True)) as mock_get_page,
         patch.object(sqlite_instance, "_execute_get_scenario_history_aggregates", return_value={}) as mock_aggregates,
     ):
-        result = await sqlite_instance.get_scenario_run_history_page_async(scenario_names=["Test"], limit=50)
+        result = await sqlite_instance.get_scenario_run_history_page_async(
+            scenario_names=["Test"], reference_id=reference_id, limit=50
+        )
 
     mock_get_page.assert_called_once_with(
-        scenario_names=["Test"], statuses=None, labels=None, operation_ids=None, cursor=None, limit=50
+        scenario_names=["Test"],
+        statuses=None,
+        labels=None,
+        operation_ids=None,
+        reference_id=reference_id,
+        cursor=None,
+        limit=50,
     )
     assert result[0] == records
     assert result[2] is True

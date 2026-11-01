@@ -138,6 +138,16 @@ export default function ConverterRegistry() {
     try {
       const response = await convertersApi.listConverters()
       setConverters(response.items)
+      setTypeFilter((current) => (
+        current && response.items.some((converter) => converter.identifier.class_name === current)
+          ? current
+          : ''
+      ))
+      setOutputFilter((current) => (
+        current && response.items.some((converter) => converter.identifier.supported_output_types?.includes(current))
+          ? current
+          : ''
+      ))
     } catch (err) {
       setError(toApiError(err).detail)
     } finally {

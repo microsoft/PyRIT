@@ -66,6 +66,14 @@ function scoreVerdict(score?: BackendScore | null): 'success' | 'failure' | 'und
   return score.score_value.toLowerCase() === 'true' ? 'success' : 'failure'
 }
 
+const RESULT_POPOVER_POSITIONING = {
+  autoSize: 'height',
+  strategy: 'fixed',
+  // Resizing can move the trigger out of view; keep the details inside the viewport.
+  unstable_disableTether: 'all',
+  overflowBoundaryPadding: 16,
+} as const
+
 function scoreLabel(score?: BackendScore | null): string {
   const verdict = scoreVerdict(score)
   if (!score) return 'Not set'
@@ -218,7 +226,7 @@ export default function ObjectiveHeader({
       <Popover
         withArrow
         open={resultOpen}
-        positioning={{ autoSize: 'height' }}
+        positioning={RESULT_POPOVER_POSITIONING}
         onOpenChange={(_event, data) => {
           setResultOpen(data.open)
           if (data.open) {
