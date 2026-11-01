@@ -445,6 +445,7 @@ class TestShellMain:
             assert "boom" in captured.out
 
     def test_main_log_level_and_config_file(self, tmp_path):
+        (tmp_path / "conf.yaml").write_text("", encoding="utf-8")
         with (
             patch("pyrit.cli._banner.play_animation", return_value=""),
             patch("pyrit.cli.pyrit_shell.PyRITShell") as mock_shell_class,
