@@ -211,7 +211,10 @@ async function activateTarget(
   await page.getByRole("combobox", { name: "Default objective target", exact: true })
     .selectOption(targetRegistryName);
   await page.getByRole("button", { name: "Attacks", exact: true }).click();
-  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByRole("button", { name: "New attack", exact: true }))
+    .toBeVisible({ timeout: 5_000 });
+  await expect(page.getByRole("combobox", { name: "Chat target", exact: true }))
+    .toHaveValue(targetRegistryName);
 }
 
 /** Navigate to an attack by opening the History view and clicking its row. */

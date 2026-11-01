@@ -139,6 +139,16 @@ function LegacyPresetEditorRedirect() {
   return <Navigate replace to={presetEditorRoutePath(routerPathParamValue(presetName))} />
 }
 
+function LegacyAttackRedirect() {
+  const { attackId, conversationId } = useParams<{ attackId: string; conversationId?: string }>()
+  const location = useLocation()
+  const path = conversationId === undefined
+    ? attackRoutePath(routerPathParamValue(attackId))
+    : attackConversationRoutePath(routerPathParamValue(attackId), routerPathParamValue(conversationId))
+
+  return <Navigate replace to={`${path}${location.search}${location.hash}`} />
+}
+
 /** Status of the in-flight attack load for an /attack/chat/:id route. */
 type AttackLoadStatus = 'loading' | 'success' | 'not-found' | 'error'
 
@@ -607,7 +617,6 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     dismissPendingImport()
     lastChatLocation.current = { path: VIEW_PATHS.chat, state: null }
     // Keep the editor mounted until the router has committed an allowed navigation.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDraftSession((current) => ({
       ...current,
       key: current.key + 1,
@@ -781,7 +790,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       onReturnToScan={() => {
         if (scenarioResultId) {
           navigate(scenarioRunRoutePath(scenarioResultId), {
-            state: { fromScenarioHistory: true, scenarioHistorySearch: lastScenarioHistorySearch.current },
+            state: location.state ?? { fromScenarioHistory: true, scenarioHistorySearch: lastScenarioHistorySearch.current },
           })
         }
       }}
@@ -893,6 +902,11 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <Route
                 path="/attack/chat/:attackId/conversations/:conversationId"
                 element={chatElement}
+              />
+              <Route path="/attacks/:attackId" element={<LegacyAttackRedirect />} />
+              <Route
+                path="/attacks/:attackId/conversations/:conversationId"
+                element={<LegacyAttackRedirect />}
               />
               <Route path="/registry" element={<RegistryLayout />}>
                 <Route index element={<Navigate to="/registry/targets" replace />} />
