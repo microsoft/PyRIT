@@ -10,6 +10,9 @@ from pyrit.converter import VariationConverter
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.models import Message, MessagePiece
 
+# The converters persist their target exchanges through the normalizer, which needs memory.
+pytestmark = pytest.mark.usefixtures("patch_central_database")
+
 
 def test_variation_converter_raises_when_converter_target_is_none():
     with pytest.raises(ValueError, match="converter_target is required"):
@@ -48,7 +51,7 @@ async def test_variation_converter_send_prompt_async_bad_json_exception_retries(
             ]
         )
 
-        mock_create.return_value = [message]
+        mock_create.side_effect = lambda **_: [message.duplicate()]
 
         with patch("asyncio.sleep", new_callable=AsyncMock):
             with pytest.raises(InvalidJsonException):
@@ -73,7 +76,9 @@ async def test_variation_converter_extracts_first_element_from_json_list(sqlite_
             )
         ]
     )
-    with patch.object(prompt_target, "send_prompt_async", new=AsyncMock(return_value=[response])):
+    with patch.object(
+        prompt_target, "send_prompt_async", new=AsyncMock(side_effect=lambda **_: [response.duplicate()])
+    ):
         result = await prompt_variation.convert_async(prompt="testing")
     assert result.output_text == "first variation"
 
@@ -93,7 +98,9 @@ async def test_variation_converter_preserves_original_and_converted_values(sqlit
             )
         ]
     )
-    with patch.object(prompt_target, "send_prompt_async", new=AsyncMock(return_value=[response])) as mock_send:
+    with patch.object(
+        prompt_target, "send_prompt_async", new=AsyncMock(side_effect=lambda **_: [response.duplicate()])
+    ) as mock_send:
         await prompt_variation.convert_async(prompt="hello world")
 
     sent_message = mock_send.call_args[1]["message"]

@@ -15,6 +15,9 @@ from pyrit.converter import (
 from pyrit.models import Message, MessagePiece, PromptDataType
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 
+# The converters persist their target exchanges through the normalizer, which needs memory.
+pytestmark = pytest.mark.usefixtures("patch_central_database")
+
 
 def test_random_translation_converter_raises_when_converter_target_is_none():
     with pytest.raises(ValueError, match="converter_target is required"):
@@ -32,7 +35,7 @@ def mock_target() -> MagicMock:
             )
         ]
     )
-    target.send_prompt_async = AsyncMock(return_value=[response])
+    target.send_prompt_async = AsyncMock(side_effect=lambda **_: [response.duplicate()])
     target.get_identifier.return_value = get_mock_target_identifier("MockTranslationTarget")
     return target
 
