@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -661,10 +662,11 @@ class XPIAManualProcessingWorkflow(XPIAWorkflow):
                 modified to include the manual processing callback.
         """
 
-        # Create the manual input callback
+        # Create the manual input callback. The console read runs in a worker thread so other
+        # async work keeps running while the operator triggers the processing target.
         async def manual_input_async() -> str:
             prompt = "Please trigger the processing target's execution and paste the output here:"
-            return input(prompt)
+            return await asyncio.to_thread(input, prompt)
 
         # Set the processing callback on the context
         context.processing_callback = manual_input_async
