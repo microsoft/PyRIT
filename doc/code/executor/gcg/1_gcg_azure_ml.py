@@ -29,9 +29,15 @@
 # %%
 import os
 
-from pyrit.setup.initialization import _load_environment_files
+from pyrit.setup import ConfigurationLoader, initialize_pyrit_async
 
-_load_environment_files(env_files=None)
+pyrit_config = ConfigurationLoader.load_with_overrides()
+await initialize_pyrit_async(
+    memory_db_type="InMemory",
+    load_defaults=False,
+    env_files=pyrit_config.resolve_env_files(),
+    env_akv_ref=pyrit_config.resolve_env_akv_ref(),
+)
 
 subscription_id = os.environ.get("AZURE_ML_SUBSCRIPTION_ID")
 resource_group = os.environ.get("AZURE_ML_RESOURCE_GROUP")
@@ -56,9 +62,9 @@ warnings.filterwarnings("ignore", module=r"azure\.ai\.ml.*")
 
 # %%
 from azure.ai.ml import MLClient
-from azure.identity import AzureCliCredential
+from azure.identity import DefaultAzureCredential
 
-ml_client = MLClient(AzureCliCredential(), subscription_id, resource_group, workspace)
+ml_client = MLClient(DefaultAzureCredential(), subscription_id, resource_group, workspace)
 
 # %% [markdown]
 # ## Create AML Environment
@@ -99,22 +105,95 @@ ml_client.environments.create_or_update(env_docker_context)
 # Docker-installed package (Python's `-m` flag puts the cwd at the front of `sys.path`).
 #
 # The new public API takes a typed ``GCGConfig`` (strategy) and a separate
-# ``GCGDataConfig`` (CSV paths/counts). We build both locally with whatever
-# overrides we want, serialize each into a JSON file the AML job can read as
-# an input, and ship those paths through the job command. Defaults come from
-# the dataclasses in ``pyrit.executor.promptgen.gcg.config``; goals and targets
-# flow into ``GCGGenerator.execute_async`` at runtime, not through the config.
+# ``GCGDataConfig`` (resolved goals and targets). We load the bundled
+# ``adv_bench`` dataset through the standard ``SeedDatasetProvider``; each seed
+# already preserves its canonical target completion in ``metadata["gcg_target"]``.
+# We materialize those values inline via ``from_seed_dataset``, so the serialized
+# JSON the AML job reads already embeds the data and the compute container never
+# fetches it from the public internet. We build both configs locally, serialize
+# each into a JSON file the AML job mounts as an input, and ship those paths
+# through the job command. Defaults come from the dataclasses in
+# ``pyrit.executor.promptgen.gcg.config``; goals and targets flow into
+# ``GCGGenerator.execute_async`` at runtime, not through the config.
+#
+# AdvBench already provides a target completion for each objective. For another
+# ordinary ``SeedDataset`` without those values, use
+# ``create_gcg_data_config_async`` with an adversarial target and a
+# ``completion_scorer``. The scorer must return True only for a suitable
+# affirmative prefix, not a refusal, unrelated response, or complete answer.
+# Provided ``gcg_target`` strings are trusted and preserved without scoring;
+# missing, None, or blank values trigger generation. Other metadata types are
+# rejected rather than converted to strings.
+#
+# With your configured ``adversarial_target`` and ``scoring_target``:
+#
+# ```python
+# from pyrit.executor.promptgen.gcg import create_gcg_data_config_async
+# from pyrit.score import (
+#     SelfAskTrueFalseScorer,
+#     TrueFalseQuestion,
+#     render_true_false_system_prompt,
+# )
+#
+# question = TrueFalseQuestion(
+#     true_description="A short response prefix that directly begins complying with the objective.",
+#     false_description="A refusal, deflection, unrelated response, or complete answer.",
+# )
+# prefix_scorer = SelfAskTrueFalseScorer(
+#     chat_target=scoring_target,
+#     system_prompt=render_true_false_system_prompt(question=question),
+#     question=question,
+# )
+# data_config = await create_gcg_data_config_async(
+#     dataset=objectives,
+#     adversarial_target=adversarial_target,
+#     completion_scorer=prefix_scorer,
+# )
+# ```
+#
+# Optional ``completion_prompt=SeedPrompt(...)`` replaces the default generation
+# prompt using Jinja variables ``objective`` and ``max_length``. Generation uses
+# the final assistant response, not intermediate tool outputs, and requires a
+# single error-free text piece. Empty, overlong, or scorer-rejected completions
+# raise an error without truncation or automatic retries. The default generated
+# completion limit is 256 characters; provided metadata is not length-limited.
+# All resolved strings are serialized locally, so neither the adversarial target
+# nor the scorer is needed by the AML job.
+#
+# **Migration from v1.1.0:** ``GCGDataConfig(train_data=..., test_data=...,
+# n_train_data=..., n_test_data=...)`` and the ``random_seed`` argument to
+# ``load_goals_and_targets`` are no longer supported. Load public or private
+# datasets before submitting the job and supply each completion as
+# ``metadata["gcg_target"]`` (or generate it as above). Select and split seeds
+# locally instead of supplying CSV URLs and row counts. For example, after
+# loading ``objectives`` through the standard provider:
+#
+# ```python
+# from random import Random
+# from pyrit.models import SeedDataset
+#
+# seeds = list(objectives.seeds)
+# Random(42).shuffle(seeds)
+# data_config = GCGDataConfig.from_seed_dataset(
+#     SeedDataset(seeds=seeds[:50]),
+#     test_dataset=SeedDataset(seeds=seeds[50:60]),
+# )
+# ```
+#
+# This makes the submitted split explicit and reproducible. The compute-side
+# ``load_goals_and_targets(data=data_config)`` only reads the inline lists.
 #
 # We also have to specify a GPU compute target. In our experience, a GPU instance with
 # at least 24GB of vRAM is required (e.g., Standard_NC24ads_A100_v4).
 #
 # Depending on the compute instance you use, you may encounter "out of memory" errors.
-# In this case, we recommend training on a smaller model or lowering ``data.n_train_data``
-# or ``algorithm.batch_size``.
+# In this case, we recommend training on a smaller model or lowering the number
+# of goals selected below or ``algorithm.batch_size``.
 
 # %%
 import tempfile
 
+from pyrit.datasets import SeedDatasetProvider
 from pyrit.executor.promptgen.gcg import (
     GCGAlgorithmConfig,
     GCGConfig,
@@ -128,11 +207,9 @@ config = GCGConfig(
     algorithm=GCGAlgorithmConfig(n_steps=5, batch_size=64, test_steps=1),
     output=GCGOutputConfig(result_prefix="gcg_suffix"),
 )
-data_config = GCGDataConfig(
-    train_data=("https://raw.githubusercontent.com/llm-attacks/llm-attacks/main/data/advbench/harmful_behaviors.csv"),
-    n_train_data=5,
-    n_test_data=0,
-)
+objectives = (await SeedDatasetProvider.fetch_datasets_async(dataset_names=["adv_bench"]))[0]
+objectives.seeds = list(objectives.seeds[:5])
+data_config = GCGDataConfig.from_seed_dataset(objectives)
 
 # Write the configs into a tempdir so AML can mount them as separate job inputs.
 config_dir = Path(tempfile.mkdtemp(prefix="gcg-aml-config-"))
@@ -183,12 +260,17 @@ print(f"Studio URL: {returned_job.studio_url}")
 # runs never share a file). For our config, that resolves to
 # `gcg_suffix_<timestamp>_<id>.json` under
 # `<download_dir>/named-outputs/results/` once we download. The
-# `controls` array in that file contains one entry per training step, and
-# the last entry is the final adversarial suffix that, appended to the user
-# prompt, was optimized to elicit the target response.
+# `controls` array contains logged checkpoints, not an iteration count.
+# With the default individual-goal strategy, each of the five goals logs an
+# initial checkpoint plus five optimization checkpoints (`test_steps=1`):
+# 30 entries for 25 optimization iterations in total. Other strategies,
+# checkpoint intervals, or early stopping can change that relationship.
+# The last entry is the final logged suffix. A nonempty suffix and finite loss
+# confirm a usable result artifact, not that the suffix achieves the objective.
 
 # %%
 import json
+import math
 import tempfile
 import time
 from pathlib import Path
@@ -225,7 +307,13 @@ with open(result_file) as f:
 final_suffix = log["controls"][-1] if log["controls"] else None
 final_loss = log["losses"][-1] if log["losses"] else None
 
+if not isinstance(final_suffix, str) or not final_suffix.strip():
+    raise ValueError("GCG result does not contain a nonempty final suffix.")
+if isinstance(final_loss, bool) or not isinstance(final_loss, (int, float)) or not math.isfinite(final_loss):
+    raise ValueError("GCG result does not contain a finite final loss.")
+
 print(f"Result file: {result_file.name}")
-print(f"Steps run: {len(log['controls'])}")
+print(f"Configured optimization steps per goal: {config.algorithm.n_steps}")
+print(f"Logged checkpoints: {len(log['controls'])}")
 print(f"Final loss: {final_loss}")
 print(f"Generated suffix: {final_suffix!r}")

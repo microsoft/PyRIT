@@ -14,8 +14,9 @@ command line is::
         --data inputs/data.json \\
         --output-dir ${{outputs.results}}
 
-This file deserializes both configs inside the job, loads goals/targets from
-the configured CSV, and runs the attack via a fresh ``GCGGenerator``.
+This file deserializes both configs inside the job and runs the attack via a
+fresh ``GCGGenerator``. The goals and targets travel inline in ``data.json``, so
+the job never fetches data from the public internet.
 """
 
 import argparse
@@ -54,7 +55,7 @@ def _parse_arguments() -> argparse.Namespace:
         "--data",
         type=str,
         required=True,
-        help="Path to a JSON file produced by GCGDataConfig.to_json_file() (CSV paths + counts).",
+        help="Path to a JSON file produced by GCGDataConfig.to_json_file() (inline goals + targets).",
     )
     parser.add_argument(
         "--output-dir",
@@ -105,9 +106,7 @@ async def _main_async(config_path: str, data_path: str, output_dir: str | None =
         output=output,
         hf_token=config.hf_token,
     )
-    train_goals, train_targets, test_goals, test_targets = load_goals_and_targets(
-        data=data, random_seed=config.algorithm.random_seed
-    )
+    train_goals, train_targets, test_goals, test_targets = load_goals_and_targets(data=data)
     await generator.execute_async(
         goals=train_goals,
         targets=train_targets,

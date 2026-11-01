@@ -22,6 +22,7 @@ from pyrit.executor.promptgen.gcg import (
     GCGOutputConfig,
     GCGResult,
     GCGStrategyConfig,
+    create_gcg_data_config_async,
     load_goals_and_targets,
 )
 
@@ -42,6 +43,7 @@ def test_public_api_symbols_are_exported() -> None:
         "GCGOutputConfig",
         "GCGResult",
         "GCGStrategyConfig",
+        "create_gcg_data_config_async",
         "load_goals_and_targets",
     }
     assert expected.issubset(set(gcg_pkg.__all__))
@@ -62,6 +64,7 @@ def test_public_api_symbols_are_importable_from_package() -> None:
         GCGOutputConfig,
         GCGResult,
         GCGStrategyConfig,
+        create_gcg_data_config_async,
         load_goals_and_targets,
     )
     for sym in symbols:
