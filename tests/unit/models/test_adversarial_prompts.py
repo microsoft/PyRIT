@@ -1,7 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Any
+import copy
+import json
+from types import MappingProxyType
+from typing import Any, assert_type
 
 import pytest
 from pydantic import ValidationError
@@ -175,3 +178,56 @@ async def test_flat_dataset_and_memory_round_trip_preserve_the_association_async
         "Objective: goal\n{% endraw %}{{ 7 * 7 }}"
     )
     assert restored.next_message.get_piece().original_value == "What is the return period?"
+
+
+class DerivedAdversarialPrompts(AdversarialPrompts):
+    """Subclass used to verify that from_metadata returns the calling class."""
+
+
+def _text_prompts() -> AdversarialPrompts:
+    return AdversarialPrompts(first_message=SeedPrompt(value="Hello there.", data_type="text"))
+
+
+class TestAdversarialPromptsFromMetadata:
+    """Tests that AdversarialPrompts.from_metadata preserves the calling class and read-only semantics."""
+
+    @pytest.mark.parametrize("metadata", [None, {}, {"unrelated": 1}])
+    def test_absent_association_returns_none(self, metadata: dict[str, Any] | None) -> None:
+        assert AdversarialPrompts.from_metadata(metadata) is None
+        assert DerivedAdversarialPrompts.from_metadata(metadata) is None
+
+    def test_present_association_returns_base_class(self) -> None:
+        prompts = AdversarialPrompts.from_metadata(_text_prompts().to_metadata())
+        assert_type(prompts, AdversarialPrompts | None)
+        assert type(prompts) is AdversarialPrompts
+        assert prompts.identity == _text_prompts().identity
+
+    def test_present_association_returns_subclass(self) -> None:
+        prompts = DerivedAdversarialPrompts.from_metadata(_text_prompts().to_metadata())
+        assert_type(prompts, DerivedAdversarialPrompts | None)
+        assert type(prompts) is DerivedAdversarialPrompts
+
+    def test_round_trips_through_json_metadata(self) -> None:
+        original = _prompts()
+        metadata = json.loads(json.dumps(original.to_metadata()))
+        restored = AdversarialPrompts.from_metadata(metadata)
+        assert restored is not None
+        assert restored.identity == original.identity
+
+    def test_reads_from_read_only_mapping(self) -> None:
+        metadata = MappingProxyType(_text_prompts().to_metadata())
+        restored = AdversarialPrompts.from_metadata(metadata)
+        assert restored is not None
+        assert restored.identity == _text_prompts().identity
+        assert AdversarialPrompts.from_metadata(MappingProxyType({})) is None
+
+    def test_does_not_mutate_metadata(self) -> None:
+        metadata = _text_prompts().to_metadata()
+        snapshot = copy.deepcopy(metadata)
+        AdversarialPrompts.from_metadata(metadata)
+        assert metadata == snapshot
+
+    @pytest.mark.parametrize("value", [None, {}, "text", [], {"unknown": True}])
+    def test_invalid_association_is_rejected(self, value: object) -> None:
+        with pytest.raises(ValidationError):
+            DerivedAdversarialPrompts.from_metadata({AdversarialPrompts.METADATA_KEY: value})
