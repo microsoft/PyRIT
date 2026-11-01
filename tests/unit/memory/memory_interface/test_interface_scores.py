@@ -448,3 +448,47 @@ async def test_get_scores_by_scorer_identifier_filter(
         ],
     )
     assert len(results) == 0
+
+
+async def test_get_scores_by_score_category(
+    sqlite_instance: MemoryInterface,
+    sample_conversation_entries: Sequence[PromptMemoryEntry],
+):
+    prompt_id = sample_conversation_entries[0].id
+    sqlite_instance._insert_entries(entries=sample_conversation_entries)
+
+    def make_score(value: str, categories: list[str] | None, score_type: str = "float_scale") -> Score:
+        return Score(
+            score_value=value,
+            score_value_description="",
+            score_type=score_type,
+            score_category=categories,
+            score_rationale="",
+            score_metadata={},
+            scorer_class_identifier=_test_scorer_id(),
+            message_piece_id=prompt_id,
+        )
+
+    await sqlite_instance.add_scores_to_memory_async(
+        scores=[
+            make_score("0.1", ["hate"]),
+            make_score("0.2", ["violence", "hate"]),
+            make_score("0.3", ["hate_speech"]),
+            make_score("0.4", ["HaTe"]),
+            make_score("0.5", None),
+            make_score("0.6", []),
+            make_score("true", ["hate"], score_type="true_false"),
+        ]
+    )
+
+    async def values_for(category: str | list[str], score_type: str | None = None):
+        scores = await sqlite_instance.get_scores_async(score_category=category, score_type=score_type)
+        return sorted(score.score_value for score in scores)
+
+    assert await values_for("hate") == ["0.1", "0.2", "0.4", "true"]
+    assert await values_for("HATE", score_type="float_scale") == ["0.1", "0.2", "0.4"]
+    assert await values_for("violence") == ["0.2"]
+    assert await values_for("hate_speech") == ["0.3"]
+    assert await values_for("speech") == []
+    assert await values_for(["hate", "violence"]) == ["0.2"]
+    assert await values_for(["hate"], score_type="float_scale") == ["0.1", "0.2", "0.4"]
