@@ -23,20 +23,26 @@ class UnicodeConfusableConverter(Converter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
+    # Latin a, c, e, o, p, x, y (both cases) -> their Cyrillic look-alikes.
+    _CYRILLIC_HOMOGLYPHS = str.maketrans(
+        "aceopxyACEOPXY",
+        "\u0430\u0441\u0435\u043e\u0440\u0445\u0443\u0410\u0421\u0415\u041e\u0420\u0425\u0423",
+    )
+
     def __init__(
         self,
         *,
-        source_package: Literal["confusable_homoglyphs", "confusables"] = "confusable_homoglyphs",
+        source_package: Literal["confusable_homoglyphs", "confusables", "cyrillic_homoglyph"] = "confusable_homoglyphs",
         deterministic: bool = False,
     ) -> None:
         """
         Initialize the converter with the specified source package for homoglyph generation.
 
         Args:
-            source_package (Literal["confusable_homoglyphs", "confusables"]):
+            source_package (Literal["confusable_homoglyphs", "confusables", "cyrillic_homoglyph"]):
                 The package to use for homoglyph generation.
 
-                Can be either:
+                Can be one of:
                     - "confusable_homoglyphs" (https://pypi.org/project/confusable-homoglyphs/):
                         Used by default as it is more regularly maintained and up to date with the latest
                         Unicode-provided confusables found here:
@@ -44,15 +50,18 @@ class UnicodeConfusableConverter(Converter):
                     - "confusables" (https://pypi.org/project/confusables/):
                         Provides additional methods of matching characters (not just Unicode list),
                         so each character has more possible substitutions.
+                    - "cyrillic_homoglyph":
+                        Replaces Latin a, c, e, o, p, x, y (both cases) with their Cyrillic look-alikes
+                        using a fixed table, so the output is always the same.
             deterministic (bool): This argument is for unittesting only.
 
         Raises:
             ValueError: If an invalid source package is provided.
         """
-        if source_package not in ["confusable_homoglyphs", "confusables"]:
+        if source_package not in ["confusable_homoglyphs", "confusables", "cyrillic_homoglyph"]:
             raise ValueError(
-                f"Invalid source package: {source_package}. Please choose either 'confusable_homoglyphs' \
-                or 'confusables'"
+                f"Invalid source package: {source_package}. Please choose 'confusable_homoglyphs', "
+                "'confusables', or 'cyrillic_homoglyph'"
             )
         self._source_package = source_package
         self._deterministic = deterministic
@@ -89,7 +98,9 @@ class UnicodeConfusableConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        if self._source_package == "confusable_homoglyphs":
+        if self._source_package == "cyrillic_homoglyph":
+            converted_prompt = prompt.translate(self._CYRILLIC_HOMOGLYPHS)
+        elif self._source_package == "confusable_homoglyphs":
             converted_prompt = self._generate_perturbed_prompts(prompt)
         else:
             converted_prompt = "".join(self._confusable(c) for c in prompt)

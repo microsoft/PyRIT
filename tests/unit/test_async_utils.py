@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pyrit.common.task_utils import gather_with_cleanup_async
 from unit.async_utils import (
     TEST_WATCHDOG_SECONDS,
     drain_tasks_async,
@@ -36,6 +37,16 @@ async def test_get_defined_tasks_preserves_tasks_and_order_async() -> None:
     assert_type(tasks, list[asyncio.Task[int]])
     assert tasks == [first, second]
     assert await asyncio.gather(*tasks) == [1, 2]
+
+
+async def test_gather_with_cleanup_preserves_result_type_async() -> None:
+    async def complete_async(value: int) -> int:
+        return value
+
+    results = await gather_with_cleanup_async([complete_async(1), complete_async(2)])
+
+    assert_type(results, list[int])
+    assert results == [1, 2]
 
 
 async def test_wait_for_completion_returns_result_async() -> None:
