@@ -106,6 +106,39 @@ async def test_html_report_renders_media_piece_as_placeholder():
     assert "[image_path] media/img.png" in html
 
 
+async def test_html_report_renders_text_to_image_converted_media_with_label():
+    payload = _payload()
+    payload["conversations"][0]["messages"][0]["pieces"][0] = {
+        "data_type": "text",
+        "original_value_data_type": "text",
+        "converted_value_data_type": "image_path",
+        "original_value": "draw a cat",
+        "converted_value": "media/cat.png",
+        "response_error": None,
+    }
+
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert "[image_path] media/cat.png" in html
+
+
+async def test_html_report_renders_image_to_text_converted_piece_as_plain_text():
+    payload = _payload()
+    payload["conversations"][0]["messages"][0]["pieces"][0] = {
+        "data_type": "image_path",
+        "original_value_data_type": "image_path",
+        "converted_value_data_type": "text",
+        "original_value": "media/receipt.png",
+        "converted_value": "Total: $50",
+        "response_error": None,
+    }
+
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert "Total: $50" in html
+    assert "[image_path]" not in html
+
+
 async def test_html_report_renders_every_template_field():
     # Kitchen-sink payload: exercises every branch the template reads — reasoning
     # pieces, inline scores, response errors, groups — so a renamed/removed field
