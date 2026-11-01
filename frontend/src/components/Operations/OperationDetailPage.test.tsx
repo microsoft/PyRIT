@@ -204,15 +204,18 @@ it('refreshes evidence counts without collapsing the expanded list after detachm
   expect(await screen.findByText('No evidence attached.')).toBeInTheDocument()
 })
 
-it('puts all execution history after the findings without fetching or duplicating activity', async () => {
+it('links both feature histories after the findings without fetching or duplicating activity', async () => {
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
   renderPage()
   const finding = await screen.findByRole('heading', { name: FINDING.title })
-  const link = screen.getByRole('link', { name: 'All execution history' })
+  const link = screen.getByRole('link', { name: 'Attack history' })
   const url = new URL(link.getAttribute('href') ?? '', 'http://localhost')
-  expect(url.pathname).toBe('/history/attacks')
+  expect(url.pathname).toBe('/attack/history')
   expect(url.searchParams.getAll('operation_id')).toEqual([OPERATION.id])
   expect(url.searchParams.has('operation')).toBe(false)
+  const scannerUrl = new URL(screen.getByRole('link', { name: 'Scanner history' }).getAttribute('href') ?? '', 'http://localhost')
+  expect(scannerUrl.pathname).toBe('/scanner/history')
+  expect(scannerUrl.searchParams.getAll('operation_id')).toEqual([OPERATION.id])
   expect(finding.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(screen.queryByText('Human assessments, separate from attack outcomes and scores.')).not.toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Recent attacks' })).not.toBeInTheDocument()

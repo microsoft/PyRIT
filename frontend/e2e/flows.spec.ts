@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   test,
   expect,
+  selectChatTarget,
   type APIRequestContext,
   type Locator,
   type Page,
@@ -199,19 +200,12 @@ async function createConversation(
   return body.conversation_id;
 }
 
-/** Save an objective default and open a new chat with that target. */
+/** Select a target in a new chat. */
 async function activateTarget(
   page: Page,
   targetRegistryName: string,
 ): Promise<void> {
-  await page.getByTitle("Registry").click();
-  await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10_000 });
-  const row = page.getByTestId(`target-row-${targetRegistryName}`);
-  await expect(row).toBeVisible({ timeout: 10_000 });
-  await page.getByRole("combobox", { name: "Default objective target", exact: true })
-    .selectOption(targetRegistryName);
-  await page.getByTitle("Technique.execute").click();
-  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5_000 });
+  await selectChatTarget(page, targetRegistryName);
 }
 
 /** Navigate to an attack by opening the History view and clicking its row. */
@@ -219,7 +213,8 @@ async function openAttackInHistory(
   page: Page,
   attackResultId: string,
 ): Promise<void> {
-  await page.getByTitle("History").click();
+  await page.getByRole("button", { name: "Attacks", exact: true }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
   await expect(page.getByTestId("attacks-table")).toBeVisible({
     timeout: 10_000,
   });
@@ -227,7 +222,7 @@ async function openAttackInHistory(
   const row = page.getByTestId(`attack-row-${attackResultId}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
   await row.click();
-  await expect(page).toHaveURL(new RegExp(`/attacks/${attackResultId}$`));
+  await expect(page).toHaveURL(new RegExp(`/attack/chat/${attackResultId}$`));
   await expect(page.getByTestId("toggle-panel-btn")).toBeEnabled({
     timeout: 10_000,
   });

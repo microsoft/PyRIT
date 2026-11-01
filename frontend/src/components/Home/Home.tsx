@@ -29,6 +29,7 @@ interface HomeProps {
   activeTarget: TargetInstance | null
   onNavigate: (view: ViewName) => void
   onOpenAttack: (attackResultId: string) => void
+  onOpenHistory: () => void
 }
 
 interface OperationGroup {
@@ -92,6 +93,7 @@ export default function Home({
   activeTarget,
   onNavigate,
   onOpenAttack,
+  onOpenHistory,
 }: HomeProps) {
   const styles = useHomeStyles()
   const [attacks, setAttacks] = useState<AttackSummary[]>([])
@@ -193,7 +195,7 @@ export default function Home({
               appearance="subtle"
               icon={<ArrowRightRegular />}
               iconPosition="after"
-              onClick={() => onNavigate('history')}
+              onClick={onOpenHistory}
               data-testid="home-view-all-history-btn"
             >
               View all history

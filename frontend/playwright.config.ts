@@ -76,7 +76,7 @@ export default defineConfig({
               {
                 name: "pyrit.userPreferences.v1.local",
                 value: JSON.stringify({
-                  targets: { objective: null, adversarial: null },
+                  targets: { adversarial: null },
                   hiddenTargetRegistryNames: [],
                   labels: {},
                   theme: "system",

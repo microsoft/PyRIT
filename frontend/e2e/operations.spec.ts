@@ -52,7 +52,7 @@ for (const width of [1280, 390]) {
     })
     expect(attackResponse.ok()).toBeTruthy()
     const attack = await attackResponse.json()
-    await page.goto(`/attacks/${attack.attack_result_id}/conversations/${attack.conversation_id}`)
+    await page.goto(`/attack/chat/${attack.attack_result_id}/conversations/${attack.conversation_id}`)
     await page.getByTestId('objective-outcome-button').click()
     await page.getByRole('button', { name: 'Add as finding' }).click()
     const dialog = page.getByRole('dialog')
@@ -315,7 +315,7 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
       status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'Attach failed' }),
     })
   })
-  await page.goto(`/attacks/${sourceAttack.attack_result_id}/conversations/${sourceAttack.conversation_id}`)
+  await page.goto(`/attack/chat/${sourceAttack.attack_result_id}/conversations/${sourceAttack.conversation_id}`)
   await page.getByTestId('objective-outcome-button').click()
   await page.getByRole('button', { name: 'Add as finding' }).click()
   await page.getByRole('radio', { name: /Independent human finding/ }).click()
@@ -333,20 +333,22 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
   await expect(page.getByRole('heading', { name: 'Independent human finding', exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: 'Recent attacks', exact: true })).toHaveCount(0)
   await expect(page.getByRole('region', { name: 'Recent scanner runs', exact: true })).toHaveCount(0)
-  const historyLink = page.getByRole('link', { name: 'All execution history', exact: true })
+  const historyLink = page.getByRole('link', { name: 'Attack history', exact: true })
   const href = await historyLink.getAttribute('href')
   expect(new URL(href!, 'http://localhost').searchParams.getAll('operation_id')).toEqual([operation.id])
   await historyLink.click()
-  await expect(page).toHaveURL(/\/history\/attacks\?/)
+  await expect(page).toHaveURL(/\/attack\/history\?/)
   await expect(page.getByRole('row', { name: 'Open ManualAttack attack', exact: true })).toHaveCount(7)
   await expect(page.getByRole('combobox', { name: 'All operations' })).toHaveValue(name)
-  await page.getByRole('tab', { name: 'Scanner', exact: true }).click()
-  await expect(page).toHaveURL(/\/history\/scanner\?/)
+  await page.goto(`/operations/${operation.id}`)
+  await page.getByRole('link', { name: 'Scanner history', exact: true }).click()
+  await expect(page).toHaveURL(/\/scanner\/history\?/)
   expect(new URL(page.url()).searchParams.getAll('operation_id')).toEqual([operation.id])
   const returnedAttacks = page.waitForResponse(response =>
     new URL(response.url()).pathname === '/api/attacks' && response.request().method() === 'GET')
-  await page.getByRole('tab', { name: 'Attacks', exact: true }).click()
-  await expect(page).toHaveURL(/\/history\/attacks\?/)
+  await page.goto(`/operations/${operation.id}`)
+  await page.getByRole('link', { name: 'Attack history', exact: true }).click()
+  await expect(page).toHaveURL(/\/attack\/history\?/)
   expect((await returnedAttacks).ok()).toBeTruthy()
   await expect(page.getByRole('progressbar', { name: 'Loading attacks...' })).toHaveCount(0, { timeout: 30_000 })
   await expect(page.getByRole('row', { name: 'Open ManualAttack attack', exact: true })).toHaveCount(7)
@@ -482,7 +484,7 @@ test('exports selected findings as Word and Markdown @seeded', async ({ page, re
     expect(markdown).not.toContain(title)
   }
   expect(markdown).toContain(`**Description:** ${description.split('\n')[0]}\\\n`)
-  const link = `${origin}/attacks/${attack.attack_result_id}/conversations/${attack.conversation_id}` +
+  const link = `${origin}/attack/chat/${attack.attack_result_id}/conversations/${attack.conversation_id}` +
     `?findingEvidenceId=${evidence.item.id}`
   // As in Word, the evidence bullet's objective is the link text.
   expect(markdown.split('\n').filter(line => line.startsWith('- [') && line.endsWith(`](<${link}>)`))).toHaveLength(1)

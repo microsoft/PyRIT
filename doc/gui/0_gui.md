@@ -23,29 +23,55 @@ For other setup options, see [Docker](../getting_started/install_docker.md) or t
 
 ## Home
 
-Home shows your default objective target and recent attacks grouped by operation.
+Home shows your last-used objective target and recent attacks grouped by operation.
 Open an attack to return to its conversation, or go to Registry to configure a
 target. The shared labels bar sets the operator, operation, and custom labels
 for new work; it does not change saved results.
 
-![Home page with default target and recent work](images/home.png)
+![Home page with target and recent work](images/home.png)
 
 ## Chat
 
-Chat (`/chat`) is the manual conversation workspace. Select a target and write
-the messages yourself. You can attach media, transform content with converters,
+Select **Attacks** in the sidebar to open Chat (`/attack/chat`), the manual conversation
+workspace. Select a target and write the messages yourself. You can attach media, transform content with converters,
 and branch or edit conversations to try another approach. Add an objective and
 select a chat scorer if you want automated assessment of responses.
 
-The same conversation viewer opens saved attacks from History. Automated results
+To score a saved response, open the objective outcome, expand **Automated scorer**,
+and select a scorer. **Apply scorer** evaluates only the latest saved assistant
+response in the open conversation. It keeps an existing complete result for the
+same response, scorer configuration, and objective criteria without another
+evaluation. **Off** hides the action. Earlier responses, other conversations, and
+human scores do not change; future responses keep the selected chat scorer.
+
+New chats and scans start with the last objective target you used. New chats also
+reuse the last chat scorer, including **Off**, unless a Registry default is set.
+These choices are saved in the current browser profile after use. Opening saved
+activity or editing an unsent draft does not change them.
+Chat use is recorded only after a request turn is confirmed, not after preparation
+fails, and stays with the initiating account even if you navigate away. A chat
+with a temperature override remembers its registered source target, without
+changing that chat's execution binding. While a remembered scorer is loading,
+wait for its catalog. Explicit scorer selections, including **Off**, take
+precedence; an unavailable remembered scorer is not saved as **Off**.
+
+The **Chat** tab returns to your retained draft, or your last chat if there is no draft.
+Selecting **Chat** while a chat is open keeps that chat open.
+Use **New attack** to start a blank draft. The **History** tab
+(`/attack/history`) opens saved attacks in the same conversation viewer. Automated results
 are read-only; **Continue manually** creates a separate manual attack. Export
 a conversation when you need a transcript.
+
+Older `/attacks/{attackId}` and
+`/attacks/{attackId}/conversations/{conversationId}` links redirect to the
+corresponding Chat route while retaining query parameters and fragments.
 
 ![Chat workspace with a prompt and target response](images/chat.png)
 
 ## Scanner
 
-Scanner (`/scanner`) is the catalog and launch point for automated scenarios.
+Scanner has **Launch** (`/scanner/launch`) and **History** (`/scanner/history`) tabs.
+Launch is the catalog and launch point for automated scenarios.
 Each scenario defines a test workflow with its techniques, data, and scoring.
 Open one to select a target and adjust the settings it supports, such as
 techniques, dataset selection, and concurrency.
@@ -77,11 +103,23 @@ Registry prepares reusable components; it does not execute attacks. Create
 targets to connect to model endpoints, converters to transform content, and
 named techniques that configure existing attacks. Browse configured scorers
 and select a default chat scorer; scorer setup uses initializers, not an editor
-on this page. Target defaults apply to new chats and scans.
+on this page. An explicit scan choice takes precedence. Otherwise, the current
+adversarial-target order is a saved Registry default, the registered
+`adversarial_chat` target, then last use. Objective targets do not have a Registry
+default. Existing chats and runs keep their settings.
+
+Expand a target, scorer, technique, or converter name to inspect its identity
+JSON. Target identity inspection is independent of expanding composite target
+members; defaults, visibility, and the target's configuration columns remain
+available. Converter inputs and outputs stay visible in the table. Use the small
+red X to remove a converter from the live registry; confirmation is required.
 
 **Scenario presets** save a scenario configuration for reuse with a target
 chosen at launch. **Suites** maintain ordered collections of preset definitions.
 They are stored separately from live component instances.
+Suite launch dialogs apply arriving target defaults only to untouched selections.
+An explicit target choice, including clearing an optional adversarial target to
+use the server default, is retained when the registry refreshes.
 
 Targets, converters, and techniques added only to the live registry must be
 recreated after a backend restart or reinitialization. Use
@@ -102,11 +140,17 @@ Load data through PyRIT before refreshing this catalog. See
 
 ## History
 
-Find saved attacks and scanner runs. Filter the list, open results, and inspect
-the conversations and scores. Supported failed scanner runs can be resumed.
+History is next to the feature that produced the results, not a separate sidebar
+item. Use the History tab in Attacks or Scanner to filter saved results and inspect
+their conversations and scores.
 
-The **Attacks** tab opens individual conversations. The **Scanner** tab opens
-run-level progress and results, including runs from `technique.execute`.
+Scanner history opens run-level progress and results, including runs from
+`technique.execute`. Its **ID** field accepts a complete conversation, attack,
+finding, or scenario result ID and searches all stored runs. Hover over the field
+to see the supported ID types. **Back to scan**, beside Markdown in a scan-owned
+chat, returns to its run.
+
+Supported failed scanner runs can be resumed.
 Resume retries unfinished objectives or objectives with execution errors when
 the original launch configuration is available. It skips completed objectives
 with non-error outcomes, including `failure`. Retrying an unsuccessful technique
@@ -163,6 +207,10 @@ for requirements and limits.
 ![Configuration page with backend setup controls](images/configuration.png)
 
 ## Preferences
+
+Use the icon at the top of the sidebar to show or hide navigation labels. This
+choice is saved for your account in this browser. On narrow screens, the same
+icon opens a navigation panel without reducing the workspace width.
 
 Use the sidebar's **Theme** menu to change the appearance. User preferences,
 such as default targets, are saved in this browser for the current account.

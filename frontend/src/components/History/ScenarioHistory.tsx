@@ -4,6 +4,8 @@ import {
   Badge,
   Button,
   Combobox,
+  Field,
+  Input,
   MessageBar,
   MessageBarBody,
   mergeClasses,
@@ -22,9 +24,11 @@ import {
   ArrowLeftRegular,
   ArrowRightRegular,
   ArrowSyncRegular,
+  DismissRegular,
   FilterDismissRegular,
   PlayRegular,
   ScriptRegular,
+  SearchRegular,
 } from '@fluentui/react-icons'
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
@@ -36,6 +40,7 @@ import type {
 } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
+import { scenarioRunRoutePath, UUID_PATTERN } from '@/utils/routeParams'
 
 import type { ViewName } from '../Sidebar/Navigation'
 import { useScenarioHistoryStyles } from './ScenarioHistory.styles'
@@ -46,6 +51,7 @@ import {
 } from './scenarioHistoryFilters'
 
 const PAGE_SIZE = 25
+const INVALID_ID_MESSAGE = 'Enter a complete ID (UUID).'
 
 interface ScenarioHistoryProps {
   filters: ScenarioHistoryFilters
@@ -98,6 +104,23 @@ export default function ScenarioHistory({
   showTitle = true,
 }: ScenarioHistoryProps) {
   const styles = useScenarioHistoryStyles()
+  const [idDraft, setIdDraft] = useState({
+    source: filters.referenceId, value: filters.referenceId, error: '',
+  })
+  if (idDraft.source !== filters.referenceId) {
+    setIdDraft({ source: filters.referenceId, value: filters.referenceId, error: '' })
+  }
+  const validReference = !filters.referenceId || UUID_PATTERN.test(filters.referenceId)
+  const idError = idDraft.error || (!validReference ? INVALID_ID_MESSAGE : '')
+  const submitId = (value: string): void => {
+    const id = value.trim()
+    if (id && !UUID_PATTERN.test(id)) {
+      setIdDraft((current) => ({ ...current, error: INVALID_ID_MESSAGE }))
+      return
+    }
+    setIdDraft({ source: filters.referenceId, value: id, error: '' })
+    onFiltersChange({ ...filters, referenceId: id.toLowerCase() })
+  }
   const queue = useScenarioQueue()
   const lastQueueRevisionRef = useRef<number | null>(null)
   const [runs, setRuns] = useState<ScenarioRunListItem[]>([])
@@ -118,6 +141,7 @@ export default function ScenarioHistory({
     filters.operator,
     filters.operationId,
     filters.otherLabels,
+    filters.referenceId,
   ])
   const [settledFilterKey, setSettledFilterKey] = useState<string | null>(null)
   const [fetchToken, setFetchToken] = useState({
@@ -125,6 +149,9 @@ export default function ScenarioHistory({
     filterKey,
     nonce: 0,
   })
+  if (fetchToken.filterKey !== filterKey) {
+    setFetchToken({ cursor: undefined, filterKey, nonce: fetchToken.nonce + 1 })
+  }
   const queueRevision = queue.snapshot?.revision
 
   const requestPage = useCallback((cursor?: string) => {
@@ -189,6 +216,7 @@ export default function ScenarioHistory({
   }, [runs])
 
   useEffect(() => {
+    if (!validReference) return
     let cancelled = false
     const effectiveCursor = fetchToken.filterKey === filterKey ? fetchToken.cursor : undefined
     const label = [
@@ -202,6 +230,7 @@ export default function ScenarioHistory({
       run_statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
       label: label.length > 0 ? label : undefined,
       operation_id: filters.operationId.length > 0 ? filters.operationId : undefined,
+      reference_id: filters.referenceId || undefined,
     }).then((response) => {
       if (cancelled) return
       setRuns(response.items)
@@ -233,6 +262,8 @@ export default function ScenarioHistory({
     filters.operator,
     filters.operationId,
     filters.otherLabels,
+    filters.referenceId,
+    validReference,
   ])
 
   useEffect(() => {
@@ -250,13 +281,15 @@ export default function ScenarioHistory({
   ): void => {
     onFiltersChange({ ...filters, [key]: value })
   }
-  const hasFilters = filters.scenarioNames.length > 0
+  const hasFilters = Boolean(filters.referenceId || idDraft.value)
+    || filters.scenarioNames.length > 0
     || filters.statuses.length > 0
     || filters.operator.length > 0
     || filters.operationId.length > 0
     || filters.otherLabels.length > 0
   const filtersPending = settledFilterKey !== filterKey
-  const displayLoading = loading || filtersPending
+  const displayLoading = validReference && (loading || filtersPending)
+  const displayedRuns = validReference ? runs : []
 
   return (
     <div className={styles.root}>
@@ -274,7 +307,7 @@ export default function ScenarioHistory({
             Refresh
           </Button>
         </div>
-        <div className={styles.filters}>
+        <div className={styles.filters} role="group" aria-label="Scanner history filters">
           <Tooltip content="Reset all filters" relationship="label">
             <Button
               className={styles.touchTargetHeight}
@@ -283,7 +316,10 @@ export default function ScenarioHistory({
               icon={<FilterDismissRegular />}
               aria-label="Reset all filters"
               disabledFocusable={!hasFilters}
-              onClick={() => onFiltersChange({ ...DEFAULT_SCENARIO_HISTORY_FILTERS })}
+              onClick={() => {
+                setIdDraft({ source: '', value: '', error: '' })
+                onFiltersChange({ ...DEFAULT_SCENARIO_HISTORY_FILTERS })
+              }}
               data-testid="scenario-reset-filters-btn"
             />
           </Tooltip>
@@ -332,6 +368,36 @@ export default function ScenarioHistory({
             testId="scenario-label-filter"
             className={styles.filterDropdown}
           />
+          <form
+            role="search"
+            aria-label="Scan history"
+            className={styles.lookupForm}
+            onSubmit={(event: React.FormEvent<HTMLFormElement>) => {
+              event.preventDefault()
+              submitId(idDraft.value)
+            }}
+          >
+            <Field validationState={idError ? 'error' : 'none'} validationMessage={idError || undefined}>
+              <Tooltip content="Search by conversation, attack, finding, or scenario ID." relationship="description">
+                <Input
+                  className={styles.lookupInput}
+                  aria-label="ID"
+                  placeholder="ID"
+                  contentBefore={<SearchRegular />}
+                  contentAfter={idDraft.value ? (
+                    <Button className={styles.touchTarget} appearance="transparent" size="small"
+                      icon={<DismissRegular />} aria-label="Clear ID search"
+                      onClick={() => { submitId('') }} />
+                  ) : undefined}
+                  value={idDraft.value}
+                  onChange={(_, data) => {
+                    setIdDraft((current) => ({ ...current, value: data.value, error: '' }))
+                    if (!data.value.trim() || UUID_PATTERN.test(data.value.trim())) submitId(data.value)
+                  }}
+                />
+              </Tooltip>
+            </Field>
+          </form>
         </div>
         {optionsError && (
           <MessageBar intent="warning">
@@ -355,7 +421,7 @@ export default function ScenarioHistory({
               Retry
             </Button>
           </div>
-        ) : runs.length === 0 ? (
+        ) : displayedRuns.length === 0 ? (
           <div className={styles.emptyState} data-testid="scenario-history-empty">
             <Text size={400}>No scenario runs found</Text>
             <Text>{hasFilters ? 'Try adjusting your filters.' : 'Launch a scenario to see its progress and results here.'}</Text>
@@ -367,7 +433,7 @@ export default function ScenarioHistory({
           </div>
         ) : (
           <ScenarioHistoryTable
-            runs={runs}
+            runs={displayedRuns}
             queueSnapshot={queue.snapshot}
             onOpenRun={onOpenRun}
             onResume={resume.requestResume}
@@ -377,7 +443,7 @@ export default function ScenarioHistory({
         )}
       </div>
 
-      {!displayLoading && !error && runs.length > 0 && (
+      {!displayLoading && !error && displayedRuns.length > 0 && (
         <div className={styles.pagination}>
           <Button
             className={styles.touchTarget}
@@ -451,7 +517,7 @@ function ScenarioHistoryTable({
             >
             <TableCell>
               <a
-                href={`/scanner-history/${run.scenario_result_id}`}
+                href={scenarioRunRoutePath(run.scenario_result_id)}
                 className={styles.rowLink}
                 aria-label={`Open ${run.scenario_registry_name ?? run.scenario_name} scenario run`}
                 onClick={(event) => {

@@ -5,6 +5,8 @@ import { decodeBlobErrorAsync, toApiError } from './errors'
 import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
+  ApplyChatScorerRequest,
+  ApplyChatScorerResponse,
   TargetInstance,
   UnregisteredTarget,
   UnregisteredConverter,
@@ -474,6 +476,9 @@ export const initializersApi = {
 }
 
 export const attacksApi = {
+  applyScorer: async (attackResultId: string, request: ApplyChatScorerRequest): Promise<ApplyChatScorerResponse> => {
+    return (await apiClient.post(`/attacks/${encodeURIComponent(attackResultId)}/apply-scorer`, request)).data
+  },
   saveConversation: async (request: SaveConversationRequest): Promise<AddMessageResponse> => {
     const response = await apiClient.post('/attacks/save-conversation', request)
     return response.data
@@ -704,6 +709,7 @@ export const scenariosApi = {
     run_statuses?: ScenarioRunState[]
     label?: string[]
     operation_id?: string[]
+    reference_id?: string
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,

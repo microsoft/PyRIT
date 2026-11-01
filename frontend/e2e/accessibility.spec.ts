@@ -1,4 +1,4 @@
-import { test, expect, type Locator, type Page } from "./_fixtures";
+import { test, expect, selectChatTarget, type Locator, type Page } from "./_fixtures";
 import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
 import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
@@ -123,13 +123,7 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Save an objective default, then open a new chat with that target.
-    await page.getByTitle("Registry").click();
-    await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
-    const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
-    await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
-    await objectiveDefault.selectOption({ index: 1 });
-    await page.getByTitle("Technique.execute").click();
+    await selectChatTarget(page, "a11y-form-target");
 
     // Input should be accessible
     const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
@@ -146,11 +140,11 @@ test.describe("Accessibility", () => {
 
   test("should have accessible sidebar navigation", async ({ page }) => {
     // Chat button
-    const chatBtn = page.getByTitle("Technique.execute");
+    const chatBtn = page.getByRole("button", { name: "Attacks", exact: true });
     await expect(chatBtn).toBeVisible();
 
     // Registry button
-    const configBtn = page.getByTitle("Registry");
+    const configBtn = page.getByRole("button", { name: "Registry", exact: true });
     await expect(configBtn).toBeVisible();
 
     // Theme toggle button (now a menu trigger with "Theme: <mode>" title)
@@ -192,7 +186,7 @@ test.describe("Accessibility", () => {
     // keyboard) to guarantee the document has focus when the keystroke fires.
     // Without both, Chromium sometimes leaves `:focus` empty under parallel
     // worker load.
-    await expect(page.getByTitle("Home")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Home", exact: true })).toBeVisible();
     await page.locator("body").press("Tab");
     const focused = page.locator(":focus");
     await expect(focused).toBeVisible();
@@ -231,7 +225,7 @@ test.describe("Accessibility", () => {
     });
     await page.reload();
 
-    await expect(page.getByTitle("Home")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Home", exact: true })).toBeVisible();
 
     const skipLink = page.getByRole("link", { name: "Skip to main content" });
     await expect(skipLink).not.toBeInViewport();
@@ -266,13 +260,7 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Save an objective default, then open a new chat with that target.
-    await page.getByTitle("Registry").click();
-    await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
-    const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
-    await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
-    await objectiveDefault.selectOption({ index: 1 });
-    await page.getByTitle("Technique.execute").click();
+    await selectChatTarget(page, "a11y-focus-target");
 
     const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await expect(input).toBeEnabled({ timeout: 5000 });
@@ -313,7 +301,7 @@ test.describe("Accessibility", () => {
     });
 
     // Navigate to the registry
-    await page.getByTitle("Registry").click();
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("Target Registry")).toBeVisible();
 
     // Table should exist
@@ -335,9 +323,9 @@ test.describe("Accessibility", () => {
     );
 
     const views = [
-      { button: "History", heading: "History" },
+      { button: "Scanner", heading: "Scanner" },
       { button: "Registry", heading: "Target Registry" },
-      { button: "Technique.execute", heading: "Chat" },
+      { button: "Attacks", heading: "Attacks" },
     ];
 
     for (const view of views) {
