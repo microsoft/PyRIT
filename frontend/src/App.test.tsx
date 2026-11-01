@@ -6,7 +6,7 @@
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useLocation, useNavigate } from "react-router";
+import { MemoryRouter, parsePath, useLocation, useNavigate } from "react-router";
 import App from "./App";
 
 import { attacksApi, operationsApi, targetsApi } from "./services/api";
@@ -302,7 +302,9 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="scenario-result-id">{scenarioResultId ?? "none"}</span>
-        <span data-testid="route-location">{`${location.pathname}${location.search}`}</span>
+        <span data-testid="route-location" data-navigation-state={JSON.stringify(location.state)}>
+          {`${location.pathname}${location.search}`}
+        </span>
         <button
           onClick={() => onConversationCreated("ar-123", "conv-123")}
           data-testid="set-conversation"
@@ -663,9 +665,11 @@ function RouterProbe() {
 describe("App", () => {
   // App reads the active view from the URL, so every render needs a router.
   // initialPath lets a test deep-link straight to a view.
-  function renderApp(initialPath = "/") {
+  function renderApp(initialPath: string = "/", navigationState?: Record<string, unknown>) {
     return render(
-      <MemoryRouter initialEntries={[initialPath]}>
+      <MemoryRouter initialEntries={navigationState === undefined
+        ? [initialPath]
+        : [{ ...parsePath(initialPath), state: navigationState }]}>
         <App />
       </MemoryRouter>
     );
@@ -1697,7 +1701,8 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: ["conv-456"],
     });
-    renderApp(`/attack/chat/ar-1?scenarioResultId=${scenarioResultId}`);
+    const returnContext = { suiteExecutionId: "suite-1", suiteName: "Saved suite" };
+    renderApp(`/attack/chat/ar-1?scenarioResultId=${scenarioResultId}`, returnContext);
     await waitFor(() =>
       expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
     );
@@ -1707,10 +1712,14 @@ describe("App", () => {
       `/attack/chat/ar-1/conversations/conv-456?scenarioResultId=${scenarioResultId}`
     );
     expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId);
+    expect(screen.getByTestId("route-location"))
+      .toHaveAttribute("data-navigation-state", JSON.stringify(returnContext));
 
     fireEvent.click(screen.getByRole("button", { name: "New attack", exact: true }));
     expect(screen.getByTestId("route-location")).toHaveTextContent("/attack/chat");
     expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("none");
+    expect(JSON.parse(screen.getByTestId("route-location").getAttribute("data-navigation-state") ?? "null"))
+      .toEqual({ newAttackRequestId: expect.any(String) });
   });
 
   it("uses the conversation from a deep link when it belongs to the attack", async () => {
@@ -1778,7 +1787,8 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
     });
-    renderApp(`/attack/chat/ar-1/conversations/bogus?scenarioResultId=${scenarioResultId}`);
+    const returnContext = { fromScenarioHistory: true, scenarioHistorySearch: "?status=COMPLETED" };
+    renderApp(`/attack/chat/ar-1/conversations/bogus?scenarioResultId=${scenarioResultId}`, returnContext);
 
     await waitFor(() =>
       expect(screen.getByTestId("route-location")).toHaveTextContent(
@@ -1786,6 +1796,8 @@ describe("App", () => {
       )
     );
     expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId);
+    expect(screen.getByTestId("route-location"))
+      .toHaveAttribute("data-navigation-state", JSON.stringify(returnContext));
   });
 
   it("hydrates history filters from the URL query string", () => {

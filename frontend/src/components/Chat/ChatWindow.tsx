@@ -1693,7 +1693,10 @@ export default function ChatWindow({
       if (chatInputText || draftAttachments.length || activePieceConversions.text) {
         const pieces: ConversationDraftPiece[] = [
           ...(chatInputText || activePieceConversions.text
-            ? [{ ...newDraftPiece(), draftId: 'text', original_value: chatInputText }] : []),
+            ? [{
+              ...newDraftPiece(), draftId: 'text', original_value: chatInputText,
+              prompt_metadata: inputBoxRef.current?.getTextMetadata(),
+            }] : []),
           ...draftAttachments.map(attachmentDraft),
         ].map((piece: ConversationDraftPiece) => {
           const conversion = activePieceConversions[piece.draftId]
@@ -2204,7 +2207,7 @@ export default function ChatWindow({
           <Link
             className={styles.breadcrumbLink}
             to={scenarioRunRoutePath(scenarioResultId)}
-            state={{ fromScenarioHistory: true }}
+            state={location.state ?? { fromScenarioHistory: true }}
             onClick={(event: React.MouseEvent<HTMLAnchorElement>) => {
               if (onReturnToScan && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
                 event.preventDefault()

@@ -46,11 +46,13 @@ import {
 } from '@/components/AttackResults/attackAttemptFormatting'
 import { suiteExecutionRoutePath } from '@/components/ScenarioSuites/suiteRoutes'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
+import { useScenarioResultHierarchy } from '@/hooks/useScenarioResultHierarchy'
 import { useScenarioRunResume } from '@/hooks/useScenarioRunResume'
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
+  ScenarioHierarchyNode,
   ScenarioProgressCounts,
   ScenarioProgressHeader,
   ScenarioProgressResult,
@@ -75,6 +77,8 @@ import { ObjectiveDetailsDialog, TechniqueDetailsDialog } from './ScenarioRunDia
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
 import ScenarioQueue from './ScenarioQueue'
 import PairedOutcomes from './PairedOutcomes'
+import ScenarioResultHierarchy from './ScenarioResultHierarchy'
+import { hierarchyDisplayGroups } from './scenarioHierarchy'
 
 const CLOCK_REFRESH_INTERVAL_MS = 1_000
 const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
@@ -113,6 +117,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   const location = useLocation()
   const navigate = useNavigate()
   const { state, retry, applyRunSummary } = useScenarioRunProgress(scenarioResultId)
+  const hierarchy = useScenarioResultHierarchy(scenarioResultId, state.run !== null && state.summary !== null)
   const queue = useScenarioQueue()
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
   const [cancelling, setCancelling] = useState(false)
@@ -129,6 +134,8 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   const [atomicGroupsExpandedChoice, setAtomicGroupsExpandedChoice] = useState<boolean | null>(null)
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set())
   const detailsTriggerRef = useRef<HTMLElement | null>(null)
+  const atomicGroupsToggleRef = useRef<HTMLButtonElement | null>(null)
+  const [hierarchySelection, setHierarchySelection] = useState<ScenarioHierarchyNode | null>(null)
   const navigationState = location.state as {
     fromScenarioHistory?: boolean
     scenarioHistorySearch?: string
@@ -163,9 +170,12 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     () => new Map(state.summary?.atomic_groups.map((group) => [group.id, group]) ?? []),
     [state.summary],
   )
-  const selectedAttempt = useMemo(
-    () => state.results.find((attempt) => attempt.attack_result_id === attackResultId) ?? null,
-    [attackResultId, state.results],
+  // A hierarchy node can be opened before the paged progress feed has delivered it.
+  const selectedAttempt = useMemo<ScenarioProgressResult | null>(
+    () =>
+      state.results.find((attempt) => attempt.attack_result_id === attackResultId) ??
+      (hierarchySelection?.attack_result_id === attackResultId ? hierarchySelection : null),
+    [attackResultId, state.results, hierarchySelection],
   )
   const selectedAttemptGroup = selectedAttempt
     ? plannedAtomicGroups.get(selectedAttempt.atomic_group_id)
@@ -188,14 +198,19 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
 
   const closeAttemptDetails = (): void => {
     navigate(scenarioRunRoutePath(scenarioResultId), { replace: true, state: location.state })
-    requestAnimationFrame(() => detailsTriggerRef.current?.focus())
+    requestAnimationFrame(() => {
+      const trigger = detailsTriggerRef.current
+      const focusTarget = trigger?.isConnected ? trigger : atomicGroupsToggleRef.current
+      focusTarget?.focus()
+    })
   }
 
   const openAttemptDetails = (
-    attempt: ScenarioProgressResult,
+    attempt: ScenarioProgressResult | ScenarioHierarchyNode,
     trigger: HTMLElement,
   ): void => {
     detailsTriggerRef.current = trigger
+    setHierarchySelection('objective' in attempt ? attempt : null)
     navigate(scenarioRunAttackRoutePath(scenarioResultId, attempt.attack_result_id), { state: location.state })
   }
 
@@ -299,7 +314,11 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     techniques,
     seed_groups: seedGroups,
   } = state.summary
-  const displayGroups = summarizedDisplayGroups ?? techniques
+  const displayGroups = hierarchyDisplayGroups(summarizedDisplayGroups ?? techniques, hierarchy.roots.groups)
+  const producerCounts = state.summary?.overall.producer_counts
+  const executionCount = producerCounts
+    ? producerCounts.target_facing.attempts + producerCounts.orchestration.attempts + producerCounts.unknown.attempts
+    : state.results.length
   const atomicGroupsExpanded = atomicGroupsExpandedChoice ?? displayGroups.length <= AUTO_EXPAND_GROUP_LIMIT
   const unattributedAttempts = state.summary.unattributed_attempts ?? 0
   const queued = run.status === 'QUEUED'
@@ -566,75 +585,86 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
                 aria-controls="atomic-groups-panel"
                 aria-label={`${atomicGroupsExpanded ? 'Collapse' : 'Expand'} atomic attack groups`}
                 data-testid="toggle-atomic-groups-btn"
+                ref={atomicGroupsToggleRef}
                 onClick={() => setAtomicGroupsExpandedChoice(!atomicGroupsExpanded)}
               >
                 {atomicGroupsExpanded ? 'Collapse' : 'Expand'}
               </Button>
             </div>
             <Text className={styles.sectionHint}>
-              {`${displayGroups.length.toLocaleString()} group${displayGroups.length === 1 ? '' : 's'}, ${state.results.length.toLocaleString()} execution${state.results.length === 1 ? '' : 's'}`}
+              {`${displayGroups.length.toLocaleString()} group${displayGroups.length === 1 ? '' : 's'}, ${executionCount.toLocaleString()} ${producerCounts ? '' : 'loaded '}execution${executionCount === 1 ? '' : 's'}`}
             </Text>
           </div>
           <div id="atomic-groups-panel" hidden={!atomicGroupsExpanded}>
-            {atomicGroupsExpanded && (displayGroups.length === 0 ? (
-              <EmptyState text="No atomic attack groups have been persisted yet." />
-            ) : (
-              <div className={styles.displayGroupList}>
-                {displayGroups.map((group) => {
-                  const attempts = (group.atomic_group_ids ?? [])
-                    .flatMap((atomicGroupId) => attemptsByGroupId.get(atomicGroupId) ?? [])
-                  const expanded = expandedGroupIds.has(group.id)
-                  const panelId = `atomic-group-${group.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
-                  return (
-                    <article key={group.id} className={styles.displayGroup}>
-                      <div className={styles.displayGroupSummary}>
-                        <Button
-                          appearance="subtle"
-                          className={styles.expandButton}
-                          icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
-                          aria-expanded={expanded}
-                          aria-controls={panelId}
-                          aria-label={`${expanded ? 'Collapse' : 'Expand'} attacks in ${group.display_group}`}
-                          onClick={() => toggleDisplayGroup(group.id)}
-                        />
-                        <span className={styles.displayGroupIdentity}>
-                          <Text size={400} weight="semibold">{group.display_group}</Text>
-                          <Text size={200} className={styles.sectionHint}>
-                            {group.atomic_attack_names.join(', ')}
-                          </Text>
-                        </span>
-                        <span className={styles.displayGroupMetrics}>
-                          <DisplayGroupMetric
-                            label="Completed"
-                            value={formatCompletion(group.completed, group.planned)}
-                          />
-                          <DisplayGroupMetric
-                            label="Attack success"
-                            value={formatSuccess(group.succeeded, group.completed, group.success_percentage)}
-                          />
-                          <DisplayGroupMetric label="Errors" value={String(group.errors)} />
-                          <DisplayGroupMetric label="Retries" value={String(group.retries)} />
-                        </span>
-                      </div>
-                      {expanded && (
-                        <div
-                          id={panelId}
-                          className={styles.displayGroupPanel}
-                          aria-label={`${group.display_group} attack executions`}
-                        >
-                          <AttackExecutionTable
-                            attempts={attempts.slice(0, MAX_VISIBLE_ATTEMPTS_PER_GROUP)}
-                            totalAttempts={attempts.length}
-                            seedObjectives={seedObjectives}
-                            onOpenDetails={openAttemptDetails}
-                          />
-                        </div>
-                      )}
-                    </article>
-                  )
-                })}
-              </div>
-            ))}
+            {atomicGroupsExpanded && (
+              <ScenarioResultHierarchy hierarchy={hierarchy} runStatus={run.status}>
+                {displayGroups.length === 0 ? (
+                  <EmptyState text="No atomic attack groups have been persisted yet." />
+                ) : (
+                  <div className={styles.displayGroupList}>
+                    {displayGroups.map((group) => {
+                      const attempts = (group.atomic_group_ids ?? [])
+                        .flatMap((atomicGroupId) => attemptsByGroupId.get(atomicGroupId) ?? [])
+                      const expanded = expandedGroupIds.has(group.id)
+                      const panelId = `atomic-group-${group.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+                      return (
+                        <article key={group.id} className={styles.displayGroup}>
+                          <div className={styles.displayGroupSummary}>
+                            <Button
+                              appearance="subtle"
+                              className={styles.expandButton}
+                              icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
+                              aria-expanded={expanded}
+                              aria-controls={panelId}
+                              aria-label={`${expanded ? 'Collapse' : 'Expand'} attacks in ${group.display_group}`}
+                              onClick={() => toggleDisplayGroup(group.id)}
+                            />
+                            <span className={styles.displayGroupIdentity}>
+                              <Text size={400} weight="semibold">{group.display_group}</Text>
+                              <Text size={200} className={styles.sectionHint}>
+                                {group.atomic_attack_names.join(', ')}
+                              </Text>
+                            </span>
+                            <span className={styles.displayGroupMetrics}>
+                              <DisplayGroupMetric
+                                label="Completed"
+                                value={formatCompletion(group.completed, group.planned)}
+                              />
+                              <DisplayGroupMetric
+                                label="Attack success"
+                                value={formatSuccess(group.succeeded, group.completed, group.success_percentage)}
+                              />
+                              <DisplayGroupMetric label="Errors" value={String(group.errors)} />
+                              <DisplayGroupMetric label="Retries" value={String(group.retries)} />
+                            </span>
+                          </div>
+                          {expanded && (
+                            <div
+                              id={panelId}
+                              className={styles.displayGroupPanel}
+                              aria-label={`${group.display_group} attack executions`}
+                            >
+                              <AttackExecutionTable
+                                scenarioResultId={scenarioResultId}
+                                label={`${group.display_group} attack results`}
+                                attempts={attempts.slice(0, MAX_VISIBLE_ATTEMPTS_PER_GROUP)}
+                                totalAttempts={attempts.length}
+                                roots={hierarchy.roots.groups
+                                  .filter((savedGroup) => group.atomic_group_ids.includes(savedGroup.atomic_group_id))
+                                  .flatMap((savedGroup) => savedGroup.roots)}
+                                hierarchy={hierarchy}
+                                seedObjectives={seedObjectives}
+                                onOpenDetails={openAttemptDetails}
+                              />
+                            </div>
+                          )}
+                        </article>
+                      )
+                    })}
+                  </div>
+                )}
+              </ScenarioResultHierarchy>
+            )}
           </div>
         </section>
 
@@ -790,15 +820,22 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
               <DialogContent className={styles.attackDetailDialogContent}>
                 <AttackAttemptDetails
                   attempt={selectedAttempt}
-                  objective={seedObjectives.get(selectedAttempt.seed_group_id) ?? null}
+                  objective={
+                    (hierarchySelection?.attack_result_id === selectedAttempt.attack_result_id
+                      ? hierarchySelection.objective
+                      : null) ??
+                    seedObjectives.get(selectedAttempt.seed_group_id) ??
+                    null
+                  }
                   atomicGroup={selectedAttemptGroup}
                   techniqueDetails={progressAtomicGroups.get(selectedAttempt.atomic_group_id)?.technique_details}
                   objectiveScorer={objectiveScorer}
-                  conversationPath={attackConversationRoutePath(
+                  conversationPath={selectedAttempt.conversation_id ? attackConversationRoutePath(
                     selectedAttempt.attack_result_id,
                     selectedAttempt.conversation_id,
                     scenarioResultId,
-                  )}
+                  ) : null}
+                  conversationState={location.state}
                 />
               </DialogContent>
             )}
