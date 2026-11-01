@@ -218,6 +218,8 @@ async def test_md_image_across_lines_follows_default_patterns_only(
         "![a" + "]" * 50_000 + "\n" + "[" * 50_000,
         "![a\n" * 20_000 + "]",
     ],
+    # Short ids: pytest copies the id into an environment variable, which Windows caps at 32,767 characters.
+    ids=["unclosed-inline-per-line", "nested-openers", "closers-then-openers", "unclosed-image-per-line"],
 )
 def test_md_image_scan_scales_on_malformed_input(text: str):
     assert _find_images(text) == set()
