@@ -37,6 +37,23 @@ describe('useTargetPreferences', () => {
     jest.restoreAllMocks()
   })
 
+  it('restores a temperature-bound source for later chat and scan defaults', () => {
+    const bound = {
+      ...target, identifier: { ...target.identifier, hash: 'effective-hash' },
+      binding: {
+        version: 1 as const, source_name: target.target_registry_name, source_hash: target.identifier.hash,
+        effective_hash: 'effective-hash', temperature: 0.8,
+      },
+    }
+    const first = renderTargetPreferences('alice', [target, adversarial])
+    act(() => first.result.current.rememberUse({ objective: targetReference(bound) }))
+    first.unmount()
+    const restored = renderTargetPreferences('alice', [target, adversarial])
+    expect(restored.result.current.objectiveTarget).toBe(target)
+    expect(restored.result.current.objectiveReference).toEqual(targetReference(target))
+    expect(bound.identifier.hash).toBe('effective-hash')
+  })
+
   it('stores only target references and restores each account independently', () => {
     const first = renderTargetPreferences('tenant:alice', [target, adversarial])
     act(() => first.result.current.rememberUse({ objective: targetReference(target) }))

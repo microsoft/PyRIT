@@ -741,16 +741,19 @@ describe("ChatWindow Integration", () => {
       },
     );
 
-    it("aborts the single status read on unmount, not the accepted submission", async () => {
+    it("keeps the account-owned status read after unmount, not the view evidence reader", async () => {
       const user = userEvent.setup();
-      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+      let finish: (progress: MessageSendStatus) => void = () => {};
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
       const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
       await sendDraft(user);
       expect(mockedAttacksApi.getMessageSend).toHaveBeenCalledTimes(1);
       const signal = mockedAttacksApi.getMessageSend.mock.calls[0][2];
-      expect(signal?.aborted).toBe(false);
+      expect(signal).toBeUndefined();
       rendered.unmount();
-      expect(signal?.aborted).toBe(true);
+      await act(async () => { finish(complete); });
+      expect(readUserPreferences("local").lastUsedTargets?.objective?.registryName).toBe(mockTarget.target_registry_name);
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1);
       expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
     });
 
@@ -988,7 +991,7 @@ describe("ChatWindow Integration", () => {
         expect(readUserPreferences("local").lastUsedTargets).toBeUndefined();
       });
 
-      it("does not start copy trackers after unmount while preparation was being read", async () => {
+      it("continues only account-owned receipt tracking after unmount while preparation was being read", async () => {
         const user = userEvent.setup();
         let finish: (value: MessageSendStatus) => void = () => {};
         mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, count: 3 });
@@ -997,12 +1000,12 @@ describe("ChatWindow Integration", () => {
         await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
         await chooseCount(user, 3);
         await sendDraft(user);
-        const signal = mockedAttacksApi.getMessageSend.mock.calls[0][2];
+        await waitFor(() => expect(mockedAttacksApi.getMessageSend).toHaveBeenCalledTimes(1));
         rendered.unmount();
-        expect(signal?.aborted).toBe(true);
-        await act(async () => { finish(repeatedProgress(["sending", "sending", "queued"])); });
-        expect(mockedAttacksApi.getMessageSend).toHaveBeenCalledTimes(1);
+        await act(async () => { finish(repeatedProgress(["completed", "completed", "completed"])); });
+        expect(mockedAttacksApi.getMessageSend.mock.calls[0][2]).toBeUndefined();
         expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1);
+        expect(readUserPreferences("local").lastUsedTargets?.objective?.registryName).toBe(mockTarget.target_registry_name);
       });
     });
   });
@@ -3199,6 +3202,45 @@ describe("ChatWindow Integration", () => {
     expect(mockedAttacksApi.createAttack.mock.calls[0][0].target_binding).toEqual(binding);
     expect(onConversationCreated.mock.calls[0][3].binding).toEqual(binding);
     expect(source.identifier.hash).not.toBe("private-hash");
+  });
+
+  it("remembers the registered source on a subsequent send using a reopened temperature binding", async () => {
+    const user = userEvent.setup();
+    const bound: TargetInstance = {
+      ...mockTarget, identifier: { ...mockTarget.identifier, hash: "private-hash", temperature: 0.8 },
+      binding: {
+        version: 1, source_name: mockTarget.target_registry_name, source_hash: mockTarget.identifier.hash,
+        temperature: 0.8, effective_hash: "private-hash",
+      },
+    };
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      conversation_id: "bound-conversation", messages: [], target_response_status: null,
+    });
+    mockSendResult.mockResolvedValue({
+      ...makeTextResponse("Bound reply"),
+      attack: {
+        attack_result_id: "bound-attack", conversation_id: "bound-conversation", attack_type: "ManualAttack",
+        objective: "", converters: [], message_count: 2, related_conversation_ids: [],
+        labels: {}, created_at: "", updated_at: "", target: { identifier_hash: "private-hash", binding: bound.binding },
+      },
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={bound}
+      attackResultId="bound-attack" conversationId="bound-conversation" activeConversationId="bound-conversation"
+      attackTarget={{ identifier_hash: "private-hash", binding: bound.binding }} targetResolutionStatus="resolved" /></TestWrapper>);
+    await waitFor(() => expect(screen.getByPlaceholderText("Type prompt here")).toBeEnabled());
+    await user.type(screen.getByPlaceholderText("Type prompt here"), "Next prompt");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("Bound reply");
+    expect(readUserPreferences("local").lastUsedTargets?.objective).toEqual({
+      registryName: mockTarget.target_registry_name, identifierHash: mockTarget.identifier.hash,
+    });
+    expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled();
+    expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledWith("bound-attack", expect.objectContaining({
+      target_registry_name: mockTarget.target_registry_name,
+    }));
+    expect(bound.identifier.hash).toBe("private-hash");
+    expect(bound.binding?.effective_hash).toBe("private-hash");
+    expect(bound.binding?.temperature).toBe(0.8);
   });
 
   it.each([

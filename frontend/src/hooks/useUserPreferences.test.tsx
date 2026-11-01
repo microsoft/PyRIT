@@ -2,11 +2,17 @@ import { act, render, renderHook, screen, waitFor } from '@testing-library/react
 import type { ReactNode } from 'react'
 import userEvent from '@testing-library/user-event'
 
-import type { UserPreferences } from '@/types'
+import type { AttackSummary, MessageSendStatus, UserPreferences } from '@/types'
+import { attacksApi } from '@/services/api'
+import { deferred } from '@/test-utils/deferred'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import { UserPreferencesProvider, useUserPreferences } from './useUserPreferences'
+
+jest.mock('@/services/api', () => ({
+  attacksApi: { getMessageSend: jest.fn(), getAttack: jest.fn() },
+}))
 
 const chosenPreferences: UserPreferences = {
   targets: {
@@ -44,6 +50,7 @@ describe('useUserPreferences', () => {
   beforeEach(() => {
     window.localStorage.clear()
     jest.restoreAllMocks()
+    jest.clearAllMocks()
   })
 
   it('stores and restores every preference in one account-scoped record', () => {
@@ -348,5 +355,94 @@ describe('useUserPreferences', () => {
     })
     expect(saved.lastUsedChatScorer).toBeNull()
     expect(saved.targets).toEqual(chosenPreferences.targets)
+  })
+
+  describe('account-owned confirmed chat use', () => {
+    const target = { registryName: 'used-target', identifierHash: 'source-hash' }
+    const scorer = { registry_name: 'judge', identifier_hash: 'judge-hash' }
+    const catalog = [{
+      scorer_registry_name: scorer.registry_name,
+      identifier: { class_name: 'SubStringScorer', class_module: 'pyrit.score', hash: scorer.identifier_hash, scorer_type: 'true_false' },
+    }]
+    const completed: MessageSendStatus = {
+      attack_result_id: 'attack', conversation_id: 'conversation', send_id: 'send',
+      state: 'completed', request_turn_number: 0, failure_stage: null, error: null,
+    }
+    const attack: AttackSummary = {
+      attack_result_id: 'attack', conversation_id: 'conversation', attack_type: 'ManualAttack',
+      objective: 'Goal', chat_scorer: scorer, chat_scorer_inherited: false,
+      converters: [], related_conversation_ids: [], message_count: 2, labels: {}, created_at: '', updated_at: '',
+    }
+
+    it('records once in the originating account after its provider unmounts', async () => {
+      const acceptance = deferred<MessageSendStatus>()
+      const progress = deferred<MessageSendStatus>()
+      jest.mocked(attacksApi.getMessageSend).mockReturnValue(progress.promise)
+      jest.mocked(attacksApi.getAttack).mockResolvedValue(attack)
+      const write = jest.spyOn(Storage.prototype, 'setItem')
+      const origin = renderHook(() => useUserPreferences(), { wrapper })
+      origin.result.current.observeChatSend('attack', acceptance.promise, target, scorer, false, catalog)
+      origin.unmount()
+      const other = renderHook(() => useUserPreferences(), {
+        wrapper: ({ children }: { children: ReactNode }) => (
+          <UserPreferencesProvider accountKey="tenant:bob">{children}</UserPreferencesProvider>
+        ),
+      })
+      await act(async () => {
+        acceptance.resolve({ ...completed, state: 'queued', request_turn_number: null })
+      })
+      expect(readUserPreferences('tenant:alice').lastUsedTargets).toBeUndefined()
+      await act(async () => { progress.resolve(completed) })
+      expect(readUserPreferences('tenant:alice').lastUsedTargets?.objective).toEqual(target)
+      expect(readUserPreferences('tenant:alice').lastUsedChatScorer).toEqual(scorer)
+      expect(other.result.current.preferences).toEqual(DEFAULT_USER_PREFERENCES)
+      expect(readUserPreferences('tenant:bob')).toEqual(DEFAULT_USER_PREFERENCES)
+      expect(write).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+      { name: 'preparation failure', request_turn_number: 0, failure_stage: 'preparation' as const },
+      { name: 'no confirmed request turn', request_turn_number: null, failure_stage: null },
+    ])('does not record $name', async ({ request_turn_number, failure_stage }) => {
+      const { result } = renderHook(() => useUserPreferences(), { wrapper })
+      await act(async () => {
+        result.current.observeChatSend('attack', Promise.resolve({
+          ...completed, state: 'failed', request_turn_number, failure_stage,
+        }), target, scorer, true, catalog)
+      })
+      expect(readUserPreferences('tenant:alice')).toEqual(DEFAULT_USER_PREFERENCES)
+      expect(attacksApi.getAttack).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      { name: 'unresolved implicit default', choice: undefined, explicit: false, inherited: false, expected: scorer },
+      { name: 'missing selected scorer', choice: scorer, explicit: true, inherited: false, expected: scorer },
+      { name: 'explicit Off', choice: null, explicit: true, inherited: false, expected: null },
+      { name: 'inherited Off', choice: null, explicit: false, inherited: true, expected: scorer },
+    ])('preserves scorer provenance for $name', async ({ choice, explicit, inherited, expected }) => {
+      writeUserPreferences('tenant:alice', { ...DEFAULT_USER_PREFERENCES, lastUsedChatScorer: scorer })
+      jest.mocked(attacksApi.getAttack).mockResolvedValue({
+        ...attack, chat_scorer: null, chat_scorer_inherited: inherited,
+      })
+      const { result } = renderHook(() => useUserPreferences(), { wrapper })
+      await act(async () => {
+        result.current.observeChatSend('attack', Promise.resolve(completed), target, choice, explicit, catalog)
+      })
+      expect(readUserPreferences('tenant:alice').lastUsedTargets?.objective).toEqual(target)
+      expect(readUserPreferences('tenant:alice').lastUsedChatScorer).toEqual(expected)
+    })
+
+    it('shares receipt reads and reports failed confirmation instead of inventing use', async () => {
+      const failure = new Error('Progress unavailable')
+      jest.mocked(attacksApi.getMessageSend).mockRejectedValue(failure)
+      const { result } = renderHook(() => useUserPreferences(), { wrapper })
+      const observation = result.current.observeChatSend(
+        'attack', Promise.resolve({ ...completed, state: 'queued' }), target, scorer, false, catalog,
+      )
+      await act(async () => { await observation.readProgress() })
+      await waitFor(() => expect(result.current.error).toContain('Progress unavailable'))
+      expect(readUserPreferences('tenant:alice').lastUsedTargets).toBeUndefined()
+      expect(attacksApi.getMessageSend).toHaveBeenCalledTimes(1)
+    })
   })
 })

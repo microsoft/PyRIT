@@ -219,6 +219,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const { preferences, updatePreferences, error: preferenceError } = useUserPreferences()
   const defaultChatScorer = preferences.chatScorer !== undefined ? preferences.chatScorer
     : resolveChatScorerReference(preferences.lastUsedChatScorer, scorerRegistry.scorers)
+  const scorerDefaultsReady = preferences.chatScorer !== undefined
+    || preferences.lastUsedChatScorer == null || !scorerRegistry.loading
   const targetDefaults = useTargetPreferences(registry.targets)
   const draftHandoff = useChatDraftHandoff()
   const { clearPreservedDraft, dismissPendingImport } = draftHandoff
@@ -294,7 +296,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const operation = useOperationSelection(operationSelection, generation)
   const operationReady = operation.state.status === 'empty' || operation.state.status === 'resolved'
   const operationId = operation.state.status === 'resolved' ? operation.state.operation.id : null
-  const newActivityReady = defaultsReady && operationReady
+  const newActivityReady = defaultsReady && operationReady && !registry.loading && !registry.error
   const operationBlockedReason = defaultsReady && !operationReady && operation.state.status !== 'loading'
     ? getOperationWarning(operation.state)
     : undefined
@@ -768,6 +770,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       labels={globalLabels}
       operationId={operationId}
       defaultsReady={newActivityReady}
+      scorerDefaultsReady={scorerDefaultsReady}
       newActivityBlockedReason={operationBlockedReason}
       onNavigate={handleNavigate}
       attackOperator={readyAttack ? readyAttack.operator : null}
