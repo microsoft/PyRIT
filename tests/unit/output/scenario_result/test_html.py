@@ -5,6 +5,7 @@ import json
 import uuid
 from typing import Any
 
+import pytest
 from unit.mocks import make_scenario_result
 
 from pyrit.models import (
@@ -269,3 +270,48 @@ async def test_html_report_renders_role_aware_accounting():
 
     assert "Target-facing attempts" in html
     assert "Orchestration attempts" in html
+
+
+async def test_html_report_renders_explicit_empty_converted_text():
+    payload = _payload()
+    payload["conversations"][0]["messages"][0]["pieces"][0] = {
+        "data_type": "text",
+        "original_value": "ORIGINAL_WAS_REMOVED",
+        "converted_value": "",
+        "response_error": None,
+    }
+
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert "ORIGINAL_WAS_REMOVED" not in html
+    assert '<div class="piece"></div>' in html
+
+
+async def test_html_report_renders_explicit_empty_converted_media():
+    payload = _payload()
+    payload["conversations"][0]["messages"][0]["pieces"][0] = {
+        "data_type": "image_path",
+        "original_value": "media/original.png",
+        "converted_value": "",
+        "response_error": None,
+    }
+
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert "media/original.png" not in html
+    assert '<div class="piece media">[image_path] </div>' in html
+
+
+@pytest.mark.parametrize("piece_extra", [{"converted_value": None}, {}])
+async def test_html_report_falls_back_to_original_when_converted_value_missing(piece_extra: dict[str, Any]):
+    payload = _payload()
+    payload["conversations"][0]["messages"][0]["pieces"][0] = {
+        "data_type": "text",
+        "original_value": "only-original",
+        "response_error": None,
+        **piece_extra,
+    }
+
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert "only-original" in html
