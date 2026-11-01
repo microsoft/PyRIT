@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import tempfile
+import warnings
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -82,7 +83,6 @@ class TestCopilotAuthenticatorInitialization:
             assert authenticator._maximized is True
             assert authenticator._elements_timeout == 10000
             assert authenticator._token_capture_timeout == 60
-            assert authenticator._network_retries == 3
             assert authenticator._fallback_to_plaintext is False
 
             assert isinstance(authenticator._token_fetch_lock, asyncio.Lock)
@@ -101,7 +101,6 @@ class TestCopilotAuthenticatorInitialization:
                 maximized=False,
                 timeout_for_elements_seconds=20,
                 token_capture_timeout_seconds=120,
-                network_retries=5,
                 fallback_to_plaintext=True,
             )
 
@@ -109,8 +108,32 @@ class TestCopilotAuthenticatorInitialization:
             assert authenticator._maximized is False
             assert authenticator._elements_timeout == 20000
             assert authenticator._token_capture_timeout == 120
-            assert authenticator._network_retries == 5
             assert authenticator._fallback_to_plaintext is True
+
+    def test_init_does_not_warn_by_default(self, mock_env_vars, mock_persistent_cache):
+        """Test that constructing without the deprecated network_retries argument emits no deprecation warning."""
+
+        with (
+            patch(
+                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._create_persistent_cache",
+                return_value=mock_persistent_cache,
+            ),
+            warnings.catch_warnings(),
+        ):
+            warnings.simplefilter("error", DeprecationWarning)
+            CopilotAuthenticator()
+
+    def test_init_network_retries_is_deprecated(self, mock_env_vars, mock_persistent_cache):
+        """Test that passing the deprecated network_retries argument emits a DeprecationWarning."""
+
+        with (
+            patch(
+                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._create_persistent_cache",
+                return_value=mock_persistent_cache,
+            ),
+            pytest.warns(DeprecationWarning, match="network_retries"),
+        ):
+            CopilotAuthenticator(network_retries=5)
 
     def test_init_missing_env_var_raises_error(self):
         """Test that missing a required environment variable raises ValueError."""
