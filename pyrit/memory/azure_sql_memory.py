@@ -741,6 +741,10 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                             created_at = datetime.fromisoformat(raw_created_at)
                         else:
                             created_at = raw_created_at
+                        # The raw MIN(timestamp) aggregate bypasses UTCDateTime's result
+                        # processor, so reattach the UTC offset every other read path returns.
+                        if created_at.tzinfo is None:
+                            created_at = created_at.replace(tzinfo=UTC)
 
                     result[conv_id] = ConversationStats(
                         message_count=msg_count,
