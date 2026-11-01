@@ -155,11 +155,11 @@ function LocationProbe() {
 function renderFlow(): void {
   render(
     <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={['/scanner']}>
+      <MemoryRouter initialEntries={['/scanner/launch']}>
         <LocationProbe />
         <Routes>
           <Route
-            path="/scanner"
+            path="/scanner/launch"
             element={(
               <ScenarioCatalog
                 targets={[TARGET]}
@@ -172,7 +172,7 @@ function renderFlow(): void {
             )}
           />
           <Route
-            path="/scanner/:scenarioName"
+            path="/scanner/launch/:scenarioName"
             element={(
               <ScenarioDetail
                 targets={[TARGET]}
@@ -184,7 +184,7 @@ function renderFlow(): void {
               />
             )}
           />
-          <Route path="/scanner-history/:scenarioResultId" element={<ScenarioRunPage />} />
+          <Route path="/scanner/history/:scenarioResultId" element={<ScenarioRunPage />} />
         </Routes>
       </MemoryRouter>
     </FluentProvider>,
@@ -215,7 +215,7 @@ describe('Scenario catalog-to-run integration', () => {
     renderFlow()
 
     await user.click(await screen.findByRole('link', { name: SCENARIO_NAME }))
-    expect(await screen.findByRole('heading', { level: 1, name: SCENARIO_NAME })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 2, name: SCENARIO_NAME })).toBeInTheDocument()
 
     const expectedEstimateRequest = {
       target_name: TARGET.target_registry_name,
@@ -245,9 +245,9 @@ describe('Scenario catalog-to-run integration', () => {
     }))
     expect(await screen.findByTestId('scenario-run-page')).toBeInTheDocument()
     expect(screen.getByLabelText('Current route')).toHaveTextContent(
-      `/scanner-history/${RUN_ID}`,
+      `/scanner/history/${RUN_ID}`,
     )
-    expect(await screen.findByRole('heading', { level: 1, name: SCENARIO_NAME })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 2, name: SCENARIO_NAME })).toBeInTheDocument()
     expect(mockListTargets).not.toHaveBeenCalled()
   })
 })

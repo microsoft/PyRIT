@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import and_, or_, select
 
-from pyrit.memory.memory_models import ScenarioResultEntry
+from pyrit.memory.memory_models import AttackResultEntry, ConversationEntry, FindingEvidenceEntry, ScenarioResultEntry
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -44,6 +44,7 @@ class _ScenarioHistoryQueries:
         statuses: Sequence[str] | None,
         labels: Mapping[str, str | Sequence[str]] | None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         cursor: ScenarioHistoryKeysetCursor | None,
         limit: int,
     ) -> tuple[list[ScenarioHistoryRunRecord], bool]:
@@ -55,6 +56,7 @@ class _ScenarioHistoryQueries:
             statuses: Filter by scenario run state (case-insensitive, normalized to upper).
             labels: Filter by label key-value pairs (exact match; keys restricted to [A-Za-z0-9_.-]+).
             operation_ids: Saved Operation IDs to match, without legacy name resolution.
+            reference_id: Exact conversation, attack, finding, or scenario result ID.
             cursor: Keyset cursor for pagination (timestamp DESC, id DESC).
             limit: Page size (1-100).
 
@@ -72,6 +74,23 @@ class _ScenarioHistoryQueries:
             raise ValueError("Scenario history limit must be between 1 and 100.")
 
         conditions: list[Any] = []
+        if reference_id is not None:
+            conversation_attacks = select(ConversationEntry.attack_result_id).where(
+                ConversationEntry.conversation_id == str(reference_id)
+            )
+            finding_attacks = select(FindingEvidenceEntry.attack_result_id).where(
+                FindingEvidenceEntry.finding_id == reference_id
+            )
+            matching_attack = select(AttackResultEntry.id).where(
+                AttackResultEntry.attribution_parent_id == ScenarioResultEntry.id,
+                or_(
+                    AttackResultEntry.id == reference_id,
+                    AttackResultEntry.conversation_id == str(reference_id),
+                    AttackResultEntry.id.in_(conversation_attacks),
+                    AttackResultEntry.id.in_(finding_attacks),
+                ),
+            )
+            conditions.append(or_(ScenarioResultEntry.id == reference_id, matching_attack.exists()))
         if operation_ids:
             conditions.append(ScenarioResultEntry.operation_id.in_(operation_ids))
         effective_names = sorted({name.strip() for name in scenario_names or [] if name.strip()})

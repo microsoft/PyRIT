@@ -32,20 +32,28 @@ for new work; it does not change saved results.
 
 ## Chat
 
-Chat (`/chat`) is the manual conversation workspace. Select a target and write
-the messages yourself. You can attach media, transform content with converters,
+Select **Attacks** in the sidebar to open Chat (`/attack/chat`), the manual conversation
+workspace. Select a target and write the messages yourself. You can attach media, transform content with converters,
 and branch or edit conversations to try another approach. Add an objective and
 select a chat scorer if you want automated assessment of responses.
 
-The same conversation viewer opens saved attacks from History. Automated results
+The **Chat** tab returns to your retained draft, or your last chat if there is no draft.
+Selecting **Chat** while a chat is open keeps that chat open.
+Use **New attack** to start a blank draft. The **History** tab
+(`/attack/history`) opens saved attacks in the same conversation viewer. Automated results
 are read-only; **Continue manually** creates a separate manual attack. Export
 a conversation when you need a transcript.
+
+Older `/attacks/{attackId}` and
+`/attacks/{attackId}/conversations/{conversationId}` links redirect to the
+corresponding Chat route while retaining query parameters and fragments.
 
 ![Chat workspace with a prompt and target response](images/chat.png)
 
 ## Scanner
 
-Scanner (`/scanner`) is the catalog and launch point for automated scenarios.
+Scanner has **Launch** (`/scanner/launch`) and **History** (`/scanner/history`) tabs.
+Launch is the catalog and launch point for automated scenarios.
 Each scenario defines a test workflow with its techniques, data, and scoring.
 Open one to select a target and adjust the settings it supports, such as
 techniques, dataset selection, and concurrency.
@@ -102,11 +110,17 @@ Load data through PyRIT before refreshing this catalog. See
 
 ## History
 
-Find saved attacks and scanner runs. Filter the list, open results, and inspect
-the conversations and scores. Supported failed scanner runs can be resumed.
+History is next to the feature that produced the results, not a separate sidebar
+item. Use the History tab in Attacks or Scanner to filter saved results and inspect
+their conversations and scores.
 
-The **Attacks** tab opens individual conversations. The **Scanner** tab opens
-run-level progress and results, including runs from `technique.execute`.
+Scanner history opens run-level progress and results, including runs from
+`technique.execute`. Its **ID** field accepts a complete conversation, attack,
+finding, or scenario result ID and searches all stored runs. Hover over the field
+to see the supported ID types. **Back to scan**, beside Markdown in a scan-owned
+chat, returns to its run.
+
+Supported failed scanner runs can be resumed.
 Resume retries unfinished objectives or objectives with execution errors when
 the original launch configuration is available. It skips completed objectives
 with non-error outcomes, including `failure`. Retrying an unsuccessful technique
@@ -163,6 +177,10 @@ for requirements and limits.
 ![Configuration page with backend setup controls](images/configuration.png)
 
 ## Preferences
+
+Use the icon at the top of the sidebar to show or hide navigation labels. This
+choice is saved for your account in this browser. On narrow screens, the same
+icon opens a navigation panel without reducing the workspace width.
 
 Use the sidebar's **Theme** menu to change the appearance. User preferences,
 such as default targets, are saved in this browser for the current account.

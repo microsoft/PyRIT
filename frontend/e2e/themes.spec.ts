@@ -197,8 +197,8 @@ test.describe('Theme presets', () => {
   })
 
   for (const path of [
-    '/chat', '/history/attacks', '/history/scanner', '/targets', '/config',
-    '/scanner', '/scanner/missing', '/scanner-history/missing', '/',
+    '/attack/chat', '/attack/history', '/scanner/history', '/targets', '/config',
+    '/scanner/launch', '/scanner/launch/missing', '/scanner/history/missing', '/',
   ]) {
     test(`decoration is shared with ${path}`, async ({ page }: { page: Page }) => {
       await chooseTheme(page, 'Jimothy')
