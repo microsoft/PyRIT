@@ -35,6 +35,7 @@ from pyrit.models import (
     ScoreType,
     SeedPrompt,
 )
+from pyrit.prompt_normalizer.prompt_normalizer import _WriteOnlyDelivery
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, SelfAskRefusalScorer, TrueFalseScorer
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
@@ -1083,8 +1084,8 @@ class TestPromptGeneration:
             prompt_normalizer=mock_prompt_normalizer,
         )
         attack_message = Message.from_prompt(prompt="My attack prompt", role="user")
-        mock_prompt_normalizer.send_prompt_async.return_value = Message.from_prompt(
-            prompt="My attack prompt", role="user"
+        mock_prompt_normalizer.send_prompt_async.return_value = _WriteOnlyDelivery(
+            message_pieces=attack_message.message_pieces
         )
 
         with pytest.raises(ValueError, match="cannot run against a write-only target"):

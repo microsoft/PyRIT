@@ -85,6 +85,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class _WriteOnlyTargetError(ValueError):
+    """Raised when the objective target returns no response, so no node can ever be scored."""
+
+
 class TAPSystemPromptPaths(enum.Enum):
     """Enum for predefined TAP attack system prompt paths."""
 
@@ -577,12 +581,16 @@ class _TreeOfAttacksNode:
         3. Send the prompt to the objective target.
         4. Score the response with all configured scorers.
 
-        All errors are handled gracefully - JSON parsing errors and unexpected exceptions are
-        caught and stored in the node's error_message attribute rather than being raised.
+        JSON parsing errors and unexpected exceptions are caught and stored in the node's
+        error_message attribute rather than being raised. A write-only objective target is
+        raised instead, because it fails every node the same way.
 
         Args:
             objective (str): The attack objective describing what the attacker wants to achieve.
                             This is used to guide the adversarial prompt generation and scoring.
+
+        Raises:
+            _WriteOnlyTargetError: If the objective target returned no response.
 
         Note:
             This method sets the following node attributes during execution:
@@ -620,6 +628,8 @@ class _TreeOfAttacksNode:
             # Mark execution as successful
             self._mark_execution_complete()
 
+        except _WriteOnlyTargetError:
+            raise
         except InvalidJsonException as e:
             self._handle_json_error(e)
         except Exception as e:
@@ -827,10 +837,10 @@ class _TreeOfAttacksNode:
         Reject a delivered request that the normalizer returned in place of a target response.
 
         Raises:
-            ValueError: If the objective target returned no response.
+            _WriteOnlyTargetError: If the objective target returned no response.
         """
         if PromptNormalizer.is_write_only_delivery(response):
-            raise ValueError(
+            raise _WriteOnlyTargetError(
                 "The objective target returned no response. Tree of attacks needs a target response "
                 "to score each node, so it cannot run against a write-only target."
             )

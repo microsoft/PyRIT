@@ -17,10 +17,13 @@ from pyrit.models import (
     ComponentIdentifier,
     Condition,
     MessagePiece,
+    MessageScorable,
     Scorable,
     ScorableUnion,
     Score,
     ScoringExpectation,
+    SurfaceScorable,
+    TraceScorable,
 )
 from pyrit.score import TrueFalseCompositeScorer, TrueFalseScoreAggregator, TrueFalseScorer
 
@@ -66,6 +69,14 @@ class _SecondScorer(_FirstScorer):
 
 class _ConfiguredScorer(_FirstScorer):
     CONDITION_TYPE = None
+
+
+class _SurfaceSecondScorer(_SecondScorer):
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable, SurfaceScorable)
+
+
+class _TraceFirstScorer(_FirstScorer):
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable, TraceScorable)
 
 
 def _expectation() -> ScoringExpectation:
@@ -186,3 +197,58 @@ def test_attack_warns_once_before_execution_when_auxiliary_is_skipped(caplog: py
     with caplog.at_level(logging.WARNING):
         attack._validate_scoring_expectation(context=context)
     assert "_SecondScorer will not run" in caplog.text
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_side_effect_evidence_only_skips_message_scorers_async(sqlite_instance: MemoryInterface) -> None:
+    objective, message_auxiliary, surface_auxiliary = _SecondScorer(), _SecondScorer(), _SurfaceSecondScorer()
+    expectation = ScoringExpectation(conditions=(_SecondCondition(),))
+
+    results = await score_attack_response_async(
+        response=(await _stored_response_async(sqlite_instance)),
+        objective_scorer=objective,
+        auxiliary_scorers=[message_auxiliary, surface_auxiliary],
+        expectation=expectation,
+        side_effect_evidence_only=True,
+    )
+
+    assert results["objective_scores"] == []
+    assert objective.expectations == message_auxiliary.expectations == []
+    assert surface_auxiliary.expectations == [expectation]
+    assert [score.scorer_class_identifier for score in results["auxiliary_scores"]] == [
+        surface_auxiliary.get_identifier()
+    ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_side_effect_evidence_only_runs_trace_objective_scorer_async(sqlite_instance: MemoryInterface) -> None:
+    objective = _TraceFirstScorer()
+
+    results = await score_attack_response_async(
+        response=(await _stored_response_async(sqlite_instance)),
+        objective_scorer=objective,
+        auxiliary_scorers=[],
+        expectation=ScoringExpectation(conditions=(_FirstCondition(),)),
+        side_effect_evidence_only=True,
+    )
+
+    assert objective.expectations == [ScoringExpectation(conditions=(_FirstCondition(),))]
+    assert [score.get_value() for score in results["objective_scores"]] == [True]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_side_effect_evidence_only_with_no_applicable_scorer_scores_nothing_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    objective = _FirstScorer()
+
+    results = await score_attack_response_async(
+        response=(await _stored_response_async(sqlite_instance)),
+        objective_scorer=objective,
+        auxiliary_scorers=None,
+        expectation=ScoringExpectation(conditions=(_FirstCondition(),)),
+        side_effect_evidence_only=True,
+    )
+
+    assert results == {"objective_scores": [], "auxiliary_scores": []}
+    assert objective.expectations == []

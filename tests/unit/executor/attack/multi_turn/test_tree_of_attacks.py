@@ -30,6 +30,7 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     _TAPAttackConfiguration,
     _TreeOfAttacksNode,
     _TreeOfAttacksNodeExecutor,
+    _WriteOnlyTargetError,
 )
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
@@ -45,6 +46,7 @@ from pyrit.models import (
     ScoringExpectation,
     SeedPrompt,
 )
+from pyrit.prompt_normalizer.prompt_normalizer import _WriteOnlyDelivery
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.score import (
     FloatScaleThresholdScorer,
@@ -2361,21 +2363,23 @@ class TestTreeOfAttacksNode:
 
         assert node.objective_target_conversation_id == original_conv_id
 
-    async def test_node_write_only_delivery_is_not_scored(self, node_components):
-        """A request handed back for a write-only target fails the node instead of being scored."""
+    async def test_node_write_only_delivery_is_raised_not_scored(self, node_components):
+        """A request handed back for a write-only target is raised out of the node instead of scored."""
         node = _TreeOfAttacksNode(**node_components)
-        delivered_request = Message.from_prompt(prompt="test prompt", role="user")
+        delivered_request = _WriteOnlyDelivery(
+            message_pieces=Message.from_prompt(prompt="test prompt", role="user").message_pieces
+        )
         node._prompt_normalizer.send_prompt_async = AsyncMock(return_value=delivered_request)
 
         with (
             patch.object(node, "_generate_adversarial_prompt_async", new_callable=AsyncMock, return_value="prompt"),
             patch.object(node, "_score_response_async", new_callable=AsyncMock) as mock_score,
+            pytest.raises(_WriteOnlyTargetError, match="cannot run against a write-only target"),
         ):
             await node.send_prompt_async(objective="test objective")
 
         mock_score.assert_not_awaited()
-        assert node.error_message is not None
-        assert "cannot run against a write-only target" in node.error_message
+        assert node.error_message is None
         assert node.completed is False
         assert node.last_response is None
         assert node.objective_score is None
@@ -3523,10 +3527,10 @@ class TestModalityRouterIntegration:
         node._adversarial_chat_system_seed_prompt.response_json_schema = None
         node._initial_prompt = Message.from_prompt(prompt="concrete seed prompt", role="user")
         node._prompt_normalizer.send_prompt_async = AsyncMock(
-            return_value=Message.from_prompt(prompt="concrete seed prompt", role="user")
+            return_value=_WriteOnlyDelivery(message_pieces=node._initial_prompt.message_pieces)
         )
 
-        with pytest.raises(ValueError, match="cannot run against a write-only target"):
+        with pytest.raises(_WriteOnlyTargetError, match="cannot run against a write-only target"):
             await node._send_initial_prompt_to_target_async()
 
         assert node.last_response is None
