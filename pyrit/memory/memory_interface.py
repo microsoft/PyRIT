@@ -5010,11 +5010,13 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
-        Standalone seeds with the same value hash, dataset, and behavioral inputs already
-        present in storage are skipped. Multi-seed groups are compared as complete groups,
-        including roles, sequence, metadata, and behavioral inputs, so shared content cannot strip
-        members from a different conversation. Duplicates *within* ``seeds`` are all inserted,
-        because the check looks at what storage held when the call started.
+        Standalone seeds with the same value hash, dataset, seed type, data type, response schema,
+        and behavioral inputs already present in storage are skipped. Singleton groups, and groups
+        whose complete membership is already stored, are compared by full member identity, including
+        roles, sequence, metadata, and behavioral inputs. Multi-seed groups are compared as complete
+        groups, so shared content cannot strip members from a different conversation. Duplicates
+        *within* ``seeds`` are all inserted, because the check looks at what storage held when the
+        call started.
         When a stored seed is copied to a new group, its caller-visible ID is updated after
         successful insertion.
 
@@ -5040,6 +5042,21 @@ class MemoryInterface(abc.ABC):
             for dataset, seed in existing_seeds
             if seed.prompt_group_id is not None
         }
+        # Seeds whose group is not retained as a new group (singleton groups, and groups whose
+        # complete membership is already stored) fall through to the standalone check below. Compare
+        # them by full member identity so schema- or metadata-distinct groups are not collapsed.
+        stored_member_pairs = {
+            (dataset, self._seed_group_member_key(seed)) for dataset, seed in existing_seeds if dataset
+        }
+        stored_member_keys = {self._seed_group_member_key(seed) for dataset, seed in existing_seeds if not dataset}
+        # Standalone identity additionally tracks the seed type and data type, which change what a
+        # seed executes as even when its value, dataset, and behavioral inputs match.
+        stored_standalone_pairs = {
+            (seed.value_sha256, dataset, self._seed_standalone_key(seed)) for dataset, seed in existing_seeds if dataset
+        }
+        stored_standalone_hashes = {
+            (seed.value_sha256, self._seed_standalone_key(seed)) for dataset, seed in existing_seeds if not dataset
+        }
         retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in retained_group_ids]
         stored_groups = (
             {
@@ -5057,7 +5074,6 @@ class MemoryInterface(abc.ABC):
         for prompt in seeds:
             if not prompt.value_sha256:
                 continue
-            behavior_key = self._seed_behavior_key(prompt)
             # A seed without a dataset name matches the hash in any dataset, mirroring the
             # filter that is applied when dataset_name is not supplied.
             if prompt.prompt_group_id in retained_group_ids:
@@ -5075,11 +5091,22 @@ class MemoryInterface(abc.ABC):
                     copied_seed_ids.append((prompt, entry.id))
                 entries.append(entry)
                 continue
-            if prompt.dataset_name:
-                if (prompt.value_sha256, prompt.dataset_name, behavior_key) in existing_pairs:
+            if prompt.prompt_group_id is not None:
+                # A singleton group (or a group already stored as a complete group) has no retained
+                # group ID; identify it by its full member identity instead of the standalone key.
+                member_key = self._seed_group_member_key(prompt)
+                if prompt.dataset_name:
+                    if (prompt.dataset_name, member_key) in stored_member_pairs:
+                        continue
+                elif member_key in stored_member_keys:
                     continue
-            elif (prompt.value_sha256, behavior_key) in existing_hashes:
-                continue
+            else:
+                standalone_key = self._seed_standalone_key(prompt)
+                if prompt.dataset_name:
+                    if (prompt.value_sha256, prompt.dataset_name, standalone_key) in stored_standalone_pairs:
+                        continue
+                elif (prompt.value_sha256, standalone_key) in stored_standalone_hashes:
+                    continue
             entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
@@ -5115,6 +5142,26 @@ class MemoryInterface(abc.ABC):
                 "authors": entry.authors or [],
                 "groups": entry.groups or [],
                 "source": entry.source,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _seed_standalone_key(seed: Seed[Any]) -> str:
+        """
+        Identify a standalone seed by its type fields and behavioral inputs.
+
+        Returns:
+            str: Canonical standalone identity.
+        """
+        entry = SeedEntry(entry=seed)
+        return json.dumps(
+            {
+                "seed_type": entry.seed_type,
+                "data_type": entry.data_type,
+                "response_json_schema": getattr(seed, "response_json_schema", None),
+                "behavioral_parameters": SeedIdentifier.get_behavioral_parameters(seed),
             },
             sort_keys=True,
             separators=(",", ":"),
