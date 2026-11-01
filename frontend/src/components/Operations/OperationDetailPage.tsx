@@ -41,6 +41,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
   const [params, setParams] = useSearchParams()
   const rawOffset = Number(params.get('offset') ?? 0)
   const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0
+  const historySearch = filtersToSearchParams({ ...DEFAULT_HISTORY_FILTERS, operationId: [operationId] })
   const [operationRevision, setOperationRevision] = useState(0)
   const [operationState, setOperationState] = useState<OperationState | null>(null)
   const operationKey = JSON.stringify([operationId, operationRevision])
@@ -260,9 +261,10 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
           </div>
         </>
       )}
-      <Link className={styles.link} to={`/history/attacks?${filtersToSearchParams({
-        ...DEFAULT_HISTORY_FILTERS, operationId: [current.operation.id],
-      })}`}>All execution history</Link>
+      <div className={styles.headerActions}>
+        <Link className={styles.link} to={`/attack/history?${historySearch}`}>Attack history</Link>
+        <Link className={styles.link} to={`/scanner/history?${historySearch}`}>Scanner history</Link>
+      </div>
     </section>
   )
 }

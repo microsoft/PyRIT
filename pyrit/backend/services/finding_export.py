@@ -201,7 +201,8 @@ def _conversation_link(*, dashboard_origin: AnyHttpUrl, item: FindingEvidenceIte
             ``frontend/src/utils/attackConversationRoute.cases.json``.
     """
     path = (
-        f"/attacks/{_encode_segment(str(item.item.attack_result_id))}/conversations/{_encode_segment(conversation_id)}"
+        f"/attack/chat/{_encode_segment(str(item.item.attack_result_id))}"
+        f"/conversations/{_encode_segment(conversation_id)}"
     )
     query = {"scenarioResultId": str(item.scenario_result_id)} if item.scenario_result_id else {}
     query["findingEvidenceId"] = str(item.item.id)

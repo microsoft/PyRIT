@@ -10,6 +10,9 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
+  Field,
+  Input,
+  Select,
   Spinner,
   Table,
   TableBody,
@@ -18,36 +21,20 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
+  mergeClasses,
   useRestoreFocusTarget,
 } from '@fluentui/react-components'
-import { AddRegular, ArrowSyncRegular, DeleteRegular } from '@fluentui/react-icons'
+import { AddRegular, ArrowSyncRegular, DismissRegular, SearchRegular } from '@fluentui/react-icons'
 
 import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ConverterIdentifier, ConverterInstance } from '@/types'
+import type { ConverterInstance } from '@/types'
 
 import CreateConverterDialog from './CreateConverterDialog'
+import { useConverterRegistryPageStyles } from './ConverterRegistry.styles'
+import RegistryIdentityRow from './RegistryIdentityRow'
 import { useConverterRegistryStyles } from './Registry.styles'
-
-const IDENTIFIER_FIELDS = new Set([
-  'class_name',
-  'class_module',
-  'hash',
-  'pyrit_version',
-  'eval_hash',
-  'children',
-  'attributes',
-  'supported_input_types',
-  'supported_output_types',
-])
-
-function formatParameters(identifier: ConverterIdentifier): string {
-  const parameters = Object.entries(identifier)
-    .filter(([key, value]) => !IDENTIFIER_FIELDS.has(key) && value != null)
-    .map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value) : String(value)}`)
-  return parameters.join('\n') || '—'
-}
 
 // One token per dialog opening. A create response can land after the dialog it
 // was submitted from is gone, and by then another dialog may be open, so the
@@ -84,7 +71,12 @@ function DataTypeBadges({ dataTypes }: DataTypeBadgesProps) {
 export default function ConverterRegistry() {
   const { generation } = useRuntime()
   const styles = useConverterRegistryStyles()
+  const pageStyles = useConverterRegistryPageStyles()
   const [converters, setConverters] = useState<ConverterInstance[]>([])
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [search, setSearch] = useState('')
+  const [typeFilter, setTypeFilter] = useState('')
+  const [outputFilter, setOutputFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createToken, setCreateToken] = useState<DialogToken | null>(null)
@@ -146,6 +138,16 @@ export default function ConverterRegistry() {
     try {
       const response = await convertersApi.listConverters()
       setConverters(response.items)
+      setTypeFilter((current) => (
+        current && response.items.some((converter) => converter.identifier.class_name === current)
+          ? current
+          : ''
+      ))
+      setOutputFilter((current) => (
+        current && response.items.some((converter) => converter.identifier.supported_output_types?.includes(current))
+          ? current
+          : ''
+      ))
     } catch (err) {
       setError(toApiError(err).detail)
     } finally {
@@ -202,12 +204,29 @@ export default function ConverterRegistry() {
     }
   }
 
+  const toggleDetails = (name: string): void => {
+    setExpanded((current: Set<string>) => {
+      const next = new Set(current)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const visible = converters.filter((converter: ConverterInstance) => (
+    `${converter.converter_id} ${converter.identifier.class_name} ${converter.description ?? ''}`.toLowerCase().includes(search.toLowerCase())
+    && (!typeFilter || converter.identifier.class_name === typeFilter)
+    && (!outputFilter || converter.identifier.supported_output_types?.includes(outputFilter))
+  ))
+  const types = [...new Set(converters.map((converter: ConverterInstance) => converter.identifier.class_name))].sort()
+  const outputs = [...new Set(converters.flatMap((converter: ConverterInstance) => converter.identifier.supported_output_types ?? []))].sort()
+
   return (
     <div className={styles.root} data-testid="converter-registry">
       <div className={styles.header}>
         <div className={styles.headerText}>
           <Text as="h1" size={600} weight="semibold">Converter Registry</Text>
-          <Text>Manage configured converter instances.</Text>
+          <Text className={pageStyles.subtitle}>Browse configured converters and inspect their identity.</Text>
         </div>
         <div className={styles.actions}>
           <Button
@@ -257,25 +276,55 @@ export default function ConverterRegistry() {
         </div>
       )}
       {!loading && !error && converters.length > 0 && (
-        <div className={styles.tableContainer}>
-          <Table className={styles.table} aria-label="Converter instances">
+        <>
+        <div className={pageStyles.filters}>
+          <Field label="Search converters" className={pageStyles.search}>
+            <Input contentBefore={<SearchRegular />} placeholder="Name, type, or description"
+              value={search} onChange={(_, data) => setSearch(data.value)} />
+          </Field>
+          <Field label="Filter by type">
+            <Select value={typeFilter} onChange={(_, data) => setTypeFilter(data.value)}>
+              <option value="">All types</option>
+              {types.map((type: string) => <option key={type} value={type}>{type}</option>)}
+            </Select>
+          </Field>
+          <Field label="Filter by output">
+            <Select value={outputFilter} onChange={(_, data) => setOutputFilter(data.value)}>
+              <option value="">All outputs</option>
+              {outputs.map((output: string) => <option key={output} value={output}>{output.replace('_path', '')}</option>)}
+            </Select>
+          </Field>
+          {(search || typeFilter || outputFilter) && <Button appearance="subtle" onClick={() => {
+            setSearch('')
+            setTypeFilter('')
+            setOutputFilter('')
+          }}>Clear filters</Button>}
+        </div>
+        <div className={pageStyles.summary}>
+          <Text size={200} className={pageStyles.subtitle}>{visible.length} of {converters.length} converters</Text>
+          <Text size={200} className={pageStyles.subtitle}>Expand a name to view its identity</Text>
+        </div>
+        <div className={mergeClasses(styles.tableContainer, pageStyles.tableContainer)}>
+          <Table className={mergeClasses(styles.table, pageStyles.table)} aria-label="Converter instances">
             <TableHeader>
               <TableRow>
-                <TableHeaderCell>Registry Name</TableHeaderCell>
+                <TableHeaderCell className={pageStyles.nameColumn}>Name</TableHeaderCell>
                 <TableHeaderCell>Type</TableHeaderCell>
-                <TableHeaderCell>Inputs</TableHeaderCell>
-                <TableHeaderCell>Outputs</TableHeaderCell>
-                <TableHeaderCell>Parameters</TableHeaderCell>
-                <TableHeaderCell>Actions</TableHeaderCell>
+                <TableHeaderCell className={pageStyles.modalityColumn}>Inputs</TableHeaderCell>
+                <TableHeaderCell className={pageStyles.modalityColumn}>Outputs</TableHeaderCell>
+                <TableHeaderCell className={pageStyles.actionColumn} aria-label="Actions" />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {converters.map((converter) => (
-                <TableRow key={converter.converter_id}>
-                  <TableCell className={styles.nameCell}>{converter.converter_id}</TableCell>
+              {visible.map((converter: ConverterInstance) => (
+                <RegistryIdentityRow key={converter.converter_id} name={converter.converter_id}
+                  identity={converter.identifier} columns={5} expanded={expanded.has(converter.converter_id)}
+                  onToggle={() => toggleDetails(converter.converter_id)}>
                   <TableCell>
+                    <div className={pageStyles.type}>
                     <Text>{converter.identifier.class_name}</Text>
                     {converter.is_llm_based && <Badge appearance="tint">LLM</Badge>}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <DataTypeBadges dataTypes={converter.identifier.supported_input_types} />
@@ -283,26 +332,26 @@ export default function ConverterRegistry() {
                   <TableCell>
                     <DataTypeBadges dataTypes={converter.identifier.supported_output_types} />
                   </TableCell>
-                  <TableCell className={styles.parameters}>
-                    {formatParameters(converter.identifier)}
-                  </TableCell>
-                  <TableCell>
+                  <TableCell className={pageStyles.actionCell}>
                     <Button
                       {...restoreFocusTarget}
-                      className={styles.deleteButton}
+                      className={pageStyles.removeButton}
                       appearance="subtle"
-                      icon={<DeleteRegular />}
+                      size="small"
+                      icon={<DismissRegular className={pageStyles.dismissIcon} />}
                       aria-label={`Remove ${converter.converter_id}`}
                       onClick={(event) => openRemoveDialog(event, converter)}
-                    >
-                      Remove
-                    </Button>
+                    />
                   </TableCell>
-                </TableRow>
+                </RegistryIdentityRow>
               ))}
             </TableBody>
           </Table>
         </div>
+        {visible.length === 0 && <div className={styles.state}>
+          <Text>No converters match these filters.</Text>
+        </div>}
+        </>
       )}
 
       <CreateConverterDialog

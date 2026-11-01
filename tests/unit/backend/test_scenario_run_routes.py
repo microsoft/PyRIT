@@ -332,7 +332,7 @@ class TestListScenarioRunsRoute:
                 "?scenario_names=first&scenario_names=second"
                 "&run_statuses=IN_PROGRESS&run_statuses=FAILED"
                 "&label=operator%3Aalice&label=operator%3Abob&label=team%3Asafety"
-                f"&operation_id={OPERATION_ID}&limit=10&cursor=opaque"
+                f"&operation_id={OPERATION_ID}&reference_id={OPERATION_ID}&limit=10&cursor=opaque"
             )
 
         assert response.status_code == status.HTTP_200_OK
@@ -341,9 +341,14 @@ class TestListScenarioRunsRoute:
             statuses=[ScenarioRunState.IN_PROGRESS, ScenarioRunState.FAILED],
             labels={"operator": ["alice", "bob"], "team": ["safety"]},
             operation_ids=[OPERATION_ID],
+            reference_id=OPERATION_ID,
             limit=10,
             cursor="opaque",
         )
+
+    def test_list_runs_rejects_non_uuid_id(self, client: TestClient) -> None:
+        response = client.get("/api/scenarios/runs?reference_id=free-text")
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 class TestScenarioRunQueueRoute:

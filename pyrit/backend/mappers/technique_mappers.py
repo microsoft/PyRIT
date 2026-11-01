@@ -98,6 +98,7 @@ def technique_to_instance(*, name: str, factory: AttackTechniqueFactory) -> Tech
         tags=factory.technique_tags,
         uses_adversarial=factory.uses_adversarial,
         uses_default_adversarial_target=factory.uses_default_adversarial_target,
+        identifier=factory.get_identifier(),
         creation_statement=_format_creation_calls(factory),
     )
 

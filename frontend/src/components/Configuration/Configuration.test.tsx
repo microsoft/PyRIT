@@ -41,7 +41,7 @@ function RouterProbe(): ReactElement {
     <>
       <output aria-label="Current URL">{location.pathname}{location.search}</output>
       <button type="button" onClick={() => void navigate(-1)}>Go back</button>
-      <button type="button" onClick={() => void navigate('/scanner')}>Go to scanner</button>
+      <button type="button" onClick={() => void navigate('/scanner/launch')}>Go to scanner</button>
     </>
   )
 }

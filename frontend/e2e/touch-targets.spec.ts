@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "./_fixtures";
+import { expect, test, selectChatTarget, type Locator, type Page } from "./_fixtures";
 import { fulfillMessageSend, makeAddMessageResponse } from "./_attacks";
 import { READY_RUNTIME, READY_RUNTIME_STATUS } from "./_runtime";
 import { mockVersion } from "./_compatibility";
@@ -494,11 +494,7 @@ test.describe("Mobile touch targets", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 320, height: 568 });
-    await page.goto("/");
-    await page.getByRole("button", { name: "Registry", exact: true }).click();
-    await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
-    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
-    await page.getByRole("button", { name: "Technique.execute", exact: true }).click();
+    await selectChatTarget(page);
 
     await page.getByRole("button", { name: "Add objective" }).click();
     const objectiveInput = page.getByRole("textbox", {
@@ -578,7 +574,7 @@ test.describe("Mobile touch targets", () => {
     await expectMinimumTouchTarget(page.getByRole("button", { name: "Reset all filters", exact: true }));
     await expectNoDocumentOverflow(page);
 
-    await page.goto("/history");
+    await page.goto("/attack/history");
     await expect(
       page.getByTestId("open-attack-home-attack-001")
     ).toBeVisible();
@@ -627,7 +623,7 @@ test.describe("Mobile touch targets", () => {
     // the create-attack flow seeds the objective as "" client-side and never
     // loads the long mocked objective, so the disclosure toggle would never
     // render and this test would silently skip checking it.
-    await page.goto("/attacks/mobile-attack-001");
+    await page.goto("/attack/chat/mobile-attack-001");
     await expect(
       page.getByText("Deterministic assistant response for touch-target tests.")
     ).toBeVisible();
@@ -637,7 +633,7 @@ test.describe("Mobile touch targets", () => {
 
     await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
-    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
+    await expect(page.getByRole("combobox", { name: "Default objective target", exact: true })).toHaveCount(0);
     await page.goBack();
     await expect(
       page.getByTestId("toggle-objective-header-btn")

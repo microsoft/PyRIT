@@ -64,11 +64,21 @@ describe('ScenarioQueue', () => {
 
     const activeLink = screen.getByRole('link', { name: /active\.scenario/i })
     const waitingLink = screen.getByRole('link', { name: /waiting\.scenario/i })
-    expect(activeLink).toHaveAttribute('href', '/scanner-history/run-active')
-    expect(waitingLink).toHaveAttribute('href', '/scanner-history/run-waiting')
+    expect(activeLink).toHaveAttribute('href', '/scanner/history/run-active')
+    expect(waitingLink).toHaveAttribute('href', '/scanner/history/run-waiting')
     expect(waitingLink).toHaveAttribute('aria-current', 'page')
     expect(screen.getByText('Active')).toBeInTheDocument()
     expect(screen.getByText('Position 1')).toBeInTheDocument()
+  })
+
+  it('encodes a queued scenario result ID in its deep link', () => {
+    renderQueue({
+      ...SNAPSHOT,
+      active: null,
+      queued: [{ ...SNAPSHOT.queued[0], scenario_result_id: 'run/1 %' }],
+    })
+    expect(screen.getByRole('link', { name: /waiting\.scenario/i }))
+      .toHaveAttribute('href', '/scanner/history/run%2F1%20%25')
   })
 
   it('renders a concise empty state', () => {

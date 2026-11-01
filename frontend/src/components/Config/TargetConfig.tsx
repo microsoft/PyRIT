@@ -16,17 +16,13 @@ import TargetTable from './TargetTable'
 import { useTargetConfigStyles } from './TargetConfig.styles'
 
 interface TargetConfigProps {
-  defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
-  onSetDefaultObjectiveTarget: (target: TargetInstance | null) => void
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
   onTargetsLoaded?: (targets: TargetInstance[]) => void
 }
 
 export default function TargetConfig({
-  defaultObjectiveTarget,
   defaultAdversarialTarget,
-  onSetDefaultObjectiveTarget,
   onSetDefaultAdversarialTarget,
   onTargetsLoaded,
 }: TargetConfigProps) {
@@ -91,7 +87,7 @@ export default function TargetConfig({
         <div className={styles.headerLeft}>
           <Text as="h1" size={600} weight="semibold">Target Registry</Text>
           <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
-            Manage targets and choose defaults for new chats and scanner runs. Existing chats and runs are unchanged.
+            Manage targets and choose an adversarial default. Existing chats and runs are unchanged.
           </Text>
         </div>
         <div className={styles.headerActions}>
@@ -159,9 +155,7 @@ export default function TargetConfig({
       {!loading && !error && targets.length > 0 && (
         <TargetTable
           targets={targets}
-          defaultObjectiveTarget={defaultObjectiveTarget}
           defaultAdversarialTarget={defaultAdversarialTarget}
-          onSetDefaultObjectiveTarget={onSetDefaultObjectiveTarget}
           onSetDefaultAdversarialTarget={onSetDefaultAdversarialTarget}
         />
       )}
