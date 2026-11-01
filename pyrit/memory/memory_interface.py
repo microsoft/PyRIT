@@ -7158,6 +7158,32 @@ class MemoryInterface(abc.ABC):
             flag_modified(entry, "scenario_metadata")
             session.commit()
 
+    def _execute_increment_scenario_number_tries(
+        self,
+        *,
+        scenario_result_id: str,
+    ) -> int:
+        """
+        Atomically increment and return the number_tries counter for a scenario result.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result.
+
+        Returns:
+            int: The new number_tries value after incrementing.
+
+        Raises:
+            ValueError: If the scenario result is not found in memory.
+        """
+        with closing(self._get_session()) as session:
+            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
+            if not entry:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
+            entry.number_tries += 1
+            new_tries = entry.number_tries
+            session.commit()
+            return new_tries
+
     def _execute_get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """Return one ScenarioResult header without hydrating linked attack results."""
         with closing(self._get_session()) as session:
@@ -11745,6 +11771,51 @@ class MemoryInterface(abc.ABC):
         """
         return await self._run_database_operation_async(
             self._execute_update_scenario_metadata_fields, scenario_result_id=scenario_result_id, fields=fields
+        )
+
+    def increment_scenario_number_tries(
+        self,
+        *,
+        scenario_result_id: str,
+    ) -> int:
+        """
+        Use ``increment_scenario_number_tries_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            int: The new number_tries value after incrementing.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.increment_scenario_number_tries",
+            new_item="MemoryInterface.increment_scenario_number_tries_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_increment_scenario_number_tries(
+            scenario_result_id=scenario_result_id,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.increment_scenario_number_tries)
+    async def increment_scenario_number_tries_async(
+        self,
+        *,
+        scenario_result_id: str,
+    ) -> int:
+        """
+        Atomically increment and return the number_tries counter for a scenario result.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result to update.
+
+        Returns:
+            int: The new number_tries value after incrementing.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        return await self._run_database_operation_async(
+            self._execute_increment_scenario_number_tries,
+            scenario_result_id=scenario_result_id,
         )
 
     def get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
