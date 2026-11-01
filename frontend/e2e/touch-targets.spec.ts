@@ -4,6 +4,7 @@ import { READY_RUNTIME, READY_RUNTIME_STATUS } from "./_runtime";
 import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
 import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
+import type { ConversationMessagesResponse } from "../src/types";
 
 const TOUR_STEP_COUNT = TOUR_STEPS.length;
 
@@ -362,7 +363,15 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
                 },
               },
             ))
-          : jsonResponse({ messages: MESSAGES })
+          : jsonResponse({
+              conversation_id: "mobile-conversation-001",
+              messages: MESSAGES,
+              automated_score: MESSAGES[1].message_pieces[0].scores[1],
+              latest_response_id: "mobile-assistant-piece",
+              outcome: "success",
+              scoring_failure: null,
+              target_response_status: null,
+            } satisfies ConversationMessagesResponse)
       );
       return;
     }
