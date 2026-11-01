@@ -1052,6 +1052,16 @@ class OpenAIResponseTarget(OpenAITarget):
             )
 
         if configured_tool is not None:
+            try:
+                configured_tool.validate_arguments(arguments=args)
+            except ValueError as exc:
+                if self._fail_on_missing_function:
+                    raise
+                logger.warning("Invalid arguments for function '%s': %s", name, exc)
+                return _ToolDispatchResult(
+                    output={"error": "malformed_arguments", "function": name, "raw_arguments": args_json},
+                    invoked=False,
+                )
             return _ToolDispatchResult(output=await configured_tool.execute_async(arguments=args), invoked=True)
 
         if custom_function is not None:

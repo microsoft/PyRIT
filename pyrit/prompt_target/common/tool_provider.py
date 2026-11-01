@@ -46,6 +46,18 @@ class Tool(ABC):
         self.parameters = parameters
         self.strict = strict
 
+    def validate_arguments(self, *, arguments: dict[str, object]) -> None:
+        """
+        Check model-supplied arguments before the tool is executed.
+
+        The default accepts any arguments. Overrides raise ``ValueError`` to reject a call
+        without executing the tool, so the caller can return the error to the model.
+
+        Args:
+            arguments: Arguments supplied by the model.
+        """
+        return
+
     @abstractmethod
     async def execute_async(self, *, arguments: dict[str, object]) -> object:
         """
@@ -123,6 +135,18 @@ class FunctionTool(Tool):
         )
         self._function = function
         self._argument_model: type[BaseModel] = argument_model
+
+    def validate_arguments(self, *, arguments: dict[str, object]) -> None:
+        """
+        Check arguments against the function signature.
+
+        Args:
+            arguments: Arguments supplied by the model.
+
+        Raises:
+            ValidationError: If the arguments do not match the function signature.
+        """
+        self._argument_model.model_validate(arguments)
 
     async def execute_async(self, *, arguments: dict[str, object]) -> object:
         """
