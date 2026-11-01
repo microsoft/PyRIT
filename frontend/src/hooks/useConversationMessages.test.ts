@@ -77,6 +77,30 @@ describe('useConversationMessages', () => {
     expect(result.current.isLoadingMessages).toBe(false)
   })
 
+  it('should reload a sending conversation after another conversation has loaded', async () => {
+    const branchLoad = deferred<ConversationMessagesResponse>()
+    const returnLoad = deferred<ConversationMessagesResponse>()
+    getMessages
+      .mockReturnValueOnce(branchLoad.promise)
+      .mockReturnValueOnce(returnLoad.promise)
+    const sendingConversations = new Set(['main'])
+    const isSendInFlight = (conversationId: string): boolean => conversationId === 'main'
+    const { result, rerender } = renderMessages({ sendingConversations, isSendInFlight })
+
+    // The sending conversation stays skipped on mount, so another conversation
+    // loads first and replaces whatever view the hook holds.
+    rerender({ activeConversationId: 'branch', sendingConversations, isSendInFlight })
+    await act(async () => { branchLoad.resolve(transcript('branch')) })
+    expect(result.current.loadedConversationId).toBe('branch')
+    expect(contents(result.current.messages)).toEqual(['branch:1'])
+
+    rerender({ activeConversationId: 'main', sendingConversations, isSendInFlight })
+    await waitFor(() => expect(getMessages).toHaveBeenLastCalledWith('attack', 'main'))
+    await act(async () => { returnLoad.resolve(transcript('main', [2])) })
+    expect(contents(result.current.messages)).toEqual(['main:2'])
+    expect(result.current.loadedConversationId).toBe('main')
+  })
+
   it('should ignore a stale response after navigating to another conversation', async () => {
     const mainLoad = deferred<ConversationMessagesResponse>()
     const branchLoad = deferred<ConversationMessagesResponse>()
@@ -154,25 +178,28 @@ describe('useConversationMessages', () => {
     expect(contents(result.current.messages)).toEqual(['branch:1'])
   })
 
-  it('should skip loaded or sending conversations unless a forced load is requested', async () => {
-    getMessages.mockResolvedValue(transcript('main'))
+  it('should load a sending conversation when another one is loaded, and skip one already loaded', async () => {
+    getMessages.mockResolvedValueOnce(transcript('main')).mockResolvedValueOnce(transcript('branch'))
     const isSendInFlight = (conversationId: string): boolean => conversationId === 'branch'
     const sendingConversations = new Set(['branch'])
     const { result, rerender } = renderMessages({ isSendInFlight, sendingConversations })
     await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
     expect(getMessages).toHaveBeenCalledTimes(1)
 
+    // A sending conversation must load when another conversation's transcript is
+    // on screen; without the fetch, the other conversation keeps rendering under
+    // this conversation's URL until the send completes. The send pipeline layers
+    // its pending messages on top of the fetched transcript.
     rerender({ activeConversationId: 'branch', isSendInFlight, sendingConversations })
-    rerender({ activeConversationId: 'main', isSendInFlight, sendingConversations })
-    expect(getMessages).toHaveBeenCalledTimes(1)
-
-    getMessages.mockResolvedValueOnce(transcript('branch'))
-    act(() => { result.current.requestForcedLoad() })
-    rerender({ activeConversationId: 'branch', isSendInFlight, sendingConversations })
-
-    expect(getMessages).toHaveBeenCalledTimes(2)
-    expect(getMessages).toHaveBeenLastCalledWith('attack', 'branch')
     await waitFor(() => expect(result.current.loadedConversationId).toBe('branch'))
+    expect(getMessages).toHaveBeenCalledTimes(2)
+
+    // Returning to main re-fetches it: loading branch replaced the held
+    // transcript, and nothing caches per-conversation transcripts here.
+    rerender({ activeConversationId: 'main', isSendInFlight, sendingConversations })
+    expect(getMessages).toHaveBeenCalledTimes(3)
+    expect(getMessages).toHaveBeenLastCalledWith('attack', 'main')
+    await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
   })
 
   it('should let a claimed send read supersede an older load and yield to a newer claim', async () => {
