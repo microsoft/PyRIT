@@ -76,7 +76,7 @@ test('selects a chat scorer, displays its result, and retains scoring errors aft
     }
     await route.fallback()
   })
-  await page.goto('/attacks/scoring-attack/conversations/scoring-conversation')
+  await page.goto('/attack/chat/scoring-attack/conversations/scoring-conversation')
   await page.getByRole('button', { name: /objective achieved outcome/i }).click()
   await page.getByRole('button', { name: /^automated scorer:/i }).click()
   await page.getByRole('combobox', { name: 'Chat scorer' }).selectOption('registered:judge')

@@ -28,8 +28,8 @@ export function createTourSteps({
     {
       target: '[data-tour="sidebar-nav"]',
       content:
-        'Ahoy! Welcome to Co-PyRIT! This is your main navigation panel. Home is your dashboard, Technique.execute opens Chat, ' +
-        'History tracks past attacks and scanner runs, Scanner launches full test campaigns, and Registry is where you manage ' +
+        'Ahoy! Welcome to Co-PyRIT! This is your main navigation panel. Home is your dashboard, Attacks opens Chat, ' +
+        'Scanner launches full test campaigns, and Registry is where you manage ' +
         'targets and converters.' +
         (canManageConfiguration
           ? ' Configuration holds environment settings for your deployment.'
@@ -82,14 +82,13 @@ export function createTourSteps({
       viewRequired: 'scenarios',
     },
     {
-      target: '[data-tour="history-tabs"]',
+      target: '[data-tour="feature-tabs"]',
       content:
-        'Every run is logged here. The Attacks tab lists individual conversations and the Scanner tab lists ' +
-        'scenario runs. Each tab has its own filters, such as outcome, converter type, or labels, so you can ' +
-        'find exactly what you need!',
+        'Attacks and Scanner each have a History tab. Use Chat to return to your current conversation, ' +
+        'or New attack to start a new one. Scanner history lists scenario runs and accepts an ID search.',
       placement: 'bottom',
       skipBeacon: true,
-      viewRequired: 'history',
+      viewRequired: 'chat',
     },
     {
       target: '[data-tour="registry-tabs"]',

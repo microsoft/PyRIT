@@ -248,11 +248,11 @@ function renderDetail(
   const renderPage = (pageProps: React.ComponentProps<typeof ScenarioDetail>): React.ReactElement => (
     <FluentProvider theme={webLightTheme}>
       {dataRouter ? <RouterProvider router={createMemoryRouter([{
-        path: '/:catalog/:scenarioName', element: <ScenarioDetail {...pageProps} />,
+        path: '/scanner/launch/:scenarioName', element: <ScenarioDetail {...pageProps} />,
       }], { initialEntries: [path] })} /> : <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route
-            path="/:catalog/:scenarioName"
+            path="/scanner/launch/:scenarioName"
             element={<ScenarioDetail {...pageProps} />}
           />
         </Routes>
@@ -275,7 +275,7 @@ describe('ScenarioDetail', () => {
     const scorer = { scorer_registry_name: 'custom', identifier: {
       class_name: 'SubStringScorer', hash: 'custom-hash', scorer_type: 'true_false',
     } }
-    renderDetail('/scanner/foundry.red_team_agent', { scorers: [scorer] })
+    renderDetail('/scanner/launch/foundry.red_team_agent', { scorers: [scorer] })
     const picker = await screen.findByRole('combobox', { name: 'Objective scorer' })
     expect(picker).toHaveValue('')
     expect(screen.getByRole('option', { name: 'Use scenario default' })).toBeInTheDocument()
@@ -292,7 +292,7 @@ describe('ScenarioDetail', () => {
   })
 
   it('does not show a scorer override for fixed-scoring scenarios', async () => {
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
     expect(screen.queryByRole('combobox', { name: 'Objective scorer' })).not.toBeInTheDocument()
   })
@@ -362,7 +362,7 @@ describe('ScenarioDetail', () => {
 
     it('should save all builder turns into the scanner field without losing configuration or sending', async () => {
       const user = userEvent.setup()
-      renderDetail('/scanner/technique.execute', {}, true)
+      renderDetail('/scanner/launch/technique.execute', {}, true)
       await user.type(await screen.findByRole('spinbutton', { name: 'max_turns' }), '3')
       expect(screen.getByRole('button', { name: 'Edit conversation' })).toBeDisabled()
       await user.click(screen.getByRole('button', { name: 'Add new conversation' }))
@@ -392,7 +392,7 @@ describe('ScenarioDetail', () => {
 
     it('should enable the converters toggle only with a conversation ID and submit its boolean choice', async () => {
       const user = userEvent.setup()
-      renderDetail('/scanner/technique.execute')
+      renderDetail('/scanner/launch/technique.execute')
       const toggle = await screen.findByRole('switch', { name: 'Apply converters to conversation' })
       const id = screen.getByRole('textbox', { name: 'prepended_conversation_id' })
       expect(toggle).not.toBeChecked()
@@ -420,7 +420,7 @@ describe('ScenarioDetail', () => {
 
     it('should fill the conversation from the URL without opening an editor or launching a scan', async () => {
       const user = userEvent.setup()
-      renderDetail('/scanner/technique.execute?prepended_conversation_id=history-conversation')
+      renderDetail('/scanner/launch/technique.execute?prepended_conversation_id=history-conversation')
       const id = await screen.findByRole('textbox', { name: 'prepended_conversation_id' })
       expect(id).toHaveValue('history-conversation')
       expect(screen.getByRole('button', { name: 'Edit conversation' })).toBeEnabled()
@@ -442,9 +442,9 @@ describe('ScenarioDetail', () => {
     it('should fill a new conversation when the same scanner is opened with a different URL parameter', async () => {
       const user = userEvent.setup()
       render(<FluentProvider theme={webLightTheme}>
-        <MemoryRouter initialEntries={['/scanner/technique.execute?prepended_conversation_id=first-conversation']}>
-          <Link to="/scanner/technique.execute?prepended_conversation_id=second-conversation">Use another conversation</Link>
-          <Routes><Route path="/scanner/:scenarioName" element={
+        <MemoryRouter initialEntries={['/scanner/launch/technique.execute?prepended_conversation_id=first-conversation']}>
+          <Link to="/scanner/launch/technique.execute?prepended_conversation_id=second-conversation">Use another conversation</Link>
+          <Routes><Route path="/scanner/launch/:scenarioName" element={
             <ScenarioDetail targets={[]} defaultObjectiveTarget={null} defaultAdversarialTarget={null}
               labels={{ operator: 'roakey' }} defaultsReady onNavigate={jest.fn()} />
           } /></Routes>
@@ -460,14 +460,14 @@ describe('ScenarioDetail', () => {
       '?prepended_conversation_id=%20%20',
       '?prepended_conversation_id=first&prepended_conversation_id=second',
     ])('should leave the conversation unset for an empty or ambiguous URL parameter: %s', async (query: string) => {
-      renderDetail(`/scanner/technique.execute${query}`)
+      renderDetail(`/scanner/launch/technique.execute${query}`)
       expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('')
       expect(screen.getByRole('button', { name: 'Edit conversation' })).toBeDisabled()
       expect(mockStartRun).not.toHaveBeenCalled()
     })
 
     it('should decode the conversation URL parameter', async () => {
-      renderDetail('/scanner/technique.execute?prepended_conversation_id=saved%2Fhistory%20%26%20context')
+      renderDetail('/scanner/launch/technique.execute?prepended_conversation_id=saved%2Fhistory%20%26%20context')
       expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('saved/history & context')
     })
 
@@ -475,7 +475,7 @@ describe('ScenarioDetail', () => {
       mockGetScenario.mockResolvedValue(makeScenario({
         supported_parameters: [{ name: 'max_turns', type_name: 'int', required: false, default: '7' }],
       }))
-      renderDetail('/scanner/foundry.red_team_agent?prepended_conversation_id=history-conversation')
+      renderDetail('/scanner/launch/foundry.red_team_agent?prepended_conversation_id=history-conversation')
       expect(await screen.findByRole('spinbutton', { name: 'max_turns' })).toHaveValue(7)
       expect(screen.queryByRole('textbox', { name: 'prepended_conversation_id' })).not.toBeInTheDocument()
       await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
@@ -490,7 +490,7 @@ describe('ScenarioDetail', () => {
           { name: 'apply_converters_to_prepended_history', type_name: 'bool', required: false, default: defaultValue },
         ],
       }))
-      renderDetail('/scanner/technique.execute')
+      renderDetail('/scanner/launch/technique.execute')
       const toggle = await screen.findByRole('switch', { name: 'Apply converters to conversation' })
       expect(toggle).toBeEnabled()
       if (defaultValue === 'True') expect(toggle).toBeChecked()
@@ -499,7 +499,7 @@ describe('ScenarioDetail', () => {
 
     it('should load the field history for editing and replace its ID with a saved copy', async () => {
       const user = userEvent.setup()
-      renderDetail('/scanner/technique.execute', {}, true)
+      renderDetail('/scanner/launch/technique.execute', {}, true)
       await user.type(await screen.findByRole('textbox', { name: 'prepended_conversation_id' }), ' history-conversation ')
       await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
       const first = await screen.findByRole('region', { name: 'Message 1' })
@@ -524,7 +524,7 @@ describe('ScenarioDetail', () => {
         resolveConversation = resolve
       }))
       const user = userEvent.setup()
-      renderDetail('/scanner/technique.execute?prepended_conversation_id=history-conversation', {}, true)
+      renderDetail('/scanner/launch/technique.execute?prepended_conversation_id=history-conversation', {}, true)
       const launch = await screen.findByRole('button', { name: 'Launch scan' })
       const form = launch.closest('form')
       if (!form) throw new Error('Launch scan must submit the configuration form.')
@@ -557,7 +557,7 @@ describe('ScenarioDetail', () => {
         resolveSave = resolve
       }))
       const user = userEvent.setup()
-      renderDetail('/scanner/technique.execute?prepended_conversation_id=history-conversation', {}, true)
+      renderDetail('/scanner/launch/technique.execute?prepended_conversation_id=history-conversation', {}, true)
       const launch = await screen.findByRole('button', { name: 'Launch scan' })
       const form = launch.closest('form')
       if (!form) throw new Error('Launch scan must submit the configuration form.')
@@ -584,7 +584,7 @@ describe('ScenarioDetail', () => {
 
     it('should keep the configured ID when an edited draft is discarded', async () => {
       const user = userEvent.setup()
-      renderDetail('/scanner/technique.execute', {}, true)
+      renderDetail('/scanner/launch/technique.execute', {}, true)
       await user.type(await screen.findByRole('textbox', { name: 'prepended_conversation_id' }), 'history-conversation')
       await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
       await user.type(within(await screen.findByRole('region', { name: 'Message 1' })).getByRole('textbox'), ' discarded')
@@ -597,7 +597,7 @@ describe('ScenarioDetail', () => {
     it('should report a missing conversation without opening an empty editor or changing the field', async () => {
       mockAttacks.getConversation.mockRejectedValue(new Error('Saved chat conversation not found'))
       const user = userEvent.setup()
-      renderDetail('/scanner/technique.execute', {}, true)
+      renderDetail('/scanner/launch/technique.execute', {}, true)
       await user.type(await screen.findByRole('textbox', { name: 'prepended_conversation_id' }), 'missing')
       await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
       expect(await screen.findByText('Saved chat conversation not found')).toBeInTheDocument()
@@ -610,7 +610,7 @@ describe('ScenarioDetail', () => {
     it('should keep the draft and scanner ID when saving fails', async () => {
       mockAttacks.saveConversation.mockRejectedValue(new Error('Conversation save failed'))
       const user = userEvent.setup()
-      renderDetail('/scanner/technique.execute', {}, true)
+      renderDetail('/scanner/launch/technique.execute', {}, true)
       await user.type(await screen.findByRole('textbox', { name: 'prepended_conversation_id' }), 'history-conversation')
       await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
       await user.type(within(await screen.findByRole('region', { name: 'Message 1' })).getByRole('textbox'), ' kept')
@@ -626,7 +626,7 @@ describe('ScenarioDetail', () => {
     Reflect.deleteProperty(legacyScenario, 'supported_parameter_names')
     mockGetScenario.mockResolvedValue(legacyScenario)
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
 
     expect(await screen.findByText(/catalog has no input support metadata/i)).toBeInTheDocument()
     expect(screen.queryByRole('form')).not.toBeInTheDocument()
@@ -654,7 +654,7 @@ describe('ScenarioDetail', () => {
     // Defaults and estimate data do not establish support for an input.
     mockGetScenario.mockResolvedValue(scenario)
     mockEstimateRun.mockResolvedValue(makeEstimate(8))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await flushRenderedPromises()
     await advanceTimers(300)
 
@@ -688,7 +688,7 @@ describe('ScenarioDetail', () => {
       all_techniques: [],
       default_techniques: [],
     }))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     const baseline = await screen.findByRole('checkbox', { name: 'baseline' })
     await user.click(baseline)
     await confirmRunPreview(user)
@@ -710,7 +710,7 @@ describe('ScenarioDetail', () => {
     ]
     mockGetScenario.mockResolvedValue(makeScenario({ supported_parameters: parameters }))
     mockEstimateRun.mockResolvedValue(makeEstimate(8))
-    const detail = renderDetail('/scanner/foundry.red_team_agent')
+    const detail = renderDetail('/scanner/launch/foundry.red_team_agent')
     await flushRenderedPromises()
     await user.type(screen.getByLabelText(/^iterations/), '1.5')
     await user.type(screen.getByLabelText(/^note/), 'Keep this value')
@@ -755,24 +755,24 @@ describe('ScenarioDetail', () => {
 
   it('shows a loading state while fetching', () => {
     mockGetScenario.mockReturnValue(new Promise(() => {}))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     expect(screen.getByText('Loading scenario...')).toBeInTheDocument()
   })
 
   it('decodes the scenario name from the URL exactly once', async () => {
-    renderDetail('/scanner/foundry.red_team_agent');
+    renderDetail('/scanner/launch/foundry.red_team_agent');
     await screen.findByTestId('scenario-target-select')
     expect(mockGetScenario).toHaveBeenCalledWith('foundry.red_team_agent')
   })
 
   it('decodes a slash-bearing encoded scenario name back to the original', async () => {
-    renderDetail('/scanner/foundry%2Fred_team_agent')
+    renderDetail('/scanner/launch/foundry%2Fred_team_agent')
     await waitFor(() => expect(mockGetScenario).toHaveBeenCalledWith('foundry/red_team_agent'))
     await screen.findByTestId('scenario-target-select')
   })
 
   it('preserves a literal percent sequence in a scenario registry name', async () => {
-    renderDetail('/scanner/discount%2550')
+    renderDetail('/scanner/launch/discount%2550')
     await waitFor(() => expect(mockGetScenario).toHaveBeenCalledWith('discount%50'))
     await screen.findByTestId('scenario-target-select')
   })
@@ -783,7 +783,7 @@ describe('ScenarioDetail', () => {
       isAxiosError: true,
       response: { status: 404, data: { detail: 'not found' } },
     })
-    renderDetail('/scanner/%zz')
+    renderDetail('/scanner/launch/%zz')
     expect(await screen.findByTestId('scenario-not-found')).toBeInTheDocument()
     expect(mockGetScenario).toHaveBeenCalledWith('%zz')
     consoleWarn.mockRestore()
@@ -795,10 +795,10 @@ describe('ScenarioDetail', () => {
       response: { status: 404, data: { detail: 'not found' } },
     })
 
-    renderDetail('/scanner/missing.scenario')
+    renderDetail('/scanner/launch/missing.scenario')
 
     expect(await screen.findByTestId('scenario-not-found')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /back to scanners/i })).toHaveAttribute('href', '/scanner')
+    expect(screen.getByRole('link', { name: /back to scanners/i })).toHaveAttribute('href', '/scanner/launch')
     expect(screen.queryByTestId('scenario-error')).not.toBeInTheDocument()
   })
 
@@ -808,7 +808,7 @@ describe('ScenarioDetail', () => {
       .mockRejectedValueOnce({ isAxiosError: true, response: { status: 500, data: { detail: 'boom' } } })
       .mockResolvedValueOnce(makeScenario())
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
 
     expect(await screen.findByTestId('scenario-error')).toBeInTheDocument()
     expect(screen.getByText('boom')).toBeInTheDocument()
@@ -825,7 +825,7 @@ describe('ScenarioDetail', () => {
     const onNavigate = jest.fn()
     mockEstimateRun.mockResolvedValueOnce(makeEstimate(8))
 
-    renderDetail('/scanner/foundry.red_team_agent', { targets: [], onNavigate })
+    renderDetail('/scanner/launch/foundry.red_team_agent', { targets: [], onNavigate })
     await flushRenderedPromises()
     await advanceTimers(300)
 
@@ -844,13 +844,13 @@ describe('ScenarioDetail', () => {
   })
 
   it('prefills the objective default when it is among the supplied targets', async () => {
-    renderDetail('/scanner/foundry.red_team_agent', { defaultObjectiveTarget: makeTarget('target-b') })
+    renderDetail('/scanner/launch/foundry.red_team_agent', { defaultObjectiveTarget: makeTarget('target-b') })
 
     expect(await screen.findByTestId('scenario-target-select')).toHaveValue('target-b')
   })
 
   it('shows supplied target model names without fetching the target registry', async () => {
-    renderDetail('/scanner/foundry.red_team_agent', {
+    renderDetail('/scanner/launch/foundry.red_team_agent', {
       targets: [makeTarget('target-a', 'gpt-4o'), makeTarget('target-b')],
     })
 
@@ -864,7 +864,7 @@ describe('ScenarioDetail', () => {
     identifier: { class_name: 'OpenAIChatTarget', hash: 'changed' },
   }])('leaves the objective selection blank without a valid default (%s)', async (defaultObjectiveTarget: TargetInstance | null) => {
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent', { defaultObjectiveTarget })
+    renderDetail('/scanner/launch/foundry.red_team_agent', { defaultObjectiveTarget })
 
     expect(await screen.findByRole('combobox', { name: 'Objective Target' })).toHaveValue('')
     await user.click(screen.getByRole('button', { name: 'Launch scan' }))
@@ -874,7 +874,7 @@ describe('ScenarioDetail', () => {
 
   it('initializes objective and eligible adversarial defaults from supplied targets', async () => {
     const adversary = makeAdversarialTarget('adversary')
-    renderDetail('/scanner/foundry.red_team_agent', {
+    renderDetail('/scanner/launch/foundry.red_team_agent', {
       targets: [makeTarget('target-a'), makeTarget('target-b'), adversary],
       defaultObjectiveTarget: makeTarget('target-b'),
       defaultAdversarialTarget: adversary,
@@ -896,7 +896,7 @@ describe('ScenarioDetail', () => {
   it('does not replace per-form overrides or cleared values when saved defaults change', async () => {
     const user = userEvent.setup()
     const adversary = makeAdversarialTarget('adversary')
-    const view = renderDetail('/scanner/foundry.red_team_agent', {
+    const view = renderDetail('/scanner/launch/foundry.red_team_agent', {
       targets: [makeTarget('target-a'), makeTarget('target-b'), adversary],
       defaultAdversarialTarget: adversary,
     })
@@ -916,7 +916,7 @@ describe('ScenarioDetail', () => {
     const adversary = makeAdversarialTarget('adversary')
     const override = makeAdversarialTarget('override')
     mockEstimateRun.mockResolvedValue(makeEstimate(8))
-    renderDetail('/scanner/foundry.red_team_agent', {
+    renderDetail('/scanner/launch/foundry.red_team_agent', {
       targets: [makeTarget('target-a'), adversary, override],
       defaultAdversarialTarget: adversary,
     })
@@ -950,7 +950,7 @@ describe('ScenarioDetail', () => {
   })
 
   it('ignores an ineligible adversarial default', async () => {
-    renderDetail('/scanner/foundry.red_team_agent', { defaultAdversarialTarget: makeTarget('target-a') })
+    renderDetail('/scanner/launch/foundry.red_team_agent', { defaultAdversarialTarget: makeTarget('target-a') })
     expect(await screen.findByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('')
   })
 
@@ -961,7 +961,7 @@ describe('ScenarioDetail', () => {
       identifier: { class_name: 'OpenAIChatTarget', hash: 'changed' },
     },
   ])('ignores an adversarial default whose exact identity is unavailable (%s)', async (defaultAdversarialTarget: TargetInstance) => {
-    renderDetail('/scanner/foundry.red_team_agent', {
+    renderDetail('/scanner/launch/foundry.red_team_agent', {
       targets: [makeTarget('target-a'), makeAdversarialTarget('adversary')],
       defaultAdversarialTarget,
     })
@@ -983,7 +983,7 @@ describe('ScenarioDetail', () => {
       }],
     }))
     mockEstimateRun.mockResolvedValue(makeEstimate(8))
-    renderDetail('/scanner/foundry.red_team_agent', {
+    renderDetail('/scanner/launch/foundry.red_team_agent', {
       targets: [makeTarget('target-a'), adversary],
       defaultAdversarialTarget: adversary,
     })
@@ -1008,7 +1008,7 @@ describe('ScenarioDetail', () => {
 
   it('hides the adversarial selector for scenarios that do not use the default target', async () => {
     mockGetScenario.mockResolvedValue(makeScenario({ uses_default_adversarial_target: false }))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByRole('combobox', { name: 'Objective Target' })
     expect(screen.queryByRole('combobox', { name: 'Adversarial Target' })).not.toBeInTheDocument()
     expect(screen.queryByText('The registered target this scenario uses to generate attacks.')).not.toBeInTheDocument()
@@ -1016,7 +1016,7 @@ describe('ScenarioDetail', () => {
 
   it('shows the configuration, estimate, and launch sections before the preview dialog', async () => {
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
 
     expect(await screen.findByRole('form', { name: 'Scenario run configuration' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Scenario description' })).toBeInTheDocument()
@@ -1034,7 +1034,7 @@ describe('ScenarioDetail', () => {
 
   it('restores focus to Launch scan button when preview dialog is cancelled', async () => {
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
 
     const launchButton = await screen.findByTestId('launch-scenario-btn')
     const preview = await openRunPreview(user)
@@ -1049,7 +1049,7 @@ describe('ScenarioDetail', () => {
 
   it('restores focus to Launch scan button when preview dialog is dismissed via Escape', async () => {
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
 
     const launchButton = await screen.findByTestId('launch-scenario-btn')
     const preview = await openRunPreview(user)
@@ -1065,7 +1065,7 @@ describe('ScenarioDetail', () => {
   it('debounces preview requests and aborts the superseded request', async () => {
     jest.useFakeTimers()
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await flushRenderedPromises()
 
     expect(screen.getByTestId('scenario-target-select')).toBeInTheDocument()
@@ -1105,7 +1105,7 @@ describe('ScenarioDetail', () => {
         resolveSecond = resolve
       }))
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await flushRenderedPromises()
     await advanceTimers(300)
     await user.selectOptions(screen.getByTestId('scenario-target-select'), 'target-b')
@@ -1135,7 +1135,7 @@ describe('ScenarioDetail', () => {
         response: { status: 503, data: { detail: 'Preview service unavailable' } },
       })
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await flushRenderedPromises()
     await advanceTimers(300)
     await flushRenderedPromises()
@@ -1155,7 +1155,7 @@ describe('ScenarioDetail', () => {
   it('does not request a preview while the custom technique selection is empty', async () => {
     jest.useFakeTimers()
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await flushRenderedPromises()
 
     await user.click(screen.getByTestId('technique-default_technique'))
@@ -1169,7 +1169,7 @@ describe('ScenarioDetail', () => {
   it('renders a backend conditional estimate without inventing a total', async () => {
     jest.useFakeTimers()
     mockEstimateRun.mockResolvedValue(makeEstimate(null))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await flushRenderedPromises()
     await advanceTimers(300)
     await flushRenderedPromises()
@@ -1185,7 +1185,7 @@ describe('ScenarioDetail', () => {
         description_markdown: `Set \`\`num_jailbreaks\`\`.\n\n${RAW_IMAGE_HTML}unsafe`,
       }),
     )
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
 
     const description = await screen.findByTestId('scenario-detail-description')
     expect(within(description).getByText('num_jailbreaks').tagName).toBe('CODE')
@@ -1196,7 +1196,7 @@ describe('ScenarioDetail', () => {
   })
 
   it('initializes the individual techniques from the resolved defaults', async () => {
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
 
     await screen.findByTestId('scenario-target-select')
     expect(screen.getByTestId('technique-default_technique')).toBeChecked()
@@ -1208,7 +1208,7 @@ describe('ScenarioDetail', () => {
   it('uses one radio selection when the backend limits the scenario to one technique', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     const selected = await screen.findByRole('radio', { name: 'default_technique' })
     const other = screen.getByRole('radio', { name: 'crescendo' })
     expect(selected).toBeChecked()
@@ -1228,7 +1228,7 @@ describe('ScenarioDetail', () => {
   it('should load and edit only single-technique scenarios, then preview and launch the same local override', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
-    renderDetail('/scanner/technique.execute')
+    renderDetail('/scanner/launch/technique.execute')
     await screen.findByRole('spinbutton', { name: 'Turn count' })
     expect(mockTechniques.getConfiguration).toHaveBeenCalledWith('default_technique')
     const editor = screen.getByRole('region', { name: 'Technique Parameters' })
@@ -1263,7 +1263,7 @@ describe('ScenarioDetail', () => {
   it('should keep inline edits when a switch is cancelled and reset to the source', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
-    renderDetail('/scanner/technique.execute')
+    renderDetail('/scanner/launch/technique.execute')
     await user.type(await screen.findByLabelText('Simulated user system prompt'), ' edited')
     await screen.findByRole('button', { name: 'Edited - click to reset' })
     expect(await screen.findByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }} edited')
@@ -1290,7 +1290,7 @@ describe('ScenarioDetail', () => {
       const configuration = techniqueConfiguration(name)
       return { ...configuration, editable_fields: [...configuration.editable_fields, 'adversarial_chat'] }
     })
-    renderDetail('/scanner/technique.execute', {
+    renderDetail('/scanner/launch/technique.execute', {
       targets: [makeTarget('target-a'), adversary],
     })
     await screen.findByRole('spinbutton', { name: 'Turn count' })
@@ -1306,7 +1306,7 @@ describe('ScenarioDetail', () => {
   })
 
   it('should show no editor or configuration request for other scenarios with one selected item', async () => {
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
     expect(screen.queryByRole('button', { name: 'Edit technique' })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Technique Parameters' })).not.toBeInTheDocument()
@@ -1327,7 +1327,7 @@ describe('ScenarioDetail', () => {
         { name: 'retries_on_objective_failure', type_name: 'int', required: false, default: '0' },
       ],
     }))
-    renderDetail('/scanner/technique.execute')
+    renderDetail('/scanner/launch/technique.execute')
     await screen.findByRole('spinbutton', { name: 'Turn count' })
     const form = screen.getByRole('form', { name: 'Scenario run configuration' })
     expect(within(form).getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual([
@@ -1348,7 +1348,7 @@ describe('ScenarioDetail', () => {
     }
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
     mockTechniques.validateEdit.mockImplementationOnce(() => new Promise((resolve) => { resolveEdit = resolve }))
-    renderDetail('/scanner/technique.execute')
+    renderDetail('/scanner/launch/technique.execute')
     const turns = await screen.findByRole('spinbutton', { name: 'Turn count' })
     await user.clear(turns)
     await user.type(turns, '0')
@@ -1393,7 +1393,7 @@ describe('ScenarioDetail', () => {
     mockTechniques.getConfiguration.mockImplementation(async (name: string) => ({
       ...techniqueConfiguration(name), supports_prepended_conversation: false,
     }))
-    renderDetail('/scanner/technique.execute')
+    renderDetail('/scanner/launch/technique.execute')
     await screen.findByRole('spinbutton', { name: 'Turn count' })
     expect(screen.queryByRole('textbox', { name: 'prepended_conversation_id' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Add new conversation' })).not.toBeInTheDocument()
@@ -1419,7 +1419,7 @@ describe('ScenarioDetail', () => {
     mockTechniques.getConfiguration.mockImplementation(async (name: string) => ({
       ...techniqueConfiguration(name), supports_prompt: name === 'default_technique',
     }))
-    renderDetail('/scanner/technique.execute')
+    renderDetail('/scanner/launch/technique.execute')
     const prompt = await screen.findByRole('textbox', { name: 'prompt' })
     await user.type(prompt, 'Product specification: Atlas.')
     await user.click(screen.getByRole('radio', { name: 'crescendo' }))
@@ -1434,7 +1434,7 @@ describe('ScenarioDetail', () => {
   it('allows keyboard changes to a single technique without changing baseline', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await user.click(await screen.findByRole('radio', { name: 'default_technique' }))
     await user.keyboard('{ArrowRight}')
     expect(screen.getByRole('radio', { name: 'crescendo' })).toBeChecked()
@@ -1449,7 +1449,7 @@ describe('ScenarioDetail', () => {
       default_technique: 'default', default_techniques: ['default_technique'],
       include_baseline_by_default: false,
     }))
-    renderDetail('/scanner/technique.execute')
+    renderDetail('/scanner/launch/technique.execute')
     const first = await screen.findByRole('radio', { name: 'default_technique' })
     expect(first).not.toBeChecked()
     expect(screen.getByRole('radio', { name: 'crescendo' })).not.toBeChecked()
@@ -1468,7 +1468,7 @@ describe('ScenarioDetail', () => {
       max_concrete_techniques: 1,
       default_techniques: ['default_technique', 'crescendo'],
     }))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByRole('radio', { name: 'crescendo' })
     await advanceTimers(300)
     expect(mockEstimateRun).not.toHaveBeenCalled()
@@ -1498,7 +1498,7 @@ describe('ScenarioDetail', () => {
         { name: 'many_shot', tags: ['multi_turn'] },
       ],
     }))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByRole('checkbox', { name: 'crescendo' })
     expect(screen.getAllByRole('button', { name: 'Select Multi-turn techniques' })[0]).toBeDisabled()
     await user.click(screen.getByRole('checkbox', { name: 'crescendo' }))
@@ -1538,7 +1538,7 @@ describe('ScenarioDetail', () => {
       }),
     )
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     expect(screen.getByText('Sends the objective directly.')).toBeInTheDocument()
@@ -1556,7 +1556,7 @@ describe('ScenarioDetail', () => {
     )
     const user = userEvent.setup()
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     expect(screen.queryByTestId('technique-all_garak')).not.toBeInTheDocument()
@@ -1587,7 +1587,7 @@ describe('ScenarioDetail', () => {
       }),
     )
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await user.click(screen.getAllByRole('button', { name: 'Select Multi-turn techniques' })[0])
@@ -1609,7 +1609,7 @@ describe('ScenarioDetail', () => {
       }),
     )
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     expect(screen.getByTestId('technique-prompt_sending')).toBeChecked()
@@ -1624,7 +1624,7 @@ describe('ScenarioDetail', () => {
 
   it('keeps an explicit invalid custom state when the last concrete technique is removed', async () => {
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await user.click(screen.getByTestId('technique-default_technique'))
@@ -1637,7 +1637,7 @@ describe('ScenarioDetail', () => {
 
   it('defaults the baseline checkbox from include_baseline_by_default when enabled, and allows editing', async () => {
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     const checkbox = screen.getByTestId('baseline-checkbox')
@@ -1653,7 +1653,7 @@ describe('ScenarioDetail', () => {
 
   it('includes the baseline when a shared tag selects or clears its members', async () => {
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await user.click(screen.getAllByRole('button', { name: 'Clear Single-turn techniques' })[0])
@@ -1669,7 +1669,7 @@ describe('ScenarioDetail', () => {
     mockGetScenario.mockResolvedValue(
       makeScenario({ baseline_policy: 'disabled', include_baseline_by_default: false }),
     )
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     expect(screen.getByTestId('baseline-checkbox')).not.toBeChecked()
@@ -1679,7 +1679,7 @@ describe('ScenarioDetail', () => {
     mockGetScenario.mockResolvedValue(makeScenario({ baseline_policy: 'forbidden' }))
     const user = userEvent.setup()
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     const checkbox = screen.getByTestId('baseline-checkbox')
@@ -1704,7 +1704,7 @@ describe('ScenarioDetail', () => {
       }),
     )
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     expect(screen.queryByTestId('scenario-param-objective_target')).not.toBeInTheDocument()
@@ -1724,7 +1724,7 @@ describe('ScenarioDetail', () => {
     )
     const user = userEvent.setup()
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     // A number-typed HTML input rejects non-numeric characters outright, so a
@@ -1739,7 +1739,7 @@ describe('ScenarioDetail', () => {
 
   it('preserves an unknown default limit when blank, with default concurrency/retries', async () => {
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await confirmRunPreview(user)
@@ -1797,7 +1797,7 @@ describe('ScenarioDetail', () => {
       }),
     )
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
 
     expect(await screen.findByRole('heading', { name: 'Parameters' })).toBeInTheDocument()
     expect(screen.queryByText('Advanced options')).not.toBeInTheDocument()
@@ -1829,7 +1829,7 @@ describe('ScenarioDetail', () => {
       dataset_size: { kind: 'bounded', value: 10 }, dataset_limit: { state: 'value', value: 10 },
     })
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
 
     expect(await screen.findByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('Up to 5')
     expect(await screen.findByText('Up to 10')).toBeInTheDocument()
@@ -1844,7 +1844,7 @@ describe('ScenarioDetail', () => {
         dataset_limit: { state: 'scenario_default' },
       },
     }))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     expect(await screen.findByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('All available')
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
@@ -1858,7 +1858,7 @@ describe('ScenarioDetail', () => {
         dataset_limit: { state: 'not_applicable' },
       },
     }))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByRole('table', { name: 'Selected datasets' })
     expect(screen.queryByRole('textbox', { name: 'Maximum objectives' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Use all data' })).not.toBeInTheDocument()
@@ -1873,7 +1873,7 @@ describe('ScenarioDetail', () => {
         dataset_limit: { state: 'value', value: 5 },
       },
     }))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await setObjectiveLimit(user, '2')
     await openObjectiveLimit(user)
     await user.click(screen.getByRole('button', { name: 'Reset to 5' }))
@@ -1888,7 +1888,7 @@ describe('ScenarioDetail', () => {
 
   it('sends an explicit all total for both estimation and launch', async () => {
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await setObjectiveLimit(user, '2')
     await openObjectiveLimit(user)
     await user.click(screen.getByRole('checkbox', { name: 'All available for Maximum objectives' }))
@@ -1907,7 +1907,7 @@ describe('ScenarioDetail', () => {
         dataset_limit: { state: 'value', value: 5 },
       },
     }))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await openObjectiveLimit(user)
     await user.click(screen.getByRole('checkbox', { name: 'All available for Maximum objectives' }))
     await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('datasets.max_total', 'all'))
@@ -1921,7 +1921,7 @@ describe('ScenarioDetail', () => {
 
   it('includes dataset overrides and filters when provided', async () => {
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     const addDataset = screen.getByRole('combobox', { name: 'Add dataset' })
@@ -1988,7 +1988,7 @@ describe('ScenarioDetail', () => {
         },
       }
     })
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByRole('table', { name: 'Selected datasets' })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveTextContent('Up to 5'))
     await user.click(screen.getByRole('button', { name: 'Edit harmbench objective limit' }))
@@ -2010,7 +2010,7 @@ describe('ScenarioDetail', () => {
 
   it('rejects a non-positive-integer max dataset size', async () => {
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await setObjectiveLimit(user, '0')
@@ -2035,7 +2035,7 @@ describe('ScenarioDetail', () => {
         max_per_dataset: 5, max_total: 'all', fetch: 'always', filters: {},
       },
     })
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await flushRenderedPromises()
     await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
     await advanceTimers(300)
@@ -2065,7 +2065,7 @@ describe('ScenarioDetail', () => {
         max_per_dataset: 5, max_total: 'all', fetch: 'always', filters: {},
       },
     })
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
     await user.click(screen.getByRole('button', { name: 'Launch scan' }))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
@@ -2085,7 +2085,7 @@ describe('ScenarioDetail', () => {
         max_per_dataset: 5, max_total: 'all', fetch: 'always', filters: {},
       },
     })
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
     const preview = await openRunPreview(user)
     await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
@@ -2103,7 +2103,7 @@ describe('ScenarioDetail', () => {
     mockGetScenario.mockResolvedValue(makeScenario({ default_datasets: ['ds_a', 'ds_b'], dataset_defaults: defaults }))
     let resolveEstimate: (value: ScenarioRunSizeEstimateResponse) => void = () => {}
     mockEstimateRun.mockImplementation(() => new Promise((resolve) => { resolveEstimate = resolve }))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledTimes(1))
     await act(async () => resolveEstimate({ ...makeEstimate(8), effective_datasets: defaults }))
     await user.click(screen.getByRole('radio', { name: 'Refresh' }))
@@ -2147,7 +2147,7 @@ describe('ScenarioDetail', () => {
       },
     }))
     mockEstimateRun.mockRejectedValue(new Error('Estimate unavailable'))
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
     await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
       'foundry.red_team_agent', expect.objectContaining({ datasets: { fetch: 'always' } }), expect.any(AbortSignal),
@@ -2179,7 +2179,7 @@ describe('ScenarioDetail', () => {
     ['Max retries', '1.5', 'Max retries must be an integer from 0 to 20.'],
   ])('validates %s typed as %s before launching', async (label, value, message) => {
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     const input = await screen.findByRole('spinbutton', { name: label })
 
     await user.clear(input)
@@ -2193,7 +2193,7 @@ describe('ScenarioDetail', () => {
 
   it('commits typed stepper values and sends the values shown after mouse and keyboard steps', async () => {
     const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     const retries = await screen.findByRole('spinbutton', { name: 'Max retries' })
     const concurrency = screen.getByRole('spinbutton', { name: 'Max concurrency' })
 
@@ -2218,7 +2218,7 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     mockStartRun.mockResolvedValueOnce({ scenario_result_id: 'sr-1' })
 
-    renderDetail('/scanner/foundry.red_team_agent', {
+    renderDetail('/scanner/launch/foundry.red_team_agent', {
       labels: { operator: 'roakey', team: 'red' }, operationId: 'operation-1',
     })
     await screen.findByTestId('scenario-target-select')
@@ -2310,7 +2310,7 @@ describe('ScenarioDetail', () => {
       note: 'The backend total is authoritative.',
     })
 
-    renderDetail('/scanner/airt.jailbreak')
+    renderDetail('/scanner/launch/airt.jailbreak')
     await screen.findByTestId('scenario-target-select')
 
     await user.click(screen.getByTestId('technique-jailbreak_system_prompt'))
@@ -2375,14 +2375,14 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     mockStartRun.mockResolvedValueOnce({ scenario_result_id: 'sr/1' })
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await confirmRunPreview(user)
 
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith(
-        '/scanner-history/sr%2F1',
+        '/scanner/history/sr%2F1',
         expect.objectContaining({ state: expect.objectContaining({ scenarioName: 'foundry.red_team_agent' }) }),
       ),
     )
@@ -2395,7 +2395,7 @@ describe('ScenarioDetail', () => {
       response: { status: 400, data: { detail: 'Invalid target' } },
     })
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await confirmRunPreview(user)
@@ -2414,7 +2414,7 @@ describe('ScenarioDetail', () => {
       }),
     )
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
     await openRunPreview(user)
 
@@ -2453,7 +2453,7 @@ describe('ScenarioDetail', () => {
       response: { status: 400, data: { detail: 'boom' } },
     })
 
-    renderDetail('/scanner/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await user.selectOptions(screen.getByTestId('scenario-target-select'), 'target-b')
@@ -2485,7 +2485,7 @@ describe('ScenarioDetail', () => {
       max_concrete_techniques: 1,
       supported_parameters: [{ name: 'objective', type_name: 'str', required: true, multiline: true }],
     }))
-    renderDetail('/scanner/technique.execute')
+    renderDetail('/scanner/launch/technique.execute')
     const objective = await screen.findByRole('textbox', { name: 'objective' })
     expect(objective).toBeRequired()
     expect(screen.getByText('objective', { selector: 'label' })).toHaveTextContent('*')
@@ -2505,20 +2505,20 @@ describe('ScenarioDetail', () => {
   })
   describe('launch gating while generation defaults load', () => {
     it('disables Launch scan while defaultsReady is false', async () => {
-      renderDetail('/scanner/foundry.red_team_agent', { defaultsReady: false })
+      renderDetail('/scanner/launch/foundry.red_team_agent', { defaultsReady: false })
       const launch = await screen.findByRole('button', { name: 'Launch scan' })
       expect(launch).toBeDisabled()
     })
 
     it('enables Launch scan once defaults are ready', async () => {
-      renderDetail('/scanner/foundry.red_team_agent', { defaultsReady: true })
+      renderDetail('/scanner/launch/foundry.red_team_agent', { defaultsReady: true })
       const launch = await screen.findByRole('button', { name: 'Launch scan' })
       await waitFor(() => expect(launch).toBeEnabled())
     })
 
     it('gates an open preview and launches with refreshed labels without losing configuration', async () => {
       const user = userEvent.setup()
-      const view = renderDetail('/scanner/foundry.red_team_agent')
+      const view = renderDetail('/scanner/launch/foundry.red_team_agent')
       await user.selectOptions(await screen.findByRole('combobox', { name: 'Objective Target' }), 'target-b')
       await user.click(screen.getByRole('button', { name: 'Launch scan' }))
       const preview = await screen.findByRole('dialog', { name: 'Run preview' })
@@ -2539,7 +2539,7 @@ describe('ScenarioDetail', () => {
   })
 
   describe('preset seeding', () => {
-    const PRESET_PATH = '/scanner/foundry.red_team_agent?preset=spanish_probe'
+    const PRESET_PATH = '/scanner/launch/foundry.red_team_agent?preset=spanish_probe'
     const CONVERTER_TOKEN = 'role_play:converter.translation_spanish'
     const NOT_FOUND_ERROR = { isAxiosError: true, response: { status: 404, data: { detail: 'not found' } } }
 
@@ -2549,8 +2549,8 @@ describe('ScenarioDetail', () => {
     })
 
     it.each([
-      '/scanner/foundry.red_team_agent',
-      '/scanner/foundry.red_team_agent?preset=%20%20',
+      '/scanner/launch/foundry.red_team_agent',
+      '/scanner/launch/foundry.red_team_agent?preset=%20%20',
     ])('should not load a preset for a link without a preset name: %s', async (path: string) => {
       renderDetail(path)
 
@@ -2881,9 +2881,9 @@ describe('ScenarioDetail', () => {
       renderDetail(PRESET_PATH)
 
       expect(await screen.findByTestId('preset-not-found')).toHaveTextContent('Preset "spanish_probe" was not found')
-      expect(screen.getByRole('link', { name: /back to scanners/i })).toHaveAttribute('href', '/scanner')
+      expect(screen.getByRole('link', { name: /back to scanners/i })).toHaveAttribute('href', '/scanner/launch')
       expect(screen.getByRole('link', { name: 'Open foundry.red_team_agent without a preset' }))
-        .toHaveAttribute('href', '/scanner/foundry.red_team_agent')
+        .toHaveAttribute('href', '/scanner/launch/foundry.red_team_agent')
       expect(screen.queryByRole('button', { name: 'Launch scan' })).not.toBeInTheDocument()
     })
 
@@ -2907,13 +2907,13 @@ describe('ScenarioDetail', () => {
 
     it('should refuse to seed a preset saved for another scenario', async () => {
       mockGetPreset.mockResolvedValue(makePresetResponse({ name: 'encoding_probe', scenario_name: 'garak.encoding' }))
-      renderDetail('/scanner/foundry.red_team_agent?preset=encoding_probe')
+      renderDetail('/scanner/launch/foundry.red_team_agent?preset=encoding_probe')
 
       expect(await screen.findByTestId('preset-scenario-mismatch')).toHaveTextContent(
         'Preset "encoding_probe" configures garak.encoding, not foundry.red_team_agent.',
       )
       expect(screen.getByRole('link', { name: 'Open garak.encoding with this preset' }))
-        .toHaveAttribute('href', '/scanner/garak.encoding?preset=encoding_probe')
+        .toHaveAttribute('href', '/scanner/launch/garak.encoding?preset=encoding_probe')
       expect(screen.queryByRole('button', { name: 'Launch scan' })).not.toBeInTheDocument()
       expect(mockEstimateRun).not.toHaveBeenCalled()
     })
@@ -2924,9 +2924,9 @@ describe('ScenarioDetail', () => {
         name === 'first' ? { name, techniques: ['crescendo'] } : { name, techniques: ['default_technique'] },
       ))
       render(<FluentProvider theme={webLightTheme}>
-        <MemoryRouter initialEntries={['/scanner/foundry.red_team_agent?preset=first']}>
-          <Link to="/scanner/foundry.red_team_agent?preset=second">Use another preset</Link>
-          <Routes><Route path="/scanner/:scenarioName" element={
+        <MemoryRouter initialEntries={['/scanner/launch/foundry.red_team_agent?preset=first']}>
+          <Link to="/scanner/launch/foundry.red_team_agent?preset=second">Use another preset</Link>
+          <Routes><Route path="/scanner/launch/:scenarioName" element={
             <ScenarioDetail targets={[]} defaultObjectiveTarget={null} defaultAdversarialTarget={null}
               labels={{ operator: 'roakey' }} defaultsReady onNavigate={jest.fn()} />
           } /></Routes>

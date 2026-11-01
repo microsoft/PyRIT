@@ -24,8 +24,8 @@ export const PRESET_QUERY_PARAM = 'preset'
 /**
  * Opens the Scanner launch form for the preset's scenario, pre-filled from the preset.
  * The preset rides in the query string rather than the path so no preset name can
- * collide with another `/scanner/...` route.
+ * collide with another `/scanner/launch/...` route.
  */
 export function presetScannerRoutePath(scenarioName: string, presetName: string): string {
-  return `/scanner/${encodeURIComponent(scenarioName)}?${PRESET_QUERY_PARAM}=${encodeURIComponent(presetName)}`
+  return `/scanner/launch/${encodeURIComponent(scenarioName)}?${PRESET_QUERY_PARAM}=${encodeURIComponent(presetName)}`
 }

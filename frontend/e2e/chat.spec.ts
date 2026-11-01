@@ -143,7 +143,7 @@ async function mockBackendAPIs(page: Page) {
 /** Save the mock target as the objective default, then open a new chat. */
 async function activateMockTarget(page: Page) {
   // Click the Registry button in the sidebar
-  await page.getByTitle("Registry").click();
+  await page.getByRole("button", { name: "Registry", exact: true }).click();
   await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
 
   // Set the objective default for this browser profile.
@@ -152,8 +152,8 @@ async function activateMockTarget(page: Page) {
   await objectiveDefault.selectOption({ index: 1 });
 
   // Return to Chat view
-  await page.getByTitle("Technique.execute").click();
-  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
+  await page.getByRole("button", { name: "Attacks", exact: true }).click();
+  await expect(page.getByRole("button", { name: "New attack", exact: true })).toBeVisible({ timeout: 5000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -170,18 +170,18 @@ test.describe("Application Smoke Tests", () => {
   });
 
   test("should display chat ribbon", async ({ page }) => {
-    await expect(page.getByTitle("Technique.execute")).toBeVisible({ timeout: 10000 });
-    await page.getByTitle("Technique.execute").click();
-    await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: "Attacks", exact: true })).toBeVisible({ timeout: 10000 });
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
+    await expect(page.getByRole("button", { name: "New attack", exact: true })).toBeVisible({ timeout: 10000 });
   });
 
   test("should have New Attack button", async ({ page }) => {
-    await page.getByTitle("Technique.execute").click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
     await expect(page.getByRole("button", { name: /new attack/i })).toBeVisible();
   });
 
   test("should offer the target picker without a bottom warning", async ({ page }) => {
-    await page.getByTitle("Technique.execute").click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
     await expect(page.getByRole("combobox", { name: "Chat target" })).toBeVisible();
     await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
   });
@@ -190,7 +190,7 @@ test.describe("Application Smoke Tests", () => {
 test.describe("Theme Toggle", () => {
   test("should toggle dark/light theme", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByTitle("Technique.execute")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: "Attacks", exact: true })).toBeVisible({ timeout: 10000 });
 
     // The app defaults to system mode, so the toggle button title should say "Theme: System"
     const themeBtn = page.getByTitle("Theme: System");
@@ -316,7 +316,7 @@ test.describe("Chat Functionality", () => {
     ).toBeVisible({ timeout: 10000 });
 
     // Click New Attack
-    await page.getByTestId("new-attack-btn").click();
+    await page.getByRole("button", { name: "New attack", exact: true }).click();
 
     // Previous messages should be cleared
     await expect(page.getByText("Mock response for: First message")).not.toBeVisible();
@@ -358,7 +358,7 @@ test.describe("Multiple Messages", () => {
 test.describe("Chat without target", () => {
   test("should allow drafting but block sending when no target is selected", async ({ page }) => {
     await page.goto("/");
-    await page.getByTitle("Technique.execute").click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
 
     const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await expect(input).toBeEnabled();
@@ -812,7 +812,7 @@ test.describe("Multi-turn conversation flow", () => {
     ).toBeVisible({ timeout: 10000 });
 
     // New Attack
-    await page.getByTestId("new-attack-btn").click();
+    await page.getByRole("button", { name: "New attack", exact: true }).click();
     await expect(getMessageByText(page, "Before reset")).not.toBeVisible();
 
     // Send new message in fresh conversation
@@ -868,7 +868,7 @@ test.describe("Target type scenarios", () => {
     });
 
     await page.goto("/");
-    await page.getByTitle("Registry").click();
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
 
     await expect(page.locator("table").getByText("OpenAIChatTarget")).toBeVisible();
@@ -893,7 +893,7 @@ test.describe("Target type scenarios", () => {
     });
 
     await page.goto("/");
-    await page.getByTitle("Registry").click();
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("dall-e-3", { exact: true })).toBeVisible({ timeout: 10000 });
 
     // Save the DALL-E target as the objective default.
@@ -901,7 +901,7 @@ test.describe("Target type scenarios", () => {
       .selectOption("dall-e-image-gen");
 
     // Navigate to chat
-    await page.getByTitle("Technique.execute").click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
     // Scope queries to the badge so we don't also match the (hidden)
     // copy of the target text that Fluent's Tooltip renders into the DOM.
     const badge = page.getByTestId("target-badge");

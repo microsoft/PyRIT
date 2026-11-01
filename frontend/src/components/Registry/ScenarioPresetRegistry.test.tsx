@@ -115,7 +115,7 @@ describe('ScenarioPresetRegistry', () => {
     renderRegistry()
 
     expect(screen.getByRole('heading', { level: 1, name: 'Scenario presets' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Scanner' })).toHaveAttribute('href', '/scanner')
+    expect(screen.getByRole('link', { name: 'Scanner' })).toHaveAttribute('href', '/scanner/launch')
     expect(await screen.findByTestId('suite-empty-state')).toBeInTheDocument()
     expect(await screen.findByTestId('empty-state')).toBeInTheDocument()
   })

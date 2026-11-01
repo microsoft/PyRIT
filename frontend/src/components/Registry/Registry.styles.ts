@@ -92,21 +92,10 @@ export const useConverterRegistryStyles = makeStyles({
     minWidth: '780px',
     backgroundColor: tokens.colorNeutralBackground1,
   },
-  nameCell: {
-    fontFamily: tokens.fontFamilyMonospace,
-    overflowWrap: 'anywhere',
-  },
-  parameters: {
-    whiteSpace: 'pre-wrap',
-    overflowWrap: 'anywhere',
-  },
   typeList: {
     display: 'flex',
     flexWrap: 'wrap',
     gap: tokens.spacingHorizontalXS,
-  },
-  deleteButton: {
-    color: tokens.colorPaletteRedForeground1,
   },
 })
 
