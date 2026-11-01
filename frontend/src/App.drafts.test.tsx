@@ -193,12 +193,12 @@ function renderChat(path = '/chat', strict = false): ReturnType<typeof render> {
 }
 
 async function visitDatasets(user: UserEvent): Promise<void> {
-  await user.click(screen.getByRole('button', { name: 'Datasets', exact: true }))
+  await user.click(await screen.findByRole('button', { name: 'Datasets', exact: true }))
   await screen.findByRole('heading', { name: 'Datasets' })
 }
 
 async function returnToChat(user: UserEvent): Promise<void> {
-  await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
+  await user.click(await screen.findByRole('button', { name: 'Chat', exact: true }))
   await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
 }
 
@@ -858,7 +858,7 @@ describe('App draft handoff with the real chat and composer', () => {
 
     // 1. Clicking Cancel leaves the dirty draft and stays on datasets without creating conversation
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
-    expect(screen.queryByRole('dialog', { name: 'Replace Existing Draft?' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Replace Existing Draft?' })).not.toBeInTheDocument())
     expect(attacksApi.createConversation).not.toHaveBeenCalled()
 
     // Return to chat: original dirty draft is intact!
@@ -866,13 +866,14 @@ describe('App draft handoff with the real chat and composer', () => {
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Unsaved attack message'))
 
     // 2. Now user visits datasets again and confirms replacement
-    await user.click(screen.getByRole('button', { name: 'Datasets', exact: true }))
+    await user.click(await screen.findByRole('button', { name: 'Datasets', exact: true }))
     await screen.findByRole('heading', { name: 'jailbreak_templates' })
     await user.click(await screen.findByTestId('import-into-chat-button'))
     await user.click(await screen.findByTestId('import-new-conversation-item'))
 
     expect(await screen.findByRole('dialog', { name: 'Replace Existing Draft?' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Replace' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Replace Existing Draft?' })).not.toBeInTheDocument())
 
     // New conversation is created, navigated, and populated with template prompt
     await waitFor(() => expect(attacksApi.createConversation).toHaveBeenCalledWith('saved', {}))

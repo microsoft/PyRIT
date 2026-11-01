@@ -356,4 +356,63 @@ describe('buildSeedImport', () => {
       expect(outcome.reason).toMatch(/unsupported role/)
     }
   })
+
+  it('handles a single record without sequence numbers as a single prompt', () => {
+    const members: SeedRecord[] = [
+      makeSeed({
+        id: 'p-no-seq',
+        value: 'Single prompt without sequence',
+        sequence: null,
+      }),
+    ]
+    const outcome = buildSeedImport(members)
+    expect(outcome.type).toBe('single_prompt')
+    if (outcome.type === 'single_prompt') {
+      expect(outcome.text).toBe('Single prompt without sequence')
+    }
+  })
+
+  it('combines multiple records without sequence numbers sharing the same role into a single prompt', () => {
+    const members: SeedRecord[] = [
+      makeSeed({
+        id: 'p-no-seq-1',
+        value: 'Piece 1',
+        sequence: null,
+        role: 'user',
+      }),
+      makeSeed({
+        id: 'p-no-seq-2',
+        value: 'Piece 2',
+        sequence: null,
+        role: 'user',
+      }),
+    ]
+    const outcome = buildSeedImport(members)
+    expect(outcome.type).toBe('single_prompt')
+    if (outcome.type === 'single_prompt') {
+      expect(outcome.text).toBe('Piece 1\n\nPiece 2')
+    }
+  })
+
+  it('rejects multiple records without sequence numbers when they have different roles', () => {
+    const members: SeedRecord[] = [
+      makeSeed({
+        id: 'p-no-seq-user',
+        value: 'User piece',
+        sequence: null,
+        role: 'user',
+      }),
+      makeSeed({
+        id: 'p-no-seq-asst',
+        value: 'Assistant piece',
+        sequence: null,
+        role: 'assistant',
+      }),
+    ]
+    const outcome = buildSeedImport(members)
+    expect(outcome.type).toBe('unsupported')
+    if (outcome.type === 'unsupported') {
+      expect(outcome.reason).toMatch(/ambiguous turn sequence/)
+    }
+  })
 })
