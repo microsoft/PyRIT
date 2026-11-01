@@ -31,7 +31,7 @@ from pyrit.converter import (
 )
 from pyrit.converter.text_selection_strategy import TextSelectionStrategy, WordSelectionStrategy
 from pyrit.datasets import TextJailBreak
-from pyrit.models import ComponentType, Parameter, SeedPrompt
+from pyrit.models import ComponentType, Identifiable, Parameter, SeedPrompt
 from pyrit.registry.components import ConverterRegistry
 from unit.mocks import MockPromptTarget
 
@@ -48,8 +48,8 @@ def _token() -> str:
 
 
 _SAME_QUALNAME_FUNCTIONS = (
-    lambda text: text[::-1],
     lambda text: text.upper(),
+    lambda text: text.lower(),
 )
 
 
@@ -199,10 +199,13 @@ def samples(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[Any, ..
             SeedPrompt(value="Second {{ objective }}", parameters=["objective"]),
         ),
         "AddImageTextConverter.bounding_box": ((0, 0, 10, 10), (0, 0, 20, 20)),
-        "BinaryConverter.bits_per_char": tuple(list(BinaryConverter.BitsPerChar)[:2]),
+        "BinaryConverter.bits_per_char": tuple(BinaryConverter.BitsPerChar),
         "CodeAttackConverter.template": code_attack_templates,
-        "CodeAttackConverter.encoding": tuple(list(CodeAttackConverter.Encoding)[:2]),
+        "CodeAttackConverter.encoding": tuple(CodeAttackConverter.Encoding),
         "ScientificTranslationConverter.mode": ("academic", "technical"),
+        "RepeatTokenConverter.token_insert_mode": ("prepend", "append", "repeat"),
+        "SATAMaskingConverter.num_masks": (3, 4),
+        "SATAMaskingConverter.skip_first": (2, 3),
         "video_path": ("first.mp4", "second.mp4"),
         "wordswap_path": ("filipino.yaml", "indian.yaml"),
         "font_name": (Path("first.ttf"), Path("second.ttf")),
@@ -210,7 +213,7 @@ def samples(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[Any, ..
         "injection_items": ([{"text": "first"}], [{"text": "second"}]),
         "encrypt_function": _SAME_QUALNAME_FUNCTIONS,
         "decrypt_function": _SAME_QUALNAME_FUNCTIONS,
-        "filter_name": ("gritty_documentary", "laundromat_fisheye"),
+        "filter_name": ("laundromat_fisheye", "polaroid_vintage_film"),
         "variation": ("dive_bar_reflection", "airport_lounge"),
         "replace": ("first", "second"),
         "zero_char": ("\u200b", "\u200c"),
@@ -301,7 +304,7 @@ def _fresh(annotation: Any) -> Any:
     return _MISSING
 
 
-def _two_values(
+def _sample_values(
     owner: str, parameter: Parameter, default: Any, samples: dict[str, tuple[Any, ...]]
 ) -> tuple[Any, ...] | None:
     for key in (f"{owner}.{parameter.name}", parameter.name):
@@ -312,8 +315,8 @@ def _two_values(
     if inspect.isclass(annotation) and issubclass(annotation, enum.Enum):
         allowed = tuple(annotation)
     if allowed is not None:
-        others = [value for value in allowed if value != default]
-        return (others[0], default if len(others) == 1 else others[1]) if others else None
+        others = tuple(value for value in allowed if value != default)
+        return others or None
     if inspect.isclass(annotation) and issubclass(annotation, WordSelectionStrategy):
         return WordIndexSelectionStrategy(indices=[0]), WordIndexSelectionStrategy(indices=[1])
     if inspect.isclass(annotation) and issubclass(annotation, TextSelectionStrategy):
@@ -333,7 +336,7 @@ def _reference(parameter: Parameter, variant: int) -> Any:
     if parameter.reference.component_type is ComponentType.TARGET:
         return MockPromptTarget(rpm=10 + variant)
     if parameter.reference.component_type is ComponentType.CONVERTER:
-        converter = BinaryConverter() if variant else Base64Converter()
+        converter = Base64Converter(encoding_func="b32encode") if variant else Base64Converter()
         return [converter] if parameter.is_list else converter
     return _MISSING
 
@@ -346,7 +349,7 @@ def _baseline(cls: type, parameters: list[Parameter], samples: dict[str, tuple[A
             if value is not _MISSING:
                 kwargs[parameter.name] = value
         elif parameter.default is REQUIRED_VALUE:
-            values = _two_values(cls.__name__, parameter, default=None, samples=samples)
+            values = _sample_values(cls.__name__, parameter, default=None, samples=samples)
             if values is None:
                 pytest.fail(f"{cls.__name__}.{parameter.name}: add a sample value")
             kwargs[parameter.name] = values[0]
@@ -399,7 +402,7 @@ def _setup(
         pytest.skip(SINGLE_VALUE_SETTINGS[(converter_name, parameter_name)])
     if get_origin(annotation) is Literal and len(get_args(annotation)) == 1:
         pytest.fail(f"{converter_name}.{parameter_name}: only one value is allowed; list it in SINGLE_VALUE_SETTINGS")
-    found = _two_values(converter_name, parameter, default=kwargs.get(parameter_name, default), samples=samples)
+    found = _sample_values(converter_name, parameter, default=kwargs.get(parameter_name, default), samples=samples)
     if found is None and default is None:
         template = _loaded_template(_build(cls, kwargs), parameter_name)
         found = None if template is None else (_changed(template), _changed(_changed(template)))
@@ -438,8 +441,20 @@ def _build(cls: type, kwargs: dict[str, Any], parameter_name: str | None = None)
         pytest.fail(f"{setting}: add a sample value the converter accepts ({error})")
 
 
+def _copied(kwargs: dict[str, Any]) -> dict[str, Any]:
+    components = [
+        item
+        for value in kwargs.values()
+        for item in (value if isinstance(value, list) else [value])
+        if isinstance(item, Identifiable)
+    ]
+    return copy.deepcopy(kwargs, {id(component): component for component in components})
+
+
 def _hash(cls: type, kwargs: dict[str, Any], parameter_name: str | None = None) -> str:
-    repeated: set[str] = {_build(cls, kwargs, parameter_name).get_identifier().hash for _ in range(2)}
+    repeated: set[str] = {
+        _build(cls, built, parameter_name).get_identifier().hash for built in (kwargs, _copied(kwargs))
+    }
     if len(repeated) != 1:
         setting = cls.__name__ if parameter_name is None else f"{cls.__name__}.{parameter_name}"
         pytest.fail(f"{setting}: the same settings build different identifiers")
@@ -449,7 +464,7 @@ def _hash(cls: type, kwargs: dict[str, Any], parameter_name: str | None = None) 
 def _hashes(cls: type, kwargs: dict[str, Any], parameter_name: str, values: tuple[Any, ...]) -> list[str]:
     baseline = _hash(cls, kwargs)
     changed = [_hash(cls, {**kwargs, parameter_name: value}, parameter_name) for value in values]
-    return [baseline, *changed] if parameter_name in kwargs else changed
+    return [baseline, *changed]
 
 
 @pytest.mark.filterwarnings("ignore:.*TaskFramingConverter is deprecated:DeprecationWarning")
@@ -462,8 +477,9 @@ def test_converter_setting_reaches_identifier(
 
     hashes = _hashes(cls, kwargs, parameter_name, values)
 
+    picked = "" if parameter_name in kwargs else ", unless a sample is the value it picks when the setting is left out"
     assert len(set(hashes)) == len(hashes), (
-        f"{converter_name}.{parameter_name} changes the converter but not its identifier"
+        f"{converter_name}.{parameter_name} changes the converter but not its identifier{picked}"
     )
 
 
