@@ -64,6 +64,18 @@ from pyrit.score import OpenRedirectOutputScorer
         "redirect=%252f%255cevil.com",
         "return_to=//evil.com",
         "return=//evil.com",
+        "redirect=/%5cattacker.example",
+        r"redirect=%2f\attacker.example",
+        "redirect=/%2fattacker.example",
+        "redirect=%2f/attacker.example",
+        r"redirect=\%5cattacker.example",
+        r"redirect=%5c\attacker.example",
+        r"redirect=\%2fattacker.example",
+        "redirect=%5c/attacker.example",
+        "redirect=/%252fattacker.example",
+        "redirect=%252f/attacker.example",
+        r"redirect=/%255cattacker.example",
+        r"redirect=%255c\attacker.example",
     ],
 )
 async def test_open_redirect_detected(text: str, patch_central_database):
@@ -97,6 +109,12 @@ async def test_open_redirect_detected(text: str, patch_central_database):
         "url=https://example.com/page",
         "redirect=/normal/internal/path",
         "next=/dashboard",
+        "redirect=/docs/%252f%252fchapter",
+        "redirect=/help&note=%252f%252fchapter",
+        "redirect=/docs/%2f%2fchapter",
+        "redirect=/help&note=%2f%2fchapter",
+        "redirect=/docs/%5c%5cchapter",
+        "redirect=/help&note=%5c%5cchapter",
     ],
 )
 async def test_open_redirect_not_detected(text: str, patch_central_database):
@@ -122,6 +140,13 @@ async def test_open_redirect_scorer_userinfo_host_confusion_rationale(patch_cent
 async def test_open_redirect_scorer_double_encoded_slash_rationale(patch_central_database):
     scorer = OpenRedirectOutputScorer()
     score = (await scorer.score_text_async("redirect=%252f%252fevil.com/steal"))[0]
+    assert score.get_value() is True
+    assert "Encoded Slash Redirect" in score.score_rationale
+
+
+async def test_open_redirect_scorer_mixed_slash_rationale(patch_central_database):
+    scorer = OpenRedirectOutputScorer()
+    score = (await scorer.score_text_async("redirect=/%5cattacker.example"))[0]
     assert score.get_value() is True
     assert "Encoded Slash Redirect" in score.score_rationale
 

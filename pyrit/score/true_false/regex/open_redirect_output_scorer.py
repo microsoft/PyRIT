@@ -28,11 +28,17 @@ class OpenRedirectOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         r"target|dest(?:ination)?|next|continue|goto|callback|forward|location|url|rurl)"
     )
 
+    _RAW_SEP = r"[/\\]"
+    _ENCODED_SEP = r"(?:%252f|%2f|%255c|%5c)"
+    _SEP = rf"(?:{_RAW_SEP}|{_ENCODED_SEP})"
+
     _DEFAULT_PATTERNS: dict[str, str] | None = {
         # Redirect parameter pointing at a protocol-relative //host or backslash bypass.
         "Protocol-Relative Redirect Param": (rf"(?i)\b{_REDIRECT_PARAM}\s*[=:]\s*[\"']?\s*[/\\]{{2,}}[A-Za-z0-9.-]+"),
-        # Redirect parameter carrying an encoded or double-encoded slash bypass (%2f%2f, %252f%252f, or %5c).
-        "Encoded Slash Redirect": (rf"(?i)\b{_REDIRECT_PARAM}\s*[=:]\s*[\"']?[^\"'\s]*(?:%252f|%2f|%255c|%5c){{2,}}"),
+        # Redirect parameter carrying an encoded, double-encoded, or mixed slash/backslash bypass.
+        "Encoded Slash Redirect": (
+            rf"(?i)\b{_REDIRECT_PARAM}\s*[=:]\s*[\"\']?\s*(?:{_ENCODED_SEP}{_SEP}+|{_RAW_SEP}+{_ENCODED_SEP}{_SEP}*)"
+        ),
         # Userinfo host confusion: https://trusted@evil — the real host is after the @.
         # Supports RFC 3986 user:password credentials, domain destinations (including Punycode TLDs),
         # IPv4 addresses, and optional empty or zero-padded destination ports ending at a host boundary.
