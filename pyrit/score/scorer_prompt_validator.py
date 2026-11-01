@@ -54,7 +54,8 @@ class ScorerPromptValidator:
             raise_on_no_valid_pieces (bool | None): Whether to raise ValueError when no pieces are valid.
                 Defaults to False, allowing scorers to return ``[]`` for non-applicable evidence.
                 Set to True to raise an exception instead.
-            is_objective_required (bool): Whether an objective must be provided for scoring. Defaults to False.
+            is_objective_required (bool): Infer ``MatchesObjective`` on an undeclared message scorer.
+                The scorer validates that condition before acquiring evidence. Defaults to False.
         """
         if supported_data_types:
             self._supported_data_types = supported_data_types
@@ -77,19 +78,25 @@ class ScorerPromptValidator:
 
     @property
     def is_objective_required(self) -> bool:
-        """Whether the scorer uses the objective as a required criterion."""
+        """
+        Whether a scorer that declares no ``CONDITION_TYPE`` matches the objective.
+
+        A scorer class's own ``CONDITION_TYPE`` takes precedence; this flag only lets a
+        configured instance of an undeclared scorer require ``MatchesObjective``.
+        """
         return self._is_objective_required
 
     def validate(self, message: Message, objective: str | None) -> None:
         """
-        Validate a message and objective against configured requirements.
+        Validate message evidence against configured requirements.
 
         Args:
             message (Message): The message to validate.
-            objective (str | None): The objective string, if required.
+            objective (str | None): Compatibility parameter, retained for custom validator overrides.
+                Objective requirements are checked by the scorer, not by this validator.
 
         Raises:
-            ValueError: If validation fails due to unsupported pieces, exceeding max pieces, or missing objective.
+            ValueError: If validation fails due to unsupported pieces or exceeding max pieces.
         """
         valid_pieces_count = 0
         for piece in message.message_pieces:
@@ -118,9 +125,6 @@ class ScorerPromptValidator:
                 f"Message has {len(message.message_pieces)} pieces, "
                 f"exceeding the limit of {self._max_pieces_in_response}."
             )
-
-        if self._is_objective_required and not objective:
-            raise ValueError("Objective is required but not provided.")
 
     def is_role_supported(self, message_piece: MessagePiece) -> bool:
         """

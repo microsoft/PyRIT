@@ -58,7 +58,7 @@ if TYPE_CHECKING:
         ResponseHandler,
     )
     from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
-    from pyrit.score.scorer import Scorer
+    from pyrit.score.scorer import LegacyScorerHookError, Scorer
     from pyrit.score.scorer_evaluation.human_labeled_dataset import (
         HarmHumanLabeledEntry,
         HumanLabeledDataset,
@@ -224,6 +224,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "LikertScalePaths": "pyrit.score.float_scale.self_ask_likert_scorer",
     "LLAMAGUARD_3_CATEGORY_CODES": "pyrit.score.true_false.llamaguard_parser",
     "LlamaGuardCategory": "pyrit.score.true_false.llamaguard_policy",
+    "LegacyScorerHookError": "pyrit.score.scorer",
     "LlamaGuardMessageRole": "pyrit.score.true_false.llamaguard_scorer",
     "LlamaGuardPolicy": "pyrit.score.true_false.llamaguard_policy",
     "LlamaGuardScorer": "pyrit.score.true_false.llamaguard_scorer",
