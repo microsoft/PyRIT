@@ -247,7 +247,7 @@ async def test_question_answer_custom_expectation_hook_runs_async(expectation: S
             self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
         ) -> list[Score]:
             scores = await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
-            scores[0].score_value = "false"
+            scores[0].set_value(False)
             return scores
 
     [score] = await StrictQuestionAnswerScorer().score_async(
