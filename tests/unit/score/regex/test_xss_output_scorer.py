@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from time import perf_counter
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -139,12 +140,60 @@ async def test_xss_obfuscated_javascript_uri_detected(text: str, patch_central_d
         # Named references are case-sensitive, and &Colon; is not a colon.
         '<a href="java&tab;script:alert(1)">x</a>',
         '<a href="javascript&Colon;alert(1)">x</a>',
+        # HTML decodes &#0; to U+FFFD, which the URL parser does not strip.
+        '<a href="&#0;&#106;avascript&#58;0">x</a>',
+        # A vertical tab is not removed from inside the URL, so it splits the scheme.
+        '<a href="java&#11;script&#58;0">x</a>',
     ],
 )
 async def test_xss_javascript_uri_lookalikes_not_detected(text: str, patch_central_database: MagicMock) -> None:
     scorer = XSSOutputScorer()
     score = (await scorer.score_text_async(text=text))[0]
     assert score.get_value() is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<a href="&#74;avascript&#58;0">x</a>',
+        '<a href="&#x4a;avascript&#58;0">x</a>',
+        '<a href="&#X4A;&#65;&#86;&#65;&#83;&#67;&#82;&#73;&#80;&#84;&#58;0">x</a>',
+        '<a href="&#x4A;&#x41;&#x56;&#x41;&#x53;&#x43;&#x52;&#x49;&#x50;&#x54;&#x3a;0">x</a>',
+        '<a href="&#1;&#106;avascript&#58;0">x</a>',
+        '<a href="&#x1f;&#106;avascript&#58;0">x</a>',
+        '<a href="&#11;&#x0e;&#106;avascript&#58;0">x</a>',
+        '<a href="\x01\x1b&#106;avascript&#58;0">x</a>',
+    ],
+)
+async def test_xss_uppercase_and_leading_control_references_detected(
+    text: str, patch_central_database: MagicMock
+) -> None:
+    scorer = XSSOutputScorer()
+    score = (await scorer.score_text_async(text=text))[0]
+    assert score.get_value() is True
+    assert score.score_rationale == "Matched: JavaScript URI"
+
+
+@pytest.mark.parametrize("length", [16, 20, 24])
+@pytest.mark.parametrize(
+    "template",
+    [
+        '<a href="javascript{run}x">text</a>',
+        '<a href="{run}x">text</a>',
+        "<a href={run}x>text</a>",
+        '<a href="&#106;ava{run}x">text</a>',
+    ],
+)
+async def test_xss_javascript_uri_near_miss_does_not_backtrack(
+    *, template: str, length: int, patch_central_database: MagicMock
+) -> None:
+    # Keep inputs bounded so regressing to overlapping repeated alternatives cannot hang the suite.
+    text = template.format(run="\t" * length)
+    start = perf_counter()
+    score = (await XSSOutputScorer().score_text_async(text=text))[0]
+    elapsed = perf_counter() - start
+    assert score.get_value() is False
+    assert elapsed < 0.5, f"JavaScript URI near miss took {elapsed:.3f}s"
 
 
 async def test_xss_custom_patterns_do_not_decode_javascript_uri(patch_central_database: MagicMock) -> None:
