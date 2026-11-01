@@ -4,7 +4,7 @@
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.models import Message
+from pyrit.models import CapabilityName, Message
 from pyrit.prompt_target import RoundRobinTarget, TargetCapabilities, TargetConfiguration
 
 # ── Construction validation ──────────────────────────────────────────────────
@@ -83,6 +83,62 @@ def test_init_succeeds_with_weights():
 
 
 # ── Configuration validation ─────────────────────────────────────────────────
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("capability", list(CapabilityName))
+def test_aggregate_capabilities_requires_every_child_for_feature_support(capability: CapabilityName) -> None:
+    children = [MockPromptTarget(), MockPromptTarget()]
+    target = RoundRobinTarget(targets=children)
+    supported = children[0].capabilities.model_copy(update={capability.value: True})
+    unsupported = supported.model_copy(update={capability.value: False})
+
+    assert target.aggregate_capabilities(child_capabilities=[supported, supported]).includes(capability=capability)
+    assert not target.aggregate_capabilities(child_capabilities=[supported, unsupported]).includes(
+        capability=capability
+    )
+    assert not target.aggregate_capabilities(child_capabilities=[unsupported, supported]).includes(
+        capability=capability
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_aggregate_capabilities_intersects_input_combinations_and_unions_possible_outputs() -> None:
+    children = [MockPromptTarget(), MockPromptTarget()]
+    target = RoundRobinTarget(targets=children)
+    original_configurations = [child.configuration for child in children]
+    first = TargetCapabilities(
+        input_modalities=frozenset({frozenset({"text"}), frozenset({"text", "image_path"}), frozenset({"audio_path"})}),
+        output_modalities=frozenset({frozenset({"text"})}),
+    )
+    second = TargetCapabilities(
+        input_modalities=frozenset({frozenset({"text"}), frozenset({"image_path"}), frozenset({"text", "audio_path"})}),
+        output_modalities=frozenset({frozenset({"text", "image_path"})}),
+    )
+
+    result = target.aggregate_capabilities(child_capabilities=[first, second])
+
+    assert result.input_modalities == frozenset({frozenset({"text"})})
+    assert result.output_modalities == frozenset({frozenset({"text"}), frozenset({"text", "image_path"})})
+    assert all(
+        child.configuration is original for child, original in zip(children, original_configurations, strict=True)
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_aggregate_capabilities_rejects_missing_results_and_disjoint_inputs() -> None:
+    target = RoundRobinTarget(targets=[MockPromptTarget(), MockPromptTarget()])
+    with pytest.raises(ValueError, match="every round-robin child"):
+        target.aggregate_capabilities(child_capabilities=[])
+    with pytest.raises(ValueError, match="every round-robin child"):
+        target.aggregate_capabilities(child_capabilities=[TargetCapabilities()])
+    with pytest.raises(ValueError, match="no shared"):
+        target.aggregate_capabilities(
+            child_capabilities=[
+                TargetCapabilities(),
+                TargetCapabilities(input_modalities=frozenset({frozenset({"image_path"})})),
+            ]
+        )
 
 
 @pytest.mark.usefixtures("patch_central_database")
