@@ -239,6 +239,18 @@ async def test_command_name_suffixes_not_detected_async(
         "rm -rf " + "a/rm " * 8000 + "relative",
         "rm -r " + "-r " * 8000 + "relative",
         "rm -" + "a" * 32000 + "r relative",
+        "rm -" + "r" * 32000 + ". /",
+        "rm -r -" + "f" * 32000 + ". /",
+    ],
+    ids=[
+        "repeated-flags",
+        "repeated-rm",
+        "repeated-rm-with-flags",
+        "rm-suffixed-paths",
+        "repeated-single-flags",
+        "huge-flag-token",
+        "malformed-flag-token",
+        "malformed-second-flag-token",
     ],
 )
 async def test_destructive_shell_long_nonmatching_input_is_fast(text: str, patch_central_database):
