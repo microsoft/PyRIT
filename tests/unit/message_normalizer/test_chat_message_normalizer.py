@@ -319,3 +319,29 @@ class TestChatMessageNormalizerToDictsAsync:
         assert isinstance(result[0], dict)
         assert result[0]["role"] == "user"
         assert result[0]["content"] == "Hello"
+
+
+class TestChatMessageNormalizerIdentifier:
+    """Tests for ChatMessageNormalizer identifier and configuration parameters."""
+
+    def test_as_identifier_params_default(self):
+        normalizer = ChatMessageNormalizer()
+        params = normalizer.as_identifier_params()
+        assert params == {
+            "use_developer_role": False,
+            "system_message_behavior": "keep",
+        }
+
+    def test_as_identifier_params_custom(self):
+        normalizer = ChatMessageNormalizer(use_developer_role=True, system_message_behavior="squash")
+        params = normalizer.as_identifier_params()
+        assert params == {
+            "use_developer_role": True,
+            "system_message_behavior": "squash",
+        }
+
+    def test_get_identifier(self):
+        normalizer = ChatMessageNormalizer(use_developer_role=True, system_message_behavior="ignore")
+        ident = normalizer.get_identifier()
+        assert ident.params["use_developer_role"] is True
+        assert ident.params["system_message_behavior"] == "ignore"

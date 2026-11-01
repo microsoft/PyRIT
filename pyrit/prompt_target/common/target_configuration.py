@@ -7,7 +7,7 @@ from types import MappingProxyType
 from typing import Any
 
 from pyrit.message_normalizer import MessageListNormalizer
-from pyrit.models import Message
+from pyrit.models import Identifiable, Message
 from pyrit.prompt_target.common.conversation_normalization_pipeline import ConversationNormalizationPipeline
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
@@ -194,9 +194,33 @@ class TargetConfiguration:
             # ``self._pipeline``. Attack-owned overrides are represented by the
             # attack identifier instead.
             "normalization_pipeline": [
-                f"{type(normalizer).__module__}.{type(normalizer).__qualname__}"
-                for normalizer in self._pipeline.normalizers
+                self._serialize_normalizer(normalizer) for normalizer in self._pipeline.normalizers
             ],
+        }
+
+    @staticmethod
+    def _serialize_normalizer(normalizer: Any) -> dict[str, Any]:
+        """
+        Serialize a normalizer into a deterministic dictionary containing its type and parameters.
+
+        Args:
+            normalizer (Any): The message normalizer instance to serialize.
+
+        Returns:
+            dict[str, Any]: Dictionary with 'type' and 'params' keys.
+        """
+        params: dict[str, Any] = {}
+        if isinstance(normalizer, Identifiable):
+            ident = normalizer.get_identifier()
+            if hasattr(ident, "params"):
+                params = ident.params
+        elif hasattr(normalizer, "as_identifier_params"):
+            val = normalizer.as_identifier_params()
+            if isinstance(val, dict):
+                params = val
+        return {
+            "type": f"{type(normalizer).__module__}.{type(normalizer).__qualname__}",
+            "params": params,
         }
 
     @staticmethod
