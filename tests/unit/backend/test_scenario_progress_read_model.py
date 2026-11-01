@@ -215,23 +215,55 @@ def test_load_objective_metrics_rereads_recent_file_with_unchanged_metadata(tmp_
     with (
         patch.object(progress_module, "SCORER_EVALS_PATH", tmp_path),
         patch.object(Path, "stat", autospec=True, side_effect=stat_within_tick),
+        patch.object(
+            progress_module.time, "time_ns", return_value=tick_stat.st_mtime_ns + 1_000_000_000
+        ) as current_time,
+        patch.object(
+            progress_module,
+            "find_objective_metrics_by_eval_hash",
+            wraps=progress_module.find_objective_metrics_by_eval_hash,
+        ) as load_metrics,
     ):
         first = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
         _write_objective_metrics(file_path=file_path, scorer_identifier=scorer_identifier, accuracy=0.85)
         rewritten = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
+        current_time.return_value = tick_stat.st_mtime_ns + 2_000_000_000
+        settled = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
+        unchanged = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
 
+    assert first is not None
+    assert rewritten is not None
+    assert settled is not None
     assert first.accuracy == 0.75
     assert rewritten.accuracy == 0.85
+    assert settled.accuracy == 0.85
+    assert unchanged is settled
+    assert load_metrics.call_count == 3
 
 
-def test_load_objective_metrics_reuses_cache_once_file_is_older_than_recent_window(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("age_ns", "expected_reads"),
+    [
+        pytest.param(-2_000_000_000, 2, id="future-timestamp"),
+        pytest.param(0, 2, id="just-modified"),
+        pytest.param(1_999_999_999, 2, id="before-boundary"),
+        pytest.param(2_000_000_000, 1, id="at-boundary"),
+        pytest.param(2_000_000_001, 1, id="after-boundary"),
+        pytest.param(10_000_000_000, 1, id="settled"),
+    ],
+)
+def test_load_objective_metrics_cache_policy_at_file_age_boundaries(
+    *, tmp_path: Path, age_ns: int, expected_reads: int
+) -> None:
     file_path = tmp_path / "objective" / "objective_achieved_metrics.jsonl"
-    scorer_identifier = ComponentIdentifier(class_name="SettledScorer", class_module="tests")
+    scorer_identifier = ComponentIdentifier(class_name="BoundaryScorer", class_module="tests")
     eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
-    _write_objective_metrics(file_path=file_path, scorer_identifier=scorer_identifier, accuracy=0.75, age_seconds=10)
+    _write_objective_metrics(file_path=file_path, scorer_identifier=scorer_identifier, accuracy=0.75)
+    mtime_ns = file_path.stat().st_mtime_ns
 
     with (
         patch.object(progress_module, "SCORER_EVALS_PATH", tmp_path),
+        patch.object(progress_module.time, "time_ns", return_value=mtime_ns + age_ns),
         patch.object(
             progress_module,
             "find_objective_metrics_by_eval_hash",
@@ -241,9 +273,11 @@ def test_load_objective_metrics_reuses_cache_once_file_is_older_than_recent_wind
         first = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
         second = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
 
-    assert first is second
-    assert first.accuracy == 0.75
-    load_metrics.assert_called_once()
+    assert first is not None
+    assert second is not None
+    assert first.accuracy == second.accuracy == 0.75
+    assert (first is second) == (expected_reads == 1)
+    assert load_metrics.call_count == expected_reads
 
 
 async def test_progress_updates_scorer_identity_without_new_results(tmp_path: Path) -> None:
