@@ -23,16 +23,21 @@ class OpenRedirectOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     _IPV4 = rf"{_OCTET}\.{_OCTET}\.{_OCTET}\.{_OCTET}"
     _TLD = r"(?:[A-Za-z]{2,}|xn--[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)"
 
+    _REDIRECT_PARAM = (
+        r"(?:redirect(?:_?(?:uri|url|to))?|return(?:_?(?:uri|url|to))?|returnto|"
+        r"target|dest(?:ination)?|next|continue|goto|callback|forward|location|url|rurl)"
+    )
+
+    _RAW_SEP = r"[/\\]"
+    _ENCODED_SEP = r"(?:%252f|%2f|%255c|%5c)"
+    _SEP = rf"(?:{_RAW_SEP}|{_ENCODED_SEP})"
+
     _DEFAULT_PATTERNS: dict[str, str] | None = {
-        # Redirect parameter pointing at a protocol-relative //host (classic open-redirect).
-        "Protocol-Relative Redirect Param": (
-            r"(?i)\b(?:redirect(?:_?(?:uri|url|to))?|return_?url|returnto|next|continue|dest(?:ination)?|"
-            r"goto|callback|forward|location)\s*[=:]\s*[\"']?\s*//[A-Za-z0-9.-]+"
-        ),
-        # Redirect parameter carrying an encoded //bypass (%2f%2f or %2F%2F).
+        # Redirect parameter pointing at a protocol-relative //host or backslash bypass.
+        "Protocol-Relative Redirect Param": (rf"(?i)\b{_REDIRECT_PARAM}\s*[=:]\s*[\"']?\s*[/\\]{{2,}}[A-Za-z0-9.-]+"),
+        # Redirect parameter carrying an encoded, double-encoded, or mixed slash/backslash bypass.
         "Encoded Slash Redirect": (
-            r"(?i)\b(?:redirect(?:_?(?:uri|url|to))?|return_?url|returnto|next|continue|dest(?:ination)?|"
-            r"goto|callback|forward|location)\s*[=:]\s*[\"']?[^\"'\s]*%2f%2f"
+            rf"(?i)\b{_REDIRECT_PARAM}\s*[=:]\s*[\"\']?\s*(?:{_ENCODED_SEP}{_SEP}+|{_RAW_SEP}+{_ENCODED_SEP}{_SEP}*)"
         ),
         # Userinfo host confusion: https://trusted@evil — the real host is after the @.
         # Supports RFC 3986 user:password credentials, domain destinations (including Punycode TLDs),
