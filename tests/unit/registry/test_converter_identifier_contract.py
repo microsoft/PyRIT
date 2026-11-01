@@ -170,7 +170,9 @@ def samples(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[Any, ..
         filters[-1].write_bytes((styles / source).read_bytes())
     code_attack = _CUSTOM_CODE_ATTACK["template"].read_text(encoding="utf-8")
     code_attack_templates = (folder / "first_code_attack.yaml", folder / "second_code_attack.yaml")
-    code_attack_templates[0].write_text(code_attack, encoding="utf-8")
+    code_attack_templates[0].write_text(
+        code_attack.replace("{{ wrapped_input }}", "{{ wrapped_input }}  ", 1), encoding="utf-8"
+    )
     code_attack_templates[1].write_text(
         code_attack.replace("{{ wrapped_input }}", "{{ wrapped_input }} ", 1), encoding="utf-8"
     )
@@ -386,11 +388,12 @@ def _setup(
         **SETTINGS_THAT_NEED_ANOTHER.get((converter_name, parameter_name), {}),
     }
     if parameter.reference is not None:
-        values = (_reference(parameter, 0), _reference(parameter, 1))
-        if _MISSING in values:
+        if _MISSING in (kwargs.get(parameter_name, _MISSING), _reference(parameter, 1)):
             pytest.fail(f"{converter_name}.{parameter_name}: add a reference sample")
-        return cls, kwargs, values
+        return cls, kwargs, (_reference(parameter, 1),)
     default = None if parameter.default is REQUIRED_VALUE else parameter.default
+    if default is not None and parameter_name not in kwargs:
+        kwargs = {**kwargs, parameter_name: default}
     annotation = _unwrap_optional(parameter.param_type)
     if (converter_name, parameter_name) in SINGLE_VALUE_SETTINGS:
         pytest.skip(SINGLE_VALUE_SETTINGS[(converter_name, parameter_name)])
@@ -402,7 +405,29 @@ def _setup(
         found = None if template is None else (_changed(template), _changed(_changed(template)))
     if found is None:
         pytest.fail(f"{converter_name}.{parameter_name}: add a sample value")
-    return cls, kwargs, found
+    changed = _changed_from(kwargs.get(parameter_name, _MISSING), found)
+    if not changed:
+        pytest.fail(f"{converter_name}.{parameter_name}: add a sample value that differs from the baseline")
+    return cls, kwargs, changed
+
+
+def _same(first: Any, second: Any) -> bool:
+    if first is second:
+        return True
+    if isinstance(first, TextSelectionStrategy) and type(first) is type(second):
+        return bool(vars(first) == vars(second))
+    try:
+        return bool(first == second)
+    except (TypeError, ValueError):
+        return False
+
+
+def _changed_from(baseline: Any, values: tuple[Any, ...]) -> tuple[Any, ...]:
+    changed: list[Any] = []
+    for value in values:
+        if not any(_same(value, seen) for seen in (baseline, *changed)):
+            changed.append(value)
+    return tuple(changed)
 
 
 def _build(cls: type, kwargs: dict[str, Any], parameter_name: str | None = None) -> Any:
@@ -413,11 +438,18 @@ def _build(cls: type, kwargs: dict[str, Any], parameter_name: str | None = None)
         pytest.fail(f"{setting}: add a sample value the converter accepts ({error})")
 
 
-def _hashes(cls: type, kwargs: dict[str, Any], parameter_name: str, values: tuple[Any, ...]) -> set[str]:
-    repeated = {_build(cls, kwargs).get_identifier().hash for _ in range(2)}
+def _hash(cls: type, kwargs: dict[str, Any], parameter_name: str | None = None) -> str:
+    repeated: set[str] = {_build(cls, kwargs, parameter_name).get_identifier().hash for _ in range(2)}
     if len(repeated) != 1:
-        pytest.fail(f"{cls.__name__}: the same settings build different identifiers")
-    return {_build(cls, {**kwargs, parameter_name: value}, parameter_name).get_identifier().hash for value in values}
+        setting = cls.__name__ if parameter_name is None else f"{cls.__name__}.{parameter_name}"
+        pytest.fail(f"{setting}: the same settings build different identifiers")
+    return repeated.pop()
+
+
+def _hashes(cls: type, kwargs: dict[str, Any], parameter_name: str, values: tuple[Any, ...]) -> list[str]:
+    baseline = _hash(cls, kwargs)
+    changed = [_hash(cls, {**kwargs, parameter_name: value}, parameter_name) for value in values]
+    return [baseline, *changed] if parameter_name in kwargs else changed
 
 
 @pytest.mark.filterwarnings("ignore:.*TaskFramingConverter is deprecated:DeprecationWarning")
@@ -430,7 +462,9 @@ def test_converter_setting_reaches_identifier(
 
     hashes = _hashes(cls, kwargs, parameter_name, values)
 
-    assert len(hashes) == 2, f"{converter_name}.{parameter_name} changes the converter but not its identifier"
+    assert len(set(hashes)) == len(hashes), (
+        f"{converter_name}.{parameter_name} changes the converter but not its identifier"
+    )
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -439,11 +473,15 @@ def test_neutral_setting_leaves_identifier_unchanged(
     converter_name: str, parameter_name: str, samples: dict[str, tuple[Any, ...]]
 ) -> None:
     cls, kwargs, values = _setup(converter_name, parameter_name, samples)
-    assert values[0] != values[1], f"{converter_name}.{parameter_name}: the two samples are equal"
+    assert len(values) == 2, (
+        f"{converter_name}.{parameter_name}: the samples must differ from each other and from the baseline"
+    )
 
     hashes = _hashes(cls, kwargs, parameter_name, values)
 
-    assert len(hashes) == 1, f"{converter_name}.{parameter_name} is identified now; remove it from NEUTRAL_SETTINGS"
+    assert len(set(hashes)) == 1, (
+        f"{converter_name}.{parameter_name} is identified now; remove it from NEUTRAL_SETTINGS"
+    )
 
 
 def test_exemptions_point_at_registered_settings() -> None:
