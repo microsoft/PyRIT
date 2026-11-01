@@ -1,5 +1,5 @@
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
@@ -763,6 +763,21 @@ describe('ScenarioHistory', () => {
       4,
       expect.objectContaining({ cursor: undefined }),
     ))
+  })
+
+  it('offers the QUEUED run status filter', async () => {
+    const onFiltersChange = jest.fn()
+    mockedScenariosApi.listRuns.mockResolvedValue({
+      items: [RUN],
+      pagination: { limit: 25, has_more: false },
+    })
+    renderHistory({ ...defaultProps, onFiltersChange })
+    await screen.findByTestId('scenario-history-table')
+
+    fireEvent.click(screen.getByTestId('scenario-status-filter'))
+    fireEvent.click(await screen.findByText('Queued'))
+
+    expect(onFiltersChange).toHaveBeenCalledWith({ ...DEFAULT_SCENARIO_HISTORY_FILTERS, statuses: ['QUEUED'] })
   })
 
   it('hides stale pagination while changed filters are loading', async () => {

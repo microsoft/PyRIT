@@ -30,14 +30,27 @@ describe('scenario history URL filters', () => {
     })
   })
 
-  it('ignores synthetic and invalid run states without dropping valid filters', () => {
+  it('ignores invalid run states without dropping valid filters', () => {
     const params = new URLSearchParams('status=COMPLETED&status=QUEUED&status=UNKNOWN&operator=alice')
 
     expect(scenarioHistoryFiltersFromSearchParams(params)).toEqual({
       ...DEFAULT_SCENARIO_HISTORY_FILTERS,
-      statuses: ['COMPLETED'],
+      statuses: ['COMPLETED', 'QUEUED'],
       operator: ['alice'],
     })
+  })
+
+  it('keeps a QUEUED-only status filter', () => {
+    const params = new URLSearchParams('status=QUEUED')
+
+    expect(scenarioHistoryFiltersFromSearchParams(params)).toEqual({
+      ...DEFAULT_SCENARIO_HISTORY_FILTERS,
+      statuses: ['QUEUED'],
+    })
+  })
+
+  it('lists every persisted run state in backend order', () => {
+    expect(SCENARIO_RUN_STATES).toEqual(['CREATED', 'QUEUED', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED'])
   })
 
   it('round-trips every persisted run state', () => {
