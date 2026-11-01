@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_right
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from markdown_it import MarkdownIt
+from markdown_it.common.utils import normalizeReference
 
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer, _ConfigurableRegexScorerMixin
 
@@ -30,140 +33,32 @@ _IMAGE_PATTERNS = {
 # CommonMark lets image text, labels and the whitespace around a destination or title continue on
 # the next line of a paragraph, and renderers still fetch the image. The default image patterns
 # read one line at a time, so _find_images also follows the image syntax inside each paragraph.
+# A CommonMark block parser finds the paragraphs and headings, without their block quote and list
+# prefixes, and the link reference definitions; code and HTML blocks hold no paragraph. Its inline
+# rule is disabled, so the inline content stays raw text for the bracket scan below. The parser
+# turns every line ending into "\n" and NUL into U+FFFD before the scan reads the content.
+_BLOCK_PARSER = MarkdownIt("commonmark").disable("inline")
 
-# Block starts that end a paragraph (CommonMark 0.31.2): a blank line, ATX heading, code fence,
-# thematic break or setext underline, block quote, list item with content (an ordered one must
-# start at 1), and HTML blocks of types 1 to 6.
-_EOL = r"(?=[\r\n]|\Z)"
-_LINE_BREAK = r"(?:\r\n?|\n)"
-_ATX = rf"\#{{1,6}}+(?:[ \t]|{_EOL})"
-_HTML_BLOCK_NAMES = (
-    "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir"
-    "|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe"
-    "|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary"
-    "|table|tbody|td|tfoot|th|thead|title|tr|track|ul"
-)
-_PARAGRAPH_END = re.compile(
-    rf"[ \t]*+{_EOL}"
-    r"|[ ]{0,3}+(?:"
-    rf"{_ATX}"
-    rf"|`{{3,}}+[^`\r\n]*+{_EOL}|~{{3,}}"
-    rf"|(?:(?:\*[ \t]*+){{3,}}+|(?:_[ \t]*+){{3,}}+|(?:-[ \t]*+){{3,}}+|=++[ \t]*+|-++[ \t]*+){_EOL}"
-    r"|>"
-    r"|(?:[-+*]|0{0,8}+1[.)])[ \t]++[^ \t\r\n]"
-    rf"|<(?:(?:script|pre|style|textarea)(?:[ \t>]|{_EOL})|!--|\?|![A-Za-z]|!\[CDATA\["
-    rf"|/?(?:{_HTML_BLOCK_NAMES})(?:[ \t>]|/>|{_EOL}))"
-    r")",
-    re.IGNORECASE,
-)
-_ATX_HEADING = re.compile(rf"[ ]{{0,3}}+{_ATX}")
-_ORDERED_ITEM = re.compile(rf"[ ]{{0,3}}+[0-9]{{1,9}}+[.)](?:[ \t]|{_EOL})")
-_QUOTE_MARKERS = re.compile(r"(?:[ ]{0,3}+>[ \t]?+)++")
-_LIST_ITEM = re.compile(r"[ ]{0,3}+(?:[-+*]|[0-9]{1,9}+[.)])[ ]{1,4}+(?=[^ \t\r\n])")
-_INDENTED_CODE = re.compile(r"[ ]{0,3}+(?:[ ]|\t)")
-_FENCE = re.compile(rf"[ ]{{0,3}}+(`{{3,}}+(?=[^`\r\n]*+{_EOL})|~{{3,}}+)")
-_FENCE_CLOSE = re.compile(rf"[ ]{{0,3}}+(`{{3,}}+|~{{3,}}+)[ \t]*+{_EOL}")
-_LINE = re.compile(rf"[^\r\n]*+{_LINE_BREAK}?+")
-
-# Inside one paragraph: backslash escapes, code span backticks, brackets and line breaks.
-_TOKEN = re.compile(rf"\\[!-/:-@\[-`{{-~]|`++|!?\[|\]|{_LINE_BREAK}")
+# Inside one paragraph: backslash escapes, code span backticks and brackets.
+_TOKEN = re.compile(r"\\[!-/:-@\[-`{-~]|`++|!?\[|\]")
 _BACKTICKS = re.compile(r"`++")
-_ESCAPE = r"\\[^\r\n]?+"
-_SPACE = rf"[ \t]*+(?:{_LINE_BREAK}[ \t]*+)?+"
-# A bare destination has no ASCII space or control character (NUL is allowed, because CommonMark
-# replaces it) and up to three levels of balanced parentheses. A backslash escapes only ASCII
-# punctuation and is a literal backslash otherwise.
-_DEST_CHAR = r"(?:\\[!-/:-@\[-`{-~]?+|[^\x01-\x20\x7f()\\])"
+_ESCAPE = r"\\[^\n]?+"
+_SPACE = r"[ \t]*+(?:\n[ \t]*+)?+"
+# A bare destination has no ASCII space or control character and up to three levels of balanced
+# parentheses. A backslash escapes only ASCII punctuation and is a literal backslash otherwise.
+_DEST_CHAR = r"(?:\\[!-/:-@\[-`{-~]?+|[^\x00-\x20\x7f()\\])"
 _PARENS_1 = rf"\({_DEST_CHAR}*+\)"
 _PARENS_2 = rf"\((?:{_DEST_CHAR}|{_PARENS_1})*+\)"
 _PARENS_3 = rf"\((?:{_DEST_CHAR}|{_PARENS_2})*+\)"
-_DESTINATION = rf"(?:<(?:\\[^\r\n]|[^<>\\\r\n])*+>|(?!<)(?:{_DEST_CHAR}|{_PARENS_3})*+)"
+_DESTINATION = rf"(?:<(?:\\[^\n]|[^<>\\\n])*+>|(?!<)(?:{_DEST_CHAR}|{_PARENS_3})*+)"
 _TITLE = (
     rf'(?:"(?:{_ESCAPE}|[^"\\])*+"'
     rf"|'(?:{_ESCAPE}|[^'\\])*+'"
     rf"|\((?:{_ESCAPE}|[^()\\])*+\))"
 )
 # A title must be separated from the destination by a space or a line break.
-_INLINE_TAIL = re.compile(rf"\({_SPACE}{_DESTINATION}(?:{_SPACE}(?<=[ \t\r\n]){_TITLE})?+{_SPACE}\)")
+_INLINE_TAIL = re.compile(rf"\({_SPACE}{_DESTINATION}(?:{_SPACE}(?<=[ \t\n]){_TITLE})?+{_SPACE}\)")
 _LABEL_TAIL = re.compile(rf"\[(?:{_ESCAPE}|[^\[\]\\])*+\]")
-# A link reference definition, as the shortcut-reference pattern reads it: at most three spaces of
-# indentation and a destination on the same line. Its label may span lines but not a blank line.
-_DEFINITION = re.compile(
-    rf"^[ ]{{0,3}}+\[((?:\\[^\r\n]|[^\[\]\\\r\n]|{_LINE_BREAK}(?![ \t]*+[\r\n])){{1,999}}+)\]:[ \t]*+\S", re.MULTILINE
-)
-
-
-def _normalize_label(label: str) -> str:
-    """
-    Normalize a link label as CommonMark compares them.
-
-    Returns:
-        str: The case-folded label with spaces, tabs and line endings collapsed to one space.
-    """
-    return re.sub(r"[ \t\r\n]+", " ", label).strip(" ").casefold()
-
-
-def _paragraphs(text: str) -> list[str]:
-    """
-    Split text into its paragraphs, each without the block quote and list prefixes of its lines.
-
-    A paragraph runs until a blank line or a block start that interrupts it. An ATX heading is one
-    line, and code blocks are skipped. Continuation lines of a block quote are read after the
-    paragraph's ``>`` markers, and those of a list item after its content indentation. A list
-    marker that is not indented to the item's content starts a new item, whatever its number.
-
-    Returns:
-        list[str]: The text of each paragraph.
-    """
-    paragraphs: list[str] = []
-    lines: list[str] = []
-    fence = ""
-    fence_depth = fence_indent = depth = indent = 0
-    for line in _LINE.finditer(text):
-        pos, line_end = line.span()
-        if pos == line_end:
-            break
-        markers = _QUOTE_MARKERS.match(text, pos)
-        line_depth = markers.group().count(">") if markers else 0
-        body = markers.end() if markers else pos
-        if fence:
-            blank = not line.group().strip(" \t\r\n")
-            if line_depth >= fence_depth and (blank or text.startswith(" " * fence_indent, body)):
-                close = _FENCE_CLOSE.match(text, body + fence_indent)
-                if close and close.group(1)[0] == fence[0] and len(close.group(1)) >= len(fence):
-                    fence = ""
-                continue
-            # The block quote or list item that holds the fence has ended.
-            fence = ""
-        if lines:
-            content = body if depth and markers else pos
-            nested = indent > 0 and text.startswith(" " * indent, content)
-            if nested:
-                content += indent
-            if (
-                line_depth > depth
-                or _PARAGRAPH_END.match(text, content)
-                or (indent and not nested and _ORDERED_ITEM.match(text, content))
-            ):
-                paragraphs.append("".join(lines))
-                lines = []
-            else:
-                lines.append(text[content:line_end])
-                continue
-        if line.group().strip(" \t\r\n"):
-            item = _LIST_ITEM.match(text, body)
-            content = item.end() if item else body
-            if opened := _FENCE.match(text, content):
-                fence, fence_depth, fence_indent = opened.group(1), line_depth, content - body
-            elif _ATX_HEADING.match(text, content):
-                paragraphs.append(text[content:line_end])
-            elif item or not _INDENTED_CODE.match(text, body):
-                lines = [text[content:line_end]]
-                depth = line_depth
-                indent = content - body
-    if lines:
-        paragraphs.append("".join(lines))
-    return paragraphs
 
 
 def _find_images(text: str) -> set[str]:
@@ -171,25 +66,21 @@ def _find_images(text: str) -> set[str]:
     Find Markdown images by following the image syntax across the lines of each paragraph.
 
     Brackets are paired with one stack, so nested brackets have no depth limit and each closing
-    bracket is read once. Code spans are skipped. A reference or shortcut image needs a matching
-    definition.
+    bracket is read once. Code spans are skipped. A reference or shortcut image needs a link
+    reference definition with the same label.
 
     Returns:
         set[str]: The names of the image patterns found.
     """
     found: set[str] = set()
-    definitions: set[str] | None = None
+    env: dict[str, Any] = {}
+    paragraphs = [token.content for token in _BLOCK_PARSER.parse(text, env) if token.type == "inline"]
+    definitions = env.get("references", {})
 
     def defined(label: str) -> bool:
-        nonlocal definitions
-        key = _normalize_label(label)
-        if not key or len(label) > 999:
-            return False
-        if definitions is None:
-            definitions = {_normalize_label(match.group(1)) for match in _DEFINITION.finditer(text)}
-        return key in definitions
+        return len(label) <= 999 and normalizeReference(label) in definitions
 
-    for paragraph in _paragraphs(text):
+    for paragraph in paragraphs:
         openers: list[int] = []
         last_open = -1
         backticks: dict[int, list[int]] | None = None
