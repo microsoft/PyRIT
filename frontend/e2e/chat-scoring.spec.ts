@@ -37,8 +37,15 @@ test('selects a chat scorer, displays its result, and retains scoring errors aft
       await route.fulfill({ json: attack }); return
     }
     if (path === '/api/attacks/scoring-attack/messages') {
-      await route.fulfill({ json: { conversation_id: 'scoring-conversation', messages,
-        target_response_status: null, scoring_failure: scoringFailure } }); return
+      await route.fulfill({ json: {
+        conversation_id: 'scoring-conversation',
+        messages,
+        automated_score: attack.automated_score ?? null,
+        latest_response_id: attack.last_response?.id ?? null,
+        outcome: attack.outcome ?? 'undetermined',
+        target_response_status: null,
+        scoring_failure: scoringFailure,
+      } }); return
     }
     if (path === '/api/attacks/scoring-attack/conversations') {
       await route.fulfill({ json: { attack_result_id: attack.attack_result_id, main_conversation_id: attack.conversation_id,
