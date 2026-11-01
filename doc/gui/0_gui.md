@@ -87,9 +87,11 @@ named techniques that configure existing attacks. Browse configured scorers
 and select a default chat scorer; scorer setup uses initializers, not an editor
 on this page. Target defaults apply to new chats and scans.
 
-Expand a scorer, technique, or converter name to inspect its identity JSON.
-Converter inputs and outputs stay visible in the table. Use the small red X
-to remove a converter from the live registry; confirmation is required.
+Expand a target, scorer, technique, or converter name to inspect its identity
+JSON. Target identity inspection is independent of expanding composite target
+members; defaults, visibility, and the target's configuration columns remain
+available. Converter inputs and outputs stay visible in the table. Use the small
+red X to remove a converter from the live registry; confirmation is required.
 
 **Scenario presets** save a scenario configuration for reuse with a target
 chosen at launch. **Suites** maintain ordered collections of preset definitions.
