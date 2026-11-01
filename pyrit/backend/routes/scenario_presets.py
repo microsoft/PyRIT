@@ -13,7 +13,7 @@ Route structure:
     GET    /api/scenario-presets/{name}           — get one preset and its version
     POST   /api/scenario-presets                  — create a preset that must not exist
     PUT    /api/scenario-presets/{name}           — replace a preset the caller has read
-    DELETE /api/scenario-presets/{name}           — delete a preset
+    DELETE /api/scenario-presets/{name}           — delete a preset, optionally only at a read version
     POST   /api/scenario-presets/{name}/resolve   — combine a preset with launch fields
 """
 
@@ -245,20 +245,37 @@ async def update_scenario_preset(  # pyrit-async-suffix-exempt
     "/{name}",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_admin)],
-    responses={404: {"model": ProblemDetail, "description": "Preset not found"}},
+    responses={
+        404: {"model": ProblemDetail, "description": "Preset not found"},
+        409: {"model": ProblemDetail, "description": "The preset changed after it was read"},
+    },
 )
-async def delete_scenario_preset(name: str) -> None:  # pyrit-async-suffix-exempt
+async def delete_scenario_preset(  # pyrit-async-suffix-exempt
+    name: str,
+    expected_version: str | None = Query(None, description="Delete only if the stored preset still has this version"),
+) -> None:
     """
     Delete one stored preset.
 
+    When the caller supplies ``expected_version`` the stored version must still match,
+    so a delete confirmed against a stale read is reported instead of discarding an
+    edit the caller never saw.
+
     Args:
         name: The preset name.
+        expected_version: The version the caller read, or None to delete unconditionally.
 
     Raises:
-        HTTPException: 404 if no preset is stored, 400 for an illegal name, 503 if storage fails.
+        HTTPException: 404 if no preset is stored, 409 if the stored version moved,
+            400 for an illegal name, 503 if storage fails.
     """
     try:
-        deleted = await get_scenario_preset_service().delete_preset_async(name=name)
+        deleted = await get_scenario_preset_service().delete_preset_async(name=name, expected_version=expected_version)
+    except ScenarioPresetConflictError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Scenario preset '{name}' changed since it was read; re-read it and retry",
+        ) from None
     except AzureError as exc:
         raise _storage_unavailable() from exc
     except ValueError as exc:

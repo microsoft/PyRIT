@@ -276,27 +276,31 @@ class ScenarioPresetRegistry(Registry["ScenarioPreset", ScenarioPresetMetadata])
             return False
         return True
 
-    def delete_preset(self, *, name: str) -> bool:
+    def delete_preset(self, *, name: str, expected_version: str | None = None) -> bool:
         """
         Delete one stored preset, reporting whether it was there to delete.
 
-        The delete is unconditional: a version guards an edit from discarding content,
-        and a delete has none to lose. The answer comes from the delete itself rather
-        than a preceding existence check, so when two callers race to remove the same
-        preset exactly one is told it did.
+        Without *expected_version* the delete is unconditional. With it, the delete is
+        refused if the preset changed after the caller read it, so confirming a delete
+        cannot discard an edit the caller never saw. The answer comes from the delete
+        itself rather than a preceding existence check, so when two callers race to
+        remove the same preset exactly one is told it did.
 
         Args:
             name (str): The preset name.
+            expected_version (str | None): The version the caller read, or ``None`` to
+                delete whatever is stored. Defaults to ``None``.
 
         Returns:
             bool: True if a document was stored under *name*, False if nothing was. A
             preset registered by code is not a document and is never deleted here.
 
         Raises:
+            ScenarioPresetConflictError: If the stored version does not match *expected_version*.
             ValueError: If *name* is not a legal preset name.
             TimeoutError: If a local delete could not acquire the document lock.
         """
-        deleted = self._get_storage().delete_preset(name)
+        deleted = self._get_storage().delete_preset(name, expected_version=expected_version)
         if deleted:
             logger.info(f"Deleted scenario preset '{name}'.")
         return deleted

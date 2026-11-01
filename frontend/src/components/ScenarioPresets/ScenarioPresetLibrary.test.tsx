@@ -544,9 +544,49 @@ describe('ScenarioPresetLibrary', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
     expect(await screen.findByTestId('empty-state')).toBeInTheDocument()
-    expect(mockRemove).toHaveBeenCalledWith('nightly_probe')
+    expect(mockRemove).toHaveBeenCalledWith('nightly_probe', 'v1')
     expect(onPresetDeleted).toHaveBeenCalledTimes(1)
     expect(mockList).toHaveBeenCalledTimes(2)
+  })
+
+  it('reloads instead of deleting a preset that changed since it was loaded', async () => {
+    const user = userEvent.setup()
+    mockList
+      .mockResolvedValueOnce({ source: 'presets.yaml', items: [makeItem()] })
+      .mockResolvedValueOnce({ source: 'presets.yaml', items: [makeSavedItem(true, 'v2')] })
+    mockRemove.mockRejectedValueOnce(httpError(409, 'Version mismatch.'))
+
+    renderLibrary()
+
+    await user.click(await screen.findByTestId('delete-preset-nightly_probe'))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    expect(await screen.findByText(
+      "Preset 'nightly_probe' changed since it was loaded. Review it and try again.",
+    )).toBeInTheDocument()
+    expect(mockRemove).toHaveBeenCalledWith('nightly_probe', 'v1')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(await screen.findByRole('switch', { name: 'Add nightly_probe to scanner' })).toBeChecked()
+    expect(screen.getByTestId('preset-row-nightly_probe')).toBeInTheDocument()
+    expect(mockList).toHaveBeenCalledTimes(2)
+    expect(onPresetDeleted).not.toHaveBeenCalled()
+    expect(screen.queryByText('Version mismatch.')).not.toBeInTheDocument()
+  })
+
+  it('deletes a stored preset with no version unconditionally', async () => {
+    const user = userEvent.setup()
+    mockList.mockResolvedValue({ source: 'presets.yaml', items: [{ ...makeItem(), version: null }] })
+    mockRemove.mockResolvedValue(undefined)
+
+    renderLibrary()
+
+    await user.click(await screen.findByTestId('delete-preset-nightly_probe'))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => expect(onPresetDeleted).toHaveBeenCalledTimes(1))
+    expect(mockRemove).toHaveBeenCalledWith('nightly_probe', undefined)
   })
 
   it('holds the confirmation until the server finishes deleting', async () => {

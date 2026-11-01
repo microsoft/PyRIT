@@ -235,6 +235,20 @@ async def test_delete_reports_presence(service: ScenarioSuiteService) -> None:
     assert await service.delete_suite_async(name="weekly") is False
 
 
+async def test_delete_with_a_stale_version_conflicts(service: ScenarioSuiteService) -> None:
+    """Test that the service forwards the version a delete was confirmed against."""
+    created = await service.save_suite_async(suite=_suite(), expected_version=None)
+    updated = await service.save_suite_async(
+        suite=_suite().model_copy(update={"description": "winner"}),
+        expected_version=created.version,
+    )
+
+    with pytest.raises(ScenarioSuiteConflictError):
+        await service.delete_suite_async(name="weekly", expected_version=created.version)
+
+    assert await service.delete_suite_async(name="weekly", expected_version=updated.version) is True
+
+
 def test_configure_source_replaces_storage(tmp_path: Path, preset_registry: MagicMock) -> None:
     """Test that the service reports its registry's configured source."""
     registry = ScenarioSuiteRegistry()

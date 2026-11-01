@@ -1513,7 +1513,7 @@ export interface ScenarioPresetResponse {
    * registered preset cannot be updated or deleted through the API.
    */
   origin: 'stored' | 'registered'
-  /** Opaque document version; required to update the preset. Null when registered in code. */
+  /** Opaque document version; required to update the preset and sent when deleting it. Null when registered in code. */
   version: string | null
   /** Empty when the preset is runnable here. Never blocks a save. */
   issues: PresetIssue[]
@@ -1567,7 +1567,7 @@ export interface ScenarioSuiteResponse {
    * registered suite cannot be updated or deleted through the API.
    */
   origin: 'stored' | 'registered'
-  /** Opaque document version required to update a stored suite. Null when registered in code. */
+  /** Opaque document version required to update a stored suite and sent when deleting it. Null when registered in code. */
   version: string | null
   /** Ordered exactly like `suite.entries`. */
   entry_statuses: ScenarioSuiteEntryStatus[]
