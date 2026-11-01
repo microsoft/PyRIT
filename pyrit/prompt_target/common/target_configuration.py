@@ -7,7 +7,7 @@ from types import MappingProxyType
 from typing import Any
 
 from pyrit.message_normalizer import MessageListNormalizer
-from pyrit.models import Message
+from pyrit.models import Message, RequestGenerationConfig
 from pyrit.prompt_target.common.conversation_normalization_pipeline import ConversationNormalizationPipeline
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
@@ -205,8 +205,9 @@ class TargetConfiguration:
         Project a ``TargetCapabilities`` instance into a deterministic dict
         suitable for inclusion in a ``ComponentIdentifier``.
 
-        Fields are discovered dynamically via the pydantic model fields so new
-        capability fields are picked up automatically. Set-valued fields (e.g.,
+        Fields are discovered dynamically via the pydantic model fields. The additive
+        request-generation availability flags are excluded to preserve existing hashes;
+        configured defaults remain identity-bearing target parameters. Set-valued fields (e.g.,
         the modality frozensets) are detected by type and normalized to sorted
         lists of sorted lists; all other fields are passed through as-is.
 
@@ -217,7 +218,12 @@ class TargetConfiguration:
             dict[str, Any]: Field-name to serialized-value mapping.
         """
         params: dict[str, Any] = {}
+        generation_flags = {capability.value for capability in RequestGenerationConfig.FIELD_CAPABILITIES.values()}
         for field_name in type(capabilities).model_fields:
+            # Request-option availability does not change configured generation behavior.
+            # Excluding additive flags preserves existing target and nested scorer hashes.
+            if field_name in generation_flags:
+                continue
             value = getattr(capabilities, field_name)
             # Normalize set-valued fields (e.g., modality frozensets) to a
             # deterministic representation. Handles both frozenset[frozenset[...]]

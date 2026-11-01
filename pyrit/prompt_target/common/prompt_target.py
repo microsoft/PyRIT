@@ -19,6 +19,8 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    RequestGenerationConfig,
+    RequestGenerationInfo,
     RequestTraceContext,
     TargetIdentifier,
     WebSearchConfig,
@@ -70,6 +72,7 @@ class PromptTarget(Identifiable):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
     _DEFAULT_TRACE_ENABLED: ClassVar[bool] = False
     _SUPPORTS_TOOL_CALL_HISTORY: ClassVar[bool] = False
+    _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset()
 
     # Declarative auth facts consumed by the create-target service and catalog.
     # Kept off ``TargetCapabilities`` (auth is a construction/credential axis, not
@@ -178,6 +181,14 @@ class PromptTarget(Identifiable):
             if custom_configuration is not None
             else type(self).get_default_configuration(self._underlying_model)
         )
+        unsupported_generation = {
+            capability.value: False
+            for capability in RequestGenerationConfig.FIELD_CAPABILITIES.values()
+            if capability not in self._SUPPORTED_GENERATION_CAPABILITIES
+            and self.capabilities.includes(capability=capability)
+        }
+        if unsupported_generation:
+            self.apply_capabilities(capabilities=self.capabilities.model_copy(update=unsupported_generation))
         if custom_configuration is None and underlying_model is None and self._SUPPORTS_TOOL_CALL_HISTORY:
             known = get_known_capabilities(model_name)
             if known is not None:
@@ -306,8 +317,14 @@ class PromptTarget(Identifiable):
         """
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
             piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
         message.validate()
+        generation_config = self.validate_request_generation_config(message)
+        for piece in message.message_pieces:
+            piece_config = RequestGenerationConfig.from_metadata(metadata=piece.prompt_metadata)
+            RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
+            piece.prompt_metadata.update(piece_config.to_metadata())
         web_search_config = self._get_web_search_config(message)
         self.validate_web_search_config(web_search_config)
         conversation_id = message.get_piece().conversation_id or ""
@@ -325,7 +342,14 @@ class PromptTarget(Identifiable):
             )
             if not normalized_conversation:
                 raise ValueError("Normalization pipeline returned an empty conversation. Cannot send an empty request.")
-            if self._get_web_search_config(normalized_conversation[-1]) != web_search_config:
+            # Normalizers can merge history or discard piece metadata. Only the original
+            # outbound message selects this send's options, never normalized history.
+            normalized_request = normalized_conversation[-1]
+            for piece in normalized_request.message_pieces:
+                RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
+                RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
+            normalized_request.get_piece().prompt_metadata.update(generation_config.to_metadata())
+            if self._get_web_search_config(normalized_request) != web_search_config:
                 raise ValueError("Normalization changed the request's web search policy.")
             self._validate_request(normalized_conversation=normalized_conversation)
             with target_trace_context(
@@ -333,7 +357,18 @@ class PromptTarget(Identifiable):
             ):
                 if send_context:
                     send_context.mark_target_invoked()
-                response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+                try:
+                    response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+                finally:
+                    generation_info = RequestGenerationInfo.from_metadata(
+                        metadata=normalized_request.get_piece().prompt_metadata
+                    )
+                    if generation_info is not None:
+                        generation_info = generation_info.model_copy(
+                            update={"request_piece_ids": tuple(str(piece.id) for piece in message.message_pieces)}
+                        )
+                        for piece in message.message_pieces:
+                            piece.prompt_metadata.update(generation_info.to_metadata())
             for response_message in response:
                 for piece in response_message.message_pieces:
                     piece.prompt_metadata = {
@@ -341,11 +376,40 @@ class PromptTarget(Identifiable):
                         for key, value in piece.prompt_metadata.items()
                         if key not in (RequestTraceContext.METADATA_KEY, RequestTraceContext.REQUEST_METADATA_KEY)
                     }
+                    RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
+                    RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
+                    if generation_info is not None:
+                        piece.prompt_metadata.update(generation_info.to_metadata())
             send_succeeded = True
             return response
         finally:
             if send_context:
                 send_context.finish_send(succeeded=send_succeeded)
+
+    def validate_request_generation_config(self, message: Message) -> RequestGenerationConfig:
+        """
+        Validate current-message options without loading history or performing provider I/O.
+
+        Returns:
+            RequestGenerationConfig: The validated request options.
+
+        Raises:
+            ValueError: The override is invalid or unsupported.
+        """
+        config = RequestGenerationConfig.from_message(message)
+        for capability in sorted(config.required_capabilities):
+            if capability not in self._SUPPORTED_GENERATION_CAPABILITIES or not self.capabilities.includes(
+                capability=capability
+            ):
+                raise ValueError(
+                    f"{type(self).__name__} does not support runtime {capability.name.lower()} "
+                    "for this model configuration."
+                )
+        self._validate_request_generation_config(config)
+        return config
+
+    def _validate_request_generation_config(self, config: RequestGenerationConfig) -> None:
+        """Validate adapter-specific parameter ranges and joint model/mode restrictions."""
 
     @abc.abstractmethod
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
@@ -759,12 +823,17 @@ class PromptTarget(Identifiable):
                 return TargetConfiguration(
                     capabilities=known.model_copy(
                         update={
+                            **{
+                                capability.value: False
+                                for capability in RequestGenerationConfig.FIELD_CAPABILITIES.values()
+                                if capability not in cls._SUPPORTED_GENERATION_CAPABILITIES
+                            },
                             "input_modalities": frozenset(
                                 combo
                                 for combo in known.input_modalities
                                 if cls._SUPPORTS_TOOL_CALL_HISTORY
                                 or not combo & {"function_call", "function_call_output"}
-                            )
+                            ),
                         }
                     )
                 )

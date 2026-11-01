@@ -3,13 +3,14 @@ import { useState, useCallback, useEffect, useLayoutEffect, useRef, forwardRef, 
 import { Button, Caption1, Popover, PopoverSurface, PopoverTrigger, Tooltip, Text } from '@fluentui/react-components'
 import { SendRegular, DismissRegular, InfoRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 
-import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, MultiSendOptions, PieceConversion, TargetInstance, UndoLastSendAction } from '@/types'
+import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, MultiSendOptions, PieceConversion, RequestGenerationDraft, TargetInstance, UndoLastSendAction } from '@/types'
 import { isTargetResolutionBlocking } from '@/utils/targetIdentity'
 
 import { usePromptEditorStyles } from './PromptEditor.styles'
 import PromptEditor from './PromptEditor'
 import SystemPromptSetup from './SystemPromptSetup'
 import MultiSendSettings from './MultiSendSettings'
+import GenerationSettings from './GenerationSettings'
 import { PIECE_TYPE_TO_DATA_TYPE, withDraftIdentity } from './converterTypes'
 
 const DISABLED_WARNING_HOVER_DELAY_MS = 700
@@ -106,6 +107,8 @@ export interface ChatInputAreaHandle {
 }
 
 interface ChatInputAreaProps {
+  generationDraft?: RequestGenerationDraft
+  onGenerationDraftChange?: (value: RequestGenerationDraft) => void
   undoLastSend?: UndoLastSendAction
   repeatDisabledReason?: string
   onSend: (
@@ -158,7 +161,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   convertedValue, onClearConversion, onClearAllConversions, onConvertedValueChange,
   converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip,
   onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange,
-  repeatDisabledReason, undoLastSend,
+  repeatDisabledReason, undoLastSend, generationDraft = {}, onGenerationDraftChange,
   initialText = '', initialAttachments = [], initialTextMetadata,
 }, ref) {
   const styles = usePromptEditorStyles()
@@ -303,6 +306,8 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             convertedFileChip={convertedFileChip} onClearConvertedFileChip={onClearConvertedFileChip}
             setup={showSystemPrompt && onSystemPromptChange && <SystemPromptSetup value={systemPrompt}
               onChange={onSystemPromptChange} disabled={!!activeTarget && !supportsSystemPrompt} />}
+            footer={onGenerationDraftChange && <GenerationSettings value={generationDraft}
+              onChange={onGenerationDraftChange} target={activeTarget} disabled={disabled} />}
             warning={hasUnsupportedModalities && <div className={styles.unsupportedWarning} data-testid="unsupported-modality-warning">
               <WarningRegular fontSize={14} /><Caption1>
                 {unsupportedModalityReasons.join(' ')}

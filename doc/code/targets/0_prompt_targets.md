@@ -57,6 +57,56 @@ Target-side rate limiting remains independent and continues to use `limit_reques
 `_send_prompt_to_target_async(*, normalized_conversation: list[Message]) -> list[Message]` instead of
 overriding `send_prompt_async`.
 
+## Runtime generation configuration
+
+Use `RequestGenerationConfig` to attach typed generation overrides to one outbound
+request without changing the target's configured defaults or identity. Support is
+declared per parameter and depends on the adapter, model, and effective sampling
+mode. See [Target Capabilities](./6_1_target_capabilities.ipynb) for inspecting support
+and OpenAI model-family rules.
+
+The config currently exposes `temperature`. For example, with an `OpenAIChatTarget`
+whose `target.capabilities.supports_temperature` is true:
+
+```python
+from pyrit.models import Message, MessagePiece, RequestGenerationConfig
+from pyrit.prompt_normalizer import PromptNormalizer
+
+message = Message(
+    message_pieces=[
+        MessagePiece(
+            role="user",
+            original_value="Describe this scene.",
+            prompt_metadata=RequestGenerationConfig(temperature=0).to_metadata(),
+        )
+    ]
+)
+response = await PromptNormalizer().send_prompt_async(
+    message=message, target=target, conversation_id=conversation_id
+)
+```
+
+`to_metadata()` produces `{"request_generation_config": {"temperature": 0}}` in
+this example. Put overrides on one current message piece or repeat matching
+values across pieces. Conflicting values, invalid inputs, and unsupported
+parameters or model modes fail before provider I/O. Only the current outbound
+message supplies overrides, not conversation history. Parameter limits are
+adapter-specific: OpenAI Chat accepts finite temperatures from 0 through 2,
+including zero, but not booleans or numeric strings.
+
+Missing or null fields preserve the target's configured behavior. Explicit
+overrides take precedence over provider passthrough values, including nested
+`extra_body` settings. If neither a request value nor a configured value exists,
+the parameter is omitted rather than assigning a guessed provider default.
+Transport retries retain the resolved settings; a new send can select new values.
+
+`PromptNormalizer` saves generation evidence with the request and its responses.
+Read it using `RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)`.
+Each parameter record, such as `info.temperature`, contains the `requested`
+override, `resolved` value sent, and `source`: `request`, `target_default`, or
+`provider_default`. Unknown provider defaults remain `None`; reading a message
+without generation evidence returns `None`.
+
 ## Chat-style targets vs general targets
 
 A `PromptTarget` is a generic place to send a prompt. With PyRIT, the idea is that it will eventually be consumed by an AI application, but that doesn't have to be immediate. For example, you could have a SharePoint target. Everything you send a prompt to is a `PromptTarget`. Many attacks work generically with any `PromptTarget` including `RedTeamingAttack` and `PromptSendingAttack`.
@@ -244,6 +294,7 @@ A `TargetConfiguration` composes three concerns:
 | `supports_system_prompt`         | The target natively supports a system-role message.                                                                                      |
 | `supports_json_output`           | The target supports a "json" response format that guarantees valid JSON output.                                                          |
 | `supports_json_schema`           | The target supports constraining output to a caller-provided JSON schema.                                                                |
+| `supports_temperature`           | The adapter and configured model mode support per-request temperature overrides. This does not change the target's default or identity. |
 | `input_modalities`               | The set of input modality combinations the target accepts (e.g. `{text}`, `{text, image_path}`).                                         |
 | `output_modalities`              | The set of output modality combinations the target produces.                                                                             |
 

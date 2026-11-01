@@ -153,17 +153,11 @@ def _permissive_configuration(
     merged_modalities = original.capabilities.input_modalities | _TEXT_MODALITY
     if extra_input_modalities is not None:
         merged_modalities = frozenset(merged_modalities | frozenset(extra_input_modalities))
-    permissive_caps = TargetCapabilities(
-        supports_multi_turn=True,
-        supports_multi_message_pieces=True,
-        supports_json_schema=True,
-        supports_json_output=True,
-        supports_editable_history=True,
-        supports_system_prompt=True,
-        supports_streaming_audio=True,
-        supports_web_search=True,
-        input_modalities=merged_modalities | TOOL_CALL_INPUT_MODALITIES,
-        output_modalities=original.capabilities.output_modalities,
+    permissive_caps = original.capabilities.model_copy(
+        update={
+            **{capability.value: True for capability in CapabilityName},
+            "input_modalities": merged_modalities | TOOL_CALL_INPUT_MODALITIES,
+        }
     )
     # Rebuild a fresh configuration from the instance's native capabilities so
     # probes bypass preflight validation without inheriting ADAPT policy or
@@ -915,7 +909,7 @@ async def discover_target_capabilities_async(
     def _resolve(name: CapabilityName) -> bool:
         if name in probed:
             return name in queried_caps
-        return bool(getattr(declared, name.value))
+        return declared.includes(capability=name)
 
     resolved_multi_turn = _resolve(CapabilityName.MULTI_TURN)
     # Editable history is only meaningful if multi-turn probing/declaration
@@ -931,19 +925,12 @@ async def discover_target_capabilities_async(
             queried_modalities | (declared.input_modalities - frozenset(test_modalities))
         )
 
-    resolved = TargetCapabilities(
-        supports_multi_turn=resolved_multi_turn,
-        supports_multi_message_pieces=_resolve(CapabilityName.MULTI_MESSAGE_PIECES),
-        supports_json_schema=_resolve(CapabilityName.JSON_SCHEMA),
-        supports_json_output=_resolve(CapabilityName.JSON_OUTPUT),
-        supports_editable_history=resolved_editable_history,
-        supports_system_prompt=_resolve(CapabilityName.SYSTEM_PROMPT),
-        supports_streaming_audio=declared.supports_streaming_audio,
-        supports_web_search=_resolve(CapabilityName.WEB_SEARCH),
-        input_modalities=resolved_input_modalities,
-        # Output modalities are still declarative because probing them would
-        # require target-specific response inspection.
-        output_modalities=declared.output_modalities,
+    resolved = declared.model_copy(
+        update={
+            **{capability.value: _resolve(capability) for capability in CapabilityName},
+            "supports_editable_history": resolved_editable_history,
+            "input_modalities": resolved_input_modalities,
+        }
     )
     if apply:
         target.apply_capabilities(capabilities=resolved)

@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
-from typing import NoReturn, cast
+from typing import ClassVar, Literal, NoReturn, cast
 
 from pyrit.models.literals import PromptDataType
 from pyrit.models.target.target_capabilities import CapabilityName, TargetCapabilities
@@ -14,6 +15,7 @@ from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALIT
 __all__ = [
     "CapabilityHandlingPolicy",
     "CapabilityName",
+    "OpenAIModelSampling",
     "TargetCapabilities",
     "UnsupportedCapabilityBehavior",
     "get_known_capabilities",
@@ -104,6 +106,109 @@ class CapabilityHandlingPolicy:
 # Shared profiles are defined once and referenced by multiple model names.
 # ---------------------------------------------------------------------------
 
+
+class OpenAIModelSampling:
+    """Resolve OpenAI sampling support without duplicating complete capability profiles."""
+
+    _RULES: ClassVar[
+        tuple[tuple[frozenset[str], Literal["supported", "requires_none", "unsupported"], str | None], ...]
+    ] = (
+        (
+            frozenset(
+                {
+                    "gpt-4",
+                    "gpt-4-0314",
+                    "gpt-4-0613",
+                    "gpt-4-32k",
+                    "gpt-4-32k-0314",
+                    "gpt-4-32k-0613",
+                    "gpt-4-turbo",
+                    "gpt-4-turbo-preview",
+                    "gpt-4-1106-preview",
+                    "gpt-4-0125-preview",
+                    "gpt-4-vision-preview",
+                    "gpt-4o",
+                    "gpt-4o-mini",
+                    "gpt-4.1",
+                    "gpt-4.1-mini",
+                    "gpt-4.1-nano",
+                }
+            ),
+            "supported",
+            None,
+        ),
+        (frozenset({"gpt-5.1", "gpt-5.2", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}), "requires_none", "none"),
+        (
+            frozenset({"gpt-5.5", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}),
+            "requires_none",
+            "medium",
+        ),
+        (
+            frozenset(
+                {
+                    "gpt-5",
+                    "gpt-5-mini",
+                    "gpt-5-nano",
+                    "gpt-5-pro",
+                    "gpt-5.2-pro",
+                    "gpt-5.4-pro",
+                    "gpt-5.5-pro",
+                    "gpt-5-codex",
+                    "gpt-5.1-codex",
+                    "gpt-5.1-codex-mini",
+                    "gpt-5.1-codex-max",
+                    "gpt-5.2-codex",
+                    "gpt-5.3-codex",
+                    "o1",
+                    "o1-mini",
+                    "o1-preview",
+                    "o1-pro",
+                    "o3",
+                    "o3-mini",
+                    "o3-pro",
+                    "o4-mini",
+                    "gpt-4o-audio-preview",
+                    "gpt-4o-mini-audio-preview",
+                    "gpt-4o-realtime-preview",
+                    "gpt-4o-mini-realtime-preview",
+                }
+            ),
+            "unsupported",
+            None,
+        ),
+    )
+    _SNAPSHOT_SUFFIX: ClassVar[re.Pattern[str]] = re.compile(r"-\d{4}-\d{2}-\d{2}$")
+
+    @classmethod
+    def supports_temperature(
+        cls, *, model_name: object, reasoning_effort: object = None, declared_support: bool | None = None
+    ) -> bool:
+        """
+        Resolve support using the model's sampling rule and effective reasoning effort.
+
+        Args:
+            model_name (object): Effective model or deployment name from the request configuration.
+            reasoning_effort (object): Effective effort, or None to use the documented model default.
+            declared_support (bool | None): Explicit capability declaration. False disables support;
+                True permits unrecognized deployments but cannot bypass a known model's restrictions.
+
+        Returns:
+            bool: Whether this model configuration accepts a runtime temperature.
+        """
+        if declared_support is False or not isinstance(model_name, str):
+            return False
+        # Only dated snapshots inherit a named model's rule, not arbitrary prefixed variants.
+        model = cls._SNAPSHOT_SUFFIX.sub("", model_name)
+        for models, mode, default_effort in cls._RULES:
+            if model in models:
+                if mode == "unsupported":
+                    return False
+                if mode == "requires_none":
+                    return (default_effort if reasoning_effort is None else reasoning_effort) == "none"
+                return reasoning_effort in (None, "none")
+        return declared_support is True and reasoning_effort in (None, "none")
+
+
 _TEXT_IMAGE_INPUT: frozenset[frozenset[PromptDataType]] = cast(
     "frozenset[frozenset[PromptDataType]]",
     frozenset({frozenset({"text"}), frozenset({"image_path"}), frozenset({"text", "image_path"})}),
@@ -191,4 +296,9 @@ def get_known_capabilities(underlying_model: str) -> TargetCapabilities | None:
         TargetCapabilities | None: The known capabilities for the model, or None if the model
         is not recognized.
     """
-    return _KNOWN_CAPABILITIES.get(underlying_model)
+    profile = _KNOWN_CAPABILITIES.get(underlying_model)
+    if profile is None:
+        return None
+    return profile.model_copy(
+        update={"supports_temperature": OpenAIModelSampling.supports_temperature(model_name=underlying_model)}
+    )

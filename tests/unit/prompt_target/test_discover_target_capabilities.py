@@ -120,6 +120,34 @@ class TestPermissiveConfiguration:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestDiscoverTargetCapabilitiesAsync:
+    @pytest.mark.parametrize("capabilities", [None, [], [CapabilityName.TEMPERATURE], [CapabilityName.SYSTEM_PROMPT]])
+    @pytest.mark.parametrize("supported", [False, True])
+    async def test_discovery_preserves_generation_and_additional_declared_fields(
+        self, capabilities: list[CapabilityName] | None, supported: bool
+    ) -> None:
+        class ExtendedCapabilities(TargetCapabilities):
+            additional_declaration: bool = True
+
+        target = OpenAIChatTarget(
+            model_name="gpt-4o" if supported else "unknown",
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+        )
+        declared = ExtendedCapabilities.model_validate(target.capabilities.model_dump())
+        target.apply_capabilities(capabilities=declared)
+        with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=_ok_response()):
+            result = await discover_target_capabilities_async(
+                target=target, capabilities=capabilities, test_modalities=set(), retries=0, apply=True
+            )
+        assert result.supports_temperature is supported
+        assert isinstance(result, ExtendedCapabilities)
+        assert result.additional_declaration
+        assert result.output_modalities == declared.output_modalities
+        assert target.capabilities == result
+        assert isinstance(target.capabilities, ExtendedCapabilities)
+        target.set_model_name(model_name="unknown" if supported else "gpt-4o")
+        assert target.capabilities.supports_temperature is not supported
+
     async def test_returns_only_supported_when_all_probes_succeed(self) -> None:
         target = MockPromptTarget()
         target._send_prompt_to_target_async = AsyncMock(return_value=_ok_response())  # type: ignore[method-assign]

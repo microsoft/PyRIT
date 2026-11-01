@@ -3,7 +3,8 @@
 
 import logging
 from collections.abc import MutableSequence, Sequence
-from typing import Any
+from copy import deepcopy
+from typing import Any, ClassVar
 
 from openai.types.chat import ChatCompletion
 
@@ -17,6 +18,9 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    ParameterResolution,
+    RequestGenerationConfig,
+    RequestGenerationInfo,
 )
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
@@ -31,7 +35,12 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     detect_response_content,
     save_audio_response_async,
 )
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import (
+    CapabilityName,
+    OpenAIModelSampling,
+    TargetCapabilities,
+    get_known_capabilities,
+)
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
@@ -80,6 +89,7 @@ class OpenAIChatTarget(OpenAITarget):
     """
 
     _SUPPORTS_TOOL_CALL_HISTORY = True
+    _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset({CapabilityName.TEMPERATURE})
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -156,8 +166,6 @@ class OpenAIChatTarget(OpenAITarget):
             json.JSONDecodeError: If the response from the target is not valid JSON.
             Exception: If the request fails for any other reason.
         """
-        super().__init__(custom_configuration=custom_configuration, **kwargs)
-
         # Validate generation parameters.
         validate_temperature(temperature)
         validate_top_p(top_p)
@@ -179,6 +187,77 @@ class OpenAIChatTarget(OpenAITarget):
             extra_body_parameters = {**audio_params, **extra_body_parameters} if extra_body_parameters else audio_params
 
         self._extra_body_parameters = extra_body_parameters
+        super().__init__(custom_configuration=custom_configuration, **kwargs)
+        self._generation_capability_overrides = {
+            capability: custom_configuration.capabilities.includes(capability=capability)
+            for capability in self._SUPPORTED_GENERATION_CAPABILITIES
+            if custom_configuration is not None
+            and capability.value in custom_configuration.capabilities.model_fields_set
+        }
+        self._refresh_generation_capabilities()
+
+    def set_model_name(self, *, model_name: str) -> None:
+        """Set the model name and refresh request-generation support for the effective model."""
+        super().set_model_name(model_name=model_name)
+        self._refresh_generation_capabilities()
+
+    def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
+        """Apply declared model support subject to this adapter's configured sampling mode."""
+        super().apply_capabilities(capabilities=self._generation_capabilities_for_mode(capabilities))
+
+    def _refresh_generation_capabilities(self) -> None:
+        parameters = self._effective_generation_parameters()
+        model = parameters["model"]
+        known = get_known_capabilities(model) if isinstance(model, str) else None
+        support = {
+            capability.value: self._generation_capability_overrides.get(
+                capability, known is not None and known.includes(capability=capability)
+            )
+            for capability in self._SUPPORTED_GENERATION_CAPABILITIES
+        }
+        if (
+            CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES
+            and CapabilityName.TEMPERATURE not in self._generation_capability_overrides
+        ):
+            support["supports_temperature"] = OpenAIModelSampling.supports_temperature(
+                model_name=model,
+                reasoning_effort=parameters.get("reasoning_effort"),
+                declared_support=True if support["supports_temperature"] else None,
+            )
+        self.apply_capabilities(capabilities=self.capabilities.model_copy(update=support))
+
+    def _effective_generation_parameters(self) -> dict[str, Any]:
+        parameters = self._extra_body_parameters or {}
+        return {
+            "model": self._underlying_model or self._model_name,
+            **parameters,
+            **(parameters.get("extra_body") or {}),
+        }
+
+    def _generation_capabilities_for_mode(self, capabilities: TargetCapabilities) -> TargetCapabilities:
+        parameters = self._effective_generation_parameters()
+        temperature_supported = (
+            CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES
+            and OpenAIModelSampling.supports_temperature(
+                model_name=parameters["model"],
+                reasoning_effort=parameters.get("reasoning_effort"),
+                declared_support=capabilities.includes(capability=CapabilityName.TEMPERATURE),
+            )
+            and self._audio_response_config is None
+            and "audio" not in (parameters.get("modalities") or [])
+            and not parameters.get("stream", False)
+        )
+        return capabilities.model_copy(update={"supports_temperature": temperature_supported})
+
+    def _validate_request_generation_config(self, config: RequestGenerationConfig) -> None:
+        if config.temperature is None:
+            return
+        if not self._generation_capabilities_for_mode(self.capabilities).includes(
+            capability=CapabilityName.TEMPERATURE
+        ):
+            raise ValueError("Runtime temperature is not supported for this OpenAI Chat model configuration.")
+        if not 0 <= config.temperature <= 2:
+            raise ValueError("OpenAI Chat request temperature must be between 0 and 2 inclusive.")
 
     def validate_tool_history(self, messages: Sequence[Message]) -> None:
         """Check stored tool history and Chat Completions tool-message constraints."""
@@ -244,18 +323,59 @@ class OpenAIChatTarget(OpenAITarget):
         """
         message = normalized_conversation[-1]
         message_piece: MessagePiece = message.message_pieces[0]
+        # The public send boundary clears incoming evidence. Only this logical send's
+        # first provider attempt can have populated it; retries retain its resolution.
+        generation_info = RequestGenerationInfo.from_metadata(metadata=message_piece.prompt_metadata)
         json_config = self._get_json_response_config(message_piece=message_piece)
 
         logger.info(f"Sending the following prompt to the prompt target: {message}")
 
         body = await self._construct_request_body_async(conversation=normalized_conversation, json_config=json_config)
-
-        # Use unified error handling - automatically detects ChatCompletion and validates
+        if generation_info is None:
+            generation_config = self.validate_request_generation_config(message)
+            generation_info = RequestGenerationInfo(
+                temperature=self._resolve_request_temperature(body=body, config=generation_config)
+            )
+        else:
+            self._apply_request_temperature(body=body, temperature=generation_info.temperature.resolved)
+        # Record only after preparation succeeds and the transport is about to be invoked.
+        message_piece.prompt_metadata.update(generation_info.to_metadata())
         response = await self._handle_openai_request_async(
             api_call=lambda: self._client.chat.completions.create(**body),
             request=message,
         )
         return [response]
+
+    @staticmethod
+    def _apply_request_temperature(*, body: dict[str, Any], temperature: float | None) -> None:
+        nested = body.get("extra_body") or {}
+        if temperature is None:
+            body.pop("temperature", None)
+            nested.pop("temperature", None)
+        else:
+            body["temperature"] = temperature
+            # The SDK merges extra_body after its named arguments.
+            if "temperature" in nested:
+                nested["temperature"] = temperature
+
+    def _resolve_request_temperature(
+        self, *, body: dict[str, Any], config: RequestGenerationConfig
+    ) -> ParameterResolution:
+        nested = body.get("extra_body") or {}
+        if config.temperature is not None:
+            self._apply_request_temperature(body=body, temperature=config.temperature)
+        resolved = nested.get("temperature", body.get("temperature"))
+        return ParameterResolution(
+            requested=config.temperature,
+            resolved=resolved,
+            source=(
+                "request"
+                if config.temperature is not None
+                else "target_default"
+                if resolved is not None
+                else "provider_default"
+            ),
+        )
 
     def _detect_response_content(self, message: Any) -> tuple[bool, bool, bool]:
         """
@@ -444,7 +564,7 @@ class OpenAIChatTarget(OpenAITarget):
         }
 
         if self._extra_body_parameters:
-            body_parameters.update(self._extra_body_parameters)
+            body_parameters.update(deepcopy(self._extra_body_parameters))
 
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}

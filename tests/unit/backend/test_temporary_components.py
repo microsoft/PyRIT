@@ -15,6 +15,8 @@ import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+from openai.resources.chat.completions import AsyncCompletions
+from openai.types.chat import ChatCompletion
 
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
@@ -48,12 +50,13 @@ from pyrit.converter import (
     TranslationConverter,
 )
 from pyrit.memory import SQLiteMemory
-from pyrit.models import JSONValue, Operation, PromptDataType
+from pyrit.models import JSONValue, Operation, PromptDataType, RequestGenerationConfig, RequestGenerationInfo
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import HuggingFaceChatTarget, OpenAIChatTarget
 from pyrit.prompt_target.common.utils import _get_rate_limit_lock
 from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
 from unit.backend.mocks import _settle_send_async
+from unit.mocks import openai_chat_response_json_dict
 
 
 @pytest.fixture(autouse=True)
@@ -297,31 +300,44 @@ class TestTemporaryComponents:
             await source.cleanup_target_async()
 
     @pytest.mark.parametrize("client_setting", ["default", "none", "custom"])
-    async def test_temperature_support_with_http_client_async(self, client_setting: str) -> None:
+    async def test_runtime_temperature_is_independent_of_reconstruction_async(self, client_setting: str) -> None:
         async with httpx.AsyncClient() as client:
             client_kwargs: dict[str, Any] = {}
             if client_setting != "default":
                 client_kwargs["http_client"] = client if client_setting == "custom" else None
             source = OpenAIChatTarget(
                 endpoint="https://example.test/v1",
-                model_name="test",
+                model_name="gpt-4o",
                 api_key="test-only-key",
                 httpx_client_kwargs=client_kwargs,
             )
             try:
                 descriptor = target_object_to_instance("source", source)
+                assert descriptor.capabilities.supports_temperature
+                schema = type(descriptor).model_json_schema()
+                assert (
+                    not {
+                        "reconstructable",
+                        "reconstruction_error",
+                        "supports_temperature_override",
+                    }
+                    & descriptor.model_dump().keys()
+                )
+                assert (
+                    not {
+                        "reconstructable",
+                        "reconstruction_error",
+                        "supports_temperature_override",
+                    }
+                    & schema["$defs"]["TargetInstance"]["properties"].keys()
+                )
+                registry = TargetRegistry.get_registry_singleton()
                 if client_setting == "custom":
-                    assert not descriptor.reconstructable
-                    assert not descriptor.supports_temperature_override
-                    assert descriptor.reconstruction_error == (
-                        "OpenAIChatTarget cannot be recreated with different settings because it uses a custom "
-                        "HTTP client supplied through httpx_client_kwargs['http_client']."
-                    )
+                    with pytest.raises(ValueError, match="custom HTTP client"):
+                        registry.get_reconstruction_parameters(source)
                     assert not client.is_closed
                 else:
-                    assert descriptor.reconstructable
-                    assert descriptor.supports_temperature_override
-                    assert descriptor.reconstruction_error is None
+                    assert registry.get_reconstruction_parameters(source)["model_name"] == "gpt-4o"
             finally:
                 await source.cleanup_target_async()
 
@@ -454,18 +470,17 @@ class TestTemporaryComponents:
         finally:
             await target.cleanup_target_async()
 
-    async def test_target_settings_capability_rejects_undeclared_inputs_async(self) -> None:
+    async def test_target_reconstruction_rejects_undeclared_inputs_async(self) -> None:
         target = source_target()
-        TargetRegistry.get_registry_singleton().instances.register(target, name="source")
+        registry = TargetRegistry.get_registry_singleton()
+        registry.instances.register(target, name="source")
         try:
             with patch.dict(target._reconstruction_parameters, {"opaque_setting": "preserve"}):
                 descriptor = await TargetService().get_target_async(target_registry_name="source")
                 assert descriptor is not None
-                assert not descriptor.reconstructable
-                assert not descriptor.supports_temperature_override
-                assert descriptor.reconstruction_error == (
-                    "The source uses undeclared constructor inputs: opaque_setting"
-                )
+                assert descriptor.identifier.hash == target.get_identifier().hash
+                with pytest.raises(ValueError, match="undeclared constructor inputs: opaque_setting"):
+                    registry.recreate_instance(source=target, params={})
         finally:
             await target.cleanup_target_async()
 
@@ -641,6 +656,66 @@ class TestTemporaryComponents:
                     )
                 )
         finally:
+            await source.cleanup_target_async()
+
+    async def test_runtime_temperature_preserves_saved_variant_binding_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        source = OpenAIChatTarget(
+            model_name="gpt-4o", endpoint="https://example.test/v1", api_key="test-only-key", temperature=0.2
+        )
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        built = await TargetService().build_from_source_async(
+            SourceInstanceSpec(
+                source_name="source", source_hash=source.get_identifier().hash, params={"temperature": 0.8}
+            )
+        )
+        binding = TargetBinding(
+            source_name="source",
+            source_hash=source.get_identifier().hash,
+            temperature=0.8,
+            effective_hash=built.get_identifier().hash,
+        )
+        await built.cleanup_target_async()
+        sender = MessageSendService(scheduler=ManualSendScheduler())
+        try:
+            created = await AttackService(message_send_service=sender).create_attack_async(
+                request=CreateAttackRequest(target_registry_name="source", target_binding=binding)
+            )
+            response = ChatCompletion.model_validate({**openai_chat_response_json_dict(), "created": 0})
+            with patch.object(AsyncCompletions, "create", new_callable=AsyncMock, return_value=response) as send:
+                for index, temperature in enumerate((0, None)):
+                    status = await sender.submit_async(
+                        attack_result_id=created.attack_result_id,
+                        request=MessageSendRequest(
+                            target_registry_name="source",
+                            target_conversation_id=created.conversation_id,
+                            submission_id=f"runtime-{index}",
+                            role="user",
+                            pieces=[
+                                MessagePieceRequest(
+                                    original_value="hello",
+                                    prompt_metadata=RequestGenerationConfig(temperature=temperature).to_metadata(),
+                                )
+                            ],
+                        ),
+                    )
+                    status = await _settle_send_async(service=sender, status=status)
+                    assert status.state == MessageSendState.COMPLETED
+            assert [call.kwargs["temperature"] for call in send.call_args_list] == [0, 0.8]
+            [saved] = await sqlite_instance.get_attack_results_async(attack_result_ids=[created.attack_result_id])
+            assert TargetBinding.from_metadata(saved.metadata) == binding
+            messages = await sqlite_instance.get_conversation_messages_async(conversation_id=created.conversation_id)
+            for message, expected in zip(messages, (0, 0, 0.8, 0.8), strict=True):
+                assert "_pyrit_temperature" not in message.get_piece().prompt_metadata
+                assert "request_temperature" not in message.get_piece().prompt_metadata
+                info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+                assert info is not None
+                assert info.temperature.resolved == expected
+            assert source.get_identifier().hash == binding.source_hash
+            assert source._temperature == 0.2
+        finally:
+            await sender.shutdown_async()
             await source.cleanup_target_async()
 
     @pytest.mark.parametrize("operation_by_id", [False, True])

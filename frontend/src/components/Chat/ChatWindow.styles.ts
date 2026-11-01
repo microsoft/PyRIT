@@ -122,16 +122,6 @@ export const useChatWindowStyles = makeStyles({
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
   },
-  temperatureField: {
-    gridTemplateColumns: 'max-content 5rem',
-    columnGap: tokens.spacingHorizontalNone,
-    alignItems: 'center',
-    flexShrink: 0,
-  },
-  temperatureInput: {
-    width: '5rem',
-    minWidth: 0,
-  },
   sharedTarget: {
     maxWidth: '240px',
     [NARROW_VIEWPORT_QUERY]: {
