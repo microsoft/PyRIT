@@ -30,6 +30,8 @@ async def _seed_async(memory: SQLiteMemory) -> None:
         AttackOutcome,
         AttackResult,
         AttackResultRole,
+        Conversation,
+        MessagePiece,
         ScenarioIdentifier,
         ScenarioResult,
         ScenarioRunPlan,
@@ -65,10 +67,10 @@ async def _seed_async(memory: SQLiteMemory) -> None:
         seed_groups=[ScenarioRunPlanSeedGroup(id="seed", objective="seed", objective_sha256=to_sha256("seed"))],
     )
 
-    def result(
+    def _result(
+        *,
         index: int,
         group: str,
-        *,
         objective: str,
         outcome: AttackOutcome = AttackOutcome.FAILURE,
         child_ids: list[str] | None = None,
@@ -76,7 +78,7 @@ async def _seed_async(memory: SQLiteMemory) -> None:
     ) -> AttackResult:
         return AttackResult(
             attack_result_id=str(UUID(int=0x360200000 + index)),
-            conversation_id=str(UUID(int=0x360300000 + index)),
+            conversation_id="" if child_ids is not None else str(UUID(int=0x360300000 + index)),
             objective=objective,
             outcome=outcome,
             timestamp=timestamp + timedelta(seconds=index),
@@ -98,12 +100,13 @@ async def _seed_async(memory: SQLiteMemory) -> None:
         )
 
     grandchildren = [
-        result(1000 + i, "sequential", objective=f"Nested step {i + 1}", attempt_index=i + 1) for i in range(2)
+        _result(index=1000 + i, group="sequential", objective=f"Nested step {i + 1}", attempt_index=i + 1)
+        for i in range(2)
     ]
     children = [
-        result(
-            10 + i,
-            "sequential",
+        _result(
+            index=10 + i,
+            group="sequential",
             objective=f"Step {i + 1}",
             outcome=AttackOutcome.SUCCESS if i == 4 else AttackOutcome.FAILURE,
             child_ids=[g.attack_result_id for g in grandchildren] if i == 0 else None,
@@ -114,11 +117,40 @@ async def _seed_async(memory: SQLiteMemory) -> None:
     child_ids = [child.attack_result_id for child in children]
     child_ids[MISSING_POSITION] = str(UUID(int=0x3602DEAD))
     child_ids[DUPLICATE_POSITION] = child_ids[0]
-    parent = result(1, "sequential", objective="Sequential parent", child_ids=child_ids)
-    single = result(2, "single", objective="Single-turn attempt", outcome=AttackOutcome.SUCCESS)
+    parent = _result(index=1, group="sequential", objective="Sequential parent", child_ids=child_ids)
+    single = _result(index=2, group="single", objective="Single-turn attempt", outcome=AttackOutcome.SUCCESS)
 
     rows = {"sequential": [parent, *children, *grandchildren], "single": [single]}
     await memory.add_attack_results_to_memory_async(attack_results=[row for group in rows.values() for row in group])
+    pieces: list[MessagePiece] = []
+    for group in rows.values():
+        for row in group:
+            if not row.conversation_id:
+                continue
+            await memory.add_conversation_to_memory_async(
+                conversation=Conversation(
+                    conversation_id=row.conversation_id,
+                    target_identifier=target,
+                    attack_result_id=row.attack_result_id,
+                )
+            )
+            pieces.extend(
+                [
+                    MessagePiece(
+                        role="user",
+                        conversation_id=row.conversation_id,
+                        sequence=0,
+                        original_value=f"Synthetic request for {row.objective}. No external model was called.",
+                    ),
+                    MessagePiece(
+                        role="assistant",
+                        conversation_id=row.conversation_id,
+                        sequence=1,
+                        original_value=f"Stored example response for {row.objective}. This is offline sample data.",
+                    ),
+                ]
+            )
+    await memory.add_message_pieces_to_memory_async(message_pieces=pieces)
     await memory.add_scenario_results_to_memory_async(
         scenario_results=[
             ScenarioResult(

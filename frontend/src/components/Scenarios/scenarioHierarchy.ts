@@ -1,5 +1,6 @@
 import type {
   AttackResultRole,
+  ScenarioDisplayGroupProgress,
   ScenarioHierarchyGroup,
   ScenarioHierarchyNode,
   ScenarioHierarchyProjection,
@@ -87,6 +88,26 @@ export function mergeRootPage(
     }
   }
   return merged
+}
+
+/** Keeps live display-group totals, adding saved groups absent from the progress summary. */
+export function hierarchyDisplayGroups(
+  displayGroups: readonly ScenarioDisplayGroupProgress[],
+  hierarchyGroups: readonly ScenarioHierarchyGroup[],
+): ScenarioDisplayGroupProgress[] {
+  const knownIds = new Set(displayGroups.flatMap((group) => group.atomic_group_ids))
+  return [
+    ...displayGroups,
+    ...hierarchyGroups
+      .filter((group) => !knownIds.has(group.atomic_group_id))
+      .map((group) => ({
+        ...group.counts,
+        id: `saved:${group.atomic_group_id}`,
+        display_group: group.display_group,
+        atomic_attack_names: [group.atomic_attack_name],
+        atomic_group_ids: [group.atomic_group_id],
+      })),
+  ]
 }
 
 const ROLE_LABELS: Record<AttackResultRole, string> = {

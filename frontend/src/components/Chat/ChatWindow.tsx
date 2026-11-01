@@ -2304,6 +2304,7 @@ export default function ChatWindow({
                 <Link
                   className={styles.breadcrumbLink}
                   to={scenarioRunRoutePath(scenarioResultId)}
+                  state={location.state}
                   aria-label={`Return to scenario run ${scenarioResultId}`}
                 >
                   Scenario run {scenarioResultId.slice(0, 8)}

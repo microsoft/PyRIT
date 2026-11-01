@@ -81,8 +81,11 @@ export interface UseScenarioResultHierarchyResult {
   readonly restartChildren: (key: string, node: ScenarioHierarchyNode) => void
 }
 
-/** State is not reset when `scenarioResultId` changes; mount a new instance per run (for example with a `key`). */
-export function useScenarioResultHierarchy(scenarioResultId: string): UseScenarioResultHierarchyResult {
+/** Mount a keyed owner per run so saved relationship caches cannot carry over to another run. */
+export function useScenarioResultHierarchy(
+  scenarioResultId: string,
+  enabled: boolean = true,
+): UseScenarioResultHierarchyResult {
   const [roots, setRoots] = useState<HierarchyRootState>(INITIAL_ROOTS)
   const [children, setChildren] = useState<ReadonlyMap<string, HierarchyChildrenState>>(new Map())
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
@@ -101,6 +104,15 @@ export function useScenarioResultHierarchy(scenarioResultId: string): UseScenari
     controllers.current.delete(controller)
   }, [])
 
+  const resetHierarchy = useCallback((): void => {
+    for (const controller of controllers.current) controller.abort()
+    controllers.current.clear()
+    childControllers.current.clear()
+    setRoots(INITIAL_ROOTS)
+    setChildren(new Map())
+    setExpanded(new Set())
+  }, [])
+
   useEffect(() => {
     const active = controllers.current
     return () => {
@@ -112,10 +124,12 @@ export function useScenarioResultHierarchy(scenarioResultId: string): UseScenari
   }, [])
 
   useEffect(() => {
+    if (!enabled) return
     const controller = track()
     scenariosApi
       .getRunHierarchy(scenarioResultId, { max_nodes: HIERARCHY_MAX_NODES }, controller.signal)
       .then((page) => {
+        if (controller.signal.aborted) return
         setRoots({
           status: 'ready',
           runStatus: page.status,
@@ -137,20 +151,12 @@ export function useScenarioResultHierarchy(scenarioResultId: string): UseScenari
       })
       .finally(() => release(controller))
     return () => controller.abort()
-  }, [scenarioResultId, rootEpoch, track, release])
+  }, [scenarioResultId, enabled, rootEpoch, track, release])
 
   const reloadRoots = useCallback(() => {
-    // Late responses from before the reload must not land in the fresh tree.
-    for (const controller of controllers.current) {
-      controller.abort()
-    }
-    controllers.current.clear()
-    childControllers.current.clear()
-    setRoots(INITIAL_ROOTS)
-    setChildren(new Map())
-    setExpanded(new Set())
+    resetHierarchy()
     setRootEpoch((epoch) => epoch + 1)
-  }, [])
+  }, [resetHierarchy])
 
   const loadMoreRoots = useCallback(() => {
     const cursor = roots.nextCursor
@@ -162,6 +168,7 @@ export function useScenarioResultHierarchy(scenarioResultId: string): UseScenari
     scenariosApi
       .getRunHierarchy(scenarioResultId, { max_nodes: HIERARCHY_MAX_NODES, cursor }, controller.signal)
       .then((page) => {
+        if (controller.signal.aborted) return
         setRoots((state) => ({
           ...state,
           runStatus: page.status,
@@ -209,6 +216,7 @@ export function useScenarioResultHierarchy(scenarioResultId: string): UseScenari
           controller.signal,
         )
         .then((page) => {
+          if (controller.signal.aborted) return
           setChildren((map) => {
             const next = new Map(map)
             const current = map.get(key) ?? EMPTY_CHILDREN
@@ -288,11 +296,18 @@ export function useScenarioResultHierarchy(scenarioResultId: string): UseScenari
     (key: string, node: ScenarioHierarchyNode) => {
       // Descendants loaded under the old child pages may no longer match; forget them too.
       const prefix = `${key}/`
+      for (const [childKey, controller] of childControllers.current) {
+        if (childKey.startsWith(prefix)) {
+          controller.abort()
+          childControllers.current.delete(childKey)
+          release(controller)
+        }
+      }
       setChildren((map) => new Map([...map].filter(([childKey]) => !childKey.startsWith(prefix))))
       setExpanded((keys) => new Set([...keys].filter((childKey) => !childKey.startsWith(prefix))))
       fetchChildren(key, node, null)
     },
-    [fetchChildren],
+    [fetchChildren, release],
   )
 
   const toggleNode = useCallback(

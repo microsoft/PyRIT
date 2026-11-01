@@ -1,6 +1,11 @@
-import type { ScenarioHierarchyGroup, ScenarioHierarchyNode, ScenarioHierarchyProjection } from '@/types'
+import type {
+  ScenarioDisplayGroupProgress,
+  ScenarioHierarchyGroup,
+  ScenarioHierarchyNode,
+  ScenarioHierarchyProjection,
+} from '@/types'
 
-import { childSlots, mergeRootPage, previewHasAllChildren } from './scenarioHierarchy'
+import { childSlots, hierarchyDisplayGroups, mergeRootPage, previewHasAllChildren } from './scenarioHierarchy'
 
 function node(overrides: Partial<ScenarioHierarchyNode> = {}): ScenarioHierarchyNode {
   return {
@@ -97,5 +102,39 @@ describe('previewHasAllChildren', () => {
     expect(previewHasAllChildren(node({ child_attack_result_ids: ['a'], children_truncated: true }))).toBe(false)
     expect(previewHasAllChildren(node({ child_attack_result_ids: ['a'], next_children_cursor: 'c' }))).toBe(false)
     expect(previewHasAllChildren(node({ child_attack_result_ids: ['a'], children_count: 3 }))).toBe(false)
+  })
+
+  describe('hierarchyDisplayGroups', () => {
+    it('keeps merged live groups and their full counts instead of counting visible saved roots', () => {
+      const progress: ScenarioDisplayGroupProgress = {
+        ...counts(7),
+        id: 'display-group',
+        display_group: 'Merged group',
+        atomic_attack_names: ['g1', 'g2'],
+        atomic_group_ids: ['g1', 'g2'],
+      }
+      const groups = hierarchyDisplayGroups(
+        [progress],
+        [group('g1', ['r1'], 2), group('g2', ['r2'], 3)],
+      )
+      expect(groups).toEqual([progress])
+      expect(groups[0]).toBe(progress)
+      expect(groups[0].completed).toBe(7)
+      expect(groups[0].atomic_group_ids).toEqual(['g1', 'g2'])
+    })
+
+    it('surfaces an unplanned saved group with its exact backend counts even with no loaded roots', () => {
+      const saved = group('unplanned', [], 4)
+      const groups = hierarchyDisplayGroups([], [saved])
+
+      expect(groups).toEqual([{
+        ...counts(4),
+        id: 'saved:unplanned',
+        display_group: 'unplanned',
+        atomic_attack_names: ['unplanned'],
+        atomic_group_ids: ['unplanned'],
+      }])
+      expect(saved.roots).toEqual([])
+    })
   })
 })

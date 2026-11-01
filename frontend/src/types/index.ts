@@ -2060,6 +2060,18 @@ export interface ScenarioRunPlan {
   seed_groups: ScenarioRunPlanSeedGroup[]
 }
 
+export interface ScenarioProducerCategoryCounts {
+  attempts: number
+  errors: number
+  retries: number
+}
+
+export interface ScenarioProducerCounts {
+  target_facing: ScenarioProducerCategoryCounts
+  orchestration: ScenarioProducerCategoryCounts
+  unknown: ScenarioProducerCategoryCounts
+}
+
 export interface ScenarioProgressCounts {
   completed: number
   planned: number | null
@@ -2067,6 +2079,7 @@ export interface ScenarioProgressCounts {
   success_percentage: number | null
   errors: number
   retries: number
+  producer_counts?: ScenarioProducerCounts | null
 }
 
 export interface ScenarioTechniqueProgress extends ScenarioProgressCounts {

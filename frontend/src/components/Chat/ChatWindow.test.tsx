@@ -2618,10 +2618,20 @@ describe("ChatWindow Integration", () => {
   it("returns to the originating scenario run from the breadcrumb", async () => {
     const user = userEvent.setup();
     const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    const navigationState = {
+      fromScenarioHistory: true,
+      scenarioHistorySearch: "?status=COMPLETED",
+      suiteExecutionId: "saved-suite-execution",
+      suiteName: "Saved suite",
+    };
+    function OriginatingScenario() {
+      const location = useLocation();
+      return <h1 data-navigation-state={JSON.stringify(location.state)}>Originating scenario run</h1>;
+    }
     render(
       <UserPreferencesProvider accountKey="local">
         <FluentProvider theme={webLightTheme}>
-        <MemoryRouter initialEntries={["/attacks/attack-1"]}>
+        <MemoryRouter initialEntries={[{ pathname: "/attacks/attack-1", state: navigationState }]}>
           <Routes>
             <Route
               path="/attacks/:attackResultId"
@@ -2629,7 +2639,7 @@ describe("ChatWindow Integration", () => {
             />
             <Route
               path="/scanner-history/:scenarioResultId"
-              element={<h1>Originating scenario run</h1>}
+              element={<OriginatingScenario />}
             />
           </Routes>
         </MemoryRouter>
@@ -2645,6 +2655,8 @@ describe("ChatWindow Integration", () => {
       level: 1,
       name: "Originating scenario run",
     })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Originating scenario run" }))
+      .toHaveAttribute("data-navigation-state", JSON.stringify(navigationState));
   });
 
   it("should apply and persist the Markdown choice across remounts", async () => {

@@ -1,7 +1,9 @@
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { MemoryRouter } from 'react-router'
 
+import { useScenarioResultHierarchy } from '@/hooks/useScenarioResultHierarchy'
 import { scenariosApi } from '@/services/api'
 import type {
   ScenarioHierarchyNode,
@@ -11,6 +13,7 @@ import type {
 } from '@/types'
 
 import ScenarioResultHierarchy from './ScenarioResultHierarchy'
+import AttackExecutionTable from './AttackExecutionTable'
 
 jest.mock('@/services/api', () => ({
   scenariosApi: { getRunHierarchy: jest.fn(), getRunHierarchyNode: jest.fn() },
@@ -98,20 +101,63 @@ function cursorError(status: number) {
 
 /** An orchestration parent whose children the preview deferred. */
 const PARENT = node('parent', {
+  conversation_id: '',
   result_role: 'orchestration',
   child_attack_result_ids: ['c1', 'missing'],
   children_truncated: true,
   children_count: 3,
 })
 
-function mount(onOpenResult = jest.fn(), runStatus: ScenarioRunState | null = null) {
-  const view = (status: ScenarioRunState | null) => (
+function HierarchyHarness({
+  onOpenResult, runStatus, scenarioResultId = 'run',
+}: {
+  readonly onOpenResult: jest.Mock
+  readonly runStatus: ScenarioRunState | null
+  readonly scenarioResultId?: string
+}) {
+  const hierarchy = useScenarioResultHierarchy(scenarioResultId)
+  const counts = hierarchy.roots.overallCounts
+  return (
+    <>
+      {counts && <div aria-label="Run totals">Completed: {counts.completed} of {counts.planned}</div>}
+      <ScenarioResultHierarchy hierarchy={hierarchy} runStatus={runStatus}>
+        {hierarchy.roots.groups.map((group) => (
+          <AttackExecutionTable
+            key={group.atomic_group_id}
+            scenarioResultId={scenarioResultId}
+            label={`${group.display_group} saved results`}
+            roots={group.roots}
+            attempts={[]}
+            totalAttempts={0}
+            hierarchy={hierarchy}
+            seedObjectives={new Map()}
+            onOpenDetails={onOpenResult}
+          />
+        ))}
+      </ScenarioResultHierarchy>
+    </>
+  )
+}
+
+function mount(onOpenResult: jest.Mock = jest.fn(), runStatus: ScenarioRunState | null = null) {
+  const view = (status: ScenarioRunState | null, scenarioResultId = 'run') => (
     <FluentProvider theme={webLightTheme}>
-      <ScenarioResultHierarchy scenarioResultId="run" runStatus={status} onOpenResult={onOpenResult} />
+      <MemoryRouter>
+        <HierarchyHarness
+          key={scenarioResultId}
+          runStatus={status}
+          scenarioResultId={scenarioResultId}
+          onOpenResult={onOpenResult}
+        />
+      </MemoryRouter>
     </FluentProvider>
   )
   const { rerender } = render(view(runStatus))
-  return { onOpenResult, setRunStatus: (status: ScenarioRunState) => rerender(view(status)) }
+  return {
+    onOpenResult,
+    setRunStatus: (status: ScenarioRunState) => rerender(view(status)),
+    setRunId: (scenarioResultId: string) => rerender(view(runStatus, scenarioResultId)),
+  }
 }
 
 const resultsTable = () => screen.getByRole('table', { name: 'Sequential saved results' })
@@ -123,6 +169,104 @@ const totalsText = () => screen.getByLabelText('Run totals').textContent
 beforeEach(() => {
   getRoots.mockReset()
   getNode.mockReset()
+})
+
+test('resets expanded nodes and cached children when the run changes', async () => {
+  const user = userEvent.setup()
+  getRoots.mockResolvedValueOnce(projection([PARENT])).mockResolvedValueOnce(projection([{
+    ...PARENT, objective: 'parent in the new run',
+  }]))
+  getNode
+    .mockResolvedValueOnce(node('parent', {
+      child_attack_result_ids: ['old-child'],
+      children_count: 1,
+      children: [node('old-child', { child_index: 0 })],
+    }))
+    .mockResolvedValueOnce(node('parent', {
+      child_attack_result_ids: ['new-child'],
+      children_count: 1,
+      children: [node('new-child', { child_index: 0 })],
+    }))
+  const view = mount()
+  await user.click(await screen.findByRole('button', { name: 'Expand children of attack parent: objective parent' }))
+  expect(await screen.findByText('objective old-child')).toBeVisible()
+
+  view.setRunId('another-run')
+  const expand = await screen.findByRole('button', { name: 'Expand children of attack parent: parent in the new run' })
+  expect(expand).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.queryByText('objective old-child')).not.toBeInTheDocument()
+  await user.click(expand)
+  expect(await screen.findByText('objective new-child')).toBeVisible()
+  expect(getNode).toHaveBeenLastCalledWith('another-run', 'parent', { limit: 200 }, expect.any(AbortSignal))
+})
+
+test('ignores a late root response from a previously selected run', async () => {
+  let resolveOld: ((page: ScenarioHierarchyProjection) => void) | undefined
+  getRoots
+    .mockImplementationOnce(() => new Promise<ScenarioHierarchyProjection>((resolve) => { resolveOld = resolve }))
+    .mockResolvedValueOnce(projection([node('current-run')]))
+  const view = mount()
+  view.setRunId('another-run')
+  expect(await screen.findByText('objective current-run')).toBeVisible()
+  if (resolveOld === undefined) throw new Error('The old run request was not started')
+  const respond = resolveOld
+
+  await act(async () => { respond(projection([node('old-run')])) })
+  expect(screen.queryByText('objective old-run')).not.toBeInTheDocument()
+  expect(screen.getByText('objective current-run')).toBeVisible()
+})
+
+test('does not reuse a late descendant page after restarting its parent', async () => {
+  const user = userEvent.setup()
+  const child = node('child', {
+    child_index: 0,
+    child_attack_result_ids: ['old-grandchild'],
+    children_count: 1,
+    children_truncated: true,
+  })
+  const updatedChild = { ...child, child_attack_result_ids: ['fresh-grandchild'] }
+  let finishOldChild: ((page: ScenarioHierarchyNode) => void) | undefined
+  getRoots.mockResolvedValue(projection([PARENT]))
+  getNode
+    .mockResolvedValueOnce(node('parent', {
+      child_attack_result_ids: ['child'],
+      children: [child],
+      children_count: 2,
+      next_children_cursor: 'parent-next',
+    }))
+    .mockImplementationOnce(() => new Promise<ScenarioHierarchyNode>((resolve) => { finishOldChild = resolve }))
+    .mockRejectedValueOnce(cursorError(400))
+    .mockResolvedValueOnce(node('parent', {
+      child_attack_result_ids: ['child'],
+      children: [updatedChild],
+      children_count: 1,
+    }))
+    .mockResolvedValueOnce(node('child', {
+      child_attack_result_ids: ['fresh-grandchild'],
+      children: [node('fresh-grandchild', { child_index: 0 })],
+      children_count: 1,
+    }))
+  mount()
+  await user.click(await screen.findByRole('button', { name: 'Expand children of attack parent: objective parent' }))
+  await user.click(await screen.findByRole('button', { name: 'Expand children of #1 attack child: objective child' }))
+  await user.click(screen.getByRole('button', { name: 'Load more children' }))
+  await user.click(await screen.findByRole('button', { name: 'Reload children' }))
+  expect(getNode.mock.calls[1][3]).toHaveProperty('aborted', true)
+  const expandChild = await screen.findByRole('button', { name: 'Expand children of #1 attack child: objective child' })
+  if (finishOldChild === undefined) throw new Error('The descendant request was not started')
+  const respond = finishOldChild
+  await act(async () => {
+    respond(node('child', {
+      child_attack_result_ids: ['old-grandchild'],
+      children: [node('old-grandchild', { child_index: 0 })],
+      children_count: 1,
+    }))
+  })
+
+  await user.click(expandChild)
+  expect(getNode).toHaveBeenCalledTimes(5)
+  expect(await screen.findByText('objective fresh-grandchild')).toBeVisible()
+  expect(screen.queryByText('objective old-grandchild')).not.toBeInTheDocument()
 })
 
 test('loads children by position, keeps unresolved references visible, and pages with the node cursor', async () => {
@@ -155,7 +299,7 @@ test('loads children by position, keeps unresolved references visible, and pages
   expect(getNode).toHaveBeenLastCalledWith('run', 'parent', { limit: 200 }, expect.any(AbortSignal))
   expect(within(rowWith('objective c1')).getByText('#1')).toBeInTheDocument()
   expect(within(rowWith('Unresolved reference: missing')).getByText('#2')).toBeInTheDocument()
-  expect(screen.getByText('Showing 2 of 3 saved children')).toBeInTheDocument()
+  expect(screen.getByText('Showing 2 of 3 saved child positions')).toBeInTheDocument()
 
   await user.click(screen.getByRole('button', { name: 'Load more children' }))
 
@@ -414,7 +558,7 @@ test('a failed run that is resumed offers to reload the hierarchy it loaded befo
 
   // Finishing after the reload is a change too; the snapshot is no longer current.
   setRunStatus('COMPLETED')
-  expect(screen.getByText("This run's status changed since this hierarchy loaded.")).toBeInTheDocument()
+  expect(screen.getByText("This run's status changed since these results loaded.")).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Reload hierarchy' })).toBeInTheDocument()
 })
 
@@ -441,12 +585,17 @@ test('shows results in aligned columns with the attack outcome spelled out', asy
     'Result type',
     'Attack outcome',
     'Duration',
-    'Retries',
+    'Retries / error',
+    'Timestamp',
     'Actions',
   ])
   // A child row has the same cells in the same columns as its parent; only the first column is indented.
   const cells = (text: string) => within(rowWith(text)).getAllByRole('cell').map((cell) => cell.textContent)
-  expect(cells('objective parent')).toEqual(['objective parent', 'Orchestration', 'Success', '1s', '0', 'Details'])
-  expect(cells('objective c1')).toEqual(['#1objective c1', 'Target-facing', 'ErrorTarget timed out', '1s', '2', 'Details'])
-  expect(screen.getByText(/Each row is one saved attack result/)).toHaveTextContent('not chat messages or retries')
+  expect(cells('objective parent')).toEqual([
+    'objective parentattack parent', 'Orchestration', 'Success', '1s', '0', expect.any(String), 'Details',
+  ])
+  expect(cells('objective c1')).toEqual([
+    '#1objective c1attack c1', 'Target-facing', 'Error', '1s', '2Target timed out', expect.any(String), 'Details',
+  ])
+  expect(screen.getByText(/^Result rows are saved attacks\./)).toHaveTextContent('not chat messages or retries')
 })

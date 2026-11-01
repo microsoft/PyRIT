@@ -229,10 +229,6 @@ export const useScenarioRunPageStyles = makeStyles({
     whiteSpace: 'nowrap',
     textAlign: 'right',
   },
-  attemptsTable: {
-    minWidth: '64rem',
-    tableLayout: 'auto',
-  },
   displayGroupList: {
     display: 'flex',
     flexDirection: 'column',
