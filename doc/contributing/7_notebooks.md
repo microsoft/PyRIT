@@ -46,7 +46,7 @@ For HTML only, run from `doc`:
 
 ```powershell
 Set-Location doc
-uv run --frozen --no-sync jupyter-book build --html --strict
+uv run --frozen --no-sync jupyter-book build --html --strict --check-links
 ```
 
 Do not add `--all` to an HTML-only build. It selects the PDF export declared in
@@ -54,6 +54,13 @@ Do not add `--all` to an HTML-only build. It selects the PDF export declared in
 version, `--strict` fails on errors and reports warnings separately; a successful
 strict build is not necessarily warning-free. Do not suppress errors to make a
 build pass.
+
+`--check-links` checks link destinations, including missing Python source files
+that otherwise remain ordinary hyperlinks. External URL checks require network
+access; auth-required and robot-policy exceptions are listed in `doc/myst.yml`.
+The docs workflow runs strict link checking for the `latest` slot, including PR
+validation, before rendering. Frozen release versions retain their existing build
+behavior.
 
 ### PDF prerequisites and validation
 
@@ -83,7 +90,7 @@ as well; compilation does not prove that every interactive HTML element has a
 correct print representation.
 
 Where GNU Make is available, `make docs-build` prepares the API reference, builds
-strict HTML, and generates RSS. `make docs-build-pdf` prepares the API reference
-and runs the checked PDF export. `make docs-build-all` builds HTML first and then
-checks the PDF export. These local targets do not change the hosted multiversion
-publication workflow.
+strict HTML with link checking, and generates RSS. `make docs-build-pdf` prepares
+the API reference and runs the checked PDF export. `make docs-build-all` builds
+HTML first and then checks the PDF export. These local targets do not change the
+hosted multiversion publication workflow.

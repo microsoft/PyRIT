@@ -544,7 +544,7 @@ await output_scenario_async(sysprompt_result)
 #
 # **Aggregate techniques:** `DEFAULT` runs Rust. `ALL` runs all seven languages.
 #
-# > **Note:** Rust and its crates.io registry are the default because this registry is much smaller.
+# > **Note:** Rust and its [crates.io](https://crates.io) registry are the default because this registry is much smaller.
 # > If you select another language, PyRIT downloads its registry on demand. The raw package names
 # > are loaded into memory only for the scorer and are never sent as prompts.
 
