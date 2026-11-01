@@ -411,9 +411,18 @@ export function mergeBackendMessages(previous: BackendMessage[], incoming: Backe
   return [...turns.values()].sort((a, b) => a.message.turn_number - b.message.turn_number).map(({ message, pieces }) => {
     const orderedPieces = [...pieces.values()]
     if (orderedPieces.every((piece) => piece.timestamp !== undefined)) {
-      orderedPieces.sort((a, b) => (
-        Date.parse(a.timestamp ?? '') - Date.parse(b.timestamp ?? '') || a.id.localeCompare(b.id)
-      ))
+      orderedPieces.sort((a: BackendMessagePiece, b: BackendMessagePiece): number => {
+        const firstTimestamp = a.timestamp ?? ''
+        const secondTimestamp = b.timestamp ?? ''
+        const millisecondOrder = Date.parse(firstTimestamp) - Date.parse(secondTimestamp)
+        if (millisecondOrder) return millisecondOrder
+        // Date truncates Python's microseconds; keep them ahead of the ID tie-break.
+        const firstFraction = firstTimestamp.match(/\.(\d+)/)?.[1] ?? ''
+        const secondFraction = secondTimestamp.match(/\.(\d+)/)?.[1] ?? ''
+        const precision = Math.max(firstFraction.length, secondFraction.length)
+        return firstFraction.padEnd(precision, '0').localeCompare(secondFraction.padEnd(precision, '0'))
+          || a.id.localeCompare(b.id)
+      })
     }
     return { ...message, created_at: orderedPieces[0]?.timestamp ?? message.created_at, message_pieces: orderedPieces }
   })

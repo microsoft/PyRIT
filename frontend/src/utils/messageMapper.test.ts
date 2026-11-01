@@ -87,6 +87,22 @@ describe("messageMapper", () => {
       expect(mergeBackendMessages([], [])).toEqual([]);
     });
 
+    it.each(["", "Z", "+00:00"])("should preserve Python microsecond ordering across saved pages with timezone %s", (zone: string) => {
+      const earlier = piece("ffffffff-ffff-ffff-ffff-ffffffffffff", { timestamp: `2026-11-01T10:00:00.123100${zone}` });
+      const later = piece("00000000-0000-0000-0000-000000000000", { timestamp: `2026-11-01T10:00:00.123900${zone}` });
+      const merged = mergeBackendMessages([turn(0, [earlier])], [turn(0, [later, earlier])]);
+      expect(merged[0].message_pieces.map((entry) => entry.id)).toEqual([earlier.id, later.id]);
+      expect(merged[0].created_at).toBe(earlier.timestamp);
+      expect(backendMessagesToFrontend(merged, [])[0].displayPieces?.map((entry) => entry.pieceId)).toEqual([earlier.id, later.id]);
+    });
+
+    it("should use IDs only after timezone and fractional precision represent the same instant", () => {
+      const last = piece("ffffffff-ffff-ffff-ffff-ffffffffffff", { timestamp: "2026-11-01T11:00:00.123100+01:00" });
+      const first = piece("00000000-0000-0000-0000-000000000000", { timestamp: "2026-11-01T10:00:00.1231Z" });
+      const merged = mergeBackendMessages([], [turn(0, [last, first])]);
+      expect(merged[0].message_pieces.map((entry) => entry.id)).toEqual([first.id, last.id]);
+    });
+
     it("should reject changed turn roles or piece ownership rather than combine inconsistent evidence", () => {
       const saved = turn(0, [piece("a")], "user");
       expect(() => mergeBackendMessages([saved], [turn(0, [piece("b")])])).toThrow(/changed role/);
