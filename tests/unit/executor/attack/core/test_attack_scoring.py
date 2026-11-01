@@ -79,6 +79,10 @@ class _TraceFirstScorer(_FirstScorer):
     SUPPORTED_SCORABLE_TYPES = (MessageScorable, TraceScorable)
 
 
+class _MessageFirstScorer(_FirstScorer):
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable,)
+
+
 def _expectation() -> ScoringExpectation:
     return ScoringExpectation(objective="context", conditions=(_FirstCondition(), _SecondCondition()))
 
@@ -252,3 +256,28 @@ async def test_side_effect_evidence_only_with_no_applicable_scorer_scores_nothin
 
     assert results == {"objective_scores": [], "auxiliary_scores": []}
     assert objective.expectations == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("all_leaves_read_side_effects", [True, False])
+async def test_side_effect_evidence_only_checks_every_leaf_of_a_composite_async(
+    sqlite_instance: MemoryInterface, all_leaves_read_side_effects: bool
+) -> None:
+    surface, other = (
+        _SurfaceSecondScorer(),
+        (_TraceFirstScorer() if all_leaves_read_side_effects else _MessageFirstScorer()),
+    )
+    objective = TrueFalseCompositeScorer(scorers=[other, surface], aggregator=TrueFalseScoreAggregator.AND)
+
+    results = await score_attack_response_async(
+        response=(await _stored_response_async(sqlite_instance)),
+        objective_scorer=objective,
+        auxiliary_scorers=[],
+        expectation=_expectation(),
+        side_effect_evidence_only=True,
+    )
+
+    # Leaves that read different side effects together accept only a message, but still run.
+    assert objective.get_supported_scorable_types() == frozenset({MessageScorable})
+    assert bool(results["objective_scores"]) is all_leaves_read_side_effects
+    assert bool(surface.expectations) is all_leaves_read_side_effects

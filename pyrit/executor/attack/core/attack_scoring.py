@@ -77,7 +77,8 @@ _SIDE_EFFECT_SCORABLE_TYPES = frozenset({SurfaceScorable, TraceScorable})
 
 
 def _judges_side_effects(scorer: Scorer) -> bool:
-    return not _SIDE_EFFECT_SCORABLE_TYPES.isdisjoint(scorer.get_supported_scorable_types())
+    # Every leaf must read side effects; leaves of a composite may read different kinds.
+    return all(not _SIDE_EFFECT_SCORABLE_TYPES.isdisjoint(types) for types in scorer.get_leaf_scorable_types())
 
 
 async def score_attack_response_async(

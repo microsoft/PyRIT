@@ -497,6 +497,14 @@ async def test_attack_scores_file_write_of_write_only_target_async(
         sent_after=datetime(2000, 1, 1, tzinfo=UTC), include_intermediate=True
     )
     assert [stored_score.scorer_class_identifier.class_name for stored_score in stored] == ["FileWriteScorer"]
+    assert [
+        stored_score.id for stored_score in await sqlite_instance.get_prompt_scores_async(prompt_ids=[request.id])
+    ] == [score.id]
+    (stored_result,) = await sqlite_instance.get_attack_results_async(attack_result_ids=[result.attack_result_id])
+    assert stored_result.outcome is outcome
+    assert stored_result.last_response is None
+    assert stored_result.automated_score is not None
+    assert stored_result.automated_score.id == score.id
 
 
 # --- observation lifecycle ------------------------------------------------------------------

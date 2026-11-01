@@ -31,7 +31,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig, _WriteOnlyTargetError
+from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
 from pyrit.memory import SQLiteMemory
 from pyrit.models import AttackOutcome, ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import ConverterConfiguration
@@ -403,30 +403,34 @@ class TestRedTeamingAttackWriteOnlyTarget:
         assert await _all_scores_async(sqlite_instance) == []
 
 
+def _always_true_threshold_scorer() -> MagicMock:
+    # Reports success for anything it is given, so scoring a delivered request would be a false SUCCESS.
+    objective_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+    objective_scorer.threshold = 0.8
+    objective_scorer.get_identifier.return_value = ComponentIdentifier(
+        class_name="FloatScaleThresholdScorer", class_module="test_module"
+    )
+    objective_scorer.score_async = AsyncMock(
+        return_value=[
+            Score(
+                score_type="true_false",
+                score_value="true",
+                score_category=["test"],
+                score_value_description="Objective achieved",
+                score_rationale="Matched",
+                score_metadata={},
+                message_piece_id=str(uuid.uuid4()),
+                scorer_class_identifier=objective_scorer.get_identifier.return_value,
+            )
+        ]
+    )
+    return objective_scorer
+
+
 @pytest.mark.usefixtures("patch_central_database")
 class TestTreeOfAttacksWriteOnlyTarget:
-    async def test_write_only_target_raises_instead_of_scoring_the_request(self, sqlite_instance: SQLiteMemory) -> None:
-        # The scorer would report success for anything it is given, so any scoring of the request
-        # would turn into a false SUCCESS.
-        objective_scorer = MagicMock(spec=FloatScaleThresholdScorer)
-        objective_scorer.threshold = 0.8
-        objective_scorer.get_identifier.return_value = ComponentIdentifier(
-            class_name="FloatScaleThresholdScorer", class_module="test_module"
-        )
-        objective_scorer.score_async = AsyncMock(
-            return_value=[
-                Score(
-                    score_type="true_false",
-                    score_value="true",
-                    score_category=["test"],
-                    score_value_description="Objective achieved",
-                    score_rationale="Matched",
-                    score_metadata={},
-                    message_piece_id=str(uuid.uuid4()),
-                    scorer_class_identifier=objective_scorer.get_identifier.return_value,
-                )
-            ]
-        )
+    async def test_write_only_target_is_undetermined_and_never_scored(self, sqlite_instance: SQLiteMemory) -> None:
+        objective_scorer = _always_true_threshold_scorer()
         text_stream = io.StringIO()
         attack = TreeOfAttacksWithPruningAttack(
             objective_target=TextTarget(text_stream=text_stream),
@@ -438,11 +442,13 @@ class TestTreeOfAttacksWriteOnlyTarget:
             on_topic_checking_enabled=False,
         )
 
-        with pytest.raises(RuntimeError, match="cannot run against a write-only target") as exc_info:
-            await attack.execute_async(objective="Hello QA")
+        result = await attack.execute_async(objective="Hello QA")
 
-        assert isinstance(exc_info.value.__cause__, _WriteOnlyTargetError)
         objective_scorer.score_async.assert_not_awaited()
+        assert result.outcome is AttackOutcome.UNDETERMINED
+        assert result.outcome_reason == _NO_RESPONSE_REASON
+        assert result.last_response is None
+        assert result.automated_score is None
         assert text_stream.getvalue().count("Hello from adversary") == 1
         # The objective conversation holds only the delivered request, with no fabricated response.
         delivered = [
@@ -454,3 +460,28 @@ class TestTreeOfAttacksWriteOnlyTarget:
         objective_pieces = await sqlite_instance.get_message_pieces_async(conversation_id=delivered[0].conversation_id)
         assert [piece.role for piece in objective_pieces] == ["user"]
         assert await _all_scores_async(sqlite_instance) == []
+
+    async def test_unanswered_branch_does_not_discard_scored_sibling(self, sqlite_instance: SQLiteMemory) -> None:
+        objective_scorer = _always_true_threshold_scorer()
+        target = _ScriptedTarget(replies=["Hello actual response", None])
+        attack = TreeOfAttacksWithPruningAttack(
+            objective_target=target,
+            attack_adversarial_config=AttackAdversarialConfig(target=_JsonAdversarialChat()),
+            attack_scoring_config=TAPAttackScoringConfig(objective_scorer=objective_scorer),
+            tree_width=2,
+            tree_depth=1,
+            branching_factor=1,
+            batch_size=1,
+            on_topic_checking_enabled=False,
+        )
+
+        result = await attack.execute_async(objective="Hello QA")
+
+        assert result.outcome is AttackOutcome.SUCCESS
+        assert result.automated_score is not None
+        # The selected conversation is the answered branch, not the unanswered one.
+        pieces = await sqlite_instance.get_message_pieces_async(conversation_id=result.conversation_id)
+        assert [(piece.role, piece.converted_value) for piece in pieces][-1] == ("assistant", "Hello actual response")
+        # Only the answered branch was scored.
+        assert objective_scorer.score_async.await_count == 1
+        assert len(target.prompt_sent) == 2

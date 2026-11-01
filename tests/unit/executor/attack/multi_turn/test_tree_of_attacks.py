@@ -148,6 +148,7 @@ class MockNodeFactory:
         node.objective_target_conversation_id = config.objective_target_conversation_id
         node.adversarial_chat_conversation_id = config.adversarial_chat_conversation_id
         node.error_message = None
+        node.delivered_without_response = False
 
         node.send_prompt_async = AsyncMock(return_value=None)
 
@@ -2363,8 +2364,8 @@ class TestTreeOfAttacksNode:
 
         assert node.objective_target_conversation_id == original_conv_id
 
-    async def test_node_write_only_delivery_is_raised_not_scored(self, node_components):
-        """A request handed back for a write-only target is raised out of the node instead of scored."""
+    async def test_node_write_only_delivery_is_recorded_not_scored(self, node_components):
+        """A request handed back for a write-only target is recorded on the node instead of scored."""
         node = _TreeOfAttacksNode(**node_components)
         delivered_request = _WriteOnlyDelivery(
             message_pieces=Message.from_prompt(prompt="test prompt", role="user").message_pieces
@@ -2374,12 +2375,12 @@ class TestTreeOfAttacksNode:
         with (
             patch.object(node, "_generate_adversarial_prompt_async", new_callable=AsyncMock, return_value="prompt"),
             patch.object(node, "_score_response_async", new_callable=AsyncMock) as mock_score,
-            pytest.raises(_WriteOnlyTargetError, match="cannot run against a write-only target"),
         ):
             await node.send_prompt_async(objective="test objective")
 
         mock_score.assert_not_awaited()
-        assert node.error_message is None
+        assert node.delivered_without_response is True
+        assert node.error_message == "The objective target returned no response, so this branch has nothing to score."
         assert node.completed is False
         assert node.last_response is None
         assert node.objective_score is None
@@ -3007,6 +3008,7 @@ def _make_node_with_behavior(*, behavior: _ScenarioNodeBehavior, node_id: str) -
         node.off_topic = False
         node.objective_score = None
         node.error_message = None
+        node.delivered_without_response = False
         if b.json_err:
             node.error_message = "JSON parsing error"
             return
@@ -3044,6 +3046,7 @@ def _make_node_with_behavior(*, behavior: _ScenarioNodeBehavior, node_id: str) -
     node.objective_score = None
     node.auxiliary_scores = {}
     node.error_message = None
+    node.delivered_without_response = False
     node.last_prompt_sent = None
     node.last_response = None
     node.objective_target_conversation_id = str(uuid.uuid4())
@@ -3530,7 +3533,7 @@ class TestModalityRouterIntegration:
             return_value=_WriteOnlyDelivery(message_pieces=node._initial_prompt.message_pieces)
         )
 
-        with pytest.raises(_WriteOnlyTargetError, match="cannot run against a write-only target"):
+        with pytest.raises(_WriteOnlyTargetError, match="returned no response"):
             await node._send_initial_prompt_to_target_async()
 
         assert node.last_response is None

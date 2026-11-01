@@ -86,7 +86,7 @@ logger = logging.getLogger(__name__)
 
 
 class _WriteOnlyTargetError(ValueError):
-    """Raised when the objective target returns no response, so no node can ever be scored."""
+    """Raised when the objective target returns no response, so a branch has nothing to score."""
 
 
 class TAPSystemPromptPaths(enum.Enum):
@@ -271,6 +271,9 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
     best_objective_score: Score | None = None
     best_adversarial_conversation_id: str | None = None
     best_auxiliary_scores: dict[str, Score] = field(default_factory=dict)
+
+    # Whether any branch's request was delivered without a target response
+    delivered_without_response: bool = False
 
     # Visualization parent for first-level nodes in this execution
     visualization_root_id: str = "root"
@@ -490,6 +493,7 @@ class _TreeOfAttacksNode:
         self.last_prompt_sent: str | None = None
         self.last_response: Message | None = None
         self.error_message: str | None = None
+        self.delivered_without_response = False
         self._prepended_history_send_context: PrependedHistorySendContext | None = None
         # Context from prepended conversation (for adversarial chat system prompt)
         self._conversation_context: str | None = None
@@ -581,16 +585,13 @@ class _TreeOfAttacksNode:
         3. Send the prompt to the objective target.
         4. Score the response with all configured scorers.
 
-        JSON parsing errors and unexpected exceptions are caught and stored in the node's
-        error_message attribute rather than being raised. A write-only objective target is
-        raised instead, because it fails every node the same way.
+        All errors are handled gracefully - JSON parsing errors, unexpected exceptions, and a
+        target that returned no response are caught and stored in the node's error_message
+        attribute rather than being raised.
 
         Args:
             objective (str): The attack objective describing what the attacker wants to achieve.
                             This is used to guide the adversarial prompt generation and scoring.
-
-        Raises:
-            _WriteOnlyTargetError: If the objective target returned no response.
 
         Note:
             This method sets the following node attributes during execution:
@@ -601,6 +602,7 @@ class _TreeOfAttacksNode:
             - `completed`: `True` if execution finished successfully
             - `off_topic`: `True` if the prompt was deemed off-topic after all retries
             - `error_message`: Set if an error occurred during execution
+            - `delivered_without_response`: `True` if the target returned no response
         """
         self._reset_turn_outcome()
 
@@ -628,8 +630,11 @@ class _TreeOfAttacksNode:
             # Mark execution as successful
             self._mark_execution_complete()
 
-        except _WriteOnlyTargetError:
-            raise
+        except _WriteOnlyTargetError as e:
+            # Only this branch went unanswered; the attack decides the outcome across all branches.
+            logger.warning(f"Node {self.node_id}: {e}")
+            self.delivered_without_response = True
+            self.error_message = str(e)
         except InvalidJsonException as e:
             self._handle_json_error(e)
         except Exception as e:
@@ -748,6 +753,7 @@ class _TreeOfAttacksNode:
         self.auxiliary_scores = {}
         self.last_prompt_sent = None
         self.error_message = None
+        self.delivered_without_response = False
 
     async def _send_initial_prompt_to_target_async(self) -> Message:
         """
@@ -841,8 +847,7 @@ class _TreeOfAttacksNode:
         """
         if PromptNormalizer.is_write_only_delivery(response):
             raise _WriteOnlyTargetError(
-                "The objective target returned no response. Tree of attacks needs a target response "
-                "to score each node, so it cannot run against a write-only target."
+                "The objective target returned no response, so this branch has nothing to score."
             )
 
     def _rotate_unseeded_single_turn_conversation(self) -> None:
@@ -2071,6 +2076,8 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         """
         # Send prompts to all nodes and collect results
         await self._send_prompts_to_all_nodes_async(context)
+        if any(node.delivered_without_response for node in context.nodes):
+            context.delivered_without_response = True
 
         # Prune nodes based on width constraint
         self._prune_nodes_to_maintain_width(context)
@@ -2527,6 +2534,14 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             TAPAttackResult: The failure result indicating the attack did not achieve its objective.
         """
         best_score = context.best_objective_score
+        if best_score is None and context.delivered_without_response:
+            # No branch produced a scored response, so a 0.00 best score would not be a measured failure.
+            return await self._create_attack_result_async(
+                context=context,
+                outcome=AttackOutcome.UNDETERMINED,
+                outcome_reason="Objective target returned no response to score",
+            )
+
         if best_score is not None and attack_outcome_from_score(best_score) is AttackOutcome.UNDETERMINED:
             return await self._create_attack_result_async(
                 context=context,

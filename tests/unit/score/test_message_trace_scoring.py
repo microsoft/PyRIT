@@ -4,6 +4,7 @@
 import uuid
 from collections.abc import Iterator
 from contextlib import nullcontext
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -20,11 +21,14 @@ from pyrit.models import (
     Acquisition,
     AttackOutcome,
     ChatMessageRole,
+    Contains,
+    ContentWritten,
     Message,
     MessagePiece,
     MessageScorable,
     RequestTraceContext,
     ScoringExpectation,
+    SurfaceScorable,
     ToolCallRequirement,
     ToolsCalled,
     TraceScorable,
@@ -32,8 +36,10 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import HTTPTarget, TargetCapabilities, TargetConfiguration, TargetTraceConfig
 from pyrit.score import (
+    FileWriteScorer,
     InMemoryTraceClient,
     InMemoryTraceExporter,
+    LocalFileSurfaceSource,
     OtelToolCallScorer,
     OtelTraceSource,
     SubStringScorer,
@@ -135,6 +141,98 @@ async def test_attack_scores_tool_evidence_and_replays_async(
     assert replay.status == score.status
     if not score.is_undetermined:
         assert replay.get_value() == score.get_value()
+
+
+class _WriteOnlyTracedAgent(HTTPTarget):
+    """A traced agent that acts on the request and returns no response, like a write-only target."""
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        await super()._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+        return []
+
+
+@pytest.mark.parametrize("multi_prompt", [False, True])
+@pytest.mark.parametrize(
+    ("acts", "outcome"),
+    [(True, AttackOutcome.SUCCESS), (False, AttackOutcome.FAILURE)],
+)
+async def test_composite_of_file_and_trace_scorers_judges_write_only_target_async(
+    sqlite_instance: SQLiteMemory,
+    capture: tuple[InMemoryTraceClient, TracerProvider],
+    tmp_path: Path,
+    multi_prompt: bool,
+    acts: bool,
+    outcome: AttackOutcome,
+) -> None:
+    client, provider = capture
+    tracer = provider.get_tracer("test-agent")
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        context = TraceContextTextMapPropagator().extract(dict(request.headers))
+        with tracer.start_as_current_span("agent", context=context) as root:
+            if acts:
+                with tracer.start_as_current_span(
+                    "lookup", attributes={"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "lookup"}
+                ):
+                    path = tmp_path / "data" / "out.txt"
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("exfiltrated")
+        client.mark_complete(trace_ids=(f"{root.get_span_context().trace_id:032x}",))
+        return httpx.Response(200, text="ignored")
+
+    target = _WriteOnlyTracedAgent(
+        http_request="POST / HTTP/1.1\nHost: agent.test\n\n{PROMPT}",
+        transport=httpx.MockTransport(respond),
+        trace_config=TargetTraceConfig(enabled=True),
+        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True)),
+    )
+    # Neither leaf reads the request text, but together they accept only a MessageScorable.
+    objective_scorer = TrueFalseCompositeScorer(
+        scorers=[
+            FileWriteScorer(source=LocalFileSurfaceSource(root=tmp_path)),
+            OtelToolCallScorer(source=OtelTraceSource(trace_client=client)),
+        ],
+        aggregator=TrueFalseScoreAggregator.AND,
+    )
+    scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)
+    expectation = ScoringExpectation(
+        conditions=(
+            ContentWritten(uri="/data/out.txt", matcher=Contains(value="exfiltrated")),
+            ToolsCalled(tools=(ToolCallRequirement(name="lookup"),)),
+        )
+    )
+
+    if multi_prompt:
+        result = await MultiPromptSendingAttack(
+            objective_target=target, attack_scoring_config=scoring_config
+        ).execute_async(
+            objective="exfiltrated",
+            expectation=expectation,
+            user_messages=[Message.from_prompt(prompt="exfiltrated", role="user")],
+        )
+    else:
+        result = await PromptSendingAttack(
+            objective_target=target, attack_scoring_config=scoring_config, max_attempts_on_failure=0
+        ).execute_async(objective="exfiltrated", expectation=expectation)
+
+    assert result.outcome is outcome
+    assert result.last_response is None
+    score = result.automated_score
+    assert score is not None
+    (request,) = await sqlite_instance.get_message_pieces_async(conversation_id=result.conversation_id)
+    assert request.role == "user"
+    # Scores attach to a piece's original prompt, so the stored request finds its score.
+    assert score.scorable == MessageScorable(message_piece_ids=(request.original_prompt_id,))
+    assert [stored.id for stored in await sqlite_instance.get_prompt_scores_async(prompt_ids=[request.id])] == [
+        score.id
+    ]
+    observations = await sqlite_instance.get_observations_async(observation_ids=score.observation_ids)
+    assert {type(observation.scorable) for observation in observations} == {SurfaceScorable, TraceScorable}
+    (stored,) = await sqlite_instance.get_attack_results_async(attack_result_ids=[result.attack_result_id])
+    assert stored.outcome is outcome
+    assert stored.last_response is None
+    assert stored.automated_score is not None
+    assert stored.automated_score.id == score.id
 
 
 @pytest.mark.parametrize("role", ["user", "tool", "assistant", "developer"])
