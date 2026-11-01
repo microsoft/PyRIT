@@ -388,6 +388,10 @@ test('owns pending continuations across rapid selection, attack navigation and u
     await expect(panel.getByRole('region', { name: 'Saved conversation references' }))
       .toContainText(`${count} of 121 saved conversations loaded.`)
   }
+  const transcript = page.getByTestId('message-list')
+  expect(await transcript.evaluate((element: HTMLElement | SVGElement): string => getComputedStyle(element).overflowY)).toBe('auto')
+  await transcript.evaluate((element: HTMLElement | SVGElement): void => { element.scrollTop = element.scrollHeight })
+  expect(await transcript.evaluate((element: HTMLElement | SVGElement): number => element.scrollTop)).toBeGreaterThan(0)
   await controlSavedRead(page, 'hold_messages')
   const held = waitForSavedRead(page, 'messages', true)
   await page.getByRole('button', { name: 'Load more message pieces', exact: true }).click()
@@ -395,6 +399,7 @@ test('owns pending continuations across rapid selection, attack navigation and u
   const loading = page.getByRole('button', { name: 'Loading more message pieces...', exact: true })
   await expect(loading).toBeDisabled()
   await loading.press('Enter')
+  expect(await transcript.evaluate((element: HTMLElement | SVGElement): number => element.scrollTop)).toBeGreaterThan(0)
   expect(reads.filter((url: URL): boolean => url.pathname.endsWith('/messages') && url.searchParams.has('cursor'))).toHaveLength(1)
   const selected = waitForSavedRead(page, 'messages', false, OFF_PAGE_ID)
   await panel.getByRole('button', { name: `Select conversation ${OFF_PAGE_ID}`, exact: true }).focus()
@@ -406,6 +411,7 @@ test('owns pending continuations across rapid selection, attack navigation and u
   await expect(page.getByText(`Saved pruned user for ${OFF_PAGE_ID}. Offline evidence.`, { exact: true })).toBeVisible()
   await expect(page.getByText(`Saved pruned user for ${OFF_PAGE_ID}. Offline evidence.`, { exact: true }))
     .toBeInViewport({ ratio: 0.5 })
+  expect(await transcript.evaluate((element: HTMLElement | SVGElement): number => element.scrollTop)).toBe(0)
   await expect(page.getByText(SAVED_REQUEST, { exact: true })).toHaveCount(0)
   await expect(page.getByRole('region', { name: 'Saved transcript paging' })).toContainText('End of saved transcript. 2 message pieces loaded.')
 
