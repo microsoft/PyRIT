@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import (
@@ -43,6 +44,7 @@ from pyrit.score import (
     FileWriteScorer,
     LocalFileSurfaceSource,
     NonReplayableObservationError,
+    RegexScorer,
     TrueFalseCompositeScorer,
     TrueFalseFallbackScorer,
     TrueFalseInverterScorer,
@@ -55,7 +57,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pyrit.memory import SQLiteMemory
-    from pyrit.models import TextMatcher
+    from pyrit.models import Message, TextMatcher
     from pyrit.prompt_target import HTTPTarget
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
@@ -443,6 +445,66 @@ async def test_attack_scores_file_write_async(
     assert score.scored_expectation == ScoringExpectation(objective="exfiltrated", conditions=expectation.conditions)
     observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
     assert observation.scorable == SurfaceScorable(uri="/data/out.txt")
+
+
+class _WriteOnlyAgentTarget(MockPromptTarget):
+    """An agent stand-in that writes the prompt it receives to /data/out.txt and returns no response."""
+
+    def __init__(self, *, root: Path, write: bool) -> None:
+        super().__init__()
+        self._root = root
+        self._write = write
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        if self._write:
+            _write(root=self._root, data=normalized_conversation[-1].get_value())
+        return []
+
+
+@pytest.mark.parametrize("require_content_change", [False, True])
+@pytest.mark.parametrize(("write", "outcome"), [(True, AttackOutcome.SUCCESS), (False, AttackOutcome.FAILURE)])
+async def test_attack_scores_file_write_of_write_only_target_async(
+    *,
+    sqlite_instance: SQLiteMemory,
+    tmp_path: Path,
+    write: bool,
+    outcome: AttackOutcome,
+    require_content_change: bool,
+) -> None:
+    attack = PromptSendingAttack(
+        objective_target=_WriteOnlyAgentTarget(root=tmp_path, write=write),
+        attack_scoring_config=AttackScoringConfig(
+            objective_scorer=FileWriteScorer(source=LocalFileSurfaceSource(root=tmp_path)),
+            # Matches the request text, so it must not judge the delivered request.
+            auxiliary_scorers=[RegexScorer(patterns={"objective": "exfiltrated"})],
+        ),
+        max_attempts_on_failure=0,
+    )
+    expectation = _expectation(matcher=Contains(value="exfiltrated"), require_content_change=require_content_change)
+
+    result = await attack.execute_async(objective="exfiltrated", expectation=expectation)
+
+    assert result.outcome is outcome
+    assert result.last_response is None
+    score = result.automated_score
+    assert score is not None
+    (request,) = await sqlite_instance.get_message_pieces_async(conversation_id=result.conversation_id)
+    assert request.role == "user"
+    assert score.scorable == MessageScorable(message_piece_ids=(request.id,))
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    assert observation.scorable == SurfaceScorable(uri="/data/out.txt")
+    stored = await sqlite_instance.get_scores_async(
+        sent_after=datetime(2000, 1, 1, tzinfo=UTC), include_intermediate=True
+    )
+    assert [stored_score.scorer_class_identifier.class_name for stored_score in stored] == ["FileWriteScorer"]
+    assert [
+        stored_score.id for stored_score in await sqlite_instance.get_prompt_scores_async(prompt_ids=[request.id])
+    ] == [score.id]
+    (stored_result,) = await sqlite_instance.get_attack_results_async(attack_result_ids=[result.attack_result_id])
+    assert stored_result.outcome is outcome
+    assert stored_result.last_response is None
+    assert stored_result.automated_score is not None
+    assert stored_result.automated_score.id == score.id
 
 
 # --- observation lifecycle ------------------------------------------------------------------

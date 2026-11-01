@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from pyrit.models import ScoringExpectation
+from pyrit.models import ScoringExpectation, SurfaceScorable, TraceScorable
 from pyrit.score import MessageScorer
 
 if TYPE_CHECKING:
@@ -71,15 +71,35 @@ def prepare_attack_scoring(
     return prepared
 
 
+# Evidence of what the target did (written files, invoked tools), acquired from a source rather
+# than read from message text.
+_SIDE_EFFECT_SCORABLE_TYPES = frozenset({SurfaceScorable, TraceScorable})
+
+
+def _judges_side_effects(scorer: Scorer) -> bool:
+    # Every leaf must read side effects; leaves of a composite may read different kinds.
+    return all(not _SIDE_EFFECT_SCORABLE_TYPES.isdisjoint(types) for types in scorer.get_leaf_scorable_types())
+
+
 async def score_attack_response_async(
     *,
     response: Message,
     objective_scorer: Scorer | None,
     auxiliary_scorers: Sequence[Scorer] | None,
     expectation: ScoringExpectation | None,
+    side_effect_evidence_only: bool = False,
 ) -> dict[str, list[Score]]:
     """
     Score an attack response with the objective scorer and the auxiliary scorers that apply.
+
+    Args:
+        response (Message): The message that anchors scoring for the turn.
+        objective_scorer (Scorer | None): The scorer that decides the attack outcome.
+        auxiliary_scorers (Sequence[Scorer] | None): Additional scorers whose results are stored.
+        expectation (ScoringExpectation | None): The scoring question.
+        side_effect_evidence_only (bool): Run only scorers that judge side-effect evidence (written
+            files or invoked tools) rather than message text. Use this when ``response`` is a
+            delivered request with no target response, so the request is never judged as response text.
 
     Returns:
         dict[str, list[Score]]: The ``objective_scores`` and ``auxiliary_scores``.
@@ -87,10 +107,17 @@ async def score_attack_response_async(
     prepared = prepare_attack_scoring(
         objective_scorer=objective_scorer, auxiliary_scorers=auxiliary_scorers, expectation=expectation
     )
+    auxiliary = list(zip(prepared.auxiliary_scorers, prepared.auxiliary_expectations, strict=True))
+    if side_effect_evidence_only:
+        if objective_scorer is not None and not _judges_side_effects(objective_scorer):
+            objective_scorer = None
+        auxiliary = [(scorer, selected) for scorer, selected in auxiliary if _judges_side_effects(scorer)]
+        if objective_scorer is None and not auxiliary:
+            return {"objective_scores": [], "auxiliary_scores": []}
     return await MessageScorer.score_response_async(
         response=response,
         objective_scorer=objective_scorer,
-        auxiliary_scorers=prepared.auxiliary_scorers,
+        auxiliary_scorers=[scorer for scorer, _ in auxiliary],
         expectation=prepared.objective_expectation,
-        auxiliary_expectations=prepared.auxiliary_expectations,
+        auxiliary_expectations=[selected for _, selected in auxiliary],
     )

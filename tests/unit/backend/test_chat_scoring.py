@@ -694,6 +694,32 @@ async def test_store_only_and_missing_objective_do_not_score_async(
     assert score.call_count == 0
 
 
+@pytest.mark.parametrize("role", ["user", "assistant"])
+async def test_write_only_delivery_is_not_scored_whatever_its_role_async(
+    scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    role: str,
+) -> None:
+    service, attack, target, scorer = scoring_chat
+    # The request matches the scorer, so scoring the delivered request would report success.
+    request = chat_request(attack).model_copy(
+        update={"role": role, "pieces": [MessagePieceRequest(original_value="default request")]}
+    )
+    with (
+        patch.object(target, "_send_prompt_to_target_async", return_value=[]),
+        patch.object(scorer, "score_async", wraps=scorer.score_async) as score,
+    ):
+        await service.add_message_async(attack_result_id=attack.attack_result_id, request=request)
+
+    assert score.call_count == 0
+    [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+    assert stored.automated_score is None
+    assert stored.last_response is None
+    assert stored.outcome is not AttackOutcome.SUCCESS
+    messages = await sqlite_instance.get_conversation_messages_async(conversation_id=attack.conversation_id)
+    assert [message.api_role for message in messages] == [role]
+
+
 @pytest.mark.parametrize("scoring_failure", [False, True])
 async def test_repeated_submission_scores_each_response_once_async(
     scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],

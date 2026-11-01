@@ -292,6 +292,8 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
 
         # Send each chunk request and collect responses
         response = None
+        delivered_without_response = False
+        received_response = False
         for idx, chunk_prompt in enumerate(chunk_prompts):
             logger.info(f"Sending chunk request {idx + 1}/{len(chunk_prompts)}")
 
@@ -319,8 +321,18 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
                     send_context=context.prepended_history_send_context,
                 )
 
+            if response and PromptNormalizer.is_write_only_delivery(response):
+                # The returned request is not a chunk of the target's output, so it must not be
+                # combined into the value that gets scored.
+                delivered_without_response = True
+                response = None
+                context.chunk_responses.append("")
+                context.executed_turns += 1
+                continue
+
             # Store the response
             if response:
+                received_response = True
                 response_text = response.get_value()
                 context.chunk_responses.append(response_text)
                 logger.info(f"Received chunk {idx + 1}: {response_text[:50]}...")
@@ -334,13 +346,19 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         combined_value = "\n".join(context.chunk_responses)
         logger.info(f"Combined {len(context.chunk_responses)} chunk responses")
 
-        # Score the combined value if scorer is configured
-        score = await self._score_combined_value_async(
-            combined_value=combined_value, objective=context.objective, expectation=context.expectation
-        )
+        if delivered_without_response and not received_response:
+            # No chunk produced output, so there is nothing to score. Output from other chunks is
+            # still scored when some chunks were only delivered.
+            score = None
+            outcome, outcome_reason = AttackOutcome.UNDETERMINED, "Objective target returned no response to score"
+        else:
+            # Score the combined value if scorer is configured
+            score = await self._score_combined_value_async(
+                combined_value=combined_value, objective=context.objective, expectation=context.expectation
+            )
 
-        # Determine the outcome
-        outcome, outcome_reason = self._determine_attack_outcome(score=score)
+            # Determine the outcome
+            outcome, outcome_reason = self._determine_attack_outcome(score=score)
 
         # Create attack result
         return AttackResult(

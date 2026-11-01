@@ -602,6 +602,12 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 "Please check the target configuration and ensure it is reachable."
             )
 
+        if PromptNormalizer.is_write_only_delivery(response):
+            raise ValueError(
+                "The objective target returned no response. Red teaming needs a target response "
+                "for each turn, so it cannot run against a write-only target."
+            )
+
         return response
 
     async def _score_response_async(self, *, context: MultiTurnAttackContext[Any]) -> Score | None:

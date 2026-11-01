@@ -768,14 +768,19 @@ class MessageSendService:
             if progress is not None:
                 progress.state = MessageSendState.FINALIZING
             current_pieces = await self._memory.get_message_pieces_async(conversation_id=msg_conversation_id)
-            last_response = (
-                delivered_response.message_pieces[0]
-                if isinstance(delivered_response, Message) and delivered_response.api_role == "assistant"
-                else next(
-                    (piece for piece in current_pieces if piece.id not in prior_ids and piece.role == "assistant"),
-                    None,
+            if isinstance(delivered_response, Message) and PromptNormalizer.is_write_only_delivery(delivered_response):
+                # A write-only target returned the sent request, which is never a response to score,
+                # whatever role the request carries.
+                last_response = None
+            else:
+                last_response = (
+                    delivered_response.message_pieces[0]
+                    if isinstance(delivered_response, Message) and delivered_response.api_role == "assistant"
+                    else next(
+                        (piece for piece in current_pieces if piece.id not in prior_ids and piece.role == "assistant"),
+                        None,
+                    )
                 )
-            )
             if (
                 last_response is not None
                 and validated.scoring_inputs
