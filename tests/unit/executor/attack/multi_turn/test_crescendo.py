@@ -1228,6 +1228,40 @@ class TestResponseScoring:
         assert "skip_on_error_result" not in call_kwargs
         assert "role_filter" not in call_kwargs
 
+    async def test_backtrack_refusal_check_receives_the_attack_objective(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_refusal_scorer: MagicMock,
+        basic_context: CrescendoAttackContext,
+        sample_response: Message,
+        refusal_score: Score,
+    ):
+        """The refusal judge must evaluate deflection against the attack objective.
+
+        The sent prompt used to be passed as the objective, so the judge saw the
+        adversarial prompt itself labeled as the conversation objective.
+        """
+        adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+        scoring_config = AttackScoringConfig(refusal_scorer=mock_refusal_scorer)
+
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=adversarial_config,
+            attack_scoring_config=scoring_config,
+        )
+
+        basic_context.last_response = sample_response
+        mock_refusal_scorer.score_async.return_value = [refusal_score]
+
+        with patch.object(attack, "_backtrack_memory_async", new_callable=AsyncMock, return_value="new_conv_id"):
+            await attack._perform_backtrack_if_refused_async(
+                context=basic_context, prompt_sent="Long adversarial prompt text"
+            )
+
+        expectation = mock_refusal_scorer.score_async.call_args.kwargs["expectation"]
+        assert expectation.objective == "Test objective"
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestBacktrackingLogic:

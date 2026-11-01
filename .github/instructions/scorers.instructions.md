@@ -44,8 +44,14 @@ Requirements:
   without reading the active message or expectation context.
 - Preserve `get_chat_target()` for target discovery. Use `_score_piece_with_expectation_async`
   for migrated judge consumers; do not replace it with an objective-only hook.
-- A legacy `_score_piece_async` override below a typed scorer raises `TypeError` at construction.
-  Keep this fail-fast check: implicit dispatch through both hooks can skip or repeat custom policy.
+- A legacy `_score_piece_async` override below a typed scorer raises `LegacyScorerHookError` (a
+  `TypeError`) at construction. Keep this fail-fast check: implicit dispatch through both hooks can
+  skip or repeat custom policy.
+- A leaf that declares a typed `CONDITION_TYPE` other than `MatchesObjective` must implement an
+  expectation-aware hook. The standard pipeline rejects incompatible legacy hooks at construction.
+  Custom pipeline overrides can evaluate expectations themselves; if they delegate typed criteria to
+  a legacy hook, the runtime guard raises the same `LegacyScorerHookError`, without wrapping it.
+  This also applies to direct `Scorer` subclasses. Legacy hooks support objective-based scoring until 2.0.
 
 ## Condition contract
 
@@ -58,6 +64,11 @@ Requirements:
   only its supported subset, preserving objective context. Shared validation checks every child
   before scoring. Wrappers that transform context expose the same inputs through
   `_get_child_expectations()` for preflight.
+- A class `CONDITION_TYPE` takes precedence over the validator's `is_objective_required`,
+  which only lets an undeclared scorer require `MatchesObjective`. The scorer validates that
+  condition before evidence acquisition; the validator does not independently require an objective.
+  `SelfAskGeneralFloatScaleScorer` uses that flag by default. A custom validator can select a
+  constructor-configured rubric without an objective requirement.
 - Do not override the derived capability API, add plural declarations, or repeat missing/duplicate
   condition checks in leaves. Use shared selection helpers; leaves cannot read sibling conditions.
 - Objective-only defaults are resolved before routing. Do not infer missing conditions from a

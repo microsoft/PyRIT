@@ -20,6 +20,8 @@ _GH_TOKEN = "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh1234"
 _GH_PAT_TOKEN = "github_pat_" + "11AAAAAAA_" + "b" * 72
 _GOOGLE_KEY = "AIza" + "SyC3R4v5X6T7U8W9Y0Z1A2B3C4D5E6F7G8H"
 _SLACK_TOKEN = "xoxb" + "-0000000000000-0000000000000-aaaaaaaaaaaaaaaaaabbbbbb"
+_SLACK_USER_TOKEN = "xoxp" + "-00000000000-0000000000-0000000000000-" + "0a" * 16
+_SLACK_LEGACY_BOT_TOKEN = "xoxb" + "-000000000000-" + "0a" * 12
 _SLACK_WEBHOOK = "https://hooks.slack.com" + "/services/TXXXXXXXX/BXXXXXXXX/xxxxxxxxxxxxxxxxxxxxxxxx"
 _OPENAI_CLASSIC_KEY = "sk-" + "abcdefghijklmnopqrstuvwxyz1234567890ABCDEFGHIJKL"
 _OPENAI_PROJ_KEY = "sk-proj-" + "aB1_" * 30
@@ -202,6 +204,98 @@ async def test_credential_scorer_detects_hugging_face_token(patch_central_databa
         score = (await scorer.score_text_async(f"token = '{token}'"))[0]
         assert score.get_value() is True
         assert "Hugging Face Token" in score.score_rationale
+
+
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize("in_code", [False, True], ids=["bare", "code"])
+@pytest.mark.parametrize("token", [_SLACK_USER_TOKEN, _SLACK_LEGACY_BOT_TOKEN], ids=["user", "legacy-bot"])
+async def test_slack_token_detected_and_exactly_excluded_async(
+    *, token: str, in_code: bool, use_garak: bool, patch_central_database: MagicMock
+) -> None:
+    text = f'client = WebClient("{token}")' if in_code else token
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is True
+    assert "Slack Token" in score.score_rationale
+
+    excluded_scorer = CredentialLeakScorer.from_excluded_values([token], patterns=scorer._patterns)
+    assert (await excluded_scorer.score_text_async(text))[0].get_value() is False
+    changed_token = token[:-1] + "b"
+    assert (await excluded_scorer.score_text_async(changed_token))[0].get_value() is True
+    assert (await excluded_scorer.score_text_async(token + "c"))[0].get_value() is True
+
+
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize(
+    "token",
+    [
+        "xoxp-000000000-0000000000-0000000000-" + "0a" * 16,
+        "xoxp-0000000000-0000000000-00000000000000-" + "0a" * 16,
+        "xoxp-0000000000-0000000000-0000000000-" + "a" * 23,
+        "xoxp-0000000000-0000000000-00000x0000-" + "0a" * 16,
+        "xoxb-0000000000-0000000000-0000000000-" + "0a" * 16,
+    ],
+    ids=["short-segment", "long-segment", "short-suffix", "non-digit-segment", "bot-with-three-segments"],
+)
+async def test_slack_user_token_invalid_shapes_not_detected_async(
+    *, token: str, use_garak: bool, patch_central_database: MagicMock
+) -> None:
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    assert (await scorer.score_text_async(token))[0].get_value() is False
+
+
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize(
+    "token",
+    [
+        "xoxb" + "-00000000-" + "0a" * 9,
+        "xoxb" + "-00000000-" + "0a" * 9 + "b",
+        "xoxb" + "-00000000000000-" + "0a" * 13,
+    ],
+    ids=["short-bounds", "short-id-odd-tail", "long-bounds"],
+)
+async def test_slack_legacy_bot_token_bounds_detected_async(
+    *, token: str, use_garak: bool, patch_central_database: MagicMock
+) -> None:
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    score = (await scorer.score_text_async(f'client = WebClient("{token}")'))[0]
+    assert score.get_value() is True
+    assert "Slack Token" in score.score_rationale
+
+
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize(
+    "token",
+    [
+        "xoxb" + "-0000000-" + "0a" * 12,
+        "xoxb" + "-000000000000000-" + "0a" * 12,
+        "xoxb" + "-000000000000-" + "0a" * 8 + "b",
+        "xoxb" + "-000000000000-" + "0a" * 13 + "b",
+        "xoxb" + "-0000000x0000-" + "0a" * 12,
+        "xoxb" + "-000000000000-" + "0a" * 6 + "." + "0a" * 6,
+        "xoxb" + "-000000000000-" + "0a" * 12 + "_suffix",
+        "xoxb" + "-000000000000-" + "0a" * 12 + "-suffix",
+        "xoxb" + "-xxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx",
+        "xoxp" + "-000000000000-" + "0a" * 12,
+    ],
+    ids=[
+        "short-id",
+        "long-id",
+        "short-tail",
+        "long-tail",
+        "non-digit-id",
+        "dot-in-tail",
+        "underscore-continuation",
+        "dash-continuation",
+        "placeholder",
+        "user-prefix",
+    ],
+)
+async def test_slack_legacy_bot_token_invalid_shapes_not_detected_async(
+    *, token: str, use_garak: bool, patch_central_database: MagicMock
+) -> None:
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    assert (await scorer.score_text_async(f'client = WebClient("{token}")'))[0].get_value() is False
 
 
 async def test_ai_credentials_exclusion_with_garak_patterns(patch_central_database):
