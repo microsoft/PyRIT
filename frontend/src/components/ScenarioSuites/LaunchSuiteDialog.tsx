@@ -83,11 +83,17 @@ export default function LaunchSuiteDialog({
   const adversarialTargets = targets.filter(
     (target) => target.capabilities?.supports_multi_turn === true,
   )
-  const [targetName, setTargetName] = useState(
-    () => initialTargetName(defaultObjectiveTarget, targets),
+  const [selectedTargetName, setTargetName] = useState<string>()
+  const [selectedAdversarialTargetName, setAdversarialTargetName] = useState<string>()
+  const targetName = initialTargetName(
+    selectedTargetName === undefined ? defaultObjectiveTarget
+      : targets.find((target: TargetInstance) => target.target_registry_name === selectedTargetName) ?? null,
+    targets,
   )
-  const [adversarialTargetName, setAdversarialTargetName] = useState(
-    () => initialTargetName(defaultAdversarialTarget, adversarialTargets),
+  const adversarialTargetName = initialTargetName(
+    selectedAdversarialTargetName === undefined ? defaultAdversarialTarget
+      : adversarialTargets.find((target: TargetInstance) => target.target_registry_name === selectedAdversarialTargetName) ?? null,
+    adversarialTargets,
   )
   const [maxConcurrency, setMaxConcurrency] = useState(DEFAULT_MAX_CONCURRENCY)
   const [maxRetries, setMaxRetries] = useState(DEFAULT_MAX_RETRIES)

@@ -444,7 +444,7 @@ class AttackService:
             memory=self._memory,
             scores=scores,
         )
-        scoring = get_chat_scoring_service().conversation_scoring(
+        scoring = await get_chat_scoring_service().conversation_scoring_async(
             attack=ar, conversation_id=conversation_id, messages=pyrit_messages, scores=scores
         )
 

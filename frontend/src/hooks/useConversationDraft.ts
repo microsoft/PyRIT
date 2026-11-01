@@ -12,12 +12,12 @@ import {
   unansweredToolCallId, validateDraft,
 } from '@/utils/conversationDraft'
 import { isPathDataType } from '@/utils/media'
-import { targetReference } from '@/utils/targetIdentity'
+import { targetIdentifierHash } from '@/utils/targetIdentity'
 
 import { useConversationSave } from './useConversationSave'
 
 function targetKey(target: TargetInstance | null): string | undefined {
-  return target ? JSON.stringify(targetReference(target)) : undefined
+  return target ? JSON.stringify([target.target_registry_name, targetIdentifierHash(target)]) : undefined
 }
 
 interface DraftState extends ConversationSaveInput {

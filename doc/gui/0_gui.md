@@ -48,6 +48,12 @@ New chats and scans start with the last objective target you used. New chats als
 reuse the last chat scorer, including **Off**, unless a Registry default is set.
 These choices are saved in the current browser profile after use. Opening saved
 activity or editing an unsent draft does not change them.
+Chat use is recorded only after a request turn is confirmed, not after preparation
+fails, and stays with the initiating account even if you navigate away. A chat
+with a temperature override remembers its registered source target, without
+changing that chat's execution binding. While a remembered scorer is loading,
+wait for its catalog. Explicit scorer selections, including **Off**, take
+precedence; an unavailable remembered scorer is not saved as **Off**.
 
 The **Chat** tab returns to your retained draft, or your last chat if there is no draft.
 Selecting **Chat** while a chat is open keeps that chat open.
@@ -55,6 +61,10 @@ Use **New attack** to start a blank draft. The **History** tab
 (`/attack/history`) opens saved attacks in the same conversation viewer. Automated results
 are read-only; **Continue manually** creates a separate manual attack. Export
 a conversation when you need a transcript.
+
+Older `/attacks/{attackId}` and
+`/attacks/{attackId}/conversations/{conversationId}` links redirect to the
+corresponding Chat route while retaining query parameters and fragments.
 
 ![Chat workspace with a prompt and target response](images/chat.png)
 
@@ -119,13 +129,18 @@ adversarial-target order is a saved Registry default, the registered
 `adversarial_chat` target, then last use. Objective targets do not have a Registry
 default. Existing chats and runs keep their settings.
 
-Expand a scorer, technique, or converter name to inspect its identity JSON.
-Converter inputs and outputs stay visible in the table. Use the small red X
-to remove a converter from the live registry; confirmation is required.
+Expand a target, scorer, technique, or converter name to inspect its identity
+JSON. Target identity inspection is independent of expanding composite target
+members; defaults, visibility, and the target's configuration columns remain
+available. Converter inputs and outputs stay visible in the table. Use the small
+red X to remove a converter from the live registry; confirmation is required.
 
 **Scenario presets** save a scenario configuration for reuse with a target
 chosen at launch. **Suites** maintain ordered collections of preset definitions.
 They are stored separately from live component instances.
+Suite launch dialogs apply arriving target defaults only to untouched selections.
+An explicit target choice, including clearing an optional adversarial target to
+use the server default, is retained when the registry refreshes.
 
 Targets, converters, and techniques added only to the live registry must be
 recreated after a backend restart or reinitialization. Use
