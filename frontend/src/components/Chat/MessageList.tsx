@@ -510,7 +510,7 @@ export default function MessageList({
 
         return (
           <div
-            key={message.sequence ?? index}
+            key={message.sequence == null ? `index:${index}` : `sequence:${message.sequence}`}
             className={mergeClasses(styles.message, isUser && styles.userMessage)}
           >
             <Avatar

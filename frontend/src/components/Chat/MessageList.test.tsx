@@ -69,6 +69,33 @@ describe("MessageList", () => {
     expect(scroll).toHaveBeenCalledTimes(1);
   });
 
+  it.each([2, 3])("should retain gapped sequence %s beside optimistic user and loading rows without duplicate keys", (sequence: number) => {
+    const errors = jest.spyOn(console, "error").mockImplementation(() => {});
+    const stored: Message[] = [
+      { ...mockMessages[0], sequence: 0 }, { ...mockMessages[1], sequence },
+    ];
+    const pending: Message[] = [
+      { role: "user", content: "Pending request", timestamp: mockMessages[0].timestamp },
+      { role: "assistant", content: "...", timestamp: mockMessages[0].timestamp, isLoading: true },
+    ];
+    try {
+      const rendered = render(<TestWrapper><MessageList messages={[...stored, ...pending]} /></TestWrapper>);
+      const bubble = screen.getByTestId("message-bubble-1");
+      expect(screen.getByText("Pending request")).toBeVisible();
+      rendered.rerender(<TestWrapper><MessageList messages={[
+        ...stored, { ...pending[0], sequence: sequence + 2 },
+        { ...mockMessages[1], content: "Saved pending response", sequence: sequence + 3 },
+      ]} /></TestWrapper>);
+      expect(screen.getByTestId("message-bubble-1")).toBe(bubble);
+      expect(screen.getAllByText("Pending request")).toHaveLength(1);
+      expect(screen.getByText("Saved pending response")).toBeVisible();
+      expect(errors.mock.calls.flat().filter((value: unknown) =>
+        typeof value === "string" && value.includes("same key"))).toEqual([]);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
   it("should explain why partial saved evidence cannot be copied or branched", async () => {
     const user = userEvent.setup();
     const onCopyToInput = jest.fn();
