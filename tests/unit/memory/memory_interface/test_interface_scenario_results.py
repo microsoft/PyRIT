@@ -1,11 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from unit.mocks import get_mock_scorer_identifier, make_scenario_result, run_memory_session_async
+from unit.mocks import (
+    get_mock_scorer_identifier,
+    get_mock_target_identifier,
+    make_scenario_result,
+    run_memory_session_async,
+)
 
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import (
@@ -1172,3 +1178,70 @@ async def test_add_scenario_result_without_objective_target_raises(sqlite_instan
         (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario]))
 
     assert (await sqlite_instance.get_scenario_results_async(scenario_name="Targetless Scenario")) == []
+
+
+async def test_increment_scenario_number_tries_async(sqlite_instance: MemoryInterface):
+    """increment_scenario_number_tries_async atomically increments and returns the new try count."""
+    scenario = make_scenario_result(
+        scenario_name="Tries Scenario",
+        scenario_version=1,
+        objective_target_identifier=get_mock_target_identifier(),
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+        attack_results={},
+    )
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario])
+    scenario_id = str(scenario.id)
+
+    first = await sqlite_instance.increment_scenario_number_tries_async(scenario_result_id=scenario_id)
+    assert first == 1
+
+    second = await sqlite_instance.increment_scenario_number_tries_async(scenario_result_id=scenario_id)
+    assert second == 2
+
+    stored = (await sqlite_instance.get_scenario_results_async(scenario_result_ids=[scenario_id]))[0]
+    assert stored.number_tries == 2
+
+
+async def test_increment_scenario_number_tries_sync(sqlite_instance: MemoryInterface):
+    """Synchronous increment_scenario_number_tries works and updates try count."""
+    scenario = make_scenario_result(
+        scenario_name="Sync Tries Scenario",
+        scenario_version=1,
+        objective_target_identifier=get_mock_target_identifier(),
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+        attack_results={},
+    )
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario])
+    scenario_id = str(scenario.id)
+
+    with pytest.deprecated_call():
+        first = sqlite_instance.increment_scenario_number_tries(scenario_result_id=scenario_id)
+    assert first == 1
+
+
+async def test_increment_scenario_number_tries_missing_id_raises(sqlite_instance: MemoryInterface):
+    """increment_scenario_number_tries_async raises ValueError when scenario_result_id does not exist."""
+    missing_id = str(uuid4())
+    with pytest.raises(ValueError, match=f"Scenario result with ID {missing_id} not found in memory"):
+        await sqlite_instance.increment_scenario_number_tries_async(scenario_result_id=missing_id)
+
+
+async def test_increment_scenario_number_tries_concurrent(sqlite_instance: MemoryInterface):
+    """Concurrent increments are serialized by the transaction and never lose counts."""
+    scenario = make_scenario_result(
+        scenario_name="Concurrent Tries Scenario",
+        scenario_version=1,
+        objective_target_identifier=get_mock_target_identifier(),
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+        attack_results={},
+    )
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario])
+    scenario_id = str(scenario.id)
+
+    results = await asyncio.gather(
+        *[sqlite_instance.increment_scenario_number_tries_async(scenario_result_id=scenario_id) for _ in range(10)]
+    )
+    assert sorted(results) == list(range(1, 11))
+
+    stored = (await sqlite_instance.get_scenario_results_async(scenario_result_ids=[scenario_id]))[0]
+    assert stored.number_tries == 10

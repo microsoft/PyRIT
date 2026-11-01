@@ -11,6 +11,7 @@ AtomicAttack instances sequentially, enabling comprehensive security testing cam
 import ast
 import asyncio
 import logging
+import threading
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
@@ -162,6 +163,16 @@ class Scenario(ABC):
 
     #: Maximum number of resolved concrete techniques; None leaves the selection unrestricted.
     MAX_CONCRETE_TECHNIQUES: ClassVar[int | None] = None
+
+    #: Active scenario result IDs currently executing in this process.
+    _active_runs: ClassVar[set[str]] = set()
+    _active_runs_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    @classmethod
+    def _clear_active_runs(cls) -> None:
+        """Clear active scenario runs. Intended for test isolation."""
+        with cls._active_runs_lock:
+            cls._active_runs.clear()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -1705,57 +1716,68 @@ class Scenario(ABC):
         # Type narrowing: create local variable that type checker knows is non-None
         scenario_result_id: str = self._scenario_result_id
 
-        # Implement retry logic
-        last_exception = None
-        for retry_attempt in range(self._max_retries + 1):  # +1 for initial attempt
-            try:
-                return await self._execute_scenario_async()
-            except asyncio.CancelledError:
-                try:
-                    (
-                        await self._memory.update_scenario_run_state_async(
-                            scenario_result_id=scenario_result_id,
-                            scenario_run_state=ScenarioRunState.CANCELLED,
-                            error_message="Scenario run was cancelled",
-                            error_type="CancelledError",
-                        )
-                    )
-                except Exception:
-                    logger.exception(f"Failed to persist cancellation state for scenario '{self._name}'")
-                raise
-            except Exception as e:
-                last_exception = e
-
-                # Get current scenario to check number of tries
-                scenario_results = await self._memory.get_scenario_results_async(
-                    scenario_result_ids=[scenario_result_id]
+        with Scenario._active_runs_lock:
+            if scenario_result_id in Scenario._active_runs:
+                raise RuntimeError(
+                    f"Scenario '{self._name}' execution is already in progress for run '{scenario_result_id}'."
                 )
-                current_tries = scenario_results[0].number_tries if scenario_results else retry_attempt + 1
+            Scenario._active_runs.add(scenario_result_id)
 
-                # Check if we have more retries available
-                remaining_retries = self._max_retries - retry_attempt
+        try:
+            # Implement retry logic
+            last_exception = None
+            for retry_attempt in range(self._max_retries + 1):  # +1 for initial attempt
+                try:
+                    return await self._execute_scenario_async()
+                except asyncio.CancelledError:
+                    try:
+                        (
+                            await self._memory.update_scenario_run_state_async(
+                                scenario_result_id=scenario_result_id,
+                                scenario_run_state=ScenarioRunState.CANCELLED,
+                                error_message="Scenario run was cancelled",
+                                error_type="CancelledError",
+                            )
+                        )
+                    except Exception:
+                        logger.exception(f"Failed to persist cancellation state for scenario '{self._name}'")
+                    raise
+                except Exception as e:
+                    last_exception = e
 
-                if remaining_retries > 0:
+                    # Get current scenario to check number of tries
+                    scenario_results = await self._memory.get_scenario_results_async(
+                        scenario_result_ids=[scenario_result_id]
+                    )
+                    current_tries = scenario_results[0].number_tries if scenario_results else retry_attempt + 1
+
+                    # Check if we have more retries available
+                    remaining_retries = self._max_retries - retry_attempt
+
+                    if remaining_retries > 0:
+                        logger.error(
+                            f"Scenario '{self._name}' failed on attempt {current_tries} with error: {str(e)}. "
+                            f"Retrying... ({remaining_retries} retries remaining)",
+                            exc_info=True,
+                        )
+                        # Continue to next iteration for retry
+                        continue
+                    # No more retries, log final failure
                     logger.error(
-                        f"Scenario '{self._name}' failed on attempt {current_tries} with error: {str(e)}. "
-                        f"Retrying... ({remaining_retries} retries remaining)",
+                        f"Scenario '{self._name}' failed after {current_tries} attempts "
+                        f"(initial + {self._max_retries} retries) with error: {str(e)}. Giving up.",
                         exc_info=True,
                     )
-                    # Continue to next iteration for retry
-                    continue
-                # No more retries, log final failure
-                logger.error(
-                    f"Scenario '{self._name}' failed after {current_tries} attempts "
-                    f"(initial + {self._max_retries} retries) with error: {str(e)}. Giving up.",
-                    exc_info=True,
-                )
-                (await self._mark_scenario_failed_async(scenario_result_id=scenario_result_id, error=e))
-                raise
+                    (await self._mark_scenario_failed_async(scenario_result_id=scenario_result_id, error=e))
+                    raise
 
-        # This should never be reached, but just in case
-        if last_exception:
-            raise last_exception
-        raise RuntimeError(f"Scenario '{self._name}' completed unexpectedly without result")
+            # This should never be reached, but just in case
+            if last_exception:
+                raise last_exception
+            raise RuntimeError(f"Scenario '{self._name}' completed unexpectedly without result")
+        finally:
+            with Scenario._active_runs_lock:
+                Scenario._active_runs.discard(scenario_result_id)
 
     async def _execute_scenario_async(self) -> ScenarioResult:
         """
@@ -1781,15 +1803,9 @@ class Scenario(ABC):
             raise ValueError("self._scenario_result_id is not initialized")
         scenario_result_id: str = self._scenario_result_id
 
-        # Increment number_tries at the start of each run
-        scenario_results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
-        if scenario_results:
-            current_scenario = scenario_results[0]
-            current_scenario.number_tries += 1
-            await self._memory.update_scenario_result_async(scenario_result=current_scenario)
-            logger.info(f"Scenario '{self._name}' attempt #{current_scenario.number_tries}")
-        else:
-            raise ValueError(f"Scenario result with ID {scenario_result_id} not found")
+        # Increment number_tries atomically at the start of each run
+        current_tries = await self._memory.increment_scenario_number_tries_async(scenario_result_id=scenario_result_id)
+        logger.info(f"Scenario '{self._name}' attempt #{current_tries}")
 
         # Mark scenario as in progress
         (
