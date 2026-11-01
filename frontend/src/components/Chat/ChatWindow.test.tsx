@@ -2172,7 +2172,7 @@ describe("ChatWindow Integration", () => {
     expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
   });
 
-  it("should send a text-only video remix with its metadata after saving the editor", async () => {
+  it.each([1, 2])("should send a text-only video remix with its metadata after saving the editor %i time(s)", async (saves: number) => {
     const user = userEvent.setup();
     const metadata = { video_id: "existing-video", custom: "preserved" };
     const source: BackendMessage[] = [{
@@ -2207,12 +2207,14 @@ describe("ChatWindow Integration", () => {
     render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
       <RouterProvider router={router} />
     </UserPreferencesProvider></FluentProvider>);
-    await user.click(await screen.findByRole("button", { name: "Edit Conversation", exact: true }));
-    await screen.findByRole("region", { name: "Message 1" });
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    const input = await screen.findByPlaceholderText("Type prompt here");
-    await waitFor(() => expect(input).toHaveValue("Change the background"));
+    for (let save = 0; save < saves; save++) {
+      await user.click(await screen.findByRole("button", { name: "Edit Conversation", exact: true }));
+      await screen.findByRole("region", { name: "Message 1" });
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("Change the background"));
+    }
     expect(mockedAttacksApi.saveConversation.mock.calls[0][0].messages).toEqual([]);
+    const input = screen.getByPlaceholderText("Type prompt here");
     await user.type(input, " to blue");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledWith(
