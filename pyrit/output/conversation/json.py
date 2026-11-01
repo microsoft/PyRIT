@@ -145,13 +145,16 @@ class JsonConversationPrinter(ConversationPrinterBase):
 
         Returns:
             dict[str, Any]: The piece's curated fields (a reasoning summary for
-                reasoning pieces, otherwise the original/converted values).
+                reasoning pieces, otherwise the original/converted values and their
+                data types; ``data_type`` repeats ``original_value_data_type``).
         """
         if self._is_reasoning_piece(piece=piece):
             return {"data_type": "reasoning", "reasoning_summary": self._safe_reasoning_summary(piece=piece)}
 
         data: dict[str, Any] = {
             "data_type": piece.original_value_data_type,
+            "original_value_data_type": piece.original_value_data_type,
+            "converted_value_data_type": piece.converted_value_data_type,
             "original_value": piece.original_value,
             "converted_value": piece.converted_value,
             "response_error": piece.response_error,
