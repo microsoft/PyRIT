@@ -9,7 +9,10 @@ import { useConversationMessages } from './useConversationMessages'
 import type { UseConversationMessagesOptions } from './useConversationMessages'
 
 jest.mock('@/services/api', () => ({ attacksApi: { getMessages: jest.fn() } }))
-jest.mock('@/utils/messageMapper', () => ({ backendMessagesToFrontend: jest.fn() }))
+jest.mock('@/utils/messageMapper', () => ({
+  ...jest.requireActual<typeof import('@/utils/messageMapper')>('@/utils/messageMapper'),
+  backendMessagesToFrontend: jest.fn(),
+}))
 
 function transcript(conversationId: string, turns: number[] = [1]): ConversationMessagesResponse {
   return {
@@ -270,5 +273,272 @@ describe('useConversationMessages', () => {
 
     expect(result.current.getViewedConversationId()).toBe('created')
     expect(result.current.loadedConversationId).toBe('created')
+  })
+
+  describe('bounded saved transcripts', () => {
+    const pageSize = 100
+    function page(
+      conversationId: string, turns: Array<{ sequence: number; ids: string[]; role?: string }>,
+      nextCursor: string | null, partialSequences: number[] = [],
+    ): ConversationMessagesResponse {
+      return {
+        conversation_id: conversationId,
+        messages: turns.map(({ sequence, ids, role }) => ({
+          turn_number: sequence, role: role ?? 'assistant', created_at: '2026-01-01T00:00:00Z',
+          message_pieces: ids.map((id: string) => ({
+            id, timestamp: '2026-01-01T00:00:00Z', original_value: id, converted_value: id,
+            original_value_data_type: 'text', converted_value_data_type: 'text', scores: [], response_error: 'none',
+          })),
+        })),
+        pagination: { limit: pageSize, has_more: nextCursor !== null, next_cursor: nextCursor },
+        partial_message_sequences: partialSequences,
+        target_response_status: null,
+      }
+    }
+    const first = (): ConversationMessagesResponse => page('main', [{ sequence: -1, ids: ['a', 'b'] }], 'pieces-1', [-1])
+    const renderSaved = (props: Partial<UseConversationMessagesOptions> = {}) => renderMessages({ messagePageSize: pageSize, ...props })
+    const continueLoading = async (result: ReturnType<typeof renderMessages>['result']): Promise<void> => {
+      await act(async () => { await result.current.loadMoreMessages() })
+    }
+
+    beforeEach(() => {
+      jest.mocked(backendMessagesToFrontend).mockImplementation(
+        jest.requireActual<typeof import('@/utils/messageMapper')>('@/utils/messageMapper').backendMessagesToFrontend,
+      )
+    })
+
+    it('should bound the first request and avoid treating an incomplete response as final', async () => {
+      const response = { ...first(), target_response_status: {
+        response_error: 'processing' as const, request_turn_number: -2, response_turn_number: -1,
+      } }
+      const onConversationLoaded = jest.fn((_id: string, _response: ConversationMessagesResponse, messages: Message[]) => messages)
+      getMessages.mockResolvedValueOnce(response)
+      const { result } = renderSaved({ onConversationLoaded })
+      await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
+
+      expect(getMessages).toHaveBeenCalledTimes(1)
+      expect(getMessages).toHaveBeenCalledWith('attack', 'main', { limit: 100 })
+      expect(result.current.loadedPieceCount).toBe(2)
+      expect(result.current.isTranscriptIncomplete).toBe(true)
+      expect(result.current.messages[0]).toMatchObject({ sequence: -1, isPartial: true })
+      expect(onConversationLoaded.mock.calls[0][1].target_response_status).toBeNull()
+      expect(result.current.messagePagination).toEqual(response.pagination)
+    })
+
+    it('should merge duplicate/split pieces through multiple pages and resolve leading partial sequences', async () => {
+      const onConversationLoaded = jest.fn((_id: string, _response: ConversationMessagesResponse, messages: Message[]) => messages)
+      getMessages.mockResolvedValueOnce(first())
+        .mockResolvedValueOnce(page('main', [{ sequence: -1, ids: ['b', 'c'] }, { sequence: 0, ids: ['d'] }], 'pieces-2', [-1, 0]))
+        .mockResolvedValueOnce(page('main', [{ sequence: 0, ids: ['e'] }], null, [0]))
+      const { result } = renderSaved({ onConversationLoaded })
+      await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
+      await continueLoading(result)
+      expect(contents(result.current.messages)).toEqual(['a\nb\nc', 'd'])
+      expect(result.current.messages.map((message) => message.isPartial)).toEqual([false, true])
+      await continueLoading(result)
+
+      expect(contents(result.current.messages)).toEqual(['a\nb\nc', 'd\ne'])
+      expect(result.current.messages.map((message) => message.isPartial)).toEqual([false, false])
+      expect(result.current.loadedPieceCount).toBe(5)
+      expect(result.current.isTranscriptIncomplete).toBe(false)
+      expect(onConversationLoaded.mock.calls.at(-1)?.[1].messages).toHaveLength(2)
+      expect(getMessages.mock.calls.map((call) => call[2])).toEqual([
+        { limit: 100 }, { limit: 100, cursor: 'pieces-1' }, { limit: 100, cursor: 'pieces-2' },
+      ])
+    })
+
+    it('should prevent duplicate continuations while keeping loaded evidence visible', async () => {
+      const continuation = deferred<ConversationMessagesResponse>()
+      getMessages.mockResolvedValueOnce(first()).mockReturnValueOnce(continuation.promise)
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(2))
+      let load: Promise<void> = Promise.resolve()
+      act(() => {
+        load = result.current.loadMoreMessages()
+        void result.current.loadMoreMessages()
+      })
+      expect(getMessages).toHaveBeenCalledTimes(2)
+      expect(result.current.isLoadingMoreMessages).toBe(true)
+      expect(result.current.isLoadingMessages).toBe(false)
+      expect(contents(result.current.messages)).toEqual(['a\nb'])
+      await act(async () => { continuation.resolve(page('main', [{ sequence: -1, ids: ['c'] }], null, [-1])); await load })
+      expect(result.current.isLoadingMoreMessages).toBe(false)
+      await continueLoading(result)
+      expect(getMessages).toHaveBeenCalledTimes(2)
+    })
+
+    it('should retain pieces and the cursor after a continuation failure and retry the same bounded page', async () => {
+      getMessages.mockResolvedValueOnce(first()).mockRejectedValueOnce({
+        isAxiosError: true, response: { status: 503, data: { detail: 'Saved evidence is busy' } },
+      }).mockResolvedValueOnce(page('main', [{ sequence: -1, ids: ['c'] }], null, [-1]))
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(2))
+      await continueLoading(result)
+
+      expect(contents(result.current.messages)).toEqual(['a\nb'])
+      expect(result.current.messagePagination?.next_cursor).toBe('pieces-1')
+      expect(result.current.messageContinuationIssue).toEqual({
+        detail: 'Could not load more messages: Saved evidence is busy', restartRequired: false,
+      })
+      expect(result.current.isLoadingMoreMessages).toBe(false)
+      expect(result.current.isTranscriptIncomplete).toBe(true)
+      await continueLoading(result)
+      expect(contents(result.current.messages)).toEqual(['a\nb\nc'])
+      expect(result.current.messageContinuationIssue).toBeNull()
+      expect(getMessages.mock.calls.slice(1).map((call) => call[2])).toEqual([
+        { limit: 100, cursor: 'pieces-1' }, { limit: 100, cursor: 'pieces-1' },
+      ])
+    })
+
+    it('should require a bounded restart for an invalid continuation and preserve evidence until it succeeds', async () => {
+      getMessages.mockResolvedValueOnce(first()).mockRejectedValueOnce({
+        isAxiosError: true, response: { status: 400, data: { detail: 'Invalid saved-message cursor' } },
+      }).mockRejectedValueOnce(new Error('Restart failed')).mockResolvedValueOnce(
+        page('main', [{ sequence: 0, ids: ['fresh'] }], 'new-cursor'),
+      )
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(2))
+      await continueLoading(result)
+      expect(result.current.messageContinuationIssue?.restartRequired).toBe(true)
+      await continueLoading(result)
+      expect(getMessages).toHaveBeenCalledTimes(2)
+      await act(async () => { await result.current.loadConversation('attack', 'main') })
+      expect(contents(result.current.messages)).toEqual(['a\nb'])
+      expect(result.current.conversationLoadIssue?.detail).toContain('Restart failed')
+      await act(async () => { await result.current.loadConversation('attack', 'main') })
+      expect(contents(result.current.messages)).toEqual(['fresh'])
+      expect(result.current.messagePagination?.next_cursor).toBe('new-cursor')
+      expect(result.current.conversationLoadIssue).toBeNull()
+      expect(getMessages.mock.calls.slice(2).map((call) => call[2])).toEqual([{ limit: 100 }, { limit: 100 }])
+    })
+
+    it.each(['conversation', 'attack'])('should discard late continuation evidence across a %s change', async (change: string) => {
+      const continuation = deferred<ConversationMessagesResponse>()
+      const nextConversationId = change === 'conversation' ? 'branch' : 'main'
+      getMessages.mockResolvedValueOnce(first()).mockReturnValueOnce(continuation.promise).mockResolvedValueOnce(
+        page(nextConversationId, [{ sequence: 0, ids: ['selected'] }], 'selected-cursor'),
+      )
+      const { result, rerender } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(2))
+      let load: Promise<void> = Promise.resolve()
+      act(() => { load = result.current.loadMoreMessages() })
+      rerender({ messagePageSize: pageSize, activeConversationId: nextConversationId,
+        attackResultId: change === 'attack' ? 'other-attack' : 'attack' })
+      await waitFor(() => expect(contents(result.current.messages)).toEqual(['selected']))
+      await act(async () => { continuation.resolve(page('main', [{ sequence: -1, ids: ['stale'] }], null)); await load })
+
+      expect(contents(result.current.messages)).toEqual(['selected'])
+      expect(result.current.messagePagination?.next_cursor).toBe('selected-cursor')
+      expect(result.current.loadedPieceCount).toBe(1)
+      expect(result.current.isLoadingMoreMessages).toBe(false)
+      expect(getMessages.mock.calls[2]).toEqual([change === 'attack' ? 'other-attack' : 'attack', nextConversationId, { limit: 100 }])
+    })
+
+    it('should discard a late continuation error after selection changes', async () => {
+      const continuation = deferred<ConversationMessagesResponse>()
+      getMessages.mockResolvedValueOnce(first()).mockReturnValueOnce(continuation.promise)
+        .mockResolvedValueOnce(page('branch', [{ sequence: 0, ids: ['branch'] }], null))
+      const { result, rerender } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(2))
+      act(() => { void result.current.loadMoreMessages() })
+      rerender({ messagePageSize: pageSize, activeConversationId: 'branch' })
+      await waitFor(() => expect(contents(result.current.messages)).toEqual(['branch']))
+      await act(async () => { continuation.reject(new Error('Late failure')) })
+      expect(result.current.messageContinuationIssue).toBeNull()
+      expect(result.current.conversationLoadIssue).toBeNull()
+    })
+
+    it.each(['initial', 'continuation'])('should ignore a late %s response after unmount', async (phase: string) => {
+      const pending = deferred<ConversationMessagesResponse>()
+      const onConversationLoaded = jest.fn((_id: string, _response: ConversationMessagesResponse, messages: Message[]) => messages)
+      if (phase === 'continuation') getMessages.mockResolvedValueOnce(first())
+      getMessages.mockReturnValueOnce(pending.promise)
+      const { result, unmount } = renderSaved({ onConversationLoaded })
+      if (phase === 'continuation') {
+        await waitFor(() => expect(result.current.loadedPieceCount).toBe(2))
+        act(() => { void result.current.loadMoreMessages() })
+      }
+      const loadedCalls = onConversationLoaded.mock.calls.length
+      unmount()
+      await act(async () => { pending.resolve(page('main', [{ sequence: 0, ids: ['late'] }], null)) })
+      expect(onConversationLoaded).toHaveBeenCalledTimes(loadedCalls)
+    })
+
+    it('should yield a continuation to the incumbent reader ownership claim', async () => {
+      const pending = deferred<ConversationMessagesResponse>()
+      getMessages.mockResolvedValueOnce(first()).mockReturnValueOnce(pending.promise)
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(2))
+      act(() => { void result.current.loadMoreMessages() })
+      const newerRead = result.current.claimConversationRead('main')
+      await act(async () => { pending.resolve(page('main', [{ sequence: 0, ids: ['superseded'] }], null)) })
+      expect(contents(result.current.messages)).toEqual(['a\nb'])
+      expect(result.current.isLatestConversationRead('main', newerRead)).toBe(true)
+      expect(result.current.isLoadingMoreMessages).toBe(false)
+    })
+
+    it.each(['missing', 'missing-cursor', 'wrong-conversation'])('should fail closed for %s initial paging metadata', async (shape: string) => {
+      const response = first()
+      if (shape === 'missing') response.pagination = null
+      if (shape === 'missing-cursor' && response.pagination) response.pagination.next_cursor = null
+      if (shape === 'wrong-conversation') response.conversation_id = 'other'
+      getMessages.mockResolvedValueOnce(response)
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.conversationLoadIssue?.detail).toContain('invalid transcript pagination'))
+      expect(result.current.messages).toEqual([])
+      expect(result.current.isTranscriptIncomplete).toBe(true)
+      expect(result.current.awaitingConversationLoad).toBe(false)
+      expect(getMessages).toHaveBeenCalledTimes(1)
+      expect(getMessages).toHaveBeenCalledWith('attack', 'main', { limit: 100 })
+    })
+
+    it('should keep a repeated cursor from silently ending or extending a transcript', async () => {
+      getMessages.mockResolvedValueOnce(first()).mockResolvedValueOnce(
+        page('main', [{ sequence: -1, ids: ['c'] }], 'pieces-1', [-1]),
+      )
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(2))
+      await continueLoading(result)
+      expect(contents(result.current.messages)).toEqual(['a\nb'])
+      expect(result.current.messageContinuationIssue?.restartRequired).toBe(true)
+      expect(result.current.isTranscriptIncomplete).toBe(true)
+    })
+
+    it('should reject a cursor cycle before requesting an already consumed page', async () => {
+      getMessages.mockResolvedValueOnce(first()).mockResolvedValueOnce(
+        page('main', [{ sequence: -1, ids: ['c'] }], 'pieces-2', [-1]),
+      ).mockResolvedValueOnce(page('main', [{ sequence: 0, ids: ['d'] }], 'pieces-1'))
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(2))
+      await continueLoading(result)
+      await continueLoading(result)
+      expect(contents(result.current.messages)).toEqual(['a\nb\nc'])
+      expect(result.current.messageContinuationIssue?.restartRequired).toBe(true)
+      await continueLoading(result)
+      expect(getMessages).toHaveBeenCalledTimes(3)
+    })
+
+    it('should clear another attack transcript on an initial failure even when both reference the same conversation', async () => {
+      getMessages.mockResolvedValueOnce(first()).mockRejectedValueOnce(new Error('Other attack unavailable'))
+      const { result, rerender } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(2))
+      rerender({ messagePageSize: pageSize, attackResultId: 'other-attack' })
+      await waitFor(() => expect(result.current.conversationLoadIssue?.detail).toContain('Other attack unavailable'))
+      expect(result.current.messages).toEqual([])
+      expect(result.current.loadedPieceCount).toBe(0)
+      expect(result.current.messagePagination).toBeNull()
+    })
+
+    it('should distinguish an empty complete transcript from incomplete evidence', async () => {
+      getMessages.mockResolvedValueOnce(page('main', [], 'more')).mockResolvedValueOnce(page('main', [], null))
+      const { result } = renderSaved({ findingEvidenceId: 'finding' })
+      await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
+      expect(result.current.isEvidenceUnavailable).toBe(false)
+      expect(result.current.isTranscriptIncomplete).toBe(true)
+      await act(async () => { await result.current.loadConversation('attack', 'main') })
+      expect(result.current.isEvidenceUnavailable).toBe(true)
+      expect(result.current.isTranscriptIncomplete).toBe(false)
+      expect(result.current.loadedPieceCount).toBe(0)
+    })
   })
 })
