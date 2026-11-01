@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, Badge, MessageBar, MessageBarBody, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components'
+import { Badge, MessageBar, MessageBarBody, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components'
 import { Link } from 'react-router'
 
 import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
@@ -87,7 +87,6 @@ export default function AttackAttemptDetails({
         </Text>
       </section>
       {completed && <div className={styles.summary}>
-        <DetailMetric label="Attack Success" value={formatAttackSuccess(completed.outcome)} />
         <DetailMetric label="Score" value={formatScore(completed.score)} />
         <DetailMetric label="Execution time" value={formatDuration(completed.execution_time_ms)} />
         <DetailMetric label="Retries" value={String(completed.total_retries)} />
@@ -112,12 +111,6 @@ export default function AttackAttemptDetails({
           ? <ObjectiveScorerDetails scorer={objectiveScorer} />
           : <Text>Objective scorer information is unavailable for this attempt.</Text>}
       </section>
-      <section className={styles.section}>
-        <Text size={200} className={styles.sectionLabel}>Score rationale</Text>
-        <div className={styles.surface}>
-          <Text as="p" className={styles.bodyText}>{formatScoreRationale(completed?.score?.score_rationale)}</Text>
-        </div>
-      </section>
       {conversationPath ? (
         <Link className={styles.conversationLink} to={conversationPath} state={conversationState}>
           {completed ? 'Open conversation' : 'Watch live conversation'}
@@ -136,13 +129,6 @@ export default function AttackAttemptDetails({
           <TableRow key={item.key}><TableCell>{item.name}</TableCell><TableCell>{item.kind}</TableCell><TableCell>No saved identity</TableCell></TableRow>
         ))}</TableBody>
       </Table>
-      {completed?.outcome === 'error' && <Accordion collapsible><AccordionItem value="error">
-        <AccordionHeader>Error details{completed.error_type ? ` · ${completed.error_type}` : ''}</AccordionHeader>
-        <AccordionPanel><Text className={styles.bodyText}>{completed.error_message ?? 'No error detail is available.'}</Text></AccordionPanel>
-      </AccordionItem></Accordion>}
-      {completed && <Text size={200} className={styles.sectionLabel}>
-        {formatDuration(completed.execution_time_ms)} · {completed.total_retries} retries · {formatTimestamp(completed.timestamp)}
-      </Text>}
       {errorMessage && (
         <MessageBar intent="error">
           <MessageBarBody>{completed?.error_type ? `${completed.error_type}: ` : ''}{errorMessage}</MessageBarBody>

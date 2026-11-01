@@ -19,6 +19,7 @@ interface ConversationLoadRequest {
 
 export interface UseConversationMessagesOptions {
   readConversation?: (attackResultId: string, conversationId: string) => Promise<ConversationMessagesResponse>
+  readConversationById?: (conversationId: string) => Promise<ConversationMessagesResponse>
   pollIntervalMs?: number
   attackResultId: string | null
   conversationId: string | null
@@ -45,7 +46,7 @@ export interface ConversationMessages {
   awaitingConversationLoad: boolean
   conversationLoadIssue: ConversationLoadIssue | null
   isEvidenceUnavailable: boolean
-  loadConversation: (attackResultId: string, conversationId: string) => Promise<void>
+  loadConversation: (attackResultId: string | null, conversationId: string) => Promise<void>
   /** Lets the next conversation change load even while that conversation is sending. */
   requestForcedLoad: () => void
   markConversationLoaded: (conversationId: string | null) => void
@@ -62,6 +63,7 @@ export interface ConversationMessages {
 
 export function useConversationMessages({
   readConversation,
+  readConversationById,
   pollIntervalMs,
   attackResultId,
   conversationId,
@@ -135,14 +137,21 @@ export function useConversationMessages({
   }, [])
 
   // Load messages for a given conversation
-  const loadConversation = useCallback(async (arId: string, convId: string) => {
+  const loadConversation = useCallback(async (arId: string | null, convId: string) => {
     const requestId = claimConversationRead(convId)
     activeLoadRef.current = { conversationId: convId, requestId }
     setIsLoadingMessages(true)
     const isCurrentLoad = (): boolean => isLatestConversationRead(convId, requestId)
 
     try {
-      const response = await (readConversation ?? attacksApi.getMessages)(arId, convId)
+      let response: ConversationMessagesResponse
+      if (readConversationById) {
+        response = await readConversationById(convId)
+      } else if (arId) {
+        response = await (readConversation ?? attacksApi.getMessages)(arId, convId)
+      } else {
+        throw new Error('An attack result ID is required to load this conversation.')
+      }
       // Discard superseded loads and responses invalidated by a send.
       if (!isCurrentLoad() || viewedConvRef.current !== convId) { return }
       setConversationLoadIssue(
@@ -177,11 +186,14 @@ export function useConversationMessages({
         setIsLoadingMessages(false)
       }
     }
-  }, [claimConversationRead, isLatestConversationRead, markConversationLoaded, findingEvidenceId, readConversation])
+  }, [
+    claimConversationRead, isLatestConversationRead, markConversationLoaded,
+    findingEvidenceId, readConversation, readConversationById,
+  ])
 
   // Reload messages when activeConversationId changes
   useEffect(() => {
-    if (!attackResultId || !activeConversationId) { return }
+    if ((!attackResultId && !readConversationById) || !activeConversationId) { return }
     // A created-attack route can commit after its first send completes.
     // Preserve that local result unless the user explicitly requests a refresh.
     const force = forceLoadRef.current
@@ -194,10 +206,10 @@ export function useConversationMessages({
       )
     )) { return }
     loadConversation(attackResultId, activeConversationId)
-  }, [activeConversationId, attackResultId, loadConversation])
+  }, [activeConversationId, attackResultId, loadConversation, readConversationById])
 
   useEffect(() => {
-    if (!pollIntervalMs || !attackResultId || !activeConversationId) return
+    if (!pollIntervalMs || (!attackResultId && !readConversationById) || !activeConversationId) return
     let active = true
     let timer: ReturnType<typeof setTimeout>
     const schedule = (): void => {
@@ -209,7 +221,7 @@ export function useConversationMessages({
     }
     schedule()
     return () => { active = false; clearTimeout(timer) }
-  }, [pollIntervalMs, attackResultId, activeConversationId, loadConversation])
+  }, [pollIntervalMs, attackResultId, activeConversationId, loadConversation, readConversationById])
 
   // Synchronous loading derivation: if activeConversationId differs from the
   // conversation whose messages we've loaded, we're in a transition gap.

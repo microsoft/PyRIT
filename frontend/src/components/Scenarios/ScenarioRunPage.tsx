@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   Accordion, AccordionHeader, AccordionItem, AccordionPanel, Badge, Button,
@@ -99,6 +99,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
   const [cancelError, setCancelError] = useState<string | null>(null)
   const [rerunPending, setRerunPending] = useState(false)
   const [rerunError, setRerunError] = useState<string | null>(null)
+  const rerunRequest = useRef<AbortController | null>(null)
   const detailsTrigger = useRef<HTMLElement | null>(null)
   const objectiveTrigger = useRef<HTMLElement | null>(null)
   const overviewTarget = useRef<HTMLElement | null>(null)
@@ -115,6 +116,10 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
   const detailsTriggerRef = useRef<HTMLElement | null>(null)
   const atomicGroupsToggleRef = useRef<HTMLButtonElement | null>(null)
   const [hierarchySelection, setHierarchySelection] = useState<ScenarioHierarchyNode | null>(null)
+  useEffect(() => () => {
+    rerunRequest.current?.abort()
+    rerunRequest.current = null
+  }, [location.pathname])
   const seedObjectives = useMemo(
     () => new Map(state.plan?.seed_groups.map((seed) => [seed.id, seed.objective]) ?? []),
     [state.plan],
@@ -180,10 +185,15 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
     return new Map([...identities].map(([id, seeds]) => [id, seedDatasetNames(seeds)]))
   }, [state.results, state.activeConversations])
   const savedConversations = useMemo(() => {
-    const knownResults = new Set(state.results.map((attempt) => attempt.attack_result_id))
+    const completedConversationIds = new Set(state.results.flatMap((attempt) => [
+      attempt.conversation_id,
+      ...(attempt.related_conversation_ids ?? []),
+    ]))
     const recorded = new Map<string, ScenarioActiveConversation>()
     for (const conversation of state.recordedConversations) {
-      if (!knownResults.has(conversation.attack_result_id)) recorded.set(conversation.attack_result_id, conversation)
+      if (!completedConversationIds.has(conversation.conversation_id)) {
+        recorded.set(`${conversation.attack_result_id}:${conversation.conversation_id}`, conversation)
+      }
     }
     return [...recorded.values()]
   }, [state.results, state.recordedConversations])
@@ -226,15 +236,23 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
   }
 
   async function rerun(): Promise<void> {
+    rerunRequest.current?.abort()
+    const controller = new AbortController()
+    rerunRequest.current = controller
     setRerunPending(true)
     setRerunError(null)
     try {
-      const request = await scenariosApi.getLaunchConfiguration(scenarioResultId)
+      const request = await scenariosApi.getLaunchConfiguration(scenarioResultId, controller.signal)
+      if (rerunRequest.current !== controller || controller.signal.aborted) return
       navigate(scenarioRerunRoutePath(request.scenario_name, scenarioResultId))
     } catch (error: unknown) {
+      if (rerunRequest.current !== controller || controller.signal.aborted) return
       setRerunError(toApiError(error).detail)
     } finally {
-      setRerunPending(false)
+      if (rerunRequest.current === controller) {
+        rerunRequest.current = null
+        setRerunPending(false)
+      }
     }
   }
 
@@ -374,7 +392,8 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
         </section>}
         {savedConversations.length > 0 && <section className={styles.section} aria-label="Saved conversations">
           <Text as="h2" size={500} weight="semibold">Saved conversations</Text>
-          {savedConversations.map((conversation) => <div key={conversation.attack_result_id} className={styles.liveConversation}>
+          {savedConversations.map((conversation) => <div
+            key={`${conversation.attack_result_id}:${conversation.conversation_id}`} className={styles.liveConversation}>
             <Text>{conversation.atomic_attack_name}</Text>
             <Text className={styles.preview}>{conversation.objective}</Text>
             <Link to={scenarioConversationRoutePath(scenarioResultId, conversation.conversation_id)}>Open saved conversation</Link>

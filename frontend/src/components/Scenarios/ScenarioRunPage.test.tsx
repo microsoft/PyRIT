@@ -3,7 +3,7 @@ import { act } from 'react'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
@@ -90,11 +90,20 @@ function LocationTrace() {
   return <output aria-label="Location">{location.pathname}{location.search}</output>
 }
 
+function LeaveRunButton() {
+  const navigate = useNavigate()
+  return <button onClick={() => { navigate('/elsewhere') }}>Leave run</button>
+}
+
+function OpenAttemptButton() {
+  const navigate = useNavigate()
+  return <button onClick={() => { navigate(`/scanner/history/${RUN_ID}/attempt-1`) }}>Open attempt</button>
+}
+
 function Wrapper({ path, navigationState }: { path: string; navigationState?: object }) {
   return <FluentProvider theme={webLightTheme}><MemoryRouter initialEntries={[{ pathname: path, state: navigationState }]}>
-    <LocationTrace /><Routes>
-      <Route path="/scanner/history/:scenarioResultId/:attackResultId" element={<ScenarioRunPage />} />
-      <Route path="/scanner/history/:scenarioResultId" element={<ScenarioRunPage />} />
+    <LocationTrace /><LeaveRunButton /><OpenAttemptButton /><Routes>
+      <Route path="/scanner/history/:scenarioResultId/:attackResultId?" element={<ScenarioRunPage />} />
       <Route path="*" element={<h1>Destination</h1>} />
     </Routes>
   </MemoryRouter></FluentProvider>
@@ -165,6 +174,13 @@ describe('ScenarioRunPage', () => {
     const dialog = within(await screen.findByRole('dialog'))
     expect(dialog.queryByText(/total duration/i)).not.toBeInTheDocument()
     expect(dialog.getByRole('link', { name: 'Open conversation' })).toBeInTheDocument()
+    expect(dialog.getAllByText('The objective was met.', { exact: true })).toHaveLength(1)
+    expect(dialog.getAllByText('5s', { exact: true })).toHaveLength(1)
+    expect(dialog.queryByText(/5s · 1 retries/)).not.toBeInTheDocument()
+    expect(dialog.getAllByText('Execution time', { exact: true })).toHaveLength(1)
+    expect(dialog.getAllByText('Retries', { exact: true })).toHaveLength(1)
+    expect(dialog.getAllByText('Timestamp', { exact: true })).toHaveLength(1)
+    expect(dialog.queryByText('Attack Success', { exact: true })).not.toBeInTheDocument()
     await user.click(dialog.getByRole('button', { name: 'Identity for direct' }))
     expect(JSON.parse(dialog.getByRole('region', { name: 'Identity for direct' }).textContent ?? '')).toEqual(TECHNIQUE)
     await user.click(dialog.getByRole('button', { name: 'Identity for TrueFalseCompositeScorer' }))
@@ -222,6 +238,27 @@ describe('ScenarioRunPage', () => {
       'href', `/scanner/history/${RUN_ID}/conversations/saved`,
     )
     expect(screen.queryByRole('row', { name: /View details for/ })).not.toBeInTheDocument()
+  })
+
+  it('keeps distinct interrupted retry conversations and excludes completed transcripts', () => {
+    const saved = {
+      attack_result_id: 'attempt-1', conversation_id: 'interrupted-retry',
+      atomic_attack_name: 'direct', objective: 'First objective', started_at: RUN.started_at,
+      seed_identifiers: [],
+    }
+    state = makeState({
+      recordedConversations: [
+        saved, saved,
+        { ...saved, conversation_id: 'conversation-1' },
+        { ...saved, attack_result_id: 'attempt-2', conversation_id: 'conversation-2' },
+      ],
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const savedLinks = screen.getAllByRole('link', { name: 'Open saved conversation' })
+    expect(savedLinks).toHaveLength(1)
+    expect(savedLinks[0]).toHaveAttribute(
+      'href', `/scanner/history/${RUN_ID}/conversations/interrupted-retry`,
+    )
   })
 
   it('keeps elapsed-clock updates local instead of rebuilding result groups every second', async () => {
@@ -284,9 +321,46 @@ describe('ScenarioRunPage', () => {
     jest.mocked(scenariosApi.getLaunchConfiguration).mockResolvedValue({ scenario_name: 'test.scenario', target_name: 'original' })
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     await user.click(screen.getByRole('button', { name: 'Rerun' }))
-    expect(scenariosApi.getLaunchConfiguration).toHaveBeenCalledWith(RUN_ID)
+    expect(scenariosApi.getLaunchConfiguration).toHaveBeenCalledWith(RUN_ID, expect.any(AbortSignal))
     await waitFor(() => expect(screen.getByLabelText('Location')).toHaveTextContent(`/scanner/launch/test.scenario?rerun=${RUN_ID}`))
     expect(scenariosApi.startRun).not.toHaveBeenCalled()
+  })
+
+  it('aborts and ignores a late rerun response after leaving the run', async () => {
+    const user = userEvent.setup()
+    let resolveConfiguration: ((value: Awaited<ReturnType<typeof scenariosApi.getLaunchConfiguration>>) => void) | null = null
+    let requestSignal: AbortSignal | undefined
+    jest.mocked(scenariosApi.getLaunchConfiguration).mockImplementation((_id, signal) => new Promise((resolve) => {
+      resolveConfiguration = resolve
+      requestSignal = signal
+    }))
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await user.click(screen.getByRole('button', { name: 'Rerun' }))
+    expect(requestSignal).toBeDefined()
+    await user.click(screen.getByRole('button', { name: 'Leave run' }))
+    expect(requestSignal?.aborted).toBe(true)
+    const resolve = resolveConfiguration
+    if (!resolve) throw new Error('The launch configuration request did not start.')
+    await act(async () => {
+      resolve({ scenario_name: 'test.scenario', target_name: 'original' })
+    })
+    expect(screen.getByLabelText('Location')).toHaveTextContent('/elsewhere')
+  })
+
+  it('keeps error details visible once in completed attack details', async () => {
+    const user = userEvent.setup()
+    state = makeState({
+      results: [{
+        ...ATTEMPT, outcome: 'error', score: null,
+        error_type: 'TimeoutError', error_message: 'The target timed out.',
+      }],
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await expand(user)
+    await user.click(screen.getByRole('button', { name: /^Open details for PromptSendingAttack:/ }))
+    const dialog = within(await screen.findByRole('dialog'))
+    expect(dialog.getAllByText('TimeoutError: The target timed out.', { exact: true })).toHaveLength(1)
+    expect(dialog.queryByRole('button', { name: 'Error details' })).not.toBeInTheDocument()
   })
 
   it('reports an unavailable saved configuration instead of substituting defaults', async () => {
@@ -296,6 +370,25 @@ describe('ScenarioRunPage', () => {
     await user.click(screen.getByRole('button', { name: 'Rerun' }))
     expect(await screen.findByText('Saved configuration is unavailable')).toBeInTheDocument()
     expect(screen.getByLabelText('Location')).toHaveTextContent(scenarioRunRoutePath(RUN_ID))
+    expect(scenariosApi.startRun).not.toHaveBeenCalled()
+  })
+
+  it('aborts a rerun when the current run route changes to attempt details', async () => {
+    const user = userEvent.setup()
+    let resolveConfiguration: ((value: Awaited<ReturnType<typeof scenariosApi.getLaunchConfiguration>>) => void) | null = null
+    let requestSignal: AbortSignal | undefined
+    jest.mocked(scenariosApi.getLaunchConfiguration).mockImplementation((_id, signal) => new Promise((resolve) => {
+      resolveConfiguration = resolve
+      requestSignal = signal
+    }))
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await user.click(screen.getByRole('button', { name: 'Rerun' }))
+    await user.click(screen.getByRole('button', { name: 'Open attempt' }))
+    expect(requestSignal?.aborted).toBe(true)
+    const resolve = resolveConfiguration
+    if (!resolve) throw new Error('The launch configuration request did not start.')
+    await act(async () => { resolve({ scenario_name: 'test.scenario', target_name: 'original' }) })
+    expect(screen.getByLabelText('Location')).toHaveTextContent(`/scanner/history/${RUN_ID}/attempt-1`)
     expect(scenariosApi.startRun).not.toHaveBeenCalled()
   })
 

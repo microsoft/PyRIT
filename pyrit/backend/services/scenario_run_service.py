@@ -361,26 +361,39 @@ class ScenarioRunService:
         metadata = registry.get_class_metadata(scenario_class)
         if metadata.scenario_version != stored.scenario_version:
             raise ScenarioRunConflictError("The scenario version changed. Start a new configuration explicitly.")
-        original = stored.objective_scorer_identifier
-        current = metadata.default_objective_scorer_identifier
+        references = stored.metadata.get(_LAUNCH_REFERENCES_METADATA_KEY)
+        original_scorer_hash = references.get("objective_scorer_hash") if isinstance(references, dict) else None
+        current_scorer = self._launch_objective_scorer_identifier(request=request, metadata=metadata)
         if request.objective_scorer is not None:
             resolved = self._configuration_resolver.resolve_constructor_kwargs(
                 scenario_class=scenario_class, objective_scorer=request.objective_scorer
             )
-            current = resolved["objective_scorer"].get_identifier()
-        if original is None or current is None or original.hash != current.hash:
+            scorer = resolved.get("objective_scorer")
+            scorer_identifier = scorer.get_identifier() if scorer is not None else None
+            if getattr(scorer_identifier, "hash", None) != current_scorer:
+                raise ScenarioRunConflictError(
+                    "The saved objective scorer changed. Start a new configuration explicitly."
+                )
+        if not isinstance(original_scorer_hash, str):
+            original = stored.objective_scorer_identifier
+            if request.objective_scorer is not None:
+                original_scorer_hash = request.objective_scorer.identifier_hash
+            elif original is not None and current_scorer is not None and original.hash == current_scorer:
+                original_scorer_hash = current_scorer
+            else:
+                raise ScenarioRunConflictError(
+                    "The saved launch scorer identity is unavailable. Start a new configuration explicitly."
+                )
+        if current_scorer is None or original_scorer_hash != current_scorer:
             raise ScenarioRunConflictError("The saved objective scorer changed. Start a new configuration explicitly.")
         if request.target_name:
             current_target = self._configuration_resolver.resolve_target(target_name=request.target_name)
             original_target = stored.scenario_identifier.objective_target
             if original_target is None or current_target.get_identifier().hash != original_target.hash:
                 raise ScenarioRunConflictError("The saved target changed. Start a new configuration explicitly.")
-        references = stored.metadata.get(_LAUNCH_REFERENCES_METADATA_KEY)
-        has_adversarial_reference = isinstance(references, dict) and "adversarial_target_hash" in references
-        if (
-            request.adversarial_target_name is not None
-            or metadata.uses_default_adversarial_target is True
-            or has_adversarial_reference
+        local_factory = self._resolve_launch_local_factory(request=request)
+        if self._launch_uses_default_adversarial_target(
+            request=request, metadata=metadata, local_factory=local_factory
         ):
             original_hash = references.get("adversarial_target_hash") if isinstance(references, dict) else None
             if not isinstance(original_hash, str):
@@ -396,21 +409,118 @@ class ScenarioRunService:
                     "The saved adversarial target changed. Start a new configuration explicitly."
                 )
 
-    def _capture_launch_references(
-        self, *, request: RunScenarioRequest, scenario_class: type[Scenario]
-    ) -> dict[str, str]:
+    def _launch_objective_scorer_identifier(self, *, request: RunScenarioRequest, metadata: Any) -> str | None:
         """
-        Pin the resolved adversarial default before a new run is initialized.
+        Read the launch-time scorer hash without resolving a scorer instance.
 
         Returns:
-            dict[str, str]: The selected adversarial target hash, if this run uses one.
+            str | None: The pinned scorer hash, or None when no default is declared.
+        """
+        if request.objective_scorer is not None:
+            return request.objective_scorer.identifier_hash
+        scorer_identifier = metadata.default_objective_scorer_identifier
+        scorer_hash = getattr(scorer_identifier, "hash", None)
+        return scorer_hash if isinstance(scorer_hash, str) else None
+
+    @staticmethod
+    def _selected_launch_factories(
+        *,
+        request: RunScenarioRequest,
+        metadata: Any,
+        configured_techniques: list[Any] | None,
+        local_factory: Any | None,
+    ) -> list[Any | None]:
+        """
+        Resolve selected technique factories from metadata and registry inputs only.
+
+        Returns:
+            list[Any | None]: The factory corresponding to each selected technique.
+        """
+        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+
+        technique_class = metadata.technique_class
+        if not isinstance(technique_class, type):
+            return [local_factory] if local_factory is not None else []
+        if configured_techniques is None:
+            selectors = (
+                [technique_class(token.partition(":")[0]) for token in request.techniques]
+                if request.techniques
+                else None
+            )
+            configured_techniques = technique_class.resolve(selectors, default=technique_class.default())
+        else:
+            configured_techniques = technique_class.resolve(configured_techniques, default=technique_class.default())
+
+        factories = AttackTechniqueRegistry.get_registry_singleton().get_factories()
+        for name, factory in getattr(technique_class, "_factory_sources", {}).items():
+            factories.setdefault(name, factory)
+        if local_factory is not None:
+            factories[local_factory.name] = local_factory
+        return [factories.get(technique.value) for technique in configured_techniques]
+
+    def _launch_uses_default_adversarial_target(
+        self,
+        *,
+        request: RunScenarioRequest,
+        metadata: Any,
+        local_factory: Any | None,
+        configured_techniques: list[Any] | None = None,
+    ) -> bool:
+        """
+        Check target requirements for this run's selected factories, not its catalog.
+
+        Returns:
+            bool: Whether the selected run requires the default adversarial target.
+        """
+        factories = self._selected_launch_factories(
+            request=request,
+            metadata=metadata,
+            configured_techniques=configured_techniques,
+            local_factory=local_factory,
+        )
+        if any(factory is not None and factory.uses_default_adversarial_target for factory in factories):
+            return True
+        return any(factory is None for factory in factories) and metadata.uses_default_adversarial_target is True
+
+    @staticmethod
+    def _resolve_launch_local_factory(*, request: RunScenarioRequest) -> Any | None:
+        """
+        Rebuild a saved run-local factory from its source-pinned edit.
+
+        Returns:
+            Any | None: The selected local factory, or None without a saved edit.
+        """
+        if request.technique_override is None:
+            return None
+        from pyrit.backend.services.technique_edit_service import TechniqueEditService
+
+        return TechniqueEditService.resolve(request.technique_override)
+
+    def _capture_launch_references(
+        self, *, request: RunScenarioRequest, scenario_class: type[Scenario], init_kwargs: dict[str, Any]
+    ) -> dict[str, str]:
+        """
+        Pin launch-time component identities before scenario initialization.
+
+        Returns:
+            dict[str, str]: Component hashes needed to detect rerun drift.
         """
         metadata = ScenarioRegistry.get_registry_singleton().get_class_metadata(scenario_class)
-        if request.adversarial_target_name is None and metadata.uses_default_adversarial_target is not True:
-            return {}
-        target = self._configuration_resolver.resolve_adversarial_target(target_name=request.adversarial_target_name)
-        target = target if target is not None else get_default_adversarial_target()
-        return {"adversarial_target_hash": target.get_identifier().hash}
+        scorer_hash = self._launch_objective_scorer_identifier(request=request, metadata=metadata)
+        references = {"objective_scorer_hash": scorer_hash} if scorer_hash is not None else {}
+        local_factory = init_kwargs.get("local_technique_factory")
+        if self._launch_uses_default_adversarial_target(
+            request=request,
+            metadata=metadata,
+            local_factory=local_factory,
+            configured_techniques=init_kwargs.get("scenario_techniques"),
+        ):
+            target = self._configuration_resolver.resolve_adversarial_target(
+                target_name=request.adversarial_target_name
+            )
+            target = target if target is not None else get_default_adversarial_target()
+            references["adversarial_target_hash"] = target.get_identifier().hash
+        return references
 
     async def get_conversation_async(
         self, *, scenario_result_id: str, conversation_id: str
@@ -1578,7 +1688,10 @@ class ScenarioRunService:
         references = (
             {
                 _LAUNCH_REFERENCES_METADATA_KEY: await run_legacy_sync_async(
-                    self._capture_launch_references, request=request, scenario_class=scenario_class
+                    self._capture_launch_references,
+                    request=request,
+                    scenario_class=scenario_class,
+                    init_kwargs=init_kwargs,
                 )
             }
             if request.scenario_result_id is None
