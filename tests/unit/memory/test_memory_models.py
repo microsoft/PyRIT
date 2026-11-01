@@ -598,7 +598,20 @@ class TestSeedEntry:
         assert record.response_json_schema == {"type": "object"}
         assert record.date_added == seed.date_added
         assert record.added_by == seed.added_by
+        assert record.is_general_technique is False
         assert "is_jinja_template" not in record.model_dump()
+
+    def test_seed_prompt_roundtrip_preserves_is_general_technique(self) -> None:
+        seed = _make_seed_prompt(is_general_technique=True)
+        entry = SeedEntry(entry=seed)
+        assert entry.is_general_technique is True
+
+        record = entry.get_seed_record()
+        assert record.is_general_technique is True
+
+        recovered = entry.get_seed()
+        assert isinstance(recovered, SeedPrompt)
+        assert recovered.is_general_technique is True
 
     # ---- response_json_schema persistence ---------------------------------
 
