@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
     from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
     from pyrit.score.float_scale.roblox_pii_scorer import RobloxPiiCategory, RobloxPiiScorer
+    from pyrit.score.float_scale.secret_disclosure_scorer import SecretDisclosureScorer, SecretDisclosureView
     from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
     from pyrit.score.float_scale.self_ask_likert_scorer import (
         LikertScaleEvalFiles,
@@ -268,6 +269,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "RobloxPiiCategory": "pyrit.score.float_scale.roblox_pii_scorer",
     "RobloxPiiScorer": "pyrit.score.float_scale.roblox_pii_scorer",
     "Scorer": "pyrit.score.scorer",
+    "SecretDisclosureScorer": "pyrit.score.float_scale.secret_disclosure_scorer",
+    "SecretDisclosureView": "pyrit.score.float_scale.secret_disclosure_scorer",
     "Scorable": "pyrit.score.scorable",
     "ScorerEvalDatasetFiles": "pyrit.score.scorer_evaluation.scorer_evaluator",
     "ScorerEvaluator": "pyrit.score.scorer_evaluation.scorer_evaluator",
