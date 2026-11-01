@@ -21,6 +21,7 @@ from pyrit.common.logger import logger
 from pyrit.exceptions.retry_collector import (
     get_retry_collector,
 )
+from pyrit.executor.attack.core.attack_cancellation import AttackCancellation
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
 from pyrit.executor.attack.core.attack_scoring import prepare_attack_scoring
 from pyrit.executor.core import (
@@ -177,6 +178,11 @@ class _ObjectiveTargetConversationLifecycle:
                 )
         if pending_cancellation is not None:
             raise pending_cancellation
+
+    @property
+    def invoked(self) -> bool:
+        """Whether the attack has started sending to the objective target."""
+        return bool(self._conversation_ids)
 
     def record_invocation(self, *, conversation_id: str) -> None:
         """
@@ -655,14 +661,8 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         collector = get_retry_collector()
         retry_events = collector.events if collector else []
 
-        # Multi-turn contexts keep the active ID on their conversation session.
-        conversation_id = getattr(context, "conversation_id", None)
-        if not conversation_id:
-            conversation_id = getattr(getattr(context, "session", None), "conversation_id", None)
-        conversation_id = conversation_id or str(uuid.uuid4())
-
         error_result = AttackResult(
-            conversation_id=conversation_id,
+            conversation_id=self._result_conversation_id(context=context),
             objective=context.objective,
             attack_result_id=context.attack_result_id or str(uuid.uuid4()),
             outcome=AttackOutcome.ERROR,
@@ -698,6 +698,70 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             context._persisted_attack_result_id = error_result.attack_result_id
 
         self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
+
+    @staticmethod
+    def _result_conversation_id(*, context: AttackStrategyContextT) -> str:
+        """
+        Return the conversation an interrupted attack's result should point to.
+
+        Args:
+            context (AttackStrategyContextT): The interrupted attack's context.
+
+        Returns:
+            str: The attack's active conversation ID, or a new ID if it has none.
+        """
+        # Multi-turn contexts keep the active ID on their conversation session.
+        conversation_id = getattr(context, "conversation_id", None)
+        if not conversation_id:
+            conversation_id = getattr(getattr(context, "session", None), "conversation_id", None)
+        return str(conversation_id) if conversation_id else str(uuid.uuid4())
+
+    async def _record_cancellation_async(self, *, context: AttackStrategyContextT) -> None:
+        """
+        Persist an ``UNDETERMINED`` result for an attack cancelled after it started sending to the target.
+
+        The result carries ``AttackCancellation`` and no verdict. A failure to persist it is logged
+        rather than raised, so it never replaces the cancellation.
+
+        Args:
+            context (AttackStrategyContextT): The cancelled attack's context.
+        """
+        if not context._persist_attack_result:
+            return
+
+        cancellation = AttackCancellation()
+        collector = get_retry_collector()
+        retry_events = collector.events if collector else []
+        cancelled_result = AttackResult(
+            conversation_id=self._result_conversation_id(context=context),
+            objective=context.objective,
+            attack_result_id=context.attack_result_id or str(uuid.uuid4()),
+            outcome=AttackOutcome.UNDETERMINED,
+            outcome_reason=cancellation.reason,
+            atomic_attack_identifier=self._build_error_result_identifier(context=context),
+            labels=context.memory_labels,
+            related_conversations=context.related_conversations,
+            retry_events=retry_events,
+            total_retries=len(retry_events),
+            metadata={**context._error_result_metadata, **cancellation.to_metadata()},
+        )
+        if context.start_time:
+            cancelled_result.execution_time_ms = int((time.perf_counter() - context.start_time) * 1000)
+        self._apply_attribution(context=context, result=cancelled_result)
+        self._apply_targeted_harm_categories(context=context, result=cancelled_result)
+
+        try:
+            await self._save_result_async(result=cancelled_result)
+        except Exception:
+            self._logger.warning(
+                "Could not persist the result of cancelled attack %s.", cancelled_result.attack_result_id, exc_info=True
+            )
+            await self._confirm_result_persistence_async(
+                context=context, attack_result_id=cancelled_result.attack_result_id
+            )
+        else:
+            context._persisted_attack_result_id = cancelled_result.attack_result_id
+        self._logger.warning(f"Attack was cancelled. {cancellation.reason}")
 
 
 class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Identifiable, ABC):
@@ -1028,6 +1092,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
 
         Raises:
             ExceptionGroup: If attack execution and recording its error result both fail.
+            asyncio.CancelledError: If the attack is cancelled. An attack cancelled after it started
+                sending to the objective target first persists an ``UNDETERMINED`` result carrying
+                ``AttackCancellation``.
         """
         context._error_result_persistence_error = None
         context._error_result_metadata.clear()
@@ -1053,6 +1120,11 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
                         _operation_admission_scope(admitted),
                     ):
                         result = await super().execute_with_context_async(context=context)
+                except asyncio.CancelledError:
+                    # Keep an audit record of an attempt the objective target may have received.
+                    if lifecycle.invoked:
+                        await self._default_event_handler._record_cancellation_async(context=context)
+                    raise
                 except Exception as attack_error:
                     persistence_error = context._error_result_persistence_error
                     if persistence_error is not None:
