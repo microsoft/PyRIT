@@ -104,12 +104,13 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
     <div class="msg">
       <div class="role">{{ m.role }}{% if m.is_simulated %} (simulated){% endif %}</div>
       {% for p in m.pieces %}
+        {% set shown_type = (p.converted_value_data_type or p.data_type) if p.converted_value else p.data_type %}
         {% if p.data_type == "reasoning" %}
           <div class="piece reasoning">{{ p.reasoning_summary }}</div>
-        {% elif p.data_type == "text" %}
+        {% elif shown_type == "text" %}
           <div class="piece">{{ p.converted_value or p.original_value }}</div>
         {% else %}
-          <div class="piece media">[{{ p.data_type }}] {{ p.converted_value or p.original_value }}</div>
+          <div class="piece media">[{{ shown_type }}] {{ p.converted_value or p.original_value }}</div>
         {% endif %}
         {% if p.response_error and p.response_error != "none" %}
           <div class="piece err">error: {{ p.response_error }}</div>
