@@ -2,10 +2,12 @@
 # Licensed under the MIT license.
 
 import re
-from typing import Literal
+from typing import Literal, assert_never
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
+
+TokenInsertMode = Literal["split", "prepend", "append", "repeat"]
 
 
 class RepeatTokenConverter(Converter):
@@ -35,7 +37,7 @@ class RepeatTokenConverter(Converter):
         *,
         token_to_repeat: str,
         times_to_repeat: int,
-        token_insert_mode: Literal["split", "prepend", "append", "repeat"] | None = None,
+        token_insert_mode: TokenInsertMode | None = None,
     ) -> None:
         """
         Initialize the converter with the specified token, number of repetitions, and insertion mode.
@@ -92,6 +94,8 @@ class RepeatTokenConverter(Converter):
                     return ["", ""]
 
                 self.insert = insert
+            case _:  # pragma: no cover - mode validation above narrows this to TokenInsertMode.
+                assert_never(mode)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

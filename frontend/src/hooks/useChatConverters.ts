@@ -9,6 +9,7 @@ import type {
   ChatConverterController,
   ChatConverterSnapshot,
   ConverterInputPiece,
+  ConverterInstance,
   ConverterPipelineStage,
   ConverterPreviewResponse,
   ConverterPreviewStep,
@@ -16,6 +17,7 @@ import type {
   MessageAttachment,
   PieceConversion,
   PieceConversionUpdates,
+  SourceInstanceSpec,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import { fileToBase64 } from '@/utils/messageMapper'
@@ -242,6 +244,30 @@ export function usePieceConverters(
     const stage: ConverterPipelineStage = { id: generateClientId(), converterId }
     setPipeline(pieceType, (stages: ConverterPipelineStage[]) => [...stages, stage])
   }, [setPipeline])
+
+  const replaceTemporaryConverter = useCallback((
+    pieceType: string, stageId: string, source: SourceInstanceSpec, converter: ConverterInstance,
+  ): void => {
+    setState((current: ConversionState) => {
+      const stages = current.pipelines[pieceType] ?? []
+      const selected = stages.find((stage: ConverterPipelineStage) => stage.id === stageId && stage.temporary === source)
+      if (!selected) return current
+      const next = stages.map((stage: ConverterPipelineStage) => stage === selected
+        ? { id: stage.id, converterId: converter.converter_id } : stage)
+      if (converter.identifier.hash !== (selected.identifier?.hash ?? source.effective_hash)) {
+        return changePipeline(current, pieceType, next)
+      }
+      // Saving the same configuration changes future lookups, not past outputs or their signed provenance.
+      return {
+        ...current,
+        pipelines: { ...current.pipelines, [pieceType]: next },
+        pipelineRevisions: {
+          ...current.pipelineRevisions,
+          [pieceType]: (current.pipelineRevisions[pieceType] ?? 0) + 1,
+        },
+      }
+    })
+  }, [])
 
   const retainConverters = useCallback((availableIds: Set<string>): void => {
     setState((current: ConversionState) => {
@@ -565,6 +591,7 @@ export function usePieceConverters(
     isConverting: state.isConverting,
     addConverter,
     setPipeline,
+    replaceTemporaryConverter,
     retainConverters,
     discardTemporarySettings,
     convert: (pieceType: string) => runConversion({ pieceType, includeIncomplete: true }),

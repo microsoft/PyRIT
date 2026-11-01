@@ -120,11 +120,20 @@ print(df.to_string(index=False))
 # request. The request itself does not read ambient context. Raw sources do not receive criteria.
 #
 # **Hook migration is required:** a subclass of a migrated scorer that overrides only
-# `_score_piece_async` raises `TypeError` at construction, including for objective-only use.
-# Move that override and its `super()` call to `_score_piece_with_expectation_async`, and
-# forward the complete expectation. PyRIT does not silently bypass the old override or infer
-# how to combine both hooks. Legacy hooks on unmigrated leaves still work for objective-only
-# calls, but cannot accept other typed criteria.
+# `_score_piece_async` raises `LegacyScorerHookError` (a `TypeError`) at construction, including
+# for objective-only use. Move that override and its `super()` call to
+# `_score_piece_with_expectation_async`, and forward the complete expectation. PyRIT does not
+# silently bypass the old override or infer how to combine both hooks. Legacy hooks on unmigrated
+# leaves still work for objective-only calls until 2.0. A leaf that declares any other typed
+# `CONDITION_TYPE` but uses the standard pipeline with only a legacy hook raises
+# `LegacyScorerHookError` at construction, including direct `Scorer` subclasses. Custom pipeline
+# overrides can evaluate the expectation themselves. If they forward typed criteria to a legacy
+# hook, the runtime guard raises the same error without wrapping it.
+#
+# `is_objective_required=True` infers `MatchesObjective` only for an undeclared message scorer.
+# An explicit `CONDITION_TYPE` takes precedence. The scorer validates objective requirements before
+# acquiring evidence. `SelfAskGeneralFloatScaleScorer` requires an objective by default, but a custom
+# validator can select a fixed rubric without that requirement.
 #
 # Generic family scorers consume a `Scorable` without assuming that it resolves to a
 # message. Message scorers also support message-specific entry points and policy. Generic

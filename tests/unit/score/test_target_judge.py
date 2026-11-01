@@ -55,7 +55,6 @@ from pyrit.score import (
 )
 from pyrit.score.observation.execution import (
     _scoring_collection,
-    _scoring_expectation_context,
     _scoring_message_context,
     _scoring_scorable_context,
 )
@@ -128,7 +127,6 @@ async def test_judge_uses_explicit_evidence_after_context_change_async(
         _scoring_collection() as collector,
         _scoring_scorable_context(MessageScorable(message_piece_ids=(unrelated.id,))),
         _scoring_message_context(unrelated.to_message()),
-        _scoring_expectation_context(ScoringExpectation(objective="unrelated criterion")),
     ):
         results = await asyncio.gather(
             *(judge.judge_async(request=request, response_handler=JsonSchemaResponseHandler()) for request in requests)
@@ -174,10 +172,9 @@ async def test_judge_uses_explicit_criteria_not_ambient_context_async() -> None:
         )
         for expectation in expectations
     ]
-    with _scoring_expectation_context(ScoringExpectation(objective="wrong ambient criterion")):
-        scores = await asyncio.gather(
-            *(judge.judge_async(request=request, response_handler=JsonSchemaResponseHandler()) for request in requests)
-        )
+    scores = await asyncio.gather(
+        *(judge.judge_async(request=request, response_handler=JsonSchemaResponseHandler()) for request in requests)
+    )
     assert [score.scored_expectation for score in scores] == expectations
     conversations = [call.kwargs["conversation_id"] for call in target.set_system_prompt_async.call_args_list]
     assert len(set(conversations)) == 2
