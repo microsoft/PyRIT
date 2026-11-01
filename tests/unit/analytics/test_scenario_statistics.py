@@ -142,6 +142,13 @@ def test_combining_count_only_legacy_payloads_does_not_infer_failures_from_histo
     assert "without an outcome breakdown" in caplog.text
 
 
+def test_combining_an_empty_group_reports_no_planned_count() -> None:
+    """An empty display group never learned a plan, so planned is unknown, not 0."""
+    combined = combine_execution_counts([])
+    assert combined.planned is None
+    assert combined.completed == 0
+
+
 def test_combining_unequal_scenario_groups_recomputes_both_denominators() -> None:
     result = make_scenario_result(
         attack_results={

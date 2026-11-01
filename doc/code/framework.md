@@ -115,19 +115,14 @@ The orchestration layers **nest from broadest to narrowest** — each owns less 
 - **Attack Technique** configures one executor with its converters, seeds, scorers, and strategy.
 - **Executor / Attack** runs the algorithm: sends to targets, applies converters, and branches on scorers.
 
+:::{div}
+:class: col-page-right
 
-```mermaid
-flowchart TB
-    subgraph SCEN["Scenario — owns parallelism &amp; resiliency"]
-        subgraph TECH["Attack Technique — executor + converters + seeds + scorers + strategy"]
-            subgraph ATK["Executor / Attack — drives the conversation"]
-                LEAF["sends to targets · applies converters · branches on scorers"]
-            end
-        end
-    end
-```
+![Scenarios package the complete run. Attack techniques configure attacks, converters, scorers, attack prompts, and helper targets. Dataset objectives and the objective target are run inputs. The registry instantiates components.](../assets/pyrit-components.svg)
 
+:::
 
+The boxes show configuration packaging, not runtime ownership. Dashed splits separate run inputs from technique configuration; arrows show component use, not a required execution order.
 
 # Core Components
 
@@ -444,7 +439,7 @@ See [message normalizers](./targets/11_message_normalizer) for capability behavi
 
 **Responsibility**: The Output module is responsible for writing different components in different formats to different places.
 
-- It renders the core result types — attack results, scenario results, conversations, and scores — without those components needing to know how they are displayed.
+- It renders the core result types — attack results, scenario results, conversations, scores, and finding reports — without those components needing to know how they are displayed.
 - Format and destination are decoupled: a **format** (e.g. pretty ANSI, Markdown, JSON) is separate from a **sink** (stdout, file, Jupyter), so any result can be rendered any way to anywhere.
 - **Does not own**: deciding *what* to render or *when*. Components hand results to output; format classes only turn data into strings and never fetch data, touch `CentralMemory`, or call `print()` directly (that's isolated to leaf printer classes).
 

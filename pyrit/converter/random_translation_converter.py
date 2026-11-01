@@ -110,7 +110,13 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
 
         Returns:
             ConverterResult: The result containing the converted output and its type.
+
+        Raises:
+            ValueError: If the input type is not supported.
         """
+        if not self.input_supported(input_type):
+            raise ValueError(f"Input type {input_type} not supported")
+
         words = prompt.split()
         selected_indices = self._word_selection_strategy.select_words(words=words)
 

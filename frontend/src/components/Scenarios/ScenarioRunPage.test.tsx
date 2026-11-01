@@ -14,6 +14,7 @@ import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { scenariosApi } from '@/services/api'
 import type {
   ScenarioComponentIdentity,
+  ScenarioHierarchyNode,
   ScenarioProgressHeader,
   ScenarioProgressSummary,
   ScenarioProgressResult,
@@ -43,6 +44,9 @@ jest.mock('@/services/api', () => ({
     cancelRun: jest.fn(),
     resumeRun: jest.fn(),
     getRunProgress: jest.fn(),
+    // The hierarchy section has its own tests; keep it loading so these tests cover the rest of the page.
+    getRunHierarchy: jest.fn(() => new Promise(() => {})),
+    getRunHierarchyNode: jest.fn(),
   },
 }))
 
@@ -149,6 +153,53 @@ const ATTEMPT: ScenarioProgressResult = {
     score_value: 'true',
     score_rationale: 'The response achieved the objective.',
   },
+}
+
+function hierarchyNode(overrides: Partial<ScenarioHierarchyNode> = {}): ScenarioHierarchyNode {
+  return {
+    attack_result_id: 'hierarchy-only',
+    conversation_id: 'conversation-h',
+    result_role: 'orchestration',
+    atomic_attack_name: 'sequential-parent',
+    atomic_group_id: 'atomic-1',
+    seed_group_id: 'seed-unplanned',
+    objective: 'Objective carried by the hierarchy node',
+    outcome: 'failure',
+    execution_time_ms: 1200,
+    executed_turns: 0,
+    timestamp: '2026-01-01T00:00:00Z',
+    total_retries: 0,
+    retries: [],
+    retries_truncated: false,
+    child_attack_result_ids: [],
+    child_references_truncated: false,
+    children: [],
+    children_truncated: false,
+    child_offset: 0,
+    unresolved_child_attack_result_ids: [],
+    unresolved_child_references_truncated: false,
+    conversations: [],
+    conversations_truncated: false,
+    ...overrides,
+  }
+}
+
+function mockHierarchy(roots: ScenarioHierarchyNode[], status: ScenarioRunState = 'COMPLETED'): void {
+  const counts = { completed: 1, planned: 1, succeeded: 0, success_percentage: 0, errors: 0, retries: 0 }
+  ;(scenariosApi.getRunHierarchy as jest.Mock).mockResolvedValueOnce({
+    status,
+    groups: [{
+      atomic_group_id: roots[0]?.atomic_group_id ?? 'atomic-1',
+      atomic_attack_name: 'a',
+      display_group: 'Group',
+      roots,
+      counts,
+    }],
+    overall_counts: counts,
+    diagnostics: { rootless_results_count: 0 },
+    truncated: false,
+    has_more: false,
+  })
 }
 
 const SUMMARY: ScenarioProgressSummary = {
@@ -313,7 +364,11 @@ function AttackRouteProbe() {
   const location = useLocation()
   const navigate = useNavigate()
   return (
-    <div data-testid="attack-route" data-location={`${location.pathname}${location.search}`}>
+    <div
+      data-testid="attack-route"
+      data-location={`${location.pathname}${location.search}`}
+      data-navigation-state={JSON.stringify(location.state)}
+    >
       <button onClick={() => navigate(-1)}>Browser back</button>
     </div>
   )
@@ -365,6 +420,8 @@ function renderPage(
 describe('ScenarioRunPage', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    ;(scenariosApi.getRunHierarchy as jest.Mock).mockReset().mockImplementation(() => new Promise(() => {}))
+    ;(scenariosApi.getRunHierarchyNode as jest.Mock).mockReset()
     mockUseScenarioQueue.mockReturnValue({
       snapshot: { revision: 0, snapshot_at: '2026-01-01T00:00:00Z', active: null, queued: [] },
       loading: false,
@@ -476,7 +533,7 @@ describe('ScenarioRunPage', () => {
 
       const section = screen.getByRole('region', { name: 'Atomic attack groups' })
       expect(within(section).getByRole('heading', { name: 'Atomic attack groups', level: 2 })).toBeVisible()
-      expect(within(section).getByText('1,716 groups, 10,296 executions')).toBeVisible()
+      expect(within(section).getByText('1,716 groups, 10,296 loaded executions')).toBeVisible()
       expect(within(section).getByRole('button', {
         name: 'Expand atomic attack groups',
         expanded: false,
@@ -492,7 +549,7 @@ describe('ScenarioRunPage', () => {
     const user = userEvent.setup()
     renderPage()
     const section = screen.getByRole('region', { name: 'Atomic attack groups' })
-    expect(within(section).getByText('1 group, 1 execution')).toBeVisible()
+    expect(within(section).getByText('1 group, 1 loaded execution')).toBeVisible()
 
     screen.getByRole('button', { name: 'Cancel run' }).focus()
     await user.tab()
@@ -502,7 +559,7 @@ describe('ScenarioRunPage', () => {
     await user.keyboard('{Enter}')
     expect(screen.getByRole('button', { name: 'Collapse atomic attack groups', expanded: true })).toHaveFocus()
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
-    expect(screen.getByRole('table', { name: 'Attack executions' })).toBeVisible()
+    expect(screen.getByRole('table', { name: /attack results$/ })).toBeVisible()
 
     const collapse = screen.getByRole('button', { name: 'Collapse atomic attack groups' })
     collapse.focus()
@@ -510,11 +567,11 @@ describe('ScenarioRunPage', () => {
     expect(screen.getByRole('button', { name: 'Expand atomic attack groups', expanded: false })).toHaveFocus()
     expect(within(section).queryAllByRole('article', { hidden: true })).toHaveLength(0)
     expect(within(section).queryByRole('table', { hidden: true })).not.toBeInTheDocument()
-    expect(within(section).getByText('1 group, 1 execution')).toBeVisible()
+    expect(within(section).getByText('1 group, 1 loaded execution')).toBeVisible()
 
     await user.keyboard('{Enter}')
     expect(screen.getByRole('button', { name: 'Collapse attacks in Technique One', expanded: true })).toBeVisible()
-    expect(screen.getByRole('table', { name: 'Attack executions' })).toBeVisible()
+    expect(screen.getByRole('table', { name: /attack results$/ })).toBeVisible()
   })
 
   it('should preserve expanded and collapsed choices across progress updates and completion', async () => {
@@ -524,7 +581,7 @@ describe('ScenarioRunPage', () => {
 
     mockHookState(makeGroupedState(22))
     rerender(<TestWrapper />)
-    expect(screen.getByText('22 groups, 22 executions')).toBeVisible()
+    expect(screen.getByText('22 groups, 22 loaded executions')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Expand atomic attack groups', expanded: false })).toBeVisible()
     expect(screen.queryByText('Display group 1')).not.toBeInTheDocument()
 
@@ -538,18 +595,18 @@ describe('ScenarioRunPage', () => {
     rerender(<TestWrapper />)
 
     const section = screen.getByRole('region', { name: 'Atomic attack groups' })
-    expect(within(section).getByText('3 groups, 6 executions')).toBeVisible()
+    expect(within(section).getByText('3 groups, 6 loaded executions')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Collapse atomic attack groups', expanded: true })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Collapse attacks in Display group 0', expanded: true })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Expand attacks in Display group 2' })).toBeVisible()
     expect(within(section).getAllByText('2/2')).toHaveLength(3)
-    expect(within(screen.getByRole('table', { name: 'Attack executions' })).getAllByRole('row')).toHaveLength(3)
+    expect(within(screen.getByRole('table', { name: /attack results$/ })).getAllByRole('row')).toHaveLength(3)
 
     await user.click(screen.getByRole('button', { name: 'Collapse atomic attack groups' }))
     mockHookState(makeGroupedState(4))
     rerender(<TestWrapper />)
     expect(screen.getByRole('button', { name: 'Expand atomic attack groups', expanded: false })).toBeVisible()
-    expect(within(section).getByText('4 groups, 4 executions')).toBeVisible()
+    expect(within(section).getByText('4 groups, 4 loaded executions')).toBeVisible()
     expect(within(section).queryAllByRole('article', { hidden: true })).toHaveLength(0)
   })
 
@@ -580,7 +637,7 @@ describe('ScenarioRunPage', () => {
 
       expect(mockUseScenarioRunProgress).toHaveBeenLastCalledWith(OTHER_SCENARIO_RESULT_ID)
       expect(screen.getByRole('button', { name: /atomic attack groups$/, expanded: secondGroupCount <= 20 })).toBeVisible()
-      expect(screen.queryByRole('table', { name: 'Attack executions' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('table', { name: /attack results$/ })).not.toBeInTheDocument()
       if (secondGroupCount > 20) {
         await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
       }
@@ -598,7 +655,7 @@ describe('ScenarioRunPage', () => {
         await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
       }
       expect(screen.getByRole('button', { name: 'Expand attacks in Display group 0', expanded: false })).toBeVisible()
-      expect(screen.queryByRole('table', { name: 'Attack executions' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('table', { name: /attack results$/ })).not.toBeInTheDocument()
     },
   )
 
@@ -619,7 +676,7 @@ describe('ScenarioRunPage', () => {
     expect(within(lastGroup).getByText('Errors')).toBeVisible()
     expect(within(lastGroup).getByText('Retries')).toBeVisible()
     await user.click(groupToggles[100])
-    await user.click(screen.getByRole('row', { name: 'View details for attack-100' }))
+    await user.click(screen.getByRole('button', { name: /^Open details for attack-100:/ }))
 
     const dialog = await screen.findByRole('dialog', { name: 'attack-100' })
     expect(within(dialog).getByText(PLAN.seed_groups[0].objective)).toBeVisible()
@@ -634,7 +691,7 @@ describe('ScenarioRunPage', () => {
     const user = userEvent.setup()
     mockHookState(makeGroupedState(0))
     const { rerender } = renderPage()
-    expect(screen.getByText('0 groups, 0 executions')).toBeVisible()
+    expect(screen.getByText('0 groups, 0 loaded executions')).toBeVisible()
     expect(screen.getByText('No atomic attack groups have been persisted yet.')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Collapse atomic attack groups' }))
     expect(screen.queryByText('No atomic attack groups have been persisted yet.')).not.toBeInTheDocument()
@@ -772,7 +829,7 @@ describe('ScenarioRunPage', () => {
     expect(screen.getAllByText('1/total unavailable').length).toBeGreaterThan(0)
     expect(screen.queryByText('1/1')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
-    expect(screen.getByRole('row', { name: 'View details for attack-technique' })).toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /^View conversation for attack-technique:/ })).toBeInTheDocument()
   })
 
   it('shows a stale warning and retries from the explicit action', async () => {
@@ -1193,15 +1250,15 @@ describe('ScenarioRunPage', () => {
     )
   })
 
-  it('restores focus to the execution row after closing details', async () => {
+  it('restores focus to the separate Details button after closing details', async () => {
     jest.useFakeTimers()
     try {
       const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
       renderPage()
       await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
-      const detailsRow = screen.getByRole('row', { name: 'View details for attack-technique' })
+      const detailsButton = screen.getByRole('button', { name: /^Open details for attack-technique:/ })
 
-      await user.click(detailsRow)
+      await user.click(detailsButton)
       await waitFor(() => expect(screen.getByTestId('scanner-route')).toHaveAttribute(
         'data-location',
         `/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`,
@@ -1211,12 +1268,208 @@ describe('ScenarioRunPage', () => {
       await waitFor(() => expect(dialog).toContainElement(document.activeElement))
       await user.click(close)
 
-      expect(await screen.findByRole('row', { name: 'View details for attack-technique' })).toBe(detailsRow)
-      await waitFor(() => expect(detailsRow).toHaveFocus())
+      expect(await screen.findByRole('button', { name: /^Open details for attack-technique:/ })).toBe(detailsButton)
+      await waitFor(() => expect(detailsButton).toHaveFocus())
     } finally {
       act(() => { jest.runOnlyPendingTimers() })
       jest.useRealTimers()
     }
+  })
+
+  it('opens details for a hierarchy result that the progress feed has not delivered yet', async () => {
+    const user = userEvent.setup()
+    mockHierarchy([hierarchyNode()])
+    renderPage()
+
+    await user.click(await screen.findByRole('button', { name: 'Expand attacks in Group' }))
+    await user.click(await screen.findByRole('button', { name: 'Open details for sequential-parent: Objective carried by the hierarchy node' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'sequential-parent' })
+    expect(within(dialog).getByText('Objective carried by the hierarchy node')).toBeInTheDocument()
+  })
+
+  it('keeps the hierarchy objective when the progress row for an unplanned seed is already loaded', async () => {
+    const user = userEvent.setup()
+    // The progress row wins as the selected attempt, but it carries no objective and its seed is not in the plan.
+    const progressRow = { ...ATTEMPT, attack_result_id: 'unplanned-result', seed_group_id: 'seed-unplanned' }
+    mockHookState(makeState({ results: [ATTEMPT, progressRow] }))
+    mockHierarchy([
+      hierarchyNode({
+        attack_result_id: 'unplanned-result',
+        atomic_attack_name: 'attack-technique',
+        objective: 'Objective stored on the saved result',
+      }),
+    ])
+    renderPage()
+
+    await user.click(await screen.findByRole('button', { name: 'Expand attacks in Group' }))
+    await user.click(await screen.findByRole('button', { name: 'Open details for attack-technique: Objective stored on the saved result' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'attack-technique' })
+    expect(within(dialog).getByText('Objective stored on the saved result')).toBeInTheDocument()
+    expect(within(dialog).queryByText(/Objective text unavailable/)).not.toBeInTheDocument()
+  })
+
+  it('keeps the saved result objective for a planned seed in the shared Details dialog', async () => {
+    const user = userEvent.setup()
+    mockHierarchy([hierarchyNode({
+      attack_result_id: ATTEMPT.attack_result_id,
+      atomic_attack_name: ATTEMPT.atomic_attack_name,
+      atomic_group_id: ATTEMPT.atomic_group_id,
+      seed_group_id: ATTEMPT.seed_group_id,
+      conversation_id: ATTEMPT.conversation_id,
+      objective: 'The objective actually saved on this result',
+    })])
+    renderPage()
+    await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
+    await user.click(await screen.findByRole('button', {
+      name: 'Open details for attack-technique: The objective actually saved on this result',
+    }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'attack-technique' })
+    expect(within(dialog).getByText('The objective actually saved on this result')).toBeVisible()
+    expect(within(dialog).queryByText(PLAN.seed_groups[0].objective)).not.toBeInTheDocument()
+  })
+
+  it('consolidates parent and child rows into the existing group without changing its live totals', async () => {
+    const user = userEvent.setup()
+    const counts = { completed: 7, planned: 12, succeeded: 3, success_percentage: 43, errors: 2, retries: 5 }
+    mockHookState(makeState({
+      summary: {
+        ...SUMMARY,
+        overall: counts,
+        techniques: SUMMARY.techniques.map((group) => ({ ...group, ...counts })),
+        atomic_groups: SUMMARY.atomic_groups.map((group) => ({ ...group, ...counts })),
+      },
+    }))
+    const child = hierarchyNode({
+      attack_result_id: 'saved-child',
+      atomic_group_id: ATTEMPT.atomic_group_id,
+      objective: 'Saved child objective',
+      result_role: 'target_facing',
+      child_index: 0,
+    })
+    mockHierarchy([hierarchyNode({
+      atomic_group_id: ATTEMPT.atomic_group_id,
+      conversation_id: '',
+      child_attack_result_ids: [child.attack_result_id],
+      children_count: 1,
+      children: [child],
+    })])
+    renderPage()
+    const section = screen.getByRole('region', { name: 'Atomic attack groups' })
+    await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
+    const table = await screen.findByRole('table', { name: 'Technique One attack results' })
+    const parent = await within(table).findByRole('row', { name: /^View child results for sequential-parent:/ })
+    expect(screen.queryByRole('region', { name: 'Result hierarchy' })).not.toBeInTheDocument()
+    expect(within(section).getAllByRole('article')).toHaveLength(1)
+    expect(within(section).getAllByRole('table')).toHaveLength(1)
+    expect(within(section).getByText('7/12')).toBeVisible()
+
+    await user.click(parent)
+    expect(within(table).getByText('Saved child objective')).toBeVisible()
+    expect(within(section).getByText('7/12')).toBeVisible()
+    expect(screen.getByTestId('scanner-route')).toHaveAttribute(
+      'data-location', `/scanner-history/${SCENARIO_RESULT_ID}`,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Collapse attacks in Technique One' }))
+    await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
+    expect(screen.getByText('Saved child objective')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Collapse atomic attack groups' }))
+    await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
+    expect(screen.getByText('Saved child objective')).toBeVisible()
+    expect(scenariosApi.getRunHierarchy).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses backend producer counts for executions rather than the loaded progress rows', () => {
+    mockHookState(makeState({
+      summary: {
+        ...SUMMARY,
+        overall: {
+          ...SUMMARY.overall,
+          producer_counts: {
+            target_facing: { attempts: 1000, errors: 0, retries: 0 },
+            orchestration: { attempts: 10, errors: 0, retries: 0 },
+            unknown: { attempts: 3, errors: 0, retries: 0 },
+          },
+        },
+      },
+    }))
+    renderPage()
+    const section = screen.getByRole('region', { name: 'Atomic attack groups' })
+    expect(within(section).getByText('1 group, 1,013 executions')).toBeVisible()
+  })
+
+  it('does not offer a nonexistent chat for a conversationless compound result', async () => {
+    const user = userEvent.setup()
+    mockHierarchy([hierarchyNode({
+      atomic_group_id: ATTEMPT.atomic_group_id,
+      conversation_id: '',
+    })])
+    renderPage()
+    await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
+    await user.click(await screen.findByRole('button', {
+      name: 'Open details for sequential-parent: Objective carried by the hierarchy node',
+    }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'sequential-parent' })
+    expect(within(dialog).queryByRole('link', { name: 'View conversation' })).not.toBeInTheDocument()
+    expect(within(dialog).getByText('No conversation was saved for this result.')).toBeVisible()
+  })
+
+  it('keeps the existing execution rows usable when relationship loading fails', async () => {
+    const user = userEvent.setup()
+    ;(scenariosApi.getRunHierarchy as jest.Mock).mockRejectedValueOnce(new Error('Relationships unavailable'))
+    renderPage()
+    await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
+    expect(await screen.findByText(/Could not load the result relationships:/)).toBeVisible()
+    const table = screen.getByRole('table', { name: 'Technique One attack results' })
+    await user.click(within(table).getByRole('link'))
+
+    expect(screen.getByTestId('attack-route')).toHaveAttribute(
+      'data-location',
+      `/attacks/attack-result-1/conversations/conversation-1?scenarioResultId=${SCENARIO_RESULT_ID}`,
+    )
+  })
+
+  it('preserves the suite return context through primary saved-chat navigation', async () => {
+    const user = userEvent.setup()
+    const navigationState = {
+      suiteExecutionId: 'suite-execution-1',
+      suiteName: 'Saved suite',
+      fromScenarioHistory: true,
+      scenarioHistorySearch: '?status=COMPLETED',
+    }
+    renderPage(`/scanner-history/${SCENARIO_RESULT_ID}`, navigationState)
+    await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
+    await user.click(screen.getByRole('row', { name: /^View conversation for attack-technique:/ }))
+
+    expect(screen.getByTestId('attack-route')).toHaveAttribute(
+      'data-navigation-state', JSON.stringify(navigationState),
+    )
+  })
+
+  it('offers to reload the result hierarchy after a failed run is resumed', async () => {
+    const user = userEvent.setup()
+    const failedState = makeState({ run: { ...makeState().run, status: 'FAILED' } })
+    mockHookState(failedState)
+    mockResumeRun.mockResolvedValueOnce({ ...failedState.run, status: 'QUEUED' })
+    mockApplyRunSummary.mockImplementationOnce(() => {
+      mockHookState({ ...failedState, run: { ...failedState.run, status: 'QUEUED' } })
+    })
+    mockHierarchy([hierarchyNode()], 'FAILED')
+    renderPage()
+
+    const hierarchy = screen.getByRole('region', { name: 'Atomic attack groups' })
+    await user.click(await screen.findByRole('button', { name: 'Expand attacks in Group' }))
+    await within(hierarchy).findByText('Objective carried by the hierarchy node')
+    expect(within(hierarchy).queryByRole('button', { name: 'Reload hierarchy' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Resume run' }))
+
+    expect(await within(hierarchy).findByRole('button', { name: 'Reload hierarchy' })).toBeInTheDocument()
+    expect(within(hierarchy).getByText(/This run is still in progress/)).toBeInTheDocument()
   })
 
   it('shows descriptive technique details without result metrics', async () => {
@@ -1254,22 +1507,25 @@ describe('ScenarioRunPage', () => {
     expect(within(dialog).queryByText('Errors')).not.toBeInTheDocument()
   })
 
-  it('navigates to attempt details from the whole execution row', async () => {
+  it('opens the saved chat from the whole execution row without a Details detour', async () => {
     const user = userEvent.setup()
     renderPage()
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
 
     expect(screen.queryByText('attack-result-1')).not.toBeInTheDocument()
-    const executionsTable = screen.getByRole('table', { name: 'Attack executions' })
-    expect(within(executionsTable).getByRole('columnheader', { name: 'Attack' })).toBeInTheDocument()
+    const executionsTable = screen.getByRole('table', { name: /attack results$/ })
+    expect(within(executionsTable).getByRole('columnheader', { name: 'Result / objective' })).toBeInTheDocument()
     const firstBodyRow = within(executionsTable).getAllByRole('row')[1]
-    expect(within(firstBodyRow).queryByRole('link')).not.toBeInTheDocument()
+    expect(within(firstBodyRow).getByRole('link')).toHaveAttribute(
+      'href',
+      `/attacks/attack-result-1/conversations/conversation-1?scenarioResultId=${SCENARIO_RESULT_ID}`,
+    )
     await user.click(firstBodyRow)
-    await waitFor(() => expect(screen.getByTestId('scanner-route')).toHaveAttribute(
+    await waitFor(() => expect(screen.getByTestId('attack-route')).toHaveAttribute(
       'data-location',
-      `/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`,
+      `/attacks/attack-result-1/conversations/conversation-1?scenarioResultId=${SCENARIO_RESULT_ID}`,
     ))
-    expect(await screen.findByRole('dialog', { name: 'attack-technique' })).toBeVisible()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('preserves scanner history context through attempt detail navigation', async () => {
@@ -1284,9 +1540,9 @@ describe('ScenarioRunPage', () => {
         },
       )
       await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
-      const executionsTable = screen.getByRole('table', { name: 'Attack executions' })
+      const executionsTable = screen.getByRole('table', { name: /attack results$/ })
 
-      await user.click(within(executionsTable).getAllByRole('row')[1])
+      await user.click(within(executionsTable).getByRole('button', { name: /^Open details for attack-technique:/ }))
 
       const dialog = await screen.findByRole('dialog', { name: 'attack-technique' })
       await user.click(within(dialog).getByRole('button', { name: 'Close' }))
@@ -1378,7 +1634,7 @@ describe('ScenarioRunPage', () => {
 
     expect(screen.getByRole('button', { name: 'Collapse attacks in Technique One' }))
       .toHaveAttribute('aria-expanded', 'true')
-    const executionsTable = screen.getByRole('table', { name: 'Attack executions' })
+    const executionsTable = screen.getByRole('table', { name: /attack results$/ })
     expect(within(executionsTable).getAllByRole('row')).toHaveLength(3)
     expect(within(executionsTable).getByText('attack-technique')).toBeInTheDocument()
     expect(within(executionsTable).getByText('attack-technique-two')).toBeInTheDocument()
@@ -1398,23 +1654,23 @@ describe('ScenarioRunPage', () => {
 
     expect(screen.getByText('Showing the latest 100 of 105 executions in this group.')).toBeInTheDocument()
     expect(screen.queryByText('attack-result-0')).not.toBeInTheDocument()
-    expect(within(screen.getByRole('table', { name: 'Attack executions' }))
+    expect(within(screen.getByRole('table', { name: /attack results$/ }))
       .getAllByRole('row')).toHaveLength(101)
   })
 
-  it('navigates to attempt details from the keyboard-accessible execution row', async () => {
+  it.each(['{Enter}', ' '])('opens the saved chat from the execution row with %s', async (key: string) => {
     const user = userEvent.setup()
     renderPage()
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
-    const executionRow = screen.getByRole('row', { name: 'View details for attack-technique' })
+    const executionRow = screen.getByRole('row', { name: /^View conversation for attack-technique:/ })
 
     executionRow.focus()
-    await user.keyboard('{Enter}')
-    await waitFor(() => expect(screen.getByTestId('scanner-route')).toHaveAttribute(
+    await user.keyboard(key)
+    await waitFor(() => expect(screen.getByTestId('attack-route')).toHaveAttribute(
       'data-location',
-      `/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`,
+      `/attacks/attack-result-1/conversations/conversation-1?scenarioResultId=${SCENARIO_RESULT_ID}`,
     ))
-    expect(await screen.findByRole('dialog', { name: 'attack-technique' })).toBeVisible()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('opens attempt details from a direct link and returns to the scanner on close', async () => {
@@ -1450,7 +1706,7 @@ describe('ScenarioRunPage', () => {
     }))
     renderPage()
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
-    await user.click(screen.getByRole('row', { name: 'View details for attack-technique' }))
+    await user.click(screen.getByRole('button', { name: /^Open details for attack-technique:/ }))
 
     const dialog = await screen.findByRole('dialog', { name: 'attack-technique' })
     expect(within(dialog).getByText('No score rationale was persisted.')).toBeInTheDocument()

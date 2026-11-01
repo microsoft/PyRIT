@@ -117,6 +117,16 @@ async def test_types_are_metadata_only_and_empty_instance_list_is_valid() -> Non
     assert missing is None
 
 
+async def test_list_scorers_rejects_a_cursor_that_names_no_instance() -> None:
+    """A stale cursor must raise, not silently restart at the first page."""
+    registry = ScorerRegistry.get_registry_singleton()
+    registry.instances.register(SubStringScorer(substring="expected"), name="judge")
+    service = ScorerService()
+
+    with pytest.raises(ValueError, match="cursor is not valid"):
+        await service.list_scorers_async(cursor="removed-scorer", limit=10)
+
+
 async def test_chat_catalog_checks_response_contract_and_full_identity() -> None:
     registry = ScorerRegistry.get_registry_singleton()
     scorer = SubStringScorer(substring="expected")
@@ -253,7 +263,7 @@ async def test_list_scorers_uses_sorted_names_and_cursor_pages() -> None:
     assert second.pagination.next_cursor is None
 
 
-@pytest.mark.parametrize("cursor", [None, "a-first", "missing", "z-last"])
+@pytest.mark.parametrize("cursor", [None, "a-first", "z-last"])
 async def test_list_scorers_projects_only_requested_page(cursor: str | None) -> None:
     registry = ScorerRegistry.get_registry_singleton()
     registry.register_class(_ServiceScorer)
