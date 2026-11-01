@@ -1173,3 +1173,55 @@ async def test_convert_audio_async_raises_on_channel_mismatch(
                 )
     finally:
         Path(wrong_channels_path).unlink(missing_ok=True)
+
+
+def _cancelled_target() -> MagicMock:
+    target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+    target.send_prompt_async = AsyncMock(side_effect=asyncio.CancelledError())
+    return target
+
+
+async def test_cancelled_target_call_persists_the_request_without_a_response(mock_memory_instance):
+    with pytest.raises(asyncio.CancelledError):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"),
+            target=_cancelled_target(),
+            conversation_id="cancelled-conversation",
+        )
+
+    [persisted] = [call.kwargs["request"] for call in mock_memory_instance.add_message_to_memory_async.await_args_list]
+    assert [piece.api_role for piece in persisted.message_pieces] == ["user"]
+    assert persisted.get_value() == "request"
+    assert persisted.get_piece().conversation_id == "cancelled-conversation"
+
+
+async def test_cancelled_send_that_never_reached_the_target_persists_nothing(mock_memory_instance):
+    conversation_id = "prepended-conversation"
+    target_context = PrependedHistorySendContext(
+        conversation_id=conversation_id,
+        seed_message_ids=(uuid4(),),
+        replay_seed_each_send=False,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"),
+            target=_cancelled_target(),
+            conversation_id=conversation_id,
+            send_context=target_context,
+        )
+
+    assert target_context.target_invocation_count == 0
+    mock_memory_instance.add_message_to_memory_async.assert_not_called()
+
+
+async def test_failure_to_persist_a_cancelled_request_does_not_mask_the_cancellation(mock_memory_instance):
+    mock_memory_instance.add_message_to_memory_async.side_effect = RuntimeError("database unavailable")
+
+    with pytest.raises(asyncio.CancelledError):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"), target=_cancelled_target()
+        )
+
+    mock_memory_instance.add_message_to_memory_async.assert_awaited_once()
