@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast, final
 from tqdm.auto import tqdm
 
 from pyrit.common import default_values, get_global_default_values
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import to_sha256
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
@@ -70,9 +71,12 @@ from pyrit.registry.resolution import resolve_declared_params, resolve_reference
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
+    DatasetSource,
+    DatasetSourceKind,
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage
+from pyrit.scenario.core.required_data import ScenarioRequiredData
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -256,6 +260,8 @@ class Scenario(ABC):
         # this to the caller-supplied config (or the default); defaulting it here means the
         # attribute always exists for context construction.
         self._dataset_config: DatasetAttackConfiguration = default_dataset_config
+        # Datasets the scenario reads in full to build its attacks, apart from dataset_config.
+        self._required_data: ScenarioRequiredData | None = None
 
         self._objective_scorer = objective_scorer
         self._objective_scorer_identifier = objective_scorer.get_identifier()
@@ -684,8 +690,10 @@ class Scenario(ABC):
         return estimate.model_copy(
             update={
                 "dataset_options": self.get_dataset_options(),
-                "dataset_defaults": project_dataset_settings(self._resolved_default_dataset_config),
-                "effective_datasets": project_dataset_settings(self._dataset_config),
+                "dataset_defaults": project_dataset_settings(
+                    self._resolved_default_dataset_config, required_data=self.get_required_data()
+                ),
+                "effective_datasets": project_dataset_settings(self._dataset_config, required_data=self._required_data),
             }
         )
 
@@ -911,15 +919,38 @@ class Scenario(ABC):
         self._dataset_config = (
             dataset_config if dataset_config is not None else self._resolved_default_dataset_config
         ).with_overrides()
+        self._required_data = self.get_required_data()
+        self._move_required_sources_out_of_dataset_config()
         options = self.get_dataset_options()
         raw_overrides = params.get("dataset_overrides")
         if raw_overrides is not None:
+            request = ScenarioDatasetRequest.model_validate(raw_overrides)
+            if self._required_data is not None:
+                self._required_data, request = self._required_data.apply_overrides(
+                    request=request, options=options, population_names=self._dataset_config.dataset_names
+                )
             self._dataset_config = apply_dataset_overrides(
                 config=self._dataset_config,
-                request=ScenarioDatasetRequest.model_validate(raw_overrides),
+                request=request,
                 options=options,
             )
+        self._load_required_data_like_dataset_config()
         self._validate_runtime_configuration()
+
+    def _load_required_data_like_dataset_config(self) -> None:
+        """
+        Read the required data with the population configuration's fetch policy and filters.
+
+        A configuration without sources of its own only limits assembled groups, so its fetch
+        policy and filters describe how the required data is loaded. Required sources keep their
+        own fetch settings.
+        """
+        config = self._dataset_config
+        if self._required_data is None or config.sources or config.source_kind is DatasetSourceKind.INLINE:
+            return
+        self._required_data = self._required_data.with_sources(
+            sources=self._required_data.sources, fetch=config.fetch, filters=config.filters
+        )
 
     def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
         """
@@ -930,6 +961,66 @@ class Scenario(ABC):
         """
         return self._default_dataset_config
 
+    def get_required_data(self) -> ScenarioRequiredData | None:
+        """
+        Return the datasets this scenario reads in full to build its attacks, if any.
+
+        Required data is prepared and refreshed like ``dataset_config`` sources but never
+        capped, sampled, or filtered. ``dataset_config`` then only selects and limits the
+        attack population. Override this when a scenario assembles its population from
+        ingredient datasets such as templates or registries.
+
+        Returns:
+            ScenarioRequiredData | None: The required data, or None when the scenario has none.
+        """
+        return None
+
+    def _move_required_sources_out_of_dataset_config(self) -> None:
+        """
+        Accept a ``dataset_config`` that still lists the scenario's required datasets as sources.
+
+        Before a scenario declared required data, its configuration listed those datasets as
+        sources. When a configuration of the default's class lists exactly the required datasets,
+        their fetch settings, providers, and filters move to the required data and the
+        configuration keeps only its limits. Size limits move too, so they still fail as before. Any other selection
+        is left for the scenario's own validation to reject.
+        """
+        required = self._required_data
+        config = self._dataset_config
+        if required is None or not config.sources or type(config) is not type(self._default_dataset_config):
+            return
+        if sorted(config.dataset_names) != sorted(required.dataset_names):
+            return
+        print_deprecation_message(
+            old_item=f"{type(config).__name__}(sources=<{type(self).__name__} required datasets>)",
+            new_item=(
+                f"{type(config).__name__} without those sources; {type(self).__name__} declares them as required data"
+            ),
+            removed_in="1.4.0",
+        )
+        # The legacy configuration read these datasets as its population, so its own validators
+        # validated the raw template/corpus seeds. Those seeds are now required data, so the
+        # validators move with them; the configuration keeps only its defaults and limits.
+        self._required_data = required.with_sources(
+            sources=[
+                DatasetSource(
+                    name=source.name,
+                    max_size=config.source_limit(source.name),
+                    fetch=source.fetch,
+                    provider=source.provider,
+                )
+                for source in config.sources
+            ],
+            fetch=config.fetch,
+            filters=config.filters,
+            validators=config._user_validators,
+        )
+        stripped = config.with_overrides(sources=[])
+        moved = set(config._user_validators)
+        stripped._validators = [validator for validator in stripped._validators if validator not in moved]
+        stripped._user_validators = []
+        self._dataset_config = stripped
+
     DATASET_OPTIONS: ClassVar[ScenarioDatasetOptions] = ScenarioDatasetOptions()
 
     def get_dataset_options(self) -> ScenarioDatasetOptions:
@@ -938,7 +1029,12 @@ class Scenario(ABC):
 
     def get_default_dataset_settings(self) -> ScenarioDatasetSettings:
         """Return the default dataset settings for the current parameters, without reading memory."""
-        return project_dataset_settings(self._resolve_default_dataset_config())
+        return project_dataset_settings(self._resolve_default_dataset_config(), required_data=self.get_required_data())
+
+    def get_default_dataset_names(self) -> list[str]:
+        """Return every dataset a default run loads: required data first, then the population sources."""
+        required = self.get_required_data()
+        return [*(required.dataset_names if required else []), *self._default_dataset_config.dataset_names]
 
     async def load_datasets_async(self) -> ScenarioDatasetSettings:
         """
@@ -948,8 +1044,21 @@ class Scenario(ABC):
             ScenarioDatasetSettings: Resolved settings, with the scan's policies unchanged.
         """
         self._resolve_runtime_configuration(require_objective_target=False)
+        if self._required_data is not None:
+            self._required_data.set_refresh_validator(self._validate_required_data_refresh_async)
+            await self._required_data.prepare_async(fetch=DatasetFetchPolicy.IF_MISSING)
         await self._dataset_config.prepare_async(fetch=DatasetFetchPolicy.IF_MISSING)
-        return project_dataset_settings(self._dataset_config)
+        return project_dataset_settings(self._dataset_config, required_data=self._required_data)
+
+    async def _validate_required_data_refresh_async(self) -> None:
+        """
+        Assemble the full unsampled population from refresh candidates before they replace stored data.
+
+        Runs during a required-data refresh while the candidate seeds are visible, so the assembled
+        groups and the population's validators are checked before any write. A rejected refresh then
+        leaves the stored required datasets unchanged and earlier runs can still resume.
+        """
+        await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
 
     def _validate_runtime_configuration(self) -> None:
         """
@@ -1068,6 +1177,9 @@ class Scenario(ABC):
         # builders check compatibility. Inputs outside the saved run must not affect resume.
         is_resume = self._scenario_result_id is not None
         if not is_resume:
+            if self._required_data is not None:
+                self._required_data.set_refresh_validator(self._validate_required_data_refresh_async)
+                await self._required_data.prepare_async()
             await self._dataset_config.prepare_async()
         seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
         if stored_plan is not None:
@@ -1398,7 +1510,9 @@ class Scenario(ABC):
             ScenarioIdentifier: The identifier describing this scenario run.
         """
         techniques = sorted({s.value for s in self._scenario_techniques})
-        datasets = list(self._dataset_config.dataset_names)
+        # Required data first, so moving ingredients out of dataset_config keeps stored identities.
+        required = self._required_data.dataset_names if self._required_data is not None else []
+        datasets = [*required, *self._dataset_config.dataset_names]
         # Persist only the scenario's own custom params. The framework common inputs
         # (objective_target, techniques, dataset config, ...) are captured through the
         # dedicated identity fields below and are often live, non-JSON-serializable
