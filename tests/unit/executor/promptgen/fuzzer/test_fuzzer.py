@@ -516,6 +516,37 @@ class TestFuzzerGenerator:
         )
         assert generator._is_jailbreak(false_score) is False
 
+    def test_update_mcts_rewards_stays_bounded_for_multi_score_batches(
+        self,
+        scoring_target: MockPromptTarget,
+        template_converters: list[FuzzerConverter],
+        mock_scorer: MagicMock,
+        fuzzer_context: FuzzerContext,
+    ) -> None:
+        """The reward is a rate over scored queries, so it stays in [0, 1].
+
+        A scorer may return several scores for one response, so dividing the
+        flattened jailbreak count by the configured prompt count produced
+        rewards above 1 and inflated the MCTS exploitation term.
+        """
+        from unittest.mock import MagicMock as _MagicMock
+
+        generator = FuzzerGenerator(
+            objective_target=scoring_target,
+            template_converters=template_converters,
+            scorer=mock_scorer,
+        )
+        explorer = _MagicMock()
+        generator._mcts_explorer = explorer
+
+        generator._update_mcts_rewards(context=fuzzer_context, jailbreak_count=3, num_queries=3)
+
+        reward = explorer.update_rewards.call_args.kwargs["reward"]
+        assert reward == 1.0
+
+        generator._update_mcts_rewards(context=fuzzer_context, jailbreak_count=1, num_queries=4)
+        assert explorer.update_rewards.call_args.kwargs["reward"] == 0.25
+
     def test_process_scoring_results_attributes_jailbreaks_to_scored_response(
         self,
         scoring_target: MockPromptTarget,
