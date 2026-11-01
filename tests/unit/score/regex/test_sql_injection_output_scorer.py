@@ -159,6 +159,19 @@ async def test_sqli_tautology_bypass_detected(*, text: str, rationale: str, patc
         "' OR 'a'='a b",
         "' OR 'a'='a.",
         '" OR "x"="x y',
+        "' OR 1=1.e2",
+        "' OR 'a'='a ",
+        "' OR 'a'='a\t\nNext line",
+        "' OR 'a'='a'b",
+        '" OR "a"="a"b',
+        "\" OR 'a'='a",
+        '\' OR "a"="a',
+        "' OR 'a'='A",
+        '" OR "a"="A"',
+        "' OR 'a'='a''b",
+        "' OR 'a'='a\"b",
+        '" OR "a"="a""b',
+        '" OR "a"="a\'b',
         "' ORDER BY 1=1",
     ],
 )
@@ -189,7 +202,16 @@ async def test_sqli_union_with_comment_separators_detected(text: str, patch_cent
 
 
 @pytest.mark.parametrize(
-    "text", ["UNION/**SELECT 1", "UNIONSELECT 1", "UNION/**/SELECTED 1", "UNION -- SELECT 1", "UNION # SELECT 1"]
+    "text",
+    [
+        "UNION/**SELECT 1",
+        "UNIONSELECT 1",
+        "UNION/**/SELECTED 1",
+        "UNION -- SELECT 1",
+        "UNION # SELECT 1",
+        "UNION--x\rSELECT 1",
+        "UNION/**/SELECT--x\r1",
+    ],
 )
 async def test_sqli_union_without_token_separator_not_detected(text: str, patch_central_database: MagicMock) -> None:
     scorer = SQLInjectionOutputScorer()
