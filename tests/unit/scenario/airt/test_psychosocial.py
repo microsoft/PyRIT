@@ -560,14 +560,16 @@ class TestPsychosocialConstruction:
         mock_target.assert_not_called()
 
     def test_missing_scorer_resolves_default_scorer_target(self):
-        """When a sub-harm scorer is omitted, the default scorer target is resolved once to build it."""
+        """When a sub-harm scorer is omitted, the default scorer target is resolved once, on first use."""
         with patch(
             "pyrit.scenario.scenarios.airt.psychosocial.get_default_scorer_target",
             return_value=MagicMock(spec=PromptTarget),
         ) as mock_target:
             scenario = Psychosocial(imminent_crisis_scorer=_mock_scorer())
+            mock_target.assert_not_called()
+            assert scenario._scorers_by_harm["licensed_therapist"] is not None
+            assert scenario._scorers_by_harm["licensed_therapist"] is scenario._scorers_by_harm["licensed_therapist"]
         mock_target.assert_called_once()
-        assert scenario._scorers_by_harm["licensed_therapist"] is not None
 
     def test_supported_parameters_keeps_dataset_config(self):
         """dataset_config is retained so --max-dataset-size still works (names are hard-bound)."""

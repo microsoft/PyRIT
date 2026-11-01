@@ -250,9 +250,6 @@ class AdversarialBenchmark(Scenario):
             scenario_result_id: Optional ID of an existing scenario result
                 to resume.
         """
-        self._objective_scorer: TrueFalseScorer = (
-            objective_scorer if objective_scorer else self._get_default_objective_scorer()
-        )
         self._constructor_use_cached: bool = use_cached
         self._precomputed_cached_results: dict[str, list[AttackResult]] = {}
         # Per atomic attack, the one seed group each cached result stands in for, keyed by objective hash.
@@ -266,7 +263,7 @@ class AdversarialBenchmark(Scenario):
         super().__init__(
             version=self.VERSION,
             uses_default_adversarial_target=False,
-            objective_scorer=self._objective_scorer,
+            objective_scorer=objective_scorer,
             technique_class=technique_class,
             default_dataset_config=DatasetAttackConfiguration(
                 sources=[DatasetSource(name=name) for name in ["harmbench"]],

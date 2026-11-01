@@ -484,7 +484,7 @@ class TestFoundryInitialization:
     def test_init_creates_default_scorer_when_not_provided(
         self, mock_get_scorer, mock_objective_target, mock_memory_seed_groups
     ):
-        """Test that initialization creates default scorer when not provided."""
+        """Test that the default scorer is used when none is provided, built on first use."""
         mock_scorer_instance = MagicMock(spec=TrueFalseScorer)
         mock_get_scorer.return_value = mock_scorer_instance
 
@@ -496,12 +496,13 @@ class TestFoundryInitialization:
         ):
             scenario = RedTeamAgent()
 
-            # Verify default scorer was used
-            mock_get_scorer.assert_called_once()
-            assert scenario._attack_scoring_config.objective_scorer == mock_scorer_instance
+            # The default scorer is not built at construction
+            mock_get_scorer.assert_not_called()
 
-            # seed_groups are resolved lazily during initialize_async
+            # It is built once, on first use, and shared by the scoring config and the scenario identity
             assert scenario._attack_scoring_config.objective_scorer == mock_scorer_instance
+            assert scenario._objective_scorer is mock_scorer_instance
+            mock_get_scorer.assert_called_once()
 
     async def test_init_raises_exception_when_no_datasets_available(self, mock_objective_target, mock_objective_scorer):
         """Test that initialization raises ValueError when datasets are not available in memory."""

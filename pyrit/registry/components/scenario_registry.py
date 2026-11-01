@@ -14,6 +14,7 @@ rather than by class name, so ``_discover``/``_get_registry_name`` are overridde
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -38,6 +39,8 @@ if TYPE_CHECKING:
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.scenario.core import Scenario
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -175,6 +178,33 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             if relative:
                 return relative
         return class_name_to_snake_case(cls.__name__, suffix="Scenario")
+
+    def _build_catalog_entry(self, name: str, cls: type[Scenario]) -> ScenarioMetadata | None:
+        """
+        Build a scenario's catalog entry, leaving out a scenario that cannot be described right now.
+
+        One scenario whose construction fails (for example, because a dependency it builds is not
+        configured) must not hide every other scenario from listings. It is logged and left out
+        instead. Looking it up by name still raises the underlying error. A scenario that is not
+        no-arg instantiable breaks the registry contract, so that ``TypeError`` still propagates.
+
+        Args:
+            name: The registry name of the scenario.
+            cls: The scenario class to describe.
+
+        Returns:
+            ScenarioMetadata | None: The scenario's metadata, or None if it is unavailable.
+
+        Raises:
+            TypeError: If ``cls()`` cannot be called with no arguments.
+        """
+        try:
+            return self._build_metadata(name, cls)
+        except TypeError:
+            raise
+        except Exception as exc:
+            logger.warning(f"Scenario {name!r} is unavailable and was left out of the catalog: {exc}")
+            return None
 
     def _build_metadata(self, name: str, cls: type[Scenario]) -> ScenarioMetadata:
         """

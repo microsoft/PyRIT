@@ -4,7 +4,9 @@
 """Tests for ScenarioRegistry._build_metadata and create_and_initialize_async."""
 
 import asyncio
+import os
 import threading
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,6 +20,8 @@ from pyrit.scenario.core import (
     get_default_adversarial_target,
     override_default_adversarial_target,
 )
+from pyrit.setup.initialization import reset_setup_registries
+from pyrit.setup.initializers.techniques import TechniqueInitializer
 from unit.mocks import MockPromptTarget
 
 
@@ -92,6 +96,42 @@ class _MarkdownMetadataScenario(_MetadataScenario):
 
     <script>alert("untrusted")</script>
     """
+
+
+class _UnavailableScenario(_MetadataScenario):
+    """A scenario whose construction fails because a dependency it builds is not configured."""
+
+    def __init__(self) -> None:
+        raise ValueError("Environment variable EXAMPLE_MODEL is required")
+
+
+def _registry_with(classes: dict[str, type]) -> ScenarioRegistry:
+    """Build a registry holding exactly ``classes``, skipping discovery of the built-in scenarios."""
+    registry = ScenarioRegistry()
+    registry._discovered = True
+    registry._classes = dict(classes)
+    return registry
+
+
+#: Environment variable prefixes that configure model-backed default targets.
+_MODEL_CREDENTIAL_PREFIXES = ("OPENAI_", "AZURE_", "OBJECTIVE_SCORER_CHAT_", "ADVERSARIAL_CHAT_")
+
+
+@pytest.fixture
+def no_model_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset every variable that could configure a default OpenAI-compatible target."""
+    for name in list(os.environ):
+        if name.startswith(_MODEL_CREDENTIAL_PREFIXES):
+            monkeypatch.delenv(name)
+
+
+@pytest.fixture
+async def core_techniques() -> AsyncGenerator[None, None]:
+    """Register the default technique catalog, as the default initializers do, then reset setup."""
+    reset_setup_registries()
+    await TechniqueInitializer().initialize_async()
+    yield
+    reset_setup_registries()
 
 
 @pytest.mark.parametrize("cancelled", [False, True])
@@ -292,3 +332,55 @@ async def test_create_and_initialize_async_omits_result_id_when_none() -> None:
     scenario.set_scenario_registry_name.assert_called_once_with(scenario_registry_name="my.scenario")
     scenario.set_params_from_args.assert_called_once_with(args={"objective_target": target})
     scenario.initialize_async.assert_awaited_once_with()
+
+
+@pytest.mark.usefixtures("patch_central_database", "no_model_credentials", "core_techniques")
+async def test_catalog_metadata_needs_no_model_credentials_async() -> None:
+    """Every built-in scenario can be listed and looked up without configured model targets."""
+    registry = ScenarioRegistry()
+
+    names = registry.get_class_names()
+    metadata = registry.get_all_registered_class_metadata()
+
+    assert [item.registry_name for item in metadata] == names
+    for name in ("technique.execute", "garak.encoding", "foundry.red_team_agent", "airt.psychosocial", "airt.scam"):
+        assert registry.get_registered_class_metadata(name) is not None
+
+
+def test_unavailable_scenario_is_left_out_of_listings() -> None:
+    """One scenario that cannot be constructed does not hide the others."""
+    registry = _registry_with({"available": _MetadataScenario, "unavailable": _UnavailableScenario})
+
+    with patch("pyrit.registry.components.scenario_registry.logger") as mock_logger:
+        metadata = registry.get_all_registered_class_metadata()
+
+    assert [item.registry_name for item in metadata] == ["available"]
+    assert registry.get_registered_class_metadata("available") is not None
+    assert "EXAMPLE_MODEL" in mock_logger.warning.call_args.args[0]
+
+
+def test_unavailable_scenario_lookup_raises_its_error() -> None:
+    """Looking up an unavailable scenario by name surfaces why it is unavailable."""
+    registry = _registry_with({"available": _MetadataScenario, "unavailable": _UnavailableScenario})
+
+    with pytest.raises(ValueError, match="EXAMPLE_MODEL is required"):
+        registry.get_registered_class_metadata("unavailable")
+    assert registry.get_registered_class_metadata("missing") is None
+
+
+def test_partial_catalog_is_not_cached() -> None:
+    """A scenario reappears in listings once whatever made it unavailable is fixed."""
+    registry = _registry_with({"available": _MetadataScenario, "flaky": _UnavailableScenario})
+    assert [item.registry_name for item in registry.get_all_registered_class_metadata()] == ["available"]
+
+    registry._classes["flaky"] = _MetadataScenario
+
+    assert [item.registry_name for item in registry.get_all_registered_class_metadata()] == ["available", "flaky"]
+
+
+def test_scenario_requiring_constructor_args_still_fails_listings() -> None:
+    """The no-arg constructor contract is a programming error, so it is not skipped."""
+    registry = _registry_with({"available": _MetadataScenario, "not_no_arg": _NotNoArgScenario})
+
+    with pytest.raises(TypeError, match="must be instantiable with no arguments"):
+        registry.get_all_registered_class_metadata()

@@ -147,7 +147,7 @@ class TestScopedAdversarialDefault:
         with override_default_adversarial_target(scoped):
             default_scenario = Scam(objective_scorer=scorer)
             explicit_scenario = Scam(objective_scorer=scorer, adversarial_chat=explicit)
-        assert default_scenario._adversarial_chat is scoped
+            assert default_scenario._adversarial_chat is scoped
         assert explicit_scenario._adversarial_chat is explicit
 
     @pytest.mark.parametrize("selection", ["scoped", "baked", "create"])

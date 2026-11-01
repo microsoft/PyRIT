@@ -53,7 +53,13 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack, build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.score import Scorer, SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
+from pyrit.score import (
+    Scorer,
+    SubStringScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseScoreAggregator,
+    TrueFalseScorer,
+)
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 
 # Reusable test scorer identifier
@@ -223,6 +229,28 @@ class ConcreteScenario(Scenario):
         if not self._atomic_attacks_to_return and scenario_techniques is None:
             return []
         return super()._resolve_scenario_techniques(scenario_techniques=scenario_techniques)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_default_objective_scorer_is_built_on_first_use() -> None:
+    """Without a scorer, construction defers the default so it needs no scorer target configured."""
+    default_scorer = MagicMock(spec=TrueFalseScorer)
+    default_scorer.get_identifier.return_value = _TEST_SCORER_ID
+    with patch.object(ConcreteScenario, "_get_default_objective_scorer", return_value=default_scorer) as get_default:
+        scenario = ConcreteScenario(version=1, objective_scorer=None)
+        get_default.assert_not_called()
+
+        assert scenario._objective_scorer_identifier == _TEST_SCORER_ID
+        assert scenario._objective_scorer is default_scorer
+    get_default.assert_called_once()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_explicit_objective_scorer_never_builds_default() -> None:
+    with patch.object(ConcreteScenario, "_get_default_objective_scorer") as get_default:
+        scenario = ConcreteScenario(version=1)
+        assert scenario._objective_scorer_identifier == _TEST_SCORER_ID
+    get_default.assert_not_called()
 
 
 @pytest.mark.usefixtures("patch_central_database")

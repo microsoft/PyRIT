@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from functools import cached_property
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common import apply_defaults
@@ -101,9 +102,6 @@ class FigStep(Scenario):
             objective_scorer (TrueFalseScorer | None): Scorer for harmful objective fulfillment.
             scenario_result_id (str | None): Optional scenario result ID to resume.
         """
-        objective_scorer = objective_scorer or self._get_default_objective_scorer()
-        self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
-
         super().__init__(
             version=self.VERSION,
             technique_class=FigStepTechnique,
@@ -115,6 +113,16 @@ class FigStep(Scenario):
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
+
+    @cached_property
+    def _scorer_config(self) -> AttackScoringConfig:
+        """
+        Scoring configuration built from the objective scorer the first time an attack needs it.
+
+        Returns:
+            AttackScoringConfig: A configuration whose objective scorer is ``_objective_scorer``.
+        """
+        return AttackScoringConfig(objective_scorer=self._objective_scorer)
 
     @staticmethod
     def _get_dataset_label(*, dataset_config: DatasetConfiguration) -> str:

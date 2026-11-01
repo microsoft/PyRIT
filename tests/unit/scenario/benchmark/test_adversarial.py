@@ -564,11 +564,14 @@ class TestAdversarialBenchmarkInit:
     """Tests for the collapsed ``__init__`` surface."""
 
     def test_construct_with_default_objective_scorer(self):
-        """When no scorer is supplied, ``_get_default_objective_scorer`` is consulted."""
+        """When no scorer is supplied, ``_get_default_objective_scorer`` is consulted on first use."""
         default_scorer = MagicMock(spec=TrueFalseScorer)
-        with patch.object(AdversarialBenchmark, "_get_default_objective_scorer", return_value=default_scorer):
+        with patch.object(
+            AdversarialBenchmark, "_get_default_objective_scorer", return_value=default_scorer
+        ) as get_default:
             bench = AdversarialBenchmark()
-        assert bench._objective_scorer is default_scorer
+            get_default.assert_not_called()
+            assert bench._objective_scorer is default_scorer
         assert bench.uses_default_adversarial_target is False
 
     def test_construct_with_explicit_objective_scorer(self):
