@@ -125,6 +125,7 @@ if TYPE_CHECKING:
         WordRegexSelectionStrategy,
         WordSelectionStrategy,
     )
+    from pyrit.converter.text_to_image_converter import TextToImageConverter
     from pyrit.converter.token_smuggling import (
         AsciiSmugglerConverter,
         SneakyBitsSmugglerConverter,
@@ -246,6 +247,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TenseConverter": "pyrit.converter.tense_converter",
     "TextJailbreakConverter": "pyrit.converter.text_jailbreak_converter",
     "TextSelectionStrategy": "pyrit.converter.text_selection_strategy",
+    "TextToImageConverter": "pyrit.converter.text_to_image_converter",
     "TokenSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "ToneConverter": "pyrit.converter.tone_converter",
     "ToxicSentenceGeneratorConverter": "pyrit.converter.toxic_sentence_generator_converter",

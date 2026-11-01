@@ -322,6 +322,7 @@ license-files = [
     "LICENSE",
     "LICENSES/Apache-2.0.txt",
     "LICENSES/PromptInject-MIT.txt",
+    "LICENSES/Ugly-Gerry.txt",
     "THIRD_PARTY_NOTICES.txt",
     "third_party/garak-provenance.json",
     "third_party/promptinject-provenance.json",
@@ -330,6 +331,7 @@ license-files = [
 [tool.setuptools.package-data]
 pyrit = [
     "_compatibility.json",
+    "converter/fonts/*.otf",
     "backend/frontend/**/*",
     "memory/alembic/**/*",
     "memory/alembic.ini",

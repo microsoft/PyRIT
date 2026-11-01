@@ -17,7 +17,7 @@
 #
 # This notebook covers the following image transformations:
 #
-# - **[Text to Image](#text-to-image)**: Convert text into images (grid composite, QR codes, text overlays, LSB steganography)
+# - **[Text to Image](#text-to-image)**: Render text with fonts, grid composites, QR codes, overlays, or LSB steganography
 # - **[Image to Text](#lsb-image-steganography)**: Recover text encoded by the LSB steganography converter
 # - **[Image to Image](#image-to-image)**: Modify or transform existing images
 
@@ -25,6 +25,48 @@
 # (text-to-image)=
 # ## Text to Image
 #
+#
+# (text-to-image-converter)=
+# ### TextToImageConverter
+#
+# `TextToImageConverter` renders text into a PNG on a new blank canvas; unlike
+# `AddImageTextConverter`, it does not require an existing background image.
+# By default it uses Pillow's built-in font. Set `font="ugly_gerry"` for the bundled
+# district-shaped font, or pass a local `.ttf` or `.otf` path as a string or `Path`.
+# Missing or corrupt font files raise an error instead of falling back to another font.
+#
+# The default and custom-font modes preserve case and expand tabs to four-column
+# stops. Glyph coverage and missing-glyph appearance depend on the selected font;
+# choose one that covers your text. Lines wrap at grapheme boundaries to fit
+# `max_width` (including `padding`), keeping combining marks and emoji sequences together;
+# the image grows vertically without clipping. Images over 16 million pixels
+# are rejected as soon as completed lines exceed that budget, and repeated font
+# measurements use a bounded per-render cache. The result is `image_path`,
+# intended for an image-capable target; it is not a Unicode text encoding.
+#
+# (ugly-gerry)=
+# The `ugly_gerry` preset uses [Ugly Gerry](https://en.wikipedia.org/wiki/Ugly_Gerry),
+# whose letters resemble United States congressional districts. Only this preset
+# uppercases ASCII letters and restricts input to letters, spaces, newlines, and
+# `! ' , . ?`; unsupported characters raise `ValueError`. Its font is bundled,
+# so no installation, download, model, or credentials are needed. Attribution and
+# the original "No Rights Reserved" statement are in `LICENSES/Ugly-Gerry.txt`.
+#
+# ```python
+# from pathlib import Path
+#
+# from pyrit.converter import TextToImageConverter
+# from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+#
+# await initialize_pyrit_async(memory_db_type=IN_MEMORY)
+# converter = TextToImageConverter()
+# result = await converter.convert_async(prompt="Mixed CASE: 123")
+# # Or select the bundled font:
+# converter = TextToImageConverter(font="ugly_gerry", font_size=64, max_width=1200, padding=20)
+# result = await converter.convert_async(prompt="Hello, world!")
+# # result.output_text is the PNG path; result.output_type is "image_path".
+# # For your own font: TextToImageConverter(font=Path("custom_font.otf"))
+# ```
 #
 # ### GridCompositeConverter
 #
