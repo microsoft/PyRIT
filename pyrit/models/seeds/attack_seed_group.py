@@ -195,6 +195,9 @@ class AttackSeedGroup(SeedGroup):
             )
 
         base_seeds = [copy.deepcopy(seed) for seed in self.seeds]
+        if technique.append_objective_prompt:
+            next_seq = max((p.sequence for p in self.prompts), default=-1) + 1
+            base_seeds.append(SeedPrompt(value=self.objective.value, data_type="text", role="user", sequence=next_seq))
         technique_seeds = [copy.deepcopy(seed) for seed in technique.seeds]
         idx = technique.insertion_index
         merged_seeds = (

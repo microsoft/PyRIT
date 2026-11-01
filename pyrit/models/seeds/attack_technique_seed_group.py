@@ -50,6 +50,8 @@ class AttackTechniqueSeedGroup(SeedGroup):
         ),
     )
 
+    append_objective_prompt: bool = False
+
     @classmethod
     def from_system_prompt(cls, system_prompt: str, *, insertion_index: int | None = None) -> Self:
         """
