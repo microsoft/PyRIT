@@ -140,6 +140,16 @@ function LegacyPresetEditorRedirect() {
   return <Navigate replace to={presetEditorRoutePath(routerPathParamValue(presetName))} />
 }
 
+function LegacyAttackRedirect() {
+  const { attackId, conversationId } = useParams<{ attackId: string; conversationId?: string }>()
+  const location = useLocation()
+  const path = conversationId === undefined
+    ? attackRoutePath(routerPathParamValue(attackId))
+    : attackConversationRoutePath(routerPathParamValue(attackId), routerPathParamValue(conversationId))
+
+  return <Navigate replace to={`${path}${location.search}${location.hash}`} />
+}
+
 /** Status of the in-flight attack load for an /attack/chat/:id route. */
 type AttackLoadStatus = 'loading' | 'success' | 'not-found' | 'error'
 
@@ -209,6 +219,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const { preferences, updatePreferences, error: preferenceError } = useUserPreferences()
   const defaultChatScorer = preferences.chatScorer !== undefined ? preferences.chatScorer
     : resolveChatScorerReference(preferences.lastUsedChatScorer, scorerRegistry.scorers)
+  const scorerDefaultsReady = preferences.chatScorer !== undefined
+    || preferences.lastUsedChatScorer == null || !scorerRegistry.loading
   const targetDefaults = useTargetPreferences(registry.targets)
   const draftHandoff = useChatDraftHandoff()
   const { clearPreservedDraft, dismissPendingImport } = draftHandoff
@@ -284,7 +296,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const operation = useOperationSelection(operationSelection, generation)
   const operationReady = operation.state.status === 'empty' || operation.state.status === 'resolved'
   const operationId = operation.state.status === 'resolved' ? operation.state.operation.id : null
-  const newActivityReady = defaultsReady && operationReady
+  const newActivityReady = defaultsReady && operationReady && !registry.loading && !registry.error
   const operationBlockedReason = defaultsReady && !operationReady && operation.state.status !== 'loading'
     ? getOperationWarning(operation.state)
     : undefined
@@ -758,6 +770,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       labels={globalLabels}
       operationId={operationId}
       defaultsReady={newActivityReady}
+      scorerDefaultsReady={scorerDefaultsReady}
       newActivityBlockedReason={operationBlockedReason}
       onNavigate={handleNavigate}
       attackOperator={readyAttack ? readyAttack.operator : null}
@@ -892,6 +905,11 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <Route
                 path="/attack/chat/:attackId/conversations/:conversationId"
                 element={chatElement}
+              />
+              <Route path="/attacks/:attackId" element={<LegacyAttackRedirect />} />
+              <Route
+                path="/attacks/:attackId/conversations/:conversationId"
+                element={<LegacyAttackRedirect />}
               />
               <Route path="/registry" element={<RegistryLayout />}>
                 <Route index element={<Navigate to="/registry/targets" replace />} />

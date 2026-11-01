@@ -1253,6 +1253,11 @@ export interface MessageSendStatus extends MessageSendConversation {
   conversations?: MessageSendConversation[]
 }
 
+export interface MessageSendObservation {
+  readProgress: (refresh?: boolean) => Promise<MessageSendStatus>
+  readAttack: (refresh?: boolean) => Promise<AttackSummary>
+}
+
 export interface AttackListResponse {
   items: AttackSummary[]
   pagination: PaginationInfo
