@@ -2268,7 +2268,6 @@ export interface RuntimeStatus {
   outcome: string
   message: string
 }
-export type FindingSeverity = 'critical' | 'important' | 'moderate' | 'low' | 'informational' | 'other'
 
 export interface OperationCreate {
   name: string
@@ -2298,7 +2297,8 @@ export interface OperationDetail extends Operation {
 }
 
 export interface OperationListItem extends Operation {
-  finding_counts: Partial<Record<FindingSeverity, number>>
+  /** Finding counts by stored severity, including severities that match no current option. */
+  finding_counts: Record<string, number>
 }
 
 export interface OperationListResponse {
@@ -2307,11 +2307,10 @@ export interface OperationListResponse {
 
 export interface FindingCreate {
   title: string
-  description: string
-  severity: FindingSeverity
-  severity_other?: string | null
-  harm_type?: string | null
-  harm_type_other?: string | null
+  /** A severity option key, or Other text. */
+  severity: string
+  /** Values of the other fields and of every level, by key. Severity isn't one of them. */
+  field_values: Record<string, string>
 }
 
 /** Resending the same id and content returns the finding an earlier, unanswered request saved. */
@@ -2321,8 +2320,46 @@ export interface FindingCreateRequest extends FindingCreate {
   attack_result_id?: string
 }
 
-export interface FindingOptionsResponse {
-  harm_types: string[]
+/** A finding edit. Each key in `remove_retired_keys` drops that retired value from the stored finding. */
+export interface FindingUpdateRequest extends FindingCreate {
+  remove_retired_keys: string[]
+}
+
+export type FindingFieldType = 'text' | 'multiline' | 'choice'
+
+export type FindingSeverityColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'gray' | 'dark' | 'neutral'
+
+export interface FindingFieldOption {
+  key: string
+  label: string
+  /** The options of the next dropdown when this option is chosen. */
+  children: FindingFieldOption[]
+}
+
+/** One field of the finding dialog, as the deployment defines it. */
+export interface FindingField {
+  key: string
+  label: string
+  type: FindingFieldType
+  required: boolean
+  options: FindingFieldOption[]
+  /** The `[key, label]` of each dropdown under a cascade's first one. */
+  levels: Array<[string, string]>
+  default: string | null
+  /** Whether a single-level choice also accepts typed text. */
+  allow_other: boolean
+  /** The severity slot's badge color for each top-level option. */
+  colors: Record<string, FindingSeverityColor>
+  hint: string | null
+  section: string | null
+  /** Shown on the dashboard but left out of the Word and Markdown exports. */
+  internal: boolean
+}
+
+/** The active finding fields: the severity slot and the fields shown after it. */
+export interface FindingFields {
+  severity: FindingField
+  fields: FindingField[]
 }
 
 export interface Finding extends FindingCreate {

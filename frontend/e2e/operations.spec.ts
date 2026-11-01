@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { test, expect } from '@playwright/test'
 
 import type {
-  CreateAttackResponse, Finding, FindingEvidenceAttachResponse, FindingExportFormat, Operation,
+  CreateAttackResponse, Finding, FindingEvidenceAttachResponse, FindingExportFormat, FindingFields, Operation,
 } from '../src/types'
 import { waitForAppReady } from './_runtime'
 
@@ -21,7 +21,7 @@ for (const width of [1280, 390]) {
     const severity = `Custom severity ${'classification'.repeat(16)}`
     const harmType = `Custom harm ${'unbroken'.repeat(25)}`
     const findingResponse = await request.post(`/api/operations/${operation.id}/findings`, {
-      headers, data: { title, severity: 'other', severity_other: severity, harm_type: 'Other', harm_type_other: harmType },
+      headers, data: { title, severity, field_values: { harm_type: harmType } },
     })
     expect(findingResponse.status()).toBe(201)
 
@@ -65,10 +65,7 @@ for (const width of [1280, 390]) {
     )).toBeTruthy()
     const label = dialog.locator('label').filter({ hasText: title })
     expect(await label.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy()
-    const pickerBadgeBox = await pickerBadge.boundingBox()
-    const harmBox = await dialog.getByText(`Harm-type: ${harmType}`, { exact: true }).boundingBox()
-    if (!pickerBadgeBox || !harmBox) throw new Error('Expected visible picker classifications.')
-    expect(pickerBadgeBox.y + pickerBadgeBox.height).toBeLessThanOrEqual(harmBox.y)
+    await expect(dialog.getByText(`Harm-type: ${harmType}`, { exact: true })).toHaveCount(0)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
     await radio.focus()
     await page.keyboard.press('Space')
@@ -116,7 +113,8 @@ test('creates a unique operation and records findings within it @seeded', async 
   dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('combobox', { name: 'Operation' })).toHaveCount(0)
   await dialog.getByRole('textbox', { name: 'Title' }).fill(title)
-  await dialog.getByRole('combobox', { name: 'Severity' }).selectOption('informational')
+  await dialog.getByRole('combobox', { name: 'Severity' }).click()
+  await page.getByRole('option', { name: 'Informational', exact: true }).click()
   await dialog.getByRole('textbox', { name: 'Description' }).fill(description)
   const savedResponse = page.waitForResponse(response =>
     response.url().endsWith(`/api/operations/${operation.id}/findings`) && response.request().method() === 'POST')
@@ -145,7 +143,7 @@ test('creates a unique operation and records findings within it @seeded', async 
   const headers = { 'PyRIT-Compatibility-ID': version.compatibility_id }
   for (let index = 0; index < 21; index++) {
     const response = await request.post(`/api/operations/${operation.id}/findings`, {
-      headers, data: { title: `Assessment ${index}`, description: '', severity: index === 20 ? 'critical' : 'low' },
+      headers, data: { title: `Assessment ${index}`, severity: index === 20 ? 'critical' : 'low' },
     })
 
     expect(response.status()).toBe(201)
@@ -189,7 +187,7 @@ test('renames an operation and deletes it only once it is empty @seeded', async 
     headers, data: { name: `Typo operation ${stamp}` },
   })).json()
   const finding: Finding = await (await request.post(`/api/operations/${operation.id}/findings`, {
-    headers, data: { title: 'Blocks deletion', description: '', severity: 'low' },
+    headers, data: { title: 'Blocks deletion', severity: 'low' },
   })).json()
 
   await page.goto(`/operations/${operation.id}`)
@@ -305,7 +303,7 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
     expect(other.ok()).toBeTruthy()
   }
   const finding = await request.post(`/api/operations/${operation.id}/findings`, {
-    headers, data: { title: 'Independent human finding', description: '', severity: 'low' },
+    headers, data: { title: 'Independent human finding', severity: 'low' },
   })
   expect(finding.status()).toBe(201)
   if (!sourceAttack) throw new Error('Expected a saved attack for the evidence test.')
@@ -370,7 +368,7 @@ test('exports selected findings as Word and Markdown @seeded', async ({ page, re
   // Saved out of severity order, so the document's order can only come from severity.
   const seeds = [
     { title: 'Export low', severity: 'low' },
-    { title: 'Export critical', severity: 'critical', description },
+    { title: 'Export critical', severity: 'critical', field_values: { description } },
     { title: longTitle, severity: 'informational' },
     ...Array.from({ length: 17 }, (_, index) => ({
       title: `Export moderate ${String(index).padStart(2, '0')}`, severity: 'moderate',
@@ -508,4 +506,64 @@ test('exports selected findings as Word and Markdown @seeded', async ({ page, re
 
   await page.goto(link)
   await expect(page.getByText('Saved offline evidence.', { exact: true })).toBeVisible()
+})
+
+test('keeps the page usable after removing a retired value and cancelling the edit @seeded', async ({
+  page, request,
+}) => {
+  const version = await (await request.get('/api/version')).json()
+  const headers = { 'PyRIT-Compatibility-ID': version.compatibility_id }
+  const fieldsResponse = await request.get('/api/operations/finding-fields', { headers })
+  expect(fieldsResponse.ok()).toBeTruthy()
+  const fields: FindingFields = await fieldsResponse.json()
+  const operationResponse = await request.post('/api/operations', {
+    headers, data: { name: `Retired values ${Date.now()}` },
+  })
+  expect(operationResponse.status()).toBe(201)
+  const operation: Operation = await operationResponse.json()
+  const title = 'Contoso retired notes'
+  const notes = 'Recorded before Contoso changed its finding fields.'
+  const findingResponse = await request.post(`/api/operations/${operation.id}/findings`, {
+    headers, data: { title, severity: 'low', field_values: { description: notes } },
+  })
+  expect(findingResponse.status()).toBe(201)
+  // The seeded backend accepts only known keys, so the browser gets the fields without Description instead,
+  // which makes the saved description a retired value.
+  await page.route('**/api/operations/finding-fields', async route => {
+    await route.fulfill({ json: { ...fields, fields: fields.fields.filter(field => field.key !== 'description') } })
+  })
+
+  await page.goto(`/operations/${operation.id}`)
+  await waitForAppReady(page)
+  const edit = page.getByRole('button', { name: `Edit finding: ${title}`, exact: true })
+  const dialog = page.getByRole('dialog', { name: 'Edit finding' })
+  const retired = dialog.getByRole('group', { name: 'Retired fields · read-only' })
+  const removeButton = retired.getByRole('button', { name: 'Remove retired value description', exact: true })
+  await edit.click()
+  await expect(retired.getByText(notes, { exact: true })).toBeVisible()
+  const confirmation = page.getByRole('dialog', { name: 'Remove description?' })
+  await removeButton.click()
+  await confirmation.getByRole('button', { name: 'Keep it', exact: true }).click()
+  await expect(confirmation).toHaveCount(0)
+  await expect(removeButton).toBeFocused()
+  await removeButton.click()
+  await expect(confirmation).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(confirmation).toHaveCount(0)
+  await expect(dialog).toBeVisible()
+  await expect(removeButton).toBeFocused()
+
+  await removeButton.click()
+  await confirmation.getByRole('button', { name: 'Remove', exact: true }).click()
+  await expect(confirmation).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'Undo', exact: true })).toBeFocused()
+  await expect(dialog.getByText('1 retired value is removed when you save.', { exact: true })).toBeVisible()
+  await expect(retired).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+
+  await edit.click()
+  await expect(dialog).toBeVisible()
+  await expect(retired.getByText(notes, { exact: true })).toBeVisible()
+  await expect(removeButton).toBeVisible()
 })

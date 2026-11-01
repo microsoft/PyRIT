@@ -73,7 +73,15 @@ if TYPE_CHECKING:
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.conversation_summary import ConversationSummary
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
-    from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, FindingSeverity
+    from pyrit.models.finding import Finding, FindingCreate, FindingEvidence
+    from pyrit.models.finding_fields import (
+        DEFAULT_FINDING_FIELDS,
+        FindingField,
+        FindingFields,
+        FindingFieldType,
+        FindingSeverityColor,
+        FindingValuesError,
+    )
     from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
     from pyrit.models.identifiers import (
         REGISTRY_NAME_PATTERN,
@@ -443,7 +451,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Finding": "pyrit.models.finding",
     "FindingCreate": "pyrit.models.finding",
     "FindingEvidence": "pyrit.models.finding",
-    "FindingSeverity": "pyrit.models.finding",
+    "DEFAULT_FINDING_FIELDS": "pyrit.models.finding_fields",
+    "FindingField": "pyrit.models.finding_fields",
+    "FindingFields": "pyrit.models.finding_fields",
+    "FindingFieldType": "pyrit.models.finding_fields",
+    "FindingSeverityColor": "pyrit.models.finding_fields",
+    "FindingValuesError": "pyrit.models.finding_fields",
     "ConversationType": "pyrit.models.messages.conversation_reference",
     "ContentEntryScorable": "pyrit.models.score",
     "ContentScorable": "pyrit.models.score",

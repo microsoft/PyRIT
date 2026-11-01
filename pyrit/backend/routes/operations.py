@@ -14,7 +14,7 @@ from pyrit.backend.models.operations import (
     FindingEvidenceListResponse,
     FindingExportRequest,
     FindingListResponse,
-    FindingOptionsResponse,
+    FindingUpdateRequest,
     OperationDetail,
     OperationListResponse,
     OperationUpdateRequest,
@@ -29,8 +29,8 @@ from pyrit.backend.services.operation_service import (
     OperationService,
 )
 from pyrit.memory.memory_interface import OperationInUseError
-from pyrit.models import Finding, FindingCreate, Operation, OperationCreate
-from pyrit.models.harm_category import HarmCategory
+from pyrit.models import Finding, FindingFields, FindingValuesError, Operation, OperationCreate
+from pyrit.setup.finding_fields import get_active_finding_fields
 
 T = TypeVar("T")
 
@@ -65,15 +65,15 @@ async def list_operations_async() -> OperationListResponse:
     return OperationListResponse(items=await OperationService().list_async())
 
 
-@router.get("/finding-options", response_model=FindingOptionsResponse)
-async def get_finding_options_async() -> FindingOptionsResponse:
+@router.get("/finding-fields", response_model=FindingFields)
+async def get_finding_fields_async() -> FindingFields:
     """
-    List the harm categories a finding can use.
+    Read the finding fields this deployment uses.
 
     Returns:
-        FindingOptionsResponse: Selectable categories, including Other.
+        FindingFields: The severity slot and the fields shown after it.
     """
-    return FindingOptionsResponse(harm_types=list(HarmCategory))
+    return get_active_finding_fields()
 
 
 @router.get("/{operation_id}", response_model=OperationDetail)
@@ -131,13 +131,14 @@ async def create_operation_finding_async(*, operation_id: UUID, request: Finding
     """
     Record a finding within an operation, optionally with one saved attack result as evidence.
 
-    Retrying with the same ID and content returns the saved finding.
+    Retrying with the same ID and content returns the saved finding, as long as it still fits the active finding fields.
 
     Returns:
         Finding: The saved finding.
 
     Raises:
-        HTTPException: 409 when the ID already belongs to a different finding.
+        HTTPException: 409 when the ID already belongs to a different finding, and 422 when the values
+            do not fit the active finding fields.
     """
     try:
         return await _require_operation_async(
@@ -145,6 +146,8 @@ async def create_operation_finding_async(*, operation_id: UUID, request: Finding
         )
     except FindingConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except FindingValuesError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
 
 @router.get("/{operation_id}/findings", response_model=FindingListResponse)
@@ -185,16 +188,28 @@ async def export_operation_findings_async(*, operation_id: UUID, request: Findin
 
 
 @router.put("/{operation_id}/findings/{finding_id}", response_model=Finding)
-async def update_operation_finding_async(*, operation_id: UUID, finding_id: UUID, request: FindingCreate) -> Finding:
+async def update_operation_finding_async(
+    *, operation_id: UUID, finding_id: UUID, request: FindingUpdateRequest
+) -> Finding:
     """
-    Replace the editable fields of a finding in its operation.
+    Replace a finding's current field values in its operation.
+
+    A current field left out is cleared. Values of fields that are no longer configured are kept and can't
+    change; list them in ``remove_retired_keys`` to delete them. Values that haven't changed may use options
+    that no longer exist.
 
     Returns:
         Finding: The updated finding.
+
+    Raises:
+        HTTPException: 422 when the values do not fit the active finding fields.
     """
-    return await _require_operation_async(
-        OperationService().update_finding_async(operation_id=operation_id, finding_id=finding_id, request=request)
-    )
+    try:
+        return await _require_operation_async(
+            OperationService().update_finding_async(operation_id=operation_id, finding_id=finding_id, request=request)
+        )
+    except FindingValuesError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
 
 @router.delete("/{operation_id}/findings/{finding_id}", status_code=status.HTTP_204_NO_CONTENT)

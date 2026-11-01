@@ -19,7 +19,6 @@ from sqlalchemy.schema import CreateTable
 
 from pyrit.memory.memory_models import (
     AttackResultEntry,
-    FindingEntry,
     FindingEvidenceEntry,
     OperationEntry,
     ScenarioResultEntry,
@@ -30,6 +29,24 @@ PREVIOUS_REVISION = "3f6a9d2c8b1e"
 REVISION = "c8d3e5f7a901"
 TABLES = {"OperationEntries", "FindingEntries", "FindingEvidenceEntries"}
 ACTIVITY_TABLES = ("AttackResultEntries", "ScenarioResultEntries")
+# FindingEntry models the head revision, which no longer has this revision's finding columns.
+FINDINGS = sa.table(
+    "FindingEntries",
+    *(
+        sa.column(name)
+        for name in (
+            "id",
+            "operation_id",
+            "title",
+            "description",
+            "severity",
+            "severity_other",
+            "harm_type",
+            "harm_type_other",
+            "created_at",
+        )
+    ),
+)
 
 
 def _config_for(connection: sa.Connection) -> Config:
@@ -65,6 +82,8 @@ def test_migration_adds_tables_without_changing_existing_ones() -> None:
             assert {name: columns for name, columns in after.items() if name not in ACTIVITY_TABLES} == {
                 name: columns for name, columns in existing.items() if name not in ACTIVITY_TABLES
             }
+            # check_schema_migrations compares the database with the head models.
+            command.upgrade(config, "head")
         check_schema_migrations(engine=engine)
     finally:
         engine.dispose()
@@ -128,28 +147,28 @@ def test_migration_enforces_unique_evidence_source() -> None:
     ],
 )
 def test_migration_rejects_inconsistent_finding_classifications(invalid: dict[str, str]) -> None:
-    valid = {"title": "Finding", "description": "", "severity": "low", "created_at": datetime.now(UTC)}
+    valid = {"title": "Finding", "description": "", "severity": "low", "created_at": "2026-10-09 12:00:00"}
     engine = sa.create_engine("sqlite:///:memory:")
     try:
         with engine.begin() as connection:
             command.upgrade(_config_for(connection), REVISION)
-            insert = sa.insert(FindingEntry)
-            connection.execute(insert.values(id=uuid4(), operation_id=uuid4(), **valid))
+            insert = sa.insert(FINDINGS)
+            connection.execute(insert.values(id=str(uuid4()), operation_id=str(uuid4()), **valid))
             # Harm types are unconstrained so HarmCategory can change without a migration.
             connection.execute(
-                insert.values(id=uuid4(), operation_id=uuid4(), **valid, harm_type="Not a current category")
+                insert.values(id=str(uuid4()), operation_id=str(uuid4()), **valid, harm_type="Not a current category")
             )
             connection.execute(
                 insert.values(
-                    id=uuid4(),
-                    operation_id=uuid4(),
+                    id=str(uuid4()),
+                    operation_id=str(uuid4()),
                     **{**valid, "severity": "other", "severity_other": "Custom"},
                     harm_type="Other",
                     harm_type_other="Custom",
                 )
             )
             with pytest.raises(IntegrityError, match="CHECK"):
-                connection.execute(insert.values(id=uuid4(), operation_id=uuid4(), **{**valid, **invalid}))
+                connection.execute(insert.values(id=str(uuid4()), operation_id=str(uuid4()), **{**valid, **invalid}))
     finally:
         engine.dispose()
 

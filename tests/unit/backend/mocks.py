@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Shared attack fixtures for backend service tests."""
+"""Shared attack and finding helpers for backend service tests."""
 
 import asyncio
 from collections.abc import AsyncGenerator
@@ -12,9 +12,16 @@ from unittest.mock import MagicMock
 from pyrit.backend.models.message_sends import MessageSendState, MessageSendStatus
 from pyrit.backend.services.message_send_service import MessageSendService
 from pyrit.memory import MemoryInterface
-from pyrit.models import AtomicAttackIdentifier, AttackOutcome, AttackResult, ComponentIdentifier
+from pyrit.models import AtomicAttackIdentifier, AttackOutcome, AttackResult, ComponentIdentifier, Finding
 from pyrit.prompt_target import PromptTarget
 from unit.async_utils import TEST_WATCHDOG_SECONDS
+
+
+async def read_finding_async(*, memory: MemoryInterface, finding: Finding) -> Finding:
+    """Read a finding back from memory, failing if it is gone."""
+    stored = await memory.get_finding_async(operation_id=finding.operation_id, finding_id=finding.id)
+    assert stored is not None
+    return stored
 
 
 async def _settle_send_async(
