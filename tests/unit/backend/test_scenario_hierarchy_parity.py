@@ -1227,7 +1227,17 @@ def test_hierarchy_traversal_halts_immediately_on_budget_exhaustion() -> None:
     )
     elapsed = time.perf_counter() - start_time
 
-    assert elapsed < 0.05, f"Expected <0.05s, got {elapsed:.4f}s"
+    # The halt itself is proven structurally below: with max_nodes=1 the
+    # projection contains exactly one node, is flagged truncated, and keeps
+    # the exact aggregate. Wall clock cannot guard the "immediate" part at
+    # this scale: the bounded traversal takes ~6ms and even a full build of
+    # all 1,000 nodes takes ~20ms, while contended CI runners have measured
+    # 1.7s for this call (run 41014283717) — noise is ~85x the full-work
+    # cost, so no tight bound separates "immediate" from "quadratic".
+    # Keep only a generous ceiling that still fails fast on a hung or
+    # catastrophically regressed traversal instead of waiting for the job
+    # to time out (see issue #3671).
+    assert elapsed < 5.0, f"Expected the bounded traversal to stay well under 5s, got {elapsed:.4f}s"
     assert projection.truncated is True
     # Count total nodes in projection
     node_count = sum(len(g.roots) for g in projection.groups)
