@@ -73,7 +73,7 @@
   "overrides": {
     "rollup": "4.59.0",
     "@tootallnate/once": "3.0.1",
-    "follow-redirects": "1.16.0",
+    "follow-redirects": "1.16.2",
     "js-yaml": "4.3.2",
     "postcss": "8.5.23",
     "ws": "8.21.0"
