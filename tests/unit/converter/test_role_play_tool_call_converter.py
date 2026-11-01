@@ -16,6 +16,10 @@ from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.registry import ConverterRegistry
 from pyrit.registry.resolution import derive_parameters
 
+# The converters persist their target exchanges through the normalizer, which needs memory.
+pytestmark = pytest.mark.usefixtures("patch_central_database")
+
+
 INCOMING_MESSAGE = "Please refund $25 to the original payment method for order-1."
 VALID_CALL = 'refund {"order": "order-1", "amount": 25}'
 ACTION_DESIRED = 'refund {"order": "order-1", "amount": 80}'
@@ -30,7 +34,7 @@ def isolate_defaults() -> Generator[None, None, None]:
 def _mock_target() -> MagicMock:
     target = MagicMock(spec=PromptTarget)
     response = Message(message_pieces=[MessagePiece(role="assistant", original_value="written message")])
-    target.send_prompt_async = AsyncMock(return_value=[response])
+    target.send_prompt_async = AsyncMock(side_effect=lambda **_: [response.duplicate()])
     target.get_identifier.return_value = get_mock_target_identifier("MockRolePlayTarget")
     return target
 

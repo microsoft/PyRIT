@@ -11,6 +11,9 @@ from pyrit.converter.math_prompt_converter import MathPromptConverter
 from pyrit.models import Message, MessagePiece, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 
+# The converters persist their target exchanges through the normalizer, which needs memory.
+pytestmark = pytest.mark.usefixtures("patch_central_database")
+
 
 async def test_math_prompt_converter_convert_async():
     # Mock the converter target - use MagicMock for synchronous methods

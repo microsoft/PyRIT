@@ -10,6 +10,9 @@ from pyrit.converter import PersuasionConverter
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.models import Message, MessagePiece
 
+# The converters persist their target exchanges through the normalizer, which needs memory.
+pytestmark = pytest.mark.usefixtures("patch_central_database")
+
 
 def test_persuasion_converter_raises_when_converter_target_is_none():
     with pytest.raises(ValueError, match="converter_target is required"):
@@ -75,7 +78,7 @@ async def test_persuasion_converter_send_prompt_async_bad_json_exception_retries
                 )
             ]
         )
-        mock_create.return_value = [message]
+        mock_create.side_effect = lambda **_: [message.duplicate()]
 
         with patch("asyncio.sleep", new_callable=AsyncMock):
             with pytest.raises(InvalidJsonException):
@@ -102,7 +105,9 @@ async def test_persuasion_converter_extracts_mutated_text(sqlite_instance):
             )
         ]
     )
-    with patch.object(prompt_target, "send_prompt_async", new=AsyncMock(return_value=[response])):
+    with patch.object(
+        prompt_target, "send_prompt_async", new=AsyncMock(side_effect=lambda **_: [response.duplicate()])
+    ):
         result = await prompt_persuasion.convert_async(prompt="testing")
     assert result.output_text == "rephrased prompt"
 
@@ -123,7 +128,9 @@ async def test_persuasion_converter_missing_mutated_text_raises_invalid_json(sql
             )
         ]
     )
-    with patch.object(prompt_target, "send_prompt_async", new=AsyncMock(return_value=[response])):
+    with patch.object(
+        prompt_target, "send_prompt_async", new=AsyncMock(side_effect=lambda **_: [response.duplicate()])
+    ):
         with patch("asyncio.sleep", new_callable=AsyncMock):
             with pytest.raises(InvalidJsonException, match="missing 'mutated_text' key"):
                 await prompt_persuasion.convert_async(prompt="testing")
