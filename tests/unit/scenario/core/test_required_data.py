@@ -140,6 +140,31 @@ async def test_refresh_that_fails_validation_keeps_stored_data_async(*, sqlite_i
 
 
 @pytest.mark.usefixtures("patch_central_database")
+async def test_refresh_validator_reads_candidates_before_any_write_async(*, sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[_dataset("a", count=3)], added_by="test")
+    provider = _provider(_dataset("a", count=1))
+    required = ScenarioRequiredData(
+        sources=[DatasetSource(name="a", provider=provider)],
+        fetch=DatasetFetchPolicy.ALWAYS,
+    )
+    seen: list[int] = []
+
+    async def reject_after_reading_async() -> None:
+        seen.append(len((await required.load_async())["a"]))
+        raise DatasetConstraintError("assembly rejected the refresh")
+
+    required.set_refresh_validator(reject_after_reading_async)
+
+    with pytest.raises(DatasetConstraintError, match="assembly rejected the refresh"):
+        await required.prepare_async()
+
+    # The validator saw the candidate (1 seed), not the stored data, and the rejection kept the stored 3.
+    assert seen == [1]
+    required.set_refresh_validator(None)
+    assert [seed.value for seed in (await required.load_async())["a"]] == ["a-0", "a-1", "a-2"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_filters_narrow_the_rows_that_are_read_async(*, sqlite_instance: SQLiteMemory) -> None:
     await sqlite_instance.add_seeds_to_memory_async(
         seeds=[

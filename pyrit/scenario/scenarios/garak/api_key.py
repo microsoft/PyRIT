@@ -139,14 +139,17 @@ class ApiKeyDatasetConfiguration(DatasetAttackConfiguration):
             )
 
 
-def _require_one_template_per_technique(resolved: ResolvedDataset) -> None:
+def _require_one_template_per_technique(resolved: ResolvedDataset, *, techniques: Sequence[ApiKeyTechnique]) -> None:
     """
-    Check the corpus has exactly one prompt template for each technique.
+    Check the corpus has exactly one prompt template for each selected technique.
+
+    A technique's template is only used by a run that selects it, so a GetKey-only run does not
+    require a CompleteKey template.
 
     Raises:
-        DatasetConstraintError: If a technique has no template, several, or a non-prompt one.
+        DatasetConstraintError: If a selected technique has no template, several, or a non-prompt one.
     """
-    for technique in (ApiKeyTechnique.GetKey, ApiKeyTechnique.CompleteKey):
+    for technique in techniques:
         templates = [
             seed
             for seed in resolved.seeds
@@ -253,8 +256,16 @@ class ApiKey(Scenario):
         """
         return ScenarioRequiredData(
             sources=[DatasetSource(name=name) for name in self.required_datasets()],
-            validators=[_require_one_template_per_technique],
+            validators=[self._validate_templates_for_selected_techniques],
         )
+
+    def _validate_templates_for_selected_techniques(self, resolved: ResolvedDataset) -> None:
+        """Require one template per technique the run actually selects."""
+        techniques = getattr(self._dataset_config, "_techniques", None) or [
+            ApiKeyTechnique.GetKey,
+            ApiKeyTechnique.CompleteKey,
+        ]
+        _require_one_template_per_technique(resolved, techniques=techniques)
 
     def _validate_runtime_configuration(self) -> None:
         config = self._dataset_config
