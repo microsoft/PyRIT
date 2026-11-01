@@ -392,7 +392,7 @@ class PromptNormalizer:
         if not converter_configurations:
             return raw_pcm
 
-        input_path = _write_pcm_to_temp_wav(
+        input_path = await _write_pcm_to_temp_wav_async(
             raw_pcm=raw_pcm,
             sample_rate_hz=sample_rate_hz,
             num_channels=num_channels,
@@ -411,7 +411,9 @@ class PromptNormalizer:
                 converter_configurations=converter_configurations,
                 message=message,
             )
-            actual_rate, actual_channels, actual_width, converted_pcm = _read_pcm_from_wav(piece.converted_value)
+            actual_rate, actual_channels, actual_width, converted_pcm = await asyncio.to_thread(
+                _read_pcm_from_wav, piece.converted_value
+            )
             if (actual_rate, actual_channels, actual_width) != (
                 sample_rate_hz,
                 num_channels,
@@ -425,7 +427,8 @@ class PromptNormalizer:
                 )
             return converted_pcm
         finally:
-            Path(input_path).unlink(missing_ok=True)
+            # The worker thread finishes the removal even if this await is cancelled.
+            await asyncio.to_thread(Path(input_path).unlink, missing_ok=True)
 
     async def _calc_hash_async(self, request: Message) -> None:
         """Add a request to the memory."""
@@ -498,6 +501,53 @@ class PromptNormalizer:
             (await self.memory.add_message_to_memory_async(request=request))
 
         return prepended_conversation
+
+
+async def _write_pcm_to_temp_wav_async(
+    *,
+    raw_pcm: bytes,
+    sample_rate_hz: int,
+    num_channels: int,
+    sample_width_bytes: int,
+) -> str:
+    """
+    Write the PCM to a new temp WAV file in a worker thread and return its path.
+
+    A worker thread cannot be stopped, so a cancelled caller would never learn the path of the
+    file the thread goes on to create. In that case the file is removed once the write finishes.
+
+    Args:
+        raw_pcm (bytes): Raw PCM audio samples (no WAV header).
+        sample_rate_hz (int): Sample rate of the PCM in Hz.
+        num_channels (int): Channel count.
+        sample_width_bytes (int): Bytes per sample.
+
+    Returns:
+        str: The path of the new temp WAV file.
+
+    Raises:
+        asyncio.CancelledError: If the caller is cancelled before the write finishes.
+    """
+    write = asyncio.ensure_future(
+        asyncio.to_thread(
+            _write_pcm_to_temp_wav,
+            raw_pcm=raw_pcm,
+            sample_rate_hz=sample_rate_hz,
+            num_channels=num_channels,
+            sample_width_bytes=sample_width_bytes,
+        )
+    )
+    try:
+        return await asyncio.shield(write)
+    except asyncio.CancelledError:
+        write.add_done_callback(_remove_abandoned_temp_wav)
+        raise
+
+
+def _remove_abandoned_temp_wav(write: asyncio.Future[str]) -> None:
+    """Remove the temp WAV a cancelled caller left behind, if the write produced one."""
+    if not write.cancelled() and write.exception() is None:
+        Path(write.result()).unlink(missing_ok=True)
 
 
 def _write_pcm_to_temp_wav(

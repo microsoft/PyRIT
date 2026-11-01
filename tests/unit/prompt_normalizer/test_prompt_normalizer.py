@@ -5,6 +5,7 @@ import asyncio
 import codecs
 import os
 import tempfile
+import threading
 import wave
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -45,6 +46,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import NormalizerRequest, PromptNormalizer
+from pyrit.prompt_normalizer import prompt_normalizer as prompt_normalizer_module
 from pyrit.prompt_normalizer.converter_configuration import (
     ConverterConfiguration,
 )
@@ -1173,3 +1175,119 @@ async def test_convert_audio_async_raises_on_channel_mismatch(
                 )
     finally:
         Path(wrong_channels_path).unlink(missing_ok=True)
+
+
+async def test_convert_audio_async_runs_file_work_off_the_event_loop(
+    mock_memory_instance, sample_pcm, dummy_audio_converter_config
+):
+    event_loop_thread = threading.get_ident()
+    file_work_threads: dict[str, int] = {}
+
+    def record_thread(name, function):
+        def run(*args, **kwargs):
+            file_work_threads[name] = threading.get_ident()
+            return function(*args, **kwargs)
+
+        return run
+
+    normalizer = PromptNormalizer()
+    with (
+        patch.object(
+            prompt_normalizer_module,
+            "_write_pcm_to_temp_wav",
+            side_effect=record_thread("write", prompt_normalizer_module._write_pcm_to_temp_wav),
+        ),
+        patch.object(
+            prompt_normalizer_module,
+            "_read_pcm_from_wav",
+            side_effect=record_thread("read", prompt_normalizer_module._read_pcm_from_wav),
+        ),
+        patch.object(Path, "unlink", autospec=True, side_effect=record_thread("unlink", Path.unlink)),
+        patch.object(normalizer, "convert_values_async", new_callable=AsyncMock),
+    ):
+        result = await normalizer.convert_audio_async(
+            raw_pcm=sample_pcm,
+            converter_configurations=[dummy_audio_converter_config],
+            sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+            num_channels=_AUDIO_NUM_CHANNELS,
+            sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+        )
+
+    assert result == sample_pcm
+    assert set(file_work_threads) == {"write", "read", "unlink"}
+    assert event_loop_thread not in file_work_threads.values()
+
+
+async def test_convert_audio_async_cleans_up_temp_file_when_cancelled_during_conversion(
+    mock_memory_instance, sample_pcm, dummy_audio_converter_config
+):
+    captured_paths: list[str] = []
+    converting = asyncio.Event()
+
+    async def capture_then_wait(*, converter_configurations, message):
+        captured_paths.append(message.message_pieces[0].converted_value)
+        converting.set()
+        await asyncio.Event().wait()
+
+    normalizer = PromptNormalizer()
+    with patch.object(normalizer, "convert_values_async", side_effect=capture_then_wait):
+        task = asyncio.create_task(
+            normalizer.convert_audio_async(
+                raw_pcm=sample_pcm,
+                converter_configurations=[dummy_audio_converter_config],
+                sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+                num_channels=_AUDIO_NUM_CHANNELS,
+                sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+            )
+        )
+        await converting.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert len(captured_paths) == 1
+    assert not Path(captured_paths[0]).exists()
+
+
+async def test_convert_audio_async_removes_temp_file_written_after_cancellation(
+    mock_memory_instance, sample_pcm, dummy_audio_converter_config
+):
+    write_started = threading.Event()
+    release_write = threading.Event()
+    written_paths: list[str] = []
+    write_pcm_to_temp_wav = prompt_normalizer_module._write_pcm_to_temp_wav
+
+    def write_after_release(**kwargs):
+        write_started.set()
+        release_write.wait(timeout=5)
+        written_paths.append(write_pcm_to_temp_wav(**kwargs))
+        return written_paths[-1]
+
+    normalizer = PromptNormalizer()
+    with (
+        patch.object(prompt_normalizer_module, "_write_pcm_to_temp_wav", side_effect=write_after_release),
+        patch.object(normalizer, "convert_values_async", new_callable=AsyncMock) as mock_convert,
+    ):
+        task = asyncio.create_task(
+            normalizer.convert_audio_async(
+                raw_pcm=sample_pcm,
+                converter_configurations=[dummy_audio_converter_config],
+                sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+                num_channels=_AUDIO_NUM_CHANNELS,
+                sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+            )
+        )
+        assert await asyncio.to_thread(write_started.wait, 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        release_write.set()
+        for _ in range(500):
+            if written_paths and not Path(written_paths[0]).exists():
+                break
+            await asyncio.sleep(0.01)
+
+    assert len(written_paths) == 1
+    assert not Path(written_paths[0]).exists()
+    mock_convert.assert_not_called()
