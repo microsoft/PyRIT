@@ -130,7 +130,7 @@ class DecisionScorer(MessageFloatScaleScorer):
         required_input_modalities=frozenset({frozenset({"text"})}),
         required_output_modalities=frozenset({frozenset({"text"})}),
     )
-    _DEFAULT_VALIDATOR = ScorerPromptValidator(supported_data_types=["text"], is_objective_required=True)
+    _DEFAULT_VALIDATOR = ScorerPromptValidator(supported_data_types=["text"])
 
     def __init__(self, *, chat_target: PromptTarget, decision_question_path: str | Path | None = None) -> None:
         """

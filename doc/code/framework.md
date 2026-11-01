@@ -115,19 +115,14 @@ The orchestration layers **nest from broadest to narrowest** — each owns less 
 - **Attack Technique** configures one executor with its converters, seeds, scorers, and strategy.
 - **Executor / Attack** runs the algorithm: sends to targets, applies converters, and branches on scorers.
 
+:::{div}
+:class: col-page-right
 
-```mermaid
-flowchart TB
-    subgraph SCEN["Scenario — owns parallelism &amp; resiliency"]
-        subgraph TECH["Attack Technique — executor + converters + seeds + scorers + strategy"]
-            subgraph ATK["Executor / Attack — drives the conversation"]
-                LEAF["sends to targets · applies converters · branches on scorers"]
-            end
-        end
-    end
-```
+![Scenarios package the complete run. Attack techniques configure attacks, converters, scorers, attack prompts, and helper targets. Dataset objectives and the objective target are run inputs. The registry instantiates components.](../assets/pyrit-components.svg)
 
+:::
 
+The boxes show configuration packaging, not runtime ownership. Dashed splits separate run inputs from technique configuration; arrows show component use, not a required execution order.
 
 # Core Components
 

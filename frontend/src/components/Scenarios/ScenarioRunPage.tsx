@@ -14,19 +14,38 @@ import { formatProgressSuccess, objectivePreview } from '@/components/AttackResu
 import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import { suiteExecutionRoutePath } from '@/components/ScenarioSuites/suiteRoutes'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
+import { useScenarioResultHierarchy } from '@/hooks/useScenarioResultHierarchy'
 import { useScenarioRunResume } from '@/hooks/useScenarioRunResume'
+import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ScenarioActiveConversation, ScenarioComponentIdentity, ScenarioProgressResult, ScenarioRunPlanSeedGroup, ScenarioRunState } from '@/types'
-import { attackConversationRoutePath, routerPathParamValue, scenarioConversationRoutePath, scenarioRerunRoutePath, scenarioRunAttackRoutePath, scenarioRunRoutePath } from '@/utils/routeParams'
+import type {
+  ScenarioActiveConversation,
+  ScenarioComponentIdentity,
+  ScenarioHierarchyNode,
+  ScenarioProgressResult,
+  ScenarioRunPlanSeedGroup,
+  ScenarioRunState,
+} from '@/types'
+import {
+  attackConversationRoutePath,
+  routerPathParamValue,
+  scenarioConversationRoutePath,
+  scenarioRerunRoutePath,
+  scenarioRunAttackRoutePath,
+  scenarioRunRoutePath,
+} from '@/utils/routeParams'
 import { isTerminalRunState } from '@/utils/scenarioRunProgress'
 
 import AttackExecutionTable from './AttackExecutionTable'
 import { ObjectiveDetailsDialog } from './ScenarioRunDialogs'
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
 import ScenarioRunTiming from './ScenarioRunTiming'
+import ScenarioResultHierarchy from './ScenarioResultHierarchy'
+import { hierarchyDisplayGroups } from './scenarioHierarchy'
 
-const MAX_VISIBLE_ATTEMPTS = 100
+const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
+const AUTO_EXPAND_GROUP_LIMIT = 20
 const STATE_COLORS: Record<ScenarioRunState, 'informative' | 'brand' | 'success' | 'danger' | 'warning'> = {
   CREATED: 'informative', QUEUED: 'informative', IN_PROGRESS: 'brand', COMPLETED: 'success', FAILED: 'danger', CANCELLED: 'warning',
 }
@@ -52,13 +71,27 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
   const navigate = useNavigate()
   const location = useLocation()
   const navigationState = location.state as {
-    scenarioHistorySearch?: string; suiteExecutionId?: string; suiteName?: string
+    fromScenarioHistory?: boolean
+    scenarioHistorySearch?: string
+    scenarioName?: string
+    suiteExecutionId?: string
+    suiteName?: string
   } | null
-  const backPath = navigationState?.suiteExecutionId ? suiteExecutionRoutePath(navigationState.suiteExecutionId)
-    : `/scanner/history${navigationState?.scenarioHistorySearch ?? ''}`
-  const backLabel = navigationState?.suiteExecutionId ? `Back to ${navigationState.suiteName ?? 'suite execution'}` : 'Back to scans'
+  const backPath = navigationState?.suiteExecutionId
+    ? suiteExecutionRoutePath(navigationState.suiteExecutionId)
+    : navigationState?.fromScenarioHistory || navigationState?.scenarioHistorySearch
+      ? `/scanner/history${navigationState.scenarioHistorySearch ?? ''}`
+      : navigationState?.scenarioName
+        ? `/scanner/launch/${encodeURIComponent(navigationState.scenarioName)}`
+        : '/scanner/launch'
+  const backLabel = navigationState?.suiteExecutionId
+    ? `Back to ${navigationState.suiteName ?? 'suite execution'}`
+    : navigationState?.fromScenarioHistory || navigationState?.scenarioHistorySearch
+      ? 'Back to scans'
+      : navigationState?.scenarioName ? 'Back to scenario' : 'Back to scanners'
   const { state, retry, applyRunSummary } = useScenarioRunProgress(scenarioResultId)
-  const [expanded, setExpanded] = useState<Set<string> | null>(null)
+  const hierarchy = useScenarioResultHierarchy(scenarioResultId, state.run !== null && state.summary !== null)
+  const queue = useScenarioQueue()
   const [identityExpanded, setIdentityExpanded] = useState(false)
   const [objective, setObjective] = useState<ScenarioRunPlanSeedGroup | null>(null)
   const [cancelOpen, setCancelOpen] = useState(false)
@@ -72,10 +105,24 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
   const active = Boolean(state.run && !isTerminalRunState(state.run.status))
   const resume = useScenarioRunResume({
     onResumed: applyRunSummary,
-    onRefresh: (succeeded: boolean): void => { if (!succeeded) retry() },
+    onRefresh: (succeeded: boolean): void => {
+      queue.retry()
+      if (!succeeded) retry()
+    },
   })
-  const seedObjectives = useMemo(() => new Map(state.plan?.seed_groups.map((seed) => [seed.id, seed.objective]) ?? []), [state.plan])
-  const planSeeds = useMemo(() => new Map(state.plan?.seed_groups.map((seed) => [seed.id, seed]) ?? []), [state.plan])
+  const [atomicGroupsExpandedChoice, setAtomicGroupsExpandedChoice] = useState<boolean | null>(null)
+  const [expandedGroupChoices, setExpandedGroupChoices] = useState<Map<string, boolean>>(new Map())
+  const detailsTriggerRef = useRef<HTMLElement | null>(null)
+  const atomicGroupsToggleRef = useRef<HTMLButtonElement | null>(null)
+  const [hierarchySelection, setHierarchySelection] = useState<ScenarioHierarchyNode | null>(null)
+  const seedObjectives = useMemo(
+    () => new Map(state.plan?.seed_groups.map((seed) => [seed.id, seed.objective]) ?? []),
+    [state.plan],
+  )
+  const planSeeds = useMemo(
+    () => new Map(state.plan?.seed_groups.map((seed) => [seed.id, seed]) ?? []),
+    [state.plan],
+  )
   const attemptsBySeed = useMemo(() => {
     const groups = new Map<string, ScenarioProgressResult[]>()
     for (const attempt of state.results) {
@@ -84,6 +131,43 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
       groups.set(attempt.seed_group_id, attempts)
     }
     return groups
+  }, [state.results])
+  const plannedAtomicGroups = useMemo(
+    () => new Map(state.plan?.atomic_groups.map((group) => [group.id, group]) ?? []),
+    [state.plan],
+  )
+  const progressAtomicGroups = useMemo(
+    () => new Map(state.summary?.atomic_groups.map((group) => [group.id, group]) ?? []),
+    [state.summary],
+  )
+  // A hierarchy node can be opened before the paged progress feed has delivered it.
+  const selectedAttempt = useMemo<ScenarioProgressResult | ScenarioHierarchyNode | ScenarioActiveConversation | null>(
+    () =>
+      state.results.find((attempt) => attempt.attack_result_id === attackResultId) ??
+      state.activeConversations.find((conversation) => conversation.attack_result_id === attackResultId) ??
+      (hierarchySelection?.attack_result_id === attackResultId ? hierarchySelection : null),
+    [attackResultId, state.results, state.activeConversations, hierarchySelection],
+  )
+  const selectedAtomicGroupId = selectedAttempt && 'atomic_group_id' in selectedAttempt
+    ? selectedAttempt.atomic_group_id
+    : null
+  const selectedAttemptGroup = selectedAtomicGroupId
+    ? plannedAtomicGroups.get(selectedAtomicGroupId)
+    : undefined
+  // Attempts are grouped by atomic group id, then truncated per group, so expanding an
+  // older group still shows its own executions rather than an empty table.
+  const attemptsByGroupId = useMemo(() => {
+    const groupedAttempts = new Map<string, ScenarioProgressResult[]>()
+    for (let index = state.results.length - 1; index >= 0; index -= 1) {
+      const attempt = state.results[index]
+      const existing = groupedAttempts.get(attempt.atomic_group_id)
+      if (existing) {
+        existing.push(attempt)
+      } else {
+        groupedAttempts.set(attempt.atomic_group_id, [attempt])
+      }
+    }
+    return groupedAttempts
   }, [state.results])
   const datasetsBySeed = useMemo(() => {
     const identities = new Map<string, ScenarioComponentIdentity[]>()
@@ -103,34 +187,41 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
     }
     return [...recorded.values()]
   }, [state.results, state.recordedConversations])
-  const attemptsByGroup = useMemo(() => {
-    const groups = new Map<string, ScenarioProgressResult[]>()
-    for (const attempt of [...state.results].reverse()) {
-      const attempts = groups.get(attempt.atomic_group_id) ?? []
-      attempts.push(attempt)
-      groups.set(attempt.atomic_group_id, attempts)
-    }
-    return groups
-  }, [state.results])
-  const selected = state.results.find((attempt) => attempt.attack_result_id === attackResultId)
   const selectedActive = state.activeConversations.find((conversation) => conversation.attack_result_id === attackResultId)
-  const selectedGroup = state.plan?.atomic_groups.find((group) => group.id === selected?.atomic_group_id)
-  const techniqueDetails = selectedActive?.technique_details
-    ?? state.summary?.atomic_groups.find((group) => group.id === selected?.atomic_group_id)?.technique_details
   const runPath = scenarioRunRoutePath(scenarioResultId)
 
-  function closeDetails(): void {
+  const closeAttemptDetails = (): void => {
     navigate(runPath, { replace: true, state: location.state })
     requestAnimationFrame(() => {
-      const target = detailsTrigger.current
-      if (target?.isConnected) target.focus()
-      else overviewTarget.current?.focus()
+      const trigger = detailsTriggerRef.current ?? detailsTrigger.current
+      const focusTarget = trigger?.isConnected ? trigger : atomicGroupsToggleRef.current ?? overviewTarget.current
+      focusTarget?.focus()
     })
   }
 
+  const openAttemptDetails = (
+    attempt: ScenarioProgressResult | ScenarioHierarchyNode,
+    trigger: HTMLElement,
+  ): void => {
+    detailsTriggerRef.current = trigger
+    detailsTrigger.current = trigger
+    setHierarchySelection('result_role' in attempt ? attempt : null)
+    navigate(scenarioRunAttackRoutePath(scenarioResultId, attempt.attack_result_id), { state: location.state })
+  }
+
+  const toggleDisplayGroup = (groupId: string, defaultExpanded: boolean): void => {
+    setExpandedGroupChoices((current) => new Map(current).set(
+      groupId,
+      !(current.get(groupId) ?? defaultExpanded),
+    ))
+  }
+
   function openDetails(attempt: ScenarioProgressResult, trigger: HTMLElement): void {
-    detailsTrigger.current = objective ? objectiveTrigger.current : trigger
+    const focusTarget = objective ? objectiveTrigger.current : trigger
+    detailsTriggerRef.current = focusTarget
+    detailsTrigger.current = focusTarget
     setObjective(null)
+    setHierarchySelection(null)
     navigate(scenarioRunAttackRoutePath(scenarioResultId, attempt.attack_result_id), { state: location.state })
   }
 
@@ -174,22 +265,27 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
   const overall = summary.overall
   const outcomes = overall.outcomes
   const groups = summary.display_groups ?? summary.techniques
-  const defaultExpanded = groups.find((group) => (group.atomic_group_ids ?? []).some((id: string) => attemptsByGroup.has(id)))?.id ?? groups[0]?.id
-  const selectedAttempt = selected ?? selectedActive
   const firstError = state.results.find((attempt) => attempt.outcome === 'error')
   const controlError = rerunError ?? resume.error
     ?? (resume.executionError !== run.error ? resume.executionError : null)
   const notices: string[] = []
   if (state.overloadSummaries.length > 0) notices.push('Service overload detected.')
-  const unmatched = summary.unattributed_attempts ?? 0
+  const unattributedAttempts = summary.unattributed_attempts ?? 0
+  const unmatched = unattributedAttempts
   if (unmatched > 0) notices.push(`${unmatched} execution${unmatched === 1 ? '' : 's'} could not be matched to the saved plan.`)
   if (!state.planComplete) notices.push('The saved execution plan is incomplete; some totals cannot be verified.')
-
+  const objectiveScorer = summary.objective_scorer
+  const displayGroups = hierarchyDisplayGroups(groups, hierarchy.roots.groups)
+  const producerCounts = overall.producer_counts
+  const executionCount = producerCounts
+    ? producerCounts.target_facing.attempts + producerCounts.orchestration.attempts + producerCounts.unknown.attempts
+    : state.results.length
+  const atomicGroupsExpanded = atomicGroupsExpandedChoice ?? displayGroups.length <= AUTO_EXPAND_GROUP_LIMIT
   return (
     <main className={styles.root} data-testid="scenario-run-page">
       <div className={styles.content}>
         <Link to={backPath} className={styles.backLink}><ArrowLeftRegular /> {backLabel}</Link>
-        <Text role="status" aria-live="polite" className={styles.liveStatus}>
+        <Text role="status" aria-label="Run status updates" aria-live="polite" className={styles.liveStatus}>
           {!active ? `${run.scenario_registry_name ?? run.scenario_name}: ${run.status.toLowerCase()}.` : ''}
         </Text>
         <header className={styles.header} ref={overviewTarget} tabIndex={-1}>
@@ -285,24 +381,103 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
           </div>)}
         </section>}
         <section className={styles.section} aria-labelledby="atomic-groups-heading">
-          <div className={styles.sectionHeading}><Text as="h2" id="atomic-groups-heading" size={500} weight="semibold">Atomic attack groups</Text><Text size={200} className={styles.sectionHint}>{groups.length} groups</Text></div>
-          <div className={styles.displayGroupList}>{groups.map((group) => {
-            const attempts = (group.atomic_group_ids ?? []).flatMap((id: string) => attemptsByGroup.get(id) ?? [])
-            const isExpanded = expanded?.has(group.id) ?? group.id === defaultExpanded
-            return <article key={group.id} className={styles.displayGroup}>
-              <div className={styles.compactGroupSummary}>
-                <Button appearance="subtle" className={styles.expandButton} icon={isExpanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
-                  aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${group.display_group}`} aria-expanded={isExpanded}
-                  onClick={() => { setExpanded((current: Set<string> | null) => { const next = new Set(current ?? (defaultExpanded ? [defaultExpanded] : [])); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next }) }} />
-                <Text weight="semibold">{group.display_group}</Text>
-                <Text size={200} className={styles.sectionHint}>Attack success {formatProgressSuccess(group)}</Text>
-                <Text size={200} className={styles.sectionHint}>{group.completed}{group.planned === null ? '' : ` / ${group.planned}`} complete</Text>
-              </div>
-              {isExpanded && <AttackExecutionTable attempts={attempts.slice(0, MAX_VISIBLE_ATTEMPTS)} totalAttempts={attempts.length}
-                seedObjectives={seedObjectives} onOpenDetails={openDetails} scenarioResultId={scenarioResultId} />}
-            </article>
-          })}</div>
-          {groups.length === 0 && <Text className={styles.sectionHint}>Attack groups will appear when the plan is ready.</Text>}
+          <div className={styles.sectionHeading}>
+            <div className={styles.objectivesHeading}>
+              <Text as="h2" id="atomic-groups-heading" size={500} weight="semibold">
+                Atomic attack groups
+              </Text>
+              <Button
+                appearance="subtle"
+                className={styles.touchTarget}
+                icon={atomicGroupsExpanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
+                aria-expanded={atomicGroupsExpanded}
+                aria-controls="atomic-groups-panel"
+                aria-label={`${atomicGroupsExpanded ? 'Collapse' : 'Expand'} atomic attack groups`}
+                data-testid="toggle-atomic-groups-btn"
+                ref={atomicGroupsToggleRef}
+                onClick={() => setAtomicGroupsExpandedChoice(!atomicGroupsExpanded)}
+              >
+              </Button>
+            </div>
+            <Text className={styles.sectionHint}>
+              {`${displayGroups.length.toLocaleString()} group${displayGroups.length === 1 ? '' : 's'}, ${executionCount.toLocaleString()} ${producerCounts ? '' : 'loaded '}execution${executionCount === 1 ? '' : 's'}`}
+            </Text>
+          </div>
+          <div id="atomic-groups-panel" hidden={!atomicGroupsExpanded}>
+            {atomicGroupsExpanded && (
+              <ScenarioResultHierarchy hierarchy={hierarchy} runStatus={run.status}>
+                {displayGroups.length === 0 ? (
+                  <EmptyState text="No atomic attack groups have been persisted yet." />
+                ) : (
+                  <div className={styles.displayGroupList}>
+                    {displayGroups.map((group) => {
+                      const attempts = (group.atomic_group_ids ?? [])
+                        .flatMap((atomicGroupId) => attemptsByGroupId.get(atomicGroupId) ?? [])
+                      const defaultExpanded = displayGroups.length <= AUTO_EXPAND_GROUP_LIMIT
+                      const expanded = expandedGroupChoices.get(group.id) ?? defaultExpanded
+                      const panelId = `atomic-group-${group.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+                      return (
+                        <article key={group.id} className={styles.displayGroup}>
+                          <div className={styles.displayGroupSummary}>
+                            <Button
+                              appearance="subtle"
+                              className={styles.expandButton}
+                              icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
+                              aria-expanded={expanded}
+                              aria-controls={panelId}
+                              aria-label={`${expanded ? 'Collapse' : 'Expand'} attacks in ${group.display_group}`}
+                              onClick={() => toggleDisplayGroup(group.id, defaultExpanded)}
+                            />
+                            <span className={styles.displayGroupIdentity}>
+                              <Text size={400} weight="semibold">{group.display_group}</Text>
+                              <Text size={200} className={styles.sectionHint}>
+                                {group.atomic_attack_names.join(', ')}
+                              </Text>
+                            </span>
+                            <span className={styles.displayGroupMetrics}>
+                              <DisplayGroupMetric
+                                label="Completed"
+                                value={formatCompletion(group.completed, group.planned)}
+                              />
+                              <DisplayGroupMetric
+                                label="Attack success"
+                                value={formatSuccess(group.succeeded, group.completed, group.success_percentage)}
+                              />
+                              <DisplayGroupMetric label="Errors" value={String(group.errors)} />
+                              <DisplayGroupMetric label="Retries" value={String(group.retries)} />
+                            </span>
+                          </div>
+                          {expanded && (
+                            <div
+                              id={panelId}
+                              className={styles.displayGroupPanel}
+                              aria-label={`${group.display_group} attack executions`}
+                            >
+                              <AttackExecutionTable
+                                scenarioResultId={scenarioResultId}
+                                label={`${group.display_group} attack results`}
+                                attempts={attempts.slice(0, MAX_VISIBLE_ATTEMPTS_PER_GROUP)}
+                                totalAttempts={attempts.length}
+                                roots={hierarchy.roots.groups
+                                  .filter((savedGroup) => group.atomic_group_ids.includes(savedGroup.atomic_group_id))
+                                  .flatMap((savedGroup) => savedGroup.roots)}
+                                hierarchy={hierarchy}
+                                seedObjectives={seedObjectives}
+                                onOpenDetails={openAttemptDetails}
+                                showTimestamp={false}
+                                showConversationLink
+                                booleanOutcome
+                              />
+                            </div>
+                          )}
+                        </article>
+                      )
+                    })}
+                  </div>
+                )}
+              </ScenarioResultHierarchy>
+            )}
+          </div>
         </section>
         <section className={styles.section} aria-labelledby="objectives-heading">
           <Text as="h2" id="objectives-heading" size={500} weight="semibold">Datasets &amp; objectives</Text>
@@ -340,19 +515,84 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
           <Button appearance="primary" disabled={cancelling} onClick={() => { void cancel() }}>{cancelling ? 'Cancelling...' : 'Cancel scan'}</Button>
         </DialogActions></DialogBody></DialogSurface>
       </Dialog>
-      <Dialog open={Boolean(selectedAttempt)} onOpenChange={(_, data) => { if (!data.open) closeDetails() }}>
-        <DialogSurface className={styles.attackDetailDialogSurface}><DialogBody className={styles.attackDetailDialogBody}>
-          <DialogTitle action={<Button appearance="subtle" icon={<DismissRegular />} aria-label="Close attack details" onClick={closeDetails} />}>{selectedAttempt?.atomic_attack_name}</DialogTitle>
-          <DialogContent className={styles.attackDetailDialogContent}>{selectedAttempt && <AttackAttemptDetails attempt={selectedAttempt}
-            objective={selectedActive?.objective ?? seedObjectives.get(selected?.seed_group_id ?? '')}
-            atomicGroup={selectedGroup} techniqueDetails={techniqueDetails} objectiveScorer={summary.objective_scorer}
-            conversationPath={selectedActive ? scenarioConversationRoutePath(scenarioResultId, selectedActive.conversation_id)
-              : attackConversationRoutePath(selectedAttempt.attack_result_id, selectedAttempt.conversation_id, scenarioResultId)} />}</DialogContent>
-        </DialogBody></DialogSurface>
+      <Dialog
+        open={selectedAttempt !== null}
+        onOpenChange={(_, data) => {
+          if (!data.open) {
+            closeAttemptDetails()
+          }
+        }}
+      >
+        <DialogSurface className={styles.attackDetailDialogSurface}>
+          <DialogBody className={styles.attackDetailDialogBody}>
+            <DialogTitle
+              action={(
+                <Button
+                  appearance="subtle"
+                  icon={<DismissRegular />}
+                  aria-label="Close attack details"
+                  onClick={closeAttemptDetails}
+                />
+              )}
+            >
+              {selectedAttempt?.atomic_attack_name || 'Attack attempt'}
+            </DialogTitle>
+            {selectedAttempt && (
+              <DialogContent className={styles.attackDetailDialogContent}>
+                <AttackAttemptDetails
+                  attempt={selectedAttempt}
+                  objective={
+                    (hierarchySelection?.attack_result_id === selectedAttempt.attack_result_id
+                      ? hierarchySelection.objective
+                      : null) ??
+                    ('objective' in selectedAttempt ? selectedAttempt.objective : null) ??
+                    (selectedAttempt.seed_group_id ? seedObjectives.get(selectedAttempt.seed_group_id) : null) ??
+                    null
+                  }
+                  atomicGroup={selectedAttemptGroup}
+                  techniqueDetails={selectedActive?.technique_details
+                    ?? (selectedAtomicGroupId ? progressAtomicGroups.get(selectedAtomicGroupId)?.technique_details : null)}
+                  objectiveScorer={objectiveScorer}
+                  conversationPath={selectedActive
+                    ? scenarioConversationRoutePath(scenarioResultId, selectedActive.conversation_id)
+                    : selectedAttempt.conversation_id
+                      ? attackConversationRoutePath(selectedAttempt.attack_result_id, selectedAttempt.conversation_id, scenarioResultId)
+                      : null}
+                  conversationState={location.state}
+                />
+              </DialogContent>
+            )}
+            <DialogActions>
+              <Button appearance="primary" onClick={closeAttemptDetails}>Close</Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
       </Dialog>
       <ObjectiveDetailsDialog objective={objective} onClose={() => { setObjective(null) }}
         attempts={objective ? attemptsBySeed.get(objective.id) ?? [] : []}
         onOpenAttempt={openDetails} scenarioResultId={scenarioResultId} />
     </main>
   )
+}
+
+function EmptyState({ text }: { readonly text: string }) {
+  return <Text className={useScenarioRunPageStyles().sectionHint}>{text}</Text>
+}
+
+function DisplayGroupMetric({ label, value }: { readonly label: string; readonly value: string }) {
+  return (
+    <div>
+      <Text size={200}>{label}</Text>
+      <Text weight="semibold">{value}</Text>
+    </div>
+  )
+}
+
+function formatCompletion(completed: number, planned: number | null): string {
+  return planned === null ? `${completed}/total unavailable` : `${completed}/${planned}`
+}
+
+function formatSuccess(succeeded: number, completed: number, percentage: number | null): string {
+  if (percentage === null) return completed === 0 ? 'Unavailable' : `${succeeded}/${completed}`
+  return `${percentage}%`
 }

@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+import time
 import uuid
 from collections import OrderedDict
 from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
@@ -151,6 +152,8 @@ class ScenarioProgressReadModel:
 
     _CACHE_MAX_RUNS = 32
     _STORAGE_PAGE_SIZE = 500
+    # Covers coarse filesystem timestamps, up to FAT's 2-second resolution.
+    _RECENT_FILE_WINDOW_NS = 2_000_000_000
 
     def __init__(self, *, memory: MemoryInterface) -> None:
         """Initialize a read model over the scenario-result store."""
@@ -671,6 +674,10 @@ class ScenarioProgressReadModel:
         except FileNotFoundError:
             file_version = None
         else:
+            # A same-length rewrite within one timestamp tick keeps this metadata, so it only proves
+            # the file is unchanged once the tick has passed. Until then, read without caching.
+            if time.time_ns() - file_stat.st_mtime_ns < ScenarioProgressReadModel._RECENT_FILE_WINDOW_NS:
+                return ScenarioProgressReadModel._read_objective_metrics(eval_hash=eval_hash, file_path=file_path)
             # Check file metadata so unchanged metrics can be reused without rereading the file.
             file_version = (file_stat.st_mtime_ns, file_stat.st_ctime_ns, file_stat.st_size, file_stat.st_ino)
 
@@ -695,6 +702,16 @@ class ScenarioProgressReadModel:
 
         The file version is part of the cache key, so edits trigger a fresh lookup.
         Cache key includes file_path and _file_version; changes to either bypass the cache.
+
+        Returns:
+            ScenarioObjectiveScorerMetrics | None: Display metrics, or None if no entry exists or read fails.
+        """
+        return ScenarioProgressReadModel._read_objective_metrics(eval_hash=eval_hash, file_path=file_path)
+
+    @staticmethod
+    def _read_objective_metrics(*, eval_hash: str, file_path: Path) -> ScenarioObjectiveScorerMetrics | None:
+        """
+        Read a scorer's saved metrics from the metrics file without caching.
 
         Returns:
             ScenarioObjectiveScorerMetrics | None: Display metrics, or None if no entry exists or read fails.
