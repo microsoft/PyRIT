@@ -379,9 +379,16 @@ it('restarts pagination and search when the picker reopens', async () => {
     expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 20, title: '' })
   })
 
+  await user.type(screen.getByRole('textbox'), 'Proof')
+  await waitFor(() => {
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: 'Proof' })
+  })
+
   await user.click(screen.getByRole('button', { name: 'Cancel' }))
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
   await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio')
+  expect(screen.getByRole('textbox')).toHaveValue('')
   await waitFor(() => {
     expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: '' })
   })
