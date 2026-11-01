@@ -12,13 +12,14 @@ from unit.mocks import MockPromptTarget
 from pyrit.analytics.technique_analysis import compute_technique_stats_async
 from pyrit.converter import Converter, SearchReplaceConverter
 from pyrit.memory import SQLiteMemory
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, Message, MessagePiece, SeedObjective
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, Message, MessagePiece, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScenarioRegistry
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetConstraintError,
     DatasetSource,
+    require_seed_type,
 )
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     PromptInject,
@@ -529,6 +530,23 @@ class TestPromptInjectDatasetSampling:
 
         assert len(_objective_values(scenario)) == 3
         assert scenario._build_scenario_identifier().datasets == PromptInject.required_datasets()
+
+    async def test_migrated_legacy_validators_check_the_raw_templates_async(
+        self, *, mock_objective_target: PromptTarget
+    ) -> None:
+        # A legacy validator wrote against the raw template seeds, so it must keep seeing those
+        # (SeedPrompt) after migration, not the assembled objectives (SeedObjective).
+        scenario = PromptInject()
+        legacy = PromptInjectDatasetConfiguration(
+            sources=[DatasetSource(name=name) for name in PromptInject.required_datasets()],
+            validators=[require_seed_type(SeedPrompt)],
+            max_total=3,
+        )
+
+        with pytest.warns(DeprecationWarning, match="PromptInjectDatasetConfiguration"):
+            await _initialize_async(scenario, target=mock_objective_target, dataset_config=legacy)
+
+        assert len(_objective_values(scenario)) == 3
 
 
 @pytest.mark.usefixtures("patch_central_database")

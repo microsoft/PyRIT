@@ -417,9 +417,10 @@ class DatasetConfiguration:
         self.max_total = None if isinstance(max_total, _Unset) else max_total
         self.fetch = DatasetFetchPolicy.IF_MISSING if isinstance(fetch, _Unset) else fetch
         self._filters: dict[str, list[str]] = dict(filters or {})
+        self._user_validators: list[Callable[[ResolvedDataset], None]] = list(validators) if validators else []
         self._validators: list[Callable[[ResolvedDataset], None]] = [
             *self._default_validators(),
-            *(list(validators) if validators else []),
+            *self._user_validators,
         ]
         self._validate_selection_options()
 
@@ -494,6 +495,7 @@ class DatasetConfiguration:
         result = copy.copy(self)
         result._filters = {key: list(values) for key, values in self._filters.items()}
         result._validators = list(self._validators)
+        result._user_validators = list(self._user_validators)
         if not isinstance(sources, _Unset):
             if self.source_kind is DatasetSourceKind.INLINE:
                 raise DatasetConstraintError("Cannot replace inline seeds with named sources through overrides.")

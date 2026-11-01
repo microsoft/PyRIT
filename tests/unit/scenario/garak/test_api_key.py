@@ -494,6 +494,42 @@ class TestApiKey:
         with pytest.raises(DatasetConstraintError, match="one prompt template"):
             await _initialize_async(scenario=ApiKey(), target=mock_objective_target, corpus_seeds=corpus)
 
+    async def test_get_key_only_run_does_not_need_a_complete_key_template_async(
+        self, *, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        get_key_only = [
+            seed
+            for seed in corpus_seeds["garak_api_key_templates"]
+            if (seed.metadata or {}).get("technique") == ApiKeyTechnique.GetKey.value
+        ]
+        corpus = {**corpus_seeds, "garak_api_key_templates": get_key_only}
+        scenario = ApiKey()
+        await _initialize_async(
+            scenario=scenario,
+            target=mock_objective_target,
+            corpus_seeds=corpus,
+            techniques=[ApiKeyTechnique.GetKey],
+        )
+
+        assert list(_objectives(scenario)) == ["get_key"]
+
+    async def test_a_selected_technique_still_requires_its_template_async(
+        self, *, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        get_key_only = [
+            seed
+            for seed in corpus_seeds["garak_api_key_templates"]
+            if (seed.metadata or {}).get("technique") == ApiKeyTechnique.GetKey.value
+        ]
+        corpus = {**corpus_seeds, "garak_api_key_templates": get_key_only}
+        with pytest.raises(DatasetConstraintError, match="one prompt template for complete_key"):
+            await _initialize_async(
+                scenario=ApiKey(),
+                target=mock_objective_target,
+                corpus_seeds=corpus,
+                techniques=[ApiKeyTechnique.CompleteKey],
+            )
+
     async def test_listed_corpus_sources_still_take_overrides_async(
         self, *, mock_objective_target: PromptTarget
     ) -> None:
