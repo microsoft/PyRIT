@@ -23,7 +23,7 @@ export const useScenarioRunPageStyles = makeStyles({
     flexDirection: 'column',
     width: '100%',
     maxWidth: '96rem',
-    gap: tokens.spacingVerticalXL,
+    gap: tokens.spacingVerticalL,
     padding: tokens.spacingVerticalXXL,
     marginInline: 'auto',
     [NARROW_VIEWPORT_QUERY]: {
@@ -94,12 +94,14 @@ export const useScenarioRunPageStyles = makeStyles({
   },
   metadata: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(10rem, 1fr))',
+    gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
     gap: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalXL}`,
-    paddingTop: tokens.spacingVerticalM,
-    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    padding: tokens.spacingVerticalL,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusLarge,
+    backgroundColor: tokens.colorNeutralBackground1,
     [NARROW_VIEWPORT_QUERY]: {
-      gridTemplateColumns: '1fr',
+      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
     },
   },
   metadataItem: {
@@ -107,6 +109,13 @@ export const useScenarioRunPageStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalXXS,
     minWidth: 0,
+    overflowWrap: 'anywhere',
+  },
+  labelBadge: {
+    maxWidth: '100%',
+    height: 'auto',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
   },
   metadataLabel: {
     color: tokens.colorNeutralForeground3,
@@ -229,10 +238,39 @@ export const useScenarioRunPageStyles = makeStyles({
     whiteSpace: 'nowrap',
     textAlign: 'right',
   },
+  attemptsTable: {
+    minWidth: '48rem',
+    tableLayout: 'auto',
+  },
   displayGroupList: {
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalS,
+  },
+  compactGroupSummary: {
+    display: 'grid',
+    gridTemplateColumns: 'auto minmax(0, 1fr) auto',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalM,
+    padding: tokens.spacingVerticalS,
+  },
+  liveConversation: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalL,
+    padding: tokens.spacingVerticalM,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+  },
+  conversationSurface: {
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: '28rem',
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusLarge,
   },
   displayGroup: {
     border: `1px solid ${tokens.colorNeutralStroke2}`,
@@ -346,8 +384,8 @@ export const useScenarioRunPageStyles = makeStyles({
     overflowWrap: 'anywhere',
   },
   attackDetailDialogSurface: {
-    width: 'min(92vw, 88rem)',
-    maxWidth: '88rem',
+    width: 'min(90vw, 56rem)',
+    maxWidth: '56rem',
     maxHeight: '90vh',
     boxSizing: 'border-box',
     overflow: 'hidden',

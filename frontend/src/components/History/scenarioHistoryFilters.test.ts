@@ -14,6 +14,7 @@ describe('scenario history URL filters', () => {
       operationId: ['6f1b2c3d-0000-4000-8000-000000000001'],
       otherLabels: ['team:security', 'team:safety'],
       labelSearchText: 'team',
+      referenceId: '11111111-1111-4111-8111-111111111111',
     }
 
     const params = scenarioHistoryFiltersToSearchParams({
@@ -24,6 +25,7 @@ describe('scenario history URL filters', () => {
     expect(params.getAll('scenario')).toEqual(['red.team', 'benchmark'])
     expect(params.getAll('status')).toEqual(['IN_PROGRESS', 'FAILED'])
     expect(params.getAll('operation_id')).toEqual(['6f1b2c3d-0000-4000-8000-000000000001'])
+    expect(params.get('id')).toBe(filters.referenceId)
     expect(scenarioHistoryFiltersFromSearchParams(params)).toEqual({
       ...filters,
       statuses: [...filters.statuses],

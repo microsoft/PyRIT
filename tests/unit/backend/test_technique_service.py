@@ -99,6 +99,7 @@ async def test_catalog_real_factories_and_alias_metadata_async(registry: AttackT
         "tags",
         "uses_adversarial",
         "uses_default_adversarial_target",
+        "identifier",
         "creation_statement",
     }
     assert await service.get_async("missing") is None
@@ -247,11 +248,14 @@ def test_factory_creation_statement_uses_supplied_inputs_without_creating_attack
     identifier = factory.get_identifier()
     with (
         patch.object(factory, "create", side_effect=AssertionError("Listing must not construct an attack")),
-        patch.object(factory, "get_identifier", side_effect=AssertionError("Listing does not need identity")),
+        patch.object(factory, "get_identifier", wraps=factory.get_identifier) as get_identifier,
     ):
         item = technique_to_instance(name=name, factory=factory)
 
     assert factory.get_identifier() == identifier
+    get_identifier.assert_called_once()
+    assert item.identifier == identifier
+    assert item.model_dump(mode="json")["identifier"] == identifier.model_dump(mode="json")
     assert item.creation_statement.startswith(factory.get_creation_calls()[0][0] + "(")
     call = ast.parse(item.creation_statement, mode="eval").body
     assert isinstance(call, ast.Call)
@@ -318,6 +322,9 @@ def test_rest_create_detail_types_and_errors(
     )
     assert created.status_code == 201, created.text
     assert "'max_attempts_on_failure': 0" in created.json()["creation_statement"]
+    factory = registry.instances.get("rest_example")
+    assert factory is not None
+    assert created.json()["identifier"] == factory.get_identifier().model_dump(mode="json")
     assert client.get("/api/techniques/rest_example").json() == created.json()
     assert client.get("/api/techniques/missing").status_code == 404
     assert (

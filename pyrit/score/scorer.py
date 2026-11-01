@@ -907,6 +907,62 @@ class Scorer(Identifiable, abc.ABC):
         self._stamp_scored_expectation(scores=scores, expectation=expectation)
         return await self._validate_and_persist_scores_async(scores=scores)
 
+    async def find_matching_scores_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None = None,
+    ) -> list[Score]:
+        """
+        Match stored scores, acquiring current evidence when the scorer requires a snapshot.
+
+        Returns:
+            Matching scores in newest-first order, including undetermined results.
+        """
+        return self.find_matching_scores(scores=scores, scorable=scorable, expectation=expectation)
+
+    def find_matching_scores(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None = None,
+    ) -> list[Score]:
+        """
+        Select stored results that this scorer configuration produced for the same evidence and input.
+
+        A result matches when it records this scorer's identity, names the same evidence as
+        ``scorable``, and was judged against the expectation that ``score_async`` prepares from
+        ``expectation``. Undetermined results also match. The scorer owns this identity and
+        expectation rule; the caller decides whether a match replaces a new evaluation and how
+        it is recorded.
+
+        Args:
+            scores (Sequence[Score]): Candidate results, such as the stored scores for the evidence.
+            scorable (Scorable): The evidence that a new evaluation would read.
+            expectation (ScoringExpectation | None): The input that a new evaluation would receive.
+                Defaults to None.
+
+        Returns:
+            list[Score]: The matching results, newest first.
+
+        Raises:
+            TypeError: If ``expectation`` is not a ``ScoringExpectation``.
+            ValueError: If this scorer cannot evaluate ``expectation``.
+        """
+        prepared = self.prepare_expectation(expectation=expectation)
+        identifier_hash = self.get_identifier().hash
+        matches = [
+            score
+            for score in scores
+            if score.scorer_class_identifier is not None
+            and score.scorer_class_identifier.hash == identifier_hash
+            and score.scored_expectation == prepared
+            and scorable.names_same_evidence(score.scorable)
+        ]
+        return sorted(matches, key=lambda score: (score.timestamp, str(score.id)), reverse=True)
+
     def _score_observation(
         self,
         *,

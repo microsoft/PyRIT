@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 from pyrit.backend.mappers import (
     attack_result_to_summary_async,
+    fetch_message_scores_async,
     format_last_message_preview,
     pyrit_messages_to_dto_async,
     request_piece_to_pyrit_message_piece,
@@ -47,6 +48,7 @@ from pyrit.backend.models.attacks import (
     MessageView,
     PrependedMessageRequest,
     SaveConversationRequest,
+    ScoreView,
     TargetResponseStatus,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
@@ -434,27 +436,26 @@ class AttackService:
             raise ValueError(f"Conversation '{conversation_id}' is not part of attack '{attack_result_id}'")
 
         # Get messages for this conversation
-        pyrit_messages = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
+        pyrit_messages = list(await self._memory.get_conversation_messages_async(conversation_id=conversation_id))
+        scores = await fetch_message_scores_async(pyrit_messages=pyrit_messages, memory=self._memory)
         backend_messages = await pyrit_messages_to_dto_async(
-            list(pyrit_messages),
+            pyrit_messages,
             objective_score_id=ar.last_score.id if ar.last_score else None,
             memory=self._memory,
+            scores=scores,
         )
-        scoring_result = ar.get_scoring_failure(conversation_id)
-        latest_response = next(
-            (message for message in reversed(pyrit_messages) if message.api_role == "assistant"), None
+        scoring = await get_chat_scoring_service().conversation_scoring_async(
+            attack=ar, conversation_id=conversation_id, messages=pyrit_messages, scores=scores
         )
-        if scoring_result is not None and (
-            latest_response is None
-            or scoring_result.response_id not in {str(piece.id) for piece in latest_response.message_pieces}
-        ):
-            scoring_result = None
 
         return ConversationMessagesResponse(
             conversation_id=conversation_id,
             messages=backend_messages,
             target_response_status=_get_latest_target_response_status(backend_messages),
-            scoring_failure=scoring_result,
+            scoring_failure=scoring.failure,
+            automated_score=ScoreView.from_domain(scoring.score) if scoring.score else None,
+            outcome=scoring.outcome,
+            latest_response_id=(str(scoring.latest_response.message_pieces[0].id) if scoring.latest_response else None),
         )
 
     async def get_saved_conversation_async(self, *, conversation_id: str) -> AddMessageResponse | None:

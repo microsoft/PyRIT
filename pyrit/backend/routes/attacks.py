@@ -41,8 +41,10 @@ from pyrit.backend.models.common import (
     LabelFilterStr,
     ProblemDetail,
 )
+from pyrit.backend.models.scores import ApplyChatScorerRequest, ApplyChatScorerResponse
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError, get_attack_service
+from pyrit.backend.services.chat_scoring_service import ChatScoringError, get_chat_scoring_service
 from pyrit.backend.services.history_replay import HistoryReplayError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.media_persistence import MediaAccessDeniedError
@@ -52,6 +54,32 @@ from pyrit.memory.memory_interface import AttackStateConflictError
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/attacks", tags=["attacks"])
+
+
+@router.post("/{attack_result_id}/apply-scorer", response_model=ApplyChatScorerResponse)
+async def apply_chat_scorer_async(
+    *, attack_result_id: IdentifierStr, request: ApplyChatScorerRequest
+) -> ApplyChatScorerResponse:
+    """
+    Apply the selected scorer only to the latest saved response in the requested conversation.
+
+    Returns:
+        The persisted result and whether an existing complete score was reused.
+    """
+    try:
+        return await get_chat_scoring_service().apply_async(attack_result_id=attack_result_id, request=request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (AttackStateConflictError, ManualSendConflictError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ManualSendQueueFullError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ChatScoringError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/save-conversation", response_model=AddMessageResponse)

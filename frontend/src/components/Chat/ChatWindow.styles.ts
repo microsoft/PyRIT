@@ -169,7 +169,7 @@ export const useChatWindowStyles = makeStyles({
     ...mobileTouchTarget,
   },
   newAttackLabel: {
-    '@media (max-width: 600px)': {
+    [NARROW_VIEWPORT_QUERY]: {
       display: 'none',
     },
   },

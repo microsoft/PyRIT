@@ -76,7 +76,16 @@ export const useAttackAttemptDetailsStyles = makeStyles({
     color: tokens.colorBrandForegroundLink,
   },
   conversationLink: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalS,
     alignSelf: 'flex-start',
     color: tokens.colorBrandForegroundLink,
+    backgroundColor: tokens.colorBrandBackground2,
+    borderRadius: tokens.borderRadiusMedium,
+    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
+    fontWeight: tokens.fontWeightSemibold,
+    textDecorationLine: 'none',
+    ':hover': { backgroundColor: tokens.colorBrandBackground2Hover },
   },
 })

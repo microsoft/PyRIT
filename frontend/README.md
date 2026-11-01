@@ -268,7 +268,6 @@ npm run test:coverage # Run with coverage report (85%+ threshold)
 # End-to-End Tests (Playwright)
 npm run test:e2e          # Run headless (default local setup uses dev.py)
 npm run test:e2e:headed   # Run with visible browser windows (requires display)
-npm run test:e2e:paired-outcomes # Real SQLite/API paired-outcome acceptance tests
 npm run test:e2e:ui       # Interactive UI mode (requires display)
 ```
 

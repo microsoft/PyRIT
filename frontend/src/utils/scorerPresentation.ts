@@ -10,6 +10,19 @@ export function findRegisteredScorer(
     ?? (inherited ? scorers.find((scorer: ScorerInstance) => scorer.identifier.hash === reference.identifier_hash) : undefined)
 }
 
+export function isEligibleChatScorer(scorer: ScorerInstance): boolean {
+  return scorer.identifier.scorer_type === 'true_false' && !scorer.chat_scoring_disabled_reason
+}
+
+/** Validate automatic last-use references; explicit overrides retain their unavailable-state feedback. */
+export function resolveChatScorerReference(
+  reference: RegisteredComponentReference | null | undefined, scorers: ScorerInstance[],
+): RegisteredComponentReference | null | undefined {
+  if (reference == null) return reference
+  const scorer = findRegisteredScorer(reference, scorers)
+  return scorer && isEligibleChatScorer(scorer) ? reference : undefined
+}
+
 const METRIC_LABELS: Record<string, string> = {
   accuracy: 'Accuracy',
   accuracy_standard_error: 'Accuracy std error',

@@ -43,12 +43,29 @@ function contents(messages: Message[]): string[] {
 
 describe('useConversationMessages', () => {
   const getMessages = jest.mocked(attacksApi.getMessages)
+  afterEach(() => { jest.useRealTimers() })
 
   beforeEach(() => {
     jest.resetAllMocks()
     jest.mocked(backendMessagesToFrontend).mockImplementation((messages: BackendMessage[]) => messages.map(
       (message) => ({ role: 'user', content: `${message.created_at}:${message.turn_number}`, timestamp: '' }),
     ))
+  })
+
+  it('polls an injected saved-conversation reader without changing manual send ownership', async () => {
+    jest.useFakeTimers()
+    const readConversation = jest.fn().mockResolvedValue(transcript('main', [1]))
+    const { result, unmount } = renderMessages({ readConversation, pollIntervalMs: 2500 })
+    await act(async () => { await Promise.resolve() })
+    expect(readConversation).toHaveBeenCalledTimes(1)
+    readConversation.mockResolvedValue(transcript('main', [1, 2]))
+    await act(async () => { jest.advanceTimersByTime(2500); await Promise.resolve() })
+    expect(contents(result.current.messages)).toEqual(['main:1', 'main:2'])
+    expect(getMessages).not.toHaveBeenCalled()
+    unmount()
+    await act(async () => { jest.advanceTimersByTime(10000); await Promise.resolve() })
+    expect(readConversation).toHaveBeenCalledTimes(2)
+    jest.useRealTimers()
   })
 
   it('should load the active conversation and expose its loading state', async () => {

@@ -1,7 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
-import type { UserPreferences } from '@/types'
+import type {
+  AttackSummary, MessageSendObservation, MessageSendStatus, RegisteredComponentReference,
+  RunScenarioRequest, ScorerInstance, TargetInstance, TargetPreferences, TargetReference, UserPreferences,
+} from '@/types'
+import { observeMessageSend } from '@/services/messageSendObservation'
+import { toApiError } from '@/services/errors'
+import { resolveChatScorerReference } from '@/utils/scorerPresentation'
+import { targetReference } from '@/utils/targetIdentity'
 import {
   DEFAULT_USER_PREFERENCES,
   readUserPreferences,
@@ -16,6 +23,14 @@ interface PreferenceState {
 
 interface UserPreferencesContextValue extends PreferenceState {
   updatePreferences: (update: (current: UserPreferences) => UserPreferences) => void
+  rememberUse: (targets: Partial<TargetPreferences>, chatScorer?: RegisteredComponentReference | null) => void
+  observeChatSend: (
+    attackId: string, acceptance: Promise<MessageSendStatus>, target: TargetReference,
+    scorerChoice: RegisteredComponentReference | null | undefined, scorerExplicit: boolean, scorers: ScorerInstance[],
+  ) => MessageSendObservation
+  rememberScanTargets: (
+    targets: TargetInstance[], request: Pick<RunScenarioRequest, 'target_name' | 'adversarial_target_name'>,
+  ) => void
 }
 
 const UserPreferencesContext = createContext<UserPreferencesContextValue | null>(null)
@@ -105,8 +120,51 @@ export function UserPreferencesProvider({
     }
   }, [accountKey])
 
+  const rememberUse = useCallback((
+    targets: Partial<TargetPreferences>, chatScorer?: RegisteredComponentReference | null,
+  ): void => {
+    updatePreferences((current: UserPreferences) => ({
+      ...current,
+      lastUsedTargets: { objective: null, adversarial: null, ...current.lastUsedTargets, ...targets },
+      ...(chatScorer !== undefined ? { lastUsedChatScorer: chatScorer } : {}),
+    }))
+  }, [updatePreferences])
+
+  const rememberScanTargets = useCallback((
+    targets: TargetInstance[], request: Pick<RunScenarioRequest, 'target_name' | 'adversarial_target_name'>,
+  ): void => {
+    const objectiveTarget = targets.find((target: TargetInstance) => target.target_registry_name === request.target_name)
+    const adversarialTarget = targets.find((target: TargetInstance) =>
+      target.target_registry_name === request.adversarial_target_name)
+    if (objectiveTarget || adversarialTarget) rememberUse({
+      ...(objectiveTarget ? { objective: targetReference(objectiveTarget) } : {}),
+      ...(adversarialTarget ? { adversarial: targetReference(adversarialTarget) } : {}),
+    })
+  }, [rememberUse])
+
+  const observeChatSend = useCallback((
+    attackId: string, acceptance: Promise<MessageSendStatus>, target: TargetReference,
+    scorerChoice: RegisteredComponentReference | null | undefined, scorerExplicit: boolean, scorers: ScorerInstance[],
+  ): MessageSendObservation => observeMessageSend(
+    attackId, acceptance,
+    (_progress: MessageSendStatus, attack: AttackSummary): void => {
+      const scorerUsed = !attack.chat_scorer_inherited && (attack.objective?.trim() || scorerExplicit)
+        ? attack.chat_scorer
+          ? resolveChatScorerReference(attack.chat_scorer, scorers)
+          : scorerChoice === null ? null : undefined
+        : undefined
+      rememberUse({ objective: target }, scorerUsed)
+    },
+    (cause: unknown): void => {
+      setState((current: PreferenceState) => ({
+        ...current,
+        error: `Could not confirm last-used chat preferences. ${toApiError(cause).detail}`,
+      }))
+    },
+  ), [rememberUse])
+
   return (
-    <UserPreferencesContext.Provider value={{ ...state, updatePreferences }}>
+    <UserPreferencesContext.Provider value={{ ...state, updatePreferences, rememberUse, rememberScanTargets, observeChatSend }}>
       {children}
     </UserPreferencesContext.Provider>
   )

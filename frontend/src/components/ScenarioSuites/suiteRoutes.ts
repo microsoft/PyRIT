@@ -15,7 +15,7 @@ export function suiteEditorRoutePath(name: string): string {
 }
 
 /** Suites launch from the Scanner, so their progress pages live under it. */
-export const SUITE_EXECUTIONS_ROUTE = '/scanner/suites/executions'
+export const SUITE_EXECUTIONS_ROUTE = '/scanner/history/suites/executions'
 
 export function suiteExecutionRoutePath(executionId: string): string {
   return `${SUITE_EXECUTIONS_ROUTE}/${encodeURIComponent(executionId)}`

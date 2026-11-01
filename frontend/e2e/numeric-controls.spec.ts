@@ -170,7 +170,7 @@ test.beforeEach(async ({ page }) => {
 
 for (const clickDuration of [0, 200, 600]) {
   test(`scenario steppers apply one step for a ${clickDuration}ms click and arrow key`, async ({ page }) => {
-    await page.goto(`/scanner/${SCENARIO.scenario_name}`)
+    await page.goto(`/scanner/launch/${SCENARIO.scenario_name}`)
 
     for (const [label, initial] of [['Max retries', 0], ['Max concurrency', 10]] as const) {
       const input = page.getByRole('spinbutton', { name: label, exact: true })
@@ -189,7 +189,7 @@ for (const clickDuration of [0, 200, 600]) {
 }
 
 test('scenario steppers commit typed values before stepping and clamp at existing bounds', async ({ page }) => {
-  await page.goto(`/scanner/${SCENARIO.scenario_name}`)
+  await page.goto(`/scanner/launch/${SCENARIO.scenario_name}`)
 
   for (const [label, min, max] of [['Max retries', 0, 20], ['Max concurrency', 1, 100]] as const) {
     const input = page.getByRole('spinbutton', { name: label, exact: true })
@@ -220,14 +220,14 @@ test('scenario steppers commit typed values before stepping and clamp at existin
 })
 
 test('native shared dynamic parameter controls step once', async ({ page }) => {
-  await page.goto(`/scanner/${SCENARIO.scenario_name}`)
+  await page.goto(`/scanner/launch/${SCENARIO.scenario_name}`)
   await expectNativeSteps(page.getByRole('spinbutton', { name: 'iterations', exact: true }), 2)
   // The existing dynamic float input has native step=1 with a fractional base.
   await expectNativeSteps(page.getByRole('spinbutton', { name: 'temperature', exact: true }), 0.5)
 })
 
 test('dataset sources and explicit loading are separate from Parameters', async ({ page }, testInfo) => {
-  await page.goto(`/scanner/${SCENARIO.scenario_name}`)
+  await page.goto(`/scanner/launch/${SCENARIO.scenario_name}`)
   const section = page.getByRole('region', { name: 'Datasets', exact: true })
   await expect(section.getByRole('table', { name: 'Selected datasets' })).toBeVisible()
   await expect(section.getByRole('columnheader', { name: 'Size' })).toBeVisible()
@@ -289,7 +289,7 @@ test('native Azure ML advanced controls retain steps and reset to default guidan
 })
 
 test('dataset rows add immediately, edit in place, share filters, and reset without loading', async ({ page }) => {
-  await page.goto(`/scanner/${SCENARIO.scenario_name}`)
+  await page.goto(`/scanner/launch/${SCENARIO.scenario_name}`)
   const section = page.getByRole('region', { name: 'Datasets', exact: true })
   await section.getByRole('combobox', { name: 'Add dataset' }).click()
   await page.getByRole('option', { name: 'custom_objectives (user)', exact: true }).click()
@@ -312,7 +312,7 @@ test('dataset rows add immediately, edit in place, share filters, and reset with
 
 for (const [label, fetch] of [['Stored only', 'never'], ['Load missing', 'if_missing']] as const) {
   test(`dataset manual loading preserves the ${fetch} launch policy`, async ({ page }) => {
-    await page.goto(`/scanner/${SCENARIO.scenario_name}`)
+    await page.goto(`/scanner/launch/${SCENARIO.scenario_name}`)
     const section = page.getByRole('region', { name: 'Datasets', exact: true })
     const policy = section.getByRole('radio', { name: label, exact: true })
     await expect(section.getByRole('radio', { name: 'Load missing', exact: true })).toBeChecked()
@@ -340,7 +340,7 @@ test('dataset refresh requires preview confirmation and warns before replacing u
       json: { detail: 'Mock launch stopped after checking the refresh request.' },
     })
   })
-  await page.goto(`/scanner/${SCENARIO.scenario_name}`)
+  await page.goto(`/scanner/launch/${SCENARIO.scenario_name}`)
   await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption('mock-target')
   const section = page.getByRole('region', { name: 'Datasets', exact: true })
   await section.getByRole('combobox', { name: 'Add dataset' }).click()

@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { type FormEvent, type ReactNode, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import {
   Badge,
@@ -27,6 +27,8 @@ import {
 import {
   ArrowLeftRegular,
   ArrowSyncRegular,
+  ChevronDownRegular,
+  ChevronRightRegular,
   InfoRegular,
   SettingsRegular,
 } from '@fluentui/react-icons'
@@ -36,10 +38,12 @@ import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import ConversationEditor, { type ConversationEditorHandle } from '@/components/Chat/ConversationEditor'
 import TargetSelect from '@/components/Config/TargetSelect'
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
+import { useRegistryIdentityRowStyles } from '@/components/Registry/RegistryIdentityRow.styles'
 import { findRegisteredScorer } from '@/utils/scorerPresentation'
 import TechniqueEditor from '@/components/Techniques/TechniqueEditor'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useUserPreferences } from '@/hooks/useUserPreferences'
 import { useRunTechniqueEditor } from '@/hooks/useRunTechniqueEditor'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import ParameterField from '@/components/Parameters/ParameterField'
@@ -460,6 +464,8 @@ interface ScorerPickerData {
 }
 
 interface ScenarioDetailProps extends ScorerPickerData {
+  initialRun?: RunScenarioRequest
+  sourceRunId?: string
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
@@ -478,7 +484,10 @@ export default function ScenarioDetail(props: ScenarioDetailProps) {
   const initialConversationId = conversationIds.length === 1 ? conversationIds[0].trim() : ''
   const presetName = searchParams.get(PRESET_QUERY_PARAM)?.trim() ?? ''
   // A new scenario, conversation, or preset link starts a fresh configuration form.
-  return <ScenarioDetailContent key={JSON.stringify([encodedScenarioName, initialConversationId, presetName])}
+  if (presetName && props.sourceRunId) return <ScenarioDetailStateFrame>
+    <MessageBar intent="error"><MessageBarBody>Choose a saved run or a preset, not both.</MessageBarBody></MessageBar>
+  </ScenarioDetailStateFrame>
+  return <ScenarioDetailContent key={JSON.stringify([encodedScenarioName, initialConversationId, presetName, props.sourceRunId])}
     encodedScenarioName={encodedScenarioName} initialConversationId={initialConversationId}
     presetName={presetName} {...props} />
 }
@@ -499,7 +508,7 @@ function ScenarioDetailStateFrame({ children }: ScenarioDetailStateFrameProps) {
   return (
     <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
       <div className={styles.content}>
-        <Link to="/scanner" className={styles.backLink}>
+        <Link to="/scanner/launch" className={styles.backLink}>
           <ArrowLeftRegular /> Back to scanners
         </Link>
         {children}
@@ -509,6 +518,8 @@ function ScenarioDetailStateFrame({ children }: ScenarioDetailStateFrameProps) {
 }
 
 function ScenarioDetailContent({
+  initialRun,
+  sourceRunId,
   encodedScenarioName,
   initialConversationId,
   presetName,
@@ -649,7 +660,7 @@ function ScenarioDetailContent({
         <div className={styles.centeredState} data-testid="preset-not-found">
           <Text size={400}>Preset &quot;{presetName}&quot; was not found</Text>
           <Text size={200}>It may have been renamed or deleted.</Text>
-          <Link to={`/scanner/${encodeURIComponent(decodedScenarioName)}`}>
+          <Link to={`/scanner/launch/${encodeURIComponent(decodedScenarioName)}`}>
             Open {decodedScenarioName} without a preset
           </Link>
         </div>
@@ -693,11 +704,16 @@ function ScenarioDetailContent({
     )
   }
 
+  if (initialRun && scenario.scenario_name !== initialRun.scenario_name) return <ScenarioDetailStateFrame>
+    <MessageBar intent="error"><MessageBarBody>The saved configuration belongs to a different scenario.</MessageBarBody></MessageBar>
+  </ScenarioDetailStateFrame>
   return (
     <ScenarioLaunchForm
       key={scenario.scenario_name}
       scenario={scenario}
       preset={presetResponse}
+      initialRun={initialRun}
+      sourceRunId={sourceRunId}
       initialConversationId={initialConversationId}
       targets={targets}
       defaultObjectiveTarget={defaultObjectiveTarget}
@@ -712,6 +728,8 @@ function ScenarioDetailContent({
 }
 
 interface ScenarioLaunchFormProps extends ScorerPickerData {
+  initialRun?: RunScenarioRequest
+  sourceRunId?: string
   scenario: RegisteredScenario
   /** Seeds the initial form state only; edits are never written back to the preset. */
   preset?: ScenarioPresetResponse | null
@@ -727,6 +745,8 @@ interface ScenarioLaunchFormProps extends ScorerPickerData {
 }
 
 function ScenarioLaunchForm({
+  initialRun,
+  sourceRunId,
   scenario,
   preset = null,
   initialConversationId,
@@ -741,10 +761,14 @@ function ScenarioLaunchForm({
   scorersLoading = false,
   scorersError = null,
 }: ScenarioLaunchFormProps) {
+  const identityStyles = useRegistryIdentityRowStyles()
+  const identityId = useId()
+  const [expandedIdentities, setExpandedIdentities] = useState<Set<string>>(new Set())
   const runtime = useRuntime()
+  const { rememberScanTargets } = useUserPreferences()
   const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
   const staleSelection = selectionGeneration !== runtime.generation
-  const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(null)
+  const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(initialRun?.objective_scorer ?? null)
   const scorerError = objectiveScorer && (
     scorersLoading || scorersError || !findRegisteredScorer(objectiveScorer, scorers)
   ) ? 'The selected objective scorer is unavailable. Select a scorer or use the scenario default.' : undefined
@@ -776,6 +800,7 @@ function ScenarioLaunchForm({
   const singleTechnique = scenario.max_concrete_techniques === 1
 
   const [targetName, setTargetName] = useState(() => {
+    if (initialRun) return initialRun.target_name ?? ''
     if (defaultObjectiveTarget && targets.some((target: TargetInstance) =>
       sameTarget(target, defaultObjectiveTarget))) {
       return defaultObjectiveTarget.target_registry_name
@@ -786,6 +811,7 @@ function ScenarioLaunchForm({
     (target: TargetInstance) => target.capabilities?.supports_multi_turn === true,
   )
   const [adversarialTargetName, setAdversarialTargetName] = useState(() => {
+    if (initialRun) return initialRun.adversarial_target_name ?? ''
     if (defaultAdversarialTarget && adversarialTargets.some((target: TargetInstance) =>
       sameTarget(target, defaultAdversarialTarget))) {
       return defaultAdversarialTarget.target_registry_name
@@ -794,7 +820,7 @@ function ScenarioLaunchForm({
   })
   const [techniqueSeed] = useState(() => seedPresetTechniques(
     scenario,
-    preset?.preset.techniques,
+    initialRun?.techniques ?? preset?.preset.techniques,
     new Set(techniqueOptions.map((technique) => technique.name)),
     scenario.scenario_name === 'technique.execute' ? [] : defaultTechniques,
   ))
@@ -812,6 +838,8 @@ function ScenarioLaunchForm({
   const techniqueEditor = useRunTechniqueEditor(
     opaqueSelectedTechnique ? undefined : singleSelectedTechnique,
     runtime.generation, runtime.ready,
+    initialRun?.technique_override && initialRun.technique_override.source_name === singleSelectedTechnique
+      ? initialRun.technique_override : undefined,
   )
   const [pendingTechnique, setPendingTechnique] = useState<string | null>(null)
   const techniqueEditError = techniqueEditor.unresolved
@@ -834,9 +862,9 @@ function ScenarioLaunchForm({
     && selectedTechniques.some((name) => !presetTokens.has(name)
       && !techniqueOptions.some((technique) => technique.name === name)))
   const [baselineChecked, setBaselineChecked] = useState(
-    () => !isBaselineForbidden && (preset?.preset.include_baseline ?? scenario.include_baseline_by_default),
+    () => !isBaselineForbidden && (initialRun?.include_baseline ?? preset?.preset.include_baseline ?? scenario.include_baseline_by_default),
   )
-  const [datasetEdits, setDatasetEdits] = useState<ScenarioDatasetRequest>(() => preset?.preset.datasets ?? {})
+  const [datasetEdits, setDatasetEdits] = useState<ScenarioDatasetRequest>(() => initialRun?.datasets ?? preset?.preset.datasets ?? {})
   const [datasetError, setDatasetError] = useState<string | null>(null)
   const datasetMetadata = useScenarioDatasets()
   const [datasetProjection, setDatasetProjection] = useState<ScenarioRunSizeEstimateResponse | null>(null)
@@ -855,24 +883,25 @@ function ScenarioLaunchForm({
       reloadDatasetMetadata()
     }
   }, [datasetSelectionKey, reloadDatasetMetadata])
-  const [maxConcurrency, setMaxConcurrency] = useState(DEFAULT_MAX_CONCURRENCY)
-  const [maxRetries, setMaxRetries] = useState(DEFAULT_MAX_RETRIES)
+  const [maxConcurrency, setMaxConcurrency] = useState(initialRun?.max_concurrency ?? DEFAULT_MAX_CONCURRENCY)
+  const [maxRetries, setMaxRetries] = useState(initialRun?.max_retries ?? DEFAULT_MAX_RETRIES)
   const [scenarioParamValues, setScenarioParamValues] = useState<Record<string, ParameterFormValue>>(() =>
     getInitialFormValues(dynamicParameters, {
       ...(preset?.preset.scenario_params ?? {}),
+      ...(initialRun?.scenario_params ?? {}),
       ...(initialConversationId ? { prepended_conversation_id: initialConversationId } : {}),
     }),
   )
   const [carriedScenarioParams] = useState(
-    () => carriedPresetScenarioParams(preset?.preset.scenario_params, dynamicParameters),
+    () => carriedPresetScenarioParams(initialRun?.scenario_params ?? preset?.preset.scenario_params, dynamicParameters),
   )
   const carriedScenarioParamNames = Object.keys(carriedScenarioParams)
   const presetScenarioParams = useMemo(
     () => ({
       ...carriedScenarioParams,
-      ...untouchedPresetScenarioParams(preset?.preset.scenario_params, dynamicParameters, scenarioParamValues),
+      ...untouchedPresetScenarioParams(initialRun?.scenario_params ?? preset?.preset.scenario_params, dynamicParameters, scenarioParamValues),
     }),
-    [carriedScenarioParams, dynamicParameters, preset, scenarioParamValues],
+    [carriedScenarioParams, dynamicParameters, initialRun?.scenario_params, preset, scenarioParamValues],
   )
   const [validationError, setValidationError] = useState<string | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
@@ -956,6 +985,7 @@ function ScenarioLaunchForm({
     () => [
       ...(supportsBaseline ? [{
         ...BASELINE_TECHNIQUE,
+        identifier: scenario.baseline_identifier,
         isBaseline: true,
         disabled: isBaselineForbidden,
       }] : []),
@@ -965,7 +995,7 @@ function ScenarioLaunchForm({
         disabled: false,
       })) : []),
     ],
-    [isBaselineForbidden, supportsBaseline, supportsTechniques, techniqueOptions],
+    [isBaselineForbidden, scenario.baseline_identifier, supportsBaseline, supportsTechniques, techniqueOptions],
   )
   const techniques = selectedTechniques
   const datasetSizeLabel = !datasetOptions.total_limit ? 'Not applicable'
@@ -1256,6 +1286,7 @@ function ScenarioLaunchForm({
 
     try {
       const summary = await scenariosApi.startRun(requestResult.request)
+      rememberScanTargets(targets, requestResult.request)
       datasetMetadata.reload()
       setPreviewOpen(false)
       navigate(scenarioRunRoutePath(summary.scenario_result_id), {
@@ -1363,12 +1394,12 @@ function ScenarioLaunchForm({
       aria-labelledby="scenario-detail-title"
     >
       <div className={styles.content}>
-        <Link to="/scanner" className={styles.backLink}>
-          <ArrowLeftRegular /> Back to scanners
+        <Link to={sourceRunId ? scenarioRunRoutePath(sourceRunId) : '/scanner/launch'} className={styles.backLink}>
+          <ArrowLeftRegular /> {sourceRunId ? 'Back to scan' : 'Back to scanners'}
         </Link>
 
         <div className={styles.headerText}>
-          <Text id="scenario-detail-title" as="h1" size={600} weight="semibold">
+          <Text id="scenario-detail-title" as="h2" size={600} weight="semibold">
             {scenario.scenario_name}
           </Text>
         </div>
@@ -1488,6 +1519,8 @@ function ScenarioLaunchForm({
               <div className={styles.techniqueList} role="group" aria-label="Techniques">
                 {selectableTechniques.map((technique) => {
                   const selected = isTechniqueSelected(technique)
+                  const expanded = expandedIdentities.has(technique.name)
+                  const regionId = `${identityId}-${encodeURIComponent(technique.name)}`
                   return (
                     <div className={styles.techniqueOption} key={technique.name}>
                     {singleTechnique && !technique.isBaseline ? (
@@ -1553,6 +1586,22 @@ function ScenarioLaunchForm({
                         </Text>
                       )}
                     </div>
+                    <Button type="button" appearance="subtle" className={styles.identityToggle}
+                      icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
+                      aria-label={`Identity for ${technique.name}`} aria-expanded={expanded} aria-controls={regionId}
+                      onClick={() => {
+                        setExpandedIdentities((current: Set<string>) => {
+                          const next = new Set(current)
+                          if (next.has(technique.name)) next.delete(technique.name)
+                          else next.add(technique.name)
+                          return next
+                        })
+                      }} />
+                    {expanded && <div id={regionId} role="region" aria-label={`Identity for ${technique.name}`}
+                      className={mergeClasses(styles.identityRegion, identityStyles.details)}>
+                      {technique.identifier ? <pre className={identityStyles.json}>{JSON.stringify(technique.identifier, null, 2)}</pre>
+                        : <Text>{technique.isBaseline ? 'Baseline identity is available after launch.' : 'Identity was not recorded for this technique.'}</Text>}
+                    </div>}
                   </div>
                   )
                 })}

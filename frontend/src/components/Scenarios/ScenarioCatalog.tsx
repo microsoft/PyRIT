@@ -412,7 +412,7 @@ function ScenarioScannerRow({ scenario, estimatesLoading }: ScenarioScannerRowPr
     <ScannerRow
       testId={`scenario-card-${scenario.scenario_name}`}
       name={scenario.scenario_name}
-      path={`/scanner/${encodeURIComponent(scenario.scenario_name)}`}
+      path={`/scanner/launch/${encodeURIComponent(scenario.scenario_name)}`}
       description={(
         <MarkdownContent
           content={descriptionMarkdown}
@@ -703,17 +703,17 @@ export default function ScenarioCatalog({
     >
       <div className={styles.header} data-tour="scanner-catalog">
         <div className={styles.headerText}>
-          <Text id="scenario-catalog-title" as="h1" size={600} weight="semibold">
+          <Text id="scenario-catalog-title" as="h2" size={600} weight="semibold">
             <FluentLink
               href="https://microsoft.github.io/PyRIT/latest/scanner/scanner/"
               target="_blank"
               rel="noopener noreferrer"
             >
-              Scanner
+              Launch a scan
             </FluentLink>
           </Text>
           <Text size={300} className={styles.subtitle}>
-            Launch comprehensive testing campaigns with multiple attack techniques against a target.
+            Select a scenario to configure a scan.
           </Text>
         </div>
         <div className={styles.headerActions}>
