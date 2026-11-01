@@ -25,6 +25,7 @@ Reference: https://arxiv.org/html/2410.23861
 from __future__ import annotations
 
 import logging
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import apply_defaults
@@ -198,11 +199,6 @@ class AudioAchillesHeel(Scenario):
                 Defaults to Garak's ``DEFAULT_TEXT_PROMPT``.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-
-        self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
-
         super().__init__(
             version=self.VERSION,
             technique_class=AudioAchillesHeelTechnique,
@@ -215,6 +211,16 @@ class AudioAchillesHeel(Scenario):
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
+
+    @cached_property
+    def _scorer_config(self) -> AttackScoringConfig:
+        """
+        Scoring configuration built from the objective scorer the first time an attack needs it.
+
+        Returns:
+            AttackScoringConfig: A configuration whose objective scorer is ``_objective_scorer``.
+        """
+        return AttackScoringConfig(objective_scorer=self._objective_scorer)
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """

@@ -97,12 +97,11 @@ class Execute(Scenario):
         """Initialize the scenario with an optional scorer and resume ID."""
         self._prepended_conversation_hash: str | None = None
         self._local_technique_hash: str | None = None
-        self._objective_scorer: TrueFalseScorer = objective_scorer or self._get_default_objective_scorer()
         super().__init__(
             version=self.VERSION,
             technique_class=_build_execute_technique(),
             default_dataset_config=DatasetAttackConfiguration(seed_groups=[], max_total="all"),
-            objective_scorer=self._objective_scorer,
+            objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
 

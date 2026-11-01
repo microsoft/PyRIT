@@ -29,10 +29,14 @@ class MyScenario(Scenario):
             version=self.VERSION,
             technique_class=MyTechnique,
             default_dataset_config=DatasetAttackConfiguration(sources=[DatasetSource(name="my_dataset")]),
-            objective_scorer=objective_scorer or self._get_default_objective_scorer(),
+            objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
 ```
+
+Pass `objective_scorer` through as given. When it is `None`, `self._objective_scorer` builds
+`_get_default_objective_scorer()` the first time it is read, so constructing the scenario (as
+the registry does to list catalog metadata) never needs scorer-target credentials.
 
 The default technique (what runs when the caller passes no `scenario_techniques`) is
 **not** a constructor argument — it is owned by the technique catalog and read from
@@ -57,20 +61,29 @@ def __init__(
     objective_scorer: TrueFalseScorer | None = None,
     scenario_result_id: str | None = None,
 ) -> None:
-    # 1. Resolve defaults for optional params
-    if not objective_scorer:
-        objective_scorer = self._get_default_scorer()
+    # 1. Keep explicit arguments; leave defaults that need a model target unresolved
+    if adversarial_chat:
+        self._adversarial_chat = adversarial_chat
 
-    # 2. Store config objects for _build_atomic_attacks_async
-    self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
-
-    # 3. Call super().__init__ — required args: version, technique_class, objective_scorer
+    # 2. Call super().__init__ — required args: version, technique_class, default_dataset_config.
+    #    objective_scorer=None makes self._objective_scorer build the default on first use.
     super().__init__(
         version=self.VERSION,
         technique_class=MyTechnique,
         default_dataset_config=DatasetAttackConfiguration(sources=[DatasetSource(name="my_dataset")]),
         objective_scorer=objective_scorer,
     )
+
+
+# 3. Resolve defaults and derived config objects lazily, when _build_atomic_attacks_async needs them
+@cached_property
+def _adversarial_chat(self) -> PromptTarget:
+    return get_default_adversarial_target()
+
+
+@cached_property
+def _scorer_config(self) -> AttackScoringConfig:
+    return AttackScoringConfig(objective_scorer=self._objective_scorer)
 ```
 
 Requirements:
@@ -80,6 +93,7 @@ Requirements:
   `pyrit/common/brick_contract.py`). Violators raise `TypeError` at
   import time.
 - **All constructor parameters must be optional** (default to `None`) so the registry can instantiate the scenario with no arguments for metadata introspection. Defer required-input validation to `initialize_async()` or `_build_atomic_attacks_async()`. `ScenarioRegistry._build_metadata` raises `TypeError` if `scenario_class()` cannot be called with no arguments.
+- **Construction must not build model-backed defaults** (`_get_default_objective_scorer()`, `get_default_scorer_target()`, `get_default_adversarial_target()`), because the catalog constructs every scenario and must work without credentials. Resolve them lazily, as above. A scenario whose construction still fails is logged and left out of catalog listings.
 - `super().__init__()` called with `version`, `technique_class`, `default_dataset_config`, `objective_scorer` (the default technique is owned by the catalog, not passed here — see "Default Technique")
 - complex objects like `adversarial_chat` or `objective_scorer` should be passed into the constructor.
 

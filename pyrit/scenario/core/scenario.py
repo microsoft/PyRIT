@@ -15,6 +15,7 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from enum import Enum
+from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast, final
 
@@ -78,7 +79,6 @@ from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_targ
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, IncompatibleTechniquePolicy
 from pyrit.score import (
-    Scorer,
     SelfAskRefusalScorer,
     SelfAskTrueFalseScorer,
     TrueFalseCompositeScorer,
@@ -194,7 +194,7 @@ class Scenario(ABC):
         version: int,
         technique_class: type[ScenarioTechnique],
         default_dataset_config: DatasetAttackConfiguration,
-        objective_scorer: Scorer,
+        objective_scorer: TrueFalseScorer | None = None,
         scenario_result_id: uuid.UUID | str | None = None,
         uses_default_adversarial_target: bool | None = None,
     ) -> None:
@@ -210,7 +210,10 @@ class Scenario(ABC):
                 ``technique_class.default()``.
             default_dataset_config (DatasetAttackConfiguration): The default dataset configuration used
                 when no ``dataset_config`` is passed to ``initialize_async``.
-            objective_scorer (Scorer): The objective scorer used to evaluate attack results.
+            objective_scorer (TrueFalseScorer | None): The objective scorer used to evaluate attack results.
+                None uses ``_get_default_objective_scorer()``, built the first time the scorer is
+                needed rather than here, so a scenario can be constructed (for example to list its
+                catalog metadata) without the credentials its default scorer requires.
             uses_default_adversarial_target (bool | None): Whether this scenario uses the shared
                 adversarial target. None derives usage from its registered technique factories.
                 Scenarios that build their own attacks or supply explicit targets declare this directly.
@@ -257,8 +260,8 @@ class Scenario(ABC):
         # attribute always exists for context construction.
         self._dataset_config: DatasetAttackConfiguration = default_dataset_config
 
-        self._objective_scorer = objective_scorer
-        self._objective_scorer_identifier = objective_scorer.get_identifier()
+        if objective_scorer is not None:
+            self._objective_scorer = objective_scorer
 
         self._name = name if name else type(self).__name__
         self._memory = CentralMemory.get_memory_instance()
@@ -294,6 +297,26 @@ class Scenario(ABC):
     def name(self) -> str:
         """The name of the scenario."""
         return self._name
+
+    @cached_property
+    def _objective_scorer(self) -> TrueFalseScorer:
+        """
+        The objective scorer, defaulting to ``_get_default_objective_scorer()`` on first access.
+
+        Returns:
+            TrueFalseScorer: The scorer passed to the constructor, or the default scorer.
+        """
+        return self._get_default_objective_scorer()
+
+    @cached_property
+    def _objective_scorer_identifier(self) -> "ComponentIdentifier":
+        """
+        The identifier of the objective scorer, recorded in the scenario identity.
+
+        Returns:
+            ComponentIdentifier: The identifier of ``_objective_scorer``.
+        """
+        return self._objective_scorer.get_identifier()
 
     @property
     def atomic_attack_count(self) -> int:

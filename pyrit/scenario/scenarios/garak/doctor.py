@@ -130,9 +130,6 @@ class Doctor(Scenario):
                 (non-refusal). If not provided, defaults to the scenario's default objective scorer.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-
         technique_class = _build_doctor_technique()
 
         super().__init__(
