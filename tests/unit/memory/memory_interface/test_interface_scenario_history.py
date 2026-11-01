@@ -761,3 +761,73 @@ async def test_unique_scenario_labels_ignore_malformed_values(
         await session.commit()
 
     assert await sqlite_instance.get_unique_scenario_labels_async() == expected
+
+
+async def test_scenario_history_aggregates_combine_unplanned_attempt_counts_with_canonical_group(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    """An unplanned attempt sharing atomic attack and technique configuration combines into canonical group counts."""
+    from pyrit.models.identifiers.component_identifier import config_hash
+
+    group_id = config_hash({"atomic_attack_name": "attack", "technique_eval_hash": "eval"})
+    plan = ScenarioRunPlan(
+        scenario_registry_name="synthetic",
+        atomic_groups=[
+            ScenarioRunPlanAtomicGroup(
+                id=group_id,
+                atomic_attack_name="attack",
+                display_group="attack",
+                technique_eval_hash="eval",
+                seed_group_ids=["planned"],
+            )
+        ],
+        seed_groups=[
+            ScenarioRunPlanSeedGroup(
+                id="planned",
+                objective="Objective",
+                objective_sha256=to_sha256("Objective"),
+            )
+        ],
+    )
+    run = make_scenario_result(
+        scenario_name="SyntheticScenario",
+        objective_target_identifier=get_mock_target_identifier(),
+        attack_results={},
+        scenario_run_state=ScenarioRunState.COMPLETED,
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")},
+    )
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[run])
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            AttackResult(
+                conversation_id=str(uuid.uuid4()),
+                objective=objective,
+                outcome=outcome,
+                attribution_parent_id=str(run.id),
+                attribution_data={
+                    "parent_collection": "attack",
+                    "parent_eval_hash": "eval",
+                    "seed_group_id": seed,
+                    "result_role": "target_facing",
+                },
+            )
+            for seed, objective, outcome in [
+                ("planned", "Objective", AttackOutcome.SUCCESS),
+                ("outside", "Outside plan", AttackOutcome.ERROR),
+            ]
+        ]
+    )
+
+    aggregates = await sqlite_instance.get_scenario_history_aggregates_async(
+        scenario_result_ids=[str(run.id)], plan_scenario_ids=[str(run.id)]
+    )
+    result = aggregates[str(run.id)]
+    group = result.group_counts[group_id]
+
+    assert result.completed_units == 1
+    assert result.successful_units == 1
+    assert result.target_facing_attempts == 2
+
+    assert group.completed == 1
+    assert group.succeeded == 1
+    assert group.producer_counts.target_facing.attempts == 2
