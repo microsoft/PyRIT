@@ -590,6 +590,25 @@ describe("ConversationPanel", () => {
     expect(onChangeMainConversation).toHaveBeenCalledWith("conv-2");
   });
 
+  it.each(["{Enter}", " "])("should promote from the manual star with %s without activating its parent row", async (key: string) => {
+    const user = userEvent.setup();
+    const onChangeMainConversation = jest.fn();
+    const onSelectConversation = jest.fn();
+    mockedAttacksApi.getConversations.mockResolvedValue({
+      attack_result_id: defaultProps.attackResultId, main_conversation_id: "attack-123",
+      conversations: [{ conversation_id: "branch-1", message_count: 2 }],
+    });
+    render(<TestWrapper><ConversationPanel {...defaultProps} onChangeMainConversation={onChangeMainConversation}
+      onSelectConversation={onSelectConversation} /></TestWrapper>);
+    const star = await screen.findByRole("button", { name: "Promote conversation branch-1 to main" });
+    star.focus();
+    await user.keyboard(key);
+    expect(onChangeMainConversation).toHaveBeenCalledTimes(1);
+    expect(onChangeMainConversation).toHaveBeenCalledWith("branch-1");
+    expect(onSelectConversation).not.toHaveBeenCalled();
+    expect(star).toHaveFocus();
+  });
+
   it("should show error state on fetch failure", async () => {
     const axiosError = {
       isAxiosError: true,

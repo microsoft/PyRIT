@@ -321,7 +321,8 @@ export default function ConversationPanel({
               key={conv.conversation_id}
               className={`${styles.conversationItem} ${isActive ? styles.conversationItemActive : ''}`}
               onClick={selectConversation}
-              onKeyDown={(e) => {
+              onKeyDown={(e: React.KeyboardEvent<HTMLDivElement>) => {
+                if (e.target !== e.currentTarget) return
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault()
                   selectConversation()
@@ -352,6 +353,8 @@ export default function ConversationPanel({
                       size="small"
                       icon={conv.conversation_id === mainConversationId ? <StarFilled /> : <StarRegular />}
                       disabled={conv.conversation_id === mainConversationId || !!lockedReason}
+                      aria-label={conv.conversation_id === mainConversationId
+                        ? `Main conversation ${conv.conversation_id}` : `Promote conversation ${conv.conversation_id} to main`}
                       onClick={(e) => {
                         e.stopPropagation()
                         if (conv.conversation_id !== mainConversationId) {
