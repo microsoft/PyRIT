@@ -16,6 +16,7 @@ import {
   AttackTargetResolutionStatus,
   ConverterInstance,
   ConversationMessagesResponse,
+  ConversationPageParams,
   CreateConversationResponse,
   Message,
   MessageAttachment,
@@ -509,10 +510,10 @@ describe("ChatWindow Integration", () => {
     window.localStorage.clear();
     mockMatchMedia(false);
     // Default: panel API returns empty conversations
-    mockedAttacksApi.getConversations.mockResolvedValue({
-      conversations: [],
-      main_conversation_id: null,
-    });
+    mockedAttacksApi.getConversations.mockImplementation(async (attackId: string, params?: ConversationPageParams) => ({
+      attack_result_id: attackId, conversations: [], main_conversation_id: null,
+      ...(params ? { total_count: 0, pagination: { limit: params.limit ?? 50, has_more: false, next_cursor: null } } : {}),
+    }));
     // Default: getMessages never resolves so loadConversation won't trigger
     // state updates outside act(). Tests that need it override this mock.
     mockedAttacksApi.getMessages.mockImplementation(() => new Promise(() => {}));
@@ -619,6 +620,39 @@ describe("ChatWindow Integration", () => {
         ["saved-attack", "saved-main", { limit: 100, cursor: "message-cursor" }],
         ["saved-attack", "saved-main", { limit: 100, cursor: "message-cursor" }],
       ]);
+    });
+
+    it("should page references separately and retain those pages while loading only the selected saved transcript", async () => {
+      const user = userEvent.setup();
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockResolvedValueOnce(final)
+        .mockResolvedValueOnce(page([request], null, "saved-pruned"));
+      mockedAttacksApi.getConversations.mockResolvedValueOnce({
+        attack_result_id: props.attackResultId, main_conversation_id: props.conversationId,
+        conversations: [{ conversation_id: props.conversationId, conversation_type: "main", message_count: 3 }],
+        total_count: 2, pagination: { limit: 50, has_more: true, next_cursor: "only-reference-cursor" },
+      }).mockResolvedValueOnce({
+        attack_result_id: props.attackResultId, main_conversation_id: props.conversationId,
+        conversations: [{ conversation_id: "saved-pruned", conversation_type: "pruned", message_count: 1 }],
+        total_count: 2, pagination: { limit: 50, has_more: false, next_cursor: null },
+      });
+      const rendered = render(<TestWrapper><ChatWindow {...props} relatedConversationCount={1} /></TestWrapper>);
+      await user.click(await screen.findByRole("button", { name: "Load more conversations" }));
+      expect(await screen.findByRole("button", { name: "Select conversation saved-pruned" })).toBeVisible();
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1);
+      await user.click(screen.getByRole("button", { name: "Load more message pieces" }));
+      expect(await screen.findByText("End of saved transcript. 3 message pieces loaded.")).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Select conversation saved-pruned" }));
+      rendered.rerender(<TestWrapper><ChatWindow {...props} activeConversationId="saved-pruned" relatedConversationCount={1} /></TestWrapper>);
+      expect(await screen.findByText("End of saved transcript. 1 message piece loaded.")).toBeVisible();
+      expect(mockedAttacksApi.getConversations.mock.calls).toEqual([
+        ["saved-attack", { limit: 50 }], ["saved-attack", { limit: 50, cursor: "only-reference-cursor" }],
+      ]);
+      expect(mockedAttacksApi.getMessages.mock.calls).toEqual([
+        ["saved-attack", "saved-main", { limit: 100 }],
+        ["saved-attack", "saved-main", { limit: 100, cursor: "message-cursor" }],
+        ["saved-attack", "saved-pruned", { limit: 100 }],
+      ]);
+      expect(screen.getByRole("region", { name: "Saved conversation references" })).toHaveTextContent("2 of 2 saved conversations loaded.");
     });
 
     it("should restart a rejected cursor with a bounded initial read and retain evidence if that restart fails", async () => {

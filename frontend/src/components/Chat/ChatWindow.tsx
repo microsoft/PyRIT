@@ -121,6 +121,7 @@ const NARROW_SCREEN_QUERY = '(max-width: 600px)'
 const RETRYABLE_TARGET_RESPONSE_ERROR = 'processing'
 const CHAT_NOTICE_VISIBLE_DURATION_MS = 5_000
 const SAVED_MESSAGE_PAGE_SIZE = 100
+const SAVED_REFERENCE_PAGE_SIZE = 50
 const INCOMPLETE_TRANSCRIPT_REASON = 'Load the complete saved transcript before continuing, copying, exporting, or assessing this result.'
 
 interface ChatInfoNotice {
@@ -2614,13 +2615,15 @@ export default function ChatWindow({
       >
         <ConversationPanel
           attackResultId={attackResultId}
+          referencePageSize={executionReadOnly ? SAVED_REFERENCE_PAGE_SIZE : undefined}
           activeConversationId={activeConversationId}
           onSelectConversation={handlePanelSelectConversation}
           onNewConversation={handleNewConversation}
           onChangeMainConversation={handleChangeMainConversation}
           onClose={() => setIsPanelOpen(false)}
           lockedReason={
-            !activeTarget ? 'Configure a target to enable this action.'
+            executionReadOnly ? 'Automated results are read-only. Choose Continue manually.'
+            : !activeTarget ? 'Configure a target to enable this action.'
             : isOperatorLocked ? 'Cannot modify — attack belongs to a different operator.'
             : isCrossTargetLocked ? 'Cannot modify — attack was created with a different target.'
             : isTargetResolutionLocked ? 'Cannot modify — the attack target could not be safely resolved.'
