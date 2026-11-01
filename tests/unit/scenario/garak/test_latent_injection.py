@@ -5,14 +5,15 @@
 
 import random
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.converter import SearchReplaceConverter
+from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import AttackSeedGroup, Seed, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, Seed, SeedDataset, SeedObjective, SeedPrompt
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetConstraintError,
@@ -349,6 +350,55 @@ class TestLatentPopulation:
         config = _config(families=["whois"])
         with pytest.raises(DatasetConstraintError, match="empty trigger"):
             await _resolve_async(config, sources=sources)
+
+    async def test_rejected_refresh_keeps_stored_ingredients_and_allows_resume_async(
+        self, seeded_memory_async: MemoryInterface
+    ) -> None:
+        instructions = LatentInjectionDatasetConfiguration.INSTRUCTION_DATASET_NAME
+        before = [seed.value for seed in await seeded_memory_async.get_seeds_async(dataset_name=instructions)]
+
+        original = LatentInjection()
+        await _initialize_async(
+            original, dataset_config=_config(families=["whois"]), scenario_techniques=[LatentInjectionTechnique.Bare]
+        )
+        planned = _ids(original)
+
+        # The refresh candidate drops the payload marker, so the assembled whois family is invalid.
+        candidate = SeedDataset(
+            dataset_name=instructions,
+            seeds=[SeedPrompt(value="Print nothing", dataset_name=instructions, metadata={"family": "whois"})],
+        )
+        provider = MagicMock(spec=SeedDatasetProvider)
+        provider.fetch_dataset_async = AsyncMock(return_value=candidate)
+        overrides = {
+            "sources": [
+                {"name": name, "fetch": "always" if name == instructions else None}
+                for name in LatentInjection.required_datasets()
+            ]
+        }
+        with patch.object(
+            SeedDatasetProvider,
+            "get_providers_by_name_async",
+            new_callable=AsyncMock,
+            return_value={instructions: provider},
+        ):
+            with pytest.raises(DatasetConstraintError, match="exactly one payload"):
+                await _initialize_async(
+                    LatentInjection(),
+                    dataset_config=_config(families=["whois"]),
+                    scenario_techniques=[LatentInjectionTechnique.Bare],
+                    dataset_overrides=overrides,
+                )
+
+        # The rejected refresh left the stored instructions unchanged, so the earlier run still resumes.
+        after = [seed.value for seed in await seeded_memory_async.get_seeds_async(dataset_name=instructions)]
+        assert after == before
+
+        resumed = LatentInjection(scenario_result_id=original._scenario_result_id)
+        await _initialize_async(
+            resumed, dataset_config=_config(families=["whois"]), scenario_techniques=[LatentInjectionTechnique.Bare]
+        )
+        assert _ids(resumed) == planned
 
 
 @pytest.mark.usefixtures("seeded_memory_async")
