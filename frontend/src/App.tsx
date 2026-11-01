@@ -617,7 +617,6 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     dismissPendingImport()
     lastChatLocation.current = { path: VIEW_PATHS.chat, state: null }
     // Keep the editor mounted until the router has committed an allowed navigation.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDraftSession((current) => ({
       ...current,
       key: current.key + 1,

@@ -470,7 +470,7 @@ async function activateMockTarget(page: Page) {
   await objectiveDefault.selectOption({ index: 1 });
 
   await page.getByRole("button", { name: "Attacks", exact: true }).click();
-  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByRole("button", { name: "New attack", exact: true })).toBeVisible({ timeout: 5000 });
 }
 
 /** Open converter panel and add a registered converter to the active pipeline. */

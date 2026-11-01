@@ -242,7 +242,7 @@ async function activateMockTarget(page: Page) {
   await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
   await objectiveDefault.selectOption({ index: 1 });
   await page.getByRole("button", { name: "Attacks", exact: true }).click();
-  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByRole("button", { name: "New attack", exact: true })).toBeVisible({ timeout: 5000 });
 }
 
 /** Send a message and wait for the response. */
