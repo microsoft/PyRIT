@@ -40,3 +40,4 @@ class SeedRecord(BaseModel):
     parameters: list[str] | None
     conditions: ConditionTuple | None
     response_json_schema: JsonSchemaDefinition | None
+    is_general_technique: bool = False

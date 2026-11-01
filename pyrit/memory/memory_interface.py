@@ -4397,6 +4397,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -4409,6 +4410,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique.
             value (str): The value to match. By default this matches by substring; pass exact=True to
                 require full-string equality instead. If None, all values are returned.
             exact (bool): When True, ``value`` is matched by full-string equality rather than substring,
@@ -4471,6 +4473,9 @@ class MemoryInterface(abc.ABC):
             conditions.append(SeedEntry.seed_type == "objective")
         elif seed_type is not None:
             conditions.append(SeedEntry.seed_type == seed_type)
+
+        if is_general_technique is not None:
+            conditions.append(SeedEntry.is_general_technique == is_general_technique)
 
         self._add_list_conditions(
             field=SeedEntry.harm_categories, values=harm_categories, conditions=conditions, exact=exact
@@ -4564,6 +4569,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -4573,6 +4579,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique.
             value (str): The value to match by substring. If None, all values are returned.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
@@ -4616,6 +4623,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -4647,6 +4655,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -4664,6 +4673,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -4718,6 +4728,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -4758,6 +4769,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -4783,6 +4795,8 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match origin before expanding to complete groups.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique
+                before expanding to complete groups.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -4837,6 +4851,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -5115,6 +5130,7 @@ class MemoryInterface(abc.ABC):
                 "authors": entry.authors or [],
                 "groups": entry.groups or [],
                 "source": entry.source,
+                "is_general_technique": entry.is_general_technique,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -5778,6 +5794,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -5788,6 +5805,8 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match origin before expanding to complete groups.
+            is_general_technique (bool | None, Optional): Match whether the seed represents a general attack technique
+                before expanding to complete groups.
             value (str | None, Optional): The value to match by substring.
             value_sha256 (Sequence[str] | None, Optional): SHA256 hash of value to filter seed groups by.
             dataset_name (str | None, Optional): Name of the dataset to match exactly.
@@ -5828,6 +5847,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -10302,6 +10322,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -10330,6 +10351,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -10351,6 +10373,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -10363,6 +10386,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique.
             value (str): The value to match by substring. If None, all values are returned.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
@@ -10407,6 +10431,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -10428,6 +10453,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -10459,6 +10485,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -10481,6 +10508,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -10498,6 +10526,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -10552,6 +10581,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -10573,6 +10603,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -10604,6 +10635,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -10626,6 +10658,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -10651,6 +10684,8 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match origin before expanding to complete groups.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique
+                before expanding to complete groups.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -10705,6 +10740,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -10852,6 +10888,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -10883,6 +10920,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -10905,6 +10943,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -10915,6 +10954,8 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match origin before expanding to complete groups.
+            is_general_technique (bool | None, Optional): Match whether the seed represents a general attack technique
+                before expanding to complete groups.
             value (str | None, Optional): The value to match by substring.
             value_sha256 (Sequence[str] | None, Optional): SHA256 hash of value to filter seed groups by.
             dataset_name (str | None, Optional): Name of the dataset to match exactly.
@@ -10954,6 +10995,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,

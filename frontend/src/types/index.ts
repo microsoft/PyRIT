@@ -1347,6 +1347,7 @@ export interface SeedRecord {
   parameters: string[] | null
   conditions: SeedCondition[] | null
   response_json_schema: Record<string, unknown> | null
+  is_general_technique?: boolean
 }
 
 /** Wire shape of one logical example from `GET /api/datasets/seeds`. */

@@ -24,7 +24,7 @@ from pyrit.memory.memory_models import (
     OperationEntry,
     ScenarioResultEntry,
 )
-from pyrit.memory.migration import check_schema_migrations
+from pyrit.memory.migration import check_schema_migrations, run_schema_migrations
 
 PREVIOUS_REVISION = "3f6a9d2c8b1e"
 REVISION = "c8d3e5f7a901"
@@ -65,6 +65,7 @@ def test_migration_adds_tables_without_changing_existing_ones() -> None:
             assert {name: columns for name, columns in after.items() if name not in ACTIVITY_TABLES} == {
                 name: columns for name, columns in existing.items() if name not in ACTIVITY_TABLES
             }
+        run_schema_migrations(engine=engine)
         check_schema_migrations(engine=engine)
     finally:
         engine.dispose()
