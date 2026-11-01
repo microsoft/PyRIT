@@ -97,7 +97,7 @@ class TestDecodingScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = DecodingScorer(categories=["decoding"])
-            score = await scorer._score_piece_async(assistant_piece)
+            score = await scorer._score_piece_with_expectation_async(assistant_piece, expectation=None)
 
             assert len(score) == 1
             assert score[0].get_value() is True
@@ -117,7 +117,7 @@ class TestDecodingScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = DecodingScorer(categories=["decoding"])
-            score = await scorer._score_piece_async(assistant_piece)
+            score = await scorer._score_piece_with_expectation_async(assistant_piece, expectation=None)
 
             assert len(score) == 1
             assert score[0].get_value() is False
@@ -132,7 +132,7 @@ class TestDecodingScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = DecodingScorer(categories=["decoding"])
-            score = await scorer._score_piece_async(assistant_piece)
+            score = await scorer._score_piece_with_expectation_async(assistant_piece, expectation=None)
 
             assert len(score) == 1
             assert score[0].get_value() is True
@@ -147,7 +147,7 @@ class TestDecodingScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = DecodingScorer(categories=["decoding"])
-            score = await scorer._score_piece_async(assistant_piece)
+            score = await scorer._score_piece_with_expectation_async(assistant_piece, expectation=None)
 
             assert len(score) == 1
             assert score[0].get_value() is False
@@ -171,7 +171,7 @@ class TestDecodingScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = DecodingScorer(categories=["decoding"])
-            score = await scorer._score_piece_async(assistant_piece)
+            score = await scorer._score_piece_with_expectation_async(assistant_piece, expectation=None)
 
             memory.get_request_from_response_async.assert_awaited_once()
             assert len(score) == 1
@@ -187,7 +187,7 @@ class TestDecodingScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = DecodingScorer(categories=["decoding"])
-            score = await scorer._score_piece_async(assistant_piece)
+            score = await scorer._score_piece_with_expectation_async(assistant_piece, expectation=None)
 
             assert len(score) == 1
             assert score[0].get_value() is True
@@ -203,7 +203,7 @@ class TestDecodingScorer:
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             text_matcher = ExactTextMatching(case_sensitive=True)
             scorer = DecodingScorer(text_matcher=text_matcher, categories=["decoding"])
-            score = await scorer._score_piece_async(assistant_piece)
+            score = await scorer._score_piece_with_expectation_async(assistant_piece, expectation=None)
 
             assert len(score) == 1
             assert score[0].get_value() is False
@@ -219,7 +219,7 @@ class TestDecodingScorer:
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             text_matcher = ApproximateTextMatching(threshold=0.3, n=3, case_sensitive=False)
             scorer = DecodingScorer(text_matcher=text_matcher, categories=["decoding"])
-            score = await scorer._score_piece_async(assistant_piece)
+            score = await scorer._score_piece_with_expectation_async(assistant_piece, expectation=None)
 
             assert len(score) == 1
 
@@ -234,7 +234,7 @@ class TestDecodingScorer:
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             text_matcher = ApproximateTextMatching(threshold=0.5, n=4, case_sensitive=False)
             scorer = DecodingScorer(text_matcher=text_matcher, categories=["decoding"])
-            score = await scorer._score_piece_async(assistant_piece)
+            score = await scorer._score_piece_with_expectation_async(assistant_piece, expectation=None)
 
             assert len(score) == 1
             assert score[0].get_value() is False
@@ -260,8 +260,8 @@ class TestDecodingScorer:
             first_scorer = DecodingScorer(text_matcher=first)
             second_scorer = DecodingScorer(text_matcher=second)
 
-            first_score = await first_scorer._score_piece_async(assistant_piece)
-            second_score = await second_scorer._score_piece_async(assistant_piece)
+            first_score = await first_scorer._score_piece_with_expectation_async(assistant_piece, expectation=None)
+            second_score = await second_scorer._score_piece_with_expectation_async(assistant_piece, expectation=None)
 
             assert first_score[0].get_value() is not second_score[0].get_value()
             assert first_scorer.get_identifier().hash != second_scorer.get_identifier().hash

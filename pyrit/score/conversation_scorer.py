@@ -263,7 +263,9 @@ class ConversationScorer(MessageScorer, ABC):
             turn_index += 1
         return "".join(lines)
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Not used - ConversationScorer operates at conversation level via
         ``_score_prepared_message_async``.

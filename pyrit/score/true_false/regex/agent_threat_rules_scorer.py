@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
@@ -161,7 +161,10 @@ class AgentThreatRulesScorer(RegexScorer):
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        objective = expectation.objective if expectation else None
         values = self._extract_fields(message_piece)
         fields = self._patterns_by_field.keys() & values.keys()
         if not fields:

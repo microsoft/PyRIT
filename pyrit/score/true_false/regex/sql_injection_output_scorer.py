@@ -3,7 +3,7 @@
 
 import re
 
-from pyrit.models import MessagePiece, Score
+from pyrit.models import MessagePiece, Score, ScoringExpectation
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer, _ConfigurableRegexScorerMixin
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 
@@ -62,15 +62,18 @@ class SQLInjectionOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         self._use_default_patterns = patterns is None
         super().__init__(patterns=patterns, score_aggregator=score_aggregator)
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Evaluate default comment matches in their quote context, or honor custom patterns unchanged.
 
         Returns:
             list[Score]: One true/false score with the matching pattern names.
         """
+        objective = expectation.objective if expectation else None
         if not self._use_default_patterns:
-            return await super()._score_piece_async(message_piece, objective=objective)
+            return await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
 
         text = message_piece.converted_value
         non_breaking_quotes = self._get_non_breaking_quote_positions(text)
