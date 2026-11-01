@@ -441,3 +441,25 @@ print(type(wildguard_scorer).__name__)
 # - **`VideoTrueFalseScorer`** — extracts frames from a `video_path` response and scores them with a
 #   wrapped image `TrueFalseScorer` (True if *any* frame matches); an optional audio scorer is
 #   AND-combined so both the visuals and the transcript must match.
+
+# %% [markdown]
+# ## Selecting one label from a multi-label scorer
+#
+# `MultiLabelTrueFalseScorer` reports independent verdicts. When an attack or evaluator
+# expects one true/false result, use `TrueFalseScoreSelector` to choose a category
+# instead of combining unrelated labels.
+#
+# Given a configured `multi_label_scorer` that declares `harmful_response`:
+#
+# ```python
+# from pyrit.score import TrueFalseScoreSelector
+#
+# objective_scorer = TrueFalseScoreSelector(
+#     scorer=multi_label_scorer,
+#     label="harmful_response",
+# )
+# ```
+#
+# Use `objective_scorer` wherever a single `TrueFalseScorer` is expected. The label
+# must match one of the source scorer's `labels`; the other verdicts are retained
+# as intermediate scores.

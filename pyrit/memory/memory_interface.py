@@ -3533,7 +3533,13 @@ class MemoryInterface(abc.ABC):
         if score_type:
             conditions.append(ScoreEntry.score_type == score_type)
         if score_category:
-            conditions.append(ScoreEntry.score_category == score_category)
+            conditions.append(
+                self._get_condition_json_array_match(
+                    json_column=ScoreEntry.score_category,
+                    property_path="$",
+                    array_to_match=[score_category],
+                )
+            )
         if sent_after:
             conditions.append(ScoreEntry.timestamp >= sent_after)
         if sent_before:
