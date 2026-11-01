@@ -266,6 +266,16 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["list-scenarios", "--request-timeout", "30"])
         assert args.request_timeout == 30
 
+    def test_list_with_fractional_request_timeout(self):
+        args = pyrit_scan.parse_args(["list-targets", "--request-timeout", "0.5"])
+        assert args.request_timeout == 0.5
+
+    @pytest.mark.parametrize("value", ["0", "-1", "inf", "nan", "slow"])
+    def test_list_rejects_invalid_request_timeout(self, value):
+        with pytest.raises(SystemExit) as exc_info:
+            pyrit_scan.parse_args(["list-targets", "--request-timeout", value])
+        assert exc_info.value.code == 2
+
     def test_start_server_with_startup_timeout(self):
         args = pyrit_scan.parse_args(["start-server", "--startup-timeout", "45.5"])
         assert args.startup_timeout == 45.5

@@ -242,7 +242,9 @@ def _build_client_parent() -> ArgumentParser:
     """
     parser = ArgumentParser(add_help=False)
     group = parser.add_argument_group("server options")
-    group.add_argument("--request-timeout", type=float, default=None, help=_REQUEST_TIMEOUT_HELP)
+    group.add_argument(
+        "--request-timeout", type=_positive_finite_float, default=None, metavar="SECONDS", help=_REQUEST_TIMEOUT_HELP
+    )
     group.add_argument("--start-server", action="store_true", help=_START_SERVER_HELP)
     group.add_argument(
         "--startup-timeout", type=_positive_finite_float, default=None, metavar="SECONDS", help=_STARTUP_TIMEOUT_HELP
