@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.datasets.seed_datasets.local.local_dataset_loader import _LocalDatasetLoader
+from pyrit.memory import MemoryInterface
 from pyrit.models import SeedDataset, SeedOrigin, SeedPrompt
 
 
@@ -121,3 +122,65 @@ seeds:
         loader = _LocalDatasetLoader(file_path=Path("non_existent.yaml"))
         with pytest.raises(Exception):
             await loader.fetch_dataset_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestLocalDatasetFilenameFallback:
+    """A filename-derived dataset name must reach the seeds before they are persisted (#3740)."""
+
+    filename_only_yaml = """
+source: http://example.com
+seeds:
+  - value: filename fallback prompt
+    data_type: text
+    origin: local
+  - value: per seed named prompt
+    data_type: text
+    origin: local
+    dataset_name: per_seed_dataset
+"""
+
+    explicitly_named_yaml = """
+dataset_name: explicit_dataset
+source: http://example.com
+seeds:
+  - value: explicitly named prompt
+    data_type: text
+    origin: local
+"""
+
+    async def test_filename_fallback_is_assigned_to_seeds_and_queryable_async(
+        self, tmp_path: Path, sqlite_instance: MemoryInterface
+    ) -> None:
+        file_path = tmp_path / "filename_only.yaml"
+        file_path.write_text(self.filename_only_yaml, encoding="utf-8")
+
+        dataset = await _LocalDatasetLoader(file_path=file_path).fetch_dataset_async()
+
+        assert dataset.dataset_name == "filename_only"
+        assert dataset.seeds[0].dataset_name == "filename_only"
+        assert dataset.seeds[1].dataset_name == "per_seed_dataset"
+
+        await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="test")
+
+        stored = await sqlite_instance.get_seeds_async(dataset_name="filename_only")
+        assert [seed.value for seed in stored] == ["filename fallback prompt"]
+        assert set(await sqlite_instance.get_seed_dataset_names_async()) == {
+            "filename_only",
+            "per_seed_dataset",
+        }
+
+    async def test_explicit_dataset_name_is_unchanged_async(
+        self, tmp_path: Path, sqlite_instance: MemoryInterface
+    ) -> None:
+        file_path = tmp_path / "explicit.yaml"
+        file_path.write_text(self.explicitly_named_yaml, encoding="utf-8")
+
+        dataset = await _LocalDatasetLoader(file_path=file_path).fetch_dataset_async()
+
+        assert dataset.dataset_name == "explicit_dataset"
+        assert dataset.seeds[0].dataset_name == "explicit_dataset"
+
+        await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="test")
+        assert len(await sqlite_instance.get_seeds_async(dataset_name="explicit_dataset")) == 1
+        assert "explicit_dataset" in await sqlite_instance.get_seed_dataset_names_async()

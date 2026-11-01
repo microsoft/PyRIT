@@ -71,6 +71,14 @@ class _LocalDatasetLoader(SeedDatasetProvider):
             dataset = await asyncio.to_thread(SeedDataset.from_yaml_file, self.file_path)
             if not dataset.dataset_name:
                 dataset.dataset_name = self.dataset_name
+            # A filename-only YAML leaves the top-level dataset name unset, so `_build_seeds`
+            # could not merge it into the seeds. Carry the resolved provider name onto every
+            # seed that has no name of its own before the dataset is returned for persistence;
+            # otherwise the persisted rows stay unnamed and named queries/listing miss them.
+            # Explicit per-seed names are kept as-is (#3740).
+            for seed in dataset.seeds:
+                if not seed.dataset_name:
+                    seed.dataset_name = self.dataset_name
             return dataset
         except Exception as e:
             logger.error(f"Failed to load local dataset from {self.file_path}: {e}")
