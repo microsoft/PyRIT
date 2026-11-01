@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
 import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
 import type { Finding, FindingListItem, Operation, OperationDetail } from '@/types'
@@ -240,6 +240,37 @@ it('shows the operation and records a finding within it', async () => {
     id: expect.any(String), title: FINDING.title, severity: 'informational', description: '',
     severity_other: null, harm_type: null, harm_type_other: null,
   })
+})
+
+it('does not push a duplicate history entry when a finding is saved on the first page', async () => {
+  const user = userEvent.setup()
+  const seenLocations: string[] = []
+  function LocationProbe() {
+    const location = useLocation()
+    const marker = `${location.pathname}${location.search}|${location.key}`
+    if (seenLocations[seenLocations.length - 1] !== marker) { seenLocations.push(marker) }
+    return null
+  }
+  render(
+    <FluentProvider theme={webLightTheme}>
+      <MemoryRouter initialEntries={['/operations/op-1']}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/operations/:operationId" element={<OperationDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </FluentProvider>,
+  )
+  expect(await screen.findByRole('heading', { level: 1, name: OPERATION.name })).toBeInTheDocument()
+  await screen.findByText(/no findings/i)
+  await user.click(screen.getByRole('button', { name: 'New finding' }))
+  await user.type(screen.getByRole('textbox', { name: 'Title' }), FINDING.title)
+  jest.mocked(operationsApi.listFindings).mockResolvedValue({ items: [FINDING], has_more: false, next_offset: null })
+  await user.click(screen.getByRole('button', { name: 'Save finding' }))
+  expect(await screen.findByRole('heading', { level: 2, name: FINDING.title })).toBeInTheDocument()
+
+  expect(seenLocations).toHaveLength(1)
+  expect(seenLocations[0]?.startsWith('/operations/op-1')).toBe(true)
 })
 
 it('links an optional evidence attack when the finding is created, but not when editing', async () => {

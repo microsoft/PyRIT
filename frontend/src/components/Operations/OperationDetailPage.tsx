@@ -95,6 +95,9 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
   }, [operationId, offset, requestKey, evidenceRevision])
 
   const navigatePage = (nextOffset: number): void => {
+    // Writing the same offset again would push a duplicate history entry for an
+    // identical URL, so a save or delete on the first page must not navigate.
+    if ((nextOffset > 0 ? String(nextOffset) : null) === params.get('offset')) { return }
     setParams(nextOffset > 0 ? { offset: String(nextOffset) } : {})
   }
 
