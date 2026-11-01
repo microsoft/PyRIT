@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import inspect
 import json
 import logging
 import math
@@ -26,6 +25,7 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
 from transformers.models.gpt_neox.modeling_gpt_neox import GPTNeoXForCausalLM
 from transformers.models.gptj.modeling_gptj import GPTJForCausalLM
 
+from pyrit.executor.promptgen.gcg.attack.base.model_adapters import GCGModelAdapter, GCGTokenizerAdapter
 from pyrit.executor.promptgen.gcg.attack.base.progressive_schedule import (
     ProgressiveScheduleController,
     ProgressiveScheduleState,
@@ -785,21 +785,15 @@ class AttackPrompt:
             torch.Tensor: One scalar loss per candidate control.
         """
         selective_loss = cast("Any", loss_function)
-        try:
-            forward_parameters = inspect.signature(model.forward).parameters
-        except (TypeError, ValueError):
-            forward_parameters = {}
+        model_adapter = GCGModelAdapter(model)
 
-        supports_selective_logits = "logits_to_keep" in forward_parameters
-        supports_prefix_cache = "past_key_values" in forward_parameters and "use_cache" in forward_parameters
-
-        if supports_selective_logits and hasattr(selective_loss, "get_required_logit_positions"):
+        if model_adapter.supports_selective_logits and hasattr(selective_loss, "get_required_logit_positions"):
             logit_positions = selective_loss.get_required_logit_positions(
                 target_slice=self._target_slice,
                 control_slice=self._control_slice,
                 device=model.device,
             )
-            if use_prefix_cache and supports_prefix_cache and self._control_slice.start > 1:
+            if use_prefix_cache and model_adapter.supports_prefix_cache and self._control_slice.start > 1:
                 cached_loss = self._loss_with_prefix_cache(
                     model,
                     test_controls,
@@ -2408,28 +2402,14 @@ def _check_gcg_capabilities(
 
     Raises:
         ValueError: If the tokenizer is not fast, the model exposes no floating point
-            input embedding matrix, or GCG would use token ids outside that matrix.
+            input embedding matrix, GCG would use token ids outside that matrix, or an
+            initial control does not survive the decode/encode round trip GCG applies every step.
     """
-    if not tokenizer.is_fast:
-        raise ValueError(
-            f"The tokenizer for {model_path!r} ({type(tokenizer).__name__}) is not backed by the Hugging Face "
-            "tokenizers library, so it cannot return the character-to-token offsets GCG uses to locate the goal, "
-            "control and target. Load it with the default tokenizers backend."
-        )
-    try:
-        weight = getattr(model.get_input_embeddings(), "weight", None)
-    except NotImplementedError:
-        weight = None
-    if not isinstance(weight, torch.Tensor):
-        raise ValueError(
-            f"Model {model_path!r} does not expose an input embedding matrix through get_input_embeddings(). "
-            "GCG computes token gradients through that matrix."
-        )
-    if not weight.is_floating_point():
-        raise ValueError(
-            f"The input embeddings of {model_path!r} are {weight.dtype}, so GCG cannot compute token gradients "
-            "through them. Load the model without quantizing the embedding layer."
-        )
+    tokenizer_adapter = GCGTokenizerAdapter(tokenizer)
+    tokenizer_adapter.validate(model_path=model_path)
+    model_adapter = GCGModelAdapter(model)
+    model_adapter.validate(model_path=model_path)
+    prompts = list(prompts)
     # Added tokens the chat template never emits (e.g. Gemma 3's image token) may sit past the
     # embedding rows, so check only the ids GCG uses: the base vocabulary sampled by
     # get_nonascii_toks, the special token ids, and a conversation rendered as in _update_ids.
@@ -2437,17 +2417,33 @@ def _check_gcg_capabilities(
     prompt = tokenizer.apply_chat_template(messages, tokenize=False)
     special_ids = (tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.pad_token_id, tokenizer.unk_token_id)
     max_id = max(
-        tokenizer.vocab_size - 1,
+        tokenizer_adapter.vocab_size - 1,
         *tokenizer(prompt, add_special_tokens=False).input_ids,
         *(i for i in special_ids if i is not None),
     )
     for attack_prompt in prompts:
         max_id = max(max_id, int(attack_prompt.input_ids.max()))
-    if max_id >= weight.shape[0]:
+    if max_id >= model_adapter.num_embeddings:
         raise ValueError(
             f"The tokenizer for {model_path!r} produces token id {max_id} but the model's input embeddings "
-            f"have only {weight.shape[0]} rows. Check that the tokenizer matches the model."
+            f"have only {model_adapter.num_embeddings} rows. Check that the tokenizer matches the model."
         )
+    for attack_prompt in prompts:
+        # GCG decodes each accepted candidate as get_filtered_cands does and renders it again through
+        # control_str, so the initial control must come back as the same tokens.
+        control, control_toks = attack_prompt.control, attack_prompt.control_toks
+        attack_prompt.control_str = tokenizer.decode(
+            control_toks, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
+        round_tripped = attack_prompt.control
+        same_tokens = torch.equal(attack_prompt.control_toks, control_toks)
+        attack_prompt.control_str = control
+        if not same_tokens:
+            raise ValueError(
+                f"The initial control {control!r} does not survive a decode/encode round trip with the tokenizer "
+                f"for {model_path!r}: it comes back as {round_tripped!r}, so GCG would not optimize the "
+                "tokens it started from. Use a control_init that encodes back to the same tokens."
+            )
 
 
 def start_workers(*, params: Any, workers: list[ModelWorker]) -> None:

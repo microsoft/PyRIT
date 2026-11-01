@@ -13,6 +13,7 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
     ModelWorkerOperation,
     PromptManager,
 )
+from pyrit.executor.promptgen.gcg.attack.base.model_adapters import GCGTokenizerAdapter
 from pyrit.executor.promptgen.gcg.extension_protocols import CandidateFilter, SamplingStrategy
 
 
@@ -78,6 +79,8 @@ class GCGCandidateProposer:
         self._sample_fn = sample_fn
         self._filter_fn = filter_fn
         self._main_device = main_device
+        # Vocabulary identity per (worker index, embedding rows), so each vocabulary is hashed once per run.
+        self._vocabulary_identities: dict[tuple[int, int], str] = {}
 
     def propose_candidates(
         self,
@@ -114,7 +117,7 @@ class GCGCandidateProposer:
         control_cands: list[list[str]] = []
         group_worker_indices: list[int] = []
         grad: torch.Tensor | None = None
-        vocab: dict[str, int] | None = None
+        vocab: str | None = None
 
         # Collect and aggregate gradients across workers
         for j, worker in enumerate(self._workers):
@@ -122,7 +125,12 @@ class GCGCandidateProposer:
             new_grad = new_grad / new_grad.norm(dim=-1, keepdim=True)
             # Each embedding row is a sampleable token ID, including added tokens.
             # Tokens outside the embedding matrix cannot be sampled and need not match.
-            new_vocab = {token: i for token, i in worker.tokenizer.get_vocab().items() if i < new_grad.shape[-1]}
+            key = (j, new_grad.shape[-1])
+            if key not in self._vocabulary_identities:
+                self._vocabulary_identities[key] = GCGTokenizerAdapter(worker.tokenizer).vocabulary_identity(
+                    num_embeddings=new_grad.shape[-1]
+                )
+            new_vocab = self._vocabulary_identities[key]
 
             if grad is None:
                 grad = torch.zeros_like(new_grad)
