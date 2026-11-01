@@ -19,7 +19,6 @@ from pyrit.models import (
     Scorable,
     ScorableUnion,
     Score,
-    ScoringExpectation,
     SurfaceObservationPayload,
     ToolEventsObservationPayload,
 )
@@ -148,10 +147,6 @@ _CURRENT_OBSERVATION_COLLECTOR: ContextVar[_ScoringCollector | None] = ContextVa
     default=None,
 )
 _CURRENT_SCORE_COLLECTOR: ContextVar[_ScoringCollector | None] = ContextVar("current_score_collector", default=None)
-_CURRENT_SCORING_EXPECTATION: ContextVar[ScoringExpectation | None] = ContextVar(
-    "current_scoring_expectation",
-    default=None,
-)
 _CURRENT_SCORABLE: ContextVar[Scorable | None] = ContextVar(
     "current_scorable",
     default=None,
@@ -218,28 +213,6 @@ def _suppress_observation_collection() -> Generator[None, None, None]:
         yield
     finally:
         _CURRENT_OBSERVATION_COLLECTOR.reset(token)
-
-
-@contextmanager
-def _scoring_expectation_context(
-    expectation: ScoringExpectation | None,
-) -> Generator[None, None, None]:
-    """Make the effective expectation available to request-bound scoring helpers."""
-    token = _CURRENT_SCORING_EXPECTATION.set(expectation)
-    try:
-        yield
-    finally:
-        _CURRENT_SCORING_EXPECTATION.reset(token)
-
-
-def _get_current_scoring_expectation() -> ScoringExpectation | None:
-    """
-    Return the effective expectation for the active scorer call.
-
-    Returns:
-        ScoringExpectation | None: The active expectation.
-    """
-    return _CURRENT_SCORING_EXPECTATION.get()
 
 
 @contextmanager

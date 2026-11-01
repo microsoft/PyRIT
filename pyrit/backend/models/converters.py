@@ -112,8 +112,6 @@ class CreateConverterRequest(BaseModel):
     def _validate_registration(self) -> "CreateConverterRequest":
         if self.register and not self.name:
             raise ValueError("name is required when register=true")
-        if self.source is not None and self.register:
-            raise ValueError("source requires register=false")
         if self.source is not None and self.params:
             raise ValueError("Use source.params for reconstruction overrides")
         return self

@@ -34,8 +34,12 @@ For single-turn targets or targets that cannot replay the first prompt as histor
 without copying the response. After a successful single send, **Undo last send**
 also restores the prompt in a new conversation, if the target can replay the
 preceding history. Both actions restore the saved prompt and converter results
-for text, image, audio, video, and mixed responses. They do not overwrite new
-prompt edits or changed converter pipelines.
+for text, image, audio, video, and mixed responses when the converter pipeline
+has not changed. If you change the pipeline, both actions keep your
+current converters and temporary settings, restore the original prompt, and
+discard the old conversion results. You can then convert the prompt again.
+Neither action overwrites new prompt or working-input edits, sends a prompt,
+or runs a converter.
 When you save an edited conversation, its final user turn moves to the prompt
 box instead of saved history. Text and attachments retain their metadata,
 including text-only video remix IDs. You can enter and edit prompts without a target.

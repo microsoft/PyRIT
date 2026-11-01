@@ -122,8 +122,10 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
                 or quick validations.
 
         Raises:
-            ValueError: If any of the specified categories are invalid.
+            ValueError: If any of the specified categories are invalid, or if max_examples is less than 1.
         """
+        if max_examples is not None and max_examples < 1:
+            raise ValueError(f"max_examples must be at least 1 or None, got {max_examples}")
         if unsafe_grades is None:
             unsafe_grades = ["unsafe", "borderline"]
         self.source = source

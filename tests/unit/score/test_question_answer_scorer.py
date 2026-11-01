@@ -20,6 +20,7 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.score import (
+    LegacyScorerHookError,
     QuestionAnswerScorer,
     Scorer,
     ScorerPromptValidator,
@@ -28,7 +29,6 @@ from pyrit.score import (
     TrueFalseInverterScorer,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.observation.execution import _scoring_expectation_context
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -260,23 +260,22 @@ async def test_aggregation_uses_explicit_expectation_not_observation_context_asy
     expectation: ScoringExpectation,
 ) -> None:
     scorer = QuestionAnswerScorer()
-    unrelated = ScoringExpectation(conditions=(AnswerMatches(correct_answer="London"),))
-    with _scoring_expectation_context(unrelated):
-        [score] = await scorer._score_async(
-            Message.from_prompt(prompt="Paris", role="assistant"),
-            objective=expectation.objective,
-            expectation=expectation,
-        )
+    [score] = await scorer._score_async(
+        Message.from_prompt(prompt="Paris", role="assistant"),
+        objective=expectation.objective,
+        expectation=expectation,
+    )
     assert score.get_value() is True
 
 
-async def test_legacy_aggregation_override_cannot_drop_typed_criteria_async(expectation: ScoringExpectation) -> None:
+def test_legacy_aggregation_override_cannot_drop_typed_criteria() -> None:
     class LegacyAggregationScorer(QuestionAnswerScorer):
         async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
             raise AssertionError("Typed criteria must not be lost.")
 
-    with pytest.raises(RuntimeError, match="must accept and forward expectation"):
-        await LegacyAggregationScorer().score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
+    # The typed criterion can never reach this override, so construction fails before any call.
+    with pytest.raises(LegacyScorerHookError, match=r"Implement _score_async\(\.\.\., expectation=\.\.\.\)"):
+        LegacyAggregationScorer()
 
 
 class _LegacyMessageSubstringScorer(SubStringScorer):
@@ -292,7 +291,7 @@ async def test_legacy_hooks_reject_their_own_typed_criteria_async(
     with (
         patch.object(scorer_type, "CONDITION_TYPE", AnswerMatches),
         patch.object(scorer, "_score_piece_async", new_callable=AsyncMock) as leaf,
-        pytest.raises(RuntimeError, match="matched typed conditions"),
+        pytest.raises(LegacyScorerHookError, match="matched typed conditions"),
     ):
         await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
     leaf.assert_not_awaited()
