@@ -139,6 +139,16 @@ function LegacyPresetEditorRedirect() {
   return <Navigate replace to={presetEditorRoutePath(routerPathParamValue(presetName))} />
 }
 
+function LegacyAttackRedirect() {
+  const { attackId, conversationId } = useParams<{ attackId: string; conversationId?: string }>()
+  const location = useLocation()
+  const path = conversationId === undefined
+    ? attackRoutePath(routerPathParamValue(attackId))
+    : attackConversationRoutePath(routerPathParamValue(attackId), routerPathParamValue(conversationId))
+
+  return <Navigate replace to={`${path}${location.search}${location.hash}`} />
+}
+
 /** Status of the in-flight attack load for an /attack/chat/:id route. */
 type AttackLoadStatus = 'loading' | 'success' | 'not-found' | 'error'
 
@@ -893,6 +903,11 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <Route
                 path="/attack/chat/:attackId/conversations/:conversationId"
                 element={chatElement}
+              />
+              <Route path="/attacks/:attackId" element={<LegacyAttackRedirect />} />
+              <Route
+                path="/attacks/:attackId/conversations/:conversationId"
+                element={<LegacyAttackRedirect />}
               />
               <Route path="/registry" element={<RegistryLayout />}>
                 <Route index element={<Navigate to="/registry/targets" replace />} />

@@ -44,6 +44,10 @@ Use **New attack** to start a blank draft. The **History** tab
 are read-only; **Continue manually** creates a separate manual attack. Export
 a conversation when you need a transcript.
 
+Older `/attacks/{attackId}` and
+`/attacks/{attackId}/conversations/{conversationId}` links redirect to the
+corresponding Chat route while retaining query parameters and fragments.
+
 ![Chat workspace with a prompt and target response](images/chat.png)
 
 ## Scanner

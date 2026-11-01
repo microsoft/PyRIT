@@ -304,7 +304,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/attack/chat/mobile-attack-001") {
+    if (apiPath === "/attacks/mobile-attack-001") {
       await route.fulfill(
         jsonResponse({
           attack_result_id: "mobile-attack-001",
@@ -338,7 +338,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/attack/chat/mobile-attack-001/message-sends" && method === "POST") {
+    if (apiPath === "/attacks/mobile-attack-001/message-sends" && method === "POST") {
       await fulfillMessageSend(route, makeAddMessageResponse(
         "mobile-attack-001", "mobile-conversation-001", MESSAGES,
         null, {
@@ -350,7 +350,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       ));
       return;
     }
-    if (apiPath === "/attack/chat/mobile-attack-001/messages") {
+    if (apiPath === "/attacks/mobile-attack-001/messages") {
       await route.fulfill(
         method === "POST"
           ? jsonResponse(makeAddMessageResponse(
@@ -366,7 +366,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/attack/chat/mobile-attack-001/conversations") {
+    if (apiPath === "/attacks/mobile-attack-001/conversations") {
       await route.fulfill(
         jsonResponse({
           attack_result_id: "mobile-attack-001",
@@ -383,13 +383,13 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/attack/chat/attack-options") {
+    if (apiPath === "/attacks/attack-options") {
       await route.fulfill(
         jsonResponse({ attack_types: ["PromptSendingAttack"] })
       );
       return;
     }
-    if (apiPath === "/attack/chat/converter-options") {
+    if (apiPath === "/attacks/converter-options") {
       await route.fulfill(jsonResponse({ converter_types: [] }));
       return;
     }
