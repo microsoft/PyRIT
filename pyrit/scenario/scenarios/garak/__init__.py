@@ -26,6 +26,11 @@ if TYPE_CHECKING:
         LatentInjectionDatasetConfiguration,
         LatentInjectionTechnique,
     )
+    from pyrit.scenario.scenarios.garak.leak_replay import (
+        LeakReplay,
+        LeakReplayDatasetConfiguration,
+        LeakReplayTechnique,
+    )
     from pyrit.scenario.scenarios.garak.package_hallucination import (
         PackageHallucination,
         PackageHallucinationTechnique,
@@ -62,6 +67,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "LatentInjection": "pyrit.scenario.scenarios.garak.latent_injection",
     "LatentInjectionDatasetConfiguration": "pyrit.scenario.scenarios.garak.latent_injection",
     "LatentInjectionTechnique": "pyrit.scenario.scenarios.garak.latent_injection",
+    "LeakReplay": "pyrit.scenario.scenarios.garak.leak_replay",
+    "LeakReplayDatasetConfiguration": "pyrit.scenario.scenarios.garak.leak_replay",
+    "LeakReplayTechnique": "pyrit.scenario.scenarios.garak.leak_replay",
     "PackageHallucination": "pyrit.scenario.scenarios.garak.package_hallucination",
     "PackageHallucinationTechnique": "pyrit.scenario.scenarios.garak.package_hallucination",
     "PromptInject": "pyrit.scenario.scenarios.garak.prompt_inject",

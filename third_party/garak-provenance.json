@@ -231,6 +231,14 @@
       ]
     },
     {
+      "path": "pyrit/scenario/scenarios/garak/leak_replay.py",
+      "sources": [
+        "garak/probes/leakreplay.py",
+        "garak/detectors/leakreplay.py",
+        "garak/detectors/base.py"
+      ]
+    },
+    {
       "path": "pyrit/scenario/scenarios/garak/package_hallucination.py",
       "sources": [
         "garak/probes/packagehallucination.py"
