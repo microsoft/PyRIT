@@ -257,3 +257,22 @@ async def test_braille_converter_dollar_resets_number_mode(prompt, expected):
 
     result = await converter.convert_async(prompt=prompt, input_type="text")
     assert result.output_text == expected
+
+
+@pytest.mark.parametrize(
+    "prompt, expected",
+    [
+        ("9-10", "\u283c\u280a\u2824\u283c\u2801\u281a"),
+        ("2.5-5", "\u283c\u2803\u2832\u2811\u2824\u283c\u2811"),
+        ("8-cab", "\u283c\u2813\u2824\u2809\u2801\u2803"),
+        ("555-1234", "\u283c\u2811\u2811\u2811\u2824\u283c\u2801\u2803\u2809\u2819"),
+    ],
+    ids=["number-range", "decimal-range", "digit-hyphen-letters", "phone-number"],
+)
+async def test_braille_converter_hyphen_resets_number_mode(prompt, expected):
+    """A hyphen ends numeric mode (UEB rule 6.3.1), so digits after it get a fresh
+    number indicator and a letter after it is written as it is after a space."""
+    converter = BrailleConverter()
+
+    result = await converter.convert_async(prompt=prompt, input_type="text")
+    assert result.output_text == expected
