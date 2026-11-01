@@ -4,7 +4,7 @@
 import json
 import logging
 from collections.abc import Callable
-from typing import Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, assert_never
 
 from pyrit.auth import (
     get_azure_token_provider,
@@ -291,7 +291,7 @@ class PromptShieldTarget(PromptTarget):
                 return {"userPrompt": input_str, "documents": []}
             case "documents":
                 return {"userPrompt": "", "documents": [input_str]}
-            case _:
+            case None:
                 # This can also be accomplished using regex, but Python is flexible.
                 user_prompt = ""
                 documents: list[str] = []
@@ -305,6 +305,24 @@ class PromptShieldTarget(PromptTarget):
                     else:
                         # Text before the closing tag is the document; any text after it
                         # belongs to the user prompt and must not be silently dropped.
+                        documents.append(contents[0])
+                        user_prompt += contents[1]
+
+                return {"userPrompt": user_prompt, "documents": documents if documents else []}
+            case unknown_field:
+                if TYPE_CHECKING:
+                    assert_never(unknown_field)
+                # Preserve the historical runtime fallback for an unknown value.
+                user_prompt = ""
+                documents = []
+                split_input = input_str.split("<document>")
+
+                for element in split_input:
+                    contents = element.split("</document>")
+
+                    if len(contents) == 1:
+                        user_prompt += contents[0]
+                    else:
                         documents.append(contents[0])
                         user_prompt += contents[1]
 
