@@ -39,6 +39,7 @@ import type {
   SeedExampleListParams,
   SeedExampleListResponse,
   ConversationMessagesResponse,
+  ConversationPageParams,
   AddMessageRequest,
   AddMessageResponse,
   MessageSendRequest,
@@ -505,10 +506,12 @@ export const attacksApi = {
     return response.data
   },
 
-  getMessages: async (attackResultId: string, conversationId: string): Promise<ConversationMessagesResponse> => {
+  getMessages: async (
+    attackResultId: string, conversationId: string, params?: ConversationPageParams,
+  ): Promise<ConversationMessagesResponse> => {
     const response = await apiClient.get(
       `/attacks/${encodeURIComponent(attackResultId)}/messages`,
-      { params: { conversation_id: conversationId } }
+      { params: { conversation_id: conversationId, ...params } }
     )
     return response.data
   },
@@ -538,10 +541,11 @@ export const attacksApi = {
     return response.data
   },
 
-  getConversations: async (attackResultId: string): Promise<AttackConversationsResponse> => {
-    const response = await apiClient.get(
-      `/attacks/${encodeURIComponent(attackResultId)}/conversations`
-    )
+  getConversations: async (
+    attackResultId: string, params?: ConversationPageParams,
+  ): Promise<AttackConversationsResponse> => {
+    const url = `/attacks/${encodeURIComponent(attackResultId)}/conversations`
+    const response = params ? await apiClient.get(url, { params }) : await apiClient.get(url)
     return response.data
   },
 

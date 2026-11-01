@@ -278,6 +278,11 @@ export interface PaginationInfo {
   prev_cursor?: string | null
 }
 
+export interface ConversationPageParams {
+  limit?: number
+  cursor?: string
+}
+
 export interface ConfigurationFileContent {
   content: string
   source: string
@@ -1096,6 +1101,9 @@ export interface DisplayScore extends BackendScore {
 
 export interface BackendMessagePiece {
   id: string
+  sequence?: number
+  role?: string
+  timestamp?: string
   original_value_data_type: string
   converted_value_data_type: string
   original_value?: string | null
@@ -1131,6 +1139,8 @@ export interface ConversationMessagesResponse {
   conversation_id: string
   messages: BackendMessage[]
   target_response_status: TargetResponseStatus | null
+  pagination?: PaginationInfo | null
+  partial_message_sequences?: number[]
 }
 
 export interface MessagePieceRequest {
@@ -1229,6 +1239,7 @@ export interface AttackListResponse {
 
 export interface ConversationSummary {
   conversation_id: string
+  conversation_type?: 'main' | 'pruned'
   message_count: number
   last_message_preview?: string | null
   created_at?: string | null
@@ -1238,6 +1249,8 @@ export interface AttackConversationsResponse {
   attack_result_id: string
   main_conversation_id: string
   conversations: ConversationSummary[]
+  pagination?: PaginationInfo | null
+  total_count?: number | null
 }
 
 
