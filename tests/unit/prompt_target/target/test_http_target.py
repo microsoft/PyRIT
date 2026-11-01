@@ -63,6 +63,53 @@ def test_http_target_sets_endpoint_and_rate_limit(mock_callback_function, sqlite
     assert target._max_requests_per_minute == 25
 
 
+def _judge_target(*, auth: str = "Authorization: Bearer secret-1") -> HTTPTarget:
+    return HTTPTarget(
+        http_request=f"POST /judge HTTP/1.1\nHost: example.com\nContent-Type: text/plain\n{auth}\n\n"
+        "policy=A\n{PROMPT}"
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "other_request",
+    [
+        "POST /judge HTTP/1.1\nHost: example.com\nContent-Type: text/plain\n\npolicy=B\n{PROMPT}",
+        "PUT /judge HTTP/1.1\nHost: example.com\nContent-Type: text/plain\n\npolicy=A\n{PROMPT}",
+        "POST /judge HTTP/1.1\nHost: example.com\nContent-Type: application/json\n\npolicy=A\n{PROMPT}",
+        "POST /judge HTTP/1.1\r\nHost: example.com\r\nContent-Type: text/plain\r\n\r\npolicy=A\r\n{PROMPT}",
+    ],
+    ids=["body", "method", "header", "body-line-endings"],
+)
+def test_identifier_changes_with_the_request_template(other_request: str):
+    base = HTTPTarget(
+        http_request="POST /judge HTTP/1.1\nHost: example.com\nContent-Type: text/plain\n\npolicy=A\n{PROMPT}"
+    )
+    other = HTTPTarget(http_request=other_request)
+
+    assert base.get_identifier().params["endpoint"] == other.get_identifier().params["endpoint"]
+    assert base.get_identifier().hash != other.get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_matches_for_identical_templates():
+    assert _judge_target().get_identifier().hash == _judge_target().get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "auth",
+    ["Authorization: Bearer secret-2", "X-API-Key: secret-2", "Cookie: session=secret-2", "api-key: secret-2"],
+)
+def test_identifier_ignores_credential_headers(auth: str):
+    with_secret = _judge_target(auth=auth)
+
+    assert (
+        with_secret.get_identifier().hash == _judge_target(auth="Authorization: Bearer secret-1").get_identifier().hash
+    )
+    assert "secret" not in str(with_secret.get_identifier().params)
+
+
 @patch("httpx.AsyncClient.request")
 async def test_send_prompt_async(mock_request, mock_http_target, mock_http_response):
     message = MagicMock()
