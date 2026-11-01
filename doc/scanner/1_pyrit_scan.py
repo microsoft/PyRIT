@@ -72,9 +72,9 @@
 #
 # PyRITInitializers are how you can configure the CLI scanner. PyRIT includes several built-in initializers you can use with the `--initializers` flag.
 #
-# The `--list-initializers` command shows all available initializers. Initializers are referenced by their filename (e.g., `target`, `scorer`) regardless of which subdirectory they're in.
+# The `list-initializers` command shows all available initializers. Initializers are referenced by their filename (e.g., `target`, `scorer`) regardless of which subdirectory they're in.
 #
-# List the available initializers using the --list-initializers flag.
+# List the available initializers using the `list-initializers` command.
 
 # %%
 # !pyrit_scan list-initializers
@@ -86,7 +86,7 @@
 #
 # 1. A Scenario. Many are defined in `pyrit.scenario.scenarios`. But you can also define your own in initialization_scripts.
 # 2. Initializers (which can be supplied via the `--initializers` flag on `run`, or the `initializers` / `initialization_scripts` sections of a config file (see [here](../getting_started/pyrit_conf.md))). Scenarios often don't need many arguments, but they can be configured in different ways. And at the very least, most need an `objective_target` (the thing you're running a scan against) which you can configure by using the `--target` flag if your initializer registers targets (e.g. `target` initializer)
-# 3. Scenario Techniques (optional). These are supplied by the `--techniques` flag and tell the scenario what to test, but they are always optional. Also note you can obtain these by running `--list-scenarios`
+# 3. Scenario Techniques (optional). These are supplied by the `--techniques` flag and tell the scenario what to test, but they are always optional. Also note you can obtain these by running `list-scenarios`
 #
 # Basic usage will look something like:
 #
