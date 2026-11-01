@@ -130,11 +130,22 @@ function presetScenarioParams(
   defaults: Record<string, unknown>,
 ): Record<string, unknown> | null {
   const stored = previous?.scenario_params ?? {}
-  const edited = Object.entries(config.scenario_params ?? {}).filter(
-    ([name, value]) => (
+  // The form renders a stored list as comma-joined text, so rebuilding it re-splits any
+  // element containing a comma. What the form yields from the stored values untouched is
+  // therefore not an edit, and the stored value is kept as is.
+  const parameters = dynamicScenarioParameters(scenario)
+  const untouched = buildParametersFromForm(parameters, getInitialFormValues(parameters, stored, { prefillDefaults: false }))
+  const untouchedParams = untouched.ok ? untouched.parameters ?? {} : {}
+  const edited = Object.entries(config.scenario_params ?? {})
+    .filter(([name, value]) => (
       Object.prototype.hasOwnProperty.call(stored, name) || !matchesDefault(value, defaults[name])
-    ),
-  )
+    ))
+    .map(([name, value]) => [
+      name,
+      Object.prototype.hasOwnProperty.call(stored, name) && matchesDefault(value, untouchedParams[name])
+        ? stored[name]
+        : value,
+    ])
   const merged = {
     ...Object.fromEntries(edited),
     ...uneditableScenarioParams(scenario, previous),
