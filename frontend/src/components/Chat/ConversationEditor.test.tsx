@@ -41,6 +41,7 @@ function setupEditor(
   target?: TargetInstance,
   newAttackDisabledReason?: string,
   initialConverters?: ChatConverterSnapshot,
+  unsavedImport?: boolean,
 ) {
   const onSaved = jest.fn()
   function EditorHarness() {
@@ -50,6 +51,7 @@ function setupEditor(
       begin({
         messages, initialObjective: 'Objective', objective: 'Objective', target: target ?? null,
         sourceAttackId: 'source-attack', sourceConversationId: 'source-conversation', labels: { operator: 'owner' },
+        unsavedImport,
       })
     }, [begin])
     return controller.draft && <ConversationEditor controller={controller}
@@ -393,6 +395,33 @@ describe('ConversationEditor', () => {
       })
     })
     expect(onSaved).not.toHaveBeenCalled()
+  })
+
+  it('protects untouched imported content from silent discard on cancel and navigation', async () => {
+    const user = userEvent.setup()
+    const { router } = setupEditor(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    )
+    expect(screen.getByTestId('conversation-editor')).toBeInTheDocument()
+
+    // 1. Clicking Cancel without editing prompts for discard confirmation
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByRole('dialog', { name: 'Discard conversation draft?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.queryByRole('dialog', { name: 'Discard conversation draft?' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('conversation-editor')).toBeInTheDocument()
+
+    // 2. Navigating away without editing blocks navigation and prompts for discard confirmation
+    await act(async () => { await router.navigate('/next') })
+    expect(screen.getByRole('dialog', { name: 'Discard conversation draft?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.queryByText('Next page')).not.toBeInTheDocument()
+    expect(screen.getByTestId('conversation-editor')).toBeInTheDocument()
   })
 })
 

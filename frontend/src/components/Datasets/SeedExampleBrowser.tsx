@@ -310,31 +310,27 @@ export function SeedExampleBrowserView({
         draftHandoff.clearPreservedDraft()
       }
 
-      const expectedSeq = draftHandoff.activeSequence
-      const staged = draftHandoff.stagePendingImport(
-        {
-          destinationType: destination,
-          targetAttackId: destination === 'new_attack' ? null : effectiveAttackId,
-          targetConversationId,
-          content: {
-            text: outcome.type === 'single_prompt' ? outcome.text : (outcome.composerDraft?.text ?? ''),
-            attachments: outcome.type === 'single_prompt' ? outcome.attachments : (outcome.composerDraft?.attachments ?? []),
-            textMetadata: outcome.type === 'single_prompt' ? outcome.textMetadata : outcome.composerDraft?.textMetadata,
-          },
-          ...(outcome.type === 'conversation'
-            ? {
-                conversation: {
-                  messages: outcome.messages,
-                  objective: outcome.objective,
-                  systemPrompt: outcome.systemPrompt,
-                },
-              }
-            : {}),
-          focus: true,
-          replaceDirty,
+      const staged = draftHandoff.stagePendingImport({
+        destinationType: destination,
+        targetAttackId: destination === 'new_attack' ? null : effectiveAttackId,
+        targetConversationId,
+        content: {
+          text: outcome.type === 'single_prompt' ? outcome.text : (outcome.composerDraft?.text ?? ''),
+          attachments: outcome.type === 'single_prompt' ? outcome.attachments : (outcome.composerDraft?.attachments ?? []),
+          textMetadata: outcome.type === 'single_prompt' ? outcome.textMetadata : outcome.composerDraft?.textMetadata,
         },
-        expectedSeq,
-      )
+        ...(outcome.type === 'conversation'
+          ? {
+              conversation: {
+                messages: outcome.messages,
+                objective: outcome.objective,
+                systemPrompt: outcome.systemPrompt,
+              },
+            }
+          : {}),
+        focus: true,
+        replaceDirty,
+      })
 
       if (!staged) {
         setImportError('Import staging was superseded by another action.')
