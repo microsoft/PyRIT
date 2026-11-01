@@ -25,6 +25,7 @@ interface DraftState extends ConversationSaveInput {
   baselineMessages: ConversationDraftMessage[]
   baselineTarget: string | undefined
   temperature: string
+  unsavedImport?: boolean
 }
 
 export function useConversationDraft(
@@ -39,8 +40,11 @@ export function useConversationDraft(
   const urls = useRef(new Set<string>())
   const workflow = useConversationSave(newAttackContext)
   const dirty = draft !== null && (
-    draft.messages !== draft.baselineMessages || draft.objective !== draft.initialObjective
-    || targetKey(draft.target) !== draft.baselineTarget || draft.temperature.trim() !== ''
+    draft.unsavedImport === true
+    || draft.messages !== draft.baselineMessages
+    || draft.objective !== draft.initialObjective
+    || targetKey(draft.target) !== draft.baselineTarget
+    || draft.temperature.trim() !== ''
   )
   const validationError = draft ? validateDraft(draft.messages) : null
   const messages = draft?.messages ?? []
@@ -62,7 +66,9 @@ export function useConversationDraft(
     saved.current = false
     setError(null)
     setDraft({
-      ...input, id, baselineMessages: input.messages, baselineTarget: targetKey(input.target), temperature: '',
+      ...input, id, baselineMessages: input.baselineMessages ?? input.messages,
+      baselineTarget: targetKey(input.target), temperature: input.temperature ?? '',
+      unsavedImport: input.unsavedImport,
       sourcePieceIds: input.messages.flatMap((message: ConversationDraftMessage) => message.pieces.flatMap(
         (piece: ConversationDraftPiece) => piece.source_piece_id ? [piece.source_piece_id] : [],
       )),

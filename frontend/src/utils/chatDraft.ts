@@ -22,13 +22,14 @@ export function releaseSupersededUrls(
   revokeAttachmentUrls(previousAttachments?.filter((attachment: MessageAttachment) => !activeUrls.has(attachment.url)))
 }
 
-/** Determines if draft content contains user-entered text, attachments, system prompt, or converters. */
+/** Determines if draft content contains user-entered text, attachments, system prompt, converters, or conversation draft. */
 export function isChatDraftDirty(draft?: Partial<ChatDraftContent> | null): boolean {
   if (!draft) return false
   if (typeof draft.text === 'string' && draft.text.trim().length > 0) return true
   if (Array.isArray(draft.attachments) && draft.attachments.length > 0) return true
   if (typeof draft.systemPrompt === 'string' && draft.systemPrompt.trim().length > 0) return true
   if (draft.converters?.applied && Object.keys(draft.converters.applied).length > 0) return true
+  if (draft.conversation?.messages && draft.conversation.messages.length > 0) return true
   return false
 }
 
@@ -38,6 +39,7 @@ export function hasChatDraftState(draft?: Partial<ChatDraftContent> | null): boo
     isChatDraftDirty(draft)
     || draft.target !== undefined
     || Object.values(draft.converters?.pipelines ?? {}).some((stages: ConverterPipelineStage[]) => stages.length > 0)
+    || Boolean(draft.conversation)
   ))
 }
 
@@ -69,6 +71,12 @@ export function canApplyPendingImport(
   }
   if (pending.destinationType === 'new_attack') {
     return attackId === null && conversationId == null
+  }
+  if (pending.destinationType === 'new_conversation') {
+    if (pending.targetConversationId) {
+      return Boolean(pending.targetAttackId && attackId === pending.targetAttackId && conversationId === pending.targetConversationId)
+    }
+    return Boolean(pending.targetAttackId && attackId === pending.targetAttackId && conversationId == null)
   }
   return Boolean(pending.targetAttackId && pending.targetConversationId
     && attackId === pending.targetAttackId && conversationId === pending.targetConversationId)

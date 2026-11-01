@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 
 import {
@@ -18,10 +18,17 @@ import {
   Text,
 } from '@fluentui/react-components'
 import { ArrowSyncRegular, ChevronLeftRegular, ChevronRightRegular, SearchRegular } from '@fluentui/react-icons'
+import { useNavigate } from 'react-router'
 
+import ConfirmDialog from '@/components/ConfirmDialog'
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
+import { useChatDraftHandoff } from '@/hooks/useChatDraftHandoff'
 import { useSeedExampleDetail, useSeedExamples } from '@/hooks/useSeedExamples'
-import type { DatasetInfo, FilterOption, SeedExampleSummary } from '@/types'
+import { attacksApi } from '@/services/api'
+import { toApiError } from '@/services/errors'
+import type { DatasetInfo, FilterOption, ImportDestinationType, SeedExampleSummary } from '@/types'
+import { attackConversationRoutePath } from '@/utils/routeParams'
+import { buildSeedImport } from '@/utils/seedImport'
 
 import SeedExampleDetail from './SeedExampleDetail'
 import { useSeedExampleBrowserStyles } from './SeedExampleBrowser.styles'
@@ -47,6 +54,8 @@ const SEARCH_HELP = 'Search looks through stored text prompts and objectives. Si
 interface SeedExampleBrowserProps {
   dataset: DatasetInfo
   onCatalogStale: () => void
+  activeAttackId?: string | null
+  activeConversationId?: string | null
 }
 
 function toOptions(values: readonly string[]): FilterOption[] {
@@ -90,18 +99,40 @@ function pageSizeChoices(limit: number): number[] {
 }
 
 /** Read-only example table for one loaded dataset. */
-export default function SeedExampleBrowser({ dataset, onCatalogStale }: SeedExampleBrowserProps) {
+export default function SeedExampleBrowser({
+  dataset,
+  onCatalogStale,
+  activeAttackId,
+  activeConversationId,
+}: SeedExampleBrowserProps) {
   const browserState = useSeedExampleBrowserState(dataset.selection_key)
-  return <SeedExampleBrowserView dataset={dataset} onCatalogStale={onCatalogStale} browserState={browserState} />
+  return (
+    <SeedExampleBrowserView
+      dataset={dataset}
+      onCatalogStale={onCatalogStale}
+      browserState={browserState}
+      activeAttackId={activeAttackId}
+      activeConversationId={activeConversationId}
+    />
+  )
 }
 
 export function SeedExampleBrowserView({
   dataset,
   onCatalogStale,
   browserState,
+  activeAttackId,
+  activeConversationId,
 }: SeedExampleBrowserProps & { browserState: SeedExampleBrowserState }) {
   const styles = useSeedExampleBrowserStyles()
   const helpId = useId()
+  const navigate = useNavigate()
+  const draftHandoff = useChatDraftHandoff()
+  const [importError, setImportError] = useState<string | null>(null)
+  const [pendingDirtyDestination, setPendingDirtyDestination] = useState<ImportDestinationType | null>(null)
+
+  const effectiveAttackId = activeAttackId ?? draftHandoff.preservedDraft?.originatingAttackId ?? null
+  const effectiveConversationId = activeConversationId ?? draftHandoff.preservedDraft?.originatingConversationId ?? null
   const { query, visitedCursors, generation, commit } = browserState
   const pageState = useSeedExamples(dataset.selection_key, query, generation)
   const detailState = useSeedExampleDetail(
@@ -228,6 +259,110 @@ export function SeedExampleBrowserView({
     selectExample(next.example_id, false)
     buttonRefs.current.get(nextKey)?.focus()
   }
+
+  const isDestinationDirty = useCallback(
+    (destination: ImportDestinationType): boolean => {
+      const preserved = draftHandoff.preservedDraft
+      if (!preserved || !draftHandoff.isDraftDirty(preserved.draft)) return false
+      if (destination === 'new_attack') {
+        return preserved.originatingAttackId === null
+      }
+      if (destination === 'current_conversation') {
+        return (
+          preserved.originatingAttackId === effectiveAttackId &&
+          preserved.originatingConversationId === effectiveConversationId
+        )
+      }
+      if (destination === 'new_conversation') {
+        return preserved.originatingAttackId === effectiveAttackId
+      }
+      return false
+    },
+    [draftHandoff, effectiveAttackId, effectiveConversationId],
+  )
+
+  const executeImport = useCallback(
+    async (destination: ImportDestinationType, replaceDirty: boolean) => {
+      setImportError(null)
+      if (!detailState.detail?.members) return
+
+      const outcome = buildSeedImport(detailState.detail.members)
+      if (outcome.type === 'unsupported') {
+        setImportError(outcome.reason)
+        return
+      }
+
+      let targetConversationId: string | null =
+        destination === 'current_conversation' ? effectiveConversationId : null
+
+      if (destination === 'new_conversation' && effectiveAttackId) {
+        try {
+          const newConv = await attacksApi.createConversation(effectiveAttackId, {})
+          targetConversationId = newConv.conversation_id
+        } catch (e) {
+          setImportError(toApiError(e).detail)
+          return
+        }
+      }
+
+      // If preserved draft is clean or user confirmed replacing it, clear it so it does not collide
+      if (draftHandoff.preservedDraft && (!draftHandoff.isDraftDirty(draftHandoff.preservedDraft.draft) || replaceDirty)) {
+        draftHandoff.clearPreservedDraft()
+      }
+
+      const staged = draftHandoff.stagePendingImport({
+        destinationType: destination,
+        targetAttackId: destination === 'new_attack' ? null : effectiveAttackId,
+        targetConversationId,
+        content: {
+          text: outcome.type === 'single_prompt' ? outcome.text : (outcome.composerDraft?.text ?? ''),
+          attachments: outcome.type === 'single_prompt' ? outcome.attachments : (outcome.composerDraft?.attachments ?? []),
+          textMetadata: outcome.type === 'single_prompt' ? outcome.textMetadata : outcome.composerDraft?.textMetadata,
+        },
+        ...(outcome.type === 'conversation'
+          ? {
+              conversation: {
+                messages: outcome.messages,
+                objective: outcome.objective,
+                systemPrompt: outcome.systemPrompt,
+              },
+            }
+          : {}),
+        focus: true,
+        replaceDirty,
+      })
+
+      if (!staged) {
+        setImportError('Import staging was superseded by another action.')
+        return
+      }
+
+      if (destination === 'new_attack') {
+        navigate('/chat')
+      } else if (
+        destination === 'current_conversation' &&
+        effectiveAttackId &&
+        effectiveConversationId
+      ) {
+        navigate(attackConversationRoutePath(effectiveAttackId, effectiveConversationId))
+      } else if (destination === 'new_conversation' && effectiveAttackId && targetConversationId) {
+        navigate(attackConversationRoutePath(effectiveAttackId, targetConversationId))
+      }
+    },
+    [detailState.detail, draftHandoff, effectiveAttackId, effectiveConversationId, navigate],
+  )
+
+  const handleImport = useCallback(
+    (destination: ImportDestinationType) => {
+      setImportError(null)
+      if (isDestinationDirty(destination)) {
+        setPendingDirtyDestination(destination)
+        return
+      }
+      executeImport(destination, false)
+    },
+    [executeImport, isDestinationDirty],
+  )
 
   return (
     <div className={styles.root} data-selected-example={choice ? `${choice.selectionKey} ${choice.exampleId}` : ''}>
@@ -470,8 +605,30 @@ export function SeedExampleBrowserView({
           detail={detailState.detail}
           headingRef={detailHeadingRef}
           onRefreshUrls={detailState.refreshDisplayUrls}
+          hasActiveAttack={Boolean(effectiveAttackId)}
+          hasActiveConversation={Boolean(effectiveAttackId && effectiveConversationId)}
+          onImport={handleImport}
+          importError={importError}
         />
       )}
+      <ConfirmDialog
+        open={pendingDirtyDestination !== null}
+        title="Replace Existing Draft?"
+        confirmLabel="Replace"
+        cancelLabel="Cancel"
+        onConfirm={() => {
+          const dest = pendingDirtyDestination
+          setPendingDirtyDestination(null)
+          if (dest) {
+            executeImport(dest, true)
+          }
+        }}
+        onCancel={() => {
+          setPendingDirtyDestination(null)
+        }}
+      >
+        You have unsent changes at this destination. Importing this example will replace your unsent draft.
+      </ConfirmDialog>
     </div>
   )
 }

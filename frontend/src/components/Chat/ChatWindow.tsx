@@ -57,7 +57,7 @@ import {
   hasChatDraftState,
   isChatDraftDirty,
 } from '@/utils/chatDraft'
-import { targetReference } from '@/utils/targetIdentity'
+import { resolveTargetReference, targetReference } from '@/utils/targetIdentity'
 import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
 import { useRuntime } from '@/hooks/useRuntime'
@@ -95,6 +95,7 @@ import type {
   ChatDraftContent,
   ChatDraftContextState,
   ConversationMessagesResponse,
+  ConversationDraftMessage,
   ConversationDraftPiece,
   ConverterInputPiece,
   ConverterPipelineStage,
@@ -507,6 +508,8 @@ export default function ChatWindow({
   const undoInFlight = useRef(false)
 
   const handoffRestoredRef = useRef<number | null>(null)
+  const importInFlightRef = useRef<string | null>(null)
+  const importFailedRef = useRef<string | null>(null)
   const ownsDraftRef = useRef(false)
   const discardDraftOnUnmountRef = useRef(false)
   const preserveOnUnmountRef = useRef<(() => void) | null>(null)
@@ -528,6 +531,7 @@ export default function ChatWindow({
   const pendingUserMessagesRef = useRef<Map<string, Message[]>>(new Map())
   const pendingSendsRef = useRef<Map<string, PendingSend>>(new Map())
   const loadedUserPieceIdsRef = useRef<Map<string, Set<string>>>(new Map())
+  const loadedBackendMessagesRef = useRef<Map<string, BackendMessage[]>>(new Map())
   const isSendInFlight = useCallback(
     (convId: string): boolean => sendingConvIdsRef.current.has(convId),
     [],
@@ -538,6 +542,9 @@ export default function ChatWindow({
     setConversationScoringFailure(response.scoring_failure ?? null)
     const savedUserIds = userPieceIds(response)
     loadedUserPieceIdsRef.current.set(convId, savedUserIds)
+    if (response.messages) {
+      loadedBackendMessagesRef.current.set(convId, response.messages)
+    }
     const persistedRecovery = getPersistedProcessingRecovery(convId, response)
     setRecoverableSends((currentRecoveries) => {
       const currentRecovery = currentRecoveries[convId]
@@ -714,6 +721,19 @@ export default function ChatWindow({
     target: draftTargetReference !== undefined
       ? draftTargetReference : activeTarget ? targetReference(activeTarget) : null,
     converters: converters.snapshot(),
+    ...(editDraft
+      ? {
+          conversation: {
+            messages: editDraft.messages,
+            objective: editDraft.objective,
+            initialObjective: editDraft.initialObjective,
+            sourceConversationId: editDraft.sourceConversationId,
+            sourceAttackId: editDraft.sourceAttackId,
+            temperature: editDraft.temperature,
+            target: editDraft.target ? targetReference(editDraft.target) : null,
+          },
+        }
+      : {}),
   }
   const isActiveDraftDirty = isChatDraftDirty(activeDraft)
   useLayoutEffect(() => {
@@ -801,13 +821,19 @@ export default function ChatWindow({
     pending
     && isDraftDestinationReady
     && runtime.ready
-    && matchingPreservedDraft === null
+    && (matchingPreservedDraft === null || pending.replaceDirty || !draftHandoff.isDraftDirty(matchingPreservedDraft))
     && canApplyPendingImport(pending, draftAttackId, draftConversationId)
     && pending.sequence >= draftHandoff.activeSequence
     && (!isActiveDraftDirty || pending.replaceDirty),
   )
 
   useEffect(() => {
+    if (!pending) {
+      importInFlightRef.current = null
+      importFailedRef.current = null
+    } else if (importFailedRef.current && importFailedRef.current !== pending.id) {
+      importFailedRef.current = null
+    }
     if (pending && pending.sequence < draftHandoff.activeSequence) {
       draftHandoff.dismissPendingImport(pending.id)
       return
@@ -815,7 +841,8 @@ export default function ChatWindow({
     if (!runtime.ready || !isDraftDestinationReady || !inputBoxRef.current) return
     const preserved = draftHandoff.preservedDraft
     const restoringPreserved = Boolean(matchingPreservedDraft && preserved
-      && handoffRestoredRef.current !== preserved.sequence)
+      && handoffRestoredRef.current !== preserved.sequence
+      && !canApplyImportNow)
     let draft: ChatDraftContent
     let focus = false
     if (restoringPreserved && preserved) {
@@ -827,20 +854,103 @@ export default function ChatWindow({
       if (!consumed) return
       handoffRestoredRef.current = preserved.sequence
       draft = { ...consumed, systemPrompt: consumed.systemPrompt ?? '' }
+      if (consumed.conversation) {
+        let editorTarget: TargetInstance | null = activeTarget
+        if (consumed.conversation.target) {
+          const resolved = resolveTargetReference(consumed.conversation.target, availableTargets)
+          if (resolved) {
+            editorTarget = resolved
+          } else {
+            editorTarget = null
+            queueMicrotask(() => {
+              setEditorError("The conversation's configured target is no longer available in the registry. Select an available target.")
+            })
+          }
+        }
+        editor.begin({
+          messages: consumed.conversation.messages,
+          objective: consumed.conversation.objective ?? currentObjective,
+          initialObjective: consumed.conversation.initialObjective ?? currentObjective,
+          sourceConversationId: consumed.conversation.sourceConversationId ?? null,
+          sourceAttackId: consumed.conversation.sourceAttackId ?? draftAttackId,
+          target: editorTarget,
+          temperature: consumed.conversation.temperature ?? '',
+          labels,
+        })
+      }
     } else {
       if (!canApplyImportNow || !pending) return
-      const consumed = draftHandoff.consumePendingImport(pending.id, draftAttackId, draftConversationId)
-      if (!consumed) return
-      converters.clearAll()
-      draft = {
-        text: consumed.content.text,
-        attachments: consumed.content.attachments ?? [],
-        textMetadata: consumed.content.textMetadata,
+      if (importInFlightRef.current === pending.id || importFailedRef.current === pending.id) return
+
+      const executeImportHandoff = async (): Promise<void> => {
+        importInFlightRef.current = pending.id
+        let existingTurns: ConversationDraftMessage[] = []
+        if (pending.conversation && pending.destinationType === 'current_conversation' && draftConversationId && draftAttackId) {
+          let backendMsgs = loadedBackendMessagesRef.current.get(draftConversationId)
+          if (!backendMsgs || backendMsgs.length === 0) {
+            try {
+              const res = await attacksApi.getMessages(draftAttackId, draftConversationId)
+              backendMsgs = res?.messages ?? []
+              if (backendMsgs.length > 0) {
+                loadedBackendMessagesRef.current.set(draftConversationId, backendMsgs)
+              }
+            } catch (err) {
+              importInFlightRef.current = null
+              importFailedRef.current = pending.id
+              setEditorError(toApiError(err).detail || 'Failed to load conversation history. Preserved pending import.')
+              return
+            }
+          }
+          try {
+            existingTurns = toConversationDraft(backendMsgs)
+          } catch (err) {
+            importInFlightRef.current = null
+            importFailedRef.current = pending.id
+            setEditorError(toApiError(err).detail || 'Failed to parse conversation history. Preserved pending import.')
+            return
+          }
+        }
+
+        const consumed = draftHandoff.consumePendingImport(pending.id, draftAttackId, draftConversationId)
+        importInFlightRef.current = null
+        if (!consumed) return
+        importFailedRef.current = null
+        if (preserved) {
+          draftHandoff.clearPreservedDraft(preserved.sequence)
+        }
+        converters.clearAll()
+        if (consumed.conversation) {
+          const allMessages = [...existingTurns, ...consumed.conversation.messages]
+          editor.begin({
+            messages: allMessages,
+            objective: consumed.conversation.objective ?? currentObjective,
+            initialObjective: consumed.conversation.objective ?? currentObjective,
+            sourceConversationId: draftConversationId ?? null,
+            sourceAttackId: draftAttackId,
+            target: activeTarget,
+            unsavedImport: true,
+            labels,
+          })
+          if (consumed.conversation.systemPrompt) {
+            if (systemPrompt && systemPrompt.trim() !== consumed.conversation.systemPrompt.trim()) {
+              setEditorNotice('The imported example includes a system prompt that differs from the existing system prompt. The existing system prompt was preserved.')
+            }
+          }
+        }
+        draft = {
+          text: consumed.content.text,
+          attachments: consumed.content.attachments ?? [],
+          textMetadata: consumed.content.textMetadata,
+          ...(consumed.conversation?.systemPrompt && !systemPrompt ? { systemPrompt: consumed.conversation.systemPrompt } : {}),
+        }
+        focus = consumed.focus === true
+        restoreComposerDraft(draft)
+        if (focus) inputBoxRef.current?.focus()
       }
-      focus = consumed.focus === true
+      void executeImportHandoff()
+      return
     }
     // Claiming a handoff synchronizes the imperative input and its parent-owned draft atomically.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     const attachments = restoreComposerDraft(draft)
     if (restoringPreserved) {
       if (draft.converters?.generation === runtime.generation) {
@@ -858,6 +968,7 @@ export default function ChatWindow({
     canApplyImportNow, pending, draftHandoff, draftAttackId, draftConversationId, converters,
     isDraftDestinationReady, matchingPreservedDraft, isActiveDraftDirty, runtime.ready, runtime.generation,
     restoreComposerDraft, restoreConverterSnapshot, restoreConversions,
+    activeTarget, currentObjective, editor, labels, setEditorNotice, systemPrompt, availableTargets,
   ])
 
   // Handle conversation selection from the panel
@@ -975,6 +1086,9 @@ export default function ChatWindow({
     } : recovery
     if (isLatestRead) {
       loadedUserPieceIdsRef.current.set(effectiveConvId, userPieceIds(response.messages))
+      if (response.messages?.messages) {
+        loadedBackendMessagesRef.current.set(effectiveConvId, response.messages.messages)
+      }
       setRecoverableSends((currentRecoveries) => {
         const next = { ...currentRecoveries }
         if (recoveredDraft) { next[effectiveConvId] = recoveredDraft } else { delete next[effectiveConvId] }

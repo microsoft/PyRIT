@@ -19,11 +19,16 @@ function shownSelectionKey(selectionKey: string): string {
   return `${selectionKey.slice(0, MAX_SHOWN_SELECTION_KEY_LENGTH - 1)}…`
 }
 
+interface DatasetSelectionProps {
+  activeAttackId?: string | null
+  activeConversationId?: string | null
+}
+
 /**
  * Selected dataset summary plus a read-only example table.
  * A missing or repeated selection key does not choose a dataset or request seeds.
  */
-export default function DatasetSelection() {
+export default function DatasetSelection({ activeAttackId, activeConversationId }: DatasetSelectionProps = {}) {
   const styles = useDatasetSelectionStyles()
   const headingRef = useRef<HTMLHeadingElement>(null)
   const retryRef = useRef<HTMLButtonElement>(null)
@@ -79,7 +84,13 @@ export default function DatasetSelection() {
             <DatasetCard dataset={dataset} linked={false} />
           </div>
           <div className={styles.browser}>
-            <SeedExampleBrowserView dataset={dataset} onCatalogStale={refresh} browserState={seedBrowser} />
+            <SeedExampleBrowserView
+              dataset={dataset}
+              onCatalogStale={refresh}
+              browserState={seedBrowser}
+              activeAttackId={activeAttackId}
+              activeConversationId={activeConversationId}
+            />
           </div>
         </>
       ) : (
