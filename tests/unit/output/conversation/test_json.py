@@ -54,8 +54,30 @@ async def test_build_async_maps_message_and_piece_fields():
     assert structured[0]["role"] == "user"
     assert structured[0]["is_simulated"] is False
     assert structured[0]["pieces"][0]["data_type"] == "text"
+    assert structured[0]["pieces"][0]["original_value_data_type"] == "text"
+    assert structured[0]["pieces"][0]["converted_value_data_type"] == "text"
     assert structured[0]["pieces"][0]["original_value"] == "hi there"
     assert structured[0]["pieces"][0]["response_error"] == "none"
+
+
+async def test_build_async_includes_distinct_converted_data_type():
+    piece = MessagePiece(
+        role="user",
+        original_value="create an image of a cat",
+        original_value_data_type="text",
+        converted_value="media/cat.png",
+        converted_value_data_type="image_path",
+        conversation_id="c1",
+        sequence=0,
+    )
+    structured = await JsonConversationPrinter(source=_StubSource()).build_async([_message(piece)])
+
+    p = structured[0]["pieces"][0]
+    assert p["data_type"] == "text"
+    assert p["original_value_data_type"] == "text"
+    assert p["converted_value_data_type"] == "image_path"
+    assert p["original_value"] == "create an image of a cat"
+    assert p["converted_value"] == "media/cat.png"
 
 
 async def test_build_async_omits_scores_when_not_requested():

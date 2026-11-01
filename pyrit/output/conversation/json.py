@@ -152,6 +152,8 @@ class JsonConversationPrinter(ConversationPrinterBase):
 
         data: dict[str, Any] = {
             "data_type": piece.original_value_data_type,
+            "original_value_data_type": piece.original_value_data_type,
+            "converted_value_data_type": piece.converted_value_data_type,
             "original_value": piece.original_value,
             "converted_value": piece.converted_value,
             "response_error": piece.response_error,
