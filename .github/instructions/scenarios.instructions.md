@@ -182,8 +182,14 @@ Options:
   Use one writer per name; concurrent runs can generate and store different batches.
 - `seed_groups` and `seeds` are inline alternatives. They never use memory or providers.
 - Validators run on full filtered populations before any sampling.
-- Ingredients must remain complete. Use `max_per_dataset="all"` and no finite source
-  `max_size`; cap the assembled attack groups with `max_total`, not ingredient rows.
+- Ingredients must remain complete. Prefer declaring them as required data: override
+  `get_required_data()` to return a `ScenarioRequiredData`, assemble groups from
+  `required_data.load_async()`, and limit them with `dataset_config.select_assembled_groups()`.
+  Required data is prepared and refreshed like any source (fresh runs and explicit loads only,
+  never estimates or resume), is never capped, sampled, filtered, or deselected, and stays in
+  the dataset settings projection and scenario identity. `ApiKey` is the reference. Older
+  scenarios that keep ingredients in `dataset_config` use `max_per_dataset="all"` and no finite
+  source `max_size`; cap the assembled attack groups with `max_total`, not ingredient rows.
 - Use `with_overrides()` instead of reconstructing a subclass or mutating its defaults.
 - Clients and Python use `ScenarioDatasetRequest` through the common `dataset_overrides`
   parameter. `dataset_config` still replaces the default; overrides apply on top.

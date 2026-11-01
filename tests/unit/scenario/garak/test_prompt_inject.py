@@ -12,10 +12,15 @@ from unit.mocks import MockPromptTarget
 from pyrit.analytics.technique_analysis import compute_technique_stats_async
 from pyrit.converter import Converter, SearchReplaceConverter
 from pyrit.memory import SQLiteMemory
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, Message, MessagePiece, SeedObjective
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, Message, MessagePiece, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScenarioRegistry
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
+from pyrit.scenario.core.dataset_configuration import (
+    DatasetAttackConfiguration,
+    DatasetConstraintError,
+    DatasetSource,
+    require_seed_type,
+)
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     PromptInject,
     PromptInjectDatasetConfiguration,
@@ -90,8 +95,9 @@ class TestPromptInjectInitialization:
         config = PromptInject()._default_dataset_config
 
         assert isinstance(config, PromptInjectDatasetConfiguration)
-        assert config.dataset_names == ["prompt_inject_contexts", "prompt_inject_techniques"]
-        assert config.max_dataset_size == 12
+        assert config.dataset_names == []
+        assert config.max_total == 12
+        assert PromptInject().get_required_data().dataset_names == PromptInject.required_datasets()
 
     def test_default_technique_expands_to_all_five_forms(self) -> None:
         resolved = PromptInjectTechnique.resolve(None, default=PromptInjectTechnique.default())
@@ -156,7 +162,7 @@ class TestPromptInjectAtomicAttacks:
     ) -> None:
         scenario = PromptInject()
         goals = ["goal A", "goal B", "goal C"]
-        config = PromptInjectDatasetConfiguration(dataset_names=PromptInject.required_datasets(), max_dataset_size=cap)
+        config = PromptInjectDatasetConfiguration(max_total=cap)
 
         with patch("pyrit.scenario.core.dataset_sampling.random", random.Random(seed)):
             await _initialize_async(scenario, target=mock_objective_target, goal_texts=goals, dataset_config=config)
@@ -180,8 +186,7 @@ class TestPromptInjectAtomicAttacks:
             scenario,
             target=mock_objective_target,
             dataset_config=PromptInjectDatasetConfiguration(
-                dataset_names=PromptInject.required_datasets(),
-                max_dataset_size="all",
+                max_total="all",
             ),
         )
 
@@ -198,8 +203,7 @@ class TestPromptInjectAtomicAttacks:
             techniques=[PromptInjectTechnique.IgnorePrint, PromptInjectTechnique.IgnoreSay],
             goal_texts=["goal one", "goal two"],
             dataset_config=PromptInjectDatasetConfiguration(
-                dataset_names=PromptInject.required_datasets(),
-                max_dataset_size=10,
+                max_total=10,
             ),
         )
 
@@ -240,9 +244,7 @@ class TestPromptInjectAtomicAttacks:
             scenario,
             target=mock_objective_target,
             goal_texts=[goal],
-            dataset_config=PromptInjectDatasetConfiguration(
-                dataset_names=PromptInject.required_datasets(), max_dataset_size="all"
-            ),
+            dataset_config=PromptInjectDatasetConfiguration(max_total="all"),
         )
 
         for attack in scenario._atomic_attacks:
@@ -288,9 +290,7 @@ class TestPromptInjectAtomicAttacks:
             target=target,
             techniques=[PromptInjectTechnique.IgnorePrint, PromptInjectTechnique.IgnoreSay],
             goal_texts=["custom goal"],
-            dataset_config=PromptInjectDatasetConfiguration(
-                dataset_names=PromptInject.required_datasets(), max_dataset_size=1
-            ),
+            dataset_config=PromptInjectDatasetConfiguration(max_total=1),
         )
         attacks = {attack.atomic_attack_name: attack for attack in scenario._atomic_attacks}
         print_attack = attacks["ignore_print__goal_0"]
@@ -375,8 +375,7 @@ class TestPromptInjectAtomicAttacks:
     async def test_dataset_cap_smaller_than_goal_count_raises(self, mock_objective_target: PromptTarget) -> None:
         scenario = PromptInject()
         config = PromptInjectDatasetConfiguration(
-            dataset_names=PromptInject.required_datasets(),
-            max_dataset_size=1,
+            max_total=1,
         )
 
         with pytest.raises(
@@ -397,7 +396,6 @@ class TestPromptInjectAtomicAttacks:
             raise DatasetConstraintError("custom validator ran")
 
         config = PromptInjectDatasetConfiguration(
-            dataset_names=PromptInject.required_datasets(),
             validators=[reject_dataset],
         )
 
@@ -411,7 +409,10 @@ class TestPromptInjectAtomicAttacks:
         with patch(
             "pyrit.datasets.seed_datasets.seed_dataset_provider.SeedDatasetProvider.get_providers_by_name_async"
         ) as fetch:
-            with pytest.raises(DatasetConstraintError, match="fetch is 'never'"):
+            with (
+                pytest.warns(DeprecationWarning, match="PromptInjectDatasetConfiguration"),
+                pytest.raises(DatasetConstraintError, match="fetch is 'never'"),
+            ):
                 await _initialize_async(scenario, target=mock_objective_target, dataset_config=config)
         fetch.assert_not_called()
         assert scenario._dataset_config is not config
@@ -439,10 +440,10 @@ class TestPromptInjectAtomicAttacks:
         scenario = PromptInject()
         config = PromptInjectDatasetConfiguration(
             dataset_names=["prompt_inject_techniques"],
-            max_dataset_size=1,
+            max_total=1,
         )
 
-        with pytest.raises(DatasetConstraintError, match="requires exactly"):
+        with pytest.raises(DatasetConstraintError, match="required data"):
             await _initialize_async(scenario, target=mock_objective_target, dataset_config=config)
 
     async def test_inline_dataset_is_rejected(self, mock_objective_target: PromptTarget) -> None:
@@ -451,7 +452,7 @@ class TestPromptInjectAtomicAttacks:
             seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="custom goal")])]
         )
 
-        with pytest.raises(DatasetConstraintError, match="inline seeds are not supported"):
+        with pytest.raises(DatasetConstraintError, match="inline seeds"):
             await _initialize_async(
                 scenario,
                 target=mock_objective_target,
@@ -474,40 +475,92 @@ class TestPromptInjectDatasetSampling:
         ],
     )
     async def test_configuration_default_covers_custom_goals_async(
-        self, *, kwargs: dict[str, int | str | None], expected: int
+        self, *, kwargs: dict[str, int | str | None], expected: int, mock_objective_target: PromptTarget
     ) -> None:
         goals = [f"goal {index}" for index in range(6)]
-        config = PromptInjectDatasetConfiguration(
-            dataset_names=PromptInject.required_datasets(), goal_texts=goals, **kwargs
+        scenario = PromptInject()
+
+        await _initialize_async(
+            scenario,
+            target=mock_objective_target,
+            goal_texts=goals,
+            dataset_config=PromptInjectDatasetConfiguration(goal_texts=goals, **kwargs),
         )
-        await config.prepare_async()
-        groups = await config.get_attack_seed_groups_async()
+
+        groups = {group.objective.value: group for attack in scenario._atomic_attacks for group in attack.seed_groups}
         assert len(groups) == expected
-        assert {group.objective.metadata["goal_text"] for group in groups} == set(goals)
+        assert {group.objective.metadata["goal_text"] for group in groups.values()} == set(goals)
 
-    @pytest.mark.parametrize("grouped", [False, True])
-    async def test_both_resolvers_preserve_goal_coverage_async(self, grouped: bool) -> None:
+    async def test_small_cap_still_covers_every_goal_async(self, *, mock_objective_target: PromptTarget) -> None:
         goals = ["goal A", "goal B", "goal C"]
-        config = PromptInjectDatasetConfiguration(
-            dataset_names=PromptInject.required_datasets(), goal_texts=goals, max_dataset_size=3
-        )
-        await config.prepare_async()
+        scenario = PromptInject()
+
         with patch("pyrit.scenario.core.dataset_sampling.random", random.Random(0)):
-            if grouped:
-                by_dataset = await config.get_attack_groups_by_dataset_async()
-                groups = [group for values in by_dataset.values() for group in values]
-            else:
-                groups = await config.get_attack_seed_groups_async()
+            await _initialize_async(
+                scenario,
+                target=mock_objective_target,
+                goal_texts=goals,
+                dataset_config=PromptInjectDatasetConfiguration(goal_texts=goals, max_total=3),
+            )
 
-        assert len(groups) == 3
-        assert {group.objective.metadata["goal_text"] for group in groups} == set(goals)
-        full = await config.get_attack_seed_groups_async(apply_sampling=False)
-        assert len(full) == 105
+        assert _objective_values(scenario) and len(_objective_values(scenario)) == 3
+        assert {attack.display_group for attack in scenario._atomic_attacks} == set(goals)
 
-    async def test_flat_resolver_rejects_impossible_cap_async(self) -> None:
-        config = PromptInjectDatasetConfiguration(
-            dataset_names=PromptInject.required_datasets(), goal_texts=["goal one", "goal two"], max_dataset_size=1
-        )
+    async def test_cap_below_the_goal_count_is_rejected_async(self, *, mock_objective_target: PromptTarget) -> None:
+        goals = ["goal one", "goal two"]
 
         with pytest.raises(DatasetConstraintError, match="must be at least the number of goal_texts"):
-            await config.get_attack_seed_groups_async()
+            await _initialize_async(
+                PromptInject(),
+                target=mock_objective_target,
+                goal_texts=goals,
+                dataset_config=PromptInjectDatasetConfiguration(goal_texts=goals, max_total=1),
+            )
+
+    async def test_listing_the_templates_as_sources_still_works_with_a_warning_async(
+        self, *, mock_objective_target: PromptTarget
+    ) -> None:
+        scenario = PromptInject()
+        legacy = PromptInjectDatasetConfiguration(
+            sources=[DatasetSource(name=name) for name in PromptInject.required_datasets()], max_total=3
+        )
+
+        with pytest.warns(DeprecationWarning, match="PromptInjectDatasetConfiguration"):
+            await _initialize_async(scenario, target=mock_objective_target, dataset_config=legacy)
+
+        assert len(_objective_values(scenario)) == 3
+        assert scenario._build_scenario_identifier().datasets == PromptInject.required_datasets()
+
+    async def test_migrated_legacy_validators_check_the_raw_templates_async(
+        self, *, mock_objective_target: PromptTarget
+    ) -> None:
+        # A legacy validator wrote against the raw template seeds, so it must keep seeing those
+        # (SeedPrompt) after migration, not the assembled objectives (SeedObjective).
+        scenario = PromptInject()
+        legacy = PromptInjectDatasetConfiguration(
+            sources=[DatasetSource(name=name) for name in PromptInject.required_datasets()],
+            validators=[require_seed_type(SeedPrompt)],
+            max_total=3,
+        )
+
+        with pytest.warns(DeprecationWarning, match="PromptInjectDatasetConfiguration"):
+            await _initialize_async(scenario, target=mock_objective_target, dataset_config=legacy)
+
+        assert len(_objective_values(scenario)) == 3
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_never_fetch_override_reaches_the_templates_async(*, mock_objective_target: PromptTarget) -> None:
+    scenario = PromptInject()
+    scenario.set_params_from_args(
+        args={"objective_target": mock_objective_target, "dataset_overrides": {"fetch": "never"}}
+    )
+
+    with (
+        patch(
+            "pyrit.datasets.seed_datasets.seed_dataset_provider.SeedDatasetProvider.get_providers_by_name_async"
+        ) as fetch,
+        pytest.raises(DatasetConstraintError, match="fetch is 'never'"),
+    ):
+        await scenario.initialize_async()
+    fetch.assert_not_called()
