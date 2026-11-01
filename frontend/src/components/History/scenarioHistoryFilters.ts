@@ -20,6 +20,7 @@ export const DEFAULT_SCENARIO_HISTORY_FILTERS: ScenarioHistoryFilters = {
 
 export const SCENARIO_RUN_STATES: readonly ScenarioRunState[] = [
   'CREATED',
+  'QUEUED',
   'IN_PROGRESS',
   'COMPLETED',
   'FAILED',
