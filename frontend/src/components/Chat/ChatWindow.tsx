@@ -2,6 +2,9 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } fr
 import type { ChangeEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  Breadcrumb,
+  BreadcrumbDivider,
+  BreadcrumbItem,
   Button,
   Field,
   Input,
@@ -141,7 +144,6 @@ interface RecoverableSendDraft {
   source: 'live' | 'persisted'
   converterGeneration?: string
   pipelines?: Record<string, ConverterPipelineStage[]>
-  missingConverterSelections: boolean
 }
 
 interface PendingSend {
@@ -176,6 +178,20 @@ interface UndoableSend {
   attachments: MessageAttachment[]
   converters: ChatConverterSnapshot
   history: Array<Pick<BackendMessage, 'role'>>
+}
+
+function preparePromptRestore(
+  saved: ChatConverterSnapshot | undefined, current: ChatConverterSnapshot,
+): { snapshot: ChatConverterSnapshot; pipelineChanged: boolean } {
+  const pipelineChanged = saved
+    ? JSON.stringify(current.pipelines) !== JSON.stringify(saved.pipelines)
+    : Object.values(current.pipelines).some((stages: ConverterPipelineStage[]) => stages.length > 0)
+  return {
+    pipelineChanged,
+    snapshot: saved && !pipelineChanged ? saved : {
+      ...current, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
+    },
+  }
 }
 
 interface RepeatSendGroup {
@@ -270,7 +286,6 @@ function getPersistedProcessingRecovery(
     attachments: (originalDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
     conversions: {},
     source: 'persisted',
-    missingConverterSelections: failedRequest.message_pieces.some((piece) => Boolean(piece.converter_identifiers?.length)),
   }
 }
 
@@ -479,6 +494,8 @@ export default function ChatWindow({
   const [systemPrompt, setSystemPrompt] = useState('')
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([])
   const converters = useChatConverters(chatInputText, draftAttachments)
+  const convertersRef = useRef(converters)
+  useLayoutEffect(() => { convertersRef.current = converters }, [converters])
   const { applied: activePieceConversions, restore: restoreConversions } = converters
   const [undoableSend, setUndoableSend] = useState<UndoableSend | null>(null)
   const [isUndoingSend, setIsUndoingSend] = useState(false)
@@ -490,7 +507,6 @@ export default function ChatWindow({
   useEffect(() => () => { preserveOnUnmountRef.current?.() }, [])
   const [recoverableSends, setRecoverableSends] = useState<Record<string, RecoverableSendDraft>>({})
   const [isRecoveringProcessingError, setIsRecoveringProcessingError] = useState(false)
-  const [recoveredDraftWarningConversationId, setRecoveredDraftWarningConversationId] = useState<string | null>(null)
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
   const recoveryInFlightRef = useRef(false)
@@ -599,8 +615,6 @@ export default function ChatWindow({
     savedRecovery?.converterGeneration !== undefined && savedRecovery.converterGeneration !== runtime.generation
       ? {
           ...savedRecovery, conversions: {}, pipelines: undefined, source: 'persisted',
-          missingConverterSelections: savedRecovery.missingConverterSelections
-            || Object.keys(savedRecovery.conversions).length > 0 || Boolean(Object.keys(savedRecovery.pipelines ?? {}).length),
         }
       : savedRecovery
   ), [savedRecovery, runtime.generation])
@@ -945,7 +959,6 @@ export default function ChatWindow({
       converterGeneration: operation.converterGeneration,
       pipelines: operation.pipelines,
       source: 'live',
-      missingConverterSelections: false,
     } : recovery
     if (isLatestRead) {
       loadedUserPieceIdsRef.current.set(effectiveConvId, userPieceIds(response.messages))
@@ -1169,7 +1182,7 @@ export default function ChatWindow({
     )
     if (!sameGeneration) setSendIssue(operation.conversationId, {
       ...sendIssue,
-      description: 'Prompt restored. Converter choices could not be restored after the runtime changed; review them before sending.',
+      description: 'Prompt restored after the runtime changed. Review converters before sending.',
     })
   }
 
@@ -1525,7 +1538,7 @@ export default function ChatWindow({
     [createAndSelectConversation],
   )
 
-  const restoreRecoverableDraft = useCallback((destinationConversationId: string): void => {
+  const restoreRecoverableDraft = useCallback((): void => {
     if (!recoverableSend) { return }
     const attachments = recoverableSend.attachments.map(withDraftIdentity)
     setChatInputText(recoverableSend.originalValue)
@@ -1539,7 +1552,6 @@ export default function ChatWindow({
       recoverableSend.textMetadata,
     )
     inputBoxRef.current?.focus()
-    setRecoveredDraftWarningConversationId(recoverableSend.missingConverterSelections ? destinationConversationId : null)
   }, [restoreConversions, recoverableSend])
 
   const handleRecoverProcessingError = useCallback(async (): Promise<void> => {
@@ -1587,7 +1599,7 @@ export default function ChatWindow({
 
       onSelectConversation(response.conversation_id)
       setIsPanelOpen(!isNarrowScreen)
-      restoreRecoverableDraft(response.conversation_id)
+      restoreRecoverableDraft()
     } catch (err) {
       if (getViewedConversationId() === sourceConversationId) {
         appendConversationCreationError(err)
@@ -1684,7 +1696,10 @@ export default function ChatWindow({
       if (chatInputText || draftAttachments.length || activePieceConversions.text) {
         const pieces: ConversationDraftPiece[] = [
           ...(chatInputText || activePieceConversions.text
-            ? [{ ...newDraftPiece(), draftId: 'text', original_value: chatInputText }] : []),
+            ? [{
+              ...newDraftPiece(), draftId: 'text', original_value: chatInputText,
+              prompt_metadata: inputBoxRef.current?.getTextMetadata(),
+            }] : []),
           ...draftAttachments.map(attachmentDraft),
         ].map((piece: ConversationDraftPiece) => {
           const conversion = activePieceConversions[piece.draftId]
@@ -1798,14 +1813,8 @@ export default function ChatWindow({
     ) || Object.keys(converters.applied).length) {
       return 'Clear the current prompt and conversion edits before restoring a sent prompt.'
     }
-    if (snapshot
-      ? JSON.stringify(converters.pipelines) !== JSON.stringify(snapshot.pipelines)
-      : Object.values(converters.pipelines).some((stages: ConverterPipelineStage[]) => stages.length > 0)) {
-      return snapshot
-        ? 'The converter pipeline changed after sending. Restore is unavailable for this prompt.'
-        : 'Clear the current converter pipeline before restoring a stored prompt.'
-    }
-    if (snapshot && Object.keys(snapshot.errors).length > 0) {
+    const { pipelineChanged } = preparePromptRestore(snapshot, converters.snapshot())
+    if (snapshot && Object.keys(snapshot.errors).length > 0 && !pipelineChanged) {
       return 'The previous conversion was incomplete. Restore is unavailable for this prompt.'
     }
     return undefined
@@ -1831,6 +1840,7 @@ export default function ChatWindow({
     const sourceId = viewedConversationId
     const draftRevision = inputBoxRef.current?.getDraftRevision()
     const navigationRevision = navigationRevisionRef.current
+    const branchConverterSnapshot = converters.snapshot()
     const selectedPieceIds = messages[messageIndex]?.displayPieces?.map((piece: MessageDisplayPiece) => piece.pieceId) ?? []
     const restoresFirstPrompt = destination === 'same_attack' && activeTarget
       && canBranchFirstPrompt(activeTarget, messages, messageIndex)
@@ -1839,6 +1849,8 @@ export default function ChatWindow({
       && navigationRevisionRef.current === navigationRevision
       && inputBoxRef.current?.getDraftRevision() === draftRevision
       && launchStateRef.current.generation === runtime.generation && launchStateRef.current.ready
+      && !convertersRef.current.isConverting
+      && JSON.stringify(convertersRef.current.snapshot()) === JSON.stringify(branchConverterSnapshot)
     copyingRef.current = true
     setIsLoadingEdit(true)
     setEditorError(null)
@@ -1858,7 +1870,6 @@ export default function ChatWindow({
       let copiedMessages = toConversationDraft(sourceMessages)
       let restoredPrompt: ReturnType<typeof draftMessageToComposer> | undefined
       let promptSnapshot: ChatConverterSnapshot | undefined
-      let missingConverterSelections = false
       if (restoresFirstPrompt && activeTarget) {
         const selected = source.messages[messageIndex]
         if (!canBranchFirstPrompt(activeTarget, source.messages, messageIndex)
@@ -1870,13 +1881,18 @@ export default function ChatWindow({
           && firstPromptSend.historySignature === conversationPieceSignature(source) ? firstPromptSend : undefined
         const restoreError = promptRestoreDisabledReason(saved?.converters)
         if (restoreError) throw new Error(restoreError)
-        promptSnapshot = saved?.converters ?? {
-          generation: runtime.generation, pipelines: {}, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
-        }
+        const restoration = preparePromptRestore(saved?.converters, branchConverterSnapshot)
+        promptSnapshot = restoration.snapshot
+        const promptMessage = copiedMessages[copiedMessages.length - 1]
         restoredPrompt = saved ? {
-          text: saved.originalValue, attachments: saved.attachments, textMetadata: saved.textMetadata, converters: saved.converters,
-        } : draftMessageToComposer(copiedMessages[copiedMessages.length - 1], promptSnapshot)
-        missingConverterSelections = !saved && selected.message_pieces.some((piece: BackendMessagePiece) => Boolean(piece.converter_identifiers?.length))
+          text: saved.originalValue, attachments: saved.attachments, textMetadata: saved.textMetadata, converters: promptSnapshot,
+        } : draftMessageToComposer(restoration.pipelineChanged ? {
+          ...promptMessage,
+          pieces: promptMessage.pieces.map((piece: ConversationDraftPiece) => ({
+            ...piece, converted_value: undefined, converted_value_data_type: undefined,
+            applied_converter_ids: undefined, applied_converter_provenance: undefined,
+          })),
+        } : promptMessage, promptSnapshot)
         copiedMessages = copiedMessages.slice(0, -1)
       }
       if (isFailedPrompt && activeTarget
@@ -1903,7 +1919,7 @@ export default function ChatWindow({
         })
         if (getViewedConversationId() !== sourceId || inputBoxRef.current?.getDraftRevision() !== draftRevision) return
         onConversationCreated(response.attack_result_id, response.conversation_id, objective, target)
-        restoreRecoverableDraft(response.conversation_id)
+        restoreRecoverableDraft()
         setIsPanelOpen(true)
         setPanelRefreshKey((key: number) => key + 1)
         return
@@ -1938,11 +1954,10 @@ export default function ChatWindow({
       }
       else onConversationCreated(response.attack.attack_result_id, response.messages.conversation_id, response.attack.objective, target)
       onAttackChange?.(response.attack)
-      if (isFailedPrompt) restoreRecoverableDraft(response.messages.conversation_id)
+      if (isFailedPrompt) restoreRecoverableDraft()
       if (restoredPrompt && promptSnapshot) {
         restoreEditorPrompt(restoredPrompt, promptSnapshot)
         setUndoableSend(null)
-        setRecoveredDraftWarningConversationId(missingConverterSelections ? response.messages.conversation_id : null)
       }
       setIsPanelOpen(true)
     } catch (error) {
@@ -2016,6 +2031,16 @@ export default function ChatWindow({
     if (undoDisabledReason || !undoableSend || undoInFlight.current) return
     const saved = undoableSend
     const revision = inputBoxRef.current?.getDraftRevision()
+    const navigationRevision = navigationRevisionRef.current
+    const converterSnapshot = converters.snapshot()
+    const { snapshot: restoredConverters } = preparePromptRestore(saved.converters, converterSnapshot)
+    const draftUnchanged = (): boolean => viewedAttackRef.current === saved.attackResultId
+      && getViewedConversationId() === saved.conversationId
+      && navigationRevisionRef.current === navigationRevision
+      && inputBoxRef.current?.getDraftRevision() === revision
+      && launchStateRef.current.generation === saved.converters.generation && launchStateRef.current.ready
+      && !convertersRef.current.isConverting
+      && JSON.stringify(convertersRef.current.snapshot()) === JSON.stringify(converterSnapshot)
     let branchAttempted = false
     undoInFlight.current = true
     setIsUndoingSend(true)
@@ -2028,10 +2053,7 @@ export default function ChatWindow({
         setUndoableSend(null)
         throw new Error('The conversation changed after this send. Undo is no longer available.')
       }
-      const draftUnchanged = (): boolean => viewedAttackRef.current === saved.attackResultId
-        && getViewedConversationId() === saved.conversationId
-        && inputBoxRef.current?.getDraftRevision() === revision
-      if (!draftUnchanged() || launchStateRef.current.generation !== saved.converters.generation) {
+      if (!draftUnchanged()) {
         throw new Error('The view, prompt, or runtime changed. Your current draft was not replaced.')
       }
       branchAttempted = true
@@ -2043,7 +2065,7 @@ export default function ChatWindow({
         attacksApi.getAttack(saved.attackResultId),
       ])
       setUndoableSend(null)
-      if (!draftUnchanged() || launchStateRef.current.generation !== saved.converters.generation) {
+      if (!draftUnchanged()) {
         setEditorNotice(`Undo created conversation ${branch.conversation_id} without replacing your current draft.`)
         return
       }
@@ -2051,11 +2073,10 @@ export default function ChatWindow({
       markConversationLoaded(branch.conversation_id)
       onSelectConversation(branch.conversation_id)
       onAttackChange?.(attack)
-      setChatInputText(saved.originalValue)
-      setDraftAttachments(saved.attachments)
-      inputBoxRef.current?.restoreDraft(saved.originalValue, saved.attachments, saved.textMetadata)
-      converters.restoreSnapshot(saved.converters, saved.originalValue, saved.attachments)
-      inputBoxRef.current?.focus()
+      restoreEditorPrompt({
+        text: saved.originalValue, attachments: saved.attachments, textMetadata: saved.textMetadata,
+        converters: restoredConverters,
+      }, restoredConverters)
       setEditorNotice('Last send undone. The original sent conversation remains in history.')
     } catch (error) {
       if (branchAttempted) setUndoableSend(null)
@@ -2189,7 +2210,7 @@ export default function ChatWindow({
           <Link
             className={styles.breadcrumbLink}
             to={scenarioRunRoutePath(scenarioResultId)}
-            state={{ fromScenarioHistory: true }}
+            state={location.state ?? { fromScenarioHistory: true }}
             onClick={(event: React.MouseEvent<HTMLAnchorElement>) => {
               if (onReturnToScan && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
                 event.preventDefault()
@@ -2282,6 +2303,26 @@ export default function ChatWindow({
         />
       )}
       <div className={styles.chatArea} data-testid="chat-area">
+        {scenarioResultId && (
+          <div className={styles.breadcrumbBar}>
+            <Breadcrumb aria-label="Attack provenance" size="small">
+              <BreadcrumbItem>
+                <Text size={200}>Scanner History</Text>
+              </BreadcrumbItem>
+              <BreadcrumbDivider />
+              <BreadcrumbItem>
+                <Link
+                  className={styles.breadcrumbLink}
+                  to={scenarioRunRoutePath(scenarioResultId)}
+                  state={location.state}
+                  aria-label={`Return to scenario run ${scenarioResultId}`}
+                >
+                  Scenario run {scenarioResultId.slice(0, 8)}
+                </Link>
+              </BreadcrumbItem>
+            </Breadcrumb>
+          </div>
+        )}
         {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
         {executionReadOnly && <MessageBar intent="info">
           <MessageBarBody>
@@ -2444,11 +2485,6 @@ export default function ChatWindow({
           </MessageBar>
         )}
         <div hidden={editDraft !== null}>
-        {Boolean(recoveredDraftWarningConversationId) && recoveredDraftWarningConversationId === viewedConversationId && (
-          <MessageBar intent="warning">
-            <MessageBarBody>Converter choices could not be restored. Select and apply converters again before sending.</MessageBarBody>
-          </MessageBar>
-        )}
         <ChatInputArea
           ref={inputBoxRef}
           undoLastSend={showUndoLastSend ? {
@@ -2484,10 +2520,7 @@ export default function ChatWindow({
           convertedValue={activePieceConversions['text']?.convertedDataType === 'text' ? (activePieceConversions['text']?.convertedValue ?? null) : null}
           originalValue={activePieceConversions['text']?.originalValue ?? null}
           onClearConversion={() => converters.clear('text')}
-          onClearAllConversions={() => {
-            converters.clearAll()
-            setRecoveredDraftWarningConversationId(null)
-          }}
+          onClearAllConversions={converters.clearAll}
           onConvertedValueChange={(val: string) => converters.editConvertedValue('text', val)}
           convertedFileChip={(() => {
             const tc = activePieceConversions['text']

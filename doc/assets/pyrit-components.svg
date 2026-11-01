@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="780" viewBox="72 266 1800 780" role="img" aria-labelledby="title description">
+  <title id="title">PyRIT: Modular components</title>
+  <desc id="description">Scenarios package the complete run. Inside, attack techniques package attacks, converters, and scorers, with dataset inputs and targets that cross the technique boundary. Dataset objectives and the objective target are run inputs; attack prompts and adversarial targets are technique configuration. A separate registry instantiates components.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 10 5 0 10z" fill="#0065ad"/>
+    </marker>
+    <style>
+      text { font-family: Arial, "Segoe UI", sans-serif; }
+      .heading { font-size: 35px; font-weight: 700; fill: #142f49; }
+      .body { font-size: 26px; fill: #142f49; }
+      .note { font-size: 23px; fill: #4d6074; }
+      .label { font-size: 23px; font-weight: 700; fill: #0065ad; }
+      .card { fill: #ffffff; stroke: #91b9d3; stroke-width: 2; }
+      .link { fill: none; stroke: #0065ad; stroke-width: 3; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1920" height="1080" fill="#ffffff"/>
+
+  <rect x="96" y="290" width="1284" height="716" fill="#f2f7fb" stroke="#91b9d3" stroke-width="2"/>
+  <text x="128" y="343" class="heading">Scenarios</text>
+  <text x="128" y="379" class="body">Select datasets and techniques; manage parallel runs.</text>
+
+  <rect x="128" y="476" width="1220" height="390" fill="#d5e8f4" stroke="#0065ad" stroke-width="2.5"/>
+  <text x="650" y="523" class="heading">Attack techniques</text>
+  <text x="650" y="558" class="body">Package a named, reusable attack.</text>
+
+  <rect x="176" y="408" width="420" height="156" class="card"/>
+  <path d="M176 476h420" stroke="#0065ad" stroke-width="2" stroke-dasharray="7 6"/>
+  <text x="198" y="441" class="heading">Datasets</text>
+  <text x="198" y="467" class="note">Objectives for the run</text>
+  <text x="198" y="514" class="body">Attack prompts / templates</text>
+  <text x="198" y="545" class="note">Selected by the technique</text>
+
+  <path d="M386 564v48" class="link"/>
+  <rect x="176" y="614" width="350" height="145" class="card"/>
+  <text x="198" y="657" class="heading">Converters</text>
+  <text x="198" y="695" class="body">Transform prompts.</text>
+  <text x="198" y="730" class="body">Combine in a sequence.</text>
+
+  <path d="M526 686h72" class="link"/>
+  <rect x="600" y="614" width="350" height="145" class="card"/>
+  <text x="622" y="657" class="heading">Attacks</text>
+  <text x="622" y="695" class="body">Manage conversations.</text>
+  <text x="622" y="730" class="body">Decide the next step.</text>
+
+  <path d="M1024 686h-72" class="link"/>
+  <rect x="1026" y="614" width="274" height="145" class="card"/>
+  <text x="1048" y="657" class="heading">Scorers</text>
+  <text x="1048" y="695" class="body">Check outcomes.</text>
+  <text x="1048" y="730" class="body">Guide decisions.</text>
+
+  <path d="M775 761v42" class="link" marker-start="url(#arrow)"/>
+  <rect x="600" y="805" width="700" height="156" class="card"/>
+  <path d="M600 866h700" stroke="#0065ad" stroke-width="2" stroke-dasharray="7 6"/>
+  <text x="622" y="844" class="heading">Targets</text>
+  <text x="832" y="842" class="body">Adversarial / helper models</text>
+  <text x="622" y="903" class="body">Objective target: the system under test</text>
+  <text x="622" y="938" class="note">Selected for the run</text>
+
+  <text x="176" y="809" class="label">BOXES SHOW PACKAGING</text>
+  <text x="176" y="842" class="note">Arrows show component use.</text>
+  <text x="176" y="917" class="note">Dashed splits separate run inputs</text>
+  <text x="176" y="949" class="note">from technique configuration.</text>
+
+  <rect x="1580" y="572" width="274" height="229" fill="#d5e8f4"/>
+  <text x="1604" y="620" class="heading">Registry</text>
+  <text x="1604" y="661" class="body">Build components</text>
+  <text x="1604" y="695" class="body">from user input.</text>
+  <text x="1604" y="739" class="body">Store reusable</text>
+  <text x="1604" y="773" class="body">instances.</text>
+  <path d="M1580 686h-195" class="link"/>
+  <text x="1480" y="661" text-anchor="middle" class="label">Instantiates</text>
+</svg>

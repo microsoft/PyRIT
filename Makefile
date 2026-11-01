@@ -19,10 +19,10 @@ pre-commit:
 ty:
 	uv run --frozen --extra all --link-mode=copy -m ty check $(PYMODULE) $(UNIT_TESTS)
 
-# Build strict HTML and the RSS feed after generating the API reference.
+# Build strict HTML with link checks and the RSS feed after API generation.
 # --all would also select the configured PDF export and require LaTeX.
 docs-build: docs-api
-	cd doc && uv run jupyter-book build --html --strict
+	cd doc && uv run jupyter-book build --html --strict --check-links
 	uv run python -m build_scripts.generate_rss
 
 # PDF is a separate, checked export requiring latexmk and xelatex.

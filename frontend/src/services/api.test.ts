@@ -1252,6 +1252,52 @@ describe("api service", () => {
       });
     });
 
+    it("loads a hierarchy root page with its root cursor", async () => {
+      const projection = {
+        scenario_result_id: "sr-1",
+        groups: [],
+        has_more: true,
+        next_cursor: "roots-2",
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: projection });
+      const controller = new AbortController();
+
+      const result = await scenariosApi.getRunHierarchy(
+        "sr/1",
+        { max_nodes: 200, cursor: "roots-1" },
+        controller.signal,
+      );
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs/sr%2F1/hierarchy", {
+        params: { max_nodes: 200, cursor: "roots-1" },
+        signal: controller.signal,
+      });
+      expect(result).toBe(projection);
+    });
+
+    it("loads a node's children with the node's own children cursor", async () => {
+      const node = {
+        attack_result_id: "ar/1",
+        child_offset: 200,
+        next_children_cursor: "children-3",
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: node });
+      const controller = new AbortController();
+
+      const result = await scenariosApi.getRunHierarchyNode(
+        "sr/1",
+        "ar/1",
+        { limit: 200, children_cursor: "children-2" },
+        controller.signal,
+      );
+
+      expect(apiClient.get).toHaveBeenCalledWith(
+        "/scenarios/runs/sr%2F1/hierarchy/nodes/ar%2F1",
+        { params: { limit: 200, children_cursor: "children-2" }, signal: controller.signal },
+      );
+      expect(result).toBe(node);
+    });
+
     it("cancels a scenario run by id", async () => {
       const mockResponse = {
         data: {
