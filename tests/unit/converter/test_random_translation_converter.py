@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from unit.mocks import get_mock_target_identifier
 
+from pyrit.common.random_context import configure_random_seed
 from pyrit.converter import (
     RandomTranslationConverter,
     WordPositionSelectionStrategy,
@@ -79,6 +80,24 @@ def test_random_translation_converter_identifier_canonicalizes_language_order(mo
     reordered = RandomTranslationConverter(converter_target=mock_target, languages=["Spanish", "French"])
 
     assert first.get_identifier().hash == reordered.get_identifier().hash
+
+
+async def test_random_translation_converter_language_order_does_not_change_seeded_choices(mock_target) -> None:
+    first = RandomTranslationConverter(converter_target=mock_target, languages=["Spanish", "French", "German"])
+    reordered = RandomTranslationConverter(converter_target=mock_target, languages=["German", "Spanish", "French"])
+
+    try:
+        configure_random_seed(seed=7)
+        await first.convert_async(prompt="one two three four five six")
+        await reordered.convert_async(prompt="one two three four five six")
+    finally:
+        configure_random_seed(seed=None)
+
+    first_request, reordered_request = (
+        call.kwargs["message"].get_value() for call in mock_target.send_prompt_async.call_args_list
+    )
+    assert first.get_identifier().hash == reordered.get_identifier().hash
+    assert first_request == reordered_request
 
 
 def test_random_translation_converter_identifier_distinguishes_language_pools(mock_target) -> None:
