@@ -51,6 +51,22 @@ def test_get_token_on_init() -> None:
         assert test_instance.token == mock_token
 
 
+def test_get_token_forwards_tenant_id() -> None:
+    with patch(
+        "azure.identity.DefaultAzureCredential.get_token", return_value=AccessToken(mock_token, _TOKEN_TIME)
+    ) as mock_get_token:
+        AzureAuth(token_scope="https://mocked_endpoint.azure.com", tenant_id="my-tenant")
+        mock_get_token.assert_called_once_with("https://mocked_endpoint.azure.com", tenant_id="my-tenant")
+
+
+def test_get_token_omits_tenant_id_when_not_set() -> None:
+    with patch(
+        "azure.identity.DefaultAzureCredential.get_token", return_value=AccessToken(mock_token, _TOKEN_TIME)
+    ) as mock_get_token:
+        AzureAuth(token_scope="https://mocked_endpoint.azure.com")
+        mock_get_token.assert_called_once_with("https://mocked_endpoint.azure.com")
+
+
 @pytest.mark.parametrize("elapsed_seconds", [0, 301])
 def test_refresh_no_expiration(elapsed_seconds: int) -> None:
     with (
