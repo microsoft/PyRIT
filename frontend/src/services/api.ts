@@ -68,6 +68,8 @@ import type {
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
+  ScenarioHierarchyNode,
+  ScenarioHierarchyProjection,
   PairedOutcomeStatistics,
   ScenarioQueueSnapshot,
   ScenarioRunState,
@@ -725,6 +727,33 @@ export const scenariosApi = {
   ): Promise<ScenarioRunProgress> => {
     const response = await apiClient.get(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/progress`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  /** Loads one page of hierarchy roots. `cursor` continues roots only, never a node's children. */
+  getRunHierarchy: async (
+    scenarioResultId: string,
+    params?: { max_nodes?: number; cursor?: string },
+    signal?: AbortSignal,
+  ): Promise<ScenarioHierarchyProjection> => {
+    const response = await apiClient.get<ScenarioHierarchyProjection>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  /** Loads one page of a node's saved children, continued with that node's `next_children_cursor`. */
+  getRunHierarchyNode: async (
+    scenarioResultId: string,
+    attackResultId: string,
+    params?: { limit?: number; children_cursor?: string },
+    signal?: AbortSignal,
+  ): Promise<ScenarioHierarchyNode> => {
+    const response = await apiClient.get<ScenarioHierarchyNode>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy/nodes/${encodeURIComponent(attackResultId)}`,
       { params, signal },
     )
     return response.data

@@ -523,7 +523,13 @@ def combine_execution_counts(counts: Iterable[ScenarioProgressCounts]) -> Scenar
 
     return ScenarioProgressCounts(
         completed=completed,
-        planned=sum(value for value in planned if value is not None) if all(v is not None for v in planned) else None,
+        planned=(
+            # The empty group carries no plan at all, so it reports None rather
+            # than a vacuous sum() of 0.
+            sum(value for value in planned if value is not None)
+            if planned and all(v is not None for v in planned)
+            else None
+        ),
         succeeded=succeeded,
         success_percentage=success_percentage(succeeded=succeeded, completed=completed),
         errors=sum(item.errors for item in counts),
