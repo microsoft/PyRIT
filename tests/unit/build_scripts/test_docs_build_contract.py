@@ -6,6 +6,7 @@ from pathlib import Path
 
 import jupytext
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMMONS_SOURCE = "https://commons.wikimedia.org/wiki/File:Gorch_Fock_unter_Segeln_Kieler_Foerde_2006.jpg"
@@ -26,7 +27,7 @@ def _target(target: str) -> tuple[list[str], list[str]]:
 def test_html_build_prepares_api_without_selecting_pdf() -> None:
     dependencies, commands = _target("docs-build")
     assert dependencies == ["docs-api"]
-    assert "cd doc && uv run jupyter-book build --html --strict" in commands
+    assert "cd doc && uv run jupyter-book build --html --strict --check-links" in commands
     assert all("--all" not in command and "--pdf" not in command for command in commands)
     assert commands[-1] == "uv run python -m build_scripts.generate_rss"
     _, api_commands = _target("docs-api")
@@ -40,6 +41,14 @@ def test_pdf_targets_share_checked_export_and_all_builds_html_first() -> None:
     assert pdf_dependencies == ["docs-api"]
     assert all_dependencies == ["docs-build"]
     assert pdf_commands == all_commands == ["uv run python -m build_scripts.build_docs_pdf"]
+
+
+@pytest.mark.parametrize("url", [COMMONS_SOURCE, "https://crates.io"])
+def test_robot_exceptions_only_skip_the_verified_url(url: str) -> None:
+    config = yaml.safe_load((REPO_ROOT / "doc" / "myst.yml").read_text(encoding="utf-8"))
+    rules = config["project"]["error_rules"]
+    exception = next(rule for rule in rules if url in rule.get("keys", []))
+    assert exception == {"rule": "link-resolves", "severity": "ignore", "keys": [url]}
 
 
 @pytest.mark.parametrize(

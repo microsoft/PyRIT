@@ -584,10 +584,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
         routeConversationId === readyAttack.mainConversationId ||
         readyAttack.relatedConversationIds.includes(routeConversationId)
       if (!isKnown && !findingEvidenceId) {
-        navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true })
+        navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true, state: location.state })
       }
     }
-  }, [readyAttack, routeConversationId, navigate, scenarioResultId, findingEvidenceId])
+  }, [readyAttack, routeConversationId, navigate, scenarioResultId, findingEvidenceId, location.state])
 
   const handleNavigate = useCallback((view: ViewName) => {
     // Re-attach the last filter query so returning to history restores filters.
@@ -719,8 +719,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
 
   const handleSelectConversation = useCallback((convId: string) => {
     if (!routeAttackId) return
-    navigate(attackConversationRoutePath(routeAttackId, convId, scenarioResultId))
-  }, [routeAttackId, navigate, scenarioResultId])
+    navigate(attackConversationRoutePath(routeAttackId, convId, scenarioResultId), { state: location.state })
+  }, [routeAttackId, navigate, scenarioResultId, location.state])
 
   const handleOpenAttack = useCallback((openAttackResultId: string) => {
     navigate(attackRoutePath(openAttackResultId))
