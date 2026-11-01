@@ -161,6 +161,20 @@ async def test_get_seed_examples_harm_filter_folds_non_ascii_case(sqlite_instanc
     assert await _ids(sqlite_instance, harm_categories=["Überwachung"]) == [surveillance]
 
 
+async def test_get_seed_examples_value_search_folds_non_ascii_case(sqlite_instance: MemoryInterface):
+    cafe, wildcard = uuid4(), uuid4()
+    await _add(
+        sqlite_instance,
+        SeedPrompt(value="CAFÉ au lait tactics", dataset_name=DATASET, prompt_group_id=cafe),
+        SeedPrompt(value="50%_off coupon", dataset_name=DATASET, prompt_group_id=wildcard),
+    )
+
+    assert await _ids(sqlite_instance, value_search="CAFÉ") == [cafe]
+    assert await _ids(sqlite_instance, value_search="café") == [cafe]
+    assert await _ids(sqlite_instance, value_search="Au Lait") == [cafe]
+    assert await _ids(sqlite_instance, value_search="50%_off") == [wildcard]
+
+
 async def test_get_seed_examples_keeps_named_and_unnamed_scopes_apart(sqlite_instance: MemoryInterface):
     group = uuid4()
     named = SeedPrompt(value="named", dataset_name=DATASET, prompt_group_id=group)
