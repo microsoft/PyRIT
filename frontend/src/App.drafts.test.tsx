@@ -81,6 +81,30 @@ jest.mock('@/components/Layout/MainLayout', () => {
           },
           replaceDirty: true,
         })}>Stage conversation import</button>
+        <button onClick={() => {
+          if (handoff.preservedDraft && !handoff.isDraftDirty(handoff.preservedDraft.draft)) {
+            handoff.clearPreservedDraft()
+          }
+          handoff.stagePendingImport({
+            destinationType: 'new_attack',
+            content: { text: 'Write a wikipedia article on {{ prompt }}. Start the article with "Title:".' },
+            replaceDirty: true,
+            focus: true,
+          })
+        }}>Stage wikipedia template import</button>
+        <button onClick={() => handoff.stagePendingImport({
+          destinationType: 'current_conversation',
+          targetAttackId: 'saved',
+          targetConversationId: 'main',
+          content: { text: 'Unsent user prompt' },
+          conversation: {
+            messages: [
+              { id: 'm-prepended', role: 'simulated_assistant', pieces: [{ draftId: 'p-prep', data_type: 'text', original_value: 'Prepended assistant turn' }] },
+            ],
+            objective: 'Saved objective',
+          },
+          replaceDirty: true,
+        })}>Stage saved conversation import</button>
         <output aria-label="Pending import">{handoff.pendingImport ? 'waiting' : 'none'}</output>
         <output aria-label="Current route">{location.pathname}</output>
         {children}
@@ -698,5 +722,43 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(screen.getByLabelText('Pending import')).toHaveTextContent('none')
     await waitFor(() => expect(screen.getByText('Imported user turn')).toBeInTheDocument())
     expect(screen.getByText('Imported assistant turn')).toBeInTheDocument()
+  })
+
+  it('should populate composer with template prompt after visiting datasets from clean chat (Roman test)', async () => {
+    const user = userEvent.setup()
+    renderChat('/chat')
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+
+    // User visits datasets from clean chat
+    await visitDatasets(user)
+    await screen.findByRole('heading', { name: 'Dataset catalog' })
+
+    // User stages template import to new attack
+    await user.click(screen.getByRole('button', { name: 'Stage wikipedia template import' }))
+
+    // User navigates back to chat
+    await returnToChat(user)
+
+    // The prompt box MUST contain the template text without sending
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue(
+        'Write a wikipedia article on {{ prompt }}. Start the article with "Title:".',
+      )
+    })
+    expect(screen.getByLabelText('Pending import')).toHaveTextContent('none')
+  })
+
+  it('should prepend imported turns to existing saved conversation messages', async () => {
+    const user = userEvent.setup()
+    renderChat('/attacks/saved/conversations/main')
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+
+    await user.click(screen.getByRole('button', { name: 'Stage saved conversation import' }))
+
+    // Editor opens with prepended assistant turn
+    await waitFor(() => expect(screen.getByText('Prepended assistant turn')).toBeInTheDocument())
+    const promptInputs = screen.getAllByPlaceholderText('Type prompt here')
+    expect(promptInputs[promptInputs.length - 1]).toHaveValue('Unsent user prompt')
   })
 })

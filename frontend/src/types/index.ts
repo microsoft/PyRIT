@@ -105,6 +105,7 @@ export interface ConversationEditState {
   sourceConversationId?: string | null
   sourceAttackId?: string | null
   temperature?: string
+  target?: TargetReference | null
 }
 
 export interface ChatDraftContent {
@@ -1014,6 +1015,8 @@ export interface ConversationSaveInput {
   sourceAttackId: string | null
   sourceConversationId: string | null
   labels?: Record<string, string>
+  baselineMessages?: ConversationDraftMessage[]
+  temperature?: string
 }
 
 export interface NewAttackContext {

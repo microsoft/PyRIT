@@ -57,7 +57,7 @@ import {
   hasChatDraftState,
   isChatDraftDirty,
 } from '@/utils/chatDraft'
-import { targetReference } from '@/utils/targetIdentity'
+import { resolveTargetReference, targetReference } from '@/utils/targetIdentity'
 import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
 import { useRuntime } from '@/hooks/useRuntime'
@@ -95,6 +95,7 @@ import type {
   ChatDraftContent,
   ChatDraftContextState,
   ConversationMessagesResponse,
+  ConversationDraftMessage,
   ConversationDraftPiece,
   ConverterInputPiece,
   ConverterPipelineStage,
@@ -528,6 +529,7 @@ export default function ChatWindow({
   const pendingUserMessagesRef = useRef<Map<string, Message[]>>(new Map())
   const pendingSendsRef = useRef<Map<string, PendingSend>>(new Map())
   const loadedUserPieceIdsRef = useRef<Map<string, Set<string>>>(new Map())
+  const loadedBackendMessagesRef = useRef<Map<string, BackendMessage[]>>(new Map())
   const isSendInFlight = useCallback(
     (convId: string): boolean => sendingConvIdsRef.current.has(convId),
     [],
@@ -538,6 +540,9 @@ export default function ChatWindow({
     setConversationScoringFailure(response.scoring_failure ?? null)
     const savedUserIds = userPieceIds(response)
     loadedUserPieceIdsRef.current.set(convId, savedUserIds)
+    if (response.messages) {
+      loadedBackendMessagesRef.current.set(convId, response.messages)
+    }
     const persistedRecovery = getPersistedProcessingRecovery(convId, response)
     setRecoverableSends((currentRecoveries) => {
       const currentRecovery = currentRecoveries[convId]
@@ -723,6 +728,7 @@ export default function ChatWindow({
             sourceConversationId: editDraft.sourceConversationId,
             sourceAttackId: editDraft.sourceAttackId,
             temperature: editDraft.temperature,
+            target: editDraft.target ? targetReference(editDraft.target) : null,
           },
         }
       : {}),
@@ -813,7 +819,7 @@ export default function ChatWindow({
     pending
     && isDraftDestinationReady
     && runtime.ready
-    && matchingPreservedDraft === null
+    && (matchingPreservedDraft === null || pending.replaceDirty || !draftHandoff.isDraftDirty(matchingPreservedDraft))
     && canApplyPendingImport(pending, draftAttackId, draftConversationId)
     && pending.sequence >= draftHandoff.activeSequence
     && (!isActiveDraftDirty || pending.replaceDirty),
@@ -827,7 +833,8 @@ export default function ChatWindow({
     if (!runtime.ready || !isDraftDestinationReady || !inputBoxRef.current) return
     const preserved = draftHandoff.preservedDraft
     const restoringPreserved = Boolean(matchingPreservedDraft && preserved
-      && handoffRestoredRef.current !== preserved.sequence)
+      && handoffRestoredRef.current !== preserved.sequence
+      && !canApplyImportNow)
     let draft: ChatDraftContent
     let focus = false
     if (restoringPreserved && preserved) {
@@ -840,13 +847,17 @@ export default function ChatWindow({
       handoffRestoredRef.current = preserved.sequence
       draft = { ...consumed, systemPrompt: consumed.systemPrompt ?? '' }
       if (consumed.conversation) {
+        const editorTarget = consumed.conversation.target
+          ? resolveTargetReference(consumed.conversation.target, availableTargets) ?? activeTarget
+          : activeTarget
         editor.begin({
           messages: consumed.conversation.messages,
           objective: consumed.conversation.objective ?? currentObjective,
           initialObjective: consumed.conversation.initialObjective ?? currentObjective,
           sourceConversationId: consumed.conversation.sourceConversationId ?? null,
           sourceAttackId: consumed.conversation.sourceAttackId ?? draftAttackId,
-          target: activeTarget,
+          target: editorTarget,
+          temperature: consumed.conversation.temperature ?? '',
           labels,
         })
       }
@@ -854,23 +865,46 @@ export default function ChatWindow({
       if (!canApplyImportNow || !pending) return
       const consumed = draftHandoff.consumePendingImport(pending.id, draftAttackId, draftConversationId)
       if (!consumed) return
+      if (preserved) {
+        draftHandoff.clearPreservedDraft(preserved.sequence)
+      }
       converters.clearAll()
       if (consumed.conversation) {
-        editor.begin({
-          messages: consumed.conversation.messages,
-          objective: consumed.conversation.objective ?? currentObjective,
-          initialObjective: consumed.conversation.objective ?? currentObjective,
-          sourceConversationId: null,
-          sourceAttackId: draftAttackId,
-          target: activeTarget,
-          labels,
-        })
-        if (consumed.conversation.systemPrompt) {
-          if (systemPrompt && systemPrompt.trim() !== consumed.conversation.systemPrompt.trim()) {
-            // eslint-disable-next-line react-hooks/set-state-in-effect
-            setEditorNotice('The imported example includes a system prompt that differs from the existing system prompt. The existing system prompt was preserved.')
+        const stageConversationImport = async () => {
+          let existingTurns: ConversationDraftMessage[] = []
+          if (consumed.destinationType === 'current_conversation' && draftConversationId && draftAttackId) {
+            try {
+              let backendMsgs = loadedBackendMessagesRef.current.get(draftConversationId)
+              if (!backendMsgs || backendMsgs.length === 0) {
+                const res = await attacksApi.getMessages(draftAttackId, draftConversationId)
+                backendMsgs = res?.messages ?? []
+                if (backendMsgs.length > 0) {
+                  loadedBackendMessagesRef.current.set(draftConversationId, backendMsgs)
+                }
+              }
+              existingTurns = toConversationDraft(backendMsgs)
+            } catch {
+              existingTurns = []
+            }
+          }
+          const allMessages = [...consumed.conversation!.messages, ...existingTurns]
+          editor.begin({
+            messages: allMessages,
+            baselineMessages: [],
+            objective: consumed.conversation!.objective ?? currentObjective,
+            initialObjective: consumed.conversation!.objective ?? currentObjective,
+            sourceConversationId: draftConversationId ?? null,
+            sourceAttackId: draftAttackId,
+            target: activeTarget,
+            labels,
+          })
+          if (consumed.conversation!.systemPrompt) {
+            if (systemPrompt && systemPrompt.trim() !== consumed.conversation!.systemPrompt.trim()) {
+              setEditorNotice('The imported example includes a system prompt that differs from the existing system prompt. The existing system prompt was preserved.')
+            }
           }
         }
+        void stageConversationImport()
       }
       draft = {
         text: consumed.content.text,
@@ -898,7 +932,7 @@ export default function ChatWindow({
     canApplyImportNow, pending, draftHandoff, draftAttackId, draftConversationId, converters,
     isDraftDestinationReady, matchingPreservedDraft, isActiveDraftDirty, runtime.ready, runtime.generation,
     restoreComposerDraft, restoreConverterSnapshot, restoreConversions,
-    activeTarget, currentObjective, editor, labels, setEditorNotice, systemPrompt,
+    activeTarget, currentObjective, editor, labels, setEditorNotice, systemPrompt, availableTargets,
   ])
 
   // Handle conversation selection from the panel
@@ -1016,6 +1050,9 @@ export default function ChatWindow({
     } : recovery
     if (isLatestRead) {
       loadedUserPieceIdsRef.current.set(effectiveConvId, userPieceIds(response.messages))
+      if (response.messages?.messages) {
+        loadedBackendMessagesRef.current.set(effectiveConvId, response.messages.messages)
+      }
       setRecoverableSends((currentRecoveries) => {
         const next = { ...currentRecoveries }
         if (recoveredDraft) { next[effectiveConvId] = recoveredDraft } else { delete next[effectiveConvId] }

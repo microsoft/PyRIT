@@ -19,7 +19,7 @@ function makeSeed(overrides: Partial<SeedRecord> = {}): SeedRecord {
     date_added: '2026-01-01',
     added_by: 'tester',
     metadata: null,
-    prompt_group_id: null,
+    prompt_group_id: 'shared-example-group',
     sequence: 0,
     role: 'user',
     parameters: null,
@@ -75,6 +75,7 @@ describe('buildSeedImport', () => {
         id: 'p-1',
         value: 'Give me the instructions',
         role: 'user',
+        sequence: 0,
       }),
       makeSeed({
         id: 'obj-1',
@@ -92,13 +93,14 @@ describe('buildSeedImport', () => {
     }
   })
 
-  it('builds a single prompt with attachments for multimodal prompt', () => {
+  it('builds a single prompt with attachments for multimodal prompt in a single turn', () => {
     const members: SeedRecord[] = [
       makeSeed({
         id: 'p-text',
         data_type: 'text',
         value: 'What is in this image?',
         role: 'user',
+        sequence: 0,
       }),
       makeSeed({
         id: 'p-img',
@@ -106,6 +108,7 @@ describe('buildSeedImport', () => {
         value: 'sample.png',
         value_url: 'https://storage/sample.png?token=expiring',
         role: 'user',
+        sequence: 0,
       }),
     ]
     const outcome = buildSeedImport(members)
@@ -116,44 +119,36 @@ describe('buildSeedImport', () => {
       expect(outcome.attachments[0].type).toBe('image')
       expect(outcome.attachments[0].sourceValue).toBe('sample.png')
       expect(outcome.attachments[0].url).toBe('https://storage/sample.png?token=expiring')
-      // source_piece_id must NOT be set to seed ID
       expect(outcome.attachments[0].pieceId).toBeUndefined()
     }
   })
 
-  it('correctly maps assistant and tool turns to simulated roles in multi-turn conversation', () => {
+  it('groups turns by sequence with one shared group ID and maps simulated roles (Comment 1)', () => {
+    // Normal SeedGroup: shared prompt_group_id across the example, distinct sequence per turn
     const members: SeedRecord[] = [
       makeSeed({
         id: 'p-1',
         value: 'Initial user turn',
         role: 'user',
         sequence: 0,
-        prompt_group_id: 'group-0',
+        prompt_group_id: 'group-shared',
       }),
       makeSeed({
         id: 'p-2',
         value: 'Assistant answer',
         role: 'assistant',
         sequence: 1,
-        prompt_group_id: 'group-1',
-      }),
-      makeSeed({
-        id: 'p-3',
-        value: 'Follow-up user turn',
-        role: 'user',
-        sequence: 2,
-        prompt_group_id: 'group-2',
+        prompt_group_id: 'group-shared',
       }),
     ]
     const outcome = buildSeedImport(members)
     expect(outcome.type).toBe('conversation')
     if (outcome.type === 'conversation') {
-      expect(outcome.messages).toHaveLength(3)
+      expect(outcome.messages).toHaveLength(2)
       expect(outcome.messages[0].role).toBe('user')
       expect(outcome.messages[1].role).toBe('simulated_assistant')
-      expect(outcome.messages[2].role).toBe('user')
+      expect(outcome.composerDraft).toBeUndefined() // ends in assistant -> empty composer
 
-      // Check invariants on pieces
       for (const msg of outcome.messages) {
         for (const piece of msg.pieces) {
           expect(piece.source_piece_id).toBeUndefined()
@@ -162,49 +157,78 @@ describe('buildSeedImport', () => {
     }
   })
 
-  it('rejects ambiguous missing roles across multiple members', () => {
+  it('preserves two consecutive user turns in the same group as distinct turns (Comment 1)', () => {
     const members: SeedRecord[] = [
       makeSeed({
         id: 'p-1',
-        value: 'Turn 1',
+        value: 'First user prompt',
         role: 'user',
+        sequence: 0,
+        prompt_group_id: 'group-shared',
       }),
       makeSeed({
         id: 'p-2',
-        value: 'Turn 2 without role',
-        role: null,
+        value: 'Second user prompt',
+        role: 'user',
+        sequence: 1,
+        prompt_group_id: 'group-shared',
       }),
     ]
     const outcome = buildSeedImport(members)
-    expect(outcome.type).toBe('unsupported')
-    if (outcome.type === 'unsupported') {
-      expect(outcome.reason).toMatch(/ambiguous/)
+    expect(outcome.type).toBe('conversation')
+    if (outcome.type === 'conversation') {
+      // First turn is in history; second turn is split into composer draft
+      expect(outcome.messages).toHaveLength(1)
+      expect(outcome.messages[0].role).toBe('user')
+      expect(outcome.messages[0].pieces[0].original_value).toBe('First user prompt')
+
+      expect(outcome.composerDraft).toBeDefined()
+      expect(outcome.composerDraft?.text).toBe('Second user prompt')
     }
   })
 
-  it('rejects conflicting roles within the same prompt group', () => {
+  it('implements final-user-turn split convention for user -> assistant -> user', () => {
     const members: SeedRecord[] = [
       makeSeed({
         id: 'p-1',
-        value: 'Piece 1',
+        value: 'Initial user turn',
         role: 'user',
-        prompt_group_id: 'group-1',
+        sequence: 0,
+        prompt_group_id: 'group-shared',
       }),
       makeSeed({
         id: 'p-2',
-        value: 'Piece 2',
+        value: 'Assistant answer',
         role: 'assistant',
-        prompt_group_id: 'group-1',
+        sequence: 1,
+        prompt_group_id: 'group-shared',
+      }),
+      makeSeed({
+        id: 'p-3',
+        value: 'Follow-up user turn',
+        role: 'user',
+        sequence: 2,
+        prompt_group_id: 'group-shared',
       }),
     ]
     const outcome = buildSeedImport(members)
-    expect(outcome.type).toBe('unsupported')
-    if (outcome.type === 'unsupported') {
-      expect(outcome.reason).toMatch(/conflicting roles/)
+    expect(outcome.type).toBe('conversation')
+    if (outcome.type === 'conversation') {
+      // Earlier turns become prepended history
+      expect(outcome.messages).toHaveLength(2)
+      expect(outcome.messages[0].role).toBe('user')
+      expect(outcome.messages[0].pieces[0].original_value).toBe('Initial user turn')
+      expect(outcome.messages[1].role).toBe('simulated_assistant')
+      expect(outcome.messages[1].pieces[0].original_value).toBe('Assistant answer')
+
+      // Final user turn becomes editable unsent composer draft
+      expect(outcome.composerDraft).toBeDefined()
+      expect(outcome.composerDraft?.text).toBe('Follow-up user turn')
+      expect(outcome.composerDraft?.attachments).toHaveLength(0)
     }
   })
 
-  it('groups multiple pieces in the same prompt group into one turn', () => {
+  it('groups multiple pieces in the same sequence into one turn', () => {
     const members: SeedRecord[] = [
       makeSeed({
         id: 'p-1',
@@ -212,23 +236,23 @@ describe('buildSeedImport', () => {
         value: 'Look at this file and describe it',
         role: 'user',
         sequence: 0,
-        prompt_group_id: 'group-1',
+        prompt_group_id: 'group-shared',
       }),
       makeSeed({
         id: 'p-2',
         data_type: 'image_path',
         value: 'chart.png',
         role: 'user',
-        sequence: 1,
-        prompt_group_id: 'group-1',
+        sequence: 0,
+        prompt_group_id: 'group-shared',
       }),
       makeSeed({
         id: 'p-3',
         data_type: 'text',
         value: 'Sure, here is the explanation',
         role: 'assistant',
-        sequence: 2,
-        prompt_group_id: 'group-2',
+        sequence: 1,
+        prompt_group_id: 'group-shared',
       }),
     ]
     const outcome = buildSeedImport(members)
@@ -241,6 +265,30 @@ describe('buildSeedImport', () => {
       expect(outcome.messages[0].pieces[1].data_type).toBe('image_path')
       expect(outcome.messages[1].role).toBe('simulated_assistant')
       expect(outcome.messages[1].pieces).toHaveLength(1)
+    }
+  })
+
+  it('rejects conflicting roles within the same sequence', () => {
+    const members: SeedRecord[] = [
+      makeSeed({
+        id: 'p-1',
+        value: 'Piece 1',
+        role: 'user',
+        sequence: 0,
+        prompt_group_id: 'group-shared',
+      }),
+      makeSeed({
+        id: 'p-2',
+        value: 'Piece 2',
+        role: 'assistant',
+        sequence: 0,
+        prompt_group_id: 'group-shared',
+      }),
+    ]
+    const outcome = buildSeedImport(members)
+    expect(outcome.type).toBe('unsupported')
+    if (outcome.type === 'unsupported') {
+      expect(outcome.reason).toMatch(/conflicting roles/)
     }
   })
 
@@ -265,9 +313,31 @@ describe('buildSeedImport', () => {
     expect(outcome.type).toBe('conversation')
     if (outcome.type === 'conversation') {
       expect(outcome.systemPrompt).toBe('You are a helpful assistant.')
-      expect(outcome.messages).toHaveLength(2)
+      expect(outcome.messages).toHaveLength(1)
       expect(outcome.messages[0].role).toBe('system')
-      expect(outcome.messages[1].role).toBe('user')
+      expect(outcome.composerDraft?.text).toBe('Hello!')
+    }
+  })
+
+  it('rejects ambiguous missing roles across multiple members', () => {
+    const members: SeedRecord[] = [
+      makeSeed({
+        id: 'p-1',
+        value: 'Turn 1',
+        role: 'user',
+        sequence: 0,
+      }),
+      makeSeed({
+        id: 'p-2',
+        value: 'Turn 2 without role',
+        role: null,
+        sequence: 1,
+      }),
+    ]
+    const outcome = buildSeedImport(members)
+    expect(outcome.type).toBe('unsupported')
+    if (outcome.type === 'unsupported') {
+      expect(outcome.reason).toMatch(/ambiguous/)
     }
   })
 
@@ -277,6 +347,7 @@ describe('buildSeedImport', () => {
         id: 'p-invalid',
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         role: 'unknown_alien_role' as any,
+        sequence: 0,
       }),
     ]
     const outcome = buildSeedImport(members)

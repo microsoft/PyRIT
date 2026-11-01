@@ -21,6 +21,11 @@ export interface SinglePromptImport {
 export interface ConversationImport {
   type: 'conversation'
   messages: ConversationDraftMessage[]
+  composerDraft?: {
+    text: string
+    attachments: MessageAttachment[]
+    textMetadata?: Record<string, unknown>
+  }
   objective?: string
   systemPrompt?: string
 }
@@ -56,6 +61,23 @@ function mapToDraftRole(role: ChatMessageRole | null): ConversationDraftRole | n
   }
 }
 
+function recordToDraftPiece(record: SeedRecord): ConversationDraftPiece {
+  return {
+    draftId: generateClientId(),
+    data_type: record.data_type,
+    original_value: record.value,
+    mime_type: undefined,
+    previewUrl: record.value_url ?? undefined,
+    filename:
+      record.name ??
+      (isPathDataType(record.data_type)
+        ? basenameFromValue(record.value, record.data_type)
+        : undefined),
+    prompt_metadata: record.metadata ?? undefined,
+    source_piece_id: undefined, // Never use seed ID as chat piece ID
+  }
+}
+
 /**
  * Inspects a list of SeedRecords belonging to one logical example and produces
  * either a single prompt (for the composer), a conversation draft (for the ConversationEditor),
@@ -66,7 +88,8 @@ function mapToDraftRole(role: ChatMessageRole | null): ConversationDraftRole | n
  * 2. Does not execute or generate simulated conversations.
  * 3. Seed IDs are never assigned to source_piece_id.
  * 4. Stored value remains the durable reference; value_url is preview only.
- * 5. Does not guess ambiguous roles or sequences.
+ * 5. Turns are grouped by stored sequence and compatible role (Comment 1).
+ * 6. Final user turn split retains all content unsent in composer (Issue spec).
  */
 export function buildSeedImport(members: readonly SeedRecord[]): SeedImportOutcome {
   if (!members || members.length === 0) {
@@ -114,127 +137,107 @@ export function buildSeedImport(members: readonly SeedRecord[]): SeedImportOutco
     }
   }
 
-  // 5. Build raw draft pieces
-  // Group pieces into logical turns:
-  // - If prompt_group_id is present, group by prompt_group_id.
-  // - If prompt_group_id is missing, group by consecutive matching roles or single turn if single member.
+  // 5. Group pieces into turns by stored sequence.
+  // In SeedGroup, members of an example share the same prompt_group_id, while
+  // different conversation turns have distinct sequence numbers.
+  // Records with the same sequence form pieces within the same turn.
   interface GroupedTurn {
     role: ConversationDraftRole
-    groupId: string | null
     sequence: number
     pieces: ConversationDraftPiece[]
   }
 
   const turns: GroupedTurn[] = []
 
-  // Check if prompt_group_id is used
-  const hasGroupIds = promptRecords.some((m) => Boolean(m.prompt_group_id))
+  // Check sequence definition across prompt records
+  const hasSequenceDefined = promptRecords.some((r) => r.sequence !== null && r.sequence !== undefined)
+  const missingSequenceCount = promptRecords.filter((r) => r.sequence === null || r.sequence === undefined).length
 
-  if (hasGroupIds) {
-    const groupMap = new Map<string, SeedRecord[]>()
+  if (promptRecords.length > 1 && hasSequenceDefined && missingSequenceCount > 0) {
+    return {
+      type: 'unsupported',
+      reason: 'Some prompt members are missing sequence numbers, making the turn order ambiguous.',
+    }
+  }
+
+  if (hasSequenceDefined) {
+    // Group records by sequence
+    const sequenceMap = new Map<number, SeedRecord[]>()
     for (const record of promptRecords) {
-      const gId = record.prompt_group_id || `turn-${record.id}`
-      const existing = groupMap.get(gId) ?? []
+      const seq = record.sequence ?? 0
+      const existing = sequenceMap.get(seq) ?? []
       existing.push(record)
-      groupMap.set(gId, existing)
+      sequenceMap.set(seq, existing)
     }
 
-    for (const [gId, recordsInGroup] of groupMap.entries()) {
-      // Validate roles within group are consistent
-      const groupRoles = recordsInGroup
+    const sortedSequences = Array.from(sequenceMap.keys()).sort((a, b) => a - b)
+
+    for (const seq of sortedSequences) {
+      const recordsInSequence = sequenceMap.get(seq) ?? []
+      const sequenceRoles = recordsInSequence
         .map((r) => r.role)
         .filter((r): r is ChatMessageRole => r !== null && r !== undefined)
-      const mappedGroupRoles = groupRoles.map(mapToDraftRole)
+      const mappedRoles = sequenceRoles.map(mapToDraftRole)
 
-      if (mappedGroupRoles.some((r) => r === null)) {
+      if (mappedRoles.some((r) => r === null)) {
         return {
           type: 'unsupported',
-          reason: `Group ${gId} contains unsupported role values.`,
+          reason: `Turn at sequence ${seq} contains unsupported role values.`,
         }
       }
 
-      const distinctRoles = new Set(mappedGroupRoles)
+      const distinctRoles = new Set(mappedRoles)
       if (distinctRoles.size > 1) {
         return {
           type: 'unsupported',
-          reason: `Members within the prompt group '${gId}' have conflicting roles.`,
+          reason: `Members within sequence ${seq} have conflicting roles.`,
         }
       }
 
-      const finalRole = mappedGroupRoles[0] ?? 'user'
-      // Sort pieces by sequence within group
-      const sortedRecords = [...recordsInGroup].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0))
-      const minSeq = Math.min(...recordsInGroup.map((r) => r.sequence ?? 0))
+      const finalRole = mappedRoles[0] ?? (nonNullRoles.length === 0 ? 'user' : null)
+      if (!finalRole) {
+        return {
+          type: 'unsupported',
+          reason: `Turn at sequence ${seq} has an ambiguous or missing role.`,
+        }
+      }
 
-      const pieces: ConversationDraftPiece[] = sortedRecords.map((record) => ({
-        draftId: generateClientId(),
-        data_type: record.data_type,
-        original_value: record.value,
-        mime_type: undefined,
-        previewUrl: record.value_url ?? undefined,
-        filename: record.name ?? (isPathDataType(record.data_type) ? basenameFromValue(record.value, record.data_type) : undefined),
-        prompt_metadata: record.metadata ?? undefined,
-        source_piece_id: undefined, // Never use seed ID as chat piece ID
-      }))
-
+      const pieces = recordsInSequence.map(recordToDraftPiece)
       turns.push({
         role: finalRole,
-        groupId: gId,
-        sequence: minSeq,
+        sequence: seq,
         pieces,
       })
     }
-
-    turns.sort((a, b) => a.sequence - b.sequence)
   } else {
-    // No prompt_group_id: group records into turns by role and sequence.
-    // If consecutive records share the same role and sequence (e.g. text + image in a single turn),
-    // they are combined as pieces within that turn.
-    let currentTurn: GroupedTurn | null = null
-    for (const record of promptRecords) {
-      const mappedRole = mapToDraftRole(record.role) ?? (nonNullRoles.length === 0 ? 'user' : null)
-      if (!mappedRole) {
+    // No sequence numbers stored on records
+    if (promptRecords.length === 1) {
+      const record = promptRecords[0]
+      const mappedRole = mapToDraftRole(record.role) ?? 'user'
+      turns.push({
+        role: mappedRole,
+        sequence: 0,
+        pieces: [recordToDraftPiece(record)],
+      })
+    } else {
+      // Multiple records without sequence numbers:
+      // If all records share the same role (e.g. text + image pieces in a single prompt),
+      // combine them into a single turn at sequence 0.
+      const allRoles = promptRecords.map((r) => mapToDraftRole(r.role) ?? 'user')
+      const distinctRoles = new Set(allRoles)
+      if (distinctRoles.size === 1) {
+        turns.push({
+          role: allRoles[0],
+          sequence: 0,
+          pieces: promptRecords.map(recordToDraftPiece),
+        })
+      } else {
         return {
           type: 'unsupported',
-          reason: `Record ${record.id} has an unsupported role '${record.role}'.`,
+          reason: 'Prompt members have ambiguous turn sequence or missing sequence ordering.',
         }
-      }
-
-      const piece: ConversationDraftPiece = {
-        draftId: generateClientId(),
-        data_type: record.data_type,
-        original_value: record.value,
-        mime_type: undefined,
-        previewUrl: record.value_url ?? undefined,
-        filename:
-          record.name ??
-          (isPathDataType(record.data_type)
-            ? basenameFromValue(record.value, record.data_type)
-            : undefined),
-        prompt_metadata: record.metadata ?? undefined,
-        source_piece_id: undefined,
-      }
-
-      const matchesCurrentTurn =
-        currentTurn &&
-        currentTurn.role === mappedRole &&
-        (record.sequence === null ||
-          currentTurn.sequence === record.sequence ||
-          promptRecords.every((r) => (r.role ?? 'user') === 'user'))
-
-      if (matchesCurrentTurn && currentTurn) {
-        currentTurn.pieces.push(piece)
-      } else {
-        currentTurn = {
-          role: mappedRole,
-          groupId: null,
-          sequence: record.sequence ?? 0,
-          pieces: [piece],
-        }
-        turns.push(currentTurn)
       }
     }
-    turns.sort((a, b) => a.sequence - b.sequence)
   }
 
   if (turns.length === 0) {
@@ -244,8 +247,8 @@ export function buildSeedImport(members: readonly SeedRecord[]): SeedImportOutco
     }
   }
 
-  // 6. Check if this is a Single Prompt vs. Multi-turn Conversation
-  // Single prompt: exactly 1 turn, role is 'user'
+  // 6. Differentiate Single Prompt vs. Multi-turn Conversation with Final User Turn Split
+  // If exactly 1 turn and role is 'user', import as single prompt to editable composer.
   if (turns.length === 1 && turns[0].role === 'user') {
     const turn = turns[0]
     const textPieces = turn.pieces.filter((p) => !isPathDataType(p.data_type))
@@ -274,7 +277,26 @@ export function buildSeedImport(members: readonly SeedRecord[]): SeedImportOutco
     }
   }
 
-  const messages: ConversationDraftMessage[] = turns.map((turn) => ({
+  // Apply final-user-turn split convention:
+  // If the conversation ends in a user turn, earlier turns become prepended history
+  // and the final user turn remains editable and unsent in the composer.
+  // If it ends in an assistant/tool turn, retain the whole selected history and leave next prompt empty.
+  const lastTurn = turns[turns.length - 1]
+  let historyTurns = turns
+  let composerDraft: ConversationImport['composerDraft'] | undefined
+
+  if (lastTurn.role === 'user' && turns.length > 1) {
+    historyTurns = turns.slice(0, -1)
+    const textPieces = lastTurn.pieces.filter((p) => !isPathDataType(p.data_type))
+    const mediaPieces = lastTurn.pieces.filter((p) => isPathDataType(p.data_type))
+    composerDraft = {
+      text: textPieces.map((p) => p.original_value).join('\n\n'),
+      attachments: mediaPieces.map(draftAttachment),
+      textMetadata: textPieces[0]?.prompt_metadata,
+    }
+  }
+
+  const messages: ConversationDraftMessage[] = historyTurns.map((turn) => ({
     id: generateClientId(),
     role: turn.role,
     pieces: turn.pieces,
@@ -283,6 +305,7 @@ export function buildSeedImport(members: readonly SeedRecord[]): SeedImportOutco
   return {
     type: 'conversation',
     messages,
+    composerDraft,
     objective,
     systemPrompt,
   }

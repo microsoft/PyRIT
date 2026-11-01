@@ -20,11 +20,14 @@ import {
 import { ArrowSyncRegular, ChevronLeftRegular, ChevronRightRegular, SearchRegular } from '@fluentui/react-icons'
 import { useNavigate } from 'react-router'
 
+import ConfirmDialog from '@/components/ConfirmDialog'
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
 import { useChatDraftHandoff } from '@/hooks/useChatDraftHandoff'
 import { useSeedExampleDetail, useSeedExamples } from '@/hooks/useSeedExamples'
+import { attacksApi } from '@/services/api'
+import { toApiError } from '@/services/errors'
 import type { DatasetInfo, FilterOption, ImportDestinationType, SeedExampleSummary } from '@/types'
-import { attackConversationRoutePath, attackRoutePath } from '@/utils/routeParams'
+import { attackConversationRoutePath } from '@/utils/routeParams'
 import { buildSeedImport } from '@/utils/seedImport'
 
 import SeedExampleDetail from './SeedExampleDetail'
@@ -126,6 +129,7 @@ export function SeedExampleBrowserView({
   const navigate = useNavigate()
   const draftHandoff = useChatDraftHandoff()
   const [importError, setImportError] = useState<string | null>(null)
+  const [pendingDirtyDestination, setPendingDirtyDestination] = useState<ImportDestinationType | null>(null)
 
   const effectiveAttackId = activeAttackId ?? draftHandoff.preservedDraft?.originatingAttackId ?? null
   const effectiveConversationId = activeConversationId ?? draftHandoff.preservedDraft?.originatingConversationId ?? null
@@ -256,8 +260,26 @@ export function SeedExampleBrowserView({
     buttonRefs.current.get(nextKey)?.focus()
   }
 
-  const handleImport = useCallback(
-    (destination: ImportDestinationType) => {
+  const isDestinationDirty = useCallback(
+    (destination: ImportDestinationType): boolean => {
+      const preserved = draftHandoff.preservedDraft
+      if (!preserved || !draftHandoff.isDraftDirty(preserved.draft)) return false
+      if (destination === 'new_attack') {
+        return preserved.originatingAttackId === null
+      }
+      if (destination === 'current_conversation') {
+        return (
+          preserved.originatingAttackId === effectiveAttackId &&
+          preserved.originatingConversationId === effectiveConversationId
+        )
+      }
+      return false
+    },
+    [draftHandoff, effectiveAttackId, effectiveConversationId],
+  )
+
+  const executeImport = useCallback(
+    async (destination: ImportDestinationType, replaceDirty: boolean) => {
       setImportError(null)
       if (!detailState.detail?.members) return
 
@@ -267,53 +289,53 @@ export function SeedExampleBrowserView({
         return
       }
 
+      let targetConversationId: string | null =
+        destination === 'current_conversation' ? effectiveConversationId : null
+
+      if (destination === 'new_conversation' && effectiveAttackId) {
+        try {
+          const newConv = await attacksApi.createConversation(effectiveAttackId, {})
+          targetConversationId = newConv.conversation_id
+        } catch (e) {
+          setImportError(toApiError(e).detail)
+          return
+        }
+      }
+
+      // If preserved draft is clean or user confirmed replacing it, clear it so it does not collide
+      if (draftHandoff.preservedDraft && (!draftHandoff.isDraftDirty(draftHandoff.preservedDraft.draft) || replaceDirty)) {
+        draftHandoff.clearPreservedDraft()
+      }
+
       const expectedSeq = draftHandoff.activeSequence
-      if (outcome.type === 'single_prompt') {
-        const staged = draftHandoff.stagePendingImport(
-          {
-            destinationType: destination,
-            targetAttackId: destination === 'new_attack' ? null : effectiveAttackId,
-            targetConversationId:
-              destination === 'current_conversation' ? effectiveConversationId : null,
-            content: {
-              text: outcome.text,
-              attachments: outcome.attachments,
-              textMetadata: outcome.textMetadata,
-            },
-            focus: true,
-            replaceDirty: false,
+      const staged = draftHandoff.stagePendingImport(
+        {
+          destinationType: destination,
+          targetAttackId: destination === 'new_attack' ? null : effectiveAttackId,
+          targetConversationId,
+          content: {
+            text: outcome.type === 'single_prompt' ? outcome.text : (outcome.composerDraft?.text ?? ''),
+            attachments: outcome.type === 'single_prompt' ? outcome.attachments : (outcome.composerDraft?.attachments ?? []),
+            textMetadata: outcome.type === 'single_prompt' ? outcome.textMetadata : outcome.composerDraft?.textMetadata,
           },
-          expectedSeq,
-        )
-        if (!staged) {
-          setImportError('Import staging was superseded by another action.')
-          return
-        }
-      } else {
-        const staged = draftHandoff.stagePendingImport(
-          {
-            destinationType: destination,
-            targetAttackId: destination === 'new_attack' ? null : effectiveAttackId,
-            targetConversationId:
-              destination === 'current_conversation' ? effectiveConversationId : null,
-            content: {
-              text: '',
-              attachments: [],
-            },
-            conversation: {
-              messages: outcome.messages,
-              objective: outcome.objective,
-              systemPrompt: outcome.systemPrompt,
-            },
-            focus: true,
-            replaceDirty: false,
-          },
-          expectedSeq,
-        )
-        if (!staged) {
-          setImportError('Import staging was superseded by another action.')
-          return
-        }
+          ...(outcome.type === 'conversation'
+            ? {
+                conversation: {
+                  messages: outcome.messages,
+                  objective: outcome.objective,
+                  systemPrompt: outcome.systemPrompt,
+                },
+              }
+            : {}),
+          focus: true,
+          replaceDirty,
+        },
+        expectedSeq,
+      )
+
+      if (!staged) {
+        setImportError('Import staging was superseded by another action.')
+        return
       }
 
       if (destination === 'new_attack') {
@@ -324,11 +346,23 @@ export function SeedExampleBrowserView({
         effectiveConversationId
       ) {
         navigate(attackConversationRoutePath(effectiveAttackId, effectiveConversationId))
-      } else if (destination === 'new_conversation' && effectiveAttackId) {
-        navigate(attackRoutePath(effectiveAttackId))
+      } else if (destination === 'new_conversation' && effectiveAttackId && targetConversationId) {
+        navigate(attackConversationRoutePath(effectiveAttackId, targetConversationId))
       }
     },
     [detailState.detail, draftHandoff, effectiveAttackId, effectiveConversationId, navigate],
+  )
+
+  const handleImport = useCallback(
+    (destination: ImportDestinationType) => {
+      setImportError(null)
+      if (isDestinationDirty(destination)) {
+        setPendingDirtyDestination(destination)
+        return
+      }
+      executeImport(destination, false)
+    },
+    [executeImport, isDestinationDirty],
   )
 
   return (
@@ -578,6 +612,24 @@ export function SeedExampleBrowserView({
           importError={importError}
         />
       )}
+      <ConfirmDialog
+        open={pendingDirtyDestination !== null}
+        title="Replace Existing Draft?"
+        confirmLabel="Replace"
+        cancelLabel="Cancel"
+        onConfirm={() => {
+          const dest = pendingDirtyDestination
+          setPendingDirtyDestination(null)
+          if (dest) {
+            executeImport(dest, true)
+          }
+        }}
+        onCancel={() => {
+          setPendingDirtyDestination(null)
+        }}
+      >
+        You have unsent changes at this destination. Importing this example will replace your unsent draft.
+      </ConfirmDialog>
     </div>
   )
 }

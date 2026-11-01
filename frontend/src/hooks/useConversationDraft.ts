@@ -62,7 +62,8 @@ export function useConversationDraft(
     saved.current = false
     setError(null)
     setDraft({
-      ...input, id, baselineMessages: input.messages, baselineTarget: targetKey(input.target), temperature: '',
+      ...input, id, baselineMessages: input.baselineMessages ?? input.messages,
+      baselineTarget: targetKey(input.target), temperature: input.temperature ?? '',
       sourcePieceIds: input.messages.flatMap((message: ConversationDraftMessage) => message.pieces.flatMap(
         (piece: ConversationDraftPiece) => piece.source_piece_id ? [piece.source_piece_id] : [],
       )),
