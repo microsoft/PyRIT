@@ -449,12 +449,18 @@ export default function ChatWindow({
     setTemperature('')
   }
   const [conversationScoring, setConversationScoring] = useState<ConversationScoring | null>(null)
+  const scoringRevisionRef = useRef(0)
+  const [scoringRevision, setScoringRevision] = useState(0)
   const applyingScorer = useRef(false)
   const [applyingConversationId, setApplyingConversationId] = useState<string | null>(null)
   const isApplyingScorer = applyingConversationId !== null
   const [applyStatus, setApplyStatus] = useState<ConversationApplyStatus | null>(null)
   const [draftScorer, setDraftScorer] = useState<RegisteredComponentReference | null | undefined>(undefined)
   const selectedScorer = attackResultId ? chatScorer : draftScorer === undefined ? defaultChatScorer ?? null : draftScorer
+  const scoringSelectionRef = useRef(JSON.stringify([attackResultId, objective, selectedScorer?.identifier_hash]))
+  const [installedScoringSelection, setInstalledScoringSelection] = useState(
+    JSON.stringify([attackResultId, objective, selectedScorer?.identifier_hash]),
+  )
   const scorerSelectionReady = scorerDefaultsReady || draftScorer !== undefined
   const [scoringNotice, setScoringNotice] = useState<{ id: string; message: string; conversationId: string } | null>(null)
   const [scoringConversations, setScoringConversations] = useState<Set<string>>(new Set())
@@ -516,7 +522,6 @@ export default function ChatWindow({
   const globalMarkdown = preferences.chatMarkdown
   const location = useLocation()
   const viewedConversationId = activeConversationId ?? conversationId
-  const viewedScoring = conversationScoring?.conversationId === viewedConversationId ? conversationScoring : null
   const draftAttackId = draftContext ? draftContext.originatingAttackId : attackResultId
   const draftConversationId = draftContext ? draftContext.originatingConversationId : viewedConversationId
   const draftHandoff = useChatDraftHandoff()
@@ -749,6 +754,24 @@ export default function ChatWindow({
     onAttackChange,
     onObjectiveChange,
   })
+  const scoringSelection = JSON.stringify([attackResultId, currentObjective, selectedScorer?.identifier_hash])
+  const invalidateScoringSelection = useCallback((selection: string): void => {
+    if (scoringSelectionRef.current === selection) return
+    scoringSelectionRef.current = selection
+    setInstalledScoringSelection(selection)
+    scoringRevisionRef.current += 1
+    setScoringRevision(scoringRevisionRef.current)
+    setConversationScoring(null)
+    setApplyStatus(null)
+    if (viewedConversationId) invalidateConversationLoads(viewedConversationId)
+  }, [viewedConversationId, invalidateConversationLoads])
+  useLayoutEffect(() => {
+    invalidateScoringSelection(scoringSelection)
+  }, [scoringSelection, invalidateScoringSelection])
+  const selectionIsCurrent = installedScoringSelection === scoringSelection
+  const viewedScoring = selectionIsCurrent && conversationScoring?.conversationId === viewedConversationId
+    ? conversationScoring : null
+  const scoringInvalidated = scoringRevision !== 0 || !selectionIsCurrent
   const activeDraft: ChatDraftContent = {
     text: chatInputText,
     attachments: draftAttachments,
@@ -1715,8 +1738,10 @@ export default function ChatWindow({
       setEditorObjective(newObjective)
       return
     }
+    const revision = navigationRevisionRef.current
     await changeObjective(newObjective, expectedObjective)
-    setApplyStatus(null)
+    if (navigationRevisionRef.current !== revision) return
+    invalidateScoringSelection(JSON.stringify([attackResultId, newObjective, selectedScorer?.identifier_hash]))
     if (
       attackResultId && viewedConversationId && !isSendInFlight(viewedConversationId)
       && getViewedConversationId() === viewedConversationId
@@ -1725,7 +1750,7 @@ export default function ChatWindow({
     }
   }, [
     attackResultId, changeObjective, editDraft, setEditorObjective, executionReadOnly,
-    viewedConversationId, getViewedConversationId, isSendInFlight, loadConversation,
+    viewedConversationId, getViewedConversationId, isSendInFlight, loadConversation, invalidateScoringSelection, selectedScorer,
   ])
 
   const handleScorerUpdate = async (reference: RegisteredComponentReference | null): Promise<void> => {
@@ -1734,7 +1759,7 @@ export default function ChatWindow({
     const revision = navigationRevisionRef.current
     const updated = await attacksApi.updateAttack(attackResultId, { chat_scorer: reference })
     if (navigationRevisionRef.current !== revision) return
-    setApplyStatus(null)
+    invalidateScoringSelection(JSON.stringify([attackResultId, currentObjective, reference?.identifier_hash]))
     onAttackChange?.(updated)
     if (viewedConversationId && getViewedConversationId() === viewedConversationId) {
       await loadConversation(attackResultId, viewedConversationId)
@@ -1748,6 +1773,7 @@ export default function ChatWindow({
     const objective = currentObjective
     if (!attackResultId || !conversationId || !scorer || !responseId || applyingScorer.current) return
     const revision = navigationRevisionRef.current
+    const scoringRevision = scoringRevisionRef.current
     applyingScorer.current = true
     setApplyingConversationId(conversationId)
     setApplyStatus(null)
@@ -1767,14 +1793,14 @@ export default function ChatWindow({
       status = { intent: 'error', message: toApiError(cause).detail }
     }
     try {
-      if (navigationRevisionRef.current !== revision) return
+      if (navigationRevisionRef.current !== revision || scoringRevisionRef.current !== scoringRevision) return
       setApplyStatus({ ...status, conversationId, responseId, scorerHash: scorer.identifier_hash, objective })
       if (getViewedConversationId() !== conversationId) return
       const [updated] = await Promise.all([
         attacksApi.getAttack(attackResultId),
         loadConversation(attackResultId, conversationId),
       ])
-      if (navigationRevisionRef.current === revision) onAttackChange?.(updated)
+      if (navigationRevisionRef.current === revision && scoringRevisionRef.current === scoringRevision) onAttackChange?.(updated)
     } catch (cause: unknown) {
       console.error('Failed to refresh the attack after applying the scorer:', cause)
     } finally {
@@ -1833,7 +1859,9 @@ export default function ChatWindow({
   const handleEditorSaved = (response: AddMessageResponse, savedTarget?: TargetInstance | null): void => {
     editor.discard()
     setEditorNotice('Conversation saved.')
-    setMessages(backendMessagesToFrontend(response.messages.messages))
+    setMessages(handleConversationLoaded(
+      response.messages.conversation_id, response.messages, backendMessagesToFrontend(response.messages.messages),
+    ))
     markConversationLoaded(response.messages.conversation_id)
     if (response.attack.attack_result_id === attackResultId) {
       onSelectConversation(response.messages.conversation_id)
@@ -2052,7 +2080,9 @@ export default function ChatWindow({
       if (isFailedPrompt && inputBoxRef.current?.getDraftRevision() !== draftRevision) return
       if (destination === 'same_attack') {
         if (restoredPrompt) {
-          setMessages(backendMessagesToFrontend(response.messages.messages))
+          setMessages(handleConversationLoaded(
+            response.messages.conversation_id, response.messages, backendMessagesToFrontend(response.messages.messages),
+          ))
           markConversationLoaded(response.messages.conversation_id)
         }
         onSelectConversation(response.messages.conversation_id)
@@ -2175,7 +2205,7 @@ export default function ChatWindow({
         setEditorNotice(`Undo created conversation ${branch.conversation_id} without replacing your current draft.`)
         return
       }
-      setMessages(backendMessagesToFrontend(history.messages))
+      setMessages(handleConversationLoaded(branch.conversation_id, history, backendMessagesToFrontend(history.messages)))
       markConversationLoaded(branch.conversation_id)
       onSelectConversation(branch.conversation_id)
       onAttackChange?.(attack)
@@ -2440,8 +2470,8 @@ export default function ChatWindow({
           key={`${attackResultId ?? 'new'}-${viewedConversationId ?? 'new'}-${editDraft === null ? 'saved' : 'draft'}`}
           objective={editDraft === null ? currentObjective : editorObjective}
           draftMode={editDraft !== null}
-          outcome={humanScore ? outcome : viewedScoring?.outcome ?? outcome}
-          automatedScore={viewedScoring ? viewedScoring.score : automatedScore}
+          outcome={humanScore ? outcome : viewedScoring?.outcome ?? (scoringInvalidated ? 'undetermined' : outcome)}
+          automatedScore={viewedScoring ? viewedScoring.score : scoringInvalidated ? null : automatedScore}
           chatScorer={selectedScorer}
           chatScorerInherited={Boolean(attackResultId) && chatScorerInherited}
           scoringFailure={editDraft !== null ? null : viewedScoring?.failure ?? null}

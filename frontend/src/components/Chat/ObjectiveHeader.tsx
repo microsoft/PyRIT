@@ -139,6 +139,8 @@ export default function ObjectiveHeader({
   const [rationale, setRationale] = useState(
     humanScore?.score_rationale ?? automatedScore?.score_rationale ?? '',
   )
+  const [rationaleEdited, setRationaleEdited] = useState(false)
+  const effectiveRationale = rationaleEdited ? rationale : humanScore?.score_rationale ?? automatedScore?.score_rationale ?? ''
   const [isUpdatingResult, setIsUpdatingResult] = useState(false)
   const [resultError, setResultError] = useState('')
   const [showAutomatedDetails, setShowAutomatedDetails] = useState(false)
@@ -201,7 +203,7 @@ export default function ObjectiveHeader({
     setIsUpdatingResult(true)
     setResultError('')
     try {
-      await onUpdateHumanScore(humanVerdict === 'success', rationale)
+      await onUpdateHumanScore(humanVerdict === 'success', effectiveRationale)
       setResultOpen(false)
     } catch {
       setResultError('Unable to update the attack result.')
@@ -258,6 +260,7 @@ export default function ObjectiveHeader({
             const currentHumanVerdict = scoreVerdict(humanScore ?? automatedScore)
             setHumanVerdict(currentHumanVerdict === 'failure' ? 'failure' : 'success')
             setRationale(humanScore?.score_rationale ?? automatedScore?.score_rationale ?? '')
+            setRationaleEdited(false)
             setResultError('')
             setShowAutomatedDetails(applyStatus !== null)
             setShowScorerPicker(applyStatus !== null || applyingScorer)
@@ -396,8 +399,8 @@ export default function ObjectiveHeader({
           <Field label="Rationale">
             <Textarea
               rows={5}
-              value={rationale}
-              onChange={(_event, data) => setRationale(data.value)}
+              value={effectiveRationale}
+              onChange={(_event, data) => { setRationale(data.value); setRationaleEdited(true) }}
               resize="vertical"
               disabled={!canUpdateOutcome || applyingScorer}
               aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}

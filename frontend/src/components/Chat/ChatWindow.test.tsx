@@ -1102,7 +1102,7 @@ describe("ChatWindow Integration", () => {
     expect(screen.getByRole("button", { name: `Objective achieved outcome: ${projected}` })).toBeInTheDocument();
   });
 
-  it("should refresh the header projection after the objective changes", async () => {
+  it.each([false, true])("should invalidate the header after objective changes even if refresh fails (%s)", async (refreshFails) => {
     const user = userEvent.setup();
     const saved = { ...makeTextResponse("Saved response").messages, conversation_id: "score-conv", latest_response_id: "p-resp" };
     mockedAttacksApi.getMessages.mockResolvedValueOnce({
@@ -1121,12 +1121,15 @@ describe("ChatWindow Integration", () => {
       chatScorer={{ registry_name: "judge", identifier_hash: "hash" }} /></TestWrapper>);
     await screen.findByText("Saved response");
     expect(screen.getByRole("button", { name: "Objective achieved outcome: success" })).toBeInTheDocument();
-    mockedAttacksApi.getMessages.mockResolvedValue({ ...saved, outcome: "undetermined", automated_score: null });
+    if (refreshFails) mockedAttacksApi.getMessages.mockRejectedValue(new Error("Refresh unavailable"));
+    else mockedAttacksApi.getMessages.mockResolvedValue({ ...saved, outcome: "undetermined", automated_score: null });
     await user.click(screen.getByRole("button", { name: "Edit objective" }));
     const input = screen.getByRole("textbox", { name: "Attack objective" });
     await user.clear(input);
     await user.type(input, "New goal{Enter}");
     expect(await screen.findByRole("button", { name: "Objective achieved outcome: undetermined" })).toBeInTheDocument();
+    expect(screen.getByText("Saved response")).toBeInTheDocument();
+    if (refreshFails) expect(await screen.findByText(/Could not load conversation: Refresh unavailable/)).toBeInTheDocument();
   });
 
   describe("Apply scorer status lifetime", () => {
@@ -1199,8 +1202,81 @@ describe("ChatWindow Integration", () => {
       await user.click(screen.getByRole("button", { name: "Apply scorer", exact: true }));
       rendered.rerender(<TestWrapper><ChatWindow {...props} chatScorer={scorerB} /></TestWrapper>);
       await act(async () => { finish({ conversation_id: "score-conv", score, reused: true }); });
-      await waitFor(() => expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(2));
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: "Objective achieved outcome: undetermined" })).toBeInTheDocument();
       expect(screen.queryByText(notice)).not.toBeInTheDocument();
+    });
+
+    it.each([false, true])("invalidates scorer A evidence before a failed scorer B refresh (failure %s)", async (hasFailure) => {
+      const user = userEvent.setup();
+      mockedAttacksApi.getMessages.mockResolvedValueOnce({
+        ...makeTextResponse("Saved response").messages, conversation_id: "score-conv",
+        automated_score: hasFailure ? null : { ...score, score_rationale: "Scorer A rationale" },
+        latest_response_id: "p-resp", outcome: hasFailure ? "undetermined" : "success",
+        scoring_failure: hasFailure ? {
+          scorer: scorerA, objective: "Goal", response_id: "p-resp", conversation_id: "score-conv",
+          error: "Scorer A unavailable",
+        } : null,
+      });
+      mockedAttacksApi.updateAttack.mockResolvedValue({
+        attack_result_id: "score-attack", conversation_id: "score-conv", attack_type: "ManualAttack",
+        objective: "Goal", chat_scorer: scorerB, converters: [], message_count: 2,
+        related_conversation_ids: [], labels: {}, created_at: "", updated_at: "",
+      });
+      function Harness() {
+        const [reference, setReference] = useState(scorerA);
+        return <ChatWindow {...props} chatScorer={reference} outcome="success" automatedScore={score}
+          onAttackChange={(attack) => setReference(attack.chat_scorer ?? scorerA)} />;
+      }
+      render(<TestWrapper><Harness /></TestWrapper>);
+      await openScorerPane(user);
+      if (hasFailure) {
+        await user.click(screen.getByRole("button", { name: /scoring error.*view details/i }));
+        expect(screen.getByText(/Scorer A unavailable/)).toBeInTheDocument();
+      }
+      mockedAttacksApi.getMessages.mockRejectedValue(new Error("Scorer B refresh unavailable"));
+      await user.selectOptions(screen.getByRole("combobox", { name: "Chat scorer", exact: true }), "registered:other-judge");
+      expect(await screen.findByText(/Could not load conversation: Scorer B refresh unavailable/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Objective achieved outcome: undetermined" })).toBeInTheDocument();
+      expect(screen.queryByText(/Scorer A unavailable/)).not.toBeInTheDocument();
+      expect(screen.queryByText("Scorer A rationale")).not.toBeInTheDocument();
+      expect(screen.getByText("Saved response")).toBeInTheDocument();
+    });
+
+    it("keeps valid scoring evidence when the objective PATCH fails", async () => {
+      const user = userEvent.setup();
+      mockedAttacksApi.getMessages.mockResolvedValueOnce({
+        ...makeTextResponse("Saved response").messages, conversation_id: "score-conv",
+        automated_score: score, latest_response_id: "p-resp", outcome: "success",
+      });
+      mockedAttacksApi.updateAttack.mockRejectedValue(new Error("Objective conflict"));
+      render(<TestWrapper><ChatWindow {...props} outcome="success" /></TestWrapper>);
+      await screen.findByText("Saved response");
+      await user.click(screen.getByRole("button", { name: "Edit objective" }));
+      await user.clear(screen.getByRole("textbox", { name: "Attack objective" }));
+      await user.type(screen.getByRole("textbox", { name: "Attack objective" }), "New goal{Enter}");
+      expect(await screen.findByText("Unable to save the objective.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Objective achieved outcome: success" })).toBeInTheDocument();
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects an obsolete projection refresh already started by Apply", async () => {
+      const user = userEvent.setup();
+      let finish: (value: ConversationMessagesResponse) => void = () => {};
+      mockedAttacksApi.applyScorer.mockResolvedValue({ conversation_id: "score-conv", score, reused: false });
+      const rendered = render(<TestWrapper><ChatWindow {...props} outcome="success" automatedScore={score} /></TestWrapper>);
+      await openScorerPane(user);
+      mockedAttacksApi.getMessages.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+      await user.click(screen.getByRole("button", { name: "Apply scorer", exact: true }));
+      await waitFor(() => expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(2));
+      rendered.rerender(<TestWrapper><ChatWindow {...props} chatScorer={scorerB} outcome="success" automatedScore={score} /></TestWrapper>);
+      await act(async () => finish({
+        ...makeTextResponse("Obsolete transcript").messages, conversation_id: "score-conv",
+        automated_score: score, latest_response_id: "p-resp", outcome: "success",
+      }));
+      expect(screen.getByRole("button", { name: "Objective achieved outcome: undetermined" })).toBeInTheDocument();
+      expect(screen.queryByText("Obsolete transcript")).not.toBeInTheDocument();
+      expect(screen.getByText("Saved response")).toBeInTheDocument();
     });
   });
 
@@ -1797,7 +1873,8 @@ describe("ChatWindow Integration", () => {
 
     async function prepareUndoChat(options: {
       immutable?: boolean; emptyHistory?: boolean; assistantHistory?: boolean; restorable?: boolean;
-      responseDataTypes?: string[]; configurable?: boolean;
+      responseDataTypes?: string[]; configurable?: boolean; scored?: boolean; simulatedHistory?: boolean;
+      humanOverride?: boolean; dataRouter?: boolean;
     } = {}) {
       const user = userEvent.setup();
       const prefix: BackendMessage[] = [{
@@ -1808,6 +1885,13 @@ describe("ChatWindow Integration", () => {
         }],
       }];
       if (options.emptyHistory) prefix.length = 0;
+      if (options.simulatedHistory) prefix.push({
+        role: "simulated_assistant", turn_number: prefix.length, created_at: "",
+        message_pieces: [{
+          id: "simulated-response", original_value_data_type: "text", original_value: "Simulated response",
+          converted_value_data_type: "text", converted_value: "Simulated response", scores: [], response_error: "none",
+        }],
+      });
       if (options.assistantHistory) {
         prefix.push({
           role: "user", turn_number: prefix.length, created_at: "",
@@ -1828,7 +1912,14 @@ describe("ChatWindow Integration", () => {
         ...(options.restorable ? { supports_history_replay: true } : {}),
         capabilities: buildCapabilities({ supports_editable_history: false, supported_input_modalities: ["text"] }),
       }) : mockTarget;
-      let source = { conversation_id: "undo-source", messages: prefix, target_response_status: null as TargetResponseStatus | null };
+      const savedScore = {
+        id: "undo-score", message_piece_id: "last-assistant-0", scorer_type: "SubStringScorer", score_type: "true_false",
+        score_value: "true", score_rationale: "Original saved verdict", timestamp: "",
+      };
+      let source: ConversationMessagesResponse = {
+        conversation_id: "undo-source", messages: prefix, target_response_status: null,
+        ...(options.scored ? { automated_score: null, outcome: "undetermined", latest_response_id: null } : {}),
+      };
       const attack: AttackSummary = {
         attack_result_id: "undo-attack", conversation_id: "undo-source", attack_type: "ManualAttack",
         objective: "", converters: [], message_count: 3, related_conversation_ids: ["undo-branch"],
@@ -1836,7 +1927,10 @@ describe("ChatWindow Integration", () => {
       };
       mockedAttacksApi.getMessages.mockImplementation(async (_attackId, conversationId) => (
         conversationId === "undo-branch"
-          ? { conversation_id: "undo-branch", messages: prefix, target_response_status: null }
+          ? {
+            conversation_id: "undo-branch", messages: prefix, target_response_status: null,
+            ...(options.scored ? { automated_score: null, outcome: "undetermined", latest_response_id: null } : {}),
+          }
           : conversationId === "undo-other"
             ? { conversation_id: "undo-other", messages: [], target_response_status: null }
           : source
@@ -1869,6 +1963,7 @@ describe("ChatWindow Integration", () => {
       mockSendResult.mockImplementation(async (_attackId, request) => {
         source = {
           conversation_id: "undo-source",
+          ...(options.scored ? { automated_score: savedScore, outcome: "success", latest_response_id: "last-assistant-0" } : {}),
           target_response_status: {
             response_error: "none", request_turn_number: prefix.length, response_turn_number: prefix.length + 1,
           },
@@ -1899,12 +1994,21 @@ describe("ChatWindow Integration", () => {
           <button onClick={() => setConversation("undo-other")}>Switch undo conversation</button>
           <button onClick={() => setConversation("undo-source")}>Return to sent conversation</button>
           <ChatWindow {...defaultProps} attackResultId="undo-attack"
+          {...(options.scored ? {
+            objective: "Goal", chatScorer: { registry_name: "judge", identifier_hash: "hash" },
+            outcome: options.humanOverride ? "failure" as const : "success" as const, automatedScore: savedScore,
+            ...(options.humanOverride ? { humanScore: { ...savedScore, id: "human-undo", score_value: "false", scorer_type: "HumanScorer" } } : {}),
+          } : {})}
           activeTarget={target} availableTargets={[target]}
           conversationId={conversation} activeConversationId={conversation}
           onSelectConversation={(id: string) => { selected(id); setConversation(id); }} />
         </>;
       }
-      const rendered = render(<TestWrapper><UndoHarness /></TestWrapper>);
+      const rendered = options.dataRouter
+        ? render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+          <RouterProvider router={createMemoryRouter([{ path: "/", element: <UndoHarness /> }])} />
+        </UserPreferencesProvider></FluentProvider>)
+        : render(<TestWrapper><UndoHarness /></TestWrapper>);
       await user.type(await screen.findByPlaceholderText("Type prompt here"), "Original prompt");
       await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
       await user.click(await screen.findByRole("combobox", { name: "Add converter" }));
@@ -1937,6 +2041,56 @@ describe("ChatWindow Integration", () => {
         },
       };
     }
+
+    it.each([
+      { emptyHistory: true }, { simulatedHistory: true },
+    ])("installs the unscored Undo branch projection after a scored send (%s)", async (options) => {
+      const { user, selected } = await prepareUndoChat({ ...options, scored: true });
+      expect(screen.getByRole("button", { name: "Objective achieved outcome: success" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Undo last send" }));
+      await waitFor(() => expect(selected).toHaveBeenCalledWith("undo-branch"));
+      expect(screen.getByRole("button", { name: "Objective achieved outcome: undetermined" })).toBeInTheDocument();
+      expect(screen.queryByText("Accepted result")).not.toBeInTheDocument();
+      expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("Original prompt");
+      await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+      await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
+      expect(screen.getByRole("button", { name: "Apply scorer", exact: true })).toBeDisabled();
+      expect(screen.queryByText("Original saved verdict")).not.toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      await user.click(screen.getByRole("button", { name: "Return to sent conversation" }));
+      expect(await screen.findByText("Accepted result")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Objective achieved outcome: success" })).toBeInTheDocument();
+      expect(mockedAttacksApi.applyScorer).not.toHaveBeenCalled();
+      expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
+    });
+
+    it("preserves the authoritative human override when Undo installs an unscored branch", async () => {
+      const { user, selected } = await prepareUndoChat({ emptyHistory: true, scored: true, humanOverride: true });
+      await user.click(screen.getByRole("button", { name: "Undo last send" }));
+      await waitFor(() => expect(selected).toHaveBeenCalledWith("undo-branch"));
+      expect(screen.getByRole("button", { name: "Objective achieved outcome: failure" })).toBeInTheDocument();
+    });
+
+    it("installs the returned projection when saving an edited scored conversation", async () => {
+      const { user, selected } = await prepareUndoChat({ emptyHistory: true, scored: true, dataRouter: true });
+      const attack = await mockedAttacksApi.getAttack("undo-attack");
+      mockedAttacksApi.saveConversation.mockResolvedValue({
+        attack, messages: {
+          conversation_id: "undo-branch", messages: [], target_response_status: null,
+          automated_score: null, outcome: "undetermined", latest_response_id: null,
+        },
+      });
+      await user.click(screen.getByRole("button", { name: "Edit Conversation", exact: true }));
+      const editor = within(await screen.findByTestId("conversation-editor"));
+      const prompt = editor.getAllByPlaceholderText("Type prompt here")[0];
+      await user.clear(prompt);
+      await user.type(prompt, "Edited original prompt");
+      await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+      await waitFor(() => expect(selected).toHaveBeenCalledWith("undo-branch"));
+      expect(screen.getByRole("button", { name: "Objective achieved outcome: undetermined" })).toBeInTheDocument();
+      expect(screen.queryByText("Accepted result")).not.toBeInTheDocument();
+      expect(mockedAttacksApi.saveConversation).toHaveBeenCalledTimes(1);
+    });
 
     it.each([
       { responseDataTypes: ["text"] },
@@ -2007,14 +2161,18 @@ describe("ChatWindow Integration", () => {
     ])("restores matching in-memory converter stages when branching the first prompt after a $responseDataTypes response", async ({
       responseDataTypes,
     }: { responseDataTypes: string[] }) => {
-      const { user, selected } = await prepareUndoChat({ immutable: true, emptyHistory: true, responseDataTypes });
+      const { user, selected } = await prepareUndoChat({ immutable: true, emptyHistory: true, responseDataTypes, scored: true });
       const attack = await mockedAttacksApi.getAttack("undo-attack");
       mockedAttacksApi.saveConversation.mockResolvedValue({
-        attack, messages: { conversation_id: "undo-branch", messages: [], target_response_status: null },
+        attack, messages: {
+          conversation_id: "undo-branch", messages: [], target_response_status: null,
+          automated_score: null, outcome: "undetermined", latest_response_id: null,
+        },
       });
       await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[0]);
       await user.click(screen.getByRole("menuitem", { name: "Branch conversation", exact: true }));
       await waitFor(() => expect(selected).toHaveBeenCalledWith("undo-branch"));
+      expect(screen.getByRole("button", { name: "Objective achieved outcome: undetermined" })).toBeInTheDocument();
       expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("Original prompt");
       expect(screen.getByRole("textbox", { name: "Stage 1 output - Text" })).toHaveValue("Custom middle text");
       expect(screen.getByRole("textbox", { name: "Stage 2 output - Text" })).toHaveValue("Custom middle text|second");
