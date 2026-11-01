@@ -432,6 +432,31 @@ describe('configToPreset', () => {
     expect(roundTripped.scenario_params).toEqual({ max_turns: 5, retired_knob: 'x', max_concurrency: 4 })
   })
 
+  it('keeps a stored list whose elements contain commas when it is not edited', () => {
+    const goals: Parameter = { name: 'goals', type_name: 'list[str]', is_list: true, required: false }
+    const scenario = makeScenario({ supported_parameters: [goals] })
+    const original = makePreset({ scenario_params: { goals: ['Hello, world!', 'Second goal'] } })
+    const state = presetToConfigState(scenario, original)
+
+    const roundTripped = configToPreset(
+      { ...IDENTITY, description: 'new description' },
+      buildConfig({
+        techniques: state.techniques,
+        dynamicParameters: [goals],
+        scenarioParamValues: state.scenarioParamValues,
+      }),
+      { scenario, previous: original },
+    )
+    expect(roundTripped.scenario_params).toEqual({ goals: ['Hello, world!', 'Second goal'] })
+
+    const edited = configToPreset(
+      IDENTITY,
+      buildConfig({ dynamicParameters: [goals], scenarioParamValues: { goals: 'a, b' } }),
+      { scenario, previous: original },
+    )
+    expect(edited.scenario_params).toEqual({ goals: ['a', 'b'] })
+  })
+
   it('round-trips a fully populated preset back through the form state', () => {
     const scenario = makeScenario()
     const original = makePreset({
