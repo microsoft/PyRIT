@@ -16,7 +16,7 @@ from pyrit.message_normalizer.message_normalizer import (
     SystemMessageBehavior,
     apply_system_message_behavior_async,
 )
-from pyrit.models import ChatMessage, Message, MessagePiece
+from pyrit.models import ChatMessage, ComponentIdentifier, Message, MessagePiece
 
 if TYPE_CHECKING:
     from pyrit.models.literals import ChatMessageRole
@@ -59,6 +59,27 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         """
         self.use_developer_role = use_developer_role
         self.system_message_behavior = system_message_behavior
+
+    def as_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the configuration parameters that affect ChatMessage normalization.
+
+        Returns:
+            dict[str, Any]: Parameters including use_developer_role and system_message_behavior.
+        """
+        return {
+            "use_developer_role": self.use_developer_role,
+            "system_message_behavior": self.system_message_behavior,
+        }
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the behavioral identity for this normalizer.
+
+        Returns:
+            ComponentIdentifier: The frozen identity snapshot.
+        """
+        return ComponentIdentifier.of(self, params=self.as_identifier_params())
 
     async def normalize_async(self, messages: list[Message]) -> list[ChatMessage]:
         """
