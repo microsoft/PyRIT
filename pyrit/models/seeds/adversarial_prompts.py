@@ -81,12 +81,15 @@ class AdversarialPrompts(BaseModel):
         return {self.METADATA_KEY: self.model_dump(mode="json", exclude_none=True)}
 
     @classmethod
-    def from_metadata(cls, metadata: Mapping[str, Any] | None) -> AdversarialPrompts | None:
+    def from_metadata(cls, metadata: Mapping[str, Any] | None) -> Self | None:
         """
         Read the association without changing seed metadata.
 
+        Args:
+            metadata (Mapping[str, Any] | None): Seed metadata that may hold the association.
+
         Returns:
-            AdversarialPrompts | None: The saved prompts, or None when no association exists.
+            Self | None: The saved prompts as the calling class, or None when no association exists.
         """
         if metadata is None or cls.METADATA_KEY not in metadata:
             return None
