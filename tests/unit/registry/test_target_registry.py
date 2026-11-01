@@ -362,7 +362,11 @@ class TestClassMetadata:
     def test_metadata_supported_auth_modes_projects_class_attribute(self, registry: TargetRegistry):
         # Identity-capable targets expose both modes; api-key-only targets expose one.
         assert self._metadata_for(registry, "OpenAIChatTarget").supported_auth_modes == ("api_key", "identity")
-        assert self._metadata_for(registry, "TextTarget").supported_auth_modes == ("api_key",)
+        assert self._metadata_for(registry, "GitHubCopilotTarget").supported_auth_modes == ("api_key",)
+
+    def test_metadata_supported_auth_modes_empty_for_credential_free_target(self, registry: TargetRegistry):
+        # TextTarget writes to a local stream, so it must not advertise api-key auth.
+        assert self._metadata_for(registry, "TextTarget").supported_auth_modes == ()
 
     def test_metadata_supported_auth_modes_sourced_from_class_attributes(self, registry: TargetRegistry):
         # Auth modes are read off the class via Param.ClassAttr, not a fabricated instance.

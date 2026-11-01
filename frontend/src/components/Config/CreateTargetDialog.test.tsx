@@ -274,6 +274,12 @@ const TARGET_TYPES: TargetTypeListResponse = {
       description: "A prompt target that distributes requests across multiple inner targets using weighted round-robin selection.",
     },
     {
+      target_type: "TextTarget",
+      parameters: [],
+      supported_auth_modes: [],
+      description: "Writes prompts to a local text stream.",
+    },
+    {
       target_type: "HTTPTarget",
       parameters: [
         {
@@ -346,6 +352,7 @@ const TARGET_DISPLAY_NAMES: Record<string, string> = {
   OpenAIVideoTarget: "OpenAI video",
   RoundRobinTarget: "Weighted round robin",
   HTTPTarget: "HTTPTarget",
+  TextTarget: "TextTarget",
   AzureBlobStorageTarget: "AzureBlobStorageTarget",
 };
 
@@ -542,7 +549,7 @@ describe("CreateTargetDialog", () => {
     await openTargetTypePicker();
 
     const options = screen.getAllByRole("option");
-    expect(options).toHaveLength(11);
+    expect(options).toHaveLength(12);
     for (const entry of TARGET_TYPES.items.filter((item) => item.target_type !== "PlaywrightTarget")) {
       const option = screen.getByRole("option", {
         name: new RegExp(`Implementation: ${entry.target_type}`),
@@ -581,6 +588,20 @@ describe("CreateTargetDialog", () => {
     expect(selectedDetails).toHaveTextContent("RoundRobinTarget");
     expect(selectedDetails).toHaveTextContent("weighted round-robin selection");
     expect(selectedDetails).toHaveTextContent("Supported authentication: API key");
+  });
+
+  it("should say a credential-free target needs no authentication", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("TextTarget");
+
+    const selectedDetails = screen.getByRole("region", { name: /selected target details/i });
+    expect(selectedDetails).toHaveTextContent("No authentication required");
+    expect(selectedDetails).not.toHaveTextContent("API key");
   });
 
   it("should keep the selected target displayed after focus moves to another field", async () => {

@@ -2,8 +2,9 @@
 # Licensed under the MIT license.
 
 import sys
-from typing import IO
+from typing import IO, ClassVar
 
+from pyrit.common.auth_mode import AuthMode
 from pyrit.models import Message
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -17,6 +18,9 @@ class TextTarget(PromptTarget):
     This can be useful in various situations, for example, if operators want to generate prompts
     but enter them manually.
     """
+
+    # Writes to a local stream and never contacts a service, so it takes no credentials.
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ()
 
     def __init__(
         self,

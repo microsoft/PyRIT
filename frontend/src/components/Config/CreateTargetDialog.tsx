@@ -129,12 +129,15 @@ function getTargetDisplayName(targetType: string): string {
   return TARGET_DISPLAY_NAMES[targetType] ?? targetType
 }
 
-function getAuthDescription(entry: TargetTypeEntry): string | null {
+function getAuthDescription(entry: TargetTypeEntry, registryMetadataLoaded: boolean): string | null {
   if (entry.target_type === 'GitHubCopilotTarget') {
 return 'Supported authentication: GitHub token'
   }
   const authModes = entry.supported_auth_modes
-  if (authModes.length === 0) return null
+  if (authModes.length === 0) {
+    // The built-in fallback entries also carry an empty list, so only registry data can say "no credentials".
+    return registryMetadataLoaded ? 'No authentication required' : null
+  }
 
   const labels = authModes.map((mode) => (
     mode === 'identity' ? 'Microsoft Entra ID' : 'API key'
@@ -379,7 +382,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const hasApiKeyField = hasField('api_key')
   const selectedTargetDisplayName = getTargetDisplayName(targetType)
   const selectedTargetAuthDescription = targetTypeEntry
-    ? getAuthDescription(targetTypeEntry)
+    ? getAuthDescription(targetTypeEntry, typeMetadataAvailable)
     : null
   const supportsIdentity = targetTypeEntry
     ? targetTypeEntry.supported_auth_modes.includes('identity')
@@ -669,7 +672,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 >
                   {targetTypeOptions.map((entry) => {
                     const displayName = getTargetDisplayName(entry.target_type)
-                    const authDescription = getAuthDescription(entry)
+                    const authDescription = getAuthDescription(entry, typeMetadataAvailable)
                     const accessibleDescription = [
                       displayName,
                       entry.description,
