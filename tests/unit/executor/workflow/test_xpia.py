@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
+import threading
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,6 +11,7 @@ from unit.mocks import get_mock_prompt_normalizer
 
 from pyrit.executor.workflow.xpia import (
     XPIAContext,
+    XPIAManualProcessingWorkflow,
     XPIAResult,
     XPIAStatus,
     XPIAWorkflow,
@@ -698,3 +701,50 @@ class TestXPIAGuards:
         assert context.processing_callback is not None
         with pytest.raises(RuntimeError, match="context.processing_prompt is not initialized"):
             await context.processing_callback()
+
+
+@pytest.fixture
+def manual_workflow(mock_attack_setup_target: MagicMock, mock_scorer: MagicMock) -> XPIAManualProcessingWorkflow:
+    """Create a manual processing XPIA workflow for testing."""
+    return XPIAManualProcessingWorkflow(attack_setup_target=mock_attack_setup_target, scorer=mock_scorer)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestXPIAManualProcessingWorkflow:
+    """Tests for the manual processing callback created during setup."""
+
+    async def test_setup_async_sets_callback_that_returns_operator_input(
+        self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message
+    ) -> None:
+        context = XPIAContext(attack_content=valid_message)
+        await manual_workflow._setup_async(context=context)
+        assert context.processing_callback is not None
+
+        with patch("builtins.input", return_value="processed output") as mock_input:
+            response = await context.processing_callback()
+
+        assert response == "processed output"
+        mock_input.assert_called_once_with(
+            "Please trigger the processing target's execution and paste the output here:"
+        )
+
+    async def test_manual_input_does_not_block_the_event_loop(
+        self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message
+    ) -> None:
+        context = XPIAContext(attack_content=valid_message)
+        await manual_workflow._setup_async(context=context)
+        assert context.processing_callback is not None
+        event_loop_released_input = threading.Event()
+
+        def wait_for_event_loop(prompt: str) -> str:
+            # Only a task on the event loop sets this, so the read can finish only if the loop keeps running.
+            assert event_loop_released_input.wait(timeout=5)
+            return "processed output"
+
+        async def release_input_async() -> None:
+            event_loop_released_input.set()
+
+        with patch("builtins.input", side_effect=wait_for_event_loop):
+            response, _ = await asyncio.gather(context.processing_callback(), release_input_async())
+
+        assert response == "processed output"
