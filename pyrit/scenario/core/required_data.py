@@ -34,13 +34,22 @@ from pyrit.scenario.core.dataset_configuration import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Awaitable, Callable, Sequence
 
     from pyrit.models import Seed
 
 
 class _RequiredDatasetConfiguration(DatasetConfiguration):
     """An uncapped, unfiltered configuration used only to prepare and read required data."""
+
+    # Validates the scenario's full assembly against refresh candidates before any write.
+    _refresh_validator: Callable[[], Awaitable[None]] | None = None
+
+    async def _validate_candidate_population_async(self) -> None:
+        """Validate the required data, then the scenario's full assembly, against the candidates."""
+        await super()._validate_candidate_population_async()
+        if self._refresh_validator is not None:
+            await self._refresh_validator()
 
     async def read_async(self) -> dict[str, list[Seed[Any]]]:
         """
@@ -126,6 +135,18 @@ class ScenarioRequiredData:
     def filters(self) -> dict[str, list[str]]:
         """The ``get_seeds`` filters applied when reading."""
         return self._configuration.filters
+
+    def set_refresh_validator(self, validator: Callable[[], Awaitable[None]] | None) -> None:
+        """
+        Run this callback against refresh candidates before any required dataset is replaced.
+
+        The scenario passes its full unsampled assembly, so a refresh that would fail validation
+        leaves the stored required datasets unchanged and earlier runs can still resume.
+
+        Args:
+            validator (Callable[[], Awaitable[None]] | None): The async check, or None to clear it.
+        """
+        self._configuration._refresh_validator = validator
 
     async def prepare_async(self, *, fetch: DatasetFetchPolicy | None = None) -> None:
         """
@@ -215,6 +236,7 @@ class ScenarioRequiredData:
         sources: Sequence[DatasetSource],
         fetch: DatasetFetchPolicy,
         filters: dict[str, list[str]] | None = None,
+        validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
     ) -> ScenarioRequiredData:
         """
         Copy the declaration with replacement sources, keeping its validators.
@@ -223,12 +245,19 @@ class ScenarioRequiredData:
             sources (Sequence[DatasetSource]): The replacement sources.
             fetch (DatasetFetchPolicy): The default preparation policy.
             filters (dict[str, list[str]] | None): Filters merged over the current ones, as overrides do.
+            validators (Sequence[Callable[[ResolvedDataset], None]] | None): Validators appended to the
+                kept ones, used when a legacy ``dataset_config`` migrates its validators onto the required data.
 
         Returns:
             ScenarioRequiredData: The new declaration.
         """
         merged = {**self.filters, **{key: list(values) for key, values in (filters or {}).items()}}
-        return ScenarioRequiredData(sources=sources, fetch=fetch, validators=self._validators, filters=merged)
+        return ScenarioRequiredData(
+            sources=sources,
+            fetch=fetch,
+            validators=[*self._validators, *(validators or [])],
+            filters=merged,
+        )
 
     def _with_source_fetch(self, source_fetch: dict[str, DatasetFetchPolicy]) -> ScenarioRequiredData:
         if not source_fetch:

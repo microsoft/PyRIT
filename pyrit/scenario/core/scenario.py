@@ -998,6 +998,9 @@ class Scenario(ABC):
             ),
             removed_in="1.4.0",
         )
+        # The legacy configuration read these datasets as its population, so its own validators
+        # validated the raw template/corpus seeds. Those seeds are now required data, so the
+        # validators move with them; the configuration keeps only its defaults and limits.
         self._required_data = required.with_sources(
             sources=[
                 DatasetSource(
@@ -1010,8 +1013,13 @@ class Scenario(ABC):
             ],
             fetch=config.fetch,
             filters=config.filters,
+            validators=config._user_validators,
         )
-        self._dataset_config = config.with_overrides(sources=[])
+        stripped = config.with_overrides(sources=[])
+        moved = set(config._user_validators)
+        stripped._validators = [validator for validator in stripped._validators if validator not in moved]
+        stripped._user_validators = []
+        self._dataset_config = stripped
 
     DATASET_OPTIONS: ClassVar[ScenarioDatasetOptions] = ScenarioDatasetOptions()
 
@@ -1037,9 +1045,20 @@ class Scenario(ABC):
         """
         self._resolve_runtime_configuration(require_objective_target=False)
         if self._required_data is not None:
+            self._required_data.set_refresh_validator(self._validate_required_data_refresh_async)
             await self._required_data.prepare_async(fetch=DatasetFetchPolicy.IF_MISSING)
         await self._dataset_config.prepare_async(fetch=DatasetFetchPolicy.IF_MISSING)
         return project_dataset_settings(self._dataset_config, required_data=self._required_data)
+
+    async def _validate_required_data_refresh_async(self) -> None:
+        """
+        Assemble the full unsampled population from refresh candidates before they replace stored data.
+
+        Runs during a required-data refresh while the candidate seeds are visible, so the assembled
+        groups and the population's validators are checked before any write. A rejected refresh then
+        leaves the stored required datasets unchanged and earlier runs can still resume.
+        """
+        await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
 
     def _validate_runtime_configuration(self) -> None:
         """
@@ -1159,6 +1178,7 @@ class Scenario(ABC):
         is_resume = self._scenario_result_id is not None
         if not is_resume:
             if self._required_data is not None:
+                self._required_data.set_refresh_validator(self._validate_required_data_refresh_async)
                 await self._required_data.prepare_async()
             await self._dataset_config.prepare_async()
         seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
