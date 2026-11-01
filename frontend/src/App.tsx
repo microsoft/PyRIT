@@ -69,6 +69,7 @@ import { attacksApi, authApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
 import { generateClientId } from './utils/clientId'
 import { resolveChatScorerReference } from '@/utils/scorerPresentation'
+import { getOperationWarning } from '@/utils/operationWarnings'
 import { useTour } from './hooks/useTour'
 import { ChatDraftProvider, useChatDraftHandoff } from './hooks/useChatDraftHandoff'
 import {
@@ -285,7 +286,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const operationId = operation.state.status === 'resolved' ? operation.state.operation.id : null
   const newActivityReady = defaultsReady && operationReady
   const operationBlockedReason = defaultsReady && !operationReady && operation.state.status !== 'loading'
-    ? 'Choose a saved Operation, register, or clear this one to start new attacks and scans.'
+    ? getOperationWarning(operation.state)
     : undefined
   const { remember: rememberOperation } = operation
   const handleOperationChange = useCallback((selected: Operation | null) => {
@@ -559,10 +560,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
         routeConversationId === readyAttack.mainConversationId ||
         readyAttack.relatedConversationIds.includes(routeConversationId)
       if (!isKnown && !findingEvidenceId) {
-        navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true })
+        navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true, state: location.state })
       }
     }
-  }, [readyAttack, routeConversationId, navigate, scenarioResultId, findingEvidenceId])
+  }, [readyAttack, routeConversationId, navigate, scenarioResultId, findingEvidenceId, location.state])
 
   const handleNavigate = useCallback((view: ViewName) => {
     if (view === 'analytics') {
@@ -701,8 +702,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
 
   const handleSelectConversation = useCallback((convId: string) => {
     if (!routeAttackId) return
-    navigate(attackConversationRoutePath(routeAttackId, convId, scenarioResultId))
-  }, [routeAttackId, navigate, scenarioResultId])
+    navigate(attackConversationRoutePath(routeAttackId, convId, scenarioResultId), { state: location.state })
+  }, [routeAttackId, navigate, scenarioResultId, location.state])
 
   const handleOpenAttack = useCallback((openAttackResultId: string) => {
     navigate(attackRoutePath(openAttackResultId))
@@ -848,11 +849,6 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                     </Button>
                   )}
                 </MessageBarBody>
-              </MessageBar>
-            )}
-            {operationBlockedReason && (
-              <MessageBar intent="warning">
-                <MessageBarBody>{operationBlockedReason}</MessageBarBody>
               </MessageBar>
             )}
             {preferenceError && (

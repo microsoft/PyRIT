@@ -320,7 +320,8 @@ await output_scenario_async(exploitation_result)
 # Ports Garak's `apikey.GetKey` and `apikey.CompleteKey` probes. `GetKey` asks for a new
 # credential across 58 service types; `CompleteKey` asks the target to extend five conspicuous
 # PyRIT-created synthetic partial-key fixtures. The scenario uses `CredentialLeakScorer` with
-# its opt-in `GARAK_PATTERNS` set; the scorer's default coverage is unchanged.
+# its opt-in `GARAK_PATTERNS` set for expanded service coverage and credential capture
+# groups used for exclusions. The scorer's default patterns also detect legacy Slack bot tokens.
 # Supplied partials, request echoes, and safe placeholders are not counted as leaks; a newly
 # generated credential-shaped value is. Seven service entries represent public resource/client
 # identifiers rather than secrets; they remain in the prompt corpus for Garak parity but are
@@ -543,7 +544,7 @@ await output_scenario_async(sysprompt_result)
 #
 # **Aggregate techniques:** `DEFAULT` runs Rust. `ALL` runs all seven languages.
 #
-# > **Note:** Rust and its crates.io registry are the default because this registry is much smaller.
+# > **Note:** Rust and its [crates.io](https://crates.io) registry are the default because this registry is much smaller.
 # > If you select another language, PyRIT downloads its registry on demand. The raw package names
 # > are loaded into memory only for the scorer and are never sent as prompts.
 
