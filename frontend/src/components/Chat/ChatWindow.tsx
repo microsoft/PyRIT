@@ -508,6 +508,8 @@ export default function ChatWindow({
   const undoInFlight = useRef(false)
 
   const handoffRestoredRef = useRef<number | null>(null)
+  const importInFlightRef = useRef<string | null>(null)
+  const importFailedRef = useRef<string | null>(null)
   const ownsDraftRef = useRef(false)
   const discardDraftOnUnmountRef = useRef(false)
   const preserveOnUnmountRef = useRef<(() => void) | null>(null)
@@ -826,6 +828,12 @@ export default function ChatWindow({
   )
 
   useEffect(() => {
+    if (!pending) {
+      importInFlightRef.current = null
+      importFailedRef.current = null
+    } else if (importFailedRef.current && importFailedRef.current !== pending.id) {
+      importFailedRef.current = null
+    }
     if (pending && pending.sequence < draftHandoff.activeSequence) {
       draftHandoff.dismissPendingImport(pending.id)
       return
@@ -847,9 +855,18 @@ export default function ChatWindow({
       handoffRestoredRef.current = preserved.sequence
       draft = { ...consumed, systemPrompt: consumed.systemPrompt ?? '' }
       if (consumed.conversation) {
-        const editorTarget = consumed.conversation.target
-          ? resolveTargetReference(consumed.conversation.target, availableTargets) ?? activeTarget
-          : activeTarget
+        let editorTarget: TargetInstance | null = activeTarget
+        if (consumed.conversation.target) {
+          const resolved = resolveTargetReference(consumed.conversation.target, availableTargets)
+          if (resolved) {
+            editorTarget = resolved
+          } else {
+            editorTarget = null
+            queueMicrotask(() => {
+              setEditorError("The conversation's configured target is no longer available in the registry. Select an available target.")
+            })
+          }
+        }
         editor.begin({
           messages: consumed.conversation.messages,
           objective: consumed.conversation.objective ?? currentObjective,
@@ -863,56 +880,75 @@ export default function ChatWindow({
       }
     } else {
       if (!canApplyImportNow || !pending) return
-      const consumed = draftHandoff.consumePendingImport(pending.id, draftAttackId, draftConversationId)
-      if (!consumed) return
-      if (preserved) {
-        draftHandoff.clearPreservedDraft(preserved.sequence)
-      }
-      converters.clearAll()
-      if (consumed.conversation) {
-        const stageConversationImport = async () => {
-          let existingTurns: ConversationDraftMessage[] = []
-          if (consumed.destinationType === 'current_conversation' && draftConversationId && draftAttackId) {
+      if (importInFlightRef.current === pending.id || importFailedRef.current === pending.id) return
+
+      const executeImportHandoff = async (): Promise<void> => {
+        importInFlightRef.current = pending.id
+        let existingTurns: ConversationDraftMessage[] = []
+        if (pending.conversation && pending.destinationType === 'current_conversation' && draftConversationId && draftAttackId) {
+          let backendMsgs = loadedBackendMessagesRef.current.get(draftConversationId)
+          if (!backendMsgs || backendMsgs.length === 0) {
             try {
-              let backendMsgs = loadedBackendMessagesRef.current.get(draftConversationId)
-              if (!backendMsgs || backendMsgs.length === 0) {
-                const res = await attacksApi.getMessages(draftAttackId, draftConversationId)
-                backendMsgs = res?.messages ?? []
-                if (backendMsgs.length > 0) {
-                  loadedBackendMessagesRef.current.set(draftConversationId, backendMsgs)
-                }
+              const res = await attacksApi.getMessages(draftAttackId, draftConversationId)
+              backendMsgs = res?.messages ?? []
+              if (backendMsgs.length > 0) {
+                loadedBackendMessagesRef.current.set(draftConversationId, backendMsgs)
               }
-              existingTurns = toConversationDraft(backendMsgs)
-            } catch {
-              existingTurns = []
+            } catch (err) {
+              importInFlightRef.current = null
+              importFailedRef.current = pending.id
+              setEditorError(toApiError(err).detail || 'Failed to load conversation history. Preserved pending import.')
+              return
             }
           }
-          const allMessages = [...consumed.conversation!.messages, ...existingTurns]
+          try {
+            existingTurns = toConversationDraft(backendMsgs)
+          } catch (err) {
+            importInFlightRef.current = null
+            importFailedRef.current = pending.id
+            setEditorError(toApiError(err).detail || 'Failed to parse conversation history. Preserved pending import.')
+            return
+          }
+        }
+
+        const consumed = draftHandoff.consumePendingImport(pending.id, draftAttackId, draftConversationId)
+        importInFlightRef.current = null
+        if (!consumed) return
+        importFailedRef.current = null
+        if (preserved) {
+          draftHandoff.clearPreservedDraft(preserved.sequence)
+        }
+        converters.clearAll()
+        if (consumed.conversation) {
+          const allMessages = [...existingTurns, ...consumed.conversation.messages]
           editor.begin({
             messages: allMessages,
-            baselineMessages: [],
-            objective: consumed.conversation!.objective ?? currentObjective,
-            initialObjective: consumed.conversation!.objective ?? currentObjective,
+            objective: consumed.conversation.objective ?? currentObjective,
+            initialObjective: consumed.conversation.objective ?? currentObjective,
             sourceConversationId: draftConversationId ?? null,
             sourceAttackId: draftAttackId,
             target: activeTarget,
+            unsavedImport: true,
             labels,
           })
-          if (consumed.conversation!.systemPrompt) {
-            if (systemPrompt && systemPrompt.trim() !== consumed.conversation!.systemPrompt.trim()) {
+          if (consumed.conversation.systemPrompt) {
+            if (systemPrompt && systemPrompt.trim() !== consumed.conversation.systemPrompt.trim()) {
               setEditorNotice('The imported example includes a system prompt that differs from the existing system prompt. The existing system prompt was preserved.')
             }
           }
         }
-        void stageConversationImport()
+        draft = {
+          text: consumed.content.text,
+          attachments: consumed.content.attachments ?? [],
+          textMetadata: consumed.content.textMetadata,
+          ...(consumed.conversation?.systemPrompt && !systemPrompt ? { systemPrompt: consumed.conversation.systemPrompt } : {}),
+        }
+        focus = consumed.focus === true
+        restoreComposerDraft(draft)
+        if (focus) inputBoxRef.current?.focus()
       }
-      draft = {
-        text: consumed.content.text,
-        attachments: consumed.content.attachments ?? [],
-        textMetadata: consumed.content.textMetadata,
-        ...(consumed.conversation?.systemPrompt && !systemPrompt ? { systemPrompt: consumed.conversation.systemPrompt } : {}),
-      }
-      focus = consumed.focus === true
+      void executeImportHandoff()
+      return
     }
     // Claiming a handoff synchronizes the imperative input and its parent-owned draft atomically.
     const attachments = restoreComposerDraft(draft)

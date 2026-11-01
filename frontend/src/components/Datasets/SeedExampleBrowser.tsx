@@ -273,6 +273,9 @@ export function SeedExampleBrowserView({
           preserved.originatingConversationId === effectiveConversationId
         )
       }
+      if (destination === 'new_conversation') {
+        return preserved.originatingAttackId === effectiveAttackId
+      }
       return false
     },
     [draftHandoff, effectiveAttackId, effectiveConversationId],

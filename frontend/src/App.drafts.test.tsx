@@ -1,6 +1,6 @@
 import { StrictMode, type ReactNode } from 'react'
 
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { createMemoryRouter, MemoryRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
@@ -105,6 +105,21 @@ jest.mock('@/components/Layout/MainLayout', () => {
           },
           replaceDirty: true,
         })}>Stage saved conversation import</button>
+        <button onClick={() => {
+          handoff.preserveDraft({
+            originatingAttackId: 'saved',
+            originatingConversationId: 'main',
+            draft: {
+              text: 'Preserved with missing target',
+              attachments: [],
+              conversation: {
+                messages: [{ id: 'm1', role: 'user', pieces: [{ draftId: 'p1', data_type: 'text', original_value: 'Hello' }] }],
+                target: { target_type: 'NonExistent', target_registry_name: 'missing', identifier_hash: '999' },
+                objective: 'Test objective',
+              },
+            },
+          })
+        }}>Preserve draft with missing target</button>
         <output aria-label="Pending import">{handoff.pendingImport ? 'waiting' : 'none'}</output>
         <output aria-label="Current route">{location.pathname}</output>
         {children}
@@ -749,16 +764,102 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(screen.getByLabelText('Pending import')).toHaveTextContent('none')
   })
 
-  it('should prepend imported turns to existing saved conversation messages', async () => {
+  it('should preserve destination existing messages and append imported history after them in current_conversation', async () => {
     const user = userEvent.setup()
+    const backendMsgs = [
+      {
+        role: 'user',
+        turn_number: 0,
+        created_at: '',
+        message_pieces: [
+          {
+            id: 'p-orig-1',
+            original_value_data_type: 'text',
+            original_value: 'Existing user message',
+            converted_value_data_type: 'text',
+            converted_value: 'Existing user message',
+            scores: [],
+            response_error: 'none',
+          },
+        ],
+      },
+      {
+        role: 'assistant',
+        turn_number: 1,
+        created_at: '',
+        message_pieces: [
+          {
+            id: 'p-orig-2',
+            original_value_data_type: 'text',
+            original_value: 'Existing assistant message',
+            converted_value_data_type: 'text',
+            converted_value: 'Existing assistant message',
+            scores: [],
+            response_error: 'none',
+          },
+        ],
+      },
+    ]
+    jest.mocked(attacksApi.getMessages).mockResolvedValueOnce({
+      conversation_id: 'main',
+      messages: backendMsgs,
+      target_response_status: null,
+    })
+
     renderChat('/attacks/saved/conversations/main')
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
 
     await user.click(screen.getByRole('button', { name: 'Stage saved conversation import' }))
 
-    // Editor opens with prepended assistant turn
-    await waitFor(() => expect(screen.getByText('Prepended assistant turn')).toBeInTheDocument())
+    // Existing messages are loaded and preserved first, imported assistant turn appended
+    await waitFor(() => expect(screen.getByText('Existing user message')).toBeInTheDocument())
+    expect(screen.getByText('Existing assistant message')).toBeInTheDocument()
+    expect(screen.getByText('Prepended assistant turn')).toBeInTheDocument()
+
+    // Assert exact order: existing user message first, then existing assistant, then imported turn
+    const messageBodies = screen.getAllByRole('region').filter((r) => r.getAttribute('aria-label')?.startsWith('Message '))
+    expect(messageBodies).toHaveLength(3)
+    expect(within(messageBodies[0]).getByText('Existing user message')).toBeInTheDocument()
+    expect(within(messageBodies[1]).getByText('Existing assistant message')).toBeInTheDocument()
+    expect(within(messageBodies[2]).getByText('Prepended assistant turn')).toBeInTheDocument()
+
+    // And composer contains the unsent user prompt
     const promptInputs = screen.getAllByPlaceholderText('Type prompt here')
     expect(promptInputs[promptInputs.length - 1]).toHaveValue('Unsent user prompt')
+  })
+
+  it('should display error and preserve pending import if history loading fails for current_conversation', async () => {
+    const user = userEvent.setup()
+    renderChat('/attacks/saved/conversations/main')
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+
+    jest.mocked(attacksApi.getMessages).mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 500, data: { detail: 'Backend database unavailable' } },
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Stage saved conversation import' }))
+
+    // Error message appears in the editor
+    await waitFor(() => expect(screen.getByText('Backend database unavailable')).toBeInTheDocument())
+    // Pending import is preserved (not consumed)
+    expect(screen.getByLabelText('Pending import')).toHaveTextContent('waiting')
+  })
+
+  it('should display explicit error when conversation target is no longer available in the registry', async () => {
+    const user = userEvent.setup()
+    renderChat('/attacks/saved/conversations/branch')
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+
+    await user.click(screen.getByRole('button', { name: 'Preserve draft with missing target' }))
+
+    // Navigate to saved main where the draft was preserved
+    await user.click(screen.getByRole('button', { name: 'Open saved main' }))
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("The conversation's configured target is no longer available in the registry. Select an available target."),
+      ).toBeInTheDocument()
+    })
   })
 })

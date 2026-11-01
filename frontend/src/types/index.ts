@@ -1017,6 +1017,7 @@ export interface ConversationSaveInput {
   labels?: Record<string, string>
   baselineMessages?: ConversationDraftMessage[]
   temperature?: string
+  unsavedImport?: boolean
 }
 
 export interface NewAttackContext {
