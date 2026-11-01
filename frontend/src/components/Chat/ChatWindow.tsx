@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useId } from 'react'
-import type { ChangeEvent } from 'react'
+import type { ChangeEvent, MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Button,
@@ -413,6 +413,9 @@ export default function ChatWindow({
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
   const transcriptStatusId = useId()
+  const transcriptStatusRef = useRef<HTMLSpanElement>(null)
+  const chatAreaRef = useRef<HTMLDivElement>(null)
+  const wasSavedEvidenceRef = useRef(executionReadOnly)
   const restoreFocusTargetAttributes = useRestoreFocusTarget()
   const restoreFocusSourceAttributes = useRestoreFocusSource()
   const navigate = useNavigate()
@@ -488,6 +491,11 @@ export default function ChatWindow({
   const globalMarkdown = preferences.chatMarkdown
   const location = useLocation()
   const viewedConversationId = activeConversationId ?? conversationId
+  useLayoutEffect(() => {
+    const area = chatAreaRef.current
+    if (area && (executionReadOnly || wasSavedEvidenceRef.current)) area.scrollTop = 0
+    wasSavedEvidenceRef.current = executionReadOnly
+  }, [executionReadOnly, attackResultId, viewedConversationId])
   const draftAttackId = draftContext ? draftContext.originatingAttackId : attackResultId
   const draftConversationId = draftContext ? draftContext.originatingConversationId : viewedConversationId
   const draftHandoff = useChatDraftHandoff()
@@ -2328,7 +2336,7 @@ export default function ChatWindow({
           controller={converters}
         />
       )}
-      <div className={styles.chatArea} data-testid="chat-area">
+      <div ref={chatAreaRef} className={mergeClasses(styles.chatArea, executionReadOnly && styles.savedChatArea)} data-testid="chat-area">
         {scenarioResultId && (
           <div className={styles.breadcrumbBar}>
             <Breadcrumb aria-label="Attack provenance" size="small">
@@ -2472,6 +2480,7 @@ export default function ChatWindow({
             : undefined}
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
           autoScroll={!executionReadOnly}
+          savedEvidence={executionReadOnly}
           globalMarkdown={globalMarkdown}
           onEditConversation={executionReadOnly ? undefined : () => { void beginEdit() }}
         />}
@@ -2483,7 +2492,7 @@ export default function ChatWindow({
               </MessageBarBody></MessageBar>
             )}
             <div className={styles.savedTranscriptActions}>
-              <Text id={transcriptStatusId} role="status" aria-live="polite" size={200}>
+              <Text ref={transcriptStatusRef} tabIndex={-1} id={transcriptStatusId} role="status" aria-live="polite" size={200}>
                 {isTranscriptIncomplete
                   ? `${loadedPieceSummary} More saved evidence is available. ${INCOMPLETE_TRANSCRIPT_REASON}`
                   : `End of saved transcript. ${loadedPieceSummary}`}
@@ -2491,7 +2500,8 @@ export default function ChatWindow({
               {messagePagination.has_more && (
                 <Button className={styles.ribbonAction} disabled={isLoadingMoreMessages || isLoadingMessages || awaitingConversationLoad}
                   icon={isLoadingMoreMessages ? <Spinner size="tiny" /> : undefined}
-                  onClick={() => {
+                  onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                    if (event.currentTarget === document.activeElement) transcriptStatusRef.current?.focus({ preventScroll: true })
                     if (messageContinuationIssue?.restartRequired && attackResultId && viewedConversationId) {
                       void loadConversation(attackResultId, viewedConversationId)
                     } else { void loadMoreMessages() }

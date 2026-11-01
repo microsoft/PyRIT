@@ -27,6 +27,12 @@ export const useChatWindowStyles = makeStyles({
     gap: tokens.spacingVerticalXS,
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground3,
+    overflowAnchor: 'none',
+  },
+  savedChatArea: {
+    [NARROW_VIEWPORT_QUERY]: {
+      overflowY: 'auto',
+    },
   },
   savedTranscriptActions: {
     display: 'flex',

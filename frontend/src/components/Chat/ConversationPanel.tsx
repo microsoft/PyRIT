@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react'
+import type { MouseEvent } from 'react'
 import {
   tokens,
   Button,
@@ -84,6 +85,7 @@ export default function ConversationPanel({
   const savedReferencePageRef = useRef<SavedReferencePage | null>(null)
   const activeReadRef = useRef<number | null>(null)
   const nextReadIdRef = useRef(0)
+  const pagingStatusRef = useRef<HTMLSpanElement>(null)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [continuationIssue, setContinuationIssue] = useState<{ detail: string; restartRequired: boolean } | null>(null)
   // Initialize to `true` only when we will actually fetch on mount so the spinner
@@ -386,14 +388,17 @@ export default function ConversationPanel({
               {continuationIssue.detail} Loaded references are still available.
             </MessageBarBody></MessageBar>
           )}
-          <Text size={200} role="status" aria-live="polite">
+          <Text ref={pagingStatusRef} tabIndex={-1} size={200} role="status" aria-live="polite">
             {conversations.length} of {currentPage.response.total_count} saved conversations loaded.{' '}
             {currentPage.response.pagination?.has_more ? 'More references are available.' : 'End of saved conversation references.'}
           </Text>
           {currentPage.response.pagination?.has_more && (
             <Button className={styles.retryButton} disabled={isLoading || isLoadingMore}
               icon={isLoadingMore ? <Spinner size="tiny" /> : undefined}
-              onClick={() => { if (continuationIssue?.restartRequired) handleRetry(); else void loadMore() }}>
+              onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                if (event.currentTarget === document.activeElement) pagingStatusRef.current?.focus({ preventScroll: true })
+                if (continuationIssue?.restartRequired) handleRetry(); else void loadMore()
+              }}>
               {isLoadingMore ? 'Loading more conversations...'
                 : continuationIssue?.restartRequired ? 'Restart conversation references'
                 : continuationIssue ? 'Retry more conversations' : 'Load more conversations'}

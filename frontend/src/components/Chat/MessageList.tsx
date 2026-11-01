@@ -53,6 +53,8 @@ interface MessageListProps {
   isLoading?: boolean
   /** Live Chat follows the latest response; saved evidence keeps the reader's position. */
   autoScroll?: boolean
+  /** Saved evidence uses one scroll surface with its controls on narrow screens. */
+  savedEvidence?: boolean
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
 }
@@ -443,7 +445,7 @@ export default function MessageList({
   messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
   copyConversationDisabledReason,
   newConversationDisabledReason, getBranchConversationDisabledReason, getBranchConversationDescription, copyToInputDisabledReason,
-  isLoading, autoScroll = true, globalMarkdown = false, onEditConversation,
+  isLoading, autoScroll = true, savedEvidence = false, globalMarkdown = false, onEditConversation,
 }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -476,7 +478,7 @@ export default function MessageList({
 
   if (isLoading) {
     return (
-      <div className={styles.emptyState} data-testid="loading-state">
+      <div className={mergeClasses(styles.emptyState, savedEvidence && styles.savedEvidenceBody)} data-testid="loading-state">
         <Spinner size="medium" label="Loading conversation..." />
       </div>
     )
@@ -484,7 +486,7 @@ export default function MessageList({
 
   if (messages.length === 0) {
     return (
-      <div className={styles.emptyState} data-testid="message-list" onDoubleClick={onEditConversation}>
+      <div className={mergeClasses(styles.emptyState, savedEvidence && styles.savedEvidenceBody)} data-testid="message-list" onDoubleClick={onEditConversation}>
         <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
           There are no messages in this conversation yet.
         </Text>
@@ -493,7 +495,7 @@ export default function MessageList({
   }
 
   return (
-    <div className={styles.root} data-testid="message-list" onDoubleClick={(event) => {
+    <div className={mergeClasses(styles.root, savedEvidence && styles.savedEvidenceBody)} data-testid="message-list" onDoubleClick={(event) => {
       if (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, audio, video, [role="button"]')) return
       onEditConversation?.()
     }}>

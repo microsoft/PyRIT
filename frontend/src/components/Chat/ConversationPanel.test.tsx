@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ConversationPanel from "./ConversationPanel";
@@ -70,6 +70,7 @@ describe("ConversationPanel", () => {
       await user.keyboard("{Enter}");
       const loadingButton = screen.getByRole("button", { name: "Loading more conversations..." });
       expect(loadingButton).toBeDisabled();
+      expect(within(screen.getByRole("region", { name: "Saved conversation references" })).getByRole("status")).toHaveFocus();
       await user.click(loadingButton);
       const loadedRow = screen.getByRole("button", { name: "Select conversation saved-ref-7" });
       loadedRow.focus();
@@ -82,11 +83,30 @@ describe("ConversationPanel", () => {
       expect(screen.getByRole("region", { name: "Saved conversation references" })).toHaveTextContent("55 of 55 saved conversations loaded. End of saved conversation references.");
       expect(screen.getAllByRole("button", { name: /^Select conversation / })).toHaveLength(55);
       expect(screen.getByRole("button", { name: "Select conversation saved-ref-7" })).toBe(loadedRow);
+      expect(loadedRow).toHaveFocus();
       expect(screen.queryByRole("button", { name: "Load more conversations" })).not.toBeInTheDocument();
       expect(mockedAttacksApi.getConversations.mock.calls[1]).toEqual(["ar-attack-123", { limit: 50, cursor: "reference-cursor" }]);
       screen.getByRole("button", { name: "Select conversation saved-ref-54" }).focus();
       await user.keyboard("{Enter}");
       expect(onSelectConversation).toHaveBeenLastCalledWith("saved-ref-54");
+    });
+
+    it.each(["{Enter}", " "])("should retain keyboard focus when the final reference button disappears after %s", async (key: string) => {
+      const user = userEvent.setup();
+      let finishPage: (response: AttackConversationsResponse) => void = () => { throw new Error("No pending final reference page"); };
+      mockedAttacksApi.getConversations.mockResolvedValueOnce(first).mockImplementationOnce(
+        () => new Promise<AttackConversationsResponse>((resolve) => { finishPage = resolve; }),
+      );
+      render(<TestWrapper><ConversationPanel {...props} lockedReason="Saved evidence is read-only." /></TestWrapper>);
+      const button = await screen.findByRole("button", { name: "Load more conversations" });
+      button.focus();
+      await user.keyboard(key);
+      const status = within(screen.getByRole("region", { name: "Saved conversation references" })).getByRole("status");
+      expect(status).toHaveFocus();
+      await act(async () => { finishPage(final); });
+      expect(screen.queryByRole("button", { name: "Load more conversations" })).not.toBeInTheDocument();
+      expect(status).toHaveTextContent("55 of 55 saved conversations loaded. End of saved conversation references.");
+      expect(status).toHaveFocus();
     });
 
     it("should keep references on continuation failure and retry the same bounded cursor", async () => {
