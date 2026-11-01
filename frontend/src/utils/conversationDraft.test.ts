@@ -3,6 +3,7 @@ import { makeTarget } from '@/test-utils/targetFixtures'
 
 import { buildMessagePieces } from './messageMapper'
 import {
+  attachmentDraft, draftAttachment,
   draftConverterInputs, draftDataTypes, draftMessageToComposer, draftMessageToInput, editorTargetDisabledReason,
   canBranchFirstPrompt, historyReplayDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft,
 } from './conversationDraft'
@@ -183,6 +184,16 @@ describe('conversation drafts', () => {
       data_type: 'text', original_value: 'Change the background',
       prompt_metadata: { video_id: 'existing-video', custom: 'preserved' },
     }])
+  })
+
+  it('keeps attachment metadata when a composer attachment moves back into the editor', () => {
+    const metadata = { video_id: 'existing-video' }
+    const piece = attachmentDraft({
+      type: 'video', name: 'clip.mp4', url: '/api/media?path=clip.mp4', mimeType: 'video/mp4',
+      sourceValue: '/results/clip.mp4', sourceDataType: 'video_path', metadata,
+    })
+    expect(piece.prompt_metadata).toEqual(metadata)
+    expect(draftAttachment(piece).metadata).toEqual(metadata)
   })
 
   it('moves text and media to the composer without losing converted content or local files', () => {
