@@ -84,6 +84,7 @@ class OpenAIChatTarget(OpenAITarget):
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
             supports_editable_history=True,
+            supports_prefill=True,
             supports_json_output=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
@@ -298,6 +299,21 @@ class OpenAIChatTarget(OpenAITarget):
             is_last_message=is_last_message,
             has_text_piece=has_text_piece,
             prefer_transcript_for_history=prefer_transcript_for_history,
+        )
+
+    def _is_omitted_history_piece(self, *, message_piece: MessagePiece, has_text_piece: bool) -> bool:
+        """
+        Accept stored audio only when the Chat Completions adapter omits it.
+
+        Args:
+            message_piece: Historical message piece to check.
+            has_text_piece: Whether its message contains a text piece.
+
+        Returns:
+            bool: Whether the adapter skips this historical piece.
+        """
+        return self._should_skip_sending_audio(
+            message_piece=message_piece, is_last_message=False, has_text_piece=has_text_piece
         )
 
     async def _construct_message_from_response_async(self, response: ChatCompletion, request: MessagePiece) -> Message:

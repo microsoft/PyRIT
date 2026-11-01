@@ -86,6 +86,25 @@ def test_init_succeeds_with_weights():
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("enabled", [False, True])
+def test_prefill_support_requires_all_children(enabled: bool) -> None:
+    targets = [MockPromptTarget(), MockPromptTarget()]
+    for target in targets:
+        target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_prefill": enabled}))
+    assert RoundRobinTarget(targets=targets).capabilities.supports_prefill is enabled
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("enabled_first", [False, True])
+def test_mixed_prefill_support_is_rejected(enabled_first: bool) -> None:
+    targets = [MockPromptTarget(), MockPromptTarget()]
+    for target, enabled in zip(targets, [enabled_first, not enabled_first], strict=True):
+        target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_prefill": enabled}))
+    with pytest.raises(ValueError, match="identical configurations"):
+        RoundRobinTarget(targets=targets)
+
+
+@pytest.mark.usefixtures("patch_central_database")
 def test_configuration_adopted_from_inner_targets():
     """Round-robin adopts the inner targets' shared configuration unchanged."""
     t1, t2 = MockPromptTarget(), MockPromptTarget()
