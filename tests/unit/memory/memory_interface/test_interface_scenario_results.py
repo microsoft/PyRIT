@@ -159,6 +159,32 @@ async def test_filter_by_name(sqlite_instance: MemoryInterface, sample_attack_re
     assert results[0].scenario_name == "Test Scenario Alpha"
 
 
+@pytest.mark.parametrize(
+    ("searched", "matching_name", "decoy_name"),
+    [
+        ("Alpha_Scenario", "Alpha_Scenario", "AlphaXScenario"),
+        ("100%", "Scenario 100%", "Scenario 1000"),
+    ],
+)
+async def test_filter_by_name_treats_like_wildcards_literally(
+    sqlite_instance: MemoryInterface, sample_attack_results, searched: str, matching_name: str, decoy_name: str
+):
+    """The scenario name filter is a substring match, so ``%`` and ``_`` in it match only themselves."""
+    scenario_result1 = create_scenario_result(
+        name=matching_name,
+        attack_results={"Attack1": [sample_attack_results[0]]},
+    )
+    scenario_result2 = create_scenario_result(
+        name=decoy_name,
+        attack_results={"Attack2": [sample_attack_results[1]]},
+    )
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result1, scenario_result2]))
+
+    results = await sqlite_instance.get_scenario_results_async(scenario_name=searched)
+
+    assert [result.scenario_name for result in results] == [matching_name]
+
+
 async def test_filter_by_version(sqlite_instance: MemoryInterface, sample_attack_results):
     """Test retrieving scenario results filtered by version."""
     # Create and add scenario results with different versions
