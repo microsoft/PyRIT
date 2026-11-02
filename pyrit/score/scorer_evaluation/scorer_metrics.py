@@ -287,7 +287,7 @@ class ObjectiveScorerMetrics(ScorerMetrics):
     f1_score: float
     precision: float
     recall: float
-    specificity: float
+    specificity: float | None = field(default=None, kw_only=True)
 
 
 @dataclass

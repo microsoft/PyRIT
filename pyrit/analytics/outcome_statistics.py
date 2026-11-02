@@ -23,9 +23,10 @@ def _calculate_confidence_interval(successes: int, total: int, z: float = 1.96) 
     if total == 0:
         return None, None
     p = successes / total
-    denominator = 1 + z**2 / total
-    center = (p + z**2 / (2 * total)) / denominator
-    margin = z * math.sqrt((p * (1 - p) / total) + (z**2 / (4 * total**2))) / denominator
+    inverse_total = 1 / total
+    denominator = 1 + z**2 * inverse_total
+    center = (p + z**2 * inverse_total / 2) / denominator
+    margin = z * math.sqrt((p * (1 - p) * inverse_total) + (z**2 * inverse_total * inverse_total / 4)) / denominator
     return max(0.0, center - margin), min(1.0, center + margin)
 
 def compute_outcome_statistics(counts: Mapping[str, int] | Mapping[AttackOutcome, int]) -> OutcomeStatistics:
