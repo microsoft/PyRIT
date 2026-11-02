@@ -19,9 +19,29 @@ _END = r"(?![^\s)`])"
 # A redirection that keeps standard output: another descriptor (`2>/dev/null`, `2>&1`) or input.
 _KEEP_STDOUT = rf"(?:[02-9]>>?(?:&[0-9]|{_BLANK}*+{_WORD})|<{_BLANK}*+{_WORD})"
 _PATH = r"(?:/(?:[\w.-]+/)*+)?+"
-# An option word, quoted or not, and an argument that is not an option, such as the URL.
-_OPTION = rf"(?=[\"']?+-){_WORD}"
-_ARGUMENT = rf"(?![\"']?+-){_WORD}"
+# An option word, quoted or not, and an argument that is not an option, such as the URL. The shell
+# removes quotes and joins the parts of a word, so `""-o` and `"-"o` are the option `-o`.
+_DASH = r"""(?:""|'')*+["']?+-"""
+_OPTION = rf"(?={_DASH}){_WORD}"
+_ARGUMENT = rf"(?!{_DASH}){_WORD}"
+
+
+def _quoted_option(flags: str, text_operand: str = "") -> str:
+    """
+    Build the pattern for an option word with a quote that may hide an option such as `"-s"o`.
+
+    Args:
+        flags (str): The short option letters that take no operand and keep the body.
+        text_operand (str): The short option letters whose operand may be any quoted text.
+
+    Returns:
+        str: The pattern for such a word unless it is only `flags` (`"-s"`) or a text option with its
+            operand attached (`-H"X: y"`).
+    """
+    safe = rf"""(?-i:(?:"[-{flags}]*+"|'[-{flags}]*+'|[-{flags}])++{_END}"""
+    if text_operand:
+        safe += rf"|-[{flags}]*+[{text_operand}]"
+    return rf"""(?={_DASH})(?=[^\s()<>|;&`'"\\]*+["'])(?!{safe}))"""
 
 
 def _download_command(
@@ -54,17 +74,15 @@ def _download_command(
 # `--output FILE`, `-O`, `--remote-name`), asks for headers only (`-I`, `--head`, `-X HEAD`), reads its
 # options from a config file (`-K`, `--config`), or prints help, version or manual text instead
 # (`-h`, `-V`, `-M`). Short options are case-sensitive, and the letters in `_CURL_FLAGS` take no
-# operand, so an `o` or `X` after them starts the option's operand. The shell removes quotes, so a
-# quoted option that names a file or prints no body (`"-o"`) does not match, nor does an option with
-# a quote inside its letters (`-"o"`).
-_CURL_FLAGS = r"[#0-9aBfgGijJklLnNpqRsSvZ]*+"
+# operand, so an `o` or `X` after them starts the option's operand.
+_CURL_LETTERS = "#0-9aBfgGijJklLnNpqRsSvZ"
+_CURL_FLAGS = rf"[{_CURL_LETTERS}]*+"
 _NOT_STDOUT = rf"""(?!(?:-|"-"|'-'|/dev/stdout){_END})"""
 _CURL_NO_BODY = (
     rf"(?-i:-{_CURL_FLAGS}(?:[OIKhVM]|o(?:{_NOT_STDOUT}(?=[^\s)`])|{_SEP}{_NOT_STDOUT})|X(?:{_SEP})?+HEAD{_END})"
     rf"|--output(?:=|{_SEP}){_NOT_STDOUT}|--request(?:=|{_SEP})HEAD{_END}"
-    rf"|--remote-name|--head|--config|--help|--version|--manual"
-    rf"""|["'](?:-{_CURL_FLAGS}[oOIKhVMX]|--(?:output|remote-name|head|config|help|version|manual|request))"""
-    rf"""|-{_CURL_FLAGS}["']|--["'])"""
+    rf"|--remote-name|--head|--config|--help|--version|--manual)"
+    rf"|{_quoted_option(_CURL_LETTERS, 'ADHbceuUw')}"
 )
 # These options take any text as their operand and still download the body, so the operand is read
 # with its option: `-A -o` sets the user agent to `-o`.
@@ -86,12 +104,12 @@ _CURL_OPTION = rf"(?:{_CURL_ANY_OPERAND}{_SEP}{_WORD}|{_OPTION})"
 # and these wget options leave no body on standard output or may redirect it: help and version
 # (`-h`, `-V`), background (`-b`), recursive and mirror (`-r`, `-m`), link conversion (`-k`),
 # `--spider` and a wgetrc command (`-e`). wget accepts any unique prefix of a long option, so the
-# shortest unique prefix is excluded. Quoted options are handled as for curl.
-_WGET_FLAGS = r"[qvdNcKpxEHS46]*+"
+# shortest unique prefix is excluded.
+_WGET_LETTERS = "qvdNcKpxEHS46"
+_WGET_FLAGS = rf"[{_WGET_LETTERS}]*+"
 _WGET_NO_BODY = (
-    rf"(?-i:-{_WGET_FLAGS}[hVbrmke]|--(?:spi|hel|vers|backg|rec|mir|conv|exe)"
-    rf"""|["'](?:-{_WGET_FLAGS}[OhVbrmke]|--(?:output-d|spi|hel|vers|backg|rec|mir|conv|exe))"""
-    rf"""|-{_WGET_FLAGS}["']|--["']|--{_END})"""
+    rf"(?-i:-{_WGET_FLAGS}[hVbrmke]|--(?:spi|hel|vers|backg|rec|mir|conv|exe)|--{_END})"
+    rf"|{_quoted_option(_WGET_LETTERS, 'aiBtTwQPlARDIXU')}"
 )
 _WGET_OUTPUT = rf"(?-i:-{_WGET_FLAGS}O|--output-d)"
 _WGET_STDOUT = (
@@ -102,11 +120,10 @@ _WGET_OPERAND = rf"(?-i:-{_WGET_FLAGS}[eoaiBtOTwQPlARDIXU]|--(?:output-document|
 _WGET_WORD = rf"(?!{_WGET_NO_BODY}|{_WGET_OUTPUT})(?>{_WGET_OPERAND}{_SEP}{_WORD}|{_WORD})"
 _WGET_PREFIX_WORD = rf"(?!{_WGET_NO_BODY})(?>{_WGET_OPERAND}{_SEP}{_WORD}|{_WORD})"
 _WGET_OPTION = rf"(?:{_WGET_OPERAND}{_SEP}{_WORD}|{_OPTION})"
-_FETCH_FLAGS = r"[146AadFlMmnPpqRrUv]*+"
+_FETCH_LETTERS = "146AadFlMmnPpqRrUv"
+_FETCH_FLAGS = rf"[{_FETCH_LETTERS}]*+"
 _FETCH_STDOUT = rf"(?-i:-{_FETCH_FLAGS}o{_BLANK}*+-|--output=-){_END}"
-_FETCH_NO_BODY = (
-    rf"""(?-i:-{_FETCH_FLAGS}[os]|--output|["'](?:-{_FETCH_FLAGS}[os]|--output)|-{_FETCH_FLAGS}["']|--["'])"""
-)
+_FETCH_NO_BODY = rf"(?-i:-{_FETCH_FLAGS}[os]|--output)|{_quoted_option(_FETCH_LETTERS)}"
 _FETCH_WORD = rf"(?!{_FETCH_NO_BODY}){_WORD}"
 _DOWNLOAD = (
     rf"{_PATH}(?:{_download_command('curl', _CURL_WORD, _CURL_OPTION)}"

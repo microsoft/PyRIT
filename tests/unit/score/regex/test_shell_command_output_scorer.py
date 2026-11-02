@@ -138,6 +138,8 @@ async def test_command_substitution_detected(text: str, patch_central_database):
         # The shell removes the quotes from these words.
         ('bash -c "$(curl "-s" URL)"', True),
         ('bash -c "$(curl -H"X: y" URL)"', True),
+        ('bash -c "$(curl "-fsSL" URL)"', True),
+        ('bash -c "$(wget -U"x" -O- URL)"', True),
         ('bash --rcfile "/dev/null" -c "$(curl -s URL)"', True),
         # A newline ends the command: `curl` runs without its arguments, and `-s URL` is another command.
         ('bash -c "$(curl\n  -s URL\n)"', False),
@@ -201,6 +203,12 @@ async def test_command_substitution_detected(text: str, patch_central_database):
         ('bash -c "$(wget -qO- -e output_document=data.txt URL)"', False),
         ('bash -c "$(curl "--output" data.txt URL)"', False),
         ('bash -c "$(curl --"output" data.txt URL)"', False),
+        ('bash -c "$(curl "-s"o /dev/null URL)"', False),
+        ('bash -c "$(curl "--out"put /dev/null URL)"', False),
+        ('bash -c "$(curl ""-o /dev/null URL)"', False),
+        ('bash -c "$(wget -O- "-q"O /dev/null URL)"', False),
+        ('bash -c "$(curl "-A" agent)"', False),
+        ('bash -c "$(wget "-U" -O- URL)"', False),
         ('bash -c "$(wget --spider -O- URL)"', False),
         ('bash -c "$(wget --spi -O- URL)"', False),
         ('bash -c "$(wget -b -O- URL)"', False),
