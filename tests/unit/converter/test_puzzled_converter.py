@@ -98,6 +98,13 @@ async def test_unsupported_input_type_raises():
         await PuzzledConverter().convert_async(prompt=_PROMPT, input_type="image_path")
 
 
+async def test_unhandled_puzzle_type_raises_async() -> None:
+    converter = PuzzledConverter(num_to_mask=2, seed=1)
+    with patch.object(converter, "_puzzle_type", "sudoku"):
+        with pytest.raises(AssertionError, match="Expected code to be unreachable, but got: 'sudoku'"):
+            await converter.convert_async(prompt=_PROMPT)
+
+
 @pytest.mark.parametrize(
     "puzzle_type, label",
     [("word_search", "word search"), ("anagram", "anagram"), ("crossword", "crossword")],

@@ -43,6 +43,17 @@ _HARM_METRICS_FILES_BY_CATEGORY = {
 }
 
 
+def _harm_metrics_path(harm_category: str) -> Path:
+    """
+    Return the registry file for a harm category, including canonical category names.
+
+    Returns:
+        Path: The JSONL metrics file for the category.
+    """
+    file_name = _HARM_METRICS_FILES_BY_CATEGORY.get(harm_category, f"{harm_category}_metrics.jsonl")
+    return SCORER_EVALS_PATH / "harm" / file_name
+
+
 def _metrics_to_registry_dict(metrics: ScorerMetrics) -> dict[str, Any]:
     """
     Convert metrics to a dictionary suitable for registry storage.
@@ -123,8 +134,7 @@ def get_all_harm_metrics(
             Access metrics via `entry.metrics.mean_absolute_error`, `entry.metrics.harm_category`, etc.
             Access scorer info via `entry.scorer_identifier.class_name`, etc.
     """
-    file_path = SCORER_EVALS_PATH / "harm" / f"{harm_category}_metrics.jsonl"
-    return _load_metrics_from_file(file_path=file_path, metrics_class=HarmScorerMetrics)
+    return _load_metrics_from_file(file_path=_harm_metrics_path(harm_category), metrics_class=HarmScorerMetrics)
 
 
 def _load_metrics_from_file(
@@ -222,8 +232,7 @@ def find_harm_metrics_by_eval_hash(
     if file_path is None:
         if harm_category is None:
             raise ValueError("Either harm_category or file_path must be provided.")
-        file_name = _HARM_METRICS_FILES_BY_CATEGORY.get(harm_category, f"{harm_category}_metrics.jsonl")
-        file_path = SCORER_EVALS_PATH / "harm" / file_name
+        file_path = _harm_metrics_path(harm_category)
     return _find_metrics_by_eval_hash(file_path=file_path, eval_hash=eval_hash, metrics_class=HarmScorerMetrics)
 
 

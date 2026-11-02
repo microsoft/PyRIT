@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
@@ -12,8 +13,8 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 
 from pyrit.backend.main import app
-from pyrit.backend.models.operations import FindingEvidenceCreateRequest
-from pyrit.backend.services.operation_service import FindingNotFoundError, OperationService
+from pyrit.backend.models.operations import EvidenceAvailability, FindingEvidenceCreateRequest
+from pyrit.backend.services.operation_service import FindingNotFoundError, OperationNotFoundError, OperationService
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.memory.memory_models import AttackResultEntry, Base, PromptMemoryEntry
 from pyrit.models import (
@@ -748,3 +749,173 @@ async def test_evidence_page_batches_sources_and_counts_async(
         await service.list_findings_async(operation_id=operation.id, limit=20, offset=0)
         counts.assert_called_once()
         assert counts.call_args.kwargs["finding_ids"] == [finding.id]
+
+
+@pytest.fixture
+async def selected_findings_async(sqlite_instance: SQLiteMemory) -> tuple[Operation, list[Finding]]:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Selected"))
+    findings = []
+    for severity in ["low", "critical", "moderate"]:
+        finding = await sqlite_instance.add_finding_async(
+            finding=Finding(operation_id=operation.id, title=severity.title(), severity=severity)
+        )
+        for index in range(2):
+            conversation_id = f"{severity}-{index}"
+            attack = AttackResult(conversation_id=conversation_id, objective=conversation_id, operation_id=operation.id)
+            await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
+            await sqlite_instance.add_message_to_memory_async(
+                request=Message(
+                    message_pieces=[
+                        MessagePiece(role="user", original_value=conversation_id, conversation_id=conversation_id)
+                    ]
+                )
+            )
+            await sqlite_instance.add_finding_evidence_async(
+                evidence=FindingEvidence(finding_id=finding.id, attack_result_id=UUID(attack.attack_result_id))
+            )
+        findings.append(finding)
+    return operation, findings
+
+
+async def test_findings_with_evidence_read_in_constant_queries_async(
+    sqlite_instance: SQLiteMemory,
+    selected_findings_async: tuple[Operation, list[Finding]],
+) -> None:
+    operation, findings = selected_findings_async
+    service = OperationService()
+    with (
+        patch.object(
+            sqlite_instance, "get_attack_results_async", wraps=sqlite_instance.get_attack_results_async
+        ) as owners,
+        patch.object(
+            sqlite_instance, "get_conversation_stats_async", wraps=sqlite_instance.get_conversation_stats_async
+        ) as stats,
+        patch.object(
+            sqlite_instance, "get_finding_evidence_async", wraps=sqlite_instance.get_finding_evidence_async
+        ) as evidence_pages,
+        patch.object(sqlite_instance, "get_findings_async", wraps=sqlite_instance.get_findings_async) as finding_pages,
+    ):
+        selected = await service.get_findings_with_evidence_async(
+            operation_id=operation.id, finding_ids=[finding.id for finding in findings]
+        )
+    owners.assert_called_once()
+    stats.assert_called_once()
+    evidence_pages.assert_not_called()
+    finding_pages.assert_not_called()
+    assert [finding.title for finding, _ in selected] == ["Critical", "Moderate", "Low"]
+    for finding, items in selected:
+        page = await service.list_finding_evidence_async(
+            operation_id=operation.id, finding_id=finding.id, limit=10, offset=0
+        )
+        assert len(items) == 2
+        assert items == page.items
+
+
+async def _store_shared_conversation_attacks_async(
+    sqlite_instance: SQLiteMemory,
+) -> tuple[Operation, list[AttackResult]]:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Shared conversation"))
+    attacks = [
+        AttackResult(
+            conversation_id="shared",
+            objective=objective,
+            operation_id=operation.id,
+            timestamp=datetime(2026, 1, day, tzinfo=UTC),
+        )
+        for day, objective in [(1, "First run"), (2, "Second run")]
+    ]
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=attacks)
+    await sqlite_instance.add_message_to_memory_async(
+        request=Message(message_pieces=[MessagePiece(role="user", original_value="Shared", conversation_id="shared")])
+    )
+    return operation, attacks
+
+
+async def test_findings_with_evidence_keep_an_older_attack_sharing_a_conversation_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    operation, attacks = await _store_shared_conversation_attacks_async(sqlite_instance)
+    findings = []
+    for attack in attacks:
+        finding = await sqlite_instance.add_finding_async(
+            finding=Finding(operation_id=operation.id, title=attack.objective, severity="low")
+        )
+        await sqlite_instance.add_finding_evidence_async(
+            evidence=FindingEvidence(finding_id=finding.id, attack_result_id=UUID(attack.attack_result_id))
+        )
+        findings.append(finding)
+    service = OperationService()
+
+    selected = await service.get_findings_with_evidence_async(
+        operation_id=operation.id, finding_ids=[finding.id for finding in findings]
+    )
+
+    assert {finding.title: [(item.objective, item.availability) for item in items] for finding, items in selected} == {
+        "First run": [("First run", EvidenceAvailability.AVAILABLE)],
+        "Second run": [("Second run", EvidenceAvailability.AVAILABLE)],
+    }
+    for finding, items in selected:
+        page = await service.list_finding_evidence_async(
+            operation_id=operation.id, finding_id=finding.id, limit=10, offset=0
+        )
+        assert items == page.items
+
+
+async def test_finding_evidence_page_keeps_attacks_sharing_a_conversation_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    operation, attacks = await _store_shared_conversation_attacks_async(sqlite_instance)
+    finding = await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="Shared", severity="low")
+    )
+    for attack in attacks:
+        await sqlite_instance.add_finding_evidence_async(
+            evidence=FindingEvidence(finding_id=finding.id, attack_result_id=UUID(attack.attack_result_id))
+        )
+
+    page = await OperationService().list_finding_evidence_async(
+        operation_id=operation.id, finding_id=finding.id, limit=10, offset=0
+    )
+
+    assert len(page.items) == 2
+    assert {(item.objective, item.availability) for item in page.items} == {
+        ("First run", EvidenceAvailability.AVAILABLE),
+        ("Second run", EvidenceAvailability.AVAILABLE),
+    }
+
+
+async def test_findings_with_evidence_resolve_in_batches_async(
+    sqlite_instance: SQLiteMemory,
+    selected_findings_async: tuple[Operation, list[Finding]],
+) -> None:
+    operation, findings = selected_findings_async
+    service = OperationService()
+    finding_ids = [finding.id for finding in findings]
+    unbatched = await service.get_findings_with_evidence_async(operation_id=operation.id, finding_ids=finding_ids)
+    with (
+        patch("pyrit.backend.services.operation_service._EVIDENCE_BATCH_SIZE", 2),
+        patch.object(
+            sqlite_instance, "get_attack_results_async", wraps=sqlite_instance.get_attack_results_async
+        ) as owners,
+    ):
+        batched = await service.get_findings_with_evidence_async(operation_id=operation.id, finding_ids=finding_ids)
+    assert batched == unbatched
+    assert owners.call_count == 3
+
+
+async def test_findings_with_evidence_reject_missing_and_foreign_findings_async(
+    sqlite_instance: SQLiteMemory,
+    selected_findings_async: tuple[Operation, list[Finding]],
+) -> None:
+    operation, findings = selected_findings_async
+    other = await sqlite_instance.add_operation_async(Operation(name="Other"))
+    foreign = await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=other.id, title="Foreign", severity="low")
+    )
+    unknown = uuid4()
+    service = OperationService()
+    for finding_ids, named in [([findings[0].id, foreign.id, unknown], foreign.id), ([unknown, foreign.id], unknown)]:
+        with pytest.raises(FindingNotFoundError, match=f"Finding '{named}' not found in operation '{operation.id}'"):
+            await service.get_findings_with_evidence_async(operation_id=operation.id, finding_ids=finding_ids)
+    with pytest.raises(OperationNotFoundError):
+        await service.get_findings_with_evidence_async(operation_id=MISSING_ID, finding_ids=[findings[0].id])

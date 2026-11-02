@@ -65,7 +65,6 @@ if TYPE_CHECKING:
     )
     from pyrit.backend.models.scenario_presets import (
         PresetIssue,
-        ResolveScenarioPresetRequest,
         ScenarioPresetListResponse,
         ScenarioPresetResponse,
         UpdateScenarioPresetRequest,
@@ -128,7 +127,6 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "DatasetInfo": "pyrit.backend.models.datasets",
     "DatasetListResponse": "pyrit.backend.models.datasets",
     "PresetIssue": "pyrit.backend.models.scenario_presets",
-    "ResolveScenarioPresetRequest": "pyrit.backend.models.scenario_presets",
     "ScenarioPresetListResponse": "pyrit.backend.models.scenario_presets",
     "ScenarioPresetResponse": "pyrit.backend.models.scenario_presets",
     "UpdateScenarioPresetRequest": "pyrit.backend.models.scenario_presets",

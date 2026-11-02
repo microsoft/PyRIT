@@ -13,7 +13,12 @@ from azure.core.exceptions import AzureError
 
 from pyrit.backend.services.scenario_suite_service import ScenarioSuiteService, get_scenario_suite_service
 from pyrit.models.catalog import PresetEntry, PresetIssue, ScenarioPreset, ScenarioSuite, ScenarioSuiteEntry
-from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteConflictError, ScenarioSuiteStorage
+from pyrit.registry import (
+    ScenarioPresetRegistry,
+    ScenarioSuiteConflictError,
+    ScenarioSuiteRegistry,
+    ScenarioSuiteStorage,
+)
 
 ENTRY_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ENTRY_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -48,8 +53,9 @@ def preset_registry() -> Iterator[MagicMock]:
 
 @pytest.fixture
 def service(tmp_path: Path, preset_registry: MagicMock) -> ScenarioSuiteService:
-    """Create a service backed by isolated suite storage."""
-    return ScenarioSuiteService(storage=ScenarioSuiteStorage(source=str(tmp_path)))
+    """Create a service backed by an isolated suite registry."""
+    registry = ScenarioSuiteRegistry(storage=ScenarioSuiteStorage(source=str(tmp_path)))
+    return ScenarioSuiteService(registry=registry)
 
 
 async def test_crud_preserves_order_and_duplicate_preset_references(
@@ -61,6 +67,7 @@ async def test_crud_preserves_order_and_duplicate_preset_references(
 
     assert loaded is not None
     assert loaded.version == created.version
+    assert loaded.origin == "stored"
     assert [status.entry_id for status in loaded.entry_statuses] == [ENTRY_ONE, ENTRY_TWO]
     assert [status.preset_name for status in loaded.entry_statuses] == ["nightly", "nightly"]
 
@@ -94,6 +101,20 @@ async def test_list_reuses_preset_projection_across_suites(
     assert [item.suite.name for item in response.items] == ["alpha", "beta"]
     preset_registry.get_preset.assert_called_once_with(name="nightly")
     preset_registry.check_preset.assert_called_once()
+
+
+async def test_registered_suite_is_listed_with_nullable_version(
+    service: ScenarioSuiteService,
+) -> None:
+    """Test code-defined suite projection through the backend contract."""
+    registry = service._get_registry()
+    registry.register_suite(suite=_suite(name="code_suite", preset_names=("nightly",)))
+
+    response = await service.list_suites_async()
+
+    assert [(item.suite.name, item.origin, item.version) for item in response.items] == [
+        ("code_suite", "registered", None),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -215,10 +236,11 @@ async def test_delete_reports_presence(service: ScenarioSuiteService) -> None:
 
 
 def test_configure_source_replaces_storage(tmp_path: Path, preset_registry: MagicMock) -> None:
-    """Test runtime source configuration."""
-    service = ScenarioSuiteService()
+    """Test that the service reports its registry's configured source."""
+    registry = ScenarioSuiteRegistry()
+    service = ScenarioSuiteService(registry=registry)
 
-    service.configure_source(str(tmp_path))
+    registry.configure_source(str(tmp_path))
 
     assert service.source == str(tmp_path)
 

@@ -71,6 +71,7 @@ def reset_setup_registries() -> None:
         ConverterRegistry,
         InitializerRegistry,
         ScenarioRegistry,
+        ScenarioSuiteRegistry,
         ScorerRegistry,
         TargetRegistry,
     )
@@ -84,6 +85,7 @@ def reset_setup_registries() -> None:
         ConverterRegistry,
         InitializerRegistry,
         ScenarioRegistry,
+        ScenarioSuiteRegistry,
         ScorerRegistry,
         TargetRegistry,
     ):

@@ -1,4 +1,4 @@
-import type { AttackTargetResolutionStatus, TargetInfo, TargetInstance, TargetReference } from '../types'
+import type { AttackTargetResolutionStatus, TargetInfo, TargetInstance, TargetPreferences, TargetReference } from '../types'
 
 /**
  * Helpers for reading a target's identity off its embedded `identifier`.
@@ -62,6 +62,15 @@ export function resolveTargetReference(
     target.target_registry_name === reference.registryName
     && targetIdentifierHash(target) === reference.identifierHash
   )) ?? null : null
+}
+
+export function resolveDefaultAdversarialTarget(
+  preferences: TargetPreferences, targets: TargetInstance[],
+): TargetInstance | null {
+  const resolved = preferences.adversarial
+    ? resolveTargetReference(preferences.adversarial, targets)
+    : targets.find((target) => target.target_registry_name === 'adversarial_chat')
+  return resolved?.capabilities?.supports_multi_turn === true ? resolved : null
 }
 
 export function sameTarget(

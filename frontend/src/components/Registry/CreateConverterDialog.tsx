@@ -24,6 +24,7 @@ import {
 import { convertersApi, targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import { useTargetPreferences } from '@/hooks/useTargetPreferences'
+import { resolveDefaultAdversarialTarget } from '@/utils/targetIdentity'
 import type {
   ConverterInstance, ConverterTypeEntry, Parameter, TargetInstance, SourceInstanceSpec, ConverterIdentifier,
 } from '@/types'
@@ -69,9 +70,10 @@ interface DialogError {
 interface CreateConverterDialogProps {
   open: boolean
   onClose: () => void
-  onCreated: (converterId: string) => void
+  onCreated: (converterId: string, isCurrentOpening: boolean) => void
   editing?: { converter: ConverterInstance; spec?: SourceInstanceSpec }
   onTemporary?: (spec: SourceInstanceSpec, identifier: ConverterIdentifier) => void
+  allowUploads?: boolean
 }
 
 interface ParameterInputProps {
@@ -81,6 +83,7 @@ interface ParameterInputProps {
   showError: boolean
   onChange: (value: string) => void
   onBrowse: () => void
+  allowUploads: boolean
 }
 
 function isEditableParameter(parameter: Parameter): boolean {
@@ -158,6 +161,7 @@ function ParameterInput({
   showError,
   onChange,
   onBrowse,
+  allowUploads,
 }: ParameterInputProps) {
   const styles = useCreateConverterDialogStyles()
   const label = `${parameter.name}${parameter.required ? ' *' : ''}`
@@ -225,12 +229,15 @@ function ParameterInput({
   return (
     <Field
       label={label}
-      hint={parameter.description || parameter.type_name}
+      hint={isFile && !allowUploads
+        ? 'To change this file, create a registered converter with the new upload.'
+        : parameter.description || parameter.type_name}
       validationMessage={showError ? 'Required' : undefined}
     >
       {isFile ? (
         <div className={styles.fileRow}>
           <Input
+            disabled={!allowUploads}
             className={styles.fileInput}
             value={value}
             placeholder={parameterDefaultValue(parameter) || (
@@ -240,7 +247,7 @@ function ParameterInput({
             )}
             onChange={(_, data) => onChange(data.value)}
           />
-          <Button type="button" onClick={onBrowse}>Upload</Button>
+          <Button type="button" disabled={!allowUploads} onClick={onBrowse}>Upload</Button>
         </div>
       ) : (
         <Input
@@ -259,11 +266,12 @@ export default function CreateConverterDialog({
   onCreated,
   editing,
   onTemporary,
+  allowUploads = true,
 }: CreateConverterDialogProps) {
   const styles = useCreateConverterDialogStyles()
   const [converterTypes, setConverterTypes] = useState<ConverterTypeEntry[]>([])
   const [targets, setTargets] = useState<TargetInstance[]>([])
-  const { adversarialTarget } = useTargetPreferences(targets)
+  const { adversarialTarget, preferences } = useTargetPreferences(targets)
   const [converters, setConverters] = useState<ConverterInstance[]>([])
   const [selectedType, setSelectedType] = useState('')
   const [registryName, setRegistryName] = useState('')
@@ -311,10 +319,32 @@ export default function CreateConverterDialog({
             setSelectedType(editing.converter.identifier.class_name)
             const params: Record<string, unknown> = {
               ...editing.converter.identifier,
+              ...Object.fromEntries((editing.converter.parameters ?? []).map((parameter) => [
+                parameter.name, parameter.default,
+              ])),
               ...editing.spec?.params,
             }
+            const defaultTarget = resolveDefaultAdversarialTarget(preferences, targetResponse.items)
+            const defaultedParameters = new Set<string>()
+            for (const parameter of entry?.parameters ?? []) {
+              const reference = params[parameter.name]
+              if (parameter.reference_type === 'target' && (reference == null || reference === '') && defaultTarget) {
+                params[parameter.name] = defaultTarget.target_registry_name
+                defaultedParameters.add(parameter.name)
+              }
+              if (!reference || typeof reference !== 'object' || !('hash' in reference)) continue
+              if (parameter.reference_type === 'target') {
+                params[parameter.name] = targetResponse.items.find(
+                  (target) => target.identifier.hash === reference.hash,
+                )?.target_registry_name ?? ''
+              } else if (parameter.reference_type === 'converter') {
+                params[parameter.name] = converterResponse.items.find(
+                  (converter) => converter.identifier.hash === reference.hash,
+                )?.converter_id ?? ''
+              }
+            }
             setParameterValues(getInitialFormValues(entry?.parameters ?? [], params, { prefillDefaults: false }))
-            setChangedParameters(new Set())
+            setChangedParameters(defaultedParameters)
           }
         }
       })
@@ -330,7 +360,7 @@ export default function CreateConverterDialog({
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true; openEpochRef.current += 1 }
-  }, [open, editing])
+  }, [open, editing, preferences])
 
   // Hand the keyboard to the failure once React has committed it. A frame
   // callback can run before the render that adds the message bar, and focusing
@@ -501,7 +531,7 @@ export default function CreateConverterDialog({
       if (openEpochRef.current === epoch) {
         reset()
       }
-      onCreated(response.converter_id)
+      onCreated(response.converter_id, openEpochRef.current === epoch)
     } catch (err) {
       // A failure from an opening the user has already left stays out of the
       // one in front of them, and out of its focus.
@@ -543,7 +573,7 @@ export default function CreateConverterDialog({
               {loading && <Spinner label="Loading converter types..." />}
               {editing && <Text>
                 Only changed fields replace source settings. These settings apply to this stage,
-                not the registered converter. Closing the converter pane discards them.
+                not the registered converter.
               </Text>}
               {!loading && converterTypes.length === 0 && !error && (
                 <Text>No converter types are available.</Text>
@@ -645,7 +675,7 @@ export default function CreateConverterDialog({
                   <div className={styles.parameterGrid}>
                     {selectedConverterType?.parameters.map((parameter) => (
                       <div key={parameter.name} className={styles.parameterRow}>
-                        {parameter.variants ? (
+                        {parameter.variants || parameter.multiline ? (
                           <ParameterField
                             parameter={parameter}
                             value={parameterValues[parameter.name] ?? ''}
@@ -672,6 +702,7 @@ export default function CreateConverterDialog({
                             setParameterValues((current) => ({ ...current, [parameter.name]: value }))
                           }}
                           onBrowse={() => browse(parameter.name)}
+                          allowUploads={allowUploads}
                         />}
                       </div>
                     ))}

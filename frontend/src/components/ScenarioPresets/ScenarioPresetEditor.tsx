@@ -4,11 +4,13 @@ import {
   Button,
   Field,
   Input,
+  type LabelProps,
   MessageBar,
   MessageBarBody,
   Option,
   Spinner,
   Combobox,
+  Switch,
   Text,
   Textarea,
 } from '@fluentui/react-components'
@@ -38,6 +40,7 @@ import type {
 import { fetchAllPages } from '@/utils/fetchAllPages'
 import { routerPathParamValue } from '@/utils/routeParams'
 
+import ScannerVisibilityLabel from './ScannerVisibilityLabel'
 import { useScenarioPresetEditorStyles } from './ScenarioPresetEditor.styles'
 import { PRESETS_ROUTE } from './presetRoutes'
 import {
@@ -83,6 +86,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
 
   const [name, setName] = useState(mode === 'edit' ? decodedName : '')
   const [description, setDescription] = useState('')
+  const [showInScanner, setShowInScanner] = useState(true)
   const [scenario, setScenario] = useState<RegisteredScenario | null>(null)
   const [scenarioLoading, setScenarioLoading] = useState(false)
   const [config, setConfig] = useState<ScenarioConfigFormState | null>(null)
@@ -118,6 +122,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
         setLoaded(response)
         setName(response.preset.name)
         setDescription(response.preset.description ?? '')
+        setShowInScanner(response.preset.show_in_scanner !== false)
         setStatus('ready')
 
         // The list endpoint omits run-size estimates, so the preset's scenario is
@@ -269,7 +274,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
     setValidationError(null)
 
     const preset = configToPreset(
-      { name: trimmedName, scenarioName: scenario.scenario_name, description },
+      { name: trimmedName, scenarioName: scenario.scenario_name, description, showInScanner },
       builtConfig.config,
       { scenario, previous: loaded?.preset ?? null },
     )
@@ -418,6 +423,18 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                 </Option>
               ))}
             </Combobox>
+          </Field>
+          <Field
+            label={{
+              children: (_: unknown, slotProps: LabelProps) => <ScannerVisibilityLabel {...slotProps} />,
+            }}
+          >
+            <Switch
+              checked={showInScanner}
+              disabled={saving}
+              onChange={(_, data) => setShowInScanner(data.checked)}
+              data-testid="preset-show-in-scanner"
+            />
           </Field>
         </div>
 
