@@ -346,9 +346,20 @@ test.describe("Accessibility", () => {
 
     test("mobile audit controls provide 44px touch targets", async ({ page }) => {
       await page.setViewportSize(MOBILE_VIEWPORT);
+      await page.route(/\/api\/targets/, async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            items: [],
+            pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
+          }),
+        });
+      });
+      await page.reload();
 
       await expectMinimumTouchTarget(page.getByRole("button", { name: "Labels" }));
-      await expectMinimumTouchTarget(page.getByRole("button", { name: "Configure a target" }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Register a target" }));
       await expectMinimumTouchTarget(page.getByRole("button", { name: "Take a tour" }));
 
       await page.route(/\/api\/targets/, async (route) => {
@@ -368,8 +379,10 @@ test.describe("Accessibility", () => {
           }),
         });
       });
+      await page.reload();
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Open Registry" }));
 
-      await page.getByRole("button", { name: "Registry" }).click();
+      await page.getByRole("button", { name: "Registry", exact: true }).click();
       await expect(
         page.getByRole("heading", { level: 1, name: "Target Registry" })
       ).toBeVisible();

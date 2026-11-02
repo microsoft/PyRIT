@@ -81,12 +81,33 @@ describe('Home', () => {
     expect(screen.queryByRole('heading', { name: 'Labels' })).not.toBeInTheDocument()
     await screen.findByText('Your recent work will appear here')
     expect(mockAttacks).toHaveBeenCalledWith({ limit: 5, include_scenario_attacks: false })
-    expect(mockScans).toHaveBeenCalledWith({ limit: 5 })
+    expect(mockScans).toHaveBeenCalledWith({ limit: 5, sort_by: 'activity' })
     expect(mockOperations).toHaveBeenCalledTimes(1)
     for (const callback of [
       defaultProps.onNavigate, defaultProps.onNewAttack, defaultProps.onOpenAttack,
       defaultProps.onOpenAttackHistory, defaultProps.onOpenScannerHistory,
     ]) expect(callback).not.toHaveBeenCalled()
+  })
+
+  it('should show a delayed scan from the activity-ordered refresh in All and Scans', async () => {
+    const user = userEvent.setup()
+    mockScans
+      .mockResolvedValueOnce({ items: [], pagination: PAGINATION })
+      .mockResolvedValueOnce({
+        items: [scan({ scenario_name: 'Delayed completion scan', updated_at: '2026-10-30T12:00:00Z' })],
+        pagination: PAGINATION,
+      })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    await screen.findByText('Your recent work will appear here')
+
+    await user.click(screen.getByRole('button', { name: 'Refresh Home' }))
+    const delayedScan = await screen.findByRole('button', { name: /Delayed completion scan/ })
+    await user.click(screen.getByRole('tab', { name: 'All', exact: true }))
+    expect(delayedScan).toBeVisible()
+    await user.click(screen.getByRole('tab', { name: 'Scans', exact: true }))
+    expect(delayedScan).toBeVisible()
+    expect(mockScans).toHaveBeenNthCalledWith(1, { limit: 5, sort_by: 'activity' })
+    expect(mockScans).toHaveBeenNthCalledWith(2, { limit: 5, sort_by: 'activity' })
   })
 
   it('should use the intentional new-attack action and each workflow history', async () => {
