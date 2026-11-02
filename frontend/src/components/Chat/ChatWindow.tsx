@@ -918,7 +918,7 @@ export default function ChatWindow({
     const previousId = getViewedConversationId()
     if (editing && !await editing.finishEditing()) return
     if (editing && convId === previousId) return
-    requestForcedLoad()
+    if (convId !== activeConversationId) requestForcedLoad()
     onSelectConversation(convId)
     if (isNarrowScreen) {
       setIsPanelOpen(false)

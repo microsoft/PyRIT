@@ -87,6 +87,9 @@ export function useConversationMessages({
   }, [isSendInFlight, onConversationLoaded])
 
   const viewedConversationId = activeConversationId ?? conversationId
+  const isActiveConversationSending = Boolean(
+    activeConversationId && sendingConversations.has(activeConversationId),
+  )
   const isEvidenceUnavailable = Boolean(
     findingEvidenceId && conversationLoadIssue?.conversationId === viewedConversationId
     && conversationLoadIssue?.unavailable,
@@ -191,7 +194,7 @@ export function useConversationMessages({
     findingEvidenceId, readConversation, readConversationById,
   ])
 
-  // Reload messages when activeConversationId changes
+  // Reload when the selected conversation changes or its send releases ownership.
   useEffect(() => {
     if ((!attackResultId && !readConversationById) || !activeConversationId) { return }
     // A created-attack route can commit after its first send completes.
@@ -199,14 +202,15 @@ export function useConversationMessages({
     const force = forceLoadRef.current
     forceLoadRef.current = false
     if (!force && (
-      sendCallbacksRef.current.isSendInFlight(activeConversationId)
+      isActiveConversationSending
+      || sendCallbacksRef.current.isSendInFlight(activeConversationId)
       || (
         loadedConversationIdRef.current === activeConversationId
         && activeLoadRef.current === null
       )
     )) { return }
     loadConversation(attackResultId, activeConversationId)
-  }, [activeConversationId, attackResultId, loadConversation, readConversationById])
+  }, [activeConversationId, attackResultId, isActiveConversationSending, loadConversation, readConversationById])
 
   useEffect(() => {
     if (!pollIntervalMs || (!attackResultId && !readConversationById) || !activeConversationId) return

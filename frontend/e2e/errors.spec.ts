@@ -414,6 +414,7 @@ test.describe("Error: backend 500 on send message", () => {
     await expect(input).toHaveValue("This should fail");
     const send = page.getByRole("button", { name: "Send message", exact: true });
     await expect(send).toBeDisabled();
+    await input.hover();
     await send.hover();
     await expect(page.getByRole("tooltip")).toContainText("Send message: Internal server error");
     await expect(status).toBeVisible();
