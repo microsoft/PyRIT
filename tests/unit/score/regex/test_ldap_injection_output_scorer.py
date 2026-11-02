@@ -60,12 +60,13 @@ from pyrit.score import LDAPInjectionOutputScorer
         "admin*%29%00",
         "admin%2a%29%00",
         r"admin\2a)%00",
-        # LDAP URLs with search filter queries (RFC 4516)
-        "ldap://127.0.0.1/dc=example,dc=com???%28uid=%2a%29",
+        # LDAP URLs with search filter queries (RFC 4516) containing injection sequences
         "ldap://localhost:389/???%2a%29%28uid=%2a%29",
         "ldaps://ldap.corp.internal/???%29%7c%28objectClass=%2a%29",
-        "ldap://directory.example.com/ou=users,dc=org???(uid=*)",
-        "ldap://10.0.0.1:1389/???%28%26%28uid=%2a%29%28userPassword=%2a%29%29",
+        "ldap://127.0.0.1/dc=example,dc=com???admin%29%28uid=%2a%29",
+        "ldap://127.0.0.1/dc=example,dc=com???admin)(uid=*)",
+        "ldap://directory.example.com/ou=users,dc=org???*)(uid=*)",
+        "ldap://10.0.0.1:1389/???admin%29%28%21%28userPassword=%2a%29%29",
     ],
 )
 async def test_ldap_injection_detected(text: str, patch_central_database):
@@ -95,6 +96,16 @@ async def test_ldap_injection_detected(text: str, patch_central_database):
         "ldap://example.com/cn=John%20Doe,dc=example,dc=com",
         "http://example.com/search?q=(test)",
         "price is 20% (discount applied)",
+        # Benign LDAP URLs with plain and percent-encoded filters or extension-only text
+        "ldap://example.com/???(uid=alice)",
+        "ldap://example.com/???%28uid%3Dalice%29",
+        "ldap://example.com/????x-note=%28uid=alice%29",
+        "ldap://example.com/????x-note=%28uid=%2a%29",
+        "ldap://example.com/???(objectClass=person)",
+        "ldap://example.com/???%28objectClass%3Dperson%29",
+        "ldap://example.com/???(&(uid=alice)(status=active))",
+        "ldap://example.com/???%28%26%28uid%3Dalice%29%28status%3Dactive%29%29",
+        "ldap://example.com/???(|(uid=alice)(uid=bob))",
     ],
 )
 async def test_ldap_injection_not_detected(text: str, patch_central_database):
@@ -151,9 +162,16 @@ async def test_ldap_injection_scorer_rationale_includes_pattern_name(patch_centr
     assert score_always_true.get_value() is True
     assert "Always-True Clause" in score_always_true.score_rationale
 
-    score_url = (await scorer.score_text_async("ldap://127.0.0.1/dc=example,dc=com???%28uid=%2a%29"))[0]
+    score_url = (await scorer.score_text_async("ldap://127.0.0.1/dc=example,dc=com???admin%29%28uid=%2a%29"))[0]
     assert score_url.get_value() is True
     assert "LDAP URL Filter Injection" in score_url.score_rationale
+
+
+async def test_ldap_injection_scorer_malformed_url_does_not_stall(patch_central_database):
+    scorer = LDAPInjectionOutputScorer()
+    malformed_text = "ldap://example.com/???" + "(" * 640 + "a" * 640
+    score = (await scorer.score_text_async(malformed_text))[0]
+    assert score.get_value() is False
 
 
 async def test_ldap_injection_scorer_custom_patterns(patch_central_database):
