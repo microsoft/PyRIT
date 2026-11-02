@@ -12,6 +12,7 @@ module exists, so they could not be layered on top.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import logging
 import os
@@ -19,6 +20,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
@@ -32,6 +34,32 @@ if TYPE_CHECKING:
     from azure.storage.blob import ContainerClient
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class UnreadableDocument:
+    """A stored document with a valid name whose content could not be read."""
+
+    name: str
+    message: str
+
+
+@dataclass(frozen=True)
+class IgnoredDocument:
+    """A stored file whose name breaks the naming rule, so no single-document call can address it."""
+
+    file_name: str
+    message: str
+
+
+@dataclass(frozen=True)
+class DocumentListing:
+    """Every document a listing found, including the ones it could not use."""
+
+    documents: dict[str, bytes] = field(default_factory=dict)
+    unreadable: tuple[UnreadableDocument, ...] = ()
+    ignored: tuple[IgnoredDocument, ...] = ()
+
 
 # Both platforms lock a single byte at offset zero, which they allow past the end of an
 # empty file. The lock belongs to the open file handle, so it excludes other threads in
@@ -198,6 +226,103 @@ class FileDocumentStorage:
             dict[str, bytes]: Document content keyed by name.
         """
         return self._list_blob_documents() if self._is_blob else self._list_local_documents()
+
+    def _list_documents_with_issues(self) -> DocumentListing:
+        """
+        Read every stored document and report the ones that can't be used.
+
+        Unlike ``_list_documents``, nothing is skipped quietly: a document that can't be read
+        is reported as unreadable, and a file whose name breaks the naming rule is reported as
+        ignored without being read, because no single-document call could address it. A
+        storage location that can't be listed at all raises instead of looking empty.
+
+        Messages carry only a short reason, never a path or URL, so they can be shown to users
+        without exposing server paths or a SAS token.
+
+        Returns:
+            DocumentListing: Readable documents keyed by name, plus the unreadable and ignored ones.
+        """
+        return self._list_blob_documents_with_issues() if self._is_blob else self._list_local_documents_with_issues()
+
+    def _list_local_documents_with_issues(self) -> DocumentListing:
+        """
+        Read the local directory, reporting unreadable and badly named documents.
+
+        Returns:
+            DocumentListing: The documents and issues found in the directory.
+        """
+        directory = self._local_directory(create=True)
+        # ``Path.glob`` returns nothing for a directory it can't read; listing it directly raises instead.
+        # ``fnmatch`` keeps glob's per-platform case rule, so both listings see the same files.
+        with os.scandir(directory) as entries:
+            file_names = sorted(entry.name for entry in entries if fnmatch.fnmatch(entry.name, f"*{self._extension}"))
+        documents: dict[str, bytes] = {}
+        unreadable: list[UnreadableDocument] = []
+        ignored: list[IgnoredDocument] = []
+        for file_name in file_names:
+            name = Path(file_name).stem
+            problem = self._name_problem(name)
+            if problem is not None:
+                ignored.append(IgnoredDocument(file_name=file_name, message=problem))
+                continue
+            try:
+                documents[name] = (directory / file_name).read_bytes()
+            except FileNotFoundError:
+                # Deleted after the directory was listed, so it is no longer part of the listing.
+                continue
+            except OSError as error:
+                unreadable.append(UnreadableDocument(name=name, message=error.strerror or type(error).__name__))
+        return DocumentListing(documents=documents, unreadable=tuple(unreadable), ignored=tuple(ignored))
+
+    def _list_blob_documents_with_issues(self) -> DocumentListing:
+        """
+        Read the blob container, reporting unreadable and badly named documents.
+
+        Returns:
+            DocumentListing: The documents and issues found under the configured prefix.
+        """
+        from azure.core.exceptions import AzureError, ResourceNotFoundError
+
+        documents: dict[str, bytes] = {}
+        unreadable: list[UnreadableDocument] = []
+        ignored: list[IgnoredDocument] = []
+        with self._open_container_client() as client:
+            prefix = f"{self._blob_prefix}/" if self._blob_prefix else None
+            blobs = client.list_blobs(name_starts_with=prefix) if prefix else client.list_blobs()
+            blob_names = sorted(
+                blob.name for blob in blobs if self._is_direct_document_blob(blob_name=blob.name, prefix=prefix)
+            )
+            for blob_name in blob_names:
+                file_name = blob_name.removeprefix(prefix or "")
+                name = PurePosixPath(file_name).stem
+                problem = self._name_problem(name)
+                if problem is not None:
+                    ignored.append(IgnoredDocument(file_name=file_name, message=problem))
+                    continue
+                try:
+                    documents[name] = client.download_blob(blob_name).readall()
+                except ResourceNotFoundError:
+                    # Deleted after the container was listed, so it is no longer part of the listing.
+                    continue
+                except AzureError as error:
+                    status = getattr(error, "status_code", None)
+                    reason = type(error).__name__ if status is None else f"{type(error).__name__} ({status})"
+                    unreadable.append(UnreadableDocument(name=name, message=reason))
+        return DocumentListing(documents=documents, unreadable=tuple(unreadable), ignored=tuple(ignored))
+
+    @staticmethod
+    def _name_problem(name: str) -> str | None:
+        """
+        Return why a discovered document name can't be addressed, or None if it can.
+
+        Returns:
+            str | None: The naming-rule error, or ``None`` for a legal name.
+        """
+        try:
+            validate_registry_name(name)
+        except ValueError as error:
+            return str(error)
+        return None
 
     def _list_local_documents(self) -> dict[str, bytes]:
         """
