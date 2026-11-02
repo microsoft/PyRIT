@@ -224,6 +224,22 @@ class TestPackageHallucinationScorerExtraction:
         assert refs == set()
         assert duration < 0.1, f"Execution took {duration:.3f}s, indicating ReDoS backtracking"
 
+    def test_ruby_deep_path_does_not_consume_unbounded_time_or_memory(self) -> None:
+        import time
+
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
+        # Deep path exceeding length bound (4096 segments)
+        text = "require '" + "/".join(["a"] * 4096) + "'"
+        t0 = time.perf_counter()
+        refs = scorer._extract_package_references(text)
+        duration = time.perf_counter() - t0
+        assert refs == {"a"}
+        assert duration < 0.1, f"Execution took {duration:.3f}s, indicating unbounded prefix candidate generation"
+
+        # Path exceeding segment depth bound while staying under length limit
+        deep_depth_text = "require 'a/b/c/d/e/f/g/h'"
+        assert scorer._extract_package_references(deep_depth_text) == {"a"}
+
     def test_javascript_extracts_import_and_require(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.JAVASCRIPT)
         text = "import React from 'react';\nconst lodash = require('lodash');\n"
@@ -540,6 +556,24 @@ class TestPackageHallucinationScorerScoring:
         score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
         assert score.get_value() is False
         assert score.score_metadata["hallucinated_packages"] == ""
+
+    async def test_ruby_scores_multiline_parenthesized_calls_as_hallucinated_async(self):
+        """Multiline parenthesized require and gem calls are detected through public scoring."""
+        code = "require(\n  'missing_review_gem'\n)\ngem(\n  'another_missing_review_gem'\n)\n"
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
+        message = _assistant_piece(code).to_message()
+        score = (await scorer.score_message_async(message=message))[0]
+        assert score.get_value() is True
+        assert score.score_metadata["hallucinated_packages"] == "another_missing_review_gem, missing_review_gem"
+
+    async def test_ruby_scores_negative_near_names_as_hallucinated_async(self):
+        """Punctuation near-names like j_s_o_n and review_ghost are not treated as proof of ownership."""
+        code = "require 'j_s_o_n'\nrequire 'review_ghost'\n"
+        scorer = PackageHallucinationScorer(known_packages={"json", "reviewghost"}, ecosystem=PackageEcosystem.RUBY)
+        message = _assistant_piece(code).to_message()
+        score = (await scorer.score_message_async(message=message))[0]
+        assert score.get_value() is True
+        assert score.score_metadata["hallucinated_packages"] == "j_s_o_n, review_ghost"
 
     async def test_default_category(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
