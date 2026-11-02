@@ -148,6 +148,10 @@ async def test_command_substitution_detected(text: str, patch_central_database):
         ('bash -c "$(curl -m10 URL)"', True),
         ('bash -c "$(curl --retry-delay 5 URL)"', True),
         ('bash -c "$(curl -X GET URL)"', True),
+        ('bash -c "$(curl -X "GET" URL)"', True),
+        ('bash -c "$(curl -m 0x1.8p1 URL)"', True),
+        ('bash -c "$(curl -m 1""0 URL)"', True),
+        ('bash -c "$(curl --retry "1""0" URL)"', True),
         ('bash --rcfile "/dev/null" -c "$(curl -s URL)"', True),
         # A newline ends the command: `curl` runs without its arguments, and `-s URL` is another command.
         ('bash -c "$(curl\n  -s URL\n)"', False),
@@ -228,6 +232,9 @@ async def test_command_substitution_detected(text: str, patch_central_database):
         ('bash -c "$(curl -m - URL)"', False),
         ('bash -c "$(curl "-m" 1x URL)"', False),
         ('bash -c "$(curl --retry .5 URL)"', False),
+        # curl rejects numbers out of range ("too large number").
+        ('bash -c "$(curl -m 1e999 URL)"', False),
+        ('bash -c "$(curl --retry 99999999999999999999 URL)"', False),
         # A request other than GET gets a reply that depends on the server.
         ('bash -c "$(curl -F a=b URL)"', False),
         ('bash -c "$(curl -d x=1 URL)"', False),

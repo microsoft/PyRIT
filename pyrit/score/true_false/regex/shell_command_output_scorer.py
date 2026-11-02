@@ -97,8 +97,19 @@ _CURL_FLAGS = rf"[{_CURL_LETTERS}]*+"
 _NOT_STDOUT = rf"""(?!(?:-|"-"|'-'|/dev/stdout){_END})"""
 
 
-# Options that take a number, and the numbers curl accepts for them: seconds with an optional
-# fraction and exponent, a whole number, or a whole number or `-` for the resume offset.
+# Options that take a number, and the numbers curl accepts for them: seconds below 10^15, decimal or
+# hexadecimal, with an optional fraction and a small exponent; a whole number below 10^18; or such a
+# number or `-` for the resume offset. Larger numbers stop curl ("too large number"). A number the
+# shell joins from quoted parts (`1""0`) has at most 15 digits.
+_SECONDS = (
+    r"\+?+(?:(?:0*+[0-9]{1,6}(?:\.[0-9]*+)?+|\.[0-9]++)[eE](?:\+?+[0-9]|-[0-9]{1,2})"
+    r"|(?:0*+[0-9]{1,15}|0++)(?:\.[0-9]*+)?+|\.[0-9]++"
+    r"|0[xX](?:[0-9a-fA-F]{1,9}(?:\.[0-9a-fA-F]*+)?+[pP](?:\+?+[0-9]|-[0-9]{1,2})|[0-9a-fA-F]{1,12}(?:\.[0-9a-fA-F]*+)?+))"
+)
+_COUNT = r"\+?+(?:0*+[0-9]{1,18}|0++)"
+_DIGIT_PARTS = rf"""(?=["'0-9]{{1,15}}{_END})(?=["']*+[0-9]|["'0-9]*?[0-9])(?:"[0-9]*+"|'[0-9]*+'|[0-9])++"""
+
+
 def _curl_number_option(letters: str, names: str, number: str) -> str:
     """
     Build the pattern for a curl option that takes a number, followed by an operand that is not one.
@@ -113,15 +124,15 @@ def _curl_number_option(letters: str, names: str, number: str) -> str:
     """
     short = rf"-{_CURL_FLAGS}[{letters}]"
     option = rf"(?-i:{short}(?:{_SEP})?+|{_quoted(short)}{_SEP}|{_quoted(f'--(?:{names})')}{_SEP})"
-    return rf"{option}(?!{_quoted(number)}{_END})"
+    return rf"{option}(?!(?:{_quoted(number)}|{_DIGIT_PARTS}){_END})"
 
 
 _CURL_NOT_NUMBER = (
-    _curl_number_option("m", "max-time|connect-timeout", r"(?:[0-9]++\.?+[0-9]*+|\.[0-9]++)(?:[eE][+-]?+[0-9]++)?+")
+    _curl_number_option("m", "max-time|connect-timeout", _SECONDS)
     + "|"
-    + _curl_number_option("Yy", "retry|speed-limit|speed-time", "[0-9]++")
+    + _curl_number_option("Yy", "retry|speed-limit|speed-time", _COUNT)
     + "|"
-    + _curl_number_option("C", "continue-at", "(?:[0-9]++|-)")
+    + _curl_number_option("C", "continue-at", rf"(?:{_COUNT}|-)")
 )
 # Option names that keep the body when the whole name is written inside quotes.
 _CURL_QUOTED_NAMES = (
@@ -144,8 +155,8 @@ _CURL_OTHER_OPERAND = (
 # stop curl before the download, so outside `_CURL_TEXT_OPERAND` it is checked as a word of its own.
 _CURL_ANY_OPERAND = rf"(?:{_CURL_TEXT_OPERAND}|{_quoted(_CURL_OTHER_OPERAND)})"
 _CURL_NO_BODY = (
-    rf"(?-i:-{_CURL_FLAGS}(?:[OIKhVMdFT]|o(?:{_NOT_STDOUT}(?=[^\s)`])|{_SEP}{_NOT_STDOUT})|X(?:{_SEP})?+(?!GET{_END}))"
-    rf"|--output(?:=|{_SEP}){_NOT_STDOUT}|--request(?:=|{_SEP})(?!GET{_END})"
+    rf"(?-i:-{_CURL_FLAGS}(?:[OIKhVMdFT]|o(?:{_NOT_STDOUT}(?=[^\s)`])|{_SEP}{_NOT_STDOUT})|X(?:{_SEP})?+(?!{_quoted('GET')}{_END}))"
+    rf"|--output(?:=|{_SEP}){_NOT_STDOUT}|--request(?:=|{_SEP})(?!{_quoted('GET')}{_END})"
     rf"|--remote-name|--head|--config|--help|--version|--manual|--data|--form|--upload-file|--json)"
     rf"|{_quoted_option(_CURL_LETTERS, 'ADHbceuUw', _CURL_QUOTED_NAMES)}"
     # An unknown short option (`-s5`), or a numeric option whose operand is not a number, stops curl.
