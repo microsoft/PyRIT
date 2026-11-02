@@ -213,9 +213,9 @@ class TargetConfiguration:
         children: dict[str, Any] = {}
         if isinstance(normalizer, Identifiable):
             ident = normalizer.get_identifier()
-            if hasattr(ident, "params") and isinstance(ident.params, dict):
+            if ident.params:
                 params = ident.params
-            if hasattr(ident, "children") and isinstance(ident.children, dict) and ident.children:
+            if ident.children:
                 children = cls._serialize_identifier_children(ident.children)
         elif hasattr(normalizer, "as_identifier_params"):
             val = normalizer.as_identifier_params()
