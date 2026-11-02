@@ -4,7 +4,7 @@ import {
   Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
   MessageBar, MessageBarBody, Spinner, Text,
 } from '@fluentui/react-components'
-import { ArrowLeftRegular } from '@fluentui/react-icons'
+import { AddRegular, ArrowLeftRegular } from '@fluentui/react-icons'
 
 import { DEFAULT_HISTORY_FILTERS, filtersToSearchParams } from '@/components/History/historyFilters'
 import { operationsApi } from '@/services/api'
@@ -12,6 +12,7 @@ import { toApiError } from '@/services/errors'
 import type { Finding, FindingCreate, FindingListItem, FindingListResponse, OperationDetail } from '@/types'
 import FindingDialog, { type FindingSaveAttempt } from './FindingDialog'
 import FindingEvidenceList from './FindingEvidenceList'
+import FindingExportDialog from './FindingExportDialog'
 import FindingSeverityBadge from './FindingSeverityBadge'
 import OperationDeleteDialog from './OperationDeleteDialog'
 import OperationEditDialog from './OperationEditDialog'
@@ -202,7 +203,8 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
               onOperationChanged?.()
               void navigate('/operations')
             }} />
-          <Button ref={newFindingRef} appearance="primary" className={styles.button} onClick={event => {
+          <FindingExportDialog key={current.operation.id} operation={current.operation} />
+          <Button ref={newFindingRef} appearance="primary" className={styles.button} icon={<AddRegular />} onClick={event => {
             returnFocusRef.current = event.currentTarget
             setEditing(null)
             setOpen(true)

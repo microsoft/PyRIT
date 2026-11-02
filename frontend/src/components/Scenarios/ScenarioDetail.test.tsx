@@ -2023,7 +2023,8 @@ describe('ScenarioDetail', () => {
   })
 
   it.each(['user', 'unknown'])('warns before replacing %s data and confirms through Run preview', async (origin) => {
-    const user = userEvent.setup()
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
     jest.mocked(datasetsApi.listDatasets).mockResolvedValueOnce({ items: [{
       name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: true, provider_available: true,
       logical_examples: 8, origins: [origin], modalities: ['text'], harm_categories: [], has_unlabeled_harm_categories: false,
@@ -2035,7 +2036,9 @@ describe('ScenarioDetail', () => {
       },
     })
     renderDetail('/scanner/foundry.red_team_agent')
+    await flushRenderedPromises()
     await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
+    await advanceTimers(300)
     await user.click(screen.getByRole('button', { name: 'Launch scan' }))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
@@ -2044,7 +2047,7 @@ describe('ScenarioDetail', () => {
     expect(within(preview).getByRole('alert')).toHaveTextContent('prevent older runs from resuming')
     await user.click(within(preview).getByRole('button', { name: 'Cancel' }))
     expect(mockStartRun).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    await user.click(await screen.findByRole('button', { name: 'Launch scan' }))
     const confirmed = await screen.findByRole('dialog', { name: 'Run preview' })
     await user.click(within(confirmed).getByRole('button', { name: 'Launch scan' }))
     expect(mockStartRun).toHaveBeenCalledTimes(1)

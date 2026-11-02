@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 
 import { isCompatibilityId } from './src/utils/compatibilityId.ts'
 
-const root = path.resolve(__dirname, '..')
+const root = path.resolve(import.meta.dirname, '..')
 const compatibilityId = process.env.PYRIT_COMPATIBILITY_ID ?? execFileSync(
   process.env.PYRIT_PYTHON ?? 'python',
   [path.join(root, 'build_scripts/stamp_compatibility.py'), '--development'],
@@ -54,7 +54,7 @@ export default defineConfig({
   }],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(import.meta.dirname, './src'),
     },
   },
   server: {

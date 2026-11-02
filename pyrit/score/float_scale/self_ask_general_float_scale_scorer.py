@@ -45,8 +45,7 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
     """
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
-        supported_data_types=["text"],
-        is_objective_required=True,
+        supported_data_types=["text"], is_objective_required=True
     )
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
@@ -90,7 +89,8 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
                 to a ``JsonSchemaResponseHandler`` built from the ``*_output_key`` arguments that
                 uses ``CategoryConflictPolicy.PREFER_CONFIGURED``.
             validator (ScorerPromptValidator | None): Custom validator. If omitted, a default
-                validator will be used requiring text input and an objective.
+                validator will be used requiring text input and ``MatchesObjective``. Supply a
+                validator without ``is_objective_required`` for a fixed, constructor-configured rubric.
             score_value_output_key (str): JSON key for the score value. Defaults to "score_value".
             rationale_output_key (str): JSON key for the rationale. Defaults to "rationale".
             description_output_key (str): JSON key for the description. Defaults to "description".
