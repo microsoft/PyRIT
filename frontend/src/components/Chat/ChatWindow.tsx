@@ -55,7 +55,7 @@ import {
   hasChatDraftState,
   isChatDraftDirty,
 } from '@/utils/chatDraft'
-import { targetReference } from '@/utils/targetIdentity'
+import { sameTarget, targetReference } from '@/utils/targetIdentity'
 import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
 import { useRuntime } from '@/hooks/useRuntime'
@@ -414,6 +414,7 @@ export default function ChatWindow({
   const [isFindingDialogOpen, setIsFindingDialogOpen] = useState(false)
   const outcomeButtonRef = useRef<HTMLButtonElement>(null)
   const [generationDraft, setGenerationDraft] = useState<RequestGenerationDraft>({})
+  const [generationTarget, setGenerationTarget] = useState(activeTarget)
   const [generationAttackId, setGenerationAttackId] = useState(attackResultId)
   const [createdGenerationAttackId, setCreatedGenerationAttackId] = useState<string | null>(null)
   if (generationAttackId !== attackResultId) {
@@ -421,6 +422,10 @@ export default function ChatWindow({
     // Creating the first attack is not navigation; retain the next-send setting.
     if (attackResultId !== createdGenerationAttackId) setGenerationDraft({})
     setCreatedGenerationAttackId(null)
+  }
+  if (activeTarget && !sameTarget(activeTarget, generationTarget)) {
+    setGenerationTarget(activeTarget)
+    setGenerationDraft({})
   }
   const [conversationScoringFailure, setConversationScoringFailure] = useState<ScoringFailure | null>(null)
   const [draftScorer, setDraftScorer] = useState<RegisteredComponentReference | null | undefined>(undefined)

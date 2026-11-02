@@ -50,7 +50,7 @@ parameters for outgoing messages. For example, to set **Temperature**, uncheck
 **Use target default for temperature** and enter a value within the limits shown.
 Active overrides stay visible beside the button. Select **Use target default**
 to omit an override and use the configured target/provider settings. Unsupported
-controls are disabled with an explanation.
+overrides cannot be enabled; any retained override can still be cleared.
 
 Settings apply to the whole outbound message, including attachments, and remain
 selected across sends until changed. They reset when you switch attacks or
@@ -60,8 +60,8 @@ not change target defaults, saved bindings, or earlier messages.
 
 Request and response footers show the saved parameter values and their sources.
 Select a footer for read-only details of requested overrides and values sent.
-**Provider default (unknown)** means a parameter was omitted and its provider
-default is unknown; **not recorded** means no generation evidence was saved.
+**Provider default (unknown)** means no numeric value was submitted and the
+provider default is unknown; **not recorded** means no generation evidence was saved.
 
 See [Runtime generation configuration](../code/targets/0_prompt_targets.md#runtime-generation-configuration)
 for SDK usage and supported target behavior.

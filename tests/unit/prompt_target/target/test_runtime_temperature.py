@@ -6,6 +6,7 @@ import json
 from copy import deepcopy
 from typing import Any
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -666,6 +667,37 @@ async def test_nested_passthrough_precedence_at_http_boundary_async(patch_centra
     assert extras == original
 
 
+@pytest.mark.parametrize(
+    ("default", "extras"),
+    [(None, {}), (0.2, {"extra_body": {"temperature": None}}), (0.2, {"extra_body": {"temperature": 1.7}})],
+)
+async def test_retry_preserves_default_payload_at_http_boundary_async(
+    patch_central_database: Any, default: float | None, extras: dict[str, Any]
+) -> None:
+    bodies: list[dict[str, Any]] = []
+
+    async def respond_async(http_request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(http_request.content))
+        response = openai_chat_response_json_dict()
+        if len(bodies) == 1:
+            response["choices"][0]["message"]["content"] = ""
+        return httpx.Response(200, json=response)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond_async)) as client:
+        target = OpenAIChatTarget(
+            model_name="gpt-4o",
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            temperature=default,
+            extra_body_parameters=extras,
+            httpx_client_kwargs={"http_client": client},
+        )
+        with patch.object(target._send_prompt_to_target_async.retry, "sleep", new_callable=AsyncMock):
+            await target.send_prompt_async(message=request())
+    assert len(bodies) == 2
+    assert bodies[0] == bodies[1]
+
+
 async def test_unknown_provider_default_is_omitted_and_recorded_async(target: OpenAIChatTarget) -> None:
     target._temperature = None
     message = request()
@@ -731,6 +763,39 @@ async def test_caller_cannot_supply_temperature_evidence_async(target: OpenAICha
     info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
     assert info is not None
     assert info.temperature.resolved == 0.2
+
+
+@pytest.mark.parametrize("empty_response", [False, True])
+async def test_normalizer_error_response_retains_evidence_without_request_options_async(
+    target: OpenAIChatTarget, sqlite_instance: SQLiteMemory, empty_response: bool
+) -> None:
+    message = request(0)
+    conversation_id = str(uuid4())
+    failure = EmptyResponseException(message="No content") if empty_response else RuntimeError("Transport failed")
+    with (
+        patch.object(target._client.chat.completions, "create", new_callable=AsyncMock, side_effect=failure),
+        patch.object(target._send_prompt_to_target_async.retry, "sleep", new_callable=AsyncMock),
+    ):
+        if empty_response:
+            response = await PromptNormalizer().send_prompt_async(
+                message=message, target=target, conversation_id=conversation_id
+            )
+            assert response.get_piece().response_error == "empty"
+        else:
+            with pytest.raises(Exception, match="Error sending prompt"):
+                await PromptNormalizer().send_prompt_async(
+                    message=message, target=target, conversation_id=conversation_id
+                )
+    saved = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
+    assert len(saved) == 2
+    assert RequestGenerationConfig.from_message(saved[0]).temperature == 0
+    assert RequestGenerationConfig.METADATA_KEY not in saved[1].get_piece().prompt_metadata
+    request_info = RequestGenerationInfo.from_metadata(metadata=saved[0].get_piece().prompt_metadata)
+    response_info = RequestGenerationInfo.from_metadata(metadata=saved[1].get_piece().prompt_metadata)
+    assert request_info is not None
+    assert request_info.temperature.requested == request_info.temperature.resolved == 0
+    assert request_info.request_piece_ids == (str(saved[0].get_piece().id),)
+    assert response_info == request_info
 
 
 def test_new_capability_does_not_change_existing_identifier_projection() -> None:

@@ -445,7 +445,9 @@ class OpenAIChatTarget(OpenAITarget):
         nested = body.get("extra_body") or {}
         if temperature is None:
             body.pop("temperature", None)
-            nested.pop("temperature", None)
+            # Preserve explicit passthrough nulls on retries, rather than changing the provider payload.
+            if nested.get("temperature") is not None:
+                nested.pop("temperature", None)
         else:
             body["temperature"] = temperature
             # The SDK merges extra_body after its named arguments.

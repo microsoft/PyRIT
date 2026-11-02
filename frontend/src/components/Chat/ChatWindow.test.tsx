@@ -3290,6 +3290,26 @@ describe("ChatWindow Integration", () => {
     }
   });
 
+  it("resets generation settings when the active target changes outside the picker", async () => {
+    const user = userEvent.setup();
+    const first = { ...mockTarget, capabilities: buildCapabilities({ supports_temperature: true }) };
+    const second = {
+      ...first, target_registry_name: "second-target",
+      identifier: { ...first.identifier, hash: "second-hash" },
+    };
+    const rendered = render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={first} /></TestWrapper>);
+    await chooseTemperature(user, "0.8");
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={{ ...first }} /></TestWrapper>);
+    expect(screen.getByText("Temperature: 0.8")).toBeInTheDocument();
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={null} /></TestWrapper>);
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={first} /></TestWrapper>);
+    expect(screen.getByText("Temperature: 0.8")).toBeInTheDocument();
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={second} /></TestWrapper>);
+    expect(screen.queryByText("Temperature: 0.8")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Generation settings" }));
+    expect(screen.getByRole("checkbox", { name: "Use target default for temperature" })).toBeChecked();
+  });
+
   it("blocks an invalid explicit generation value without preparing or submitting the message", async () => {
     const user = userEvent.setup();
     const target = { ...mockTarget, capabilities: buildCapabilities({ supports_temperature: true }) };

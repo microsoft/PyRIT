@@ -45,7 +45,7 @@ export default function GenerationSettings({ value, onChange, target, disabled }
             const defaultValue = target?.binding?.[field.name] ?? target?.identifier[field.name]
             const error = generationFieldError(field.name, input, target?.capabilities)
             return <div className={styles.field} key={field.name}>
-              <Checkbox checked={useDefault} disabled={disabled || !supported}
+              <Checkbox checked={useDefault} disabled={disabled || (!supported && useDefault)}
                 label={`Use target default for ${field.label.toLowerCase()}`}
                 onChange={(_event: ChangeEvent<HTMLInputElement>, data: CheckboxOnChangeData) => {
                   const next = { ...value }

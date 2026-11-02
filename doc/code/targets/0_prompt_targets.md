@@ -96,8 +96,9 @@ including zero, but not booleans or numeric strings.
 
 Missing or null fields preserve the target's configured behavior. Explicit
 overrides take precedence over provider passthrough values, including nested
-`extra_body` settings. If neither a request value nor a configured value exists,
-the parameter is omitted rather than assigning a guessed provider default.
+`extra_body` settings. Without an override, explicit passthrough values (including
+null) are preserved. Otherwise, if neither a request value nor a configured value
+exists, the parameter is omitted rather than assigning a guessed provider default.
 Transport retries retain the resolved settings; a new send can select new values.
 
 `PromptNormalizer` saves generation evidence with the request and its responses.

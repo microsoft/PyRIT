@@ -73,6 +73,24 @@ describe('GenerationSettings', () => {
     expect(screen.getByRole('spinbutton', { name: 'Temperature' })).toHaveValue(null)
   })
 
+  it('allows clearing a retained override after the target loses support', async () => {
+    const user = userEvent.setup()
+    const rendered = render(<TestWrapper><SettingsHarness /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Generation settings' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Use target default for temperature' }))
+    await user.type(screen.getByRole('spinbutton', { name: 'Temperature' }), '0')
+    rendered.rerender(<TestWrapper><SettingsHarness selectedTarget={{
+      ...target, capabilities: { supports_temperature: false },
+    }} /></TestWrapper>)
+    const defaults = screen.getByRole('checkbox', { name: 'Use target default for temperature' })
+    expect(defaults).toBeEnabled()
+    expect(screen.getByRole('spinbutton', { name: 'Temperature' })).toBeDisabled()
+    await user.click(defaults)
+    expect(defaults).toBeChecked()
+    expect(defaults).toBeDisabled()
+    expect(screen.queryByText('Temperature: 0')).not.toBeInTheDocument()
+  })
+
   it('disables settings while sending without losing the visible override', () => {
     const onChange = jest.fn()
     const rendered = render(<TestWrapper><GenerationSettings value={{ temperature: '0' }}

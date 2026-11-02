@@ -75,7 +75,7 @@ export function generationDisplay(metadata?: Record<string, unknown> | null): Pi
     if (source === 'provider_default' && resolved === null) descriptions.push(`${field.label}: provider default (unknown)`)
     else if (resolved !== null && source !== 'provider_default') descriptions.push(`${field.label}: ${resolved} (${sourceLabel})`)
     else return { generationDescription: `${field.label}: invalid record` }
-    details.push(`${field.label}. Requested override: ${requested ?? 'none'}. Sent parameter: ${resolved ?? 'omitted (provider default unknown)'}. Source: ${sourceLabel}.`)
+    details.push(`${field.label}. Requested override: ${requested ?? 'none'}. Sent parameter: ${resolved ?? 'not specified (provider default unknown)'}. Source: ${sourceLabel}.`)
   }
   return { generationDescription: descriptions.join('; '), generationDetails: details.join(' ') }
 }

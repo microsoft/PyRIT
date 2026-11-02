@@ -57,7 +57,7 @@ describe('request temperature', () => {
     }
     expect(generationDisplay(current).generationDescription).toBe(expected)
     expect(generationDisplay(current).generationDetails).toContain(`Requested override: ${requested ?? 'none'}`)
-    expect(generationDisplay(current).generationDetails).toContain(`Sent parameter: ${value ?? 'omitted (provider default unknown)'}`)
+    expect(generationDisplay(current).generationDetails).toContain(`Sent parameter: ${value ?? 'not specified (provider default unknown)'}`)
   })
 
   it('does not guess the temperature of historical records', () => {
