@@ -4,13 +4,14 @@
 import hashlib
 import inspect
 from collections.abc import Callable
+from unittest.mock import patch
 
 import pytest
 
 import pyrit.score as score_package
 import pyrit.score.true_false.regex as regex_package
 from pyrit.memory import SQLiteMemory
-from pyrit.models import ComponentIdentifier, ScorerEvaluationIdentifier
+from pyrit.models import ComponentIdentifier, ScorerEvaluationIdentifier, config_hash
 from pyrit.score import (
     AnsiEscapeOutputScorer,
     AnthraxKeywordScorer,
@@ -222,9 +223,36 @@ async def test_nul_patterns_keep_distinct_persisted_identities_async(
 
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("scorer_class", _DEFAULT_SCORERS)
-def test_default_patterns_keep_their_existing_identity(scorer_class: type[RegexScorer]) -> None:
-    # Stored metrics and scores for default configurations must keep matching.
-    assert "patterns_digest" not in _scorer_factory(scorer_class)().get_identifier().params
+def test_default_patterns_have_stable_content_sensitive_identity(scorer_class: type[RegexScorer]) -> None:
+    default_patterns = scorer_class._DEFAULT_PATTERNS
+    assert default_patterns is not None
+    scorer = _scorer_factory(scorer_class)()
+    original_identity = _identity(scorer)
+
+    assert scorer.get_identifier().params["patterns_digest"] == config_hash(default_patterns)
+    assert scorer.get_identifier().params["pattern_count"] == len(default_patterns)
+    assert _identity(_scorer_factory(scorer_class)()) == original_identity
+    with patch.object(scorer_class, "_DEFAULT_PATTERNS", dict(reversed(default_patterns.items()))):
+        assert _identity(_scorer_factory(scorer_class)()) == original_identity
+
+    changed_patterns = dict(default_patterns)
+    name = next(iter(changed_patterns))
+    changed_patterns[name] = f"{default_patterns[name]}(?:changed)"
+    with patch.object(scorer_class, "_DEFAULT_PATTERNS", changed_patterns):
+        changed = _scorer_factory(scorer_class)()
+        assert changed.get_identifier().params["pattern_count"] == len(default_patterns)
+        assert _identity(changed)[0] != original_identity[0]
+        assert _identity(changed)[1] != original_identity[1]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("scorer_class", _CONFIGURABLE_SCORERS)
+def test_explicit_default_patterns_share_effective_identity(scorer_class: type[RegexScorer]) -> None:
+    default_patterns = scorer_class._DEFAULT_PATTERNS
+    assert default_patterns is not None
+    assert _identity(_scorer_factory(scorer_class)(patterns=dict(default_patterns))) == _identity(
+        _scorer_factory(scorer_class)()
+    )
 
 
 @pytest.mark.usefixtures("patch_central_database")

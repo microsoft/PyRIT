@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import sqlalchemy as sa
 from pydantic import PydanticUserError
+from sqlalchemy.orm import Session
 
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
@@ -68,6 +69,7 @@ from pyrit.score import (
     TrueFalseFallbackScorer,
     TrueFalseInverterScorer,
     TrueFalseScoreAggregator,
+    XSSOutputScorer,
     create_conversation_scorer,
 )
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
@@ -525,6 +527,74 @@ async def test_apply_scores_only_latest_response_and_reuses_after_selection_revi
     )
     assert transcript is not None and transcript.automated_score is not None
     assert transcript.automated_score.id == first.score.id and transcript.outcome == AttackOutcome.SUCCESS
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [('<a href="jav&#x09;ascript:alert(1)">x</a>', True), ("Ordinary assistant response", False)],
+)
+async def test_default_regex_persisted_verdict_projects_and_reuses_async(
+    *,
+    latest_response_chat: tuple[ChatScoringService, AttackResult, ApplyChatScorerRequest, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    text: str,
+    expected: bool,
+) -> None:
+    policy, attack, request, _ = latest_response_chat
+    response = MessagePiece(role="assistant", original_value=text, conversation_id=attack.conversation_id)
+    await sqlite_instance.add_message_to_memory_async(request=response.to_message())
+    scorer = XSSOutputScorer()
+    registry = ScorerRegistry.get_registry_singleton().instances
+    registry.register(scorer, name="default-regex")
+    reference = RegisteredComponentReference(
+        registry_name="default-regex", identifier_hash=scorer.get_identifier().hash
+    )
+    await AttackService().update_attack_async(
+        attack_result_id=attack.attack_result_id, request=UpdateAttackRequest(chat_scorer=reference)
+    )
+    request = request.model_copy(update={"scorer": reference, "response_id": response.id})
+    with patch.object(scorer, "score_async", wraps=scorer.score_async) as evaluate:
+        first = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+        assert not first.reused and evaluate.call_count == 1
+
+        def commit_expire_reload(session: Session) -> None:
+            session.commit()
+            session.expire_all()
+            raw = session.get(ScoreEntry, first.score.id)
+            assert raw is not None
+            persisted = raw.get_score()
+            assert persisted.get_value() is expected
+            assert persisted.scorer_class_identifier.hash == scorer.get_identifier().hash
+
+        await run_memory_session_async(memory=sqlite_instance, operation=commit_expire_reload)
+        [stored] = await sqlite_instance.get_scores_async(score_ids=[first.score.id])
+        assert stored.get_value() is expected
+        assert stored.scorer_class_identifier.hash == scorer.get_identifier().hash
+        equivalent = XSSOutputScorer()
+        assert equivalent.get_identifier() == scorer.get_identifier()
+        registry.register(equivalent, name="reloaded-default-regex")
+        equivalent_reference = RegisteredComponentReference(
+            registry_name="reloaded-default-regex", identifier_hash=equivalent.get_identifier().hash
+        )
+        await AttackService().update_attack_async(
+            attack_result_id=attack.attack_result_id,
+            request=UpdateAttackRequest(chat_scorer=equivalent_reference),
+        )
+        with patch.object(equivalent, "score_async", wraps=equivalent.score_async) as reevaluate:
+            projected = await AttackService().get_conversation_messages_async(
+                attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+            )
+            assert projected.automated_score is not None and projected.automated_score.id == first.score.id
+            assert projected.latest_response_id == str(response.id)
+            assert projected.outcome == (AttackOutcome.SUCCESS if expected else AttackOutcome.FAILURE)
+            assert evaluate.call_count == 1 and reevaluate.call_count == 0
+            repeated = await policy.apply_async(
+                attack_result_id=attack.attack_result_id,
+                request=request.model_copy(update={"scorer": equivalent_reference}),
+            )
+            assert repeated.reused and repeated.score.id == first.score.id
+            assert repeated.score.get_value() is expected
+            assert evaluate.call_count == 1 and reevaluate.call_count == 0
 
 
 async def test_apply_reuses_result_of_scorer_that_adds_objective_condition_async(
