@@ -217,7 +217,7 @@ async function mockHistoryAPIs(
 /** Navigate to the Attack History view. */
 async function goToHistory(page: Page) {
   await page.goto("/");
-  await page.getByTitle("History").click();
+  await page.getByRole("button", { name: "History", exact: true }).click();
   await expect(page.getByTestId("attacks-table")).toBeVisible({ timeout: 10_000 });
 }
 
