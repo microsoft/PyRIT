@@ -154,6 +154,157 @@ describe('ConverterRegistry', () => {
     expect(screen.getByText('No converters match these filters.')).toBeVisible()
   })
 
+  it('clears a type filter after deleting its last converter and retains search', async () => {
+    const caesar = {
+      ...converter,
+      converter_id: 'caesar',
+      identifier: { ...converter.identifier, class_name: 'CaesarConverter' },
+    }
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [converter, caesar] })
+      .mockResolvedValueOnce({ items: [caesar] })
+    const user = userEvent.setup()
+    renderRegistry()
+    await screen.findByText('caesar')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by type' }), 'Base64Converter')
+    await user.type(screen.getByRole('textbox', { name: 'Search converters' }), 'converter')
+
+    await user.click(screen.getByRole('button', { name: 'Remove base64-default' }))
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+
+    expect(await screen.findByText('caesar')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Filter by type' })).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Search converters' })).toHaveValue('converter')
+    expect(screen.getByText('1 of 1 converters')).toBeVisible()
+  })
+
+  it('clears removed type and unique output filters after deleting their only converter', async () => {
+    const audio = {
+      ...converter,
+      converter_id: 'audio',
+      identifier: {
+        ...converter.identifier,
+        class_name: 'AudioConverter',
+        supported_output_types: ['audio_path'],
+      },
+    }
+    const text = {
+      ...converter,
+      converter_id: 'text',
+      identifier: { ...converter.identifier, class_name: 'TextConverter' },
+    }
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [audio, text] })
+      .mockResolvedValueOnce({ items: [text] })
+    const user = userEvent.setup()
+    renderRegistry()
+    await screen.findByRole('button', { name: 'Identity for audio' })
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by type' }), 'AudioConverter')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by output' }), 'audio_path')
+
+    await user.click(screen.getByRole('button', { name: 'Remove audio' }))
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+
+    expect(await screen.findByRole('button', { name: 'Identity for text' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Filter by type' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: 'Filter by output' })).toHaveValue('')
+    expect(screen.getByText('1 of 1 converters')).toBeVisible()
+  })
+
+  it('retains type and output filters while another matching converter remains', async () => {
+    const matching = { ...converter, converter_id: 'base64-second' }
+    const other = {
+      ...converter,
+      converter_id: 'speech',
+      identifier: { ...converter.identifier, class_name: 'SpeechConverter', supported_output_types: ['audio_path'] },
+    }
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [converter, matching, other] })
+      .mockResolvedValueOnce({ items: [matching, other] })
+    const user = userEvent.setup()
+    renderRegistry()
+    await screen.findByRole('button', { name: 'Identity for speech' })
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by type' }), 'Base64Converter')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by output' }), 'text')
+
+    await user.click(screen.getByRole('button', { name: 'Remove base64-default' }))
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+
+    expect(await screen.findByText('base64-second')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Filter by type' })).toHaveValue('Base64Converter')
+    expect(screen.getByRole('combobox', { name: 'Filter by output' })).toHaveValue('text')
+    expect(screen.getByText('1 of 2 converters')).toBeVisible()
+  })
+
+  it('retains valid intersecting filters that currently match no converters', async () => {
+    const imageConverter = {
+      ...converter,
+      identifier: { ...converter.identifier, supported_output_types: ['image_path'] },
+    }
+    const textConverter = {
+      ...converter,
+      converter_id: 'text',
+      identifier: { ...converter.identifier, class_name: 'TextConverter' },
+    }
+    mockedConvertersApi.listConverters.mockResolvedValue({ items: [imageConverter, textConverter] })
+    const user = userEvent.setup()
+    renderRegistry()
+    await screen.findByRole('button', { name: 'Identity for text' })
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by type' }), 'Base64Converter')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by output' }), 'text')
+    expect(screen.getByText('No converters match these filters.')).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+
+    expect(await screen.findByText('No converters match these filters.')).toBeVisible()
+    expect(screen.getByRole('combobox', { name: 'Filter by type' })).toHaveValue('Base64Converter')
+    expect(screen.getByRole('combobox', { name: 'Filter by output' })).toHaveValue('text')
+  })
+
+  it('retains filters across a failed reload and clears them after a successful empty catalog', async () => {
+    const audio = {
+      ...converter,
+      converter_id: 'audio',
+      identifier: {
+        ...converter.identifier,
+        class_name: 'AudioConverter',
+        supported_output_types: ['audio_path'],
+      },
+    }
+    const text = {
+      ...converter,
+      converter_id: 'text',
+      identifier: { ...converter.identifier, class_name: 'TextConverter' },
+    }
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [audio, text] })
+      .mockRejectedValueOnce(new Error('registry unavailable'))
+      .mockResolvedValueOnce({ items: [audio, text] })
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ items: [audio, text] })
+    const user = userEvent.setup()
+    renderRegistry()
+    await screen.findByRole('button', { name: 'Identity for audio' })
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by type' }), 'AudioConverter')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by output' }), 'audio_path')
+
+    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(await screen.findByText(/registry unavailable/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(await screen.findByRole('button', { name: 'Identity for audio' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Filter by type' })).toHaveValue('AudioConverter')
+    expect(screen.getByRole('combobox', { name: 'Filter by output' })).toHaveValue('audio_path')
+
+    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(await screen.findByText('No Converters Registered')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+
+    expect(await screen.findByRole('button', { name: 'Identity for audio' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Filter by type' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: 'Filter by output' })).toHaveValue('')
+    expect(screen.getByText('2 of 2 converters')).toBeVisible()
+  })
+
   it('shows an empty state', async () => {
     mockedConvertersApi.listConverters.mockResolvedValue({ items: [] })
     renderRegistry()

@@ -2,10 +2,12 @@
 # Licensed under the MIT license.
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from pyrit.exceptions import ScorerLLMResponseBlockedException
 from pyrit.models import (
+    Acquisition,
     ChatMessageRole,
     ComponentIdentifier,
     ContentScorable,
@@ -60,6 +62,54 @@ class ConversationScorer(MessageScorer, ABC):
             PromptTarget | None: The configured scoring target, if any.
         """
         return self._get_wrapped_scorer().get_chat_target()
+
+    async def find_matching_scores_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None = None,
+    ) -> list[Score]:
+        """
+        Match the complete ordered snapshot that a fresh conversation evaluation would acquire.
+
+        Returns:
+            Scores for the exact captured evidence and effective expectation, newest first.
+        """
+        if isinstance(scorable, MessageScorable):
+            messages = await self._memory.get_message_pieces_async(prompt_ids=list(scorable.message_piece_ids))
+            if {piece.id for piece in messages} != set(scorable.message_piece_ids):
+                return []
+            conversation_ids = {piece.conversation_id for piece in messages}
+            if len(conversation_ids) != 1:
+                return []
+            conversation_id = messages[0].conversation_id
+            if conversation_id is None:
+                return []
+            scorable = ConversationScorable(conversation_id=conversation_id)
+        if not isinstance(scorable, ConversationScorable):
+            return []
+        candidates = self.find_matching_scores(scores=scores, scorable=scorable, expectation=expectation)
+        if not candidates:
+            return []
+        current = await self._source.acquire_async(scorable=scorable)
+        if current.acquisition != Acquisition.COMPLETE or not isinstance(
+            current.payload, ConversationObservationPayload
+        ):
+            return []
+        observation_ids = {observation_id for score in candidates for observation_id in score.observation_ids}
+        if not observation_ids:
+            return []
+        observations = await self._memory.get_observations_async(observation_ids=list(observation_ids))
+        matching_ids = {
+            observation.id
+            for observation in observations
+            if observation.acquisition == Acquisition.COMPLETE
+            and observation.scorable == scorable
+            and observation.source_identifier == current.source_identifier
+            and observation.payload == current.payload
+        }
+        return [score for score in candidates if matching_ids.intersection(score.observation_ids)]
 
     async def _score_message_scorable_async(
         self,

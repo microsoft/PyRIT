@@ -80,6 +80,15 @@ function scoreVerdict(score?: BackendScore | null): 'success' | 'failure' | 'und
   return score.score_value.toLowerCase() === 'true' ? 'success' : 'failure'
 }
 
+const RESULT_POPOVER_POSITIONING = {
+  autoSize: 'height',
+  align: 'start',
+  strategy: 'fixed',
+  // Resizing can move the trigger out of view; keep the details inside the viewport.
+  unstable_disableTether: 'all',
+  overflowBoundaryPadding: 16,
+} as const
+
 function scoreLabel(score?: BackendScore | null): string {
   const verdict = scoreVerdict(score)
   if (!score) return 'Not set'
@@ -130,6 +139,8 @@ export default function ObjectiveHeader({
   const [rationale, setRationale] = useState(
     humanScore?.score_rationale ?? automatedScore?.score_rationale ?? '',
   )
+  const [rationaleEdited, setRationaleEdited] = useState(false)
+  const effectiveRationale = rationaleEdited ? rationale : humanScore?.score_rationale ?? automatedScore?.score_rationale ?? ''
   const [isUpdatingResult, setIsUpdatingResult] = useState(false)
   const [resultError, setResultError] = useState('')
   const [showAutomatedDetails, setShowAutomatedDetails] = useState(false)
@@ -192,7 +203,7 @@ export default function ObjectiveHeader({
     setIsUpdatingResult(true)
     setResultError('')
     try {
-      await onUpdateHumanScore(humanVerdict === 'success', rationale)
+      await onUpdateHumanScore(humanVerdict === 'success', effectiveRationale)
       setResultOpen(false)
     } catch {
       setResultError('Unable to update the attack result.')
@@ -242,13 +253,14 @@ export default function ObjectiveHeader({
       <Popover
         withArrow
         open={resultOpen}
-        positioning={{ autoSize: 'height', align: 'start' }}
+        positioning={RESULT_POPOVER_POSITIONING}
         onOpenChange={(_event, data) => {
           setResultOpen(data.open)
           if (data.open) {
             const currentHumanVerdict = scoreVerdict(humanScore ?? automatedScore)
             setHumanVerdict(currentHumanVerdict === 'failure' ? 'failure' : 'success')
             setRationale(humanScore?.score_rationale ?? automatedScore?.score_rationale ?? '')
+            setRationaleEdited(false)
             setResultError('')
             setShowAutomatedDetails(applyStatus !== null)
             setShowScorerPicker(applyStatus !== null || applyingScorer)
@@ -387,8 +399,8 @@ export default function ObjectiveHeader({
           <Field label="Rationale">
             <Textarea
               rows={5}
-              value={rationale}
-              onChange={(_event, data) => setRationale(data.value)}
+              value={effectiveRationale}
+              onChange={(_event, data) => { setRationale(data.value); setRationaleEdited(true) }}
               resize="vertical"
               disabled={!canUpdateOutcome || applyingScorer}
               aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}

@@ -12,9 +12,33 @@ import {
 } from '@fluentui/react-components'
 
 import type { ScenarioProgressResult, ScenarioRunPlanSeedGroup } from '@/types'
+import type { UseScenarioResultHierarchyResult } from '@/hooks/useScenarioResultHierarchy'
 
 import AttackExecutionTable from './AttackExecutionTable'
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
+
+const EMPTY_HIERARCHY: UseScenarioResultHierarchyResult = {
+  roots: {
+    status: 'loading',
+    runStatus: null,
+    groups: [],
+    overallCounts: null,
+    diagnostics: null,
+    truncated: false,
+    nextCursor: null,
+    loadingMore: false,
+    error: null,
+    staleCursor: false,
+  },
+  children: new Map(),
+  expanded: new Set(),
+  toggleNode: () => {},
+  reloadRoots: () => {},
+  loadMoreRoots: () => {},
+  openChildren: () => {},
+  loadMoreChildren: () => {},
+  restartChildren: () => {},
+}
 
 interface ObjectiveDetailsDialogProps {
   readonly objective: ScenarioRunPlanSeedGroup | null
@@ -63,9 +87,10 @@ export function ObjectiveDetailsDialog({ objective, onClose, attempts, onOpenAtt
               </div>
               <section className={styles.section}>
                 <Text as="h3" size={400} weight="semibold">Atomic attacks</Text>
-                <AttackExecutionTable attempts={attempts} totalAttempts={attempts.length} showObjective={false}
+                <AttackExecutionTable label="Atomic attacks" attempts={attempts} totalAttempts={attempts.length}
+                  roots={[]} hierarchy={EMPTY_HIERARCHY}
                   scenarioResultId={scenarioResultId} seedObjectives={new Map([[objective.id, objective.objective]])}
-                  onOpenDetails={onOpenAttempt} />
+                  onOpenDetails={onOpenAttempt} showTimestamp={false} booleanOutcome />
               </section>
             </DialogContent>
           )}

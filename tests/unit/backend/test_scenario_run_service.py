@@ -11,6 +11,7 @@ import threading
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -290,6 +291,212 @@ def _make_request(
         include_baseline=include_baseline,
         scenario_params=scenario_params,
     )
+
+
+def test_capture_launch_references_skips_unused_shared_adversarial_target() -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    scorer = SimpleNamespace(hash="launch-scorer")
+    metadata = SimpleNamespace(
+        default_objective_scorer_identifier=scorer,
+        technique_class=_StubTechnique,
+        default_techniques=("role_play",),
+        uses_default_adversarial_target=True,
+    )
+    registry = MagicMock()
+    registry.get_class_metadata.return_value = metadata
+    technique_registry = MagicMock()
+    technique_registry.get_factories.return_value = {
+        "role_play": SimpleNamespace(uses_default_adversarial_target=False),
+    }
+    request = RunScenarioRequest(scenario_name="test", target_name=None, techniques=["role_play"])
+
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch(
+            "pyrit.registry.components.attack_technique_registry.AttackTechniqueRegistry.get_registry_singleton",
+            return_value=technique_registry,
+        ),
+        patch.object(_svc_mod, "get_default_adversarial_target", side_effect=AssertionError("unused target resolved")),
+        patch.object(service._configuration_resolver, "resolve_adversarial_target") as resolve_target,
+    ):
+        references = service._capture_launch_references(
+            request=request,
+            scenario_class=MagicMock(),
+            init_kwargs={"scenario_techniques": [_StubTechnique.ROLE_PLAY]},
+        )
+
+    assert references == {"objective_scorer_hash": "launch-scorer"}
+    resolve_target.assert_not_called()
+
+
+def test_capture_launch_references_includes_run_local_simulation_target() -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    metadata = SimpleNamespace(
+        default_objective_scorer_identifier=SimpleNamespace(hash="launch-scorer"),
+        technique_class=_StubTechnique,
+        default_techniques=("role_play",),
+        uses_default_adversarial_target=False,
+    )
+    registry = MagicMock()
+    registry.get_class_metadata.return_value = metadata
+    technique_registry = MagicMock()
+    technique_registry.get_factories.return_value = {}
+    local_factory = SimpleNamespace(name="role_play", uses_default_adversarial_target=True)
+    target = SimpleNamespace(get_identifier=lambda: SimpleNamespace(hash="adversarial-target"))
+    request = RunScenarioRequest(scenario_name="test", target_name=None, techniques=["role_play"])
+
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch(
+            "pyrit.registry.components.attack_technique_registry.AttackTechniqueRegistry.get_registry_singleton",
+            return_value=technique_registry,
+        ),
+        patch.object(service._configuration_resolver, "resolve_adversarial_target", return_value=None),
+        patch.object(_svc_mod, "get_default_adversarial_target", return_value=target) as get_default,
+    ):
+        references = service._capture_launch_references(
+            request=request,
+            scenario_class=MagicMock(),
+            init_kwargs={
+                "scenario_techniques": [_StubTechnique.ROLE_PLAY],
+                "local_technique_factory": local_factory,
+            },
+        )
+
+    assert references == {
+        "objective_scorer_hash": "launch-scorer",
+        "adversarial_target_hash": "adversarial-target",
+    }
+    get_default.assert_called_once()
+
+
+def test_rerun_validation_uses_saved_launch_scorer_not_effective_scorer() -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    metadata = SimpleNamespace(
+        scenario_version=1,
+        default_objective_scorer_identifier=SimpleNamespace(hash="launch-scorer"),
+    )
+    scenario_class = MagicMock()
+    scenario_class.supported_parameters.return_value = []
+    registry = MagicMock()
+    registry.get_class.return_value = scenario_class
+    registry.get_class_metadata.return_value = metadata
+    stored = SimpleNamespace(
+        scenario_version=1,
+        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "launch-scorer"}},
+        objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
+        scenario_identifier=SimpleNamespace(objective_target=None),
+    )
+    request = RunScenarioRequest(scenario_name="test", target_name=None)
+
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_launch_uses_default_adversarial_target", return_value=False),
+    ):
+        service._validate_rerun_references(stored=stored, request=request)
+
+    scenario_class.assert_not_called()
+    registry.create_and_initialize_async.assert_not_called()
+
+
+def test_rerun_validation_uses_explicit_scorer_hash_without_resolving_provider() -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    metadata = SimpleNamespace(scenario_version=1, default_objective_scorer_identifier=None)
+    scenario_class = MagicMock()
+    scenario_class.supported_parameters.return_value = []
+    registry = MagicMock()
+    registry.get_class.return_value = scenario_class
+    registry.get_class_metadata.return_value = metadata
+    stored = SimpleNamespace(
+        scenario_version=1,
+        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "explicit-launch-scorer"}},
+        objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
+        scenario_identifier=SimpleNamespace(objective_target=None),
+    )
+    request = RunScenarioRequest(
+        scenario_name="test",
+        target_name=None,
+        objective_scorer={"registry_name": "scorer", "identifier_hash": "explicit-launch-scorer"},
+    )
+    scorer = MagicMock()
+    scorer.get_identifier.return_value = SimpleNamespace(hash="explicit-launch-scorer")
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_launch_uses_default_adversarial_target", return_value=False),
+        patch.object(
+            service._configuration_resolver,
+            "resolve_constructor_kwargs",
+            return_value={"objective_scorer": scorer},
+        ) as resolve_scorer,
+    ):
+        service._validate_rerun_references(stored=stored, request=request)
+
+    resolve_scorer.assert_called_once_with(scenario_class=scenario_class, objective_scorer=request.objective_scorer)
+    scorer.score_async.assert_not_called()
+
+
+def test_rerun_validation_rejects_changed_explicit_scorer_source() -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    metadata = SimpleNamespace(scenario_version=1, default_objective_scorer_identifier=None)
+    scenario_class = MagicMock()
+    scenario_class.supported_parameters.return_value = []
+    registry = MagicMock()
+    registry.get_class.return_value = scenario_class
+    registry.get_class_metadata.return_value = metadata
+    stored = SimpleNamespace(
+        scenario_version=1,
+        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "explicit-launch-scorer"}},
+        objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
+        scenario_identifier=SimpleNamespace(objective_target=None),
+    )
+    request = RunScenarioRequest(
+        scenario_name="test",
+        target_name=None,
+        objective_scorer={"registry_name": "scorer", "identifier_hash": "explicit-launch-scorer"},
+    )
+    scorer = MagicMock()
+    scorer.get_identifier.return_value = SimpleNamespace(hash="changed-scorer")
+
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_launch_uses_default_adversarial_target", return_value=False),
+        patch.object(
+            service._configuration_resolver,
+            "resolve_constructor_kwargs",
+            return_value={"objective_scorer": scorer},
+        ),
+        pytest.raises(ScenarioRunConflictError, match="objective scorer changed"),
+    ):
+        service._validate_rerun_references(stored=stored, request=request)
+
+    scorer.score_async.assert_not_called()
+
+
+def test_rerun_validation_rejects_changed_launch_scorer() -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    metadata = SimpleNamespace(
+        scenario_version=1,
+        default_objective_scorer_identifier=SimpleNamespace(hash="changed-launch-scorer"),
+    )
+    scenario_class = MagicMock()
+    scenario_class.supported_parameters.return_value = []
+    registry = MagicMock()
+    registry.get_class.return_value = scenario_class
+    registry.get_class_metadata.return_value = metadata
+    stored = SimpleNamespace(
+        scenario_version=1,
+        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "saved-launch-scorer"}},
+        objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
+        scenario_identifier=SimpleNamespace(objective_target=None),
+    )
+    request = RunScenarioRequest(scenario_name="test", target_name=None)
+
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_launch_uses_default_adversarial_target", return_value=False),
+        pytest.raises(ScenarioRunConflictError, match="objective scorer changed"),
+    ):
+        service._validate_rerun_references(stored=stored, request=request)
 
 
 @pytest.mark.parametrize("supports_common_inputs", [True, False])

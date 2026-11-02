@@ -519,7 +519,9 @@ class TestExecutionExpectationTransport:
         assert target.prompt_sent == ["seed prompt"]
         assert objective.calls[0][1] is supplied
         assert auxiliary.calls[0][1] is supplied
-        assert refusal.calls[0][1] == ScoringExpectation(objective="seed prompt")
+        # The refusal judge renders its criterion as the conversation objective,
+        # so it receives the attack objective, not the prompt that was sent.
+        assert refusal.calls[0][1] == ScoringExpectation(objective="attack objective")
         assert refusal.calls[0][0] == objective.calls[0][0]
 
     async def test_chunked_scores_combined_content_with_auxiliary_async(self, sqlite_instance: SQLiteMemory) -> None:

@@ -9,11 +9,17 @@ import { attacksApi, convertersApi, runtimeApi, targetsApi } from '@/services/ap
 import { deferred } from '@/test-utils/deferred'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import { installRouterTestRequest } from '@/test-utils/routerRequest'
-import type { AttackSummary, BackendMessage, ConverterInstance, ConverterPreviewResponse } from '@/types'
+import type {
+  AttackSummary, BackendMessage, ConverterInstance, ConverterPreviewResponse, MessageSendStatus, ScorerInstance,
+} from '@/types'
 import { targetReference } from '@/utils/targetIdentity'
-import { DEFAULT_USER_PREFERENCES, writeUserPreferences } from '@/utils/userPreferences'
+import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
+
+let mockScorerRegistry: { scorers: ScorerInstance[]; loading: boolean; error: string | null } = {
+  scorers: [], loading: false, error: null,
+}
 
 jest.mock('@azure/msal-react', () => ({
   useMsal: () => ({ instance: { getActiveAccount: () => null, getAllAccounts: () => [] } }),
@@ -23,7 +29,7 @@ jest.mock('@/hooks/useTour', () => ({
   useTour: () => ({ startTour: jest.fn(), tourProps: {} }),
 }))
 jest.mock('@/hooks/useScorerRegistry', () => ({
-  useScorerRegistry: () => ({ scorers: [], loading: false, error: null }),
+  useScorerRegistry: () => mockScorerRegistry,
 }))
 jest.mock('@/hooks/useConnectionHealth', () => ({
   ConnectionHealthProvider: ({ children }: { children: ReactNode }) => children,
@@ -101,6 +107,7 @@ jest.mock('@/services/api', () => ({
     getConversations: jest.fn(),
     saveConversation: jest.fn(),
     submitMessageSend: jest.fn(),
+    getMessageSend: jest.fn(),
   },
   convertersApi: {
     listConverters: jest.fn(),
@@ -197,6 +204,7 @@ describe('App draft handoff with the real chat and composer', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    mockScorerRegistry = { scorers: [], loading: false, error: null }
     window.localStorage.clear()
     jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: true, state: 'ready', generation: '' })
     jest.mocked(targetsApi.listTargets).mockResolvedValue({
@@ -224,6 +232,136 @@ describe('App draft handoff with the real chat and composer', () => {
 
   afterEach(() => { jest.useRealTimers() })
 
+  const rememberedScorer = { registry_name: 'personal-judge', identifier_hash: 'judge-hash' }
+  const scorerCatalog: ScorerInstance[] = [{
+    scorer_registry_name: rememberedScorer.registry_name,
+    identifier: {
+      class_name: 'SubStringScorer', class_module: 'pyrit.score', hash: rememberedScorer.identifier_hash,
+      scorer_type: 'true_false',
+    },
+  }]
+  const confirmed: MessageSendStatus = {
+    attack_result_id: 'sent-attack', conversation_id: 'sent-conversation', send_id: 'send',
+    request_turn_number: 0, state: 'completed', failure_stage: null, error: null,
+  }
+  async function prepareNewSend(user: UserEvent): Promise<void> {
+    const picker = await screen.findByRole('combobox', { name: 'Chat target' })
+    await waitFor(() => expect(picker).toBeEnabled())
+    await user.selectOptions(picker, TARGET.target_registry_name)
+    await user.click(screen.getByRole('button', { name: 'Add objective', exact: true }))
+    await user.type(screen.getByRole('textbox', { name: 'Attack objective' }), 'Goal')
+    await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Prompt')
+  }
+
+  it('waits for the remembered scorer catalog before sending a new objective', async () => {
+    const user = userEvent.setup()
+    mockScorerRegistry = { scorers: [], loading: true, error: null }
+    writeUserPreferences('local', { ...DEFAULT_USER_PREFERENCES, lastUsedChatScorer: rememberedScorer })
+    const rendered = render(<MemoryRouter initialEntries={['/attack/chat']}><App /></MemoryRouter>)
+    await prepareNewSend(user)
+    expect(screen.getByRole('button', { name: 'Send message' })).toHaveAttribute('aria-disabled', 'true')
+    expect(attacksApi.createAttack).not.toHaveBeenCalled()
+    expect(readUserPreferences('local').lastUsedChatScorer).toEqual(rememberedScorer)
+    mockScorerRegistry = { scorers: scorerCatalog, loading: false, error: null }
+    rendered.rerender(<MemoryRouter initialEntries={['/attack/chat']}><App /></MemoryRouter>)
+    jest.mocked(attacksApi.createAttack).mockImplementation(() => new Promise(() => {}))
+    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    expect(attacksApi.createAttack).toHaveBeenCalledWith(expect.objectContaining({ chat_scorer: rememberedScorer }))
+  })
+
+  it.each([false, true])('keeps configured scorer precedence while the catalog loads (Off=%s)', async (off: boolean) => {
+    const user = userEvent.setup()
+    mockScorerRegistry = { scorers: [], loading: true, error: null }
+    const configured = off ? null : { registry_name: 'configured', identifier_hash: 'configured-hash' }
+    writeUserPreferences('local', {
+      ...DEFAULT_USER_PREFERENCES, lastUsedChatScorer: rememberedScorer, chatScorer: configured,
+    })
+    jest.mocked(attacksApi.createAttack).mockImplementation(() => new Promise(() => {}))
+    renderChat()
+    await prepareNewSend(user)
+    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    expect(attacksApi.createAttack).toHaveBeenCalledWith(expect.objectContaining({ chat_scorer: configured }))
+  })
+
+  it('does not overwrite an unavailable implicit scorer as Off on a confirmed non-inherited objective send', async () => {
+    const user = userEvent.setup()
+    writeUserPreferences('local', { ...DEFAULT_USER_PREFERENCES, lastUsedChatScorer: rememberedScorer })
+    jest.mocked(attacksApi.createAttack).mockResolvedValue({
+      attack_result_id: confirmed.attack_result_id, conversation_id: confirmed.conversation_id,
+      related_conversation_ids: [],
+    })
+    jest.mocked(attacksApi.submitMessageSend).mockResolvedValue(confirmed)
+    jest.mocked(attacksApi.getAttack).mockResolvedValue({
+      ...savedAttack(confirmed.attack_result_id), conversation_id: confirmed.conversation_id,
+      objective: 'Goal', chat_scorer: null, chat_scorer_inherited: false,
+    })
+    renderChat()
+    await prepareNewSend(user)
+    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(readUserPreferences('local').lastUsedTargets?.objective).toEqual(targetReference(TARGET)))
+    expect(attacksApi.createAttack).toHaveBeenCalledWith(expect.not.objectContaining({ chat_scorer: null }))
+    expect(readUserPreferences('local').lastUsedChatScorer).toEqual(rememberedScorer)
+  })
+
+  it('retains explicit Off through a delayed catalog update and records that actual choice', async () => {
+    const user = userEvent.setup()
+    mockScorerRegistry = { scorers: scorerCatalog, loading: false, error: null }
+    writeUserPreferences('local', { ...DEFAULT_USER_PREFERENCES, lastUsedChatScorer: rememberedScorer })
+    jest.mocked(attacksApi.createAttack).mockResolvedValue({
+      attack_result_id: confirmed.attack_result_id, conversation_id: confirmed.conversation_id,
+      related_conversation_ids: [],
+    })
+    jest.mocked(attacksApi.submitMessageSend).mockResolvedValue(confirmed)
+    jest.mocked(attacksApi.getAttack).mockResolvedValue({
+      ...savedAttack(confirmed.attack_result_id), conversation_id: confirmed.conversation_id,
+      objective: 'Goal', chat_scorer: null, chat_scorer_inherited: false,
+    })
+    const rendered = render(<MemoryRouter initialEntries={['/attack/chat']}><App /></MemoryRouter>)
+    await prepareNewSend(user)
+    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Chat scorer' }), '')
+    await user.keyboard('{Escape}')
+    mockScorerRegistry = { scorers: [], loading: true, error: null }
+    rendered.rerender(<MemoryRouter initialEntries={['/attack/chat']}><App /></MemoryRouter>)
+    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(readUserPreferences('local').lastUsedTargets?.objective).toEqual(targetReference(TARGET)))
+    expect(attacksApi.createAttack).toHaveBeenCalledWith(expect.objectContaining({ chat_scorer: null }))
+    expect(readUserPreferences('local').lastUsedChatScorer).toBeNull()
+  })
+
+  it('records confirmed use after navigation aborts chat evidence reads', async () => {
+    const user = userEvent.setup()
+    mockScorerRegistry = { scorers: scorerCatalog, loading: false, error: null }
+    writeUserPreferences('local', { ...DEFAULT_USER_PREFERENCES, lastUsedChatScorer: rememberedScorer })
+    const progress = deferred<MessageSendStatus>()
+    const receipt = deferred<AttackSummary>()
+    jest.mocked(attacksApi.createAttack).mockResolvedValue({
+      attack_result_id: confirmed.attack_result_id, conversation_id: confirmed.conversation_id,
+      related_conversation_ids: [],
+    })
+    jest.mocked(attacksApi.submitMessageSend).mockResolvedValue({
+      ...confirmed, state: 'queued', request_turn_number: null,
+    })
+    jest.mocked(attacksApi.getMessageSend).mockReturnValue(progress.promise)
+    jest.mocked(attacksApi.getAttack).mockReturnValue(receipt.promise)
+    renderChat()
+    await prepareNewSend(user)
+    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(attacksApi.getMessageSend).toHaveBeenCalledTimes(1))
+    await visitDatasets(user)
+    expect(readUserPreferences('local').lastUsedTargets).toBeUndefined()
+    await act(async () => { progress.resolve(confirmed) })
+    await act(async () => { receipt.resolve({
+      ...savedAttack(confirmed.attack_result_id), conversation_id: confirmed.conversation_id,
+      objective: 'Goal', chat_scorer: rememberedScorer, chat_scorer_inherited: false,
+    }) })
+    expect(readUserPreferences('local').lastUsedTargets?.objective).toEqual(targetReference(TARGET))
+    expect(readUserPreferences('local').lastUsedChatScorer).toEqual(rememberedScorer)
+    expect(screen.getByRole('heading', { name: 'Dataset catalog' })).toBeInTheDocument()
+  })
+
   it.each([false, true])('should preserve an unsaved draft across repeated visits with StrictMode=%s', async (strict: boolean) => {
     const user = userEvent.setup()
     renderChat('/attack/chat', strict)
@@ -233,6 +371,17 @@ describe('App draft handoff with the real chat and composer', () => {
       await returnToChat(user)
       expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Unsent prompt')
     }
+    expect(readUserPreferences('local').lastUsedTargets).toBeUndefined()
+    expect(readUserPreferences('local').lastUsedChatScorer).toBeUndefined()
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
+  })
+
+  it('does not record last use when opening saved history without sending', async () => {
+    renderChat('/attack/chat/saved/conversations/main')
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    expect(readUserPreferences('local').lastUsedTargets).toBeUndefined()
+    expect(readUserPreferences('local').lastUsedChatScorer).toBeUndefined()
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
   })
 
   it.each(['/does-not-exist', '/attack/chat/saved/extra'])(
@@ -285,49 +434,56 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
   })
 
-  it('should let the editor block New attack before any draft reset', async () => {
-    const user = userEvent.setup()
-    renderChat()
-    const target = await screen.findByRole('combobox', { name: 'Chat target' })
-    await waitFor(() => expect(target).toBeEnabled())
-    await user.selectOptions(target, 'draft-target')
-    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Original unsent prompt')
-    await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
-    await user.click(await screen.findByRole('button', { name: 'Insert message at start' }))
-    await user.type(
-      within(screen.getByRole('region', { name: 'Message 1' })).getByPlaceholderText('Type prompt here'),
-      'Unsaved conversation edit',
-    )
+  it.each(['/attack/chat', '/attack/chat/saved/conversations/main'])(
+    'should let the editor block New attack before any draft reset from %s',
+    async (path: string) => {
+      const user = userEvent.setup()
+      renderChat(path)
+      await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+      if (path === '/attack/chat') {
+        const target = screen.getByRole('combobox', { name: 'Chat target' })
+        await waitFor(() => expect(target).toBeEnabled())
+        await user.selectOptions(target, 'draft-target')
+      }
+      await user.type(screen.getByPlaceholderText('Type prompt here'), 'Original unsent prompt')
+      await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
+      await user.click(await screen.findByRole('button', { name: 'Insert message at start' }))
+      await user.type(
+        within(screen.getByRole('region', { name: 'Message 1' })).getByPlaceholderText('Type prompt here'),
+        'Unsaved conversation edit',
+      )
 
-    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
-    const firstDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
-    await user.click(within(firstDialog).getByRole('button', { name: 'Keep editing' }))
-    expect(within(screen.getByRole('region', { name: 'Message 1' }))
-      .getByPlaceholderText('Type prompt here')).toHaveValue('Unsaved conversation edit')
+      await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+      const firstDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
+      await user.click(within(firstDialog).getByRole('button', { name: 'Keep editing' }))
+      await screen.findByRole('region', { name: 'Message 1' })
+      expect(within(screen.getByRole('region', { name: 'Message 1' }))
+        .getByPlaceholderText('Type prompt here')).toHaveValue('Unsaved conversation edit')
 
-    await user.click(await screen.findByRole('button', { name: 'Cancel', exact: true }))
-    const cancelDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
-    await user.click(within(cancelDialog).getByRole('button', { name: 'Discard draft' }))
-    await waitFor(() => expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument())
-    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Original unsent prompt')
-    await visitHistory(user)
-    await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
-    expect(await screen.findByPlaceholderText('Type prompt here')).toHaveValue('Original unsent prompt')
+      await user.click(await screen.findByRole('button', { name: 'Cancel', exact: true }))
+      const cancelDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
+      await user.click(within(cancelDialog).getByRole('button', { name: 'Discard draft' }))
+      await waitFor(() => expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument())
+      expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Original unsent prompt')
+      await visitHistory(user)
+      await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
+      await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Original unsent prompt'))
 
-    await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
-    await user.click(await screen.findByRole('button', { name: 'Insert message at start' }))
-    await user.type(
-      within(screen.getByRole('region', { name: 'Message 1' })).getByPlaceholderText('Type prompt here'),
-      'Confirmed conversation edit',
-    )
-    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
-    const secondDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
-    await user.click(within(secondDialog).getByRole('button', { name: 'Discard draft' }))
-    await waitFor(() => expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument())
-    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
-    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
-    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
-  })
+      await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
+      await user.click(await screen.findByRole('button', { name: 'Insert message at start' }))
+      await user.type(
+        within(screen.getByRole('region', { name: 'Message 1' })).getByPlaceholderText('Type prompt here'),
+        'Confirmed conversation edit',
+      )
+      await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+      const secondDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
+      await user.click(within(secondDialog).getByRole('button', { name: 'Discard draft' }))
+      await waitFor(() => expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument())
+      expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+      expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+      expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
+    },
+  )
 
   it('should restore a saved conversation only after its attack and transcript load', async () => {
     const user = userEvent.setup()

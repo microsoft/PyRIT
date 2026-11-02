@@ -10,20 +10,25 @@ from unit.mocks import store_message_async
 from pyrit.common.text_matching import ExactTextMatching
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    Acquisition,
     ChatMessageRole,
     ComponentIdentifier,
+    Contains,
     ContentEntryScorable,
     ConversationScorable,
     Message,
     MessagePiece,
+    OutputMatches,
     Score,
     ScorerEvaluationIdentifier,
+    ScoringExpectation,
 )
 from pyrit.score import (
     ContentScorable,
     FloatScaleThresholdScorer,
     MessageScorable,
     MessageScorer,
+    OutputMatchesScorer,
     Scorer,
     SelfAskGeneralFloatScaleScorer,
     SubStringScorer,
@@ -38,6 +43,79 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 LINE_BREAKS = ("\n", "\r", "\r\n", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "digest",
+        "order",
+        "identity",
+        "partial",
+        "unavailable",
+        "objective",
+        "conditions",
+        "configuration",
+        "missing_trigger",
+        "missing_observation",
+    ],
+)
+async def test_conversation_matching_requires_current_complete_snapshot(patch_central_database, change):
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    user = MessagePiece(role="user", original_value="Original request", conversation_id=conversation_id)
+    response = MessagePiece(role="assistant", original_value="default", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=user.to_message())
+    await memory.add_message_to_memory_async(request=response.to_message())
+    scorer = create_conversation_scorer(scorer=OutputMatchesScorer())
+    scorable = MessageScorable.from_message(response.to_message())
+    expectation = ScoringExpectation(objective="Goal", conditions=(OutputMatches(matcher=Contains(value="default")),))
+    scores = await scorer.score_async(scorable=scorable, expectation=expectation)
+    assert await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation) == scores
+    current = await scorer._source.acquire_async(scorable=ConversationScorable(conversation_id=conversation_id))
+    if change in {"digest", "order", "identity", "partial", "unavailable"}:
+        payload = current.payload
+        if change == "digest":
+            payload = payload.model_copy(
+                update={"message_piece_digests": ("0" * 64, *payload.message_piece_digests[1:])}
+            )
+        elif change == "order":
+            payload = payload.model_copy(
+                update={
+                    "message_piece_ids": tuple(reversed(payload.message_piece_ids)),
+                    "message_piece_digests": tuple(reversed(payload.message_piece_digests)),
+                }
+            )
+        elif change == "identity":
+            payload = payload.model_copy(update={"message_piece_ids": (uuid.uuid4(), *payload.message_piece_ids[1:])})
+        acquisition = (
+            Acquisition.PARTIAL
+            if change == "partial"
+            else Acquisition.UNAVAILABLE
+            if change == "unavailable"
+            else Acquisition.COMPLETE
+        )
+        current = current.model_copy(update={"payload": payload, "acquisition": acquisition})
+        with patch.object(scorer._source, "acquire_async", AsyncMock(return_value=current)):
+            assert not await scorer.find_matching_scores_async(
+                scores=scores, scorable=scorable, expectation=expectation
+            )
+    else:
+        if change == "objective":
+            expectation = expectation.model_copy(update={"objective": "Different goal"})
+        elif change == "conditions":
+            expectation = ScoringExpectation(
+                objective="Goal", conditions=(OutputMatches(matcher=Contains(value="other")),)
+            )
+        elif change == "configuration":
+            scorer = create_conversation_scorer(
+                scorer=OutputMatchesScorer(score_aggregator=TrueFalseScoreAggregator.AND)
+            )
+        elif change == "missing_trigger":
+            scorable = MessageScorable(message_piece_ids=(*scorable.message_piece_ids, uuid.uuid4()))
+        elif change == "missing_observation":
+            scores = [score.model_copy(update={"observation_ids": ()}) for score in scores]
+        assert not await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation)
 
 
 def _make_scorer_id(name: str = "TestScorer") -> ComponentIdentifier:
