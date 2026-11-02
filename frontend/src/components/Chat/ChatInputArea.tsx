@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle, type KeyboardEvent } from 'react'
 
 import { Button, Caption1, Popover, PopoverSurface, PopoverTrigger, Tooltip, Text } from '@fluentui/react-components'
-import { SendRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowSyncRegular } from '@fluentui/react-icons'
+import { SendRegular, DismissRegular, InfoRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 
 import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, MultiSendOptions, PieceConversion, TargetInstance, UndoLastSendAction } from '@/types'
 import { isTargetResolutionBlocking } from '@/utils/targetIdentity'
@@ -120,8 +120,6 @@ interface ChatInputAreaProps {
   sendDisabled?: boolean
   sendDisabledReasons?: string[]
   activeTarget?: TargetInstance | null
-  singleTurnLimitReached?: boolean
-  onNewConversation?: () => void
   operatorLocked?: boolean
   crossTargetLocked?: boolean
   targetResolutionStatus?: AttackTargetResolutionStatus
@@ -147,21 +145,25 @@ interface ChatInputAreaProps {
   supportsSystemPrompt?: boolean
   systemPrompt?: string
   onSystemPromptChange?: (value: string) => void
+  initialText?: string
+  initialAttachments?: MessageAttachment[]
+  initialTextMetadata?: Record<string, unknown>
 }
 
 const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({
   onSend, conversionRevisionKey = '', disabled = false, disabledReasons = [], sendDisabled = false, sendDisabledReasons = [], activeTarget,
-  singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false,
+  operatorLocked = false, crossTargetLocked = false,
   targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, onConfigureTarget,
   onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange,
   convertedValue, onClearConversion, onClearAllConversions, onConvertedValueChange,
   converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip,
   onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange,
   repeatDisabledReason, undoLastSend,
+  initialText = '', initialAttachments = [], initialTextMetadata,
 }, ref) {
   const styles = usePromptEditorStyles()
-  const [input, setInput] = useState('')
-  const [attachments, setAttachments] = useState<MessageAttachment[]>([])
+  const [input, setInput] = useState(initialText)
+  const [attachments, setAttachments] = useState<MessageAttachment[]>(initialAttachments)
   const [isInputWarningOpen, setIsInputWarningOpen] = useState(false)
   const warningHoverTimer = useRef<number | undefined>(undefined)
   const cancelWarningHover = useCallback((): void => {
@@ -175,7 +177,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const disabledOverlayRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef(input)
   const attachmentsRef = useRef(attachments)
-  const textMetadataRef = useRef<Record<string, unknown> | undefined>(undefined)
+  const textMetadataRef = useRef<Record<string, unknown> | undefined>(initialTextMetadata)
   const draftRevisionRef = useRef(0)
   const previousConversionRevisionKeyRef = useRef(conversionRevisionKey)
   const inputDisabledReasons = [...disabledReasons]
@@ -199,8 +201,9 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
     setInput(text)
   }
   const changeAttachments = (next: MessageAttachment[]): void => {
+    const nextUrls = new Set(next.map((attachment) => attachment.url))
     for (const attachment of attachmentsRef.current) {
-      if (!next.includes(attachment) && attachment.url.startsWith('blob:')) URL.revokeObjectURL(attachment.url)
+      if (!nextUrls.has(attachment.url) && attachment.url.startsWith('blob:')) URL.revokeObjectURL(attachment.url)
     }
     attachmentsRef.current = next
     draftRevisionRef.current += 1
@@ -217,7 +220,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
     restoreDraft: (text: string, draftAttachments: MessageAttachment[], textMetadata?: Record<string, unknown>): void => {
       changeText(text)
       textMetadataRef.current = textMetadata
-      changeAttachments(draftAttachments.map(withDraftIdentity))
+      changeAttachments(draftAttachments.map((attachment) => attachment.draftId ? attachment : withDraftIdentity(attachment)))
     },
     focus: (): void => { textareaRef.current?.focus() },
     getDraftRevision: (): number => draftRevisionRef.current,
@@ -288,17 +291,8 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
           text="This attack uses a different target. Continue with your target to keep the conversation."
           buttonText="Continue with your target" buttonIcon={<CopyRegular />} onButtonClick={onUseAsTemplate}
           testId="cross-target-banner" buttonTestId="use-as-template-btn" buttonClassName={styles.touchTarget} />
-      ) : singleTurnLimitReached && !undoLastSend ? (
-        <StatusBanner className={styles.statusBanner} textClassName={styles.statusBannerText} icon={<InfoRegular fontSize={18} />}
-          text="This target only supports single-turn conversations." buttonText="New Conversation" buttonIcon={<AddRegular />}
-          onButtonClick={onNewConversation} testId="single-turn-banner"
-          buttonTestId="new-conversation-btn" buttonClassName={styles.touchTarget} />
       ) : (
         <>
-        {singleTurnLimitReached && <StatusBanner className={styles.statusBanner} textClassName={styles.statusBannerText}
-          icon={<InfoRegular fontSize={18} />} text="This target only supports single-turn conversations."
-          buttonText="New Conversation" buttonIcon={<AddRegular />} onButtonClick={onNewConversation}
-          testId="single-turn-banner" buttonTestId="new-conversation-btn" buttonClassName={styles.touchTarget} />}
         <div className={styles.composerTrigger}>
           <PromptEditor text={input} attachments={attachments} onInputChange={changeText} onAttachmentsChange={changeAttachments}
             disabled={disabled} textareaRef={textareaRef} onKeyDown={handleKeyDown}
@@ -318,7 +312,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               <MultiSendSettings options={effectiveSendOptions} disabled={disabled || sendDisabled}
                 disabledReason={repeatDisabledReason} onChange={setSendOptions} />
               {activeTarget?.capabilities?.supports_multi_turn === false && <Tooltip
-                content="This target does not track conversation history — each turn is sent independently." relationship="description">
+                content="This target only supports single-turn conversations." relationship="description">
                 <span className={styles.singleTurnWarning}><InfoRegular fontSize={18} /></span>
               </Tooltip>}
               <Tooltip content={sendTooltip} relationship="description">

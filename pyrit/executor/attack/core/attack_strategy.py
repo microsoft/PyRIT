@@ -714,6 +714,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: Capability requirements placed on ``objective_target``. Subclasses
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+    #: A fixed execution-input contract for attacks that do not expose ``params_type``.
+    FIXED_PARAMS_TYPE: ClassVar[type[AttackParameters] | None] = None
 
     #: Named prompt slots, template parameters, and defaults consumed by the attack.
     ADVERSARIAL_PROMPT_REQUIREMENTS: ClassVar[AdversarialPromptRequirements | None] = None
@@ -802,7 +804,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
 
         type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
         self._objective_target = objective_target
-        self._params_type = params_type
+        self._params_type = self.FIXED_PARAMS_TYPE or params_type
         self._prepended_conversation_config = prepended_conversation_config or PrependedConversationConfig()
         # Guard so subclasses that set converters before calling super() aren't clobbered
         if not hasattr(self, "_request_converters"):

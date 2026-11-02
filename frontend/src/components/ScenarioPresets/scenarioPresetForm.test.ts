@@ -41,7 +41,12 @@ function makeCappedScenario() {
   })
 }
 
-const IDENTITY = { name: 'nightly_probe', scenarioName: 'foundry.red_team_agent', description: '' }
+const IDENTITY = {
+  name: 'nightly_probe',
+  scenarioName: 'foundry.red_team_agent',
+  description: '',
+  showInScanner: true,
+}
 const ITERATION_PARAMETER: Parameter = {
   name: 'max_turns',
   type_name: 'int',
@@ -248,6 +253,28 @@ describe('configToPreset', () => {
     const preset = configToPreset(IDENTITY, buildConfig(), { scenario, previous: null })
 
     expect(preset).not.toHaveProperty('author')
+  })
+
+  it('leaves a listed preset without a scanner visibility field', () => {
+    const scenario = makeScenario()
+    const preset = configToPreset(
+      IDENTITY,
+      buildConfig(),
+      { scenario, previous: makePreset({ show_in_scanner: false }) },
+    )
+
+    expect(preset).not.toHaveProperty('show_in_scanner')
+  })
+
+  it('writes the scanner visibility of a hidden preset', () => {
+    const scenario = makeScenario()
+    const preset = configToPreset(
+      { ...IDENTITY, showInScanner: false },
+      buildConfig(),
+      { scenario, previous: null },
+    )
+
+    expect(preset.show_in_scanner).toBe(false)
   })
 
   it('carries only the fields the operator moved off the scenario default', () => {

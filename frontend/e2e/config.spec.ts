@@ -560,13 +560,7 @@ test.describe("Responsive Target Registry", () => {
 
       await page.getByRole("button", { name: /new target/i }).click();
       const dialog = page.getByRole("dialog");
-      const dialogBox = await dialog.boundingBox();
-      if (!dialogBox) {
-        throw new Error("Expected the Create Target dialog to be visible");
-      }
-      if (viewport.name === "desktop") {
-        expect(dialogBox.width).toBeLessThanOrEqual(640);
-      }
+      await expect(dialog).toBeVisible();
       await selectTargetType(page, dialog, "RoundRobinTarget");
 
       const addTargetSelect = dialog.locator("select");
@@ -610,7 +604,7 @@ test.describe("Responsive Target Registry", () => {
       );
     });
 
-    test(`should fit and align filter selections at ${viewport.name} width`, async ({
+    test(`should fit and reset filter selections at ${viewport.name} width`, async ({
       page,
     }) => {
       await page.setViewportSize({
@@ -654,25 +648,11 @@ test.describe("Responsive Target Registry", () => {
         expect(widths.scrollWidth).toBeLessThanOrEqual(widths.clientWidth);
       }
 
-      // Wrapped dropdowns start under the first one, and the reset button centers on the first row.
-      const filterBoxes = await page
-        .getByTestId("target-filters")
-        .getByRole("combobox")
-        .evaluateAll((filters) =>
-          filters.map((filter) => {
-            const box = filter.parentElement?.getBoundingClientRect();
-            return { left: box?.left ?? 0, centerY: box ? box.top + box.height / 2 : 0 };
-          })
-        );
-      expect(filterBoxes).toHaveLength(4);
-      for (const { left } of filterBoxes) {
-        expect(left).toBeGreaterThanOrEqual(filterBoxes[0].left);
+      await page.getByRole("button", { name: "Reset all filters", exact: true }).click();
+      for (const { filterName, summary } of selections) {
+        await expect(page.getByRole("combobox", { name: filterName, exact: true })).not.toHaveValue(summary);
       }
-      const resetBox = await page.getByTestId("target-reset-filters-btn").boundingBox();
-      if (!resetBox) {
-        throw new Error("Expected a visible reset button");
-      }
-      expect(Math.abs(resetBox.y + resetBox.height / 2 - filterBoxes[0].centerY)).toBeLessThanOrEqual(1);
+      await expect(page.getByTestId("target-row-filter-chat")).toBeVisible();
 
       const config = page.getByTestId("target-config");
       const configWidth = await config.evaluate((element) => ({

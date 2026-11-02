@@ -41,7 +41,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
     HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
         "crime_cyber": [HarmCategory.MALWARE, HarmCategory.COORDINATION_HARM],
         "crime_injury": [HarmCategory.VIOLENT_CONTENT],
-        "crime_kidnapp": [HarmCategory.VIOLENT_THREATS, HarmCategory.COORDINATION_HARM],
+        "crime_kidnap": [HarmCategory.VIOLENT_THREATS, HarmCategory.COORDINATION_HARM],
         "crime_other": [HarmCategory.COORDINATION_HARM],
         "crime_privacy": [HarmCategory.PPI],
         "crime_propaganda": [HarmCategory.INFO_INTEGRITY],

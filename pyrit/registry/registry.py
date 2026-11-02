@@ -1013,6 +1013,18 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
                 seam_base_type=self._seam_base_type(),
                 allowed_path_params=allowed_path_params,
             )
+            from pyrit.models import SeedPrompt
+
+            for name, value in raw_params.items():
+                source_prompt = inputs.get(name)
+                if (
+                    isinstance(params.get(name), str)
+                    and isinstance(source_prompt, SeedPrompt)
+                    and isinstance(value, SeedPrompt)
+                ):
+                    raw_params[name] = source_prompt.model_copy(
+                        update={"value": value.value, "is_jinja_template": True, "parameters": value.parameters}
+                    )
         with self._catalog_lock:
             self._ensure_discovered()
             names = sorted(name for name, cls in self._classes.items() if cls is type(source))

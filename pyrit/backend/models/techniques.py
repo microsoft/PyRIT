@@ -62,6 +62,7 @@ class TechniqueConfiguration(BaseModel):
     supplied_parameters: list[str]
     read_only: dict[str, str]
     supports_prepended_conversation: bool = False
+    supports_prompt: bool = False
 
 
 class TechniqueEditResponse(BaseModel):

@@ -44,6 +44,8 @@ class SkeletonKeyAttack(PromptSendingAttack):
     Learn more about the attack [@microsoft2024skeletonkey].
     """
 
+    FIXED_PARAMS_TYPE = SkeletonKeyAttackParameters
+
     DEFAULT_SKELETON_KEY_PROMPT_PATH: Path = Path(EXECUTOR_SEED_PROMPT_PATH) / "skeleton_key" / "skeleton_key.prompt"
     DEFAULT_SKELETON_KEY_ACCEPTANCE_PATH: Path = (
         Path(EXECUTOR_SEED_PROMPT_PATH) / "skeleton_key" / "skeleton_key_acceptance.prompt"
@@ -86,7 +88,6 @@ class SkeletonKeyAttack(PromptSendingAttack):
             attack_scoring_config=attack_scoring_config,
             prompt_normalizer=prompt_normalizer,
             max_attempts_on_failure=max_attempts_on_failure,
-            params_type=SkeletonKeyAttackParameters,
             prepended_conversation_config=prepended_conversation_config,
         )
 

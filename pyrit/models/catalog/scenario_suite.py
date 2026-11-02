@@ -3,15 +3,18 @@
 
 """Scenario suite definition models."""
 
-from typing import Self
+from typing import Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pyrit.models.identifiers.class_name_utils import validate_registry_name
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier, Identifiable
 from pyrit.models.request_limits import MAX_ITEMS
 
 SUITE_SCHEMA_VERSION = 1
+
+_NON_BEHAVIORAL_FIELDS = frozenset({"name", "schema_version", "description", "author", "entries"})
 
 
 class ScenarioSuiteEntry(BaseModel):
@@ -38,7 +41,7 @@ class ScenarioSuiteEntry(BaseModel):
         return value
 
 
-class ScenarioSuite(BaseModel):
+class ScenarioSuite(BaseModel, Identifiable):
     """
     A named, ordered collection of scenario preset references.
 
@@ -113,9 +116,48 @@ class ScenarioSuite(BaseModel):
             seen.add(entry.entry_id)
         return self
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the behavioral identity of this suite.
+
+        Entry identifiers support stable editing but do not change what the suite
+        runs, so only ordered preset names contribute to identity.
+
+        Returns:
+            ComponentIdentifier: Identity covering the suite's behavioral fields.
+        """
+        params = self.model_dump(mode="json", exclude=set(_NON_BEHAVIORAL_FIELDS), exclude_none=True)
+        params["entries"] = [entry.preset_name for entry in self.entries]
+        return ComponentIdentifier(
+            class_name=type(self).__name__,
+            class_module=type(self).__module__,
+            params=params,
+        )
+
+    def get_identifier(self) -> ComponentIdentifier:
+        """
+        Return the behavioral identity derived from the current suite definition.
+
+        Returns:
+            ComponentIdentifier: Identity derived from the ordered preset references.
+        """
+        return self._build_identifier()
+
 
 class StoredScenarioSuite(BaseModel):
     """A scenario suite together with the version of its stored document."""
 
     suite: ScenarioSuite = Field(..., description="The stored scenario suite")
     version: str = Field(..., description="Opaque version of the document this suite was read from")
+
+
+class ScenarioSuiteRegistryEntry(BaseModel):
+    """A scenario suite together with the layer that contributed it."""
+
+    suite: ScenarioSuite = Field(..., description="The scenario suite")
+    origin: Literal["stored", "registered"] = Field(
+        ..., description="Whether a stored document or registering code contributed this suite"
+    )
+    version: str | None = Field(
+        None, description="Opaque version of the stored document, or None for a registered suite"
+    )

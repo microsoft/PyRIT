@@ -51,6 +51,7 @@ cp .env_container_settings_example .env.container.settings
 Edit the `.env` and `.env.local` files to add your API keys and configuration values. See [populating secrets](./populating_secrets.md) for details.
 ```
 
+(3-set-source-build-provenance)=
 ### 3. Set Source Build Provenance
 
 From `PyRIT/docker`, derive the required build inputs from the checkout:

@@ -13,10 +13,11 @@ from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import SeedObjective
 from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit
 from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetOptions, ScenarioDatasetRequest
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.registry import TargetRegistry
+from pyrit.registry import ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, DatasetFetchPolicy, DatasetSource, Scenario
 from pyrit.scenario.core import (
     get_default_adversarial_target,
@@ -32,8 +33,39 @@ from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucin
 from pyrit.scenario.scenarios.garak.prompt_inject import PromptInject, PromptInjectDatasetConfiguration
 from pyrit.scenario.scenarios.garak.system_prompt_extraction import SystemPromptExtraction
 from pyrit.scenario.scenarios.garak.web_injection import WebInjection
-from pyrit.score import TrueFalseScorer
+from pyrit.score import SubStringScorer, TrueFalseScorer
 from unit.mocks import MockPromptTarget
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_scorer_override_preserves_defaults_and_rejects_stale_or_unsupported_selections() -> None:
+    resolver = ScenarioConfigurationResolver()
+    with patch.object(ScorerRegistry, "get_registry_singleton", return_value=ScorerRegistry()):
+        scorer = SubStringScorer(substring="expected")
+        registry = ScorerRegistry.get_registry_singleton()
+        registry.instances.register(scorer, name="custom")
+        reference = RegisteredComponentReference(registry_name="custom", identifier_hash=scorer.get_identifier().hash)
+        assert resolver.resolve_constructor_kwargs(scenario_class=ApiKey, objective_scorer=None) == {}
+        assert resolver.resolve_constructor_kwargs(scenario_class=ApiKey, objective_scorer=reference) == {
+            "objective_scorer": scorer
+        }
+        assert (
+            ApiKey(
+                **resolver.resolve_constructor_kwargs(scenario_class=ApiKey, objective_scorer=reference)
+            )._objective_scorer
+            is scorer
+        )
+
+        class FixedScenario(ApiKey):
+            def __init__(self) -> None:
+                super().__init__()
+
+        assert not ScenarioRegistry.supports_objective_scorer(FixedScenario)
+        with pytest.raises(ValueError, match="does not support"):
+            resolver.resolve_constructor_kwargs(scenario_class=FixedScenario, objective_scorer=reference)
+        registry.instances.register(SubStringScorer(substring="changed"), name="custom", replace=True)
+        with pytest.raises(ValueError, match="changed"):
+            resolver.resolve_constructor_kwargs(scenario_class=ApiKey, objective_scorer=reference)
 
 
 def _datasets(**fields: object) -> ScenarioDatasetRequest | None:

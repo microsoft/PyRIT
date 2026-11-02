@@ -14,6 +14,7 @@ interface ChatScorerPickerProps {
   loading?: boolean
   error?: string | null
   inherited?: boolean
+  usage?: 'chat' | 'scenario'
 }
 
 function scorerOptionLabel(scorer: ScorerInstance): string {
@@ -21,13 +22,13 @@ function scorerOptionLabel(scorer: ScorerInstance): string {
 }
 
 export default function ChatScorerPicker({
-  value, scorers, onChange, label = 'Chat scorer', disabled, loading, error, inherited = false,
+  value, scorers, onChange, label = 'Chat scorer', disabled, loading, error, inherited = false, usage = 'chat',
 }: ChatScorerPickerProps) {
   const styles = useChatScorerPickerStyles()
   const selectedScorer = findRegisteredScorer(value, scorers, inherited)
   const available = !value || selectedScorer !== undefined
   const eligibleScorers = scorers.filter((scorer: ScorerInstance) =>
-    scorer.identifier.scorer_type === 'true_false' && !scorer.chat_scoring_disabled_reason)
+    scorer.identifier.scorer_type === 'true_false' && (usage === 'scenario' || !scorer.chat_scoring_disabled_reason))
   const selected = selectedScorer && eligibleScorers.includes(selectedScorer)
     ? `registered:${selectedScorer.scorer_registry_name}` : value ? 'unavailable' : ''
   return (
@@ -39,7 +40,7 @@ export default function ChatScorerPicker({
           const scorer = eligibleScorers.find((item: ScorerInstance) => `registered:${item.scorer_registry_name}` === data.value)
           if (scorer) onChange({ registry_name: scorer.scorer_registry_name, identifier_hash: scorer.identifier.hash })
         }}>
-        <option value="">Off</option>
+        <option value="">{usage === 'scenario' ? 'Use scenario default' : 'Off'}</option>
         {selected === 'unavailable' && value && <option value="unavailable" hidden disabled>
           {selectedScorer ? scorerOptionLabel(selectedScorer) : `Unavailable: ${value.registry_name}`}
         </option>}
@@ -51,7 +52,7 @@ export default function ChatScorerPicker({
       </Select>
       {loading && <Text>Loading scorers...</Text>}
       {error && <Text role="alert">{error}</Text>}
-      {!available && <Text role="alert">The saved scorer is unavailable or its configuration changed. Select a scorer or turn scoring off.</Text>}
+      {!available && <Text role="alert">The saved scorer is unavailable or its configuration changed. Select a scorer or {usage === 'scenario' ? 'use the scenario default' : 'turn scoring off'}.</Text>}
     </Field>
   )
 }
