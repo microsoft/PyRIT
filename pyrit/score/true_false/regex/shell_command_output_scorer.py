@@ -26,21 +26,37 @@ _OPTION = rf"(?={_DASH}){_WORD}"
 _ARGUMENT = rf"(?!{_DASH}){_WORD}"
 
 
-def _quoted_option(flags: str, text_operand: str = "") -> str:
+def _quoted(name: str) -> str:
+    """
+    Build the pattern for an option name written plain or inside one pair of quotes.
+
+    Args:
+        name (str): The pattern for the option name.
+
+    Returns:
+        str: The pattern for `name`, `"name"` or `'name'`.
+    """
+    return rf"""(?:{name}|"{name}"|'{name}')"""
+
+
+def _quoted_option(flags: str, text_operand: str = "", names: str = "") -> str:
     """
     Build the pattern for an option word with a quote that may hide an option such as `"-s"o`.
 
     Args:
         flags (str): The short option letters that take no operand and keep the body.
         text_operand (str): The short option letters whose operand may be any quoted text.
+        names (str): The pattern for option names that keep the body when the whole name is quoted.
 
     Returns:
-        str: The pattern for such a word unless it is only `flags` (`"-s"`) or a text option with its
-            operand attached (`-H"X: y"`).
+        str: The pattern for such a word unless, after the shell removes its quotes, it is one dash and
+            `flags` (`"-s"`), a text option with its operand attached (`-H"X: y"`) or one of `names`.
     """
-    safe = rf"""(?-i:(?:"[-{flags}]*+"|'[-{flags}]*+'|[-{flags}])++{_END}"""
+    safe = rf"""(?-i:(?:""|'')*+(?:-|"-[{flags}]*+"|'-[{flags}]*+')(?:"[{flags}]*+"|'[{flags}]*+'|[{flags}])*+{_END}"""
     if text_operand:
         safe += rf"|-[{flags}]*+[{text_operand}]"
+    if names:
+        safe += rf"""|["'](?:{names})["']{_END}"""
     return rf"""(?={_DASH})(?=[^\s()<>|;&`'"\\]*+["'])(?!{safe}))"""
 
 
@@ -75,27 +91,38 @@ def _download_command(
 # options from a config file (`-K`, `--config`), or prints help, version or manual text instead
 # (`-h`, `-V`, `-M`). Short options are case-sensitive, and the letters in `_CURL_FLAGS` take no
 # operand, so an `o` or `X` after them starts the option's operand.
-_CURL_LETTERS = "#0-9aBfgGijJklLnNpqRsSvZ"
+_CURL_LETTERS = "#0-46aBfgGijJklLnNpqRsSvZ"
 _CURL_FLAGS = rf"[{_CURL_LETTERS}]*+"
 _NOT_STDOUT = rf"""(?!(?:-|"-"|'-'|/dev/stdout){_END})"""
+# Options that take a number, and option names that keep the body when written inside quotes.
+_CURL_NUMBER = rf"(?-i:-{_CURL_FLAGS}[CYmy]|--(?:max-time|connect-timeout|continue-at|retry|speed-limit|speed-time))"
+_CURL_QUOTED_NAMES = (
+    rf"(?-i:-[{_CURL_LETTERS}]*+[ADHbceuUwCEFPQTYmrtxyz]|--(?:silent|show-error|location|fail|insecure|compressed"
+    r"|verbose|progress-bar|globoff|no-progress-meter|fail-with-body|user-agent|header|referer|user|cookie"
+    r"|max-time|connect-timeout|retry|proxy))"
+)
+# These options take any text as their operand and still download the body, so the operand is read
+# with its option: `-A -o` sets the user agent to `-o`.
+_CURL_TEXT_OPERAND = _quoted(
+    r"(?-i:-" + _CURL_FLAGS + r"[ADHbceouUw]"
+    r"|--(?:output|user-agent|header|referer|user|cookie|cookie-jar|dump-header|proxy-user|write-out))"
+)
+_CURL_OTHER_OPERAND = (
+    rf"(?-i:-{_CURL_FLAGS}[CEFKPQTXYmrtxyz]"
+    r"|--(?:max-time|connect-timeout|continue-at|retry|speed-limit|speed-time|proxy|cert|key|cacert|upload-file"
+    r"|form|range|time-cond|config|request|data(?:-raw|-binary|-urlencode|-ascii)?))"
+)
+# Every option that takes an operand, for finding the URL. The operand of `-m`, `-x` or `-T` can
+# stop curl before the download, so outside `_CURL_TEXT_OPERAND` it is checked as a word of its own.
+_CURL_ANY_OPERAND = rf"(?:{_CURL_TEXT_OPERAND}|{_quoted(_CURL_OTHER_OPERAND)})"
 _CURL_NO_BODY = (
     rf"(?-i:-{_CURL_FLAGS}(?:[OIKhVM]|o(?:{_NOT_STDOUT}(?=[^\s)`])|{_SEP}{_NOT_STDOUT})|X(?:{_SEP})?+HEAD{_END})"
     rf"|--output(?:=|{_SEP}){_NOT_STDOUT}|--request(?:=|{_SEP})HEAD{_END}"
     rf"|--remote-name|--head|--config|--help|--version|--manual)"
-    rf"|{_quoted_option(_CURL_LETTERS, 'ADHbceuUw')}"
-)
-# These options take any text as their operand and still download the body, so the operand is read
-# with its option: `-A -o` sets the user agent to `-o`.
-_CURL_TEXT_OPERAND = (
-    r"(?-i:-" + _CURL_FLAGS + r"[ADHbceouUw]"
-    r"|--(?:output|user-agent|header|referer|user|cookie|cookie-jar|dump-header|proxy-user|write-out))"
-)
-# Every option that takes an operand, for finding the URL. The operand of `-m`, `-x` or `-T` can
-# stop curl before the download, so outside `_CURL_TEXT_OPERAND` it is checked as a word of its own.
-_CURL_ANY_OPERAND = (
-    rf"(?:{_CURL_TEXT_OPERAND}|(?-i:-{_CURL_FLAGS}[CEFKPQTXYmrtxyz]"
-    r"|--(?:max-time|connect-timeout|retry|proxy|cert|key|cacert|upload-file|form|range|time-cond|config"
-    r"|request|data(?:-raw|-binary|-urlencode|-ascii)?)))"
+    rf"|{_quoted_option(_CURL_LETTERS, 'ADHbceuUw', _CURL_QUOTED_NAMES)}"
+    # An unknown short option (`-s5`), or a numeric option whose operand is not a number, stops curl.
+    rf"""|(?-i:-{_CURL_FLAGS}(?![ACDEFHKPQTUXYbcdehmortuwxyzIMOV"'-]|{_END}))"""
+    rf"""|{_quoted(_CURL_NUMBER)}{_SEP}(?!["']?+[0-9.]|["']?+-["']?+{_END})"""
 )
 _CURL_WORD = rf"(?!{_CURL_NO_BODY})(?:{_CURL_TEXT_OPERAND}{_SEP}{_WORD}|{_WORD})"
 _CURL_OPTION = rf"(?:{_CURL_ANY_OPERAND}{_SEP}{_WORD}|{_OPTION})"
