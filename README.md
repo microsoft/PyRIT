@@ -27,6 +27,25 @@ Visit our [website](https://microsoft.github.io/PyRIT/) for installation, config
 demos, and documentation. Use the version picker to match the docs to your installation;
 the guides above follow the latest development version.
 
+## Models and systems
+
+Connect to **OpenAI, Anthropic, Azure OpenAI, Microsoft Foundry, Azure Machine Learning,
+Google Gemini, Google Vertex AI, AWS Bedrock, Hugging Face, Ollama, Groq, OpenRouter,
+Cohere, and GitHub Copilot**.
+
+Use OpenAI-compatible APIs or built-in targets, or install the optional
+[LiteLLM adapter](https://github.com/microsoft/PyRIT/blob/main/pyrit/prompt_target/litellm_chat_target.py)
+for additional provider integrations. See the
+[provider configuration guide](https://microsoft.github.io/PyRIT/latest/getting-started/populating-secrets/)
+and [LiteLLM provider directory](https://docs.litellm.ai/docs/providers) for setup and more providers.
+Available features depend on the target and model.
+
+Test complete applications and other endpoints through
+[HTTP](https://microsoft.github.io/PyRIT/latest/code/targets/http-target/),
+[WebSockets](https://microsoft.github.io/PyRIT/latest/code/targets/websocket-target/),
+[browser automation with Playwright](https://microsoft.github.io/PyRIT/latest/code/targets/playwright-target/),
+or [custom targets](https://microsoft.github.io/PyRIT/latest/code/targets/custom-targets/).
+
 ## Built with the community
 
 [![Code contributors](https://img.shields.io/github/contributors/microsoft/PyRIT?label=code%20contributors)](https://github.com/microsoft/PyRIT/graphs/contributors)
