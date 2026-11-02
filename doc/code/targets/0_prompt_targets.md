@@ -323,6 +323,8 @@ queried = await discover_target_capabilities_async(target=target)
 
 Each probe sends a minimal request (bounded by `per_probe_timeout_s`, default 30s, with one retry on transient errors) and only marks a capability or modality as supported if the call returns cleanly. `discover_target_capabilities_async` returns a merged view: probed where possible, declared where probing is unavailable or out of scope. "Supported" here means *the request was accepted* — a target that silently ignores a system prompt or `response_format` directive is still reported as supporting it, so validate response content out of band when the distinction matters. This function is not safe to call concurrently with other operations on the same target instance: it temporarily mutates `target._configuration` and writes probe rows to memory (rows are tagged with `prompt_metadata["capability_probe"] == "1"` for filtering). See [Target Capabilities](./6_1_target_capabilities.ipynb) for runnable examples.
 
+Use `raise_on_error=True` when you apply results automatically. This shared discovery mode first requires a successful control request with a declared input, so a general request rejection does not become negative capability results. If the control or an operational check fails, discovery raises `CapabilityDiscoveryError` and does not apply changes, even with `apply=True`. The default mode remains best-effort and does not change the target unless you set `apply=True`.
+
 ## Multi-Modal Targets
 
 Like most of PyRIT, targets can be multi-modal.

@@ -2,8 +2,9 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
+import { useTargetCapabilityDetection } from "@/hooks/useTargetCapabilityDetection";
 import { makeTarget } from "@/test-utils/targetFixtures";
-import TargetConfig from "./TargetConfig";
+import TargetConfigView from "./TargetConfig";
 import { targetsApi } from "../../services/api";
 import type { TargetInstance, TargetListResponse } from "../../types";
 
@@ -11,10 +12,16 @@ jest.mock("../../services/api", () => ({
   targetsApi: {
     listTargets: jest.fn(),
     createTarget: jest.fn(),
+    detectCapabilities: jest.fn(),
   },
 }));
 
 let mockRuntimeGeneration = "generation-1";
+
+function TargetConfig(props: Omit<React.ComponentProps<typeof TargetConfigView>, "detection">) {
+  const detection = useTargetCapabilityDetection({ generation: mockRuntimeGeneration });
+  return <TargetConfigView {...props} detection={detection} />;
+}
 
 jest.mock("@/hooks/useRuntime", () => ({
   useRuntime: () => ({ generation: mockRuntimeGeneration, ready: true, state: "ready" }),
@@ -65,6 +72,14 @@ const sampleTargets: TargetInstance[] = [
     target_type: "OpenAIChatTarget",
     endpoint: "https://api.openai.com",
     model_name: "gpt-4",
+    capabilities: {
+      supports_multi_turn: true,
+      supports_system_prompt: true,
+      supports_json_output: false,
+      supports_json_schema: false,
+      supported_input_modalities: ["text"],
+      supported_output_modalities: ["text"],
+    },
   }),
   makeTarget({
     target_registry_name: "openai_image_dalle",
@@ -86,6 +101,51 @@ describe("TargetConfig", () => {
     jest.clearAllMocks();
     window.localStorage.clear();
     mockRuntimeGeneration = "generation-1";
+  });
+
+  it("should show saved capabilities immediately and use newer registry data on refresh", async () => {
+    const user = userEvent.setup();
+    const updated: TargetInstance = {
+      ...sampleTargets[0],
+      capabilities: { ...sampleTargets[0].capabilities, supports_multi_turn: false },
+    };
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: sampleTargets,
+      pagination: { limit: 200, has_more: false },
+    });
+
+    mockedTargetsApi.detectCapabilities.mockResolvedValue(updated);
+    const onTargetsLoaded = jest.fn();
+    render(
+      <TestWrapper>
+        <TargetConfig
+          {...defaultProps}
+          defaultObjectiveTarget={sampleTargets[0]}
+          onTargetsLoaded={onTargetsLoaded}
+        />
+      </TestWrapper>,
+    );
+    await user.click(await screen.findByRole("button", { name: "Auto-detect capabilities" }));
+    expect(
+      within(screen.getByRole("combobox", { name: "Default adversarial target" }))
+        .getByRole("option", { name: "openai_chat_gpt4 (gpt-4)" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Select all shown targets" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select openai_chat_gpt4" }));
+    await user.click(screen.getByRole("button", { name: "Begin capability detection" }));
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+    expect(onTargetsLoaded).toHaveBeenCalledTimes(1);
+    expect(
+      within(screen.getByRole("combobox", { name: "Default adversarial target" }))
+        .queryByRole("option", { name: "openai_chat_gpt4 (gpt-4)" }),
+    ).not.toBeInTheDocument();
+    expect(mockedTargetsApi.detectCapabilities).toHaveBeenCalledTimes(1);
+    expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(
+      within(screen.getByRole("combobox", { name: "Default adversarial target" }))
+        .getByRole("option", { name: "openai_chat_gpt4 (gpt-4)" }),
+    ).toBeInTheDocument());
   });
 
   it("should show loading state initially", () => {

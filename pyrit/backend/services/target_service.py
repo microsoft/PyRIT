@@ -27,14 +27,20 @@ from pyrit.backend.models.targets import (
     TargetTypeResponse,
     UnregisteredTarget,
 )
-from pyrit.backend.services.component_lifecycle import release_component_async
+from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
 from pyrit.common import REQUIRED_VALUE, default_values
 from pyrit.common.auth_mode import AUTH_MODES, AuthMode
-from pyrit.models import TargetIdentifier
+from pyrit.models import PromptDataType, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.models.parameter import Parameter
-from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
+from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, RoundRobinTarget
+from pyrit.prompt_target.common.discover_target_capabilities import (
+    DEFAULT_TEST_ASSETS,
+    CapabilityDiscoveryError,
+    discover_target_capabilities_async,
+)
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
@@ -61,9 +67,96 @@ class TargetService:
     validation remains owned by the target classes.
     """
 
+    DETECTION_TIMEOUT_SECONDS: float = 240.0
+
     def __init__(self) -> None:
         """Initialize the target service."""
         self._registry = TargetRegistry.get_registry_singleton()
+        self._detecting: set[str] = set()
+        self._detecting_sources: set[int] = set()
+
+    async def detect_capabilities_async(self, *, target_registry_name: str, expected_hash: str) -> TargetInstance:
+        """
+        Probe private targets and apply a completed result to the selected source.
+
+        Round-robin detection probes each child independently and combines their
+        results. Only the selected parent is updated; live children are not changed.
+
+        Returns:
+            TargetInstance: The updated live target.
+
+        Raises:
+            LookupError: The target is not registered.
+            FileExistsError: Discovery is already running or the source changed.
+            ValueError: The target cannot be probed safely.
+            TimeoutError: Discovery exceeded its operation deadline.
+        """
+        target = self.get_target_object(target_registry_name=target_registry_name)
+        if target is None:
+            raise LookupError("Target not found")
+        if target.get_identifier().hash != expected_hash:
+            raise FileExistsError("The target changed. Refresh the target registry.")
+        if getattr(target, "inner_targets", None) and not isinstance(target, RoundRobinTarget):
+            raise ValueError("Capability detection is not supported for this composite target type.")
+        sources = target.inner_targets if isinstance(target, RoundRobinTarget) else [target]
+        snapshots = [(source, source.configuration) for source in [target, *sources]]
+        source_ids = {id(source) for source, _ in snapshots}
+        if target_registry_name in self._detecting or source_ids & self._detecting_sources:
+            raise FileExistsError("Capability detection is already running for this target or one of its children.")
+        self._detecting.add(target_registry_name)
+        self._detecting_sources.update(source_ids)
+        try:
+            async with asyncio.timeout(self.DETECTION_TIMEOUT_SECONDS):
+                results: list[TargetCapabilities] = []
+                for index, source in enumerate(sources):
+                    try:
+                        results.append(await self._probe_capabilities_async(source))
+                    except (CapabilityDiscoveryError, ValueError) as exc:
+                        if isinstance(target, RoundRobinTarget):
+                            error_type = (
+                                CapabilityDiscoveryError if isinstance(exc, CapabilityDiscoveryError) else ValueError
+                            )
+                            raise error_type(f"Child {index + 1} ({type(source).__name__}): {exc}") from exc
+                        raise
+                capabilities = (
+                    target.aggregate_capabilities(child_capabilities=results)
+                    if isinstance(target, RoundRobinTarget)
+                    else results[0]
+                )
+                if (
+                    self.get_target_object(target_registry_name=target_registry_name) is not target
+                    or any(source.configuration is not configuration for source, configuration in snapshots)
+                    or target.get_identifier().hash != expected_hash
+                    or (isinstance(target, RoundRobinTarget) and target.inner_targets != sources)
+                ):
+                    raise FileExistsError(
+                        "The target changed during capability detection. Refresh the target registry."
+                    )
+                target.apply_capabilities(capabilities=capabilities)
+                return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target)
+        finally:
+            self._detecting.discard(target_registry_name)
+            self._detecting_sources.difference_update(source_ids)
+
+    async def _probe_capabilities_async(self, target: PromptTarget) -> TargetCapabilities:
+        """
+        Check one private target and release its resources.
+
+        Returns:
+            TargetCapabilities: Completed capability results.
+        """
+        probe = await construct_component_async(self._registry.recreate_instance, source=target, params={})
+        try:
+            probe.apply_capabilities(capabilities=target.capabilities)
+            modalities: set[frozenset[PromptDataType]] = {frozenset({"text"})}
+            for modality in DEFAULT_TEST_ASSETS:
+                modalities.update({frozenset({modality}), frozenset({"text", modality})})
+            modalities.update(TOOL_CALL_INPUT_MODALITIES)
+            return await discover_target_capabilities_async(
+                target=probe, test_modalities=modalities, raise_on_error=True
+            )
+        finally:
+            await release_component_async(probe)
 
     def _build_instance_from_object(self, *, target_registry_name: str, target_obj: Any) -> TargetInstance:
         """

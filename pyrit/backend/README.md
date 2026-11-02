@@ -37,6 +37,22 @@ API keys do not authenticate incoming GUI users.
 ### Targets
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
+- `POST /api/targets/{id}/detect-capabilities` - Run live capability checks and
+  apply the result to the registered target. Send `{"expected_hash": "<identifier hash>"}`.
+  Detection uses a private target, has a four-minute operation deadline, and
+  returns the updated target. Changes last only for the current backend session.
+  Unsupported reconstruction returns 400, an unknown target 404, a changed or
+  busy target 409, an inconclusive check 502, and an operation timeout 504.
+  Checks send provider requests and can incur charges. Request acceptance does
+  not verify full feature behavior; features without probes keep declared values.
+  Shared target discovery first requires a successful control request with a
+  declared input. A failed control request is inconclusive, not evidence that
+  features are unsupported, and leaves the target unchanged.
+  For round-robin targets, each child is checked on a private copy. The parent
+  reports shared input combinations and feature support, and all possible outputs.
+  Only the selected parent is updated, after every child check succeeds; child
+  configuration and round-robin rotation stay unchanged. The four-minute deadline
+  covers the entire operation. Other composite types remain unsupported.
 
 ### Saved conversations
 
