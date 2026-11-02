@@ -103,6 +103,16 @@ describe('getInitialFormValues', () => {
     expect(values).toEqual({ names: [] })
   })
 
+  it('serializes and round-trips lists with literal brackets and quotes losslessly', () => {
+    const params = [makeParameter({ name: 'names', type_name: 'list[str]', is_list: true })]
+    const initial = { names: ['[true]', '"quoted"', 'hello, world'] }
+    const formValues = getInitialFormValues(params, initial)
+    expect(formValues.names).toBe('["[true]","\\"quoted\\"","hello, world"]')
+
+    const result = buildParametersFromForm(params, formValues)
+    expect(result).toEqual({ ok: true, parameters: initial })
+  })
+
   it('honors a declared list default when no initial value is provided', () => {
     const params = [
       makeParameter({ name: 'tags', type_name: 'list[str]', is_list: true, choices: ['x', 'y'], default: ['y'] }),
@@ -382,6 +392,13 @@ describe('buildParametersFromForm', () => {
   it.each([false, true])('preserves an explicit empty list (required: %s)', (required) => {
     const params = [makeParameter({ name: 'names', type_name: 'list[str]', is_list: true, required })]
     expect(buildParametersFromForm(params, { names: [] })).toEqual({
+      ok: true, parameters: { names: [] },
+    })
+  })
+
+  it.each([false, true])('preserves an explicit JSON empty array string "[]" (required: %s)', (required) => {
+    const params = [makeParameter({ name: 'names', type_name: 'list[str]', is_list: true, required })]
+    expect(buildParametersFromForm(params, { names: '[]' })).toEqual({
       ok: true, parameters: { names: [] },
     })
   })

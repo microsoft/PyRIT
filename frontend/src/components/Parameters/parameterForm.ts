@@ -126,6 +126,20 @@ function initialBooleanValue(source: unknown): string {
   return String(source).toLowerCase() === 'true' ? 'true' : 'false'
 }
 
+function serializeListValue(source: unknown[]): ParameterFormValue {
+  if (source.length === 0) {
+    return []
+  }
+  const hasSpecialChars = source.some((entry) => {
+    if (typeof entry !== 'string') return false
+    return entry.includes(',') || entry.includes('"') || entry.includes('[') || entry.includes(']')
+  })
+  if (hasSpecialChars) {
+    return JSON.stringify(source)
+  }
+  return source.map((entry) => String(entry)).join(', ')
+}
+
 export function getInitialFormValues(
   params: Parameter[],
   initialParameters?: Record<string, unknown> | null,
@@ -178,13 +192,11 @@ export function getInitialFormValues(
         break
       }
       case 'list': {
-        values[param.name] = Array.isArray(source) && source.length === 0
-          ? []
-          : Array.isArray(source)
-            ? source.map((entry) => String(entry)).join(', ')
-            : source != null
-              ? String(source)
-              : ''
+        values[param.name] = Array.isArray(source)
+          ? serializeListValue(source)
+          : source != null
+            ? String(source)
+            : ''
         break
       }
       default: {
@@ -349,13 +361,27 @@ export function buildParametersFromForm(
     }
 
     if (kind === 'list') {
-      const entries = Array.isArray(value) ? value : parseListValue(raw)
-      if (entries.length === 0 && !Array.isArray(value)) {
+      if (Array.isArray(value)) {
+        const coercedList: unknown[] = []
+        for (const entry of value) {
+          const coerced = coerceToken(entry, elementTypeName(param), param.name)
+          if (!coerced.ok) {
+            return coerced
+          }
+          coercedList.push(coerced.value)
+        }
+        parameters[param.name] = coercedList
+        continue
+      }
+
+      if (raw.length === 0) {
         if (param.required) {
           return { ok: false, error: `${param.name} is required.` }
         }
         continue
       }
+
+      const entries = parseListValue(raw)
       const coercedList: unknown[] = []
       for (const entry of entries) {
         const coerced = coerceToken(entry, elementTypeName(param), param.name)
