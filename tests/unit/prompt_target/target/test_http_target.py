@@ -584,3 +584,61 @@ async def test_send_prompt_async_strips_transfer_encoding_and_sends_intact_multi
     # Verify httpx computed the accurate UTF-8 byte length on the wire (12 bytes for "你好世界")
     assert req.headers.get("content-length") == "12"
     assert req.content == "你好世界".encode()
+
+
+def test_parse_raw_http_request_combines_repeated_cookies(patch_central_database):
+    request = "GET / HTTP/2\nHost: example.com\nCookie: session=abc\ncookie: csrf=def\nCOOKIE: theme=dark\n\n"
+    target = HTTPTarget(http_request=request)
+
+    headers, _, _, _, _ = target.parse_raw_http_request(request)
+
+    assert headers["cookie"] == "session=abc; csrf=def; theme=dark"
+
+
+def test_parse_raw_http_request_ignores_empty_cookie_lines(patch_central_database):
+    request = "GET / HTTP/1.1\nHost: example.com\nCookie:\nCookie: session=abc\nCookie:\n\n"
+    target = HTTPTarget(http_request=request)
+
+    headers, _, _, _, _ = target.parse_raw_http_request(request)
+
+    assert headers["cookie"] == "session=abc"
+
+
+def test_parse_raw_http_request_keeps_last_of_other_repeated_headers(patch_central_database):
+    request = (
+        "GET / HTTP/1.1\n"
+        "Host: first.example.com\n"
+        "Host: second.example.com\n"
+        "Authorization: Bearer old\n"
+        "Authorization: Bearer new\n\n"
+    )
+    target = HTTPTarget(http_request=request)
+
+    headers, _, url, _, _ = target.parse_raw_http_request(request)
+
+    assert headers["authorization"] == "Bearer new"
+    assert url == "https://second.example.com/"
+
+
+def test_parse_raw_http_request_raw_header_replaces_client_default(patch_central_database):
+    request = "GET / HTTP/1.1\nHost: example.com\nCookie: session=abc\n\n"
+    target = HTTPTarget(http_request=request, client=httpx.AsyncClient(headers={"Cookie": "default=1"}))
+
+    headers, _, _, _, _ = target.parse_raw_http_request(request)
+
+    assert headers["cookie"] == "session=abc"
+
+
+async def test_send_prompt_async_sends_every_repeated_cookie(patch_central_database):
+    captured_requests: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(200, text="ok")
+
+    raw_request = "POST / HTTP/1.1\nHost: example.com\nCookie: session=abc\nCookie: csrf=def\n\n{PROMPT}"
+    target = HTTPTarget(http_request=raw_request, transport=httpx.MockTransport(handle_request))
+
+    await target.send_prompt_async(message=Message.from_prompt(prompt="hello", role="user"))
+
+    assert captured_requests[0].headers["cookie"] == "session=abc; csrf=def"
