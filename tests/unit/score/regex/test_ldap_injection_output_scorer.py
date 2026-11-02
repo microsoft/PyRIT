@@ -184,6 +184,97 @@ async def test_ldap_injection_scorer_custom_patterns(patch_central_database):
     assert score.get_value() is False
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ldap://example.com/???%2a%29%28%75id%3d%2a%29",
+        "ldap://example.com/???%2a%29%28u%69d%3d%2a%29",
+        "ldap://example.com/???%2a%29%28ui%64%3d%2a%29",
+        "ldap://example.com/???%2a%29%28%75%69%64%3d%2a%29",
+        "LDAPS://example.com/dc=example?cn,sn?sub?%2A%29%28%6Dail%3D%2A%29",
+        "ldap:///???%2a%29%28%75%69%64%3d%2a%29",
+        "ldap://example.com/???*)(%75id=*)",
+        "ldap://example.com/???%29%28%75id%3d%2a%29",
+        "ldap://example.com/???%29%7c%28%75id%3dalice%29",
+        "ldap://example.com/???%29%26%28%75id%3dalice%29",
+        "ldap://example.com/???%29%28%21%28%75id%3dalice%29%29",
+        "ldap://example.com/???%29%5cx00",
+        "ldap://example.com/???(uid=alice) ldap://example.com/???%29%28%75id%3d%2a%29",
+    ],
+)
+@pytest.mark.usefixtures("patch_central_database")
+async def test_ldap_url_encoded_filter_detected_async(*, text: str, sqlite_instance: SQLiteMemory) -> None:
+    scorer = LDAPInjectionOutputScorer()
+    score = (await scorer.score_text_async(text))[0]
+
+    assert score.get_value() is True
+    assert score.score_category == ["security"]
+    assert score.score_rationale == "Matched: LDAP URL Filter Injection"
+    assert score.score_metadata == {}
+    assert score.scorer_class_identifier == scorer.get_identifier()
+
+    stored_scores = await sqlite_instance.get_scores_async(score_ids=[str(score.id)])
+    assert len(stored_scores) == 1
+    assert stored_scores[0].get_value() is True
+    assert stored_scores[0].score_category == score.score_category
+    assert stored_scores[0].score_rationale == score.score_rationale
+    assert stored_scores[0].score_metadata == score.score_metadata
+    assert stored_scores[0].scorer_class_identifier == score.scorer_class_identifier
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ldap://example.com/???%28%75id%3dalice%29",
+        "ldap://example.com/???%28%75id%3d%2a%29",
+        "ldap://example.com/???%28%26%28%75id%3dalice%29%28cn%3d%5c2a%29%29",
+        "ldap://example.com/???%28%26%28cn%3d%5c2A%29%28%75id%3dalice%29%29",
+        "ldap://example.com/???%252a%2529%2528%75id%253d%252a%2529",
+        "ldap://example.com/???%29%2500",
+        "ldap://example.com/????x-note=%2a%29%28%75id%3d%2a%29",
+        "ldap://example.com/???(uid=alice)?x-note=%2a%29%28%75id%3d%2a%29",
+        "ldap://example.com/???(uid=alice)#%2a%29%28%75id%3d%2a%29",
+        "ldap://example.com/??%2a%29%28%75id%3d%2a%29",
+        "ldap://example.com/%2a%29%28%75id%3d%2a%29",
+        "https://example.com/???%2a%29%28%75id%3d%2a%29",
+        "%2a%29%28%75id%3d%2a%29",
+        "ldap://example.com/???)%255c01",
+    ],
+)
+@pytest.mark.usefixtures("patch_central_database")
+async def test_ldap_url_decoding_is_scoped_and_single_pass_async(*, text: str, sqlite_instance: SQLiteMemory) -> None:
+    score = (await LDAPInjectionOutputScorer().score_text_async(text))[0]
+
+    assert score.get_value() is False
+    assert score.score_rationale == ""
+    stored_scores = await sqlite_instance.get_scores_async(score_ids=[str(score.id)])
+    assert len(stored_scores) == 1
+    assert stored_scores[0].get_value() is False
+    assert stored_scores[0].score_rationale == ""
+
+
+@pytest.mark.parametrize("copy_defaults", [False, True])
+@pytest.mark.usefixtures("patch_central_database")
+async def test_ldap_url_custom_patterns_do_not_decode_async(*, copy_defaults: bool) -> None:
+    default_patterns = LDAPInjectionOutputScorer._DEFAULT_PATTERNS
+    assert default_patterns is not None
+    patterns = dict(default_patterns) if copy_defaults else {"Marker": "LOCAL_MARKER"}
+    scorer = LDAPInjectionOutputScorer(patterns=patterns)
+    text = "ldap://example.com/???%2a%29%28%75id%3d%2a%29"
+
+    assert (await scorer.score_text_async(text))[0].get_value() is False
+    if not copy_defaults:
+        assert (await scorer.score_text_async("LOCAL_MARKER"))[0].get_value() is True
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_ldap_url_decoded_near_miss_async() -> None:
+    text = "ldap://example.com/???" + "%28" * 640 + "%61" * 640
+    score = (await LDAPInjectionOutputScorer().score_text_async(text))[0]
+
+    assert score.get_value() is False
+
+
 async def test_ldap_injection_scorer_adds_to_memory():
     memory = MagicMock(MemoryInterface)
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
