@@ -3,6 +3,7 @@
 
 import asyncio
 import codecs
+import logging
 import os
 import tempfile
 import threading
@@ -14,6 +15,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    drain_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+    wait_for_worker_ready_async,
+)
 from unit.mocks import MockPromptTarget, get_image_message_piece, get_mock_attack_identifier, get_mock_target_identifier
 
 from pyrit.converter import (
@@ -1252,20 +1260,39 @@ async def test_convert_audio_async_cleans_up_temp_file_when_cancelled_during_con
 async def test_convert_audio_async_removes_temp_file_written_after_cancellation(
     mock_memory_instance, sample_pcm, dummy_audio_converter_config
 ):
-    write_started = threading.Event()
+    loop = asyncio.get_running_loop()
+    event_loop_thread = threading.get_ident()
+    write_started = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    cleanup_finished = asyncio.Event()
     release_write = threading.Event()
+    release_cleanup = threading.Event()
     written_paths: list[str] = []
+    cleanup_threads: list[int] = []
     write_pcm_to_temp_wav = prompt_normalizer_module._write_pcm_to_temp_wav
+    unlink = Path.unlink
 
     def write_after_release(**kwargs):
-        write_started.set()
-        release_write.wait(timeout=5)
+        loop.call_soon_threadsafe(write_started.set)
+        if not release_write.wait(TEST_WATCHDOG_SECONDS):
+            raise TimeoutError("The test did not release the WAV writer.")
         written_paths.append(write_pcm_to_temp_wav(**kwargs))
         return written_paths[-1]
+
+    def hold_cleanup(path, *, missing_ok=False):
+        cleanup_threads.append(threading.get_ident())
+        loop.call_soon_threadsafe(cleanup_started.set)
+        try:
+            if cleanup_threads[-1] != event_loop_thread and not release_cleanup.wait(TEST_WATCHDOG_SECONDS):
+                raise TimeoutError("The test did not release WAV cleanup.")
+            return unlink(path, missing_ok=missing_ok)
+        finally:
+            loop.call_soon_threadsafe(cleanup_finished.set)
 
     normalizer = PromptNormalizer()
     with (
         patch.object(prompt_normalizer_module, "_write_pcm_to_temp_wav", side_effect=write_after_release),
+        patch.object(Path, "unlink", autospec=True, side_effect=hold_cleanup),
         patch.object(normalizer, "convert_values_async", new_callable=AsyncMock) as mock_convert,
     ):
         task = asyncio.create_task(
@@ -1277,17 +1304,316 @@ async def test_convert_audio_async_removes_temp_file_written_after_cancellation(
                 sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
             )
         )
-        assert await asyncio.to_thread(write_started.wait, 5)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        try:
+            await wait_for_worker_ready_async(started=write_started, operation=task)
+            assert not written_paths
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await wait_for_completion_async(future=task)
+            assert not written_paths
 
-        release_write.set()
-        for _ in range(500):
-            if written_paths and not Path(written_paths[0]).exists():
-                break
-            await asyncio.sleep(0.01)
+            release_write.set()
+            await wait_for_event_async(event=cleanup_started, tasks=[])
+            assert cleanup_threads[0] != event_loop_thread
+            heartbeat = asyncio.create_task(asyncio.sleep(0))
+            await wait_for_completion_async(future=heartbeat)
+            assert not cleanup_finished.is_set()
+        finally:
+            release_write.set()
+            release_cleanup.set()
+            if not task.done():
+                task.cancel()
+            await drain_tasks_async(task)
+            if write_started.is_set():
+                await wait_for_event_async(event=cleanup_finished, tasks=[])
 
     assert len(written_paths) == 1
     assert not Path(written_paths[0]).exists()
     mock_convert.assert_not_called()
+
+
+@pytest.mark.parametrize("reader_fails", [False, True])
+async def test_convert_audio_async_waits_for_cancelled_reader_before_removing_input(
+    mock_memory_instance, sample_pcm, reader_fails
+):
+    loop = asyncio.get_running_loop()
+    read_started = asyncio.Event()
+    read_closed = asyncio.Event()
+    release_read = threading.Event()
+    read_finished = threading.Event()
+    paths: list[str] = []
+    cleanup_after_read: list[bool] = []
+    cleanup_scheduled_early: list[bool] = []
+    unlink = Path.unlink
+    to_thread = asyncio.to_thread
+
+    def held_read(path):
+        paths.append(path)
+        try:
+            with wave.open(path, "rb") as wav_in:
+                loop.call_soon_threadsafe(read_started.set)
+                if not release_read.wait(TEST_WATCHDOG_SECONDS):
+                    raise TimeoutError("The test did not release the WAV reader.")
+                if reader_fails:
+                    raise OSError("WAV read failed after cancellation.")
+                return (
+                    wav_in.getframerate(),
+                    wav_in.getnchannels(),
+                    wav_in.getsampwidth(),
+                    wav_in.readframes(wav_in.getnframes()),
+                )
+        finally:
+            read_finished.set()
+            loop.call_soon_threadsafe(read_closed.set)
+
+    def record_unlink(path, *, missing_ok=False):
+        cleanup_after_read.append(read_finished.is_set())
+        return unlink(path, missing_ok=missing_ok)
+
+    async def observe_to_thread_async(function, *args, **kwargs):
+        if getattr(function, "__name__", "") == "unlink":
+            cleanup_scheduled_early.append(not read_finished.is_set())
+        return await to_thread(function, *args, **kwargs)
+
+    normalizer = PromptNormalizer()
+    config = ConverterConfiguration(
+        converters=[MagicMock(spec=Converter)],
+        prompt_data_types_to_apply=["text"],
+    )
+    with (
+        patch.object(prompt_normalizer_module, "_read_pcm_from_wav", side_effect=held_read),
+        patch.object(Path, "unlink", autospec=True, side_effect=record_unlink),
+        patch.object(asyncio, "to_thread", side_effect=observe_to_thread_async),
+    ):
+        existing_tasks = asyncio.all_tasks()
+        task = asyncio.create_task(
+            normalizer.convert_audio_async(
+                raw_pcm=sample_pcm,
+                converter_configurations=[config],
+                sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+                num_channels=_AUDIO_NUM_CHANNELS,
+                sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+            )
+        )
+        try:
+            await wait_for_worker_ready_async(started=read_started, operation=task)
+            task.cancel()
+            # Loop shutdown also cancels Tasks created by the operation.
+            owned_tasks = asyncio.all_tasks() - existing_tasks - {task}
+            for owned_task in owned_tasks:
+                owned_task.cancel()
+            await drain_tasks_async(*owned_tasks)
+            await asyncio.sleep(0)
+            assert not task.done()
+            assert not cleanup_scheduled_early
+            assert not cleanup_after_read
+
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            release_read.set()
+            with pytest.raises(asyncio.CancelledError) as cancellation:
+                await wait_for_completion_async(future=task)
+            if reader_fails:
+                assert isinstance(cancellation.value.__cause__, OSError)
+            assert cleanup_after_read == [True]
+            assert paths and not Path(paths[0]).exists()
+        finally:
+            release_read.set()
+            if not task.done():
+                task.cancel()
+            await drain_tasks_async(task)
+            if read_started.is_set():
+                await wait_for_event_async(event=read_closed, tasks=[])
+            for path in paths:
+                unlink(Path(path), missing_ok=True)
+
+
+async def test_convert_audio_async_removes_completed_write_cancelled_before_handoff(
+    mock_memory_instance, sample_pcm, dummy_audio_converter_config
+):
+    loop = asyncio.get_running_loop()
+    event_loop_thread = threading.get_ident()
+    cleaned = asyncio.Event()
+    paths: list[str] = []
+    cleanup_threads: list[int] = []
+    record_path = prompt_normalizer_module._TempWavWrite.record_path
+    unlink = Path.unlink
+
+    def record_then_cancel(ownership, path):
+        accepted = record_path(ownership, path)
+        paths.append(path)
+        loop.call_soon_threadsafe(task.cancel)
+        return accepted
+
+    def record_unlink(path, *, missing_ok=False):
+        cleanup_threads.append(threading.get_ident())
+        try:
+            return unlink(path, missing_ok=missing_ok)
+        finally:
+            loop.call_soon_threadsafe(cleaned.set)
+
+    normalizer = PromptNormalizer()
+    with (
+        patch.object(
+            prompt_normalizer_module._TempWavWrite, "record_path", autospec=True, side_effect=record_then_cancel
+        ),
+        patch.object(Path, "unlink", autospec=True, side_effect=record_unlink),
+        patch.object(normalizer, "convert_values_async", new_callable=AsyncMock) as mock_convert,
+    ):
+        task = asyncio.create_task(
+            normalizer.convert_audio_async(
+                raw_pcm=sample_pcm,
+                converter_configurations=[dummy_audio_converter_config],
+                sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+                num_channels=_AUDIO_NUM_CHANNELS,
+                sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+            )
+        )
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await wait_for_completion_async(future=task)
+            await wait_for_event_async(event=cleaned, tasks=[])
+            assert len(paths) == 1
+            assert cleanup_threads and cleanup_threads[0] != event_loop_thread
+            assert not Path(paths[0]).exists()
+        finally:
+            if not task.done():
+                task.cancel()
+            await drain_tasks_async(task)
+            if paths:
+                await wait_for_event_async(event=cleaned, tasks=[])
+                unlink(Path(paths[0]), missing_ok=True)
+
+    mock_convert.assert_not_called()
+
+
+async def test_convert_audio_async_removes_abandoned_write_during_loop_shutdown(
+    mock_memory_instance, sample_pcm, dummy_audio_converter_config
+):
+    outer_loop = asyncio.get_running_loop()
+    shutdown_started = asyncio.Event()
+    release_write = threading.Event()
+    written_paths: list[str] = []
+    write_pcm_to_temp_wav = prompt_normalizer_module._write_pcm_to_temp_wav
+    normalizer = PromptNormalizer()
+
+    def run_cancelled_conversion():
+        runner = asyncio.Runner()
+        loop = runner.get_loop()
+        shutdown_executor = loop.shutdown_default_executor
+
+        async def signal_shutdown_async(*args, **kwargs):
+            outer_loop.call_soon_threadsafe(shutdown_started.set)
+            await shutdown_executor(*args, **kwargs)
+
+        async def convert_and_stop_async():
+            write_started = asyncio.Event()
+
+            def write_after_release(**kwargs):
+                loop.call_soon_threadsafe(write_started.set)
+                if not release_write.wait(TEST_WATCHDOG_SECONDS):
+                    raise TimeoutError("The test did not release the WAV writer.")
+                path = write_pcm_to_temp_wav(**kwargs)
+                written_paths.append(path)
+                return path
+
+            with (
+                patch.object(prompt_normalizer_module, "_write_pcm_to_temp_wav", side_effect=write_after_release),
+                patch.object(normalizer, "convert_values_async", new_callable=AsyncMock),
+            ):
+                task = asyncio.create_task(
+                    normalizer.convert_audio_async(
+                        raw_pcm=sample_pcm,
+                        converter_configurations=[dummy_audio_converter_config],
+                        sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+                        num_channels=_AUDIO_NUM_CHANNELS,
+                        sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+                    )
+                )
+                await wait_for_worker_ready_async(started=write_started, operation=task)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await wait_for_completion_async(future=task)
+
+        with patch.object(loop, "shutdown_default_executor", side_effect=signal_shutdown_async), runner:
+            runner.run(convert_and_stop_async())
+
+    runner_task = asyncio.create_task(asyncio.to_thread(run_cancelled_conversion))
+    try:
+        await wait_for_event_async(event=shutdown_started, tasks=[runner_task])
+        assert not written_paths
+        release_write.set()
+        await wait_for_completion_async(future=runner_task)
+        assert len(written_paths) == 1
+        assert not Path(written_paths[0]).exists()
+    finally:
+        release_write.set()
+        await drain_tasks_async(runner_task)
+        for path in written_paths:
+            Path(path).unlink(missing_ok=True)
+
+
+async def test_convert_audio_async_logs_abandoned_cleanup_failure(
+    mock_memory_instance, sample_pcm, dummy_audio_converter_config, caplog
+):
+    loop = asyncio.get_running_loop()
+    write_started = asyncio.Event()
+    failure_reported = asyncio.Event()
+    release_write = threading.Event()
+    written_paths: list[str] = []
+    write_pcm_to_temp_wav = prompt_normalizer_module._write_pcm_to_temp_wav
+    report_failure = prompt_normalizer_module._report_abandoned_temp_wav_failure
+    unlink = Path.unlink
+
+    def write_after_release(**kwargs):
+        loop.call_soon_threadsafe(write_started.set)
+        if not release_write.wait(TEST_WATCHDOG_SECONDS):
+            raise TimeoutError("The test did not release the WAV writer.")
+        path = write_pcm_to_temp_wav(**kwargs)
+        written_paths.append(path)
+        return path
+
+    def fail_cleanup(path, *, missing_ok=False):
+        raise PermissionError("Test cleanup failure")
+
+    def record_failure(work):
+        try:
+            report_failure(work)
+        finally:
+            loop.call_soon_threadsafe(failure_reported.set)
+
+    normalizer = PromptNormalizer()
+    caplog.set_level(logging.ERROR, logger=prompt_normalizer_module.__name__)
+    with (
+        patch.object(prompt_normalizer_module, "_write_pcm_to_temp_wav", side_effect=write_after_release),
+        patch.object(prompt_normalizer_module, "_report_abandoned_temp_wav_failure", side_effect=record_failure),
+        patch.object(Path, "unlink", autospec=True, side_effect=fail_cleanup),
+        patch.object(normalizer, "convert_values_async", new_callable=AsyncMock),
+    ):
+        task = asyncio.create_task(
+            normalizer.convert_audio_async(
+                raw_pcm=sample_pcm,
+                converter_configurations=[dummy_audio_converter_config],
+                sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+                num_channels=_AUDIO_NUM_CHANNELS,
+                sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+            )
+        )
+        try:
+            await wait_for_worker_ready_async(started=write_started, operation=task)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await wait_for_completion_async(future=task)
+            release_write.set()
+            await wait_for_event_async(event=failure_reported, tasks=[])
+            assert any(record.exc_info and isinstance(record.exc_info[1], PermissionError) for record in caplog.records)
+        finally:
+            release_write.set()
+            if not task.done():
+                task.cancel()
+            await drain_tasks_async(task)
+            if write_started.is_set():
+                await wait_for_event_async(event=failure_reported, tasks=[])
+            for path in written_paths:
+                unlink(Path(path), missing_ok=True)
