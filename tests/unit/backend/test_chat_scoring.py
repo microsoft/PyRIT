@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import sqlalchemy as sa
 from pydantic import PydanticUserError
 
 from pyrit.backend.models.attacks import (
@@ -32,6 +33,7 @@ from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.common.attack_result_scope import attack_result_id_scope, get_current_attack_result_id
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.memory.memory_interface import AttackStateConflictError
+from pyrit.memory.memory_models import ScoreEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -55,16 +57,22 @@ from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.results.attack_result import AttackScoringInputs
 from pyrit.registry import ScorerRegistry
 from pyrit.score import (
+    FloatScaleThresholdScorer,
     ManualScorer,
     MessageToolCallScorer,
     MessageTrueFalseScorer,
     ScorerPromptValidator,
     SelfAskTrueFalseScorer,
     SubStringScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseFallbackScorer,
+    TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
     create_conversation_scorer,
 )
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from unit.async_utils import TEST_WATCHDOG_SECONDS
-from unit.mocks import MockPromptTarget
+from unit.mocks import MockPromptTarget, run_memory_session_async
 
 
 class _ChatJudgeTarget(MockPromptTarget):
@@ -82,17 +90,104 @@ class _ChatJudgeTarget(MockPromptTarget):
         ]
 
 
+class _ChatFloatScaleScorer(MessageFloatScaleScorer):
+    def __init__(self) -> None:
+        super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        return [
+            Score(
+                score_value="0.8",
+                score_type="float_scale",
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=message_piece.id,
+                objective=objective,
+            )
+        ]
+
+
+@pytest.mark.parametrize("wrapper_mode", ["inverter", "threshold", "fallback"])
+async def test_copying_wrapper_message_trigger_projection_lifecycle_async(
+    latest_response_chat, wrapper_mode: str
+) -> None:
+    policy, attack, request, _ = latest_response_chat
+    conversation_scorer = create_conversation_scorer(scorer=SubStringScorer(substring="default"))
+    if wrapper_mode == "threshold":
+        scorer = FloatScaleThresholdScorer(
+            scorer=create_conversation_scorer(scorer=_ChatFloatScaleScorer()), threshold=0.5
+        )
+    elif wrapper_mode == "fallback":
+        scorer = TrueFalseFallbackScorer(
+            scorer=conversation_scorer,
+            fallback_scorer=create_conversation_scorer(scorer=SubStringScorer(substring="fallback")),
+        )
+    else:
+        scorer = TrueFalseInverterScorer(scorer=conversation_scorer)
+    ScorerRegistry.get_registry_singleton().instances.register(scorer, name="copying-wrapper")
+    reference = RegisteredComponentReference(
+        registry_name="copying-wrapper", identifier_hash=scorer.get_identifier().hash
+    )
+    await AttackService().update_attack_async(
+        attack_result_id=attack.attack_result_id, request=UpdateAttackRequest(chat_scorer=reference)
+    )
+    request = request.model_copy(update={"scorer": reference})
+    with patch.object(scorer, "score_async", wraps=scorer.score_async) as evaluate:
+        first = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+        assert evaluate.call_count == 1
+        projected = await AttackService().get_conversation_messages_async(
+            attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+        )
+        assert projected.automated_score is not None and projected.automated_score.id == first.score.id
+        assert evaluate.call_count == 1
+        repeated = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+        assert repeated.reused and repeated.score.id == first.score.id
+        assert evaluate.call_count == 1
+        [persisted] = await CentralMemory.get_memory_instance().get_scores_async(score_ids=[first.score.id])
+        assert isinstance(persisted.scorable, MessageScorable)
+        assert str(persisted.message_piece_id) == str(request.response_id)
+        await CentralMemory.get_memory_instance().add_message_to_memory_async(
+            request=MessagePiece(
+                role="user", original_value="Changed nested history", conversation_id=attack.conversation_id
+            ).to_message()
+        )
+        stale = await AttackService().get_conversation_messages_async(
+            attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+        )
+        assert stale.latest_response_id == projected.latest_response_id == str(request.response_id)
+        assert stale.automated_score is None and stale.outcome == AttackOutcome.UNDETERMINED
+        assert evaluate.call_count == 1
+        refreshed = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+        assert not refreshed.reused and refreshed.score.id != first.score.id
+        assert evaluate.call_count == 2
+
+
 @pytest.mark.parametrize("target_backed", [False, True])
+@pytest.mark.parametrize("wrapper_mode", ["direct", "composite", "nested"])
 async def test_apply_conversation_snapshot_reuse_projection_and_judge_owner_async(
     *,
     latest_response_chat: tuple[ChatScoringService, AttackResult, ApplyChatScorerRequest, SubStringScorer],
     sqlite_instance: SQLiteMemory,
     target_backed: bool,
+    wrapper_mode: str,
 ) -> None:
     policy, attack, request, _ = latest_response_chat
     target = _ChatJudgeTarget()
     child = SelfAskTrueFalseScorer(chat_target=target) if target_backed else SubStringScorer(substring="default")
-    scorer = create_conversation_scorer(scorer=child)
+    conversation_scorer = create_conversation_scorer(scorer=child)
+    scorer = conversation_scorer
+    if wrapper_mode != "direct":
+        scorer = TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.AND,
+            scorers=[scorer, SubStringScorer(substring="default")],
+        )
+    if wrapper_mode == "nested":
+        scorer = TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.OR,
+            scorers=[scorer, SubStringScorer(substring="default")],
+        )
     ScorerRegistry.get_registry_singleton().instances.register(scorer, name="conversation-judge")
     reference = RegisteredComponentReference(
         registry_name="conversation-judge", identifier_hash=scorer.get_identifier().hash
@@ -102,16 +197,22 @@ async def test_apply_conversation_snapshot_reuse_projection_and_judge_owner_asyn
     )
     request = request.model_copy(update={"scorer": reference})
     outer_owner = str(uuid.uuid4())
-    with attack_result_id_scope(attack_result_id=outer_owner):
+    with (
+        patch.object(scorer, "score_async", wraps=scorer.score_async) as evaluate,
+        attack_result_id_scope(attack_result_id=outer_owner),
+    ):
         first = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+        assert evaluate.call_count == 1
         assert get_current_attack_result_id() == outer_owner
         projected = await AttackService().get_conversation_messages_async(
             attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
         )
         assert projected.automated_score is not None
         assert projected.automated_score.id == first.score.id
+        assert evaluate.call_count == 1
         repeated = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
         assert repeated.reused and repeated.score.id == first.score.id
+        assert evaluate.call_count == 1
     assert get_current_attack_result_id() is None
     if target_backed:
         assert len(target.prompt_sent) == 1
@@ -124,15 +225,78 @@ async def test_apply_conversation_snapshot_reuse_projection_and_judge_owner_asyn
         assert not await sqlite_instance.get_message_pieces_async(attack_result_id=outer_owner)
     added = MessagePiece(role="user", original_value="An appended live request", conversation_id=attack.conversation_id)
     await sqlite_instance.add_message_to_memory_async(request=added.to_message())
-    projected = await AttackService().get_conversation_messages_async(
-        attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
-    )
-    assert projected.latest_response_id == str(request.response_id)
-    assert projected.automated_score is None
-    reevaluated = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+    with patch.object(scorer, "score_async", wraps=scorer.score_async) as changed_evaluate:
+        projected = await AttackService().get_conversation_messages_async(
+            attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+        )
+        assert projected.latest_response_id == str(request.response_id)
+        assert projected.automated_score is None
+        assert projected.outcome == AttackOutcome.UNDETERMINED
+        changed_evaluate.assert_not_called()
+        reevaluated = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+        assert evaluate.call_count + changed_evaluate.call_count == 2
     assert not reevaluated.reused and reevaluated.score.id != first.score.id
     if target_backed:
         assert len(target.prompt_sent) == 2
+
+
+async def test_public_metadata_cannot_authorize_stale_nested_projection_async(
+    latest_response_chat, sqlite_instance: SQLiteMemory
+) -> None:
+    policy, attack, request, _ = latest_response_chat
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[
+            create_conversation_scorer(scorer=SubStringScorer(substring="default")),
+            SubStringScorer(substring="default"),
+        ],
+    )
+    ScorerRegistry.get_registry_singleton().instances.register(scorer, name="nested-provenance")
+    reference = RegisteredComponentReference(
+        registry_name="nested-provenance", identifier_hash=scorer.get_identifier().hash
+    )
+    await AttackService().update_attack_async(
+        attack_result_id=attack.attack_result_id, request=UpdateAttackRequest(chat_scorer=reference)
+    )
+    request = request.model_copy(update={"scorer": reference})
+    with patch.object(scorer, "score_async", wraps=scorer.score_async) as evaluate:
+        first = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+
+        def forge_public_metadata(session) -> None:
+            entry = session.get(ScoreEntry, first.score.id)
+            assert entry is not None
+            assert entry.snapshot_participation == {"0": None, "1": None}
+            entry.snapshot_participation = None
+            entry.score_metadata = {**entry.score_metadata, "pyrit_internal_snapshot_participation": '{"1": null}'}
+            session.commit()
+            session.expire_all()
+            raw = session.get(ScoreEntry, first.score.id)
+            assert raw.snapshot_participation is None
+            assert raw.score_metadata["pyrit_internal_snapshot_participation"] == '{"1": null}'
+            assert (
+                session.scalar(
+                    sa.select(ScoreEntry.snapshot_participation.is_(None)).where(ScoreEntry.id == first.score.id)
+                )
+                is True
+            )
+
+        await run_memory_session_async(memory=sqlite_instance, operation=forge_public_metadata)
+        [persisted] = await sqlite_instance.get_scores_async(score_ids=[first.score.id])
+        assert persisted._snapshot_participation is None
+        assert persisted.score_metadata["pyrit_internal_snapshot_participation"] == '{"1": null}'
+        await sqlite_instance.add_message_to_memory_async(
+            request=MessagePiece(
+                role="user", original_value="Changed history", conversation_id=attack.conversation_id
+            ).to_message()
+        )
+        projected = await AttackService().get_conversation_messages_async(
+            attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+        )
+        assert projected.automated_score is None and projected.outcome == AttackOutcome.UNDETERMINED
+        assert evaluate.call_count == 1
+        reevaluated = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+        assert not reevaluated.reused and reevaluated.score.id != first.score.id
+        assert evaluate.call_count == 2
 
 
 @pytest.mark.parametrize("exit_mode", ["error", "cancel"])
