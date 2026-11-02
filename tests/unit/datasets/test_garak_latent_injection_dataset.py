@@ -8,12 +8,10 @@ import itertools
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
 from pyrit.models import Seed, SeedDataset
-from pyrit.scenario import DatasetSource
 from pyrit.scenario.scenarios.garak.latent_injection import LatentInjectionDatasetConfiguration
 
 _DATASET_DIR = Path(__file__).parent.parent.parent.parent / "pyrit" / "datasets" / "seed_datasets" / "local" / "garak"
@@ -122,12 +120,14 @@ async def test_payload_split_preserves_complete_prompt_population_async(
     ingredient_seeds: dict[str, list[Seed[Any]]],
 ) -> None:
     config = LatentInjectionDatasetConfiguration(
-        sources=[DatasetSource(name=name) for name in _FILES],
         families=LatentInjectionDatasetConfiguration.FAMILIES,
         max_total="all",
     )
-    with patch.object(config, "_collect_named_seeds_async", return_value=ingredient_seeds):
-        groups = await config.get_attack_seed_groups_async()
+    # The ingredients are required data now, so assemble them directly instead of the dataset resolver.
+    grouped = config.select_assembled_groups(
+        groups_by_population=config.assemble_groups(ingredient_seeds), apply_sampling=False
+    )
+    groups = [group for population in grouped.values() for group in population]
     assert len(groups) == 4266
     assert all(group.objective.value and group.prompts[0].value for group in groups)
     # These fingerprints include the objectives, prompts, and logical IDs before the payload split.
