@@ -951,6 +951,8 @@ async def test_startup_with_an_unrestorable_entry_is_not_ready_async(runtime: Ru
         health = await client.get("/api/health")
         status = await client.get("/api/config/runtime")
     assert health.json()["ready"] is False
+    assert status.json()["version"] == runtime.version
+    assert runtime.version is not None
     (failure,) = status.json()["restore_failures"]
     assert (failure["kind"], failure["name"], failure["reason"]) == ("targets", "broken", "unknown_class")
     assert failure["version"]

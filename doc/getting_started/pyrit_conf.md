@@ -202,7 +202,7 @@ Stores saved targets, converters, scorers, and techniques in a local directory o
 registry_recipes_source: https://account.blob.core.windows.net/pyrit-storage/registry-recipes
 ```
 
-Each kind has its own folder under the source (`targets/`, `converters/`, `scorers/`, `techniques/`), with one JSON file per saved entry named after the entry. A file holds what's needed to rebuild the entry, never a credential. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/registry_recipes`.
+Each kind has its own folder under the source (`targets/`, `converters/`, `scorers/`, `techniques/`), with one JSON file per saved entry named after the entry. A file holds what's needed to rebuild the entry; restore refuses a file that stores a value for a parameter its class marks as a credential, such as `api_key`. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/registry_recipes`.
 
 The backend restores saved entries at startup and after a live apply, once the configured initializers have registered theirs. If any saved entry can't be restored, the backend stays not ready (state `failed`, outcome `restore-failed`) and lists each failure with its reason in `GET /api/config/runtime`, so a scan can't quietly run without an entry it expects. Fix or delete the listed files, then restart. Files whose names aren't valid entry names (lowercase letters, digits, and underscores, starting with a letter) are listed as ignored and don't block startup.
 
