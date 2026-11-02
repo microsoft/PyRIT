@@ -260,6 +260,7 @@ export function attachmentDraft(attachment: MessageAttachment): ConversationDraf
     previewUrl: attachment.url,
     filename: attachment.name,
     file: attachment.file,
+    prompt_metadata: attachment.metadata,
   }
 }
 
