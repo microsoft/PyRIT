@@ -23,7 +23,7 @@ async def test_frequency_preserves_float_waveform_async(
 ) -> None:
     """A floating-point WAV must keep its amplitude instead of truncating to silence."""
     samples = np.array([0.5, 0.25, -0.5, -0.25], dtype=dtype)
-    expected = samples if shift_value == 0 else np.array([0.5, 0.0, 0.5, 0.0], dtype=dtype)
+    expected = samples if shift_value == 0 else np.array([0.5, -0.5, 0.5, -0.5], dtype=dtype)
     if stereo:
         samples = np.column_stack((samples, -samples))
         expected = np.column_stack((expected, -expected))
@@ -42,9 +42,9 @@ async def test_frequency_preserves_float_waveform_async(
 @pytest.mark.parametrize(
     ("dtype", "samples", "expected_shifted"),
     [
-        (np.int16, [1 << 14, 1 << 13, -(1 << 14), -(1 << 13)], [1 << 14, 0, 1 << 14, 0]),
-        (np.int32, [1 << 30, 1 << 29, -(1 << 30), -(1 << 29)], [1 << 30, 0, 1 << 30, 0]),
-        (np.uint8, [192, 160, 64, 96], [192, 128, 192, 128]),
+        (np.int16, [1 << 14, 1 << 13, -(1 << 14), -(1 << 13)], [1 << 14, -(1 << 14), 1 << 14, -(1 << 14)]),
+        (np.int32, [1 << 30, 1 << 29, -(1 << 30), -(1 << 29)], [1 << 30, -(1 << 30), 1 << 30, -(1 << 30)]),
+        (np.uint8, [192, 160, 64, 96], [192, 64, 192, 64]),
     ],
 )
 @pytest.mark.parametrize("stereo", [False, True])
@@ -78,6 +78,41 @@ async def test_frequency_preserves_integer_waveform_async(
     np.testing.assert_allclose(output, expected, atol=1)
 
 
+@pytest.mark.usefixtures("sqlite_instance")
+async def test_frequency_shift_rejects_carrier_at_or_above_nyquist(tmp_path: Path) -> None:
+    """A carrier above Nyquist cannot be represented and would alias into audible frequencies."""
+    sample_rate = 16000
+    samples = np.sin(2 * np.pi * 440 * np.arange(sample_rate) / sample_rate).astype(np.float32)
+    source = tmp_path / "speech.wav"
+    await asyncio.to_thread(wavfile.write, source, sample_rate, samples)
+
+    with pytest.raises(ValueError, match="Nyquist frequency"):
+        await AudioFrequencyConverter().convert_async(prompt=str(source))
+
+
+@pytest.mark.usefixtures("sqlite_instance")
+async def test_frequency_shift_uses_single_upper_sideband(tmp_path: Path) -> None:
+    """Analytic-signal modulation shifts a tone once instead of creating mirrored sidebands."""
+    sample_rate = 44100
+    duration_samples = sample_rate
+    input_frequency = 440
+    shift_value = 20000
+    samples = np.sin(2 * np.pi * input_frequency * np.arange(duration_samples) / sample_rate).astype(np.float32)
+    source = tmp_path / "tone.wav"
+    await asyncio.to_thread(wavfile.write, source, sample_rate, samples)
+
+    result = await AudioFrequencyConverter(shift_value=shift_value).convert_async(prompt=str(source))
+    rate, output = await asyncio.to_thread(wavfile.read, result.output_text)
+
+    frequencies = np.fft.rfftfreq(len(output), d=1 / rate)
+    spectrum = np.abs(np.fft.rfft(output))
+    upper_sideband = np.argmin(np.abs(frequencies - (shift_value + input_frequency)))
+    mirrored_sideband = np.argmin(np.abs(frequencies - (shift_value - input_frequency)))
+
+    assert frequencies[np.argmax(spectrum)] == shift_value + input_frequency
+    assert spectrum[mirrored_sideband] < spectrum[upper_sideband] * 0.01
+
+
 async def test_convert_async_success(sqlite_instance):
     # Simulate WAV data
     sample_rate = 44100
@@ -90,7 +125,7 @@ async def test_convert_async_success(sqlite_instance):
 
     converter = AudioFrequencyConverter(shift_value=20000)
 
-    # Call the convert_async method with the temporary WAV file path
+    # Call the convert_async method with the temporary file path
     result = await converter.convert_async(prompt=original_wav_path)
 
     assert os.path.exists(result.output_text)
@@ -99,7 +134,6 @@ async def test_convert_async_success(sqlite_instance):
     # Clean up the original WAV file after the test
     os.remove(original_wav_path)
 
-    # Optionally, clean up any created files in result (if applicable)
     if os.path.exists(result.output_text):
         os.remove(result.output_text)
 
