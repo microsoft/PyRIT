@@ -35,6 +35,8 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import ConversationEditor, { type ConversationEditorHandle } from '@/components/Chat/ConversationEditor'
 import TargetSelect from '@/components/Config/TargetSelect'
+import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
+import { findRegisteredScorer } from '@/utils/scorerPresentation'
 import TechniqueEditor from '@/components/Techniques/TechniqueEditor'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import { useRuntime } from '@/hooks/useRuntime'
@@ -68,6 +70,8 @@ import type {
   ScenarioRunSizeEstimateResponse,
   TargetInstance,
   TechniqueOverride,
+  RegisteredComponentReference,
+  ScorerInstance,
 } from '@/types'
 import { newDraftMessage, toConversationDraft } from '@/utils/conversationDraft'
 import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
@@ -266,6 +270,9 @@ interface BuildEstimateRequestInput {
   techniqueOverride?: TechniqueOverride
   techniqueEditError?: string
   supportsPrependedConversation?: boolean
+  supportsPrompt?: boolean
+  objectiveScorer?: RegisteredComponentReference | null
+  scorerError?: string
 }
 
 interface BuildRunRequestInput extends BuildEstimateRequestInput {
@@ -327,8 +334,12 @@ function buildEstimateRequest({
   techniqueOverride,
   techniqueEditError,
   supportsPrependedConversation = true,
+  supportsPrompt = true,
+  objectiveScorer,
+  scorerError,
 }: BuildEstimateRequestInput): BuildEstimateRequestResult {
   if (techniqueEditError) return { ok: false, error: techniqueEditError }
+  if (scorerError) return { ok: false, error: scorerError }
   if (supportsParameter(scenario, 'scenario_techniques') && techniques.length === 0) {
     return { ok: false, error: 'Select at least one technique.' }
   }
@@ -340,11 +351,17 @@ function buildEstimateRequest({
   let scenarioParams: Record<string, unknown> | null = null
   if (dynamicParameters.length > 0) {
     const history = scenarioParamValues.prepended_conversation_id
+    const prompt = scenarioParamValues.prompt
+    if (!supportsPrompt && typeof prompt === 'string' && prompt.trim()) {
+      return { ok: false, error: 'This technique cannot send a separate prompt. Clear the prompt or select a compatible technique.' }
+    }
     if (!supportsPrependedConversation && typeof history === 'string' && history.trim()) {
       return { ok: false, error: 'This technique does not support a prepended conversation. Clear the saved conversation before launch.' }
     }
     const result = buildParametersFromForm(
-      dynamicParameters.filter((parameter) => supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(parameter.name)),
+      dynamicParameters.filter((parameter) =>
+        (supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(parameter.name))
+        && (supportsPrompt || parameter.name !== 'prompt')),
       scenarioParamValues,
     )
     if (!result.ok) {
@@ -356,6 +373,7 @@ function buildEstimateRequest({
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
   if (supportsDatasets && datasetError) return { ok: false, error: datasetError }
   const request: ScenarioRunSizeEstimateRequest = {}
+  if (objectiveScorer) request.objective_scorer = objectiveScorer
   if (techniqueOverride) request.technique_override = techniqueOverride
   if (supportsParameter(scenario, 'scenario_techniques')) {
     request.techniques = techniques
@@ -435,7 +453,13 @@ function buildRunRequest(input: BuildRunRequestInput): BuildRunRequestResult {
   return { ok: true, request }
 }
 
-interface ScenarioDetailProps {
+interface ScorerPickerData {
+  scorers?: ScorerInstance[]
+  scorersLoading?: boolean
+  scorersError?: string | null
+}
+
+interface ScenarioDetailProps extends ScorerPickerData {
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
@@ -495,6 +519,9 @@ function ScenarioDetailContent({
   labels,
   operationId = null,
   onNavigate,
+  scorers = [],
+  scorersLoading = false,
+  scorersError = null,
 }: ScenarioDetailContentProps) {
   const styles = useScenarioDetailStyles()
   const decodedScenarioName = routerPathParamValue(encodedScenarioName)
@@ -679,11 +706,12 @@ function ScenarioDetailContent({
       operationId={operationId}
       defaultsReady={defaultsReady}
       onNavigate={onNavigate}
+      scorers={scorers} scorersLoading={scorersLoading} scorersError={scorersError}
     />
   )
 }
 
-interface ScenarioLaunchFormProps {
+interface ScenarioLaunchFormProps extends ScorerPickerData {
   scenario: RegisteredScenario
   /** Seeds the initial form state only; edits are never written back to the preset. */
   preset?: ScenarioPresetResponse | null
@@ -709,10 +737,17 @@ function ScenarioLaunchForm({
   operationId,
   defaultsReady = false,
   onNavigate,
+  scorers = [],
+  scorersLoading = false,
+  scorersError = null,
 }: ScenarioLaunchFormProps) {
   const runtime = useRuntime()
   const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
   const staleSelection = selectionGeneration !== runtime.generation
+  const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(null)
+  const scorerError = objectiveScorer && (
+    scorersLoading || scorersError || !findRegisteredScorer(objectiveScorer, scorers)
+  ) ? 'The selected objective scorer is unavailable. Select a scorer or use the scenario default.' : undefined
   const styles = useScenarioDetailStyles()
   const navigate = useNavigate()
   const formId = `scenario-launch-${encodeURIComponent(scenario.scenario_name).replace(/%/g, '-')}`
@@ -761,7 +796,7 @@ function ScenarioLaunchForm({
     scenario,
     preset?.preset.techniques,
     new Set(techniqueOptions.map((technique) => technique.name)),
-    defaultTechniques,
+    scenario.scenario_name === 'technique.execute' ? [] : defaultTechniques,
   ))
   const [selectedTechniques, setSelectedTechniques] = useState<string[]>(techniqueSeed.techniques)
   // Preset tokens with no checkbox are sent verbatim for the server to resolve, so they
@@ -787,8 +822,11 @@ function ScenarioLaunchForm({
   const objectiveParameters = dynamicParameters.filter((parameter) => OBJECTIVE_PARAMETER_NAMES.has(parameter.name))
   const historyParameters = dynamicParameters.filter((parameter) => CONVERSATION_PARAMETER_NAMES.has(parameter.name)
     && parameter.name !== conversationConvertersParameter?.name)
+  const supportsPrompt = !singleTechnique || opaqueSelectedTechnique
+    || techniqueEditor.configuration?.supports_prompt === true
   const generalParameters = dynamicParameters.filter((parameter) =>
-    !OBJECTIVE_PARAMETER_NAMES.has(parameter.name) && !CONVERSATION_PARAMETER_NAMES.has(parameter.name))
+    !OBJECTIVE_PARAMETER_NAMES.has(parameter.name) && !CONVERSATION_PARAMETER_NAMES.has(parameter.name)
+    && (parameter.name !== 'prompt' || supportsPrompt))
   const unavailableSelection = (
     supportsObjectiveTarget && targetName !== ''
     && !targets.some((target) => target.target_registry_name === targetName)
@@ -941,6 +979,9 @@ function ScenarioLaunchForm({
       techniqueOverride: techniqueEditor.override,
       techniqueEditError,
       supportsPrependedConversation,
+      supportsPrompt,
+      objectiveScorer,
+      scorerError,
       dynamicParameters,
       scenarioParamValues,
       presetScenarioParams,
@@ -963,6 +1004,9 @@ function ScenarioLaunchForm({
       techniqueEditor.override,
       techniqueEditError,
       supportsPrependedConversation,
+      supportsPrompt,
+      objectiveScorer,
+      scorerError,
     ],
   )
   const requestResult = useMemo(
@@ -974,6 +1018,9 @@ function ScenarioLaunchForm({
       techniqueOverride: techniqueEditor.override,
       techniqueEditError,
       supportsPrependedConversation,
+      supportsPrompt,
+      objectiveScorer,
+      scorerError,
       dynamicParameters,
       scenarioParamValues,
       presetScenarioParams,
@@ -1004,6 +1051,9 @@ function ScenarioLaunchForm({
       techniqueEditor.override,
       techniqueEditError,
       supportsPrependedConversation,
+      supportsPrompt,
+      objectiveScorer,
+      scorerError,
     ],
   )
   const estimateRequest = useMemo(
@@ -1510,7 +1560,7 @@ function ScenarioLaunchForm({
             </section>
             )}
 
-            {(supportsObjectiveTarget || objectiveParameters.length > 0) && (
+            {(supportsObjectiveTarget || objectiveParameters.length > 0 || scenario.supports_objective_scorer) && (
               <section className={styles.section} aria-labelledby="objective-section-title">
                 <Text id="objective-section-title" as="h2" size={400} weight="semibold">Objective</Text>
                 {supportsObjectiveTarget && <>
@@ -1542,6 +1592,12 @@ function ScenarioLaunchForm({
                   )}
                 </>}
                 {objectiveParameters.map(renderScenarioParameter)}
+                {scenario.supports_objective_scorer && <ChatScorerPicker
+                  label="Objective scorer" usage="scenario" value={objectiveScorer}
+                  scorers={scorers} loading={scorersLoading} error={scorersError}
+                  disabled={submitting || previewOpen || !runtime.ready}
+                  onChange={(value) => { setObjectiveScorer(value); setSelectionGeneration(runtime.generation) }}
+                />}
               </section>
             )}
 
@@ -1559,11 +1615,10 @@ function ScenarioLaunchForm({
                     {techniqueEditor.error}
                     <Button className={styles.touchTarget} type="button" onClick={techniqueEditor.retry}>Retry technique settings</Button>
                   </MessageBarBody></MessageBar>}
-                  {techniqueEditor.hasChanges && <div className={styles.previewBadges}>
-                    {techniqueEditor.edited && <Badge appearance="outline">Edited for this run</Badge>}
-                    <Button className={styles.touchTarget} type="button" disabled={submitting || previewOpen}
-                      onClick={techniqueEditor.reset}>Reset to original</Button>
-                  </div>}
+                  {techniqueEditor.hasChanges && <Button
+                    className={styles.resetTechnique} appearance="outline" size="small" type="button"
+                    disabled={submitting || previewOpen} onClick={techniqueEditor.reset}
+                  >Edited - click to reset</Button>}
                   {techniqueEditor.original && <TechniqueEditor key={techniqueEditor.formKey}
                     original={techniqueEditor.original} initial={techniqueEditor.configuration}
                     autoApply onPending={techniqueEditor.markPending} onApplied={techniqueEditor.apply}
@@ -1807,6 +1862,10 @@ function ScenarioLaunchForm({
                       {supportsObjectiveTarget && <>
                         <dt>Objective Target</dt>
                         <dd>{targetName}</dd>
+                        {scenario.supports_objective_scorer && <>
+                          <dt>Objective scorer</dt>
+                          <dd>{objectiveScorer?.registry_name ?? 'Use scenario default'}</dd>
+                        </>}
                       </>}
                       {scenario.uses_default_adversarial_target && (
                         <>

@@ -269,6 +269,34 @@ function renderDetail(
 }
 
 describe('ScenarioDetail', () => {
+  it('uses the shared scorer picker for estimates and launch without changing the scenario default', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: true }))
+    const scorer = { scorer_registry_name: 'custom', identifier: {
+      class_name: 'SubStringScorer', hash: 'custom-hash', scorer_type: 'true_false',
+    } }
+    renderDetail('/scanner/foundry.red_team_agent', { scorers: [scorer] })
+    const picker = await screen.findByRole('combobox', { name: 'Objective scorer' })
+    expect(picker).toHaveValue('')
+    expect(screen.getByRole('option', { name: 'Use scenario default' })).toBeInTheDocument()
+    await user.selectOptions(picker, 'registered:custom')
+    const reference = { registry_name: 'custom', identifier_hash: 'custom-hash' }
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
+      'foundry.red_team_agent', expect.objectContaining({ objective_scorer: reference }), expect.any(AbortSignal),
+    ))
+    await user.selectOptions(picker, '')
+    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('objective_scorer'))
+    await user.selectOptions(picker, 'registered:custom')
+    await confirmRunPreview(user)
+    expect(mockStartRun.mock.calls[0][0].objective_scorer).toEqual(reference)
+  })
+
+  it('does not show a scorer override for fixed-scoring scenarios', async () => {
+    renderDetail('/scanner/foundry.red_team_agent')
+    await screen.findByTestId('scenario-target-select')
+    expect(screen.queryByRole('combobox', { name: 'Objective scorer' })).not.toBeInTheDocument()
+  })
+
   beforeEach(() => {
     jest.clearAllMocks()
     mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'first' })
@@ -1212,11 +1240,11 @@ describe('ScenarioDetail', () => {
     await user.type(within(editor).getByRole('spinbutton', { name: 'Turn count' }), '4')
     expect(within(editor).queryByRole('button', { name: 'Apply to run' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
-    await screen.findByText('Edited for this run')
-    expect(mockTechniques.validateEdit).toHaveBeenCalledWith({
+    await screen.findByRole('button', { name: 'Edited - click to reset' })
+    await waitFor(() => expect(mockTechniques.validateEdit).toHaveBeenCalledWith({
       source_name: 'default_technique', source_identity: 'default_technique-identity',
       changes: { simulation: { num_turns: 4 } }, dependencies: {},
-    })
+    }))
     expect(mockTechniques.createTechnique).not.toHaveBeenCalled()
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledWith(
       'foundry.red_team_agent', expect.objectContaining({
@@ -1237,17 +1265,17 @@ describe('ScenarioDetail', () => {
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
     renderDetail('/scanner/technique.execute')
     await user.type(await screen.findByLabelText('Simulated user system prompt'), ' edited')
-    await screen.findByText('Edited for this run')
+    await screen.findByRole('button', { name: 'Edited - click to reset' })
     expect(await screen.findByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }} edited')
     await user.click(await screen.findByRole('radio', { name: 'crescendo' }))
     expect(await screen.findByText('Discard technique edits?')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(await screen.findByRole('radio', { name: 'default_technique' })).toBeChecked()
-    expect(screen.getByText('Edited for this run')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edited - click to reset' })).toBeInTheDocument()
     await user.click(screen.getByRole('checkbox', { name: 'baseline' }))
-    expect(screen.getByText('Edited for this run')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Reset to original' }))
-    expect(screen.queryByText('Edited for this run')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edited - click to reset' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Edited - click to reset' }))
+    expect(screen.queryByRole('button', { name: 'Edited - click to reset' })).not.toBeInTheDocument()
     expect(await screen.findByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }}')
     await user.click(screen.getByRole('radio', { name: 'crescendo' }))
     expect(screen.getByRole('radio', { name: 'crescendo' })).toBeChecked()
@@ -1348,7 +1376,7 @@ describe('ScenarioDetail', () => {
     expect(turns).toHaveValue(4)
     expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
     expect(mockStartRun).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Reset to original' }))
+    await user.click(screen.getByRole('button', { name: 'Edited - click to reset' }))
     expect(await screen.findByRole('spinbutton', { name: 'Turn count' })).toHaveValue(2)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
   })
@@ -1382,6 +1410,27 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun.mock.calls[0][0].scenario_params ?? {}).not.toHaveProperty('apply_converters_to_prepended_history')
   })
 
+  it('hides unsupported separate prompts and blocks launch without discarding entered text', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      max_concrete_techniques: 1,
+      supported_parameters: [{ name: 'prompt', type_name: 'str', required: false, multiline: true }],
+    }))
+    mockTechniques.getConfiguration.mockImplementation(async (name: string) => ({
+      ...techniqueConfiguration(name), supports_prompt: name === 'default_technique',
+    }))
+    renderDetail('/scanner/technique.execute')
+    const prompt = await screen.findByRole('textbox', { name: 'prompt' })
+    await user.type(prompt, 'Product specification: Atlas.')
+    await user.click(screen.getByRole('radio', { name: 'crescendo' }))
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'prompt' })).not.toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('cannot send a separate prompt')
+    expect(mockStartRun).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('radio', { name: 'default_technique' }))
+    expect(await screen.findByRole('textbox', { name: 'prompt' })).toHaveValue('Product specification: Atlas.')
+  })
+
   it('allows keyboard changes to a single technique without changing baseline', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
@@ -1391,6 +1440,25 @@ describe('ScenarioDetail', () => {
     expect(screen.getByRole('radio', { name: 'crescendo' })).toBeChecked()
     expect(screen.getByRole('radio', { name: 'default_technique' })).not.toBeChecked()
     expect(screen.getByRole('checkbox', { name: 'baseline' })).toBeChecked()
+  })
+
+  it('requires an explicit GUI choice even when technique.execute has a backend default', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      scenario_name: 'technique.execute', max_concrete_techniques: 1,
+      default_technique: 'default', default_techniques: ['default_technique'],
+      include_baseline_by_default: false,
+    }))
+    renderDetail('/scanner/technique.execute')
+    const first = await screen.findByRole('radio', { name: 'default_technique' })
+    expect(first).not.toBeChecked()
+    expect(screen.getByRole('radio', { name: 'crescendo' })).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    expect(mockEstimateRun).not.toHaveBeenCalled()
+    expect(mockTechniques.getConfiguration).not.toHaveBeenCalled()
+    await user.click(first)
+    expect(first).toBeChecked()
+    await waitFor(() => expect(mockTechniques.getConfiguration).toHaveBeenCalledWith('default_technique'))
   })
 
   it('blocks estimates and launch for an over-limit selection until the user selects one technique', async () => {
@@ -1955,7 +2023,8 @@ describe('ScenarioDetail', () => {
   })
 
   it.each(['user', 'unknown'])('warns before replacing %s data and confirms through Run preview', async (origin) => {
-    const user = userEvent.setup()
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
     jest.mocked(datasetsApi.listDatasets).mockResolvedValueOnce({ items: [{
       name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: true, provider_available: true,
       logical_examples: 8, origins: [origin], modalities: ['text'], harm_categories: [], has_unlabeled_harm_categories: false,
@@ -1967,7 +2036,9 @@ describe('ScenarioDetail', () => {
       },
     })
     renderDetail('/scanner/foundry.red_team_agent')
+    await flushRenderedPromises()
     await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
+    await advanceTimers(300)
     await user.click(screen.getByRole('button', { name: 'Launch scan' }))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
@@ -1976,7 +2047,7 @@ describe('ScenarioDetail', () => {
     expect(within(preview).getByRole('alert')).toHaveTextContent('prevent older runs from resuming')
     await user.click(within(preview).getByRole('button', { name: 'Cancel' }))
     expect(mockStartRun).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    await user.click(await screen.findByRole('button', { name: 'Launch scan' }))
     const confirmed = await screen.findByRole('dialog', { name: 'Run preview' })
     await user.click(within(confirmed).getByRole('button', { name: 'Launch scan' }))
     expect(mockStartRun).toHaveBeenCalledTimes(1)

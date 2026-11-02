@@ -149,16 +149,20 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             source_type: The type of source ('public_url' or 'file').
             templates: List of template names to include. If None, all 5 templates are used.
             max_examples: Maximum number of source goals to render. Each goal produces up to
-                ``len(templates)`` image+text pairs. If None, all goals are rendered. Useful for
+                ``len(templates)`` image+text pairs. Goals with no text for any of the selected
+                templates are skipped and do not count. If None, all goals are rendered. Useful for
                 CI and quick validations where rendering all 300 goals × 5 templates is too slow.
 
         Raises:
-            ValueError: If any template name is invalid.
+            ValueError: If any template name is invalid, or if max_examples is less than 1.
         """
         self.source = source
         self.source_type: Literal["public_url", "file"] = source_type
         self.templates = templates or list(self.TEMPLATE_NAMES)
         self.max_examples = max_examples
+
+        if max_examples is not None and max_examples < 1:
+            raise ValueError(f"max_examples must be at least 1 or None, got {max_examples}")
 
         invalid = set(self.templates) - set(self.TEMPLATE_NAMES)
         if invalid:
@@ -224,6 +228,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                 alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
             )
 
+            rendered_templates = 0
             for template_name in self.templates:
                 col_name = template_name.capitalize()
                 text_to_render = example.get(col_name, "").strip()
@@ -248,6 +253,11 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                     behavior=example.get("Behavior", ""),
                 )
                 seeds.extend(pair)
+                rendered_templates += 1
+
+            # A goal with no text for the selected templates rendered nothing, so it does not count
+            if not rendered_templates:
+                continue
 
             processed_goals += 1
             if self.max_examples is not None and processed_goals >= self.max_examples:

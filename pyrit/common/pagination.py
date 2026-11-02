@@ -16,10 +16,11 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class DecodedKeysetCursor:
-    """A UTC timestamp/UUID anchor for descending recency pagination."""
+    """A UTC timestamp/UUID anchor with an optional ordered-reference or message-sequence position."""
 
     timestamp: datetime
     identifier: str
+    position: int | None = None
 
 
 def normalize_label_filters(
@@ -78,7 +79,7 @@ def fingerprint_filters(*, filters: Mapping[str, Any], length: int = 16) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:length]
 
 
-def encode_keyset_cursor(*, timestamp: datetime, identifier: str, fingerprint: str) -> str:
+def encode_keyset_cursor(*, timestamp: datetime, identifier: str, fingerprint: str, position: int | None = None) -> str:
     """
     Encode a filter-bound keyset anchor as an opaque cursor.
 
@@ -86,6 +87,7 @@ def encode_keyset_cursor(*, timestamp: datetime, identifier: str, fingerprint: s
         timestamp (datetime): A timezone-aware recency key from the last returned row.
         identifier (str): That row's UUID, breaking ties at an identical timestamp.
         fingerprint (str): The effective filters and result-selection policy.
+        position (int | None): An optional ordered-reference or message-sequence position.
 
     Returns:
         str: A base64url-encoded cursor.
@@ -96,6 +98,8 @@ def encode_keyset_cursor(*, timestamp: datetime, identifier: str, fingerprint: s
         "t": timestamp.isoformat(),
         "i": identifier,
     }
+    if position is not None:
+        payload["p"] = position
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
@@ -126,7 +130,10 @@ def decode_keyset_cursor(*, cursor: str | None, fingerprint: str) -> DecodedKeys
         return None
     timestamp_value = payload.get("t")
     identifier_value = payload.get("i")
+    position = payload.get("p")
     if not isinstance(timestamp_value, str) or not isinstance(identifier_value, str):
+        return None
+    if position is not None and type(position) is not int:
         return None
     try:
         timestamp = datetime.fromisoformat(timestamp_value)
@@ -139,7 +146,7 @@ def decode_keyset_cursor(*, cursor: str | None, fingerprint: str) -> DecodedKeys
         timestamp = timestamp.astimezone(UTC)
     except (OverflowError, OSError):
         return None
-    return DecodedKeysetCursor(timestamp=timestamp, identifier=identifier)
+    return DecodedKeysetCursor(timestamp=timestamp, identifier=identifier, position=position)
 
 
 def _canonicalize(value: Any) -> Any:

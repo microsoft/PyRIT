@@ -12,6 +12,7 @@ from pyrit.backend.models.operations import (
     FindingEvidenceAttachResponse,
     FindingEvidenceCreateRequest,
     FindingEvidenceListResponse,
+    FindingExportRequest,
     FindingListResponse,
     FindingOptionsResponse,
     FindingUpdateRequest,
@@ -20,6 +21,7 @@ from pyrit.backend.models.operations import (
     OperationListResponse,
     OperationUpdateRequest,
 )
+from pyrit.backend.services.finding_export import export_findings_async
 from pyrit.backend.services.operation_service import (
     DuplicateOperationError,
     FindingConflictError,
@@ -163,6 +165,24 @@ async def list_operation_findings_async(
     """
     return await _require_operation_async(
         OperationService().list_findings_async(operation_id=operation_id, limit=limit, offset=offset, title_query=title)
+    )
+
+
+@router.post("/{operation_id}/findings/export", response_class=Response)
+async def export_operation_findings_async(*, operation_id: UUID, request: FindingExportRequest) -> Response:
+    """
+    Download selected findings of an operation as one Word or Markdown document, in the dashboard's order.
+
+    Evidence appears as saved metadata and dashboard links, without transcripts.
+
+    Returns:
+        Response: The complete document as an attachment.
+    """
+    exported = await _require_operation_async(export_findings_async(operation_id=operation_id, request=request))
+    return Response(
+        content=exported.content,
+        media_type=exported.media_type,
+        headers={"Content-Disposition": f'attachment; filename="{exported.filename}"'},
     )
 
 

@@ -179,6 +179,9 @@ export interface ChatConverterController {
   isConverting: boolean
   addConverter: (pieceType: string, converterId: string) => void
   setPipeline: (pieceType: string, update: (stages: ConverterPipelineStage[]) => ConverterPipelineStage[]) => void
+  replaceTemporaryConverter: (
+    pieceType: string, stageId: string, source: SourceInstanceSpec, converter: ConverterInstance,
+  ) => void
   retainConverters: (availableIds: Set<string>) => void
   discardTemporarySettings?: () => void
   convert: (pieceType: string) => Promise<PieceConversionUpdates | void>
@@ -483,6 +486,7 @@ export interface ConverterIdentifier {
 }
 
 export interface ConverterInstance {
+  parameters?: Parameter[]
   converter_id: string
   reconstructable?: boolean
   reconstruction_error?: string | null
@@ -495,11 +499,16 @@ export interface ConverterListResponse {
   items: ConverterInstance[]
 }
 
-export interface CreateConverterRequest {
+export type CreateConverterRequest = {
   name: string
   type: string
+} & ({
   params?: Record<string, unknown>
-}
+  source?: never
+} | {
+  source: SourceInstanceSpec
+  params?: never
+})
 
 export interface SourceInstanceSpec {
   source_name: string
@@ -507,6 +516,8 @@ export interface SourceInstanceSpec {
   params: Record<string, unknown>
   effective_hash?: string
 }
+
+export type ConverterSelection = string | SourceInstanceSpec
 
 export interface TargetBinding {
   version: 1
@@ -580,8 +591,8 @@ export type SimulationChanges = Partial<SimulationSettings>
 interface TechniqueSettingFields {
   description?: string | null
   params?: Record<string, unknown>
-  request_converters?: string[] | null
-  response_converters?: string[] | null
+  request_converters?: ConverterSelection[] | null
+  response_converters?: ConverterSelection[] | null
   adversarial_chat?: string | null
   adversarial_system_prompt?: string | null
   adversarial_seed_prompt?: string | null
@@ -614,6 +625,7 @@ export interface TechniqueConfiguration {
   supplied_parameters: string[]
   read_only: Record<string, string>
   supports_prepended_conversation: boolean
+  supports_prompt?: boolean
 }
 
 export interface TechniqueEditResponse {
@@ -1425,6 +1437,7 @@ export interface ScenarioDatasetLoadResponse {
 }
 
 export interface RegisteredScenario {
+  supports_objective_scorer?: boolean
   /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
   max_concrete_techniques?: number | null
   scenario_name: string
@@ -1638,6 +1651,7 @@ export interface ScenarioSuiteExecutionSummary {
 }
 
 export interface RunScenarioRequest {
+  objective_scorer?: RegisteredComponentReference | null
   scenario_name: string
   target_name?: string | null
   adversarial_target_name?: string | null
@@ -1707,6 +1721,7 @@ export interface ScenarioRunSizeEstimateResponse {
 }
 
 export interface ScenarioRunSizeEstimateRequest {
+  objective_scorer?: RegisteredComponentReference | null
   target_name?: string | null
   adversarial_target_name?: string | null
   techniques?: string[] | null
@@ -2053,6 +2068,18 @@ export interface ScenarioRunPlan {
   seed_groups: ScenarioRunPlanSeedGroup[]
 }
 
+export interface ScenarioProducerCategoryCounts {
+  attempts: number
+  errors: number
+  retries: number
+}
+
+export interface ScenarioProducerCounts {
+  target_facing: ScenarioProducerCategoryCounts
+  orchestration: ScenarioProducerCategoryCounts
+  unknown: ScenarioProducerCategoryCounts
+}
+
 export interface ScenarioProgressCounts {
   completed: number
   planned: number | null
@@ -2060,6 +2087,7 @@ export interface ScenarioProgressCounts {
   success_percentage: number | null
   errors: number
   retries: number
+  producer_counts?: ScenarioProducerCounts | null
 }
 
 export interface ScenarioTechniqueProgress extends ScenarioProgressCounts {
@@ -2089,6 +2117,106 @@ export interface ScenarioAtomicGroupProgress extends ScenarioProgressCounts {
   display_group: string
   status: 'RUNNING' | 'PENDING' | 'INCOMPLETE' | 'COMPLETED'
   technique_details?: ScenarioAttackTechniqueDetails | null
+}
+
+/** What a saved attack result represents; not proof that the objective target was called. */
+export type AttackResultRole = 'target_facing' | 'orchestration' | 'unknown'
+
+export interface ScenarioOrchestrationParentSummary {
+  attack_result_id: string
+  result_role: AttackResultRole
+  outcome: AttackOutcome
+  outcome_reason?: string | null
+  attempt_index?: number | null
+  execution_time_ms: number
+  executed_turns: number
+  completion_policy?: string | null
+  child_attack_result_ids: string[]
+  child_references_truncated: boolean
+  error_type?: string | null
+  error_message?: string | null
+  timestamp: string
+  total_retries: number
+  retries: RetryEvent[]
+  retries_truncated: boolean
+}
+
+export interface ScenarioHierarchyNode {
+  attack_result_id: string
+  conversation_id: string
+  parent_attack_result_id?: string | null
+  /** Absolute position under the immediate parent. */
+  child_index?: number | null
+  result_role: AttackResultRole
+  attempt_index?: number | null
+  atomic_attack_name: string
+  atomic_group_id: string
+  seed_group_id: string
+  objective: string
+  outcome: AttackOutcome
+  outcome_reason?: string | null
+  execution_time_ms: number
+  executed_turns: number
+  timestamp: string
+  score?: ScenarioProgressScore | null
+  error_type?: string | null
+  error_message?: string | null
+  total_retries: number
+  retries: RetryEvent[]
+  retries_truncated: boolean
+  child_attack_result_ids: string[]
+  child_references_truncated: boolean
+  children: ScenarioHierarchyNode[]
+  children_truncated: boolean
+  /** Full saved child-reference count; null when not known. */
+  children_count?: number | null
+  /** Position of the first child-reference on this page. */
+  child_offset: number
+  /** Continuation for this node's children only; never for roots. */
+  next_children_cursor?: string | null
+  unresolved_child_attack_result_ids: string[]
+  unresolved_child_references_truncated: boolean
+  conversations: ConversationSummary[]
+  conversations_count?: number | null
+  conversations_truncated: boolean
+  orchestration?: ScenarioOrchestrationParentSummary | null
+}
+
+export interface ScenarioHierarchyGroup {
+  atomic_group_id: string
+  atomic_attack_name: string
+  display_group: string
+  technique?: ScenarioAttackTechniqueDetails | null
+  roots: ScenarioHierarchyNode[]
+  counts: ScenarioProgressCounts
+}
+
+export interface ScenarioHierarchyDiagnostics {
+  failed_attacks: AttackErrorSummary[]
+  failed_attacks_count: number
+  failed_attacks_truncated: boolean
+  attack_retries: AttackRetrySummary[]
+  attack_retries_count: number
+  attack_retries_truncated: boolean
+  total_retries: number
+  rootless_result_ids: string[]
+  rootless_results_count: number
+  rootless_results_truncated: boolean
+}
+
+export interface ScenarioHierarchyProjection {
+  scenario_result_id: string
+  scenario_name: string
+  scenario_version: number
+  status: ScenarioRunState
+  groups: ScenarioHierarchyGroup[]
+  /** Exact run totals; independent of which roots or children are loaded. */
+  overall_counts: ScenarioProgressCounts
+  diagnostics: ScenarioHierarchyDiagnostics
+  /** Root continuation only. */
+  has_more: boolean
+  next_cursor?: string | null
+  truncated: boolean
 }
 
 export interface ScenarioObjectiveScorerMetrics {
@@ -2248,4 +2376,14 @@ export interface FindingEvidenceListResponse {
   items: FindingEvidenceItem[]
   has_more: boolean
   next_offset: number | null
+}
+
+export type FindingExportFormat = 'docx' | 'markdown'
+
+/** Selected findings of one Operation to download as a single document. */
+export interface FindingExportRequest {
+  finding_ids: string[]
+  format: FindingExportFormat
+  /** The dashboard origin that evidence links open. */
+  dashboard_origin: string
 }

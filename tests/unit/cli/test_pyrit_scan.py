@@ -641,6 +641,19 @@ class TestMain:
         assert result == 1
         assert "not valid YAML" in capsys.readouterr().err
 
+    def test_main_missing_config_is_hard_error(self, tmp_path, capsys):
+        """A nonexistent --config-file should fail loudly, not silently use defaults."""
+        missing = tmp_path / "missing.yaml"
+        with patch.object(
+            pyrit_scan_config_reader,
+            "_DEFAULT_CONFIG_FILE",
+            tmp_path / "missing_default.yaml",
+        ):
+            result = pyrit_scan.main(["list-scenarios", "--config-file", str(missing)])
+
+        assert result == 1
+        assert "does not exist" in capsys.readouterr().err
+
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
         new_callable=AsyncMock,

@@ -73,9 +73,11 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await page.getByRole("combobox", { name: "Attack type", exact: true }).selectOption("PromptSendingAttack");
   await expect(page.getByRole("dialog")).not.toContainText(/Implementation of|This form shows|Runtime only|prompt_normalizer/);
   await page.getByLabel("max_attempts_on_failure").fill("0");
-  await page.getByRole("combobox", { name: "Request converters", exact: true }).selectOption(converterName);
-  await page.getByRole("button", { name: "Add to Request converters", exact: true }).click();
-  await page.getByRole("button", { name: "Add to Request converters", exact: true }).click();
+  const requestConverters = page.getByRole("combobox", { name: "Request converters", exact: true });
+  for (let i = 0; i < 2; i++) {
+    await requestConverters.click();
+    await page.getByTestId(`converter-option-${converterName}`).click();
+  }
   const create = page.waitForResponse((response) => response.url().endsWith("/api/techniques") && response.request().method() === "POST");
   await page.getByRole("button", { name: "Add technique" }).click();
   const created = await create;

@@ -139,6 +139,8 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
         native_required=frozenset({CapabilityName.MULTI_TURN}),
     )
 
+    FIXED_PARAMS_TYPE = MultiPromptSendingAttackParameters
+
     @apply_defaults
     def __init__(
         self,
@@ -168,7 +170,6 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             objective_target=objective_target,
             logger=logger,
             context_type=MultiTurnAttackContext,
-            params_type=MultiPromptSendingAttackParameters,
             prepended_conversation_config=prepended_conversation_config,
         )
 

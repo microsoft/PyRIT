@@ -1,7 +1,7 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { InteractionRequiredAuthError, type PublicClientApplication } from '@azure/msal-browser'
 import { generateClientId } from '@/utils/clientId'
-import { toApiError } from './errors'
+import { decodeBlobErrorAsync, toApiError } from './errors'
 import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
@@ -66,6 +66,8 @@ import type {
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
+  ScenarioHierarchyNode,
+  ScenarioHierarchyProjection,
   PairedOutcomeStatistics,
   ScenarioQueueSnapshot,
   ScenarioRunState,
@@ -87,6 +89,7 @@ import type {
   FindingEvidenceCreateRequest,
   FindingEvidenceAttachResponse,
   FindingEvidenceListResponse,
+  FindingExportRequest,
   Operation,
   OperationCreate,
   OperationDetail,
@@ -155,6 +158,13 @@ export const operationsApi = {
     await apiClient.delete(
       `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence/${encodeURIComponent(evidenceId)}`,
     )
+  },
+  exportFindings: async (
+    operationId: string, request: FindingExportRequest, signal?: AbortSignal,
+  ): Promise<Blob> => {
+    return (await apiClient.post<Blob>(
+      `${operationPath(operationId)}/findings/export`, request, { responseType: 'blob', signal },
+    )).data
   },
 }
 
@@ -232,6 +242,8 @@ apiClient.interceptors.request.use(async (config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
+    // File downloads receive error bodies as Blobs; read them before any check below.
+    await decodeBlobErrorAsync(error)
     const problem = error?.response?.data
     if (
       (error?.response?.status === 400 && problem?.type === 'urn:pyrit:compatibility:invalid') ||
@@ -709,6 +721,33 @@ export const scenariosApi = {
   ): Promise<ScenarioRunProgress> => {
     const response = await apiClient.get(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/progress`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  /** Loads one page of hierarchy roots. `cursor` continues roots only, never a node's children. */
+  getRunHierarchy: async (
+    scenarioResultId: string,
+    params?: { max_nodes?: number; cursor?: string },
+    signal?: AbortSignal,
+  ): Promise<ScenarioHierarchyProjection> => {
+    const response = await apiClient.get<ScenarioHierarchyProjection>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  /** Loads one page of a node's saved children, continued with that node's `next_children_cursor`. */
+  getRunHierarchyNode: async (
+    scenarioResultId: string,
+    attackResultId: string,
+    params?: { limit?: number; children_cursor?: string },
+    signal?: AbortSignal,
+  ): Promise<ScenarioHierarchyNode> => {
+    const response = await apiClient.get<ScenarioHierarchyNode>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy/nodes/${encodeURIComponent(attackResultId)}`,
       { params, signal },
     )
     return response.data
