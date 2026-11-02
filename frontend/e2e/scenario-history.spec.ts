@@ -754,6 +754,12 @@ test.describe("Scenario catalog, history, and live run routing", () => {
 
   test("renders deterministic FIFO position changes and queued-to-completed handoff", async ({ page }) => {
     await mockScenarioAPIs(page);
+    let documentRequests = 0;
+    page.on("request", (request) => {
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+        documentRequests += 1;
+      }
+    });
     let progressRequests = 0;
     let queueRequests = 0;
     let phase: "position-two" | "position-one" | "running" | "completed" = "position-two";
@@ -888,6 +894,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await ownQueueEntry.getByRole("link").click();
     await expect(page).toHaveURL(`/scanner/history/${QUEUED_RUN_ID}`);
     await expect(page.getByTestId("run-state-badge")).toHaveText("Executing");
+    expect(documentRequests).toBe(1);
     await expect(progress).not.toContainText("Queued");
     const liveProgressRequests = progressRequests;
     phase = "completed";
