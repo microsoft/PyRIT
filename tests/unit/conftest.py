@@ -5,12 +5,18 @@ import os
 import sqlite3
 import sys
 import tempfile
+import time
+import weakref
 from collections.abc import AsyncGenerator, Generator
 from contextlib import closing, contextmanager
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import aiosqlite
 import pytest
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, event
+from sqlalchemy.engine import ExceptionContext, ExecutionContext
+from sqlalchemy.pool import ConnectionPoolEntry, Pool
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.datasets import SeedDatasetProvider
@@ -23,6 +29,55 @@ os.environ["CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS"] = "5"
 os.environ["RETRY_MAX_NUM_ATTEMPTS"] = "2"
 os.environ["RETRY_WAIT_MIN_SECONDS"] = "0"
 os.environ["RETRY_WAIT_MAX_SECONDS"] = "1"
+
+_sqlite_statement_starts: weakref.WeakKeyDictionary[ExecutionContext, float] = weakref.WeakKeyDictionary()
+
+
+@event.listens_for(Pool, "connect", named=True)
+def _skip_sqlite_fsync(*, dbapi_connection: Any, connection_record: ConnectionPoolEntry, **kwargs: Any) -> None:
+    """
+    Turn off fsync when a unit test opens a SQLite connection.
+
+    On loaded CI disks, each fsync can take seconds. The writer holds SQLite's lock during fsync, so
+    concurrent writers can exceed the busy timeout. Locking and transactions do not change, and test
+    databases do not need durability after an OS crash. The PRAGMA reads the schema, so it does not
+    wait for an exclusive lock of another connection. In that case, the connection keeps fsync.
+    """
+    if not isinstance(connection_record.driver_connection, (sqlite3.Connection, aiosqlite.Connection)):
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA busy_timeout")
+        busy_timeout = cursor.fetchone()[0]
+        cursor.execute("PRAGMA busy_timeout = 0")
+        try:
+            cursor.execute("PRAGMA synchronous = OFF")
+        except sqlite3.OperationalError as error:
+            if error.sqlite_errorcode != sqlite3.SQLITE_BUSY:
+                raise
+        finally:
+            cursor.execute(f"PRAGMA busy_timeout = {busy_timeout}")
+    finally:
+        cursor.close()
+
+
+@event.listens_for(Engine, "before_cursor_execute", named=True)
+def _record_sqlite_statement_start(*, context: ExecutionContext | None, **kwargs: Any) -> None:
+    if context is not None and context.dialect.name == "sqlite":
+        _sqlite_statement_starts[context] = time.monotonic()
+
+
+@event.listens_for(Engine, "handle_error")
+def _note_sqlite_busy_wait(context: ExceptionContext) -> None:
+    """Show how long a statement waited for the SQLite lock, to tell contention from an immediate conflict."""
+    if getattr(context.original_exception, "sqlite_errorcode", None) != sqlite3.SQLITE_BUSY:
+        return
+    started = _sqlite_statement_starts.get(context.execution_context) if context.execution_context else None
+    if started is not None and context.sqlalchemy_exception is not None:
+        context.sqlalchemy_exception.add_note(
+            f"SQLite returned SQLITE_BUSY after {time.monotonic() - started:.2f} s. A wait near the busy "
+            "timeout means that another connection kept the lock. A wait near 0 s means that SQLite did not wait."
+        )
 
 
 @pytest.fixture

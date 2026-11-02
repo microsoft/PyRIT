@@ -424,7 +424,7 @@ describe('CreateConverterDialog', () => {
       type: 'CaesarConverter',
       params: { caesar_offset: 5 },
     })
-    expect(onCreated).toHaveBeenCalledWith('caesar-custom')
+    expect(onCreated).toHaveBeenCalledWith('caesar-custom', true)
   })
 
   it.each([
@@ -533,14 +533,15 @@ describe('CreateConverterDialog', () => {
     })
   })
 
-  it('should preserve the source target when editing temporary converter settings', async () => {
+  it.each([false, true])('should preserve the source target when editing temporary settings (nested=%s)', async (nested: boolean) => {
     const user = userEvent.setup()
     mockTargetConverter()
     const converter = {
       converter_id: 'source-rewriter',
       identifier: {
         class_name: 'PersuasionConverter', class_module: 'pyrit.converter',
-        pyrit_version: 'test', hash: 'source-hash', converter_target: rewriteTarget.target_registry_name,
+        pyrit_version: 'test', hash: 'source-hash',
+        converter_target: nested ? rewriteTarget.identifier : rewriteTarget.target_registry_name,
       },
     }
     const onTemporary = jest.fn()
@@ -555,7 +556,106 @@ describe('CreateConverterDialog', () => {
       source_name: 'source-rewriter', source_hash: 'source-hash', params: {},
     })
     expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
-    expect(converter.identifier.converter_target).toBe('rewrite-target')
+    expect(converter.identifier.converter_target).toEqual(nested ? rewriteTarget.identifier : 'rewrite-target')
+  })
+
+  it.each([
+    ['missing', undefined, null, 'adversarial_chat'],
+    ['null', null, null, 'adversarial_chat'],
+    ['empty', '', null, 'adversarial_chat'],
+    ['saved default', undefined, targetReference(rewriteTarget), 'rewrite-target'],
+  ])('should use the default adversarial target when editing a %s target', async (
+    _case: string, sourceTarget: unknown, defaultTarget: TargetReference | null, expected: string,
+  ) => {
+    const user = userEvent.setup()
+    mockTargetConverter(defaultTarget)
+    const converter = { converter_id: 'source-rewriter', identifier: {
+      class_name: 'PersuasionConverter', class_module: 'pyrit.converter', pyrit_version: 'test',
+      hash: 'source-hash', converter_target: sourceTarget,
+    } }
+    const onTemporary = jest.fn()
+    mockedConvertersApi.buildConverter.mockResolvedValue({ identifier: converter.identifier })
+    renderDialog({ editing: { converter }, onTemporary })
+    expect(await screen.findByRole('combobox', { name: /converter_target/i })).toHaveValue(expected)
+    await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+    await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
+    expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('PersuasionConverter', {
+      source_name: 'source-rewriter', source_hash: 'source-hash', params: { converter_target: expected },
+    })
+    expect(converter.identifier.converter_target).toBe(sourceTarget)
+  })
+
+  it('should prefill identifier settings and keep applied temporary overrides', async () => {
+    const user = userEvent.setup()
+    mockTargetConverter()
+    mockConverterParameters([
+      targetParameter,
+      { name: 'language', type_name: 'str', required: true },
+      { name: 'prompt_template', type_name: 'str', required: false, multiline: true },
+    ], 'TranslationConverter')
+    const converter = {
+      converter_id: 'source-translation',
+      identifier: {
+        class_name: 'TranslationConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash', language: 'French',
+        converter_target: rewriteTarget.identifier,
+      },
+      parameters: [{
+        name: 'prompt_template', type_name: 'str', required: false, multiline: true,
+        default: 'Translate the user message to {{ language }}.',
+      }],
+    }
+    const onTemporary = jest.fn()
+    mockedConvertersApi.buildConverter.mockResolvedValue({ identifier: converter.identifier })
+    renderDialog({
+      editing: {
+        converter, spec: { source_name: converter.converter_id, source_hash: 'source-hash', params: { language: 'Spanish' } },
+      },
+      onTemporary,
+    })
+    expect(await screen.findByRole('combobox', { name: /converter_target/i })).toHaveValue('rewrite-target')
+    expect(screen.getByLabelText(/language/i)).toHaveValue('Spanish')
+    expect(screen.getByLabelText(/prompt_template/i)).toHaveValue('Translate the user message to {{ language }}.')
+    await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+    await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
+    expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('TranslationConverter', {
+      source_name: 'source-translation', source_hash: 'source-hash', params: { language: 'Spanish' },
+    })
+  })
+
+  it('should keep technique file settings read-only and direct users to create a converter', async () => {
+    mockConverterParameters([{ name: 'img_to_add', type_name: 'Path', required: true }], 'AddImageTextConverter')
+    renderDialog({
+      allowUploads: false,
+      editing: { converter: {
+        converter_id: 'image', identifier: { class_name: 'AddImageTextConverter', hash: 'source' },
+      } },
+      onTemporary: jest.fn(),
+    })
+    expect(await screen.findByLabelText(/img_to_add/i)).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled()
+    expect(screen.getByText('To change this file, create a registered converter with the new upload.')).toBeInTheDocument()
+  })
+
+  it('should load a prompt default into the shared multiline editor before editing', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([{
+      name: 'system_prompt', type_name: 'str', required: false, multiline: true,
+      default: 'Default instructions\nUse {{ objective }}.',
+    }], 'RolePlayToolCallConverter')
+    renderDialog()
+    await selectConverterType('RolePlayToolCallConverter')
+    const prompt = screen.getByRole('textbox', { name: 'system_prompt' })
+    expect(prompt.tagName).toBe('TEXTAREA')
+    expect(prompt).toHaveValue('Default instructions\nUse {{ objective }}.')
+    await user.clear(prompt)
+    await user.click(prompt)
+    await user.paste('Edited instructions\nUse {{ objective }}.')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    await waitFor(() => expect(mockedConvertersApi.createConverter).toHaveBeenCalled())
+    expect(mockedConvertersApi.createConverter.mock.calls[0][0].params).toEqual({
+      system_prompt: 'Edited instructions\nUse {{ objective }}.',
+    })
   })
 
   it('should allow a different target or an empty selection', async () => {
@@ -848,7 +948,7 @@ describe('CreateConverterDialog', () => {
     })
 
     // The list still refreshes, but the opening in front of the user is untouched.
-    expect(onCreated).toHaveBeenCalledWith('first-converter')
+    expect(onCreated).toHaveBeenCalledWith('first-converter', false)
     expect(screen.getByLabelText(/registry name/i)).toHaveValue('my-second-converter')
     expect(screen.getByLabelText(/caesar_offset/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Add Converter' })).toBeInTheDocument()

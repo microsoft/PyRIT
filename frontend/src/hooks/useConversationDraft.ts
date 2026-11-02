@@ -4,7 +4,7 @@ import { toApiError } from '@/services/errors'
 import { buildTemperatureTarget } from '@/services/targetRegistry'
 import type {
   AddMessageResponse, ConversationDraftMessage, ConversationDraftPiece, ConversationSaveInput,
-  MessageAttachment, NewAttackContext, PieceConversion, SaveConversationRequest, TargetInstance,
+  MessageAttachment, NewAttackContext, PieceConversionUpdates, SaveConversationRequest, TargetInstance,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import {
@@ -133,18 +133,24 @@ export function useConversationDraft(
         ? { ...message, pieces: [...message.pieces, piece] } : message)
     })
   }
-  const applyConversions = (applied: Record<string, PieceConversion>): void => {
-    changeMessages((messages: ConversationDraftMessage[]) => messages.map((message: ConversationDraftMessage) => ({
-      ...message, pieces: message.pieces.map((piece: ConversationDraftPiece) => {
-        const result = applied[piece.draftId]
-        return result ? {
-          ...piece, converted_value: result.convertedValue,
-          converted_value_data_type: result.convertedDataType,
-          applied_converter_ids: result.converterInstanceIds,
-          applied_converter_provenance: result.converterProvenance,
-        } : piece
-      }),
-    })))
+  const applyConversions = (applied: PieceConversionUpdates): void => {
+    changeMessages((messages: ConversationDraftMessage[]) => {
+      let changed = false
+      const next = messages.map((message: ConversationDraftMessage) => ({
+        ...message, pieces: message.pieces.map((piece: ConversationDraftPiece) => {
+          if (!Object.prototype.hasOwnProperty.call(applied, piece.draftId)) return piece
+          const result = applied[piece.draftId]
+          changed = true
+          return {
+            ...piece, converted_value: result?.convertedValue,
+            converted_value_data_type: result?.convertedDataType,
+            applied_converter_ids: result?.converterInstanceIds ?? [],
+            applied_converter_provenance: result?.converterProvenance,
+          }
+        }),
+      }))
+      return changed ? next : messages
+    })
   }
   const save = async (
     destination: SaveConversationRequest['destination'], onSaved: (response: AddMessageResponse, target?: TargetInstance | null) => void,

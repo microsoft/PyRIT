@@ -27,6 +27,7 @@ from pyrit.models import (
     AttackResult,
     ChatMessageRole,
     ConversationReference,
+    ConversationSummary,
     Message,
     MessagePiece,
     PromptDataType,
@@ -356,6 +357,8 @@ class ConversationMessagesResponse(BaseModel):
             "None when the conversation does not end with a target response."
         ),
     )
+    pagination: PaginationInfo | None = None
+    partial_message_sequences: list[int] = Field(default_factory=list)
 
 
 # ============================================================================
@@ -578,15 +581,6 @@ class UpdateAttackRequest(BaseModel):
 # ============================================================================
 
 
-class ConversationSummary(BaseModel):
-    """Summary of a conversation (message count, preview, timestamp)."""
-
-    conversation_id: str = Field(..., description="Unique conversation identifier")
-    message_count: int = Field(0, description="Number of messages in this conversation")
-    last_message_preview: str | None = Field(None, description="Preview of the last message")
-    created_at: datetime | None = Field(None, description="Timestamp of the first message")
-
-
 class AttackConversationsResponse(BaseModel):
     """Response listing all conversations belonging to an attack."""
 
@@ -595,6 +589,8 @@ class AttackConversationsResponse(BaseModel):
     conversations: list[ConversationSummary] = Field(
         default_factory=list, description="All conversations including main"
     )
+    pagination: PaginationInfo | None = None
+    total_count: int | None = None
 
 
 class CreateConversationRequest(BaseModel):

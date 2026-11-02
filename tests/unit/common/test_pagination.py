@@ -71,6 +71,32 @@ def test_encode_keyset_cursor_preserves_history_wire_format() -> None:
     }
 
 
+@pytest.mark.parametrize("position", [-1, 0, 500])
+def test_keyset_cursor_preserves_ordered_positions(position: int) -> None:
+    cursor = encode_keyset_cursor(
+        timestamp=datetime(2026, 9, 21, tzinfo=UTC),
+        identifier="00000000-0000-0000-0000-000000000001",
+        fingerprint="cohort",
+        position=position,
+    )
+    decoded = decode_keyset_cursor(cursor=cursor, fingerprint="cohort")
+    assert decoded is not None
+    assert decoded.position == position
+
+
+@pytest.mark.parametrize("position", [True, False, "1", 1.0, [], {}])
+def test_keyset_cursor_rejects_non_integer_positions(position: object) -> None:
+    payload = {
+        "v": 1,
+        "f": "cohort",
+        "t": "2026-09-21T00:00:00+00:00",
+        "i": "00000000-0000-0000-0000-000000000001",
+        "p": position,
+    }
+    cursor = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    assert decode_keyset_cursor(cursor=cursor, fingerprint="cohort") is None
+
+
 def test_fingerprint_filters_preserves_history_default_digest() -> None:
     assert fingerprint_filters(filters={}) == "44136fa355b3678a"
     assert fingerprint_filters(filters={}, length=64) == (
