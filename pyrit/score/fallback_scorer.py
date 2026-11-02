@@ -226,9 +226,7 @@ class _FallbackScorer(Scorer):
         """
         selected = fallback if fallback is not None else primary
         metadata: dict[str, str | int | float] = {
-            f"primary.{key}": value
-            for key, value in (primary.score_metadata or {}).items()
-            if key != "pyrit_internal_snapshot_participation"
+            f"primary.{key}": value for key, value in (primary.score_metadata or {}).items()
         }
         metadata["resolved_by"] = "fallback" if fallback is not None else "primary"
         # Attacks rank true/false scores by this top-level key, so keep the selected child's value.
@@ -239,13 +237,7 @@ class _FallbackScorer(Scorer):
             metadata["primary_rationale"] = primary.score_rationale or ""
             metadata["fallback_status"] = fallback.status.value if fallback is not None else "not_applicable"
             if fallback is not None:
-                metadata.update(
-                    {
-                        f"fallback.{key}": value
-                        for key, value in (fallback.score_metadata or {}).items()
-                        if key != "pyrit_internal_snapshot_participation"
-                    }
-                )
+                metadata.update({f"fallback.{key}": value for key, value in (fallback.score_metadata or {}).items()})
                 metadata["fallback_rationale"] = fallback.score_rationale or ""
             rationale = self._fallback_rationale(primary=primary, fallback=fallback)
 

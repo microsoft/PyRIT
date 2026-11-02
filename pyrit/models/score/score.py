@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -32,7 +31,6 @@ from pyrit.models.score.scorable import (  # noqa: TC001  (runtime-required by P
 )
 
 ScoreType = Literal["true_false", "float_scale", "unknown"]
-_SNAPSHOT_PARTICIPATION_METADATA_KEY = "pyrit_internal_snapshot_participation"
 
 
 class ScoreStatus(str, Enum):
@@ -207,32 +205,6 @@ class Score(BaseModel):
             ``{}`` when ``value`` is ``None``, otherwise ``value`` unchanged.
         """
         return {} if value is None else value
-
-    @model_validator(mode="after")
-    def _remove_legacy_snapshot_participation(self) -> Score:
-        """
-        Move historical private participation metadata out of the public score contract.
-
-        Returns:
-            ``self`` with legacy participation stored privately and removed from metadata.
-        """
-        metadata = self.score_metadata or {}
-        if _SNAPSHOT_PARTICIPATION_METADATA_KEY not in metadata:
-            return self
-
-        legacy_value = metadata[_SNAPSHOT_PARTICIPATION_METADATA_KEY]
-        self.score_metadata = {
-            key: value for key, value in metadata.items() if key != _SNAPSHOT_PARTICIPATION_METADATA_KEY
-        }
-        if self._snapshot_participation is None:
-            participation = legacy_value
-            if isinstance(participation, str):
-                try:
-                    participation = json.loads(participation)
-                except json.JSONDecodeError:
-                    participation = None
-            self._snapshot_participation = participation if isinstance(participation, dict) else None
-        return self
 
     @field_validator("observation_ids")
     @classmethod

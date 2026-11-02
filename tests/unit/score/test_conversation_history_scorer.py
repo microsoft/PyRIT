@@ -535,6 +535,35 @@ async def test_noncanonical_snapshot_participation_cannot_skip_stale_conversatio
     )
 
 
+async def test_public_metadata_collision_cannot_authorize_skipping_conversation_branch(patch_central_database) -> None:
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    request = MessagePiece(role="user", original_value="Request", conversation_id=conversation_id)
+    response = MessagePiece(role="assistant", original_value="default", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=request.to_message())
+    await memory.add_message_to_memory_async(request=response.to_message())
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[
+            create_conversation_scorer(scorer=SubStringScorer(substring="default")),
+            SubStringScorer(substring="default"),
+        ],
+    )
+    scorable = MessageScorable.from_message(response.to_message())
+    expectation = ScoringExpectation(objective="Goal")
+    [score] = await scorer.score_async(scorable=scorable, expectation=expectation)
+    score._snapshot_participation = None
+    score.score_metadata["pyrit_internal_snapshot_participation"] = '{"1": null}'
+
+    await memory.add_message_to_memory_async(
+        request=MessagePiece(
+            role="user", original_value="A later request", conversation_id=conversation_id
+        ).to_message()
+    )
+
+    assert not await scorer.find_matching_scores_async(scores=[score], scorable=scorable, expectation=expectation)
+
+
 class MockUnsupportedScorer(MessageScorer):
     """Mock scorer that is neither a FloatScaleScorer nor a TrueFalseScorer"""
 

@@ -160,6 +160,34 @@ async def test_complete_primary_skips_fallback_async(
     assert isinstance(wrapper, FloatScaleScorer if family == "float_scale" else TrueFalseScorer)
 
 
+async def test_fallback_preserves_reserved_name_in_both_metadata_namespaces_async(
+    pair, family: ScoreType, sqlite_instance: MemoryInterface
+) -> None:
+    wrapper, primary, fallback = pair
+    primary_score = _score(
+        family=family,
+        value=None,
+        metadata={"pyrit_internal_snapshot_participation": "caller primary string"},
+    )
+    fallback_score = _score(
+        family=family,
+        value="0.8" if family == "float_scale" else "True",
+        metadata={"pyrit_internal_snapshot_participation": '{"0": null}'},
+    )
+    with (
+        patch.object(primary, "_score_scorable_async", new_callable=AsyncMock, return_value=[primary_score]),
+        patch.object(fallback, "_score_scorable_async", new_callable=AsyncMock, return_value=[fallback_score]),
+    ):
+        [result] = await wrapper.score_async(scorable=ContentScorable(value="evidence"))
+
+    assert result.score_metadata["primary.pyrit_internal_snapshot_participation"] == "caller primary string"
+    assert result.score_metadata["fallback.pyrit_internal_snapshot_participation"] == '{"0": null}'
+    assert result._snapshot_participation == {"0": None, "1": None}
+    [persisted] = await sqlite_instance.get_scores_async(score_ids=[str(result.id)])
+    assert persisted.score_metadata == result.score_metadata
+    assert persisted._snapshot_participation == result._snapshot_participation
+
+
 @pytest.mark.parametrize("primary_resolves", [False, True])
 @pytest.mark.parametrize("children_report_floats", [False, True])
 async def test_selected_original_float_value_stays_readable_async(

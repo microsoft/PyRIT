@@ -35,7 +35,6 @@ from pyrit.models import (
     ScoreType,
     ScoringExpectation,
 )
-from pyrit.models.score.score import _SNAPSHOT_PARTICIPATION_METADATA_KEY
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
@@ -76,8 +75,6 @@ def _read_snapshot_participation(score: Score) -> SnapshotParticipation | None:
         The validated child tree, or ``None`` when it is absent or invalid.
     """
     raw: Any = score._snapshot_participation
-    if raw is None:
-        raw = (score.score_metadata or {}).get(_SNAPSHOT_PARTICIPATION_METADATA_KEY)
     if not isinstance(raw, str):
         participation = raw
     else:

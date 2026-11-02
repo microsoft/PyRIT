@@ -33,31 +33,20 @@ def test_score_storage_marker_stays_private(is_intermediate: bool) -> None:
     assert entry.get_score()._snapshot_participation == {"0": None}
 
 
-def test_score_migrates_legacy_public_participation_to_private_attribute() -> None:
-    score = Score(
-        score_value="true",
-        score_type="true_false",
-        score_metadata={
-            "source": "judge",
-            "pyrit_internal_snapshot_participation": '{"0": null}',
-        },
-    )
-    assert score.score_metadata == {"source": "judge"}
-    assert score._snapshot_participation == {"0": None}
-    assert "pyrit_internal_snapshot_participation" not in score.model_dump_json()
+@pytest.mark.parametrize("value", ["not-json", '{"0": null}', 17, 1.5])
+async def test_score_preserves_reserved_name_as_caller_metadata_async(value, sqlite_instance) -> None:
+    metadata = {"pyrit_internal_snapshot_participation": value}
+    score = Score(score_value="true", score_type="true_false", score_metadata=metadata)
 
+    assert score.score_metadata == metadata
+    assert score._snapshot_participation is None
+    assert Score.model_validate(score.model_dump()).score_metadata == metadata
+    assert Score.model_validate_json(score.model_dump_json()).score_metadata == metadata
 
-def test_score_entry_hides_legacy_public_participation_when_loading_old_rows() -> None:
-    entry = ScoreEntry(entry=Score(score_value="true", score_type="true_false"))
-    entry.score_metadata = {
-        "source": "judge",
-        "pyrit_internal_snapshot_participation": '{"0": null}',
-    }
-
-    score = entry.get_score()
-
-    assert score.score_metadata == {"source": "judge"}
-    assert score._snapshot_participation == {"0": None}
+    await sqlite_instance.add_scores_to_memory_async(scores=[score])
+    [persisted] = await sqlite_instance.get_scores_async(score_ids=[str(score.id)])
+    assert persisted.score_metadata == metadata
+    assert persisted._snapshot_participation is None
 
 
 def test_intermediate_score_migration_preserves_legacy_results() -> None:
