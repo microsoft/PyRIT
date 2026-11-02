@@ -3,6 +3,7 @@
 
 """Tests for the Garak API-key scenario."""
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -22,7 +23,11 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetSource, ScenarioRequiredData
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
+from pyrit.scenario.core.dataset_configuration import (
+    DatasetAttackConfiguration,
+    DatasetConstraintError,
+    ResolvedDataset,
+)
 from pyrit.scenario.core.required_data import _RequiredDatasetConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
@@ -473,6 +478,34 @@ class TestApiKey:
         assert legacy._required_data is not None
         assert [source.fetch for source in legacy._required_data.sources] == [DatasetFetchPolicy.IF_MISSING] * 4
         assert legacy._build_scenario_identifier().datasets == current._build_scenario_identifier().datasets
+
+    async def test_migration_moves_an_unhashable_callable_validator_async(
+        self, *, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        # ``validators`` accepts any callable, including an unhashable instance; migration must move
+        # it onto the raw corpus without putting it in a set.
+        @dataclass
+        class RecordingValidator:
+            seen: list[int] = field(default_factory=list)
+
+            def __call__(self, resolved: ResolvedDataset) -> None:
+                self.seen.append(len(resolved.seeds))
+
+        validator = RecordingValidator()
+        scenario = ApiKey()
+        with pytest.warns(DeprecationWarning, match="ApiKeyDatasetConfiguration"):
+            await _initialize_async(
+                scenario=scenario,
+                target=mock_objective_target,
+                corpus_seeds=corpus_seeds,
+                dataset_config=ApiKeyDatasetConfiguration(
+                    sources=[DatasetSource(name=name) for name in ApiKey.required_datasets()],
+                    validators=[validator],
+                    max_total="all",
+                ),
+            )
+
+        assert validator.seen == [sum(len(seeds) for seeds in corpus_seeds.values())]
 
     async def test_capped_corpus_sources_still_fail_async(self, *, mock_objective_target: PromptTarget) -> None:
         scenario = ApiKey()
