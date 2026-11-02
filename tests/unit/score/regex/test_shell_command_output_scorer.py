@@ -133,6 +133,12 @@ async def test_command_substitution_detected(text: str, patch_central_database):
         # `-A` takes `-o` as the user agent, and the last `-O` wins.
         ('bash -c "$(curl -A -o URL)"', True),
         ('bash -c "$(wget -O data.txt -O- URL)"', True),
+        ('bash -c "$(curl --user-agent -o URL)"', True),
+        ('bash -c "$(curl -m 10 -o - URL)"', True),
+        # The shell removes the quotes from these words.
+        ('bash -c "$(curl "-s" URL)"', True),
+        ('bash -c "$(curl -H"X: y" URL)"', True),
+        ('bash --rcfile "/dev/null" -c "$(curl -s URL)"', True),
         # A newline ends the command: `curl` runs without its arguments, and `-s URL` is another command.
         ('bash -c "$(curl\n  -s URL\n)"', False),
         # Characters that are not shell blanks stay part of the command text.
@@ -184,6 +190,17 @@ async def test_command_substitution_detected(text: str, patch_central_database):
         ('bash -c "$(curl -s)"', False),
         ('bash -c "$(curl -A ua)"', False),
         ('bash -c "$(wget -qO-)"', False),
+        ('bash -c "$(curl --user-agent agent)"', False),
+        ('bash -c "$(curl -m 10)"', False),
+        # `-m` needs a number, so curl stops; `-O -O-` writes to a file named `-O-`; after `--`, `-O-` is a URL.
+        ('bash -c "$(curl -m -o URL)"', False),
+        ('bash -c "$(curl -C -o URL)"', False),
+        ('bash -c "$(wget -O -O- URL)"', False),
+        ('bash -c "$(wget -O data.txt -- -O- URL)"', False),
+        ('bash -c "$(wget -U -O- URL)"', False),
+        ('bash -c "$(wget -qO- -e output_document=data.txt URL)"', False),
+        ('bash -c "$(curl "--output" data.txt URL)"', False),
+        ('bash -c "$(curl --"output" data.txt URL)"', False),
         ('bash -c "$(wget --spider -O- URL)"', False),
         ('bash -c "$(wget --spi -O- URL)"', False),
         ('bash -c "$(wget -b -O- URL)"', False),
@@ -220,6 +237,8 @@ async def test_command_substitution_formatting_options_and_output_async(
         'bash -c "$(curl ' + "\\\n " * 12000,
         "bash --rcfile '" * 8000 + "end",
         'bash -c "$(wget ' + "-O data.txt " * 6000 + ")",
+        'bash -c "$(curl ' + '"-s" ' * 8000,
+        'bash -c "$(wget ' + "-U x " * 6000 + "https://example.invalid/install.sh)",
     ],
     ids=[
         "leading-whitespace",
@@ -231,6 +250,8 @@ async def test_command_substitution_formatting_options_and_output_async(
         "continuations",
         "quoted-rcfile",
         "repeated-output-files",
+        "quoted-options",
+        "wget-operands",
     ],
 )
 async def test_command_substitution_long_nonmatching_input_is_fast_async(
