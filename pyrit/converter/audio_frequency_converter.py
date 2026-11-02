@@ -7,6 +7,7 @@ from typing import Literal
 
 import numpy as np
 from scipy.io import wavfile
+from scipy.signal import hilbert
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.memory import data_serializer_factory
@@ -70,7 +71,7 @@ class AudioFrequencyConverter(Converter):
             ConverterResult: The result containing the audio file path.
 
         Raises:
-            ValueError: If the input type is not supported.
+            ValueError: If the input type is not supported or the shift is at/above Nyquist.
             Exception: If there is an error during the conversion process.
         """
         if not self.input_supported(input_type):
@@ -85,19 +86,28 @@ class AudioFrequencyConverter(Converter):
             # Read the audio file bytes and process the data
             bytes_io = io.BytesIO(audio_bytes)
             sample_rate, data = wavfile.read(bytes_io)
+            nyquist_frequency = sample_rate / 2
+            if abs(self._shift_value) >= nyquist_frequency:
+                raise ValueError(
+                    f"Frequency shift ({self._shift_value} Hz) must be below the Nyquist frequency "
+                    f"({nyquist_frequency:g} Hz) for the input sample rate ({sample_rate} Hz)."
+                )
+
+            # Use an analytic signal so modulation moves the positive-frequency content
+            # in one direction instead of creating mirrored lower and upper sidebands.
+            midpoint = 128 if data.dtype == np.uint8 else 0
+            centered_data = data.astype(np.float64) - midpoint
+            analytic_data = hilbert(centered_data, axis=0)
             phase = np.exp(1j * 2 * np.pi * self._shift_value * np.arange(len(data)) / sample_rate)
             if data.ndim > 1:
                 phase = phase[:, np.newaxis]
-            # 8-bit PCM is unsigned and centred on 128, so shift around that midpoint.
-            midpoint = 128 if data.dtype == np.uint8 else 0
-            shifted_data = (data.astype(np.float64) - midpoint) * phase
+            shifted_data = (analytic_data * phase).real + midpoint
 
             # Keep the input sample format so integer audio isn't rescaled or wrapped.
-            output_data = shifted_data.real + midpoint
             if np.issubdtype(data.dtype, np.integer):
                 info = np.iinfo(data.dtype)
-                output_data = np.clip(output_data, info.min, info.max)
-            output_data = output_data.astype(data.dtype)
+                shifted_data = np.clip(shifted_data, info.min, info.max)
+            output_data = shifted_data.astype(data.dtype)
 
             # Write to a fresh buffer so a shorter output cannot retain input bytes.
             output_bytes_io = io.BytesIO()
