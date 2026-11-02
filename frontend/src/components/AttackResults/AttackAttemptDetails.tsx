@@ -46,7 +46,8 @@ interface AttackAttemptDetailsProps {
   /** Scorer that decided attack success. */
   readonly objectiveScorer?: ScenarioObjectiveScorer | null
   /** Route to the attempt's conversation. Supplied by the host so this stays route-agnostic. */
-  readonly conversationPath: string
+  readonly conversationPath: string | null
+  readonly conversationState?: unknown
 }
 
 export default function AttackAttemptDetails({
@@ -56,6 +57,7 @@ export default function AttackAttemptDetails({
   techniqueDetails,
   objectiveScorer,
   conversationPath,
+  conversationState,
 }: AttackAttemptDetailsProps) {
   const styles = useAttackAttemptDetailsStyles()
 
@@ -131,9 +133,13 @@ export default function AttackAttemptDetails({
         </div>
       </section>
 
-      <Link className={styles.conversationLink} to={conversationPath}>
-        View conversation
-      </Link>
+      {conversationPath ? (
+        <Link className={styles.conversationLink} to={conversationPath} state={conversationState}>
+          View conversation
+        </Link>
+      ) : (
+        <Text>No conversation was saved for this result.</Text>
+      )}
 
       {errorMessage && (
         <MessageBar intent="error">

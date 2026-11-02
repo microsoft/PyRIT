@@ -21,7 +21,6 @@ from pyrit.score import (
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from pyrit.score.observation.execution import _scoring_expectation_context
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
@@ -151,7 +150,6 @@ class TestAudioTrueFalseScorer:
     async def test_typed_transcript_criteria_are_explicit_async(self, audio_message_piece: MessagePiece) -> None:
         scorer = AudioTrueFalseScorer(text_capable_scorer=QuestionAnswerScorer())
         expectation = ScoringExpectation(conditions=(AnswerMatches(correct_answer="Paris"),))
-        unrelated = ScoringExpectation(conditions=(AnswerMatches(correct_answer="London"),))
         with (
             patch.object(scorer._audio_helper, "_transcribe_audio_async", return_value="Paris"),
             patch.object(
@@ -159,7 +157,6 @@ class TestAudioTrueFalseScorer:
                 "_score_nested_message_async",
                 wraps=scorer._audio_helper.text_scorer._score_nested_message_async,
             ) as child,
-            _scoring_expectation_context(unrelated),
         ):
             [score] = await scorer._score_async(audio_message_piece.to_message(), expectation=expectation)
         assert score.get_value() is True
@@ -284,7 +281,6 @@ class TestAudioFloatScaleScorer:
             patch.object(text_scorer, "CONDITION_TYPE", AnswerMatches),
             patch.object(scorer._audio_helper, "_transcribe_audio_async", return_value="Paris"),
             patch.object(text_scorer, "_score_nested_message_async", return_value=child_scores) as child,
-            _scoring_expectation_context(ScoringExpectation(objective="unrelated")),
         ):
             [score] = await scorer._score_async(audio_message_piece.to_message(), expectation=expectation)
         assert score.get_value() == 0.8

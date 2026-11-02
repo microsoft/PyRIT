@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 'react-router'
 
 import { configurationApi, initializersApi } from '@/services/api'
+import { installRouterTestRequest } from '@/test-utils/routerRequest'
 
 import Configuration from './Configuration'
 
@@ -29,19 +30,6 @@ jest.mock('@/services/api', () => ({
 
 const mockedConfigurationApi = jest.mocked(configurationApi)
 const mockedInitializersApi = jest.mocked(initializersApi)
-const originalRequest = globalThis.Request
-
-class RouterTestRequest {
-  readonly url: string
-  readonly method: string
-  readonly signal: AbortSignal
-
-  constructor(input: string | URL, init?: { method?: string, signal?: AbortSignal | null }) {
-    this.url = String(input)
-    this.method = init?.method ?? 'GET'
-    this.signal = init?.signal ?? new AbortController().signal
-  }
-}
 
 function RouterProbe(): ReactElement {
   // Keep Fluent focus management mounted across routes, like the app shell.
@@ -97,21 +85,12 @@ function renderPage(
 }
 
 describe('Configuration', () => {
+  let restoreRequest: () => void
   beforeAll(() => {
-    Object.defineProperty(globalThis, 'Request', {
-      configurable: true,
-      writable: true,
-      value: RouterTestRequest,
-    })
+    restoreRequest = installRouterTestRequest()
   })
 
-  afterAll(() => {
-    Object.defineProperty(globalThis, 'Request', {
-      configurable: true,
-      writable: true,
-      value: originalRequest,
-    })
-  })
+  afterAll(() => { restoreRequest() })
 
   beforeEach(() => {
     jest.clearAllMocks()

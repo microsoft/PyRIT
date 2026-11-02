@@ -7,7 +7,12 @@ from uuid import UUID
 
 import pytest
 
-from pyrit.models.catalog.scenario_suite import SUITE_SCHEMA_VERSION, ScenarioSuite, ScenarioSuiteEntry
+from pyrit.models.catalog.scenario_suite import (
+    SUITE_SCHEMA_VERSION,
+    ScenarioSuite,
+    ScenarioSuiteEntry,
+    ScenarioSuiteRegistryEntry,
+)
 
 ENTRY_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ENTRY_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -30,6 +35,26 @@ def test_suite_preserves_entry_order_exactly() -> None:
 
     assert [entry.entry_id for entry in suite.entries] == [ENTRY_TWO, ENTRY_ONE]
     assert [entry.preset_name for entry in suite.entries] == ["second", "first"]
+
+
+def test_suite_identifier_uses_ordered_preset_names_not_editor_entry_ids() -> None:
+    """Test that stable editor IDs do not change the suite's behavioral identity."""
+    first = ScenarioSuite(
+        name="weekly",
+        entries=[
+            _entry(entry_id=ENTRY_ONE, preset_name="first"),
+            _entry(entry_id=ENTRY_TWO, preset_name="second"),
+        ],
+    )
+    second = ScenarioSuite(
+        name="renamed",
+        entries=[
+            _entry(entry_id=ENTRY_TWO, preset_name="first"),
+            _entry(entry_id=ENTRY_ONE, preset_name="second"),
+        ],
+    )
+
+    assert first.get_identifier() == second.get_identifier()
 
 
 def test_suite_allows_duplicate_preset_names_with_distinct_entry_ids() -> None:
@@ -96,3 +121,10 @@ def test_suite_rejects_unknown_fields() -> None:
     """Test that misspelled hand-authored fields fail loudly."""
     with pytest.raises(ValueError, match="presets"):
         ScenarioSuite(name="weekly", presets=[])  # type: ignore[call-arg]
+
+
+def test_registered_suite_entry_has_no_document_version() -> None:
+    """Test the registry envelope for a suite defined in code."""
+    entry = ScenarioSuiteRegistryEntry(suite=ScenarioSuite(name="weekly"), origin="registered")
+
+    assert entry.version is None

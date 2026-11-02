@@ -137,12 +137,21 @@ describe('useConversationMessages', () => {
 
     await act(async () => { await result.current.loadConversation('attack', 'main') })
     expect(contents(result.current.messages)).toEqual(['main:1'])
+    expect(result.current.conversationLoadIssue).toEqual({
+      conversationId: 'main', unavailable: false, detail: 'Could not load conversation: Refresh failed',
+    })
 
     getMessages.mockRejectedValueOnce(new Error('Initial load failed'))
     rerender({ activeConversationId: 'branch' })
     await waitFor(() => expect(result.current.loadedConversationId).toBe('branch'))
     expect(result.current.messages).toEqual([])
     expect(result.current.isLoadingMessages).toBe(false)
+    expect(result.current.conversationLoadIssue?.detail).toBe('Could not load conversation: Initial load failed')
+
+    getMessages.mockResolvedValueOnce(transcript('branch'))
+    await act(async () => { await result.current.loadConversation('attack', 'branch') })
+    expect(result.current.conversationLoadIssue).toBeNull()
+    expect(contents(result.current.messages)).toEqual(['branch:1'])
   })
 
   it('should skip loaded or sending conversations unless a forced load is requested', async () => {

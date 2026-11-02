@@ -20,7 +20,11 @@ from pyrit.backend.models.scenario_presets import (
 from pyrit.backend.services.scenario_preset_service import ScenarioPresetService
 from pyrit.models.catalog import ScenarioPreset, ScenarioRunSizeEstimate
 from pyrit.models.catalog.scenario import ScenarioRunSizeComponent
-from pyrit.registry import ScenarioPresetConflictError, ScenarioPresetNameRegisteredError
+from pyrit.registry import (
+    ScenarioPresetConflictError,
+    ScenarioPresetNameRegisteredError,
+    resolve_scenario_preset_run_request,
+)
 
 PRESET_NAME = "quick_scan"
 SCENARIO_NAME = "foundry.red_team_agent"
@@ -286,6 +290,24 @@ class TestUpdatePreset:
         assert response.status_code == 200
         assert service.save_preset_async.call_args.kwargs["expected_version"] == "v1"
 
+    @pytest.mark.parametrize("show_in_scanner", [True, False])
+    def test_update_round_trips_scanner_visibility(
+        self, *, client: TestClient, service: MagicMock, show_in_scanner: bool
+    ) -> None:
+        preset = ScenarioPreset(name=PRESET_NAME, scenario_name=SCENARIO_NAME, show_in_scanner=show_in_scanner)
+        service.save_preset_async = AsyncMock(
+            return_value=_response(version="v2").model_copy(update={"preset": preset})
+        )
+
+        response = client.put(
+            f"/api/scenario-presets/{PRESET_NAME}",
+            json={"preset": preset.model_dump(), "expected_version": "v1"},
+        )
+
+        assert response.status_code == 200
+        assert service.save_preset_async.call_args.kwargs["preset"].show_in_scanner is show_in_scanner
+        assert response.json()["preset"]["show_in_scanner"] is show_in_scanner
+
     @pytest.mark.parametrize("explicit_null", [False, True])
     @pytest.mark.usefixtures("signed_in_user")
     def test_an_update_without_an_author_preserves_the_original_author(
@@ -465,8 +487,9 @@ class TestResolvePreset:
         """
         resolved = preset if preset is not None else _preset()
         return AsyncMock(
-            side_effect=lambda *, name, launch: ScenarioPresetService.resolve_run_request(
-                preset=resolved, launch=launch
+            side_effect=lambda *, name, launch: resolve_scenario_preset_run_request(
+                preset=resolved,
+                launch=launch,
             )
         )
 

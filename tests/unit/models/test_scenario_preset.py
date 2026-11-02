@@ -26,6 +26,11 @@ def test_preset_carries_no_storage_version() -> None:
     assert "version" not in ScenarioPreset.model_fields
 
 
+def test_show_in_scanner_defaults_to_listed() -> None:
+    """Test that a preset written before the flag existed stays listed in the Scanner."""
+    assert ScenarioPreset(name="nightly", scenario_name="foundry.red_team_agent").show_in_scanner is True
+
+
 def test_schema_version_defaults_so_a_document_without_it_still_reads() -> None:
     """Test that a document written before the field existed is read as the first shape."""
     assert ScenarioPreset(name="nightly", scenario_name="foundry.red_team_agent").schema_version == 1
@@ -195,6 +200,20 @@ def test_identity_covers_configuration_and_ignores_description() -> None:
 
     assert preset.get_identifier().unique_name == relabelled.get_identifier().unique_name
     assert preset.get_identifier().unique_name != reconfigured.get_identifier().unique_name
+
+
+def test_identity_ignores_scanner_visibility() -> None:
+    """Test that hiding a preset from the Scanner does not change what it runs."""
+    preset = ScenarioPreset(name="nightly", scenario_name="foundry.red_team_agent", techniques=["crescendo"])
+    hidden = ScenarioPreset(
+        name="nightly",
+        scenario_name="foundry.red_team_agent",
+        techniques=["crescendo"],
+        show_in_scanner=False,
+    )
+
+    assert hidden.get_identifier().unique_name == preset.get_identifier().unique_name
+    assert "show_in_scanner" not in hidden.get_identifier().params
 
 
 def test_identity_is_rebuilt_so_a_modified_copy_does_not_report_the_original() -> None:

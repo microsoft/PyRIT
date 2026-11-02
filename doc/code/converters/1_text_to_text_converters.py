@@ -378,7 +378,20 @@ print("Variation Selector:", await var_selector.convert_async(prompt=prompt))  #
 #
 # LLM-based converters use language models to transform prompts. These converters are more flexible and can produce more natural variations, but they are slower and require an LLM target.
 #
-# These converters use LLMs to transform text style, tone, language, and semantics:
+# These converters use LLMs to transform text style, tone, language, and semantics.
+#
+# RolePlayToolCallConverter(...) writes one untrusted message so a desired tool action looks approved.
+# Supply `valid_call`, `action_desired`, and a `converter_target`, or configure a default target.
+# Pass the pipeline text to rewrite as `convert_async(prompt=...)`.
+# The call fields must not be empty. Tool calls are context for the generator, not tools it can execute.
+# `message_format` defaults to `random`: each conversion selects XML, YAML, JSON, Markdown, or plain text.
+# Set `message_format` to a format or custom instructions to keep it fixed.
+# Enable the `tools` initializer to register the example `role_play_tool_calls` technique.
+# It uses the registered `adversarial_chat` target. The general technique catalog does not include this example.
+# In Technique Parameters > Request converters, open Settings on the example converter to change its call fields
+# for this run. The registered converter stays unchanged. Add converters after it to transform the generated message.
+# The picker also has New converter, which creates a registered instance you can use in other runs.
+# `system_prompt` is the adversarial chat's system message; the default is loaded from the role-play YAML.
 
 # %%
 import pathlib

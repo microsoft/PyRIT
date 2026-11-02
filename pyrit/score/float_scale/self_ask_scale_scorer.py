@@ -8,6 +8,7 @@ from pyrit.common.path import SCORER_SCALES_PATH
 from pyrit.models import (
     ComponentIdentifier,
     JsonSchemaDefinition,
+    MatchesObjective,
     MessagePiece,
     Observation,
     Score,
@@ -83,10 +84,8 @@ class SelfAskScaleScorer(MessageFloatScaleScorer):
         RED_TEAMER_SYSTEM_PROMPT = Path(SCORER_SCALES_PATH, "red_teamer_system_prompt.yaml").resolve()
         CRITERIA_SYSTEM_PROMPT = Path(SCORER_SCALES_PATH, "criteria_system_prompt.yaml").resolve()
 
-    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
-        supported_data_types=["text"],
-        is_objective_required=True,
-    )
+    CONDITION_TYPE = MatchesObjective
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     def __init__(
