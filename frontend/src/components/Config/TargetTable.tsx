@@ -33,6 +33,7 @@ import {
   EyeRegular,
 } from '@fluentui/react-icons'
 
+import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import type { TargetInstance } from '@/types'
 import {
@@ -257,6 +258,7 @@ export default function TargetTable({
   // We use a Set of target_registry_name strings — when a name is in the set,
   // that row's sub-rows are visible.
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+  const [expandedIdentities, setExpandedIdentities] = useState<Set<string>>(new Set())
 
   const toggleExpanded = (registryName: string) => {
     setExpandedRows((prev) => {
@@ -266,6 +268,15 @@ export default function TargetTable({
       } else {
         next.add(registryName)
       }
+      return next
+    })
+  }
+
+  const toggleIdentity = (registryName: string) => {
+    setExpandedIdentities((current) => {
+      const next = new Set(current)
+      if (next.has(registryName)) next.delete(registryName)
+      else next.add(registryName)
       return next
     })
   }
@@ -406,14 +417,14 @@ export default function TargetTable({
             const weights = target.target_specific_params?.weights as number[] | undefined
 
             return (
-              <React.Fragment key={target.target_registry_name}>
-                <TableRow
-                  className={mergeClasses(
-                    isDefaultAdversarial(target) && styles.defaultRow,
-                    hidden && styles.hiddenRow,
-                  )}
-                  data-testid={`target-row-${target.target_registry_name}`}
-                >
+              <RegistryIdentityRow
+                key={target.target_registry_name}
+                name={target.target_registry_name}
+                identity={target.identifier}
+                columns={8 + CAPABILITY_COLUMNS.length}
+                expanded={expandedIdentities.has(target.target_registry_name)}
+                onToggle={() => toggleIdentity(target.target_registry_name)}
+                leadingCell={
                   <TableCell className={styles.actionCell}>
                     <Button
                       className={styles.rowAction}
@@ -427,64 +438,70 @@ export default function TargetTable({
                       {hidden ? 'Show' : 'Hide'}
                     </Button>
                   </TableCell>
-                  <TableCell className={styles.registryNameCell}>
-                    <Text size={200} className={styles.registryNameText}>{target.target_registry_name}</Text>
-                    {isDefaultAdversarial(target) && (
-                      <div className={styles.defaultIndicators}>
-                        {isDefaultAdversarial(target) && (
-                          <Badge appearance="outline" color="brand" size="small" aria-label="Default adversarial target">
-                            Adversarial
-                          </Badge>
-                        )}
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      {expandable && (
-                        <Button
-                          className={styles.rowAction}
-                          appearance="subtle"
-                          size="small"
-                          icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
-                          onClick={() => toggleExpanded(target.target_registry_name)}
-                          aria-label={expanded ? 'Collapse inner targets' : 'Expand inner targets'}
-                        />
+                }
+                nameCellClassName={styles.registryNameCell}
+                nameContent={
+                  isDefaultAdversarial(target) && (
+                    <div className={styles.defaultIndicators}>
+                      {isDefaultAdversarial(target) && (
+                        <Badge appearance="outline" color="brand" size="small" aria-label="Default adversarial target">
+                          Adversarial
+                        </Badge>
                       )}
-                      <Text size={200}>{targetType(target)}</Text>
                     </div>
-                  </TableCell>
-                  <TableCell>
-                    <ModelCell target={target} />
-                  </TableCell>
-                  <TableCell>
-                    <Text size={200} className={styles.endpointCell} title={targetEndpoint(target) || undefined}>
-                      {targetEndpoint(target) || '—'}
-                    </Text>
-                  </TableCell>
-                  <TableCell className={styles.inputsModalityCell}>
-                    <ModalityCell modalities={target.capabilities?.supported_input_modalities} />
-                  </TableCell>
-                  <TableCell className={styles.modalityCell}>
-                    <ModalityCell modalities={target.capabilities?.supported_output_modalities} />
-                  </TableCell>
-                  <CapabilityCells target={target} />
-                  <TableCell>
-                    <Text size={200} className={styles.paramsCell}>
-                      {formatParams(target.target_specific_params) || '—'}
-                    </Text>
-                  </TableCell>
-                </TableRow>
-
-                {/* Sub-rows for each inner target, visible when the parent row is expanded */}
-                {expanded && target.inner_targets && (
-                  <InnerTargetRows
-                    parentKey={target.target_registry_name}
-                    innerTargets={target.inner_targets}
-                    weights={weights}
-                  />
+                  )
+                }
+                rowClassName={mergeClasses(
+                  isDefaultAdversarial(target) && styles.defaultRow,
+                  hidden && styles.hiddenRow,
                 )}
-              </React.Fragment>
+                rowTestId={`target-row-${target.target_registry_name}`}
+                additionalRows={
+                  expanded && target.inner_targets && (
+                    <InnerTargetRows
+                      parentKey={target.target_registry_name}
+                      innerTargets={target.inner_targets}
+                      weights={weights}
+                    />
+                  )
+                }
+              >
+                <TableCell>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {expandable && (
+                      <Button
+                        className={styles.rowAction}
+                        appearance="subtle"
+                        size="small"
+                        icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
+                        onClick={() => toggleExpanded(target.target_registry_name)}
+                        aria-label={expanded ? 'Collapse inner targets' : 'Expand inner targets'}
+                      />
+                    )}
+                    <Text size={200}>{targetType(target)}</Text>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <ModelCell target={target} />
+                </TableCell>
+                <TableCell>
+                  <Text size={200} className={styles.endpointCell} title={targetEndpoint(target) || undefined}>
+                    {targetEndpoint(target) || '—'}
+                  </Text>
+                </TableCell>
+                <TableCell className={styles.inputsModalityCell}>
+                  <ModalityCell modalities={target.capabilities?.supported_input_modalities} />
+                </TableCell>
+                <TableCell className={styles.modalityCell}>
+                  <ModalityCell modalities={target.capabilities?.supported_output_modalities} />
+                </TableCell>
+                <CapabilityCells target={target} />
+                <TableCell>
+                  <Text size={200} className={styles.paramsCell}>
+                    {formatParams(target.target_specific_params) || '—'}
+                  </Text>
+                </TableCell>
+              </RegistryIdentityRow>
             )
           })}
         </TableBody>

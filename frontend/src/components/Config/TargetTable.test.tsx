@@ -122,6 +122,117 @@ describe('TargetTable', () => {
     expect(screen.getAllByText('TextTarget').length).toBeGreaterThanOrEqual(1)
   })
 
+  it('should inspect each target identity independently and preserve defaults and visibility', async () => {
+    const user = userEvent.setup()
+    const first = makeTarget({
+      target_registry_name: 'target_one',
+      target_type: 'OpenAIChatTarget',
+      identifier: {
+        constructor_params: { temperature: 0.4 },
+        __children__: { target: { class_name: 'InnerTarget', hash: 'inner-hash' } },
+      },
+    })
+    const second = makeTarget({
+      target_registry_name: 'target_two',
+      target_type: 'TextTarget',
+      identifier: { constructor_params: { prefix: 'two' } },
+    })
+    const updatedFirst = makeTarget({
+      ...first,
+      identifier: { ...first.identifier, constructor_params: { temperature: 0.8 } },
+    })
+    const { rerender } = render(
+      <TestWrapper>
+        <TargetTable
+          {...defaultProps}
+          targets={[first, second]}
+          defaultAdversarialTarget={first}
+        />
+      </TestWrapper>
+    )
+    const firstToggle = screen.getByRole('button', { name: 'Identity for target_one' })
+    const secondToggle = screen.getByRole('button', { name: 'Identity for target_two' })
+    expect(firstToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('region', { name: 'Identity for target_one' })).not.toBeInTheDocument()
+
+    await user.click(firstToggle)
+    await user.click(secondToggle)
+    const firstDetails = screen.getByRole('region', { name: 'Identity for target_one' })
+    const secondDetails = screen.getByRole('region', { name: 'Identity for target_two' })
+    expect(JSON.parse(firstDetails.textContent ?? '')).toEqual(first.identifier)
+    expect(JSON.parse(secondDetails.textContent ?? '')).toEqual(second.identifier)
+    expect(firstToggle).toHaveAttribute('aria-controls', firstDetails.id)
+    expect(secondToggle).toHaveAttribute('aria-controls', secondDetails.id)
+    expect(firstDetails.id).not.toBe(secondDetails.id)
+    expect(within(screen.getByRole('table')).getByLabelText('Default adversarial target')).toHaveTextContent('Adversarial')
+    expect(defaultProps.onSetDefaultAdversarialTarget).not.toHaveBeenCalled()
+
+    rerender(
+      <TestWrapper>
+        <TargetTable
+          {...defaultProps}
+          targets={[updatedFirst, second]}
+          defaultAdversarialTarget={updatedFirst}
+        />
+      </TestWrapper>
+    )
+    expect(screen.getByRole('region', { name: 'Identity for target_one' })).toHaveTextContent('"temperature": 0.8')
+    expect(screen.getByRole('region', { name: 'Identity for target_two' })).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Hide target_one' }))
+    expect(screen.queryByRole('button', { name: 'Identity for target_one' })).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).toBeInTheDocument()
+    expect(defaultProps.onSetDefaultAdversarialTarget).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' }))
+    expect(screen.getByRole('region', { name: 'Identity for target_one' })).toBeVisible()
+  })
+
+  it('should expand target identity independently from composite members and span all columns', async () => {
+    const user = userEvent.setup()
+    const roundRobin = makeTarget({
+      target_registry_name: 'rr_target',
+      target_type: 'RoundRobinTarget',
+      target_specific_params: { weights: [0.6, 0.4] },
+      identifier: {
+        constructor_params: { weights: [0.6, 0.4] },
+        __children__: {
+          targets: [
+            { class_name: 'OpenAIChatTarget', hash: 'first-child' },
+            { class_name: 'OpenAIChatTarget', hash: 'second-child' },
+          ],
+        },
+      },
+      inner_targets: [
+        { target_registry_name: 'inner_a', target_type: 'OpenAIChatTarget', endpoint: 'https://a.example.test' },
+        { target_registry_name: 'inner_b', target_type: 'OpenAIChatTarget', endpoint: 'https://b.example.test' },
+      ],
+    })
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[roundRobin]} />
+      </TestWrapper>
+    )
+
+    const identityToggle = screen.getByRole('button', { name: 'Identity for rr_target' })
+    await user.click(identityToggle)
+    const details = screen.getByRole('region', { name: 'Identity for rr_target' })
+    expect(JSON.parse(details.textContent ?? '')).toEqual(roundRobin.identifier)
+    expect(details.closest('td')).toHaveAttribute('colspan', String(screen.getAllByRole('columnheader').length))
+
+    await user.click(screen.getByRole('button', { name: 'Expand inner targets' }))
+    expect(screen.getByText('https://a.example.test')).toBeInTheDocument()
+    expect(screen.getByText('https://b.example.test')).toBeInTheDocument()
+    expect(screen.getByText('weight: 0.6')).toBeInTheDocument()
+    await user.click(identityToggle)
+    expect(screen.queryByRole('region', { name: 'Identity for rr_target' })).not.toBeInTheDocument()
+    expect(screen.getByText('https://a.example.test')).toBeInTheDocument()
+
+    await user.click(identityToggle)
+    await user.click(screen.getByRole('button', { name: 'Collapse inner targets' }))
+    expect(screen.getByRole('region', { name: 'Identity for rr_target' })).toBeVisible()
+    expect(screen.queryByText('https://a.example.test')).not.toBeInTheDocument()
+  })
+
   it('should display Registry Name, Type, Model, Endpoint, Inputs, Outputs, capability columns and Parameters columns', () => {
     render(
       <TestWrapper>

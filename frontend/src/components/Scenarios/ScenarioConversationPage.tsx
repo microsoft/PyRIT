@@ -39,12 +39,12 @@ function ScanConversation({ scenarioResultId, conversationId }: ScanConversation
   const [lastActive, setLastActive] = useState<ScenarioActiveConversation | null>(null)
   const attackId = active?.attack_result_id ?? saved?.attack_result_id ?? recorded?.attack_result_id ?? lastActive?.attack_result_id ?? null
   const running = Boolean(state.run && !isTerminalRunState(state.run.status))
-  const readConversation = useCallback((_attackId: string, selectedId: string) =>
+  const readConversationById = useCallback((selectedId: string) =>
     scenariosApi.getRunConversation(scenarioResultId, selectedId), [scenarioResultId])
   const transcript = useConversationMessages({
     attackResultId: attackId, conversationId, activeConversationId: conversationId,
     sendingConversations: NO_SENDS, isSendInFlight: noSendInFlight,
-    readConversation, pollIntervalMs: running ? SCENARIO_RUN_POLL_INTERVAL_MS : undefined,
+    readConversationById, pollIntervalMs: running ? SCENARIO_RUN_POLL_INTERVAL_MS : undefined,
   })
   const [cancelOpen, setCancelOpen] = useState(false)
   const [cancelling, setCancelling] = useState(false)
@@ -89,12 +89,13 @@ function ScanConversation({ scenarioResultId, conversationId }: ScanConversation
         {stopped && <Text role="status">Saved messages remain available.</Text>}
         {state.error && <MessageBar intent="error"><MessageBarBody>{state.error} <Button onClick={retry}>Retry scan</Button></MessageBarBody></MessageBar>}
         {transcript.conversationLoadIssue && <MessageBar intent="error"><MessageBarBody>
-          {transcript.conversationLoadIssue.detail} <Button onClick={() => { if (attackId) void transcript.loadConversation(attackId, conversationId) }}>Retry messages</Button>
+          {transcript.conversationLoadIssue.detail} <Button onClick={() => { void transcript.loadConversation(attackId, conversationId) }}>Retry messages</Button>
         </MessageBarBody></MessageBar>}
-        {!attackId && state.loadStatus === 'ready' && !state.stale && <MessageBar intent="warning"><MessageBarBody>This conversation is not part of this scan.</MessageBarBody></MessageBar>}
-        {!verified && !transcript.conversationLoadIssue && state.loadStatus === 'loading' && <Spinner label="Loading conversation..." />}
+        {!verified && !transcript.conversationLoadIssue
+          && (state.loadStatus === 'loading' || transcript.isLoadingMessages) && <Spinner label="Loading conversation..." />}
         <div className={styles.conversationSurface} role="log" aria-label="Conversation messages" aria-live="polite">
-          <MessageList messages={transcript.messages} isLoading={transcript.loadedConversationId === null && Boolean(attackId)} />
+          <MessageList messages={transcript.messages}
+            isLoading={transcript.loadedConversationId === null && (Boolean(attackId) || transcript.isLoadingMessages)} />
         </div>
         {active && <Text size={200} className={styles.sectionHint} role="status">Saved messages update while the attack runs.</Text>}
       </div>

@@ -19,6 +19,7 @@ from pyrit.backend.models.attacks import ScoreView
 from pyrit.backend.models.scores import ApplyChatScorerRequest, ApplyChatScorerResponse
 from pyrit.backend.services.manual_send_scheduler import complete_owned_write_async, get_manual_send_scheduler
 from pyrit.backend.services.scorer_service import get_scorer_service
+from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.executor.attack import attack_outcome_from_score
 from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.memory import CentralMemory
@@ -237,7 +238,7 @@ class ChatScoringService:
         """
         return next((message for message in reversed(messages) if message.message_pieces[0].role == "assistant"), None)
 
-    def conversation_scoring(
+    async def conversation_scoring_async(
         self,
         *,
         attack: AttackResult,
@@ -259,7 +260,7 @@ class ChatScoringService:
         """
         response = self.latest_response(messages)
         selection = self.selection(attack)
-        score = self._response_score(attack=attack, selection=selection, response=response, scores=scores)
+        score = await self._response_score_async(attack=attack, selection=selection, response=response, scores=scores)
         failure = attack.get_scoring_failure(conversation_id)
         if failure is not None and not (
             response is not None
@@ -398,9 +399,10 @@ class ChatScoringService:
                 selection, response = await self._apply_context_async(
                     attack_result_id=attack_result_id, request=request
                 )
-                evaluation = await self.evaluate_async(
-                    selection=selection, response=response, scorer=self.resolve_selection(selection), reuse=True
-                )
+                with attack_result_id_scope(attack_result_id=attack_result_id):
+                    evaluation = await self.evaluate_async(
+                        selection=selection, response=response, scorer=self.resolve_selection(selection), reuse=True
+                    )
                 async with scheduler.metadata_update_async(attack_result_id=attack_result_id):
                     await complete_owned_write_async(
                         partial(
@@ -481,7 +483,7 @@ class ChatScoringService:
             ]
         )
 
-    def _response_score(
+    async def _response_score_async(
         self,
         *,
         attack: AttackResult,
@@ -507,7 +509,7 @@ class ChatScoringService:
             scorer = self.resolve_selection(selection)
         except ValueError:
             return None
-        matches = scorer.find_matching_scores(
+        matches = await scorer.find_matching_scores_async(
             scores=scores, scorable=MessageScorable.from_message(response), expectation=selection.expectation
         )
         return next((score for score in matches if not score.is_undetermined), matches[0] if matches else None)
@@ -550,7 +552,7 @@ class ChatScoringService:
         scores = await CentralMemory.get_memory_instance().get_prompt_scores_async(
             prompt_ids=[piece.id for piece in response.message_pieces]
         )
-        matches = scorer.find_matching_scores(
+        matches = await scorer.find_matching_scores_async(
             scores=scores, scorable=MessageScorable.from_message(response), expectation=selection.expectation
         )
         return next((score for score in matches if not score.is_undetermined), None)

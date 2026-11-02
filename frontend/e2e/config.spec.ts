@@ -1,5 +1,6 @@
 import { test, expect, selectChatTarget, type Locator, type Page } from "./_fixtures";
 import { makeTarget, type FlatTarget } from "./_targets";
+import { READY_RUNTIME } from "./_runtime";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -222,6 +223,9 @@ async function checkFilterOptions(
 // ---------------------------------------------------------------------------
 
 test.beforeEach(async ({ page }) => {
+  await page.route(/\/api\/runtime$/, async (route) => {
+    await route.fulfill({ json: READY_RUNTIME });
+  });
   await page.route(/\/api\/auth\/config$/, async (route) => {
     await route.fulfill({
       status: 200,
