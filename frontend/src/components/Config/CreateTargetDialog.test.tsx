@@ -981,7 +981,11 @@ describe("CreateTargetDialog", () => {
     }
 
     await waitFor(() => {
-      expect(screen.getByText("Please provide an endpoint URL")).toBeInTheDocument();
+      // Scoped to the Endpoint URL field: the dialog's error summary (#3710) repeats the text.
+      const endpointField = screen
+        .getByPlaceholderText("https://your-resource.openai.azure.com/")
+        .closest(".fui-Field") as HTMLElement;
+      expect(within(endpointField).getByText("Please provide an endpoint URL")).toBeInTheDocument();
     });
   });
 
@@ -1567,7 +1571,8 @@ describe("CreateTargetDialog", () => {
     await user.type(screen.getByRole("textbox", { name: /Model \/ Deployment Name/ }), "gpt-4.1");
     await user.click(screen.getByRole("button", { name: "Create Target" }));
 
-    expect(await screen.findByText(detail)).toBeVisible();
+    // First match is the dialog's error summary; the GitHub Token field (#3710) may repeat the attributed text.
+    expect((await screen.findAllByText(detail))[0]).toBeVisible();
     expect(defaultProps.onCreated).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: /Model \/ Deployment Name/ })).toHaveValue("gpt-4.1");
 
@@ -2508,4 +2513,606 @@ describe("CreateTargetDialog", () => {
     );
     expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
   }, 30000);
+});
+
+// #3710. jsdom never blurs a disabled element, so in-flight checks assert aria-disabled;
+// the real focus check is in e2e/target-create-errors.spec.ts.
+describe("submit error accessibility (#3710)", () => {
+  const HTTP_ERROR = "Invalid HTTP request line";
+  const INVALID_HTTP_REQUEST = "not an HTTP request";
+
+  let dialogAccessibilityObserver: MutationObserver;
+
+  beforeEach(() => {
+    dialogAccessibilityObserver = watchDialogAccessibility();
+    jest.clearAllMocks();
+    // clearAllMocks keeps queued *Once values from a test that stopped early.
+    mockedTargetsApi.createTarget.mockReset();
+    mockedTargetsApi.listTargetTypes.mockResolvedValue(TARGET_TYPES);
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: [],
+      pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
+    } as unknown as Awaited<ReturnType<typeof mockedTargetsApi.listTargets>>);
+  });
+
+  afterEach(() => {
+    dialogAccessibilityObserver.disconnect();
+    mockedTargetsApi.createTarget.mockReset();
+  });
+
+  type CreateTargetResult = Awaited<ReturnType<typeof mockedTargetsApi.createTarget>>;
+
+  function axiosError(status: number, detail: string): Error {
+    return Object.assign(new Error(`Request failed with status code ${status}`), {
+      isAxiosError: true,
+      response: { status, data: { detail } },
+    });
+  }
+
+  function deferredCreate() {
+    let reject: (reason: unknown) => void = () => {};
+    const promise = new Promise<CreateTargetResult>((_, rejectPromise) => {
+      reject = rejectPromise;
+    });
+    mockedTargetsApi.createTarget.mockReturnValueOnce(promise);
+    return { reject };
+  }
+
+  function dialogTree(props: Partial<React.ComponentProps<typeof CreateTargetDialog>> = {}) {
+    return (
+      <TestWrapper>
+        <CreateTargetDialog open onClose={jest.fn()} onCreated={jest.fn()} {...props} />
+      </TestWrapper>
+    );
+  }
+
+  function getDialog(): HTMLElement {
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    return dialog!;
+  }
+
+  function getErrorRegion(): HTMLElement {
+    return screen.getByTestId("create-target-error");
+  }
+
+  function getCreateButton(): HTMLButtonElement {
+    return screen.getByText("Create Target").closest("button")!;
+  }
+
+  function getForm(): HTMLFormElement {
+    return screen.getByTestId("create-target-form") as HTMLFormElement;
+  }
+
+  function invalidControls(): Element[] {
+    return Array.from(getDialog().querySelectorAll('[aria-invalid="true"]'));
+  }
+
+  /** Concatenated text of every element the control's aria-describedby references. */
+  function describedByText(element: Element): string {
+    const ids = (element.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean);
+    return ids.map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+  }
+
+  async function fillHttpTarget(value = INVALID_HTTP_REQUEST): Promise<HTMLElement> {
+    await selectTargetType("HTTPTarget");
+    const httpRequestField = screen.getByLabelText(/Http Request/);
+    fireEvent.change(httpRequestField, { target: { value } });
+    return httpRequestField;
+  }
+
+  async function expectSummaryFocused(text: string): Promise<HTMLElement> {
+    const region = getErrorRegion();
+    await waitFor(() => {
+      expect(region).toHaveTextContent(text);
+    });
+    await waitFor(() => {
+      expect(region).toHaveFocus();
+    });
+    return region;
+  }
+
+  it("renders an empty, focusable alert region before any error exists", async () => {
+    render(dialogTree());
+    await flushTargetTypesFetch();
+
+    const region = getErrorRegion();
+    expect(region).toHaveAttribute("role", "alert");
+    expect(region).toHaveAttribute("aria-atomic", "true");
+    expect(region).toHaveAttribute("tabindex", "-1");
+    expect(region).toHaveTextContent("");
+    expect(getDialog()).toContainElement(region);
+  });
+
+  it("announces, focuses and attributes the issue's HTTPTarget 400 to Http Request", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(axiosError(400, HTTP_ERROR));
+    render(dialogTree());
+
+    const httpRequestField = await fillHttpTarget();
+    // The live region exists before the error arrives.
+    const region = getErrorRegion();
+    await user.click(getCreateButton());
+
+    await expectSummaryFocused(HTTP_ERROR);
+    expect(getErrorRegion()).toBe(region);
+    expect(httpRequestField).toHaveAttribute("aria-invalid", "true");
+    expect(describedByText(httpRequestField)).toContain(HTTP_ERROR);
+    // The field message must not add a second alert to the one live region.
+    const alerts = getDialog().querySelectorAll('[role="alert"]');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toBe(region);
+  });
+
+  it("keeps Create focusable (aria-disabled) and the form operable while the request is in flight", async () => {
+    const user = userEvent.setup();
+    const create = deferredCreate();
+    render(dialogTree());
+    await selectTargetType("HTTPTarget");
+
+    // Disabled for validation reasons: still natively disabled.
+    const createButton = getCreateButton();
+    expect(createButton).toHaveAttribute("disabled");
+
+    const httpRequestField = screen.getByLabelText(/Http Request/);
+    fireEvent.change(httpRequestField, { target: { value: INVALID_HTTP_REQUEST } });
+    expect(createButton).toBeEnabled();
+
+    await user.click(createButton);
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
+    });
+
+    expect(createButton).toHaveAttribute("aria-disabled", "true");
+    expect(createButton).not.toHaveAttribute("disabled");
+    expect(screen.getByText("Cancel").closest("button")).toBeEnabled();
+    expect(httpRequestField).not.toBeDisabled();
+
+    await act(async () => {
+      create.reject(axiosError(400, HTTP_ERROR));
+    });
+    await expectSummaryFocused(HTTP_ERROR);
+  });
+
+  it("clears the field's invalid state on edit but keeps the summary", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(axiosError(400, HTTP_ERROR));
+    render(dialogTree());
+
+    const httpRequestField = await fillHttpTarget();
+    await user.click(getCreateButton());
+    await expectSummaryFocused(HTTP_ERROR);
+    expect(httpRequestField).toHaveAttribute("aria-invalid", "true");
+
+    fireEvent.change(httpRequestField, { target: { value: "GET / HTTP/1.1" } });
+
+    expect(httpRequestField).not.toHaveAttribute("aria-invalid", "true");
+    expect(getErrorRegion()).toHaveTextContent(HTTP_ERROR);
+  });
+
+  it("re-inserts and re-focuses an identical error on a second failure", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget
+      .mockRejectedValueOnce(axiosError(400, HTTP_ERROR))
+      .mockRejectedValueOnce(axiosError(400, HTTP_ERROR));
+    render(dialogTree());
+
+    await fillHttpTarget();
+    await user.click(getCreateButton());
+    const region = await expectSummaryFocused(HTTP_ERROR);
+    const firstMessageBar = region.querySelector(".fui-MessageBar");
+    expect(firstMessageBar).not.toBeNull();
+
+    await user.click(getCreateButton());
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      const messageBar = region.querySelector(".fui-MessageBar");
+      expect(messageBar).not.toBeNull();
+      expect(messageBar).not.toBe(firstMessageBar);
+    });
+    await expectSummaryFocused(HTTP_ERROR);
+  });
+
+  it.each([
+    ["a 500 response", () => axiosError(500, "Upstream HTTP request failed"), "Upstream HTTP request failed"],
+    ["a 403 response", () => axiosError(403, "Not allowed to send this HTTP request"), "Not allowed to send this HTTP request"],
+    ["a non-axios Error", () => new Error(HTTP_ERROR), HTTP_ERROR],
+  ])("does not attribute %s to a field, but still announces and focuses it", async (_, makeError, shownText) => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(makeError());
+    render(dialogTree());
+
+    const httpRequestField = await fillHttpTarget();
+    await user.click(getCreateButton());
+
+    await expectSummaryFocused(shownText);
+    expect(httpRequestField).not.toHaveAttribute("aria-invalid", "true");
+    expect(invalidControls()).toHaveLength(0);
+  });
+
+  it.each([
+    "http_request and use_tls are incompatible",
+    "Http Request conflicts with Use Tls",
+  ])("does not guess a field when a 400 names two fields: %s", async (detail) => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(axiosError(400, detail));
+    render(dialogTree());
+
+    await fillHttpTarget();
+    await user.click(getCreateButton());
+
+    await expectSummaryFocused(detail);
+    expect(invalidControls()).toHaveLength(0);
+  });
+
+  it("announces, focuses and attributes a client-side parameter error from an Enter submit", async () => {
+    const user = userEvent.setup();
+    render(dialogTree());
+
+    await selectTargetType("OpenAIChatTarget");
+    await user.click(screen.getByText("Advanced settings"));
+    fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+      target: { value: "https://api.openai.com" },
+    });
+    const seedInput = screen.getByLabelText("Seed");
+    fireEvent.change(seedInput, { target: { value: "2.5" } });
+
+    // Pressing Enter in a field submits the form, bypassing the Create button.
+    seedInput.focus();
+    fireEvent.submit(getForm());
+
+    await expectSummaryFocused("seed must be an integer.");
+    expect(seedInput).toHaveAttribute("aria-invalid", "true");
+    expect(invalidControls()).toEqual([seedInput]);
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+  });
+
+  it("does not show a stale error after closing mid-request and reopening", async () => {
+    const user = userEvent.setup();
+    const onClose = jest.fn();
+    const create = deferredCreate();
+    const { rerender } = render(dialogTree({ onClose }));
+
+    await fillHttpTarget();
+    await user.click(getCreateButton());
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
+    });
+
+    // Escape while the request is in flight.
+    fireEvent.keyDown(getDialog(), { key: "Escape", code: "Escape" });
+    expect(onClose).toHaveBeenCalled();
+    rerender(dialogTree({ onClose, open: false }));
+
+    await act(async () => {
+      create.reject(axiosError(400, HTTP_ERROR));
+    });
+
+    rerender(dialogTree({ onClose, open: true }));
+    await flushTargetTypesFetch();
+
+    expect(screen.queryByText(HTTP_ERROR)).not.toBeInTheDocument();
+    expect(getErrorRegion()).toHaveTextContent("");
+    expect(invalidControls()).toHaveLength(0);
+  });
+
+  it("sends only one create request when the form is submitted twice in flight", async () => {
+    const create = deferredCreate();
+    render(dialogTree());
+
+    await fillHttpTarget();
+    fireEvent.submit(getForm());
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
+    });
+    fireEvent.submit(getForm());
+    await act(async () => {});
+
+    expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      create.reject(axiosError(400, HTTP_ERROR));
+    });
+    await expectSummaryFocused(HTTP_ERROR);
+  });
+
+  describe("RoundRobinTarget", () => {
+    const roundRobinTargets = [
+      makeTarget({
+        target_registry_name: "a",
+        target_type: "OpenAIChatTarget",
+        model_name: "gpt-4o",
+        identifier_hash: "hash-a",
+      }),
+      makeTarget({
+        target_registry_name: "b",
+        target_type: "OpenAIChatTarget",
+        model_name: "gpt-4o",
+        identifier_hash: "hash-b",
+      }),
+    ];
+
+    async function selectRoundRobinTargets(
+      user: ReturnType<typeof userEvent.setup>,
+      names: string[],
+    ): Promise<void> {
+      await selectTargetType("RoundRobinTarget");
+      const select = screen.getByText("Select a target to add...").closest("select")!;
+      for (const name of names) {
+        await user.selectOptions(select, name);
+      }
+      await waitFor(() => {
+        expect(screen.getAllByLabelText(/Weight for /)).toHaveLength(names.length);
+      }, { timeout: 10000 });
+    }
+
+    it("announces and focuses the fewer-than-two-targets error from an Enter submit", async () => {
+      const user = userEvent.setup();
+      render(dialogTree({ existingTargets: roundRobinTargets }));
+      await selectRoundRobinTargets(user, ["a"]);
+
+      fireEvent.submit(getForm());
+
+      await expectSummaryFocused("Please select at least 2 targets.");
+      expect(invalidControls()).toHaveLength(0);
+      expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+    }, 30000);
+
+    it("announces and focuses a backend rejection without attributing it to a field", async () => {
+      const user = userEvent.setup();
+      const detail = "Target 'b' endpoint and model_name differ from target 'a'.";
+      mockedTargetsApi.createTarget.mockRejectedValueOnce(axiosError(400, detail));
+      render(dialogTree({ existingTargets: roundRobinTargets }));
+      await selectRoundRobinTargets(user, ["a", "b"]);
+
+      await user.click(getCreateButton());
+
+      await expectSummaryFocused(detail);
+      expect(invalidControls()).toHaveLength(0);
+    }, 30000);
+  });
+
+  it("clears the error when the target type changes", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(axiosError(400, HTTP_ERROR));
+    render(dialogTree());
+
+    await fillHttpTarget();
+    await user.click(getCreateButton());
+    // The attributed error appears in the summary and in the field's message.
+    expect((await screen.findAllByText(HTTP_ERROR)).length).toBeGreaterThan(0);
+
+    await selectTargetType("OpenAIChatTarget");
+
+    expect(screen.queryByText(HTTP_ERROR)).not.toBeInTheDocument();
+    expect(getErrorRegion()).toHaveTextContent("");
+    expect(invalidControls()).toHaveLength(0);
+  });
+
+  describe("loop 2 audit edge cases", () => {
+    function deferredCreateSuccess() {
+      let resolve: (value: CreateTargetResult) => void = () => {};
+      const promise = new Promise<CreateTargetResult>((resolvePromise) => {
+        resolve = resolvePromise;
+      });
+      mockedTargetsApi.createTarget.mockReturnValueOnce(promise);
+      return { resolve };
+    }
+
+    // A late success must not reset a reopened dialog.
+    it("leaves a newer opening untouched when a dismissed create succeeds", async () => {
+      const user = userEvent.setup();
+      const onClose = jest.fn();
+      const onCreated = jest.fn();
+      const create = deferredCreateSuccess();
+      const { rerender } = render(dialogTree({ onClose, onCreated }));
+
+      await fillHttpTarget();
+      await user.click(getCreateButton());
+      await waitFor(() => {
+        expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
+      });
+
+      await user.click(screen.getByText("Cancel").closest("button")!);
+      expect(onClose).toHaveBeenCalled();
+      rerender(dialogTree({ onClose, onCreated, open: false }));
+      rerender(dialogTree({ onClose, onCreated, open: true }));
+      await flushTargetTypesFetch();
+      await fillHttpTarget("GET / HTTP/1.1");
+
+      await act(async () => {
+        create.resolve(makeTarget({ target_registry_name: "raw_http_target", target_type: "HTTPTarget" }));
+      });
+
+      expect(onCreated).toHaveBeenCalledTimes(1);
+      expect(onCreated).toHaveBeenCalledWith(false);
+      expect(screen.getByLabelText(/Http Request/)).toHaveValue("GET / HTTP/1.1");
+    });
+
+    it("tells the parent a create from the current opening succeeded", async () => {
+      const user = userEvent.setup();
+      const onCreated = jest.fn();
+      mockedTargetsApi.createTarget.mockResolvedValueOnce(
+        makeTarget({ target_registry_name: "raw_http_target", target_type: "HTTPTarget" }),
+      );
+      render(dialogTree({ onCreated }));
+
+      await fillHttpTarget("GET / HTTP/1.1");
+      await user.click(getCreateButton());
+
+      await waitFor(() => {
+        expect(onCreated).toHaveBeenCalledWith(true);
+      });
+    });
+
+    it("leaves a newer RoundRobin opening untouched when a dismissed create succeeds", async () => {
+      const user = userEvent.setup();
+      const onClose = jest.fn();
+      const onCreated = jest.fn();
+      const create = deferredCreateSuccess();
+      const existingTargets = [
+        makeTarget({
+          target_registry_name: "a",
+          target_type: "OpenAIChatTarget",
+          model_name: "gpt-4o",
+          identifier_hash: "hash-a",
+        }),
+        makeTarget({
+          target_registry_name: "b",
+          target_type: "OpenAIChatTarget",
+          model_name: "gpt-4o",
+          identifier_hash: "hash-b",
+        }),
+      ];
+      const { rerender } = render(dialogTree({ onClose, onCreated, existingTargets }));
+
+      await selectTargetType("RoundRobinTarget");
+      const select = screen.getByText("Select a target to add...").closest("select")!;
+      await user.selectOptions(select, "a");
+      await user.selectOptions(select, "b");
+      await user.click(getCreateButton());
+      await waitFor(() => {
+        expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
+      });
+
+      await user.click(screen.getByText("Cancel").closest("button")!);
+      expect(onClose).toHaveBeenCalled();
+      rerender(dialogTree({ onClose, onCreated, existingTargets, open: false }));
+      rerender(dialogTree({ onClose, onCreated, existingTargets, open: true }));
+      await flushTargetTypesFetch();
+      await selectTargetType("RoundRobinTarget");
+      await user.selectOptions(screen.getByText("Select a target to add...").closest("select")!, "a");
+      await waitFor(() => {
+        expect(screen.getAllByLabelText(/Weight for /)).toHaveLength(1);
+      });
+
+      await act(async () => {
+        create.resolve(makeTarget({ target_registry_name: "rr", target_type: "RoundRobinTarget" }));
+      });
+
+      expect(onCreated).toHaveBeenCalledTimes(1);
+      expect(onCreated).toHaveBeenCalledWith(false);
+      expect(screen.getAllByLabelText(/Weight for /)).toHaveLength(1);
+    }, 30000);
+
+    // An error for a type the user switched away from is not attributed, even to a same-named field.
+    it("does not attribute a rejection to a field after the target type changed", async () => {
+      const user = userEvent.setup();
+      const create = deferredCreate();
+      render(dialogTree());
+
+      await selectTargetType("OpenAIChatTarget");
+      fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+        target: { value: "https://example.com" },
+      });
+      await user.click(getCreateButton());
+      await waitFor(() => {
+        expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
+      });
+
+      // AzureMLChatTarget also has an endpoint field.
+      await selectTargetType("AzureMLChatTarget");
+      await act(async () => {
+        create.reject(axiosError(400, "endpoint is unreachable"));
+      });
+
+      await expectSummaryFocused("endpoint is unreachable");
+      expect(invalidControls()).toHaveLength(0);
+    });
+
+    // An attributed optional parameter opens Advanced settings, and it stays open.
+    it("opens Advanced settings when the error is about an optional parameter", async () => {
+      const user = userEvent.setup();
+      mockedTargetsApi.createTarget.mockRejectedValueOnce(
+        axiosError(400, "use_tls must be a boolean"),
+      );
+      render(dialogTree());
+
+      const httpRequestField = await fillHttpTarget();
+      const useTls = screen.getByTestId("target-param-use_tls");
+      const advancedSettings = useTls.closest("details")!;
+      expect(advancedSettings).not.toHaveAttribute("open");
+
+      await user.click(getCreateButton());
+      await expectSummaryFocused("use_tls must be a boolean");
+
+      expect(advancedSettings).toHaveAttribute("open");
+      expect(useTls).toBeVisible();
+      expect(useTls).toHaveAttribute("aria-invalid", "true");
+
+      fireEvent.change(httpRequestField, { target: { value: "GET / HTTP/1.1" } });
+      expect(advancedSettings).toHaveAttribute("open");
+    });
+
+    // The summary joins messages as sentences; field messages are unchanged.
+    it("joins several client validation messages into sentences in the summary", async () => {
+      mockedTargetsApi.listTargetTypes.mockResolvedValue({
+        items: [
+          {
+            target_type: "AzureMLChatTarget",
+            parameters: AZURE_ML_COMMON_PARAMETERS.map((parameter) => (
+              parameter.name === "model_name" ? { ...parameter, required: true } : parameter
+            )),
+            supported_auth_modes: ["api_key"],
+            description: "A prompt target for Azure Machine Learning chat endpoints.",
+          },
+        ],
+      });
+      render(dialogTree());
+
+      await selectTargetType("AzureMLChatTarget");
+      const endpointInput = screen.getByPlaceholderText(
+        "https://your-model.region.inference.ml.azure.com/score",
+      );
+      act(() => {
+        endpointInput.focus();
+      });
+      fireEvent.submit(getForm());
+
+      const region = await expectSummaryFocused("Please provide an endpoint URL.");
+      expect(region).toHaveTextContent(
+        /^Please provide an endpoint URL\. Please provide a model name\.$/,
+      );
+      const endpointField = endpointInput.closest(".fui-Field") as HTMLElement;
+      expect(within(endpointField).getByText("Please provide an endpoint URL")).toBeInTheDocument();
+      const modelField = screen
+        .getByPlaceholderText("e.g. Llama-3.2-3B-Instruct")
+        .closest(".fui-Field") as HTMLElement;
+      expect(within(modelField).getByText("Please provide a model name")).toBeInTheDocument();
+    });
+
+    it("ends a single client validation message with a period in the summary only", async () => {
+      const user = userEvent.setup();
+      render(dialogTree());
+
+      await selectTargetType("OpenAIChatTarget");
+      await user.click(screen.getByRole("radio", { name: /Identity-based/ }));
+      fireEvent.submit(getForm());
+
+      const region = await expectSummaryFocused("Please provide an endpoint URL");
+      expect(region).toHaveTextContent(/^Please provide an endpoint URL\.$/);
+      const endpointField = screen
+        .getByPlaceholderText("https://your-resource.openai.azure.com/")
+        .closest(".fui-Field") as HTMLElement;
+      expect(within(endpointField).getByText("Please provide an endpoint URL")).toBeInTheDocument();
+    });
+
+    // Under identity auth, an identity-conflicting parameter is never attributed.
+    it("does not attribute an error to an identity-conflicting parameter under identity auth", async () => {
+      const user = userEvent.setup();
+      mockedTargetsApi.createTarget.mockRejectedValueOnce(
+        axiosError(400, "sas_token is not allowed with this storage account"),
+      );
+      render(dialogTree());
+
+      await selectTargetType("AzureBlobStorageTarget");
+      await user.click(screen.getByRole("radio", { name: /Identity-based/ }));
+      await user.click(getCreateButton());
+
+      await expectSummaryFocused("sas_token is not allowed with this storage account");
+      expect(invalidControls()).toHaveLength(0);
+    });
+  });
 });

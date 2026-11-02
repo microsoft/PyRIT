@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   Dialog,
   DialogSurface,
@@ -31,8 +31,9 @@ import {
   buildParametersFromForm,
   type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
+import { describedOnly } from '@/components/Parameters/validationMessageSlot'
 import { targetsApi } from '@/services/api'
-import { toApiError } from '@/services/errors'
+import { toApiError, type ApiError } from '@/services/errors'
 import type { TargetInstance, TargetTypeEntry } from '@/types'
 import {
   targetIdentifierHash,
@@ -41,6 +42,11 @@ import {
   targetUnderlyingModelName,
 } from '@/utils/targetIdentity'
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
+import {
+  attributeErrorToField,
+  getParameterLabel,
+  type AttributionCandidate,
+} from './fieldErrorAttribution'
 import {
   canConfigureTargetType,
   getTargetParameterPolicy,
@@ -149,13 +155,6 @@ function defaultSupportsIdentity(targetType: string): boolean {
   return FALLBACK_IDENTITY_TARGET_TYPES.has(targetType)
 }
 
-function getParameterLabel(name: string): string {
-  return name
-    .split('_')
-    .map((word) => word.length === 1 ? word.toUpperCase() : `${word[0].toUpperCase()}${word.slice(1)}`)
-    .join(' ')
-}
-
 function isParameterValueSet(value: ParameterFormValue | undefined): boolean {
   if (typeof value === 'string') {
     return value.trim().length > 0
@@ -198,10 +197,25 @@ function isAzureMlEndpoint(endpoint: string): boolean {
   }
 }
 
+type ClientFieldKey = 'targetType' | 'endpoint' | 'modelName' | 'underlyingModel' | 'apiKey'
+type ClientFieldErrors = Partial<Record<ClientFieldKey, string>>
+
+// `attempt` changes on every report, so an identical repeat is still refocused and re-announced.
+interface DialogError {
+  message: string
+  field?: string
+  attempt: number
+}
+
+function asSentence(message: string): string {
+  return /[.!?]$/.test(message) ? message : `${message}.`
+}
+
 interface CreateTargetDialogProps {
   open: boolean
   onClose: () => void
-  onCreated: () => void
+  /** `isCurrentOpening` is false when the user closed the dialog before the request finished. */
+  onCreated: (isCurrentOpening: boolean) => void
   /** Existing targets, passed from the parent to avoid a redundant API call. */
   existingTargets?: TargetInstance[]
 }
@@ -268,14 +282,25 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const [apiKey, setApiKey] = useState('')
   const [parameterValues, setParameterValues] = useState<Record<string, ParameterFormValue>>({})
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [fieldErrors, setFieldErrors] = useState<{
-    targetType?: string
-    endpoint?: string
-    modelName?: string
-    underlyingModel?: string
-    apiKey?: string
-  }>({})
+  const [error, setError] = useState<DialogError | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<ClientFieldErrors>({})
+  const attemptRef = useRef(0)
+  const errorRegionRef = useRef<HTMLDivElement>(null)
+  // Inputs stay enabled while submitting, so Enter could submit twice.
+  const submittingRef = useRef(false)
+  // Bumped on close; a response from an earlier opening is ignored.
+  const openEpochRef = useRef(0)
+  useEffect(() => () => { openEpochRef.current += 1 }, [])
+  // Bumped on type change; a failure from the previous type's form names no field.
+  const typeSelectionRef = useRef(0)
+  const advancedSettingsRef = useRef<HTMLDetailsElement>(null)
+
+  // Keyed on the attempt only, so editing an attributed field doesn't steal focus back.
+  const focusAttempt = error?.attempt ?? 0
+  useEffect(() => {
+    if (!focusAttempt) return
+    errorRegionRef.current?.focus()
+  }, [focusAttempt])
 
   // --- RoundRobin-specific state ---
   // The list of targets available for selection (fetched once when dialog opens).
@@ -492,15 +517,100 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   }
 
   const handleClose = () => {
+    openEpochRef.current += 1
+    submittingRef.current = false
+    setSubmitting(false)
     resetForm()
     onClose()
   }
 
+  const reportError = (message: string, field?: string | null) => {
+    attemptRef.current += 1
+    setError({ message, field: field ?? undefined, attempt: attemptRef.current })
+    // Reveal an attributed field hidden in the collapsed Advanced settings.
+    if (field && optionalMetadataParameters.some((parameter) => parameter.name === field)) {
+      if (advancedSettingsRef.current) advancedSettingsRef.current.open = true
+    }
+  }
+
+  // Editing the attributed field un-marks it; the summary stays until the next submit.
+  const clearFieldAttribution = (field: string) => {
+    setError((current) => (
+      current?.field === field ? { ...current, field: undefined } : current
+    ))
+  }
+
+  const clearClientFieldError = (field: ClientFieldKey) => {
+    setFieldErrors((current) => {
+      if (current[field] === undefined) return current
+      const next = { ...current }
+      delete next[field]
+      return next
+    })
+    clearFieldAttribution(field)
+  }
+
+  const handleParameterChange = (name: string, value: ParameterFormValue) => {
+    setParameterValues((current) => ({ ...current, [name]: value }))
+    clearFieldAttribution(name)
+  }
+
+  const buildAttributionCandidates = (): AttributionCandidate[] => {
+    const candidates: AttributionCandidate[] = [
+      { key: 'targetType', names: ['target_type', 'Target Type'] },
+    ]
+    if (hasEndpointField) candidates.push({ key: 'endpoint', names: ['endpoint', 'Endpoint URL'] })
+    if (hasModelNameField) {
+      candidates.push({ key: 'modelName', names: ['model_name', 'Model / Deployment Name'] })
+    }
+    if (hasUnderlyingModelField && (underlyingModelRequired || hasDifferentUnderlying)) {
+      candidates.push({
+        key: 'underlyingModel',
+        names: [underlyingModelParameter?.name ?? 'underlying_model', 'Underlying Model'],
+      })
+    }
+    if (hasApiKeyField && !isIdentity) candidates.push({ key: 'apiKey', names: ['api_key', 'API Key'] })
+    for (const parameter of metadataDrivenParameters) {
+      // Disabled and not sent under identity auth.
+      if (isIdentity && parameter.identity_conflicting) continue
+      const label = parameter === githubTokenParameter ? 'GitHub Token' : getParameterLabel(parameter.name)
+      candidates.push({ key: parameter.name, names: [parameter.name, label] })
+    }
+    return candidates
+  }
+
+  // A response that outlives its opening only refreshes the list; it never touches a reopened dialog.
+  const submitCreate = async (
+    request: Parameters<typeof targetsApi.createTarget>[0],
+    fieldFor: (apiError: ApiError) => string | null = () => null,
+  ) => {
+    const epoch = openEpochRef.current
+    submittingRef.current = true
+    setSubmitting(true)
+    setError(null)
+    try {
+      await targetsApi.createTarget(request)
+      const isCurrentOpening = openEpochRef.current === epoch
+      if (isCurrentOpening) resetForm()
+      onCreated(isCurrentOpening)
+    } catch (err) {
+      // Surface the backend's RFC 7807 `detail` rather than axios's generic message.
+      const apiError = toApiError(err)
+      if (openEpochRef.current === epoch) reportError(apiError.detail, fieldFor(apiError))
+    } finally {
+      if (openEpochRef.current === epoch) {
+        submittingRef.current = false
+        setSubmitting(false)
+      }
+    }
+  }
+
   const handleSubmit = async () => {
+    if (submittingRef.current) return
     // For RoundRobinTarget, validation is different: we need ≥2 selected targets, not endpoint
     if (isRoundRobin) {
       if (selectedInnerTargets.length < 2) {
-        setError('Please select at least 2 targets.')
+        reportError('Please select at least 2 targets.')
         return
       }
       // Re-validate every weight at submit time. The Submit button's disabled
@@ -510,42 +620,22 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       for (const t of selectedInnerTargets) {
         const parsed = parseWeight(t.weightInput)
         if (!parsed.ok) {
-          setError(`Invalid weight for "${t.registryName}": ${parsed.error}.`)
+          reportError(`Invalid weight for "${t.registryName}": ${parsed.error}.`)
           return
         }
         parsedWeights.push(parsed.value)
       }
-
-      setSubmitting(true)
-      setError(null)
-
-      try {
-        await targetsApi.createTarget({
-          type: 'RoundRobinTarget',
-          params: {
-            targets: selectedInnerTargets.map((t) => t.registryName),
-            weights: parsedWeights,
-          },
-        })
-        resetForm()
-        onCreated()
-      } catch (err) {
-        // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
-        // messages) rather than the generic axios "Request failed with status code 400".
-        setError(toApiError(err).detail)
-      } finally {
-        setSubmitting(false)
-      }
+      await submitCreate({
+        type: 'RoundRobinTarget',
+        params: {
+          targets: selectedInnerTargets.map((t) => t.registryName),
+          weights: parsedWeights,
+        },
+      })
       return
     }
 
-    const errors: {
-      targetType?: string
-      endpoint?: string
-      modelName?: string
-      underlyingModel?: string
-      apiKey?: string
-    } = {}
+    const errors: ClientFieldErrors = {}
     if (!targetType) errors.targetType = 'Please select a target type'
     if (endpointRequired && !endpoint) errors.endpoint = 'Please provide an endpoint URL'
     if (modelNameRequired && !modelName) errors.modelName = 'Please provide a model name'
@@ -553,59 +643,81 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       errors.underlyingModel = 'Please provide the underlying model'
     }
     if (apiKeyRequired && !apiKey) errors.apiKey = 'Please provide an API key'
-    if (Object.keys(errors).length > 0) {
+    const errorKeys = Object.keys(errors) as ClientFieldKey[]
+    if (errorKeys.length > 0) {
       setFieldErrors(errors)
+      reportError(
+        errorKeys.map((key) => asSentence(errors[key] ?? '')).join(' '),
+        errorKeys.length === 1 ? errorKeys[0] : null,
+      )
       return
     }
     setFieldErrors({})
 
+    const candidates = buildAttributionCandidates()
     const metadataParams = buildParametersFromForm(metadataDrivenParameters, parameterValues)
     if (!metadataParams.ok) {
-      setError(metadataParams.error)
+      reportError(metadataParams.error, attributeErrorToField(metadataParams.error, candidates))
       return
     }
 
-    setSubmitting(true)
-    setError(null)
-
-    try {
-      const params: Record<string, unknown> = { ...(metadataParams.parameters ?? {}) }
-      // Identity-based auth must be enforceable: strip any metadata-driven
-      // parameter (e.g. AzureBlobStorageTarget's sas_token) that would let the
-      // backend authenticate a different way than the selected identity.
-      if (isIdentity) {
-        for (const parameter of metadataDrivenParameters) {
-          if (parameter.identity_conflicting) delete params[parameter.name]
-        }
+    const params: Record<string, unknown> = { ...(metadataParams.parameters ?? {}) }
+    // Identity-based auth must be enforceable: strip any metadata-driven
+    // parameter (e.g. AzureBlobStorageTarget's sas_token) that would let the
+    // backend authenticate a different way than the selected identity.
+    if (isIdentity) {
+      for (const parameter of metadataDrivenParameters) {
+        if (parameter.identity_conflicting) delete params[parameter.name]
       }
-      if (hasEndpointField && endpoint) params.endpoint = endpoint
-      if (hasModelNameField && modelName) params.model_name = modelName
-      if (hasApiKeyField && !isIdentity && apiKey) params.api_key = apiKey
+    }
+    if (hasEndpointField && endpoint) params.endpoint = endpoint
+    if (hasModelNameField && modelName) params.model_name = modelName
+    if (hasApiKeyField && !isIdentity && apiKey) params.api_key = apiKey
 
-      if (
-        (underlyingModelRequired || hasDifferentUnderlying)
-        && underlyingModel
-        && hasUnderlyingModelField
-      ) {
-        params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
-      }
+    if (
+      (underlyingModelRequired || hasDifferentUnderlying)
+      && underlyingModel
+      && hasUnderlyingModelField
+    ) {
+      params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
+    }
 
-      await targetsApi.createTarget({
+    const typeSelection = typeSelectionRef.current
+    await submitCreate(
+      {
         type: targetType,
         params,
         ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
-      })
-
-      resetForm()
-      onCreated()
-    } catch (err) {
-      // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
-      // messages) rather than the generic axios "Request failed with status code 400".
-      setError(toApiError(err).detail)
-    } finally {
-      setSubmitting(false)
-    }
+      },
+      // Only a 400/422 can be about one field, and only if the target type hasn't changed since.
+      (apiError) => (apiError.status === 400 || apiError.status === 422)
+        && typeSelectionRef.current === typeSelection
+        ? attributeErrorToField(apiError.detail, candidates)
+        : null,
+    )
   }
+
+  const clientFieldMessage = (field: ClientFieldKey) => (
+    fieldErrors[field] ?? (error?.field === field ? error.message : undefined)
+  )
+  const metadataFieldMessage = (name: string) => (
+    error?.field === name ? error.message : undefined
+  )
+  const targetTypeMessage = clientFieldMessage('targetType')
+  const endpointMessage = clientFieldMessage('endpoint')
+  const modelNameMessage = clientFieldMessage('modelName')
+  const underlyingModelMessage = clientFieldMessage('underlyingModel')
+  const apiKeyMessage = clientFieldMessage('apiKey')
+
+  const validationDisabled = !targetType
+    || (isRoundRobin
+      ? selectedInnerTargets.length < 2
+        || selectedInnerTargets.some((t) => !parseWeight(t.weightInput).ok)
+      : (endpointRequired && !endpoint) || showIdentityEndpointError)
+    || (modelNameRequired && !modelName)
+    || (underlyingModelRequired && !underlyingModel)
+    || (apiKeyRequired && !apiKey)
+    || requiredMetadataParameterMissing
 
   return (
     <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) handleClose() }}>
@@ -618,11 +730,22 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               data-testid="create-target-form"
               onSubmit={(e) => { e.preventDefault(); handleSubmit() }}
             >
-              {error && (
-                <MessageBar intent="error">
-                  <MessageBarBody>{error}</MessageBarBody>
-                </MessageBar>
-              )}
+              {/* Always mounted: screen readers only announce changes to a live region that
+                  already exists, and MessageBar's own announcer isn't provided by this app. */}
+              <div
+                ref={errorRegionRef}
+                role="alert"
+                aria-atomic="true"
+                tabIndex={-1}
+                data-testid="create-target-error"
+                className={error ? undefined : styles.errorRegionEmpty}
+              >
+                {error && (
+                  <MessageBar key={error.attempt} intent="error">
+                    <MessageBarBody>{error.message}</MessageBarBody>
+                  </MessageBar>
+                )}
+              </div>
 
               {typeMetadataStatus === 'loading' && (
                 <Spinner size="tiny" label="Loading target details..." labelPosition="after" />
@@ -642,8 +765,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 label="Target Type"
                 hint="Each option shows what the target does, its implementation class, and how it authenticates."
                 required
-                validationMessage={fieldErrors.targetType}
-                validationState={fieldErrors.targetType ? 'error' : 'none'}
+                validationMessage={describedOnly(targetTypeMessage)}
+                validationState={targetTypeMessage ? 'error' : 'none'}
               >
                 <Dropdown
                   aria-label="Target Type"
@@ -656,8 +779,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   onOptionSelect={(_, data) => {
                     const next = data.optionValue
                     if (!next) return
+                    typeSelectionRef.current += 1
                     setTargetType(next)
                     setParameterValues({})
+                    setError(null)
+                    setFieldErrors({})
                     const nextEntry = targetTypeByName.get(next)
                     const nextSupportsIdentity = nextEntry
                       ? nextEntry.supported_auth_modes.includes('identity')
@@ -864,8 +990,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       label="Endpoint URL"
                       hint={endpointParameter?.description || undefined}
                       required={endpointRequired}
-                      validationMessage={fieldErrors.endpoint}
-                      validationState={fieldErrors.endpoint ? 'error' : 'none'}
+                      validationMessage={describedOnly(endpointMessage)}
+                      validationState={endpointMessage ? 'error' : 'none'}
                     >
                       <Input
                         placeholder={isAzureML
@@ -874,7 +1000,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                             ? 'https://your-resource.openai.azure.com/'
                             : 'https://example.com/'}
                         value={endpoint}
-                        onChange={(_, data) => setEndpoint(data.value)}
+                        onChange={(_, data) => {
+                          setEndpoint(data.value)
+                          clearClientFieldError('endpoint')
+                        }}
                       />
                     </Field>
                   )}
@@ -884,15 +1013,18 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       label="Model / Deployment Name"
                       hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : modelNameParameter?.description || undefined}
                       required={modelNameRequired}
-                      validationMessage={fieldErrors.modelName}
-                      validationState={fieldErrors.modelName ? 'error' : 'none'}
+                      validationMessage={describedOnly(modelNameMessage)}
+                      validationState={modelNameMessage ? 'error' : 'none'}
                     >
                       <Input
                         placeholder={isAzureML
                           ? 'e.g. Llama-3.2-3B-Instruct'
                           : isGitHubCopilot ? 'Copilot model ID' : 'e.g. gpt-4o, my-deployment'}
                         value={modelName}
-                        onChange={(_, data) => setModelName(data.value)}
+                        onChange={(_, data) => {
+                          setModelName(data.value)
+                          clearClientFieldError('modelName')
+                        }}
                       />
                     </Field>
                   )}
@@ -925,13 +1057,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       label="Underlying Model"
                       hint={underlyingModelParameter?.description || undefined}
                       required={underlyingModelRequired}
-                      validationMessage={fieldErrors.underlyingModel}
-                      validationState={fieldErrors.underlyingModel ? 'error' : 'none'}
+                      validationMessage={describedOnly(underlyingModelMessage)}
+                      validationState={underlyingModelMessage ? 'error' : 'none'}
                     >
                       <Input
                         placeholder="e.g. gpt-4o-2024-08-06"
                         value={underlyingModel}
-                        onChange={(_, data) => setUnderlyingModel(data.value)}
+                        onChange={(_, data) => {
+                          setUnderlyingModel(data.value)
+                          clearClientFieldError('underlyingModel')
+                        }}
                       />
                     </Field>
                   )}
@@ -943,7 +1078,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         key={parameter.name}
                         parameter={parameter}
                         value={parameterValues[parameter.name] ?? ''}
-                        disabled={submitting || identityConflict}
+                        disabled={identityConflict}
                         label={getParameterLabel(parameter.name)}
                         showDefaultHint
                         allowEmptyList
@@ -951,10 +1086,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         extraHint={identityConflict
                           ? 'Ignored with Identity-based authentication.'
                           : undefined}
-                        onChange={(name, value) => setParameterValues((current) => ({
-                          ...current,
-                          [name]: value,
-                        }))}
+                        validationMessage={metadataFieldMessage(parameter.name)}
+                        onChange={handleParameterChange}
                       />
                     )
                   })}
@@ -963,13 +1096,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     <ParameterField
                       parameter={{ ...githubTokenParameter, description: GITHUB_COPILOT_TOKEN_HINT }}
                       value={parameterValues.github_token ?? ''}
-                      disabled={submitting}
+                      disabled={false}
                       label="GitHub Token"
                       testIdPrefix="target-param"
-                      onChange={(name, value) => setParameterValues((current) => ({
-                        ...current,
-                        [name]: value,
-                      }))}
+                      validationMessage={metadataFieldMessage(githubTokenParameter.name)}
+                      onChange={handleParameterChange}
                     />
                   )}
 
@@ -1011,20 +1142,23 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       label="API Key"
                       hint={apiKeyParameter?.description || undefined}
                       required={apiKeyRequired}
-                      validationMessage={fieldErrors.apiKey}
-                      validationState={fieldErrors.apiKey ? 'error' : 'none'}
+                      validationMessage={describedOnly(apiKeyMessage)}
+                      validationState={apiKeyMessage ? 'error' : 'none'}
                     >
                       <Input
                         type="password"
                         placeholder="API key (stored in memory only)"
                         value={apiKey}
-                        onChange={(_, data) => setApiKey(data.value)}
+                        onChange={(_, data) => {
+                          setApiKey(data.value)
+                          clearClientFieldError('apiKey')
+                        }}
                       />
                     </Field>
                   )}
 
                   {(optionalMetadataParameters.length > 0 || customFunctionsReason) && (
-                    <details className={styles.advancedSettings}>
+                    <details ref={advancedSettingsRef} className={styles.advancedSettings}>
                       <summary className={styles.advancedSettingsSummary}>
                         Advanced settings
                       </summary>
@@ -1036,7 +1170,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                               key={parameter.name}
                               parameter={parameter}
                               value={parameterValues[parameter.name] ?? ''}
-                              disabled={submitting || identityConflict}
+                              disabled={identityConflict}
                               label={getParameterLabel(parameter.name)}
                               showDefaultHint
                               allowEmptyList
@@ -1044,10 +1178,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                               extraHint={identityConflict
                                 ? 'Ignored with Identity-based authentication.'
                                 : undefined}
-                              onChange={(name, value) => setParameterValues((current) => ({
-                                ...current,
-                                [name]: value,
-                              }))}
+                              validationMessage={metadataFieldMessage(parameter.name)}
+                              onChange={handleParameterChange}
                             />
                           )
                         })}
@@ -1082,24 +1214,15 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
             </form>
           </DialogContent>
           <DialogActions>
-            <Button appearance="secondary" onClick={handleClose} disabled={submitting}>
+            <Button appearance="secondary" onClick={handleClose}>
               Cancel
             </Button>
+            {/* Natively disabling the focused button would drop focus to <body>, so stay focusable while submitting. */}
             <Button
               appearance="primary"
               onClick={handleSubmit}
-              disabled={
-                submitting ||
-                !targetType ||
-                (isRoundRobin
-                  ? selectedInnerTargets.length < 2 ||
-                    selectedInnerTargets.some((t) => !parseWeight(t.weightInput).ok)
-                  : (endpointRequired && !endpoint) || showIdentityEndpointError)
-                  || (modelNameRequired && !modelName)
-                  || (underlyingModelRequired && !underlyingModel)
-                  || (apiKeyRequired && !apiKey)
-                  || requiredMetadataParameterMissing
-              }
+              disabled={validationDisabled || submitting}
+              disabledFocusable={submitting}
             >
               {submitting ? 'Creating...' : 'Create Target'}
             </Button>

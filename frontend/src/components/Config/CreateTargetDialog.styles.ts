@@ -21,6 +21,17 @@ export const useCreateTargetDialogStyles = makeStyles({
     maxWidth: '100%',
     gap: tokens.spacingVerticalL,
   },
+  // Visually hidden, not display:none, so the empty live region stays in the accessibility tree.
+  errorRegionEmpty: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: '0',
+    margin: '-1px',
+    overflow: 'hidden',
+    clip: 'rect(0,0,0,0)',
+    whiteSpace: 'nowrap',
+  },
   formField: {
     minWidth: 0,
     maxWidth: '100%',

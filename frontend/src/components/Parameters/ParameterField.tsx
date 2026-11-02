@@ -4,6 +4,7 @@ import {
   Input,
   Select,
   Textarea,
+  useId,
 } from '@fluentui/react-components'
 
 import type { Parameter } from '@/types'
@@ -16,6 +17,7 @@ import {
   parseJsonObjectFormValue,
   type ParameterFormValue,
 } from './parameterForm'
+import { describedOnly } from './validationMessageSlot'
 
 export interface ParameterFieldProps {
   parameter: Parameter
@@ -34,6 +36,8 @@ export interface ParameterFieldProps {
   testIdPrefix?: string
   /** Extra guidance appended to the field's hint, e.g. explaining why it's disabled. */
   extraHint?: string
+  /** An error the form attributes to this field. Marked invalid, not announced: the form announces it. */
+  validationMessage?: string
 }
 
 /**
@@ -57,8 +61,15 @@ export default function ParameterField({
   showRequiredError = false,
   testIdPrefix = 'param',
   extraHint,
+  validationMessage: externalMessage,
 }: ParameterFieldProps) {
   const styles = useParameterFieldStyles()
+  const validationMessageId = useId('parameter-validation-')
+  const externalSlot = describedOnly(externalMessage)
+  const externalValidation = {
+    validationMessage: externalSlot,
+    validationState: externalSlot ? 'error' as const : 'none' as const,
+  }
   const kind = getParameterControlKind(parameter)
   const label = labelOverride ?? parameter.name
   const testId = `${testIdPrefix}-${parameter.name}`
@@ -75,13 +86,15 @@ export default function ParameterField({
 
   if (kind === 'structured') {
     const current = isStructuredParameterFormValue(value) ? value : { type: '', values: {} }
+    const structuredMessage = showRequiredError && !current.type ? 'Required' : externalSlot
     return (
       <>
         <Field
           label={label}
           required={parameter.required}
           hint={descriptiveHint || undefined}
-          validationMessage={showRequiredError && !current.type ? 'Required' : undefined}
+          validationMessage={structuredMessage}
+          validationState={structuredMessage ? 'error' : 'none'}
         >
           <Select
             className={styles.control}
@@ -122,7 +135,8 @@ export default function ParameterField({
     const parsed = current.trim()
       ? parseJsonObjectFormValue(current, label.replace(/ \*$/, ''))
       : null
-    const validationMessage = parsed && !parsed.ok ? parsed.error : undefined
+    // The live parse error wins over an error from an earlier submission.
+    const validationMessage = parsed && !parsed.ok ? parsed.error : externalSlot
     const jsonHint = [descriptiveHint, 'Enter a JSON object.']
       .filter((part): part is string => Boolean(part))
       .join(' ')
@@ -152,7 +166,7 @@ export default function ParameterField({
   if (kind === 'boolean') {
     const current = value === 'true' || value === 'false' ? value : ''
     return (
-      <Field label={label} required={parameter.required} hint={descriptiveHint || undefined}>
+      <Field label={label} required={parameter.required} hint={descriptiveHint || undefined} {...externalValidation}>
         <Select
           className={styles.control}
           value={current}
@@ -172,9 +186,22 @@ export default function ParameterField({
 
   if (kind === 'multiselect') {
     const selected = Array.isArray(value) ? value : []
+    // The group div isn't a Fluent control, so it is pointed at the message by hand.
+    const groupMessage = describedOnly(externalMessage, validationMessageId)
     return (
-      <Field label={label} required={parameter.required} hint={descriptiveHint || undefined}>
-        <div className={styles.checkboxGroup} role="group" aria-labelledby={`${testId}-group-label`}>
+      <Field
+        label={label}
+        required={parameter.required}
+        hint={descriptiveHint || undefined}
+        validationMessage={groupMessage}
+        validationState={groupMessage ? 'error' : 'none'}
+      >
+        <div
+          className={styles.checkboxGroup}
+          role="group"
+          aria-labelledby={`${testId}-group-label`}
+          aria-describedby={groupMessage ? validationMessageId : undefined}
+        >
           <span id={`${testId}-group-label`} className={styles.srOnly}>
             {label}
           </span>
@@ -210,7 +237,7 @@ export default function ParameterField({
 
   if (kind === 'select') {
     return (
-      <Field label={label} required={parameter.required} hint={descriptiveHint || undefined}>
+      <Field label={label} required={parameter.required} hint={descriptiveHint || undefined} {...externalValidation}>
         <Select
           className={styles.control}
           value={stringValue}
@@ -239,7 +266,7 @@ export default function ParameterField({
 
   if (kind === 'multiline') {
     return (
-      <Field label={label} required={parameter.required} hint={hint}>
+      <Field label={label} required={parameter.required} hint={hint} {...externalValidation}>
         <Textarea
           className={styles.control}
           value={stringValue}
@@ -255,7 +282,7 @@ export default function ParameterField({
 
   return (
     <>
-      <Field label={label} required={parameter.required} hint={hint}>
+      <Field label={label} required={parameter.required} hint={hint} {...externalValidation}>
         <Input
           className={styles.control}
           value={stringValue}

@@ -80,8 +80,8 @@ export default function TargetConfig({
     setRefetchCount(c => c + 1)
   }, [])
 
-  const handleTargetCreated = useCallback(() => {
-    setDialogOpen(false)
+  const handleTargetCreated = useCallback((isCurrentOpening: boolean) => {
+    if (isCurrentOpening) setDialogOpen(false)
     fetchTargets()
   }, [fetchTargets])
 

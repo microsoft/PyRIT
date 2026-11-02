@@ -381,7 +381,8 @@ test('native round-robin weights step once and preserve bounds and integer valid
   await clickNativeSpinner(weight, 'down')
   await expect(weight).toHaveValue('1')
   await weight.fill('2.5')
-  await expect(dialog.getByRole('alert')).toContainText('Weight must be a whole number')
+  // The dialog also keeps an always-mounted (empty) error summary alert (#3710); target the weight error.
+  await expect(dialog.getByRole('alert').filter({ hasText: 'Weight must be a whole number' })).toContainText('Weight must be a whole number')
 })
 
 test('shared stepper preserves decimal steps, boundaries, disabled state, and reset', async ({ page }) => {

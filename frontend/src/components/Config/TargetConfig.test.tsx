@@ -28,7 +28,7 @@ jest.mock("./CreateTargetDialog", () => {
   }: {
     open: boolean;
     onClose: () => void;
-    onCreated: () => void;
+    onCreated: (isCurrentOpening: boolean) => void;
   }) => {
     if (!open) return null;
     return (
@@ -36,8 +36,12 @@ jest.mock("./CreateTargetDialog", () => {
         <button onClick={onClose} data-testid="dialog-close">
           Cancel
         </button>
-        <button onClick={onCreated} data-testid="dialog-create">
+        <button onClick={() => onCreated(true)} data-testid="dialog-create">
           Create
+        </button>
+        {/* A create request that an earlier, dismissed opening started (#3710). */}
+        <button onClick={() => onCreated(false)} data-testid="dialog-create-stale">
+          Stale create
         </button>
       </div>
     );
@@ -567,4 +571,56 @@ describe("TargetConfig", () => {
     expect(screen.queryByTestId("create-dialog")).not.toBeInTheDocument();
   });
 
+
+  describe("create results from an earlier opening (#3710)", () => {
+    it("refreshes the list but keeps the current opening when a stale create succeeds", async () => {
+      const user = userEvent.setup();
+      mockedTargetsApi.listTargets
+        .mockResolvedValueOnce({ items: [], pagination: { limit: 200, has_more: false } })
+        .mockResolvedValueOnce({ items: sampleTargets, pagination: { limit: 200, has_more: false } });
+
+      render(
+        <TestWrapper>
+          <TargetConfig {...defaultProps} />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("No Targets Configured")).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole("button", { name: "New Target" }));
+      await user.click(screen.getByTestId("dialog-create-stale"));
+
+      await waitFor(() => {
+        expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
+      });
+      expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId("create-dialog")).toBeInTheDocument();
+    });
+
+    it("refreshes the list and closes the dialog when the current opening's create succeeds", async () => {
+      const user = userEvent.setup();
+      mockedTargetsApi.listTargets
+        .mockResolvedValueOnce({ items: [], pagination: { limit: 200, has_more: false } })
+        .mockResolvedValueOnce({ items: sampleTargets, pagination: { limit: 200, has_more: false } });
+
+      render(
+        <TestWrapper>
+          <TargetConfig {...defaultProps} />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("No Targets Configured")).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole("button", { name: "New Target" }));
+      await user.click(screen.getByTestId("dialog-create"));
+
+      await waitFor(() => {
+        expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
+      });
+      expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
+      expect(screen.queryByTestId("create-dialog")).not.toBeInTheDocument();
+    });
+  });
 });
