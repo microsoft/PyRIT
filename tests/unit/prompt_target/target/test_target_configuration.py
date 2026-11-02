@@ -545,3 +545,81 @@ def test_serialize_normalizer_defaults_to_empty_params():
     serialized = TargetConfiguration._serialize_normalizer(norm)
     assert serialized["params"] == {}
     assert "PlainListNormalizer" in serialized["type"]
+
+
+def test_serialize_normalizer_retains_child_identifier_configuration():
+    class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
+        def __init__(self, prefix: str):
+            self._prefix = prefix
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(self, params={"prefix": self._prefix})
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return messages
+
+    class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
+        def __init__(self, normalizer: Any):
+            self.normalizer = normalizer
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(
+                self,
+                children={"normalizer": self.normalizer.get_identifier()},
+            )
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return await self.normalizer.normalize_async(messages)
+
+    child = CustomPrefixNormalizer(prefix="[CHILD]")
+    wrapper = CustomWrapperNormalizer(child)
+    serialized = TargetConfiguration._serialize_normalizer(wrapper)
+
+    assert serialized["params"] == {}
+    assert "children" in serialized
+    assert "normalizer" in serialized["children"]
+    child_serialized = serialized["children"]["normalizer"]
+    assert child_serialized["params"] == {"prefix": "[CHILD]"}
+    assert "CustomPrefixNormalizer" in child_serialized["type"]
+
+
+def test_serialize_normalizer_recursively_serializes_nested_children():
+    class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
+        def __init__(self, prefix: str):
+            self._prefix = prefix
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(self, params={"prefix": self._prefix})
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return messages
+
+    class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
+        def __init__(self, normalizer: Any):
+            self.normalizer = normalizer
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(
+                self,
+                children={"normalizer": self.normalizer.get_identifier()},
+            )
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return await self.normalizer.normalize_async(messages)
+
+    leaf = CustomPrefixNormalizer(prefix="[LEAF]")
+    inner_wrapper = CustomWrapperNormalizer(leaf)
+    outer_wrapper = CustomWrapperNormalizer(inner_wrapper)
+
+    serialized = TargetConfiguration._serialize_normalizer(outer_wrapper)
+    assert serialized["params"] == {}
+    assert "children" in serialized
+
+    level1 = serialized["children"]["normalizer"]
+    assert level1["params"] == {}
+    assert "CustomWrapperNormalizer" in level1["type"]
+    assert "children" in level1
+
+    level2 = level1["children"]["normalizer"]
+    assert level2["params"] == {"prefix": "[LEAF]"}
+    assert "CustomPrefixNormalizer" in level2["type"]
