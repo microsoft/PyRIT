@@ -654,6 +654,49 @@ async def test_video_audio_scorer_cancellation_during_extraction_async(
     score_audio.assert_not_awaited()
 
 
+@pytest.mark.parametrize("cancel_twice", [False, True])
+async def test_video_frame_scorer_cancellation_during_extraction_async(
+    tmp_path: Path, video_converter_sample_video: MessagePiece, cancel_twice: bool
+) -> None:
+    """Cancelling _score_frames_async removes temporary frame files once extraction finishes."""
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    release = threading.Event()
+    source_path = Path(video_converter_sample_video.converted_value)
+    source_path.touch(exist_ok=True)
+    frame_paths = [tmp_path / "cancelled_frame_0.png", tmp_path / "cancelled_frame_1.png"]
+    scorer = VideoTrueFalseScorer(image_capable_scorer=MockTrueFalseScorer())
+
+    def extract_frames(video_path: str) -> list[str]:
+        loop.call_soon_threadsafe(started.set)
+        if not release.wait(TEST_WATCHDOG_SECONDS):
+            raise TimeoutError("The test did not release frame extraction.")
+        for frame_path in frame_paths:
+            frame_path.write_bytes(b"frame")
+        return [str(frame_path) for frame_path in frame_paths]
+
+    with patch.object(type(scorer._video_helper), "_extract_frames", side_effect=extract_frames):
+        task = asyncio.create_task(scorer._video_helper._score_frames_async(message_piece=video_converter_sample_video, expectation=None))
+        try:
+            await wait_for_event_async(event=started, tasks=[task])
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            if cancel_twice:
+                task.cancel()
+                await asyncio.sleep(0)
+                assert not task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await wait_for_completion_async(future=task)
+        finally:
+            release.set()
+            await settle_tasks_async(task)
+
+    assert all(not frame_path.exists() for frame_path in frame_paths)
+    assert source_path.exists()
+
+
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
 async def test_video_audio_scorer_keeps_source_when_extraction_returns_it(video_converter_sample_video):
     """_score_video_audio_async must not delete the video when extraction hands back the input path.
