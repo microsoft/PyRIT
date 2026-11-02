@@ -8,6 +8,7 @@ from bisect import bisect_right
 from typing import TYPE_CHECKING, Any
 
 from markdown_it import MarkdownIt
+from markdown_it.common.html_re import HTML_TAG_RE
 from markdown_it.common.utils import normalizeReference
 
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer, _ConfigurableRegexScorerMixin
@@ -39,8 +40,9 @@ _IMAGE_PATTERNS = {
 # turns every line ending into "\n" and NUL into U+FFFD before the scan reads the content.
 _BLOCK_PARSER = MarkdownIt("commonmark").disable("inline")
 
-# Inside one paragraph: backslash escapes, code span backticks and brackets.
-_TOKEN = re.compile(r"\\[!-/:-@\[-`{-~]|`++|!?\[|\]")
+# Reuse CommonMark's inline HTML grammar with an offset instead of slicing the paragraph.
+_HTML_TAG = re.compile(HTML_TAG_RE.pattern.removeprefix("^"))
+_TOKEN = re.compile(r"\\[!-/:-@\[-`{-~]|`++|!?\[|\]|<")
 _BACKTICKS = re.compile(r"`++")
 _ESCAPE = r"\\[^\n]?+"
 _SPACE = r"[ \t]*+(?:\n[ \t]*+)?+"
@@ -66,7 +68,7 @@ def _find_images(text: str) -> set[str]:
     Find Markdown images by following the image syntax across the lines of each paragraph.
 
     Brackets are paired with one stack, so nested brackets have no depth limit and each closing
-    bracket is read once. Code spans are skipped. A reference or shortcut image needs a link
+    bracket is read once. Code spans and inline HTML are skipped. A reference or shortcut image needs a link
     reference definition with the same label.
 
     Returns:
@@ -84,9 +86,26 @@ def _find_images(text: str) -> set[str]:
         openers: list[int] = []
         last_open = -1
         backticks: dict[int, list[int]] | None = None
+        html_ends: dict[str, int] | None = None
         pos = 0
         while (token := _TOKEN.search(paragraph, pos)) is not None:
             pos = token.end()
+            if token.group() == "<":
+                if html_ends is None:
+                    html_ends = {end: paragraph.rfind(end) for end in (">", "-->", "?>", "]]>")}
+                end = ">"
+                if paragraph.startswith("<!--", token.start()) and not paragraph.startswith(
+                    ("<!-->", "<!--->"), token.start()
+                ):
+                    end = "-->"
+                elif paragraph.startswith("<?", token.start()):
+                    end = "?>"
+                elif paragraph.startswith("<![CDATA[", token.start()):
+                    end = "]]>"
+                # Do not rescan an unterminated HTML suffix at every possible opener.
+                if html_ends[end] >= pos and (html := _HTML_TAG.match(paragraph, token.start())) is not None:
+                    pos = html.end()
+                continue
             if token.group()[0] == "`":
                 # A code span runs to the next backtick string of the same length.
                 if backticks is None:

