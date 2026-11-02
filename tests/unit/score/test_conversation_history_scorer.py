@@ -1,14 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import copy
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import store_message_async
+from unit.mocks import run_memory_session_async, store_message_async
 
 from pyrit.common.text_matching import ExactTextMatching
 from pyrit.memory import CentralMemory
+from pyrit.memory.memory_models import ScoreEntry
 from pyrit.models import (
     Acquisition,
     ChatMessageRole,
@@ -313,7 +315,7 @@ async def test_composite_matching_requires_each_conversation_branch_snapshot(pat
         scores=[missing_observation], scorable=scorable, expectation=expectation
     )
     out_of_range_participation = scores[0].model_copy(deep=True)
-    out_of_range_participation.score_metadata["pyrit_internal_snapshot_participation"] = '{"999": null}'
+    out_of_range_participation._snapshot_participation = {"999": None}
     await memory.add_message_to_memory_async(
         request=MessagePiece(
             role="user", original_value="A later request", conversation_id=conversation_id
@@ -469,6 +471,67 @@ async def test_evaluated_conversation_fallback_requires_fresh_primary_and_fallba
     stale_with_primary_snapshot.observation_ids.extend(fresh_primary_scores[0].observation_ids)
     assert not await scorer.find_matching_scores_async(
         scores=[stale_with_primary_snapshot], scorable=scorable, expectation=expectation
+    )
+
+
+@pytest.mark.parametrize(
+    ("malformed_key", "nested"),
+    [("00", False), ("\u0660", False), ("00", True)],
+)
+async def test_noncanonical_snapshot_participation_cannot_skip_stale_conversation_branch(
+    patch_central_database, malformed_key: str, nested: bool
+) -> None:
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    request = MessagePiece(role="user", original_value="Request", conversation_id=conversation_id)
+    response = MessagePiece(role="assistant", original_value="default", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=request.to_message())
+    await memory.add_message_to_memory_async(request=response.to_message())
+    conversation_scorer = create_conversation_scorer(scorer=SubStringScorer(substring="default"))
+    inner = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[conversation_scorer, SubStringScorer(substring="default")],
+    )
+    scorer = (
+        TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.AND,
+            scorers=[inner, SubStringScorer(substring="default")],
+        )
+        if nested
+        else inner
+    )
+    scorable = MessageScorable.from_message(response.to_message())
+    expectation = ScoringExpectation(objective="Goal")
+
+    scores = await scorer.score_async(scorable=scorable, expectation=expectation)
+    assert scores
+    assert await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation) == scores
+
+    def persist_noncanonical_key(session) -> None:
+        entry = session.get(ScoreEntry, scores[0].id)
+        assert entry is not None and entry.snapshot_participation is not None
+        participation = copy.deepcopy(entry.snapshot_participation)
+        tree = participation["0"] if nested else participation
+        assert isinstance(tree, dict) and "0" in tree
+        tree[malformed_key] = tree.pop("0")
+        entry.snapshot_participation = participation
+        session.commit()
+
+    await run_memory_session_async(memory=memory, operation=persist_noncanonical_key)
+    [malformed_score] = await memory.get_scores_async(score_ids=[str(scores[0].id)])
+    participation = malformed_score._snapshot_participation
+    assert participation is not None
+    tree = participation["0"] if nested else participation
+    assert isinstance(tree, dict) and malformed_key in tree and "0" not in tree
+
+    await memory.add_message_to_memory_async(
+        request=MessagePiece(
+            role="user", original_value="A later request", conversation_id=conversation_id
+        ).to_message()
+    )
+
+    assert not await scorer.find_matching_scores_async(
+        scores=[malformed_score], scorable=scorable, expectation=expectation
     )
 
 

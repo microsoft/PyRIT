@@ -35,6 +35,7 @@ from pyrit.models import (
     ScoreType,
     ScoringExpectation,
 )
+from pyrit.models.score.score import _SNAPSHOT_PARTICIPATION_METADATA_KEY
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
@@ -63,7 +64,6 @@ logger = logging.getLogger(__name__)
 
 #: Release in which the message-shaped ``score_async`` parameters are removed.
 LEGACY_SCORE_ASYNC_REMOVED_IN = "2.0.0"
-_SNAPSHOT_PARTICIPATION_METADATA_KEY = "pyrit_internal_snapshot_participation"
 SnapshotParticipation = dict[str, Any]
 ConditionT = TypeVar("ConditionT", bound=Condition)
 
@@ -75,14 +75,19 @@ def _read_snapshot_participation(score: Score) -> SnapshotParticipation | None:
     Returns:
         The validated child tree, or ``None`` when it is absent or invalid.
     """
-    raw = (score.score_metadata or {}).get(_SNAPSHOT_PARTICIPATION_METADATA_KEY)
+    raw: Any = score._snapshot_participation
+    if raw is None:
+        raw = (score.score_metadata or {}).get(_SNAPSHOT_PARTICIPATION_METADATA_KEY)
     if not isinstance(raw, str):
+        participation = raw
+    else:
+        try:
+            participation = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(participation, dict) or not _is_snapshot_participation(participation):
         return None
-    try:
-        participation = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    return participation if _is_snapshot_participation(participation) else None
+    return participation
 
 
 def _is_snapshot_participation(value: Any) -> bool:
@@ -93,7 +98,11 @@ def _is_snapshot_participation(value: Any) -> bool:
         Whether the value is a valid participation tree.
     """
     return isinstance(value, dict) and all(
-        isinstance(index, str) and index.isdecimal() and (child is None or _is_snapshot_participation(child))
+        isinstance(index, str)
+        and index.isascii()
+        and index.isdecimal()
+        and (index == "0" or not index.startswith("0"))
+        and (child is None or _is_snapshot_participation(child))
         for index, child in value.items()
     )
 
@@ -135,19 +144,17 @@ def _validated_snapshot_participation(
     participation = participation_by_score.get(str(score.id))
     if participation is None or not participation:
         return None
-    if any(int(index) >= child_count for index in participation):
+    valid_indices = {str(index) for index in range(child_count)}
+    if any(index not in valid_indices for index in participation):
         return None
     return participation
 
 
 def _set_snapshot_participation(*, score: Score, child_scores: dict[int, Score]) -> None:
     """Attach the exact same-input child branches that contributed to a wrapper score."""
-    metadata = dict(score.score_metadata or {})
-    metadata[_SNAPSHOT_PARTICIPATION_METADATA_KEY] = json.dumps(
-        {str(index): _read_snapshot_participation(child) for index, child in sorted(child_scores.items())},
-        sort_keys=True,
-    )
-    score.score_metadata = metadata
+    score._snapshot_participation = {
+        str(index): _read_snapshot_participation(child) for index, child in sorted(child_scores.items())
+    }
 
 
 class LegacyScorerHookError(TypeError):

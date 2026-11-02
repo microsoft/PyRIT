@@ -17,13 +17,47 @@ from pyrit.models import Score
 @pytest.mark.parametrize("is_intermediate", [False, True])
 def test_score_storage_marker_stays_private(is_intermediate: bool) -> None:
     score = Score(score_value="true", score_type="true_false")
+    score._snapshot_participation = {"0": None}
     entry = ScoreEntry(entry=score, is_intermediate=is_intermediate)
     assert entry.is_intermediate is is_intermediate
+    assert entry.snapshot_participation == {"0": None}
     assert entry.to_dict()["is_intermediate"] is is_intermediate
+    assert "pyrit_internal_snapshot_participation" not in score.score_metadata
     for field in ("is_root", "is_intermediate"):
         assert field not in Score.model_fields
         assert field not in Score.model_json_schema()["properties"]
         assert field not in entry.get_score().model_dump()
+    assert "_snapshot_participation" not in Score.model_fields
+    assert "snapshot_participation" not in Score.model_json_schema()["properties"]
+    assert "snapshot_participation" not in score.model_dump()
+    assert entry.get_score()._snapshot_participation == {"0": None}
+
+
+def test_score_migrates_legacy_public_participation_to_private_attribute() -> None:
+    score = Score(
+        score_value="true",
+        score_type="true_false",
+        score_metadata={
+            "source": "judge",
+            "pyrit_internal_snapshot_participation": '{"0": null}',
+        },
+    )
+    assert score.score_metadata == {"source": "judge"}
+    assert score._snapshot_participation == {"0": None}
+    assert "pyrit_internal_snapshot_participation" not in score.model_dump_json()
+
+
+def test_score_entry_hides_legacy_public_participation_when_loading_old_rows() -> None:
+    entry = ScoreEntry(entry=Score(score_value="true", score_type="true_false"))
+    entry.score_metadata = {
+        "source": "judge",
+        "pyrit_internal_snapshot_participation": '{"0": null}',
+    }
+
+    score = entry.get_score()
+
+    assert score.score_metadata == {"source": "judge"}
+    assert score._snapshot_participation == {"0": None}
 
 
 def test_intermediate_score_migration_preserves_legacy_results() -> None:

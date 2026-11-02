@@ -19,6 +19,7 @@ from pyrit.backend.models.attacks import (
     MessagePieceRequest,
     MessageRequest,
     SaveConversationRequest,
+    ScoreView,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
 )
@@ -209,11 +210,7 @@ async def test_apply_reuses_and_projects_legacy_snapshot_free_fallback_collision
         def remove_participation_metadata(session) -> None:
             entry = session.get(ScoreEntry, first.score.id)
             assert entry is not None
-            entry.score_metadata = {
-                key: value
-                for key, value in entry.score_metadata.items()
-                if key != "pyrit_internal_snapshot_participation"
-            }
+            entry.snapshot_participation = None
             session.commit()
 
         await run_memory_session_async(
@@ -225,7 +222,7 @@ async def test_apply_reuses_and_projects_legacy_snapshot_free_fallback_collision
             for score in await sqlite_instance.get_prompt_scores_async(prompt_ids=[request.response_id])
             if score.id == first.score.id
         ]
-        assert "pyrit_internal_snapshot_participation" not in persisted_root.score_metadata
+        assert persisted_root._snapshot_participation is None
         repeated = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
 
     assert repeated.reused and repeated.score.id == first.score.id and evaluate.call_count == 1
@@ -234,6 +231,10 @@ async def test_apply_reuses_and_projects_legacy_snapshot_free_fallback_collision
     )
     assert transcript is not None and transcript.automated_score is not None
     assert transcript.automated_score.id == first.score.id
+    score_view = transcript.automated_score
+    assert isinstance(score_view, ScoreView)
+    assert "pyrit_internal_snapshot_participation" not in score_view.score_metadata
+    assert "snapshot_participation" not in score_view.model_dump()
 
 
 async def test_apply_rechecks_legacy_composite_missing_required_conversation_provenance_async(
@@ -265,11 +266,7 @@ async def test_apply_rechecks_legacy_composite_missing_required_conversation_pro
         def remove_legacy_provenance(session) -> None:
             entry = session.get(ScoreEntry, first.score.id)
             assert entry is not None
-            entry.score_metadata = {
-                key: value
-                for key, value in entry.score_metadata.items()
-                if key != "pyrit_internal_snapshot_participation"
-            }
+            entry.snapshot_participation = None
             entry.observation_links.clear()
             session.commit()
 
@@ -280,7 +277,7 @@ async def test_apply_rechecks_legacy_composite_missing_required_conversation_pro
             if score.id == first.score.id
         ]
         assert not legacy_root.observation_ids
-        assert "pyrit_internal_snapshot_participation" not in legacy_root.score_metadata
+        assert legacy_root._snapshot_participation is None
         stale_projection = await AttackService().get_conversation_messages_async(
             attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
         )

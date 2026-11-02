@@ -145,8 +145,8 @@ async def test_complete_primary_skips_fallback_async(
         "resolved_by": "primary",
         "primary.model": "primary",
         "primary.resolved_by": "inner",
-        "pyrit_internal_snapshot_participation": '{"0": null}',
     }
+    assert result._snapshot_participation == {"0": None}
     assert child_score == original
     assert [score.id for score in (await sqlite_instance.get_scores_async(score_type=family))] == [result.id]
     assert {
@@ -155,6 +155,8 @@ async def test_complete_primary_skips_fallback_async(
         result.id,
         child_score.id,
     }
+    [persisted_result] = await sqlite_instance.get_scores_async(score_ids=[str(result.id)])
+    assert persisted_result._snapshot_participation == {"0": None}
     assert isinstance(wrapper, FloatScaleScorer if family == "float_scale" else TrueFalseScorer)
 
 
@@ -226,8 +228,8 @@ async def test_fallback_preserves_both_attempts_without_mutating_children_async(
         "primary_rationale": "uncertain",
         "fallback_rationale": "second opinion",
         "fallback_status": fallback_score.status.value,
-        "pyrit_internal_snapshot_participation": '{"0": null, "1": null}',
     }
+    assert result._snapshot_participation == {"0": None, "1": None}
     assert "uncertain" in result.score_rationale
     assert "second opinion" in result.score_rationale
     if fallback_abstains:
@@ -240,6 +242,8 @@ async def test_fallback_preserves_both_attempts_without_mutating_children_async(
         primary_score.id,
         fallback_score.id,
     }
+    [persisted_result] = await sqlite_instance.get_scores_async(score_ids=[str(result.id)])
+    assert persisted_result._snapshot_participation == {"0": None, "1": None}
 
 
 @pytest.mark.parametrize("empty_primary", [False, True])
