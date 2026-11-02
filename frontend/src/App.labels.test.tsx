@@ -66,6 +66,7 @@ jest.mock('@/services/api', () => ({
   scenariosApi: {
     listCatalog: jest.fn(),
     getScenario: jest.fn(),
+    getRunHierarchy: jest.fn(),
     estimateRun: jest.fn(),
     startRun: jest.fn(),
     cancelRun: jest.fn(),
@@ -183,6 +184,17 @@ describe('Shared new run labels', () => {
       attack_result_id: 'old_attack', main_conversation_id: 'old_conversation', conversations: [],
     })
     jest.mocked(scenariosApi.getScenario).mockResolvedValue(SCENARIO)
+    jest.mocked(scenariosApi.getRunHierarchy).mockResolvedValue({
+      scenario_result_id: 'saved_run', scenario_name: 'SavedScenario', scenario_version: 1,
+      status: 'COMPLETED', groups: [],
+      overall_counts: { completed: 0, planned: 0, succeeded: 0, success_percentage: 0, errors: 0, retries: 0 },
+      diagnostics: {
+        failed_attacks: [], failed_attacks_count: 0, failed_attacks_truncated: false,
+        attack_retries: [], attack_retries_count: 0, attack_retries_truncated: false,
+        total_retries: 0, rootless_result_ids: [], rootless_results_count: 0, rootless_results_truncated: false,
+      },
+      has_more: false, truncated: false,
+    })
     jest.mocked(scenariosApi.listCatalog).mockResolvedValue({
       items: [SCENARIO], pagination: { limit: 200, has_more: false },
     })
@@ -356,6 +368,7 @@ describe('Shared new run labels', () => {
     expect(saved).toHaveTextContent('original_team')
     expect(saved).not.toHaveTextContent('future_op')
     expect(within(saved).queryByRole('button', { name: /^Edit / })).not.toBeInTheDocument()
+    expect(scenariosApi.getRunHierarchy).toHaveBeenCalledTimes(1)
     expect(scenariosApi.startRun).not.toHaveBeenCalled()
     expect(scenariosApi.cancelRun).not.toHaveBeenCalled()
   })
@@ -423,7 +436,11 @@ describe('Shared new run labels', () => {
       const picker = await within(currentLabels()).findByRole('combobox', { name: 'Operation' })
       await waitFor(() => expect(picker).toHaveValue(proposed))
       expect(within(currentLabels()).getByText('Not registered')).toBeInTheDocument()
-      expect(await screen.findByText(/Choose a saved Operation, register, or clear this one/)).toBeInTheDocument()
+      expect(screen.queryByText(/Choose a saved Operation, register, or clear this one/)).not.toBeInTheDocument()
+      await user.click(within(currentLabels()).getByRole('button', { name: 'Show warnings' }))
+      expect(await screen.findByRole('heading', { name: 'Warnings' })).toBeInTheDocument()
+      expect(screen.getByText(/Choose a saved Operation, register, or clear this one/)).toBeInTheDocument()
+      await user.keyboard('{Escape}')
       await user.selectOptions(await screen.findByRole('combobox', { name: 'Objective Target' }), 'test_target')
       expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
       expect(operationsApi.create).not.toHaveBeenCalled()
