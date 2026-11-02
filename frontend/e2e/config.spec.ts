@@ -186,7 +186,7 @@ async function expectWithin(
 /** Navigate to the target registry. */
 async function goToTargets(page: Page) {
   await page.goto("/");
-  await page.getByTitle("Registry").click();
+  await page.getByRole("button", { name: "Registry", exact: true }).click();
   await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
 }
 
@@ -679,7 +679,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
 
     // Navigate back to chat
-    await page.getByTitle("Technique.execute").click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
     await expect(page.getByTestId("new-attack-btn")).toBeVisible();
 
     // Chat should show the selected target type. Scope to the badge to
@@ -696,19 +696,19 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     });
 
     await page.goto("/");
-    await page.getByTitle("Technique.execute").click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
     const draft = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await expect(draft).toBeEnabled();
     await draft.fill("Draft without a target");
     await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
 
     // Go to targets, set a target
-    await page.getByTitle("Registry").click();
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("gpt-4o", { exact: true })).toBeVisible({ timeout: 10000 });
     await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
 
     // Return to chat — send should be enabled when there's text
-    await page.getByTitle("Technique.execute").click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
     const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await input.fill("Hello");
     await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
