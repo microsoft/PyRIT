@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.required_data import ScenarioRequiredData
 
 
 @pytest.fixture(autouse=True)
@@ -19,5 +20,9 @@ def enforce_dataset_isolation(block_dataset_provider_lookup: AsyncMock) -> None:
 @pytest.fixture
 def mock_dataset_preparation() -> Generator[AsyncMock, None, None]:
     """Skip preparation only in tests that supply their own mocked seed populations."""
-    with patch.object(DatasetConfiguration, "prepare_async", new_callable=AsyncMock) as prepare:
+    # Required data prepares together with the population, so skipping one means skipping both.
+    with (
+        patch.object(DatasetConfiguration, "prepare_async", new_callable=AsyncMock) as prepare,
+        patch.object(ScenarioRequiredData, "prepare_async", new=prepare),
+    ):
         yield prepare

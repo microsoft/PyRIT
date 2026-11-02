@@ -1046,21 +1046,28 @@ class Scenario(ABC):
             ScenarioDatasetSettings: Resolved settings, with the scan's policies unchanged.
         """
         self._resolve_runtime_configuration(require_objective_target=False)
-        if self._required_data is not None:
-            self._required_data.set_refresh_validator(self._validate_required_data_refresh_async)
-            await self._required_data.prepare_async(fetch=DatasetFetchPolicy.IF_MISSING)
-        await self._dataset_config.prepare_async(fetch=DatasetFetchPolicy.IF_MISSING)
+        await self._prepare_datasets_async(fetch=DatasetFetchPolicy.IF_MISSING)
         return project_dataset_settings(self._dataset_config, required_data=self._required_data)
 
-    async def _validate_required_data_refresh_async(self) -> None:
+    async def _prepare_datasets_async(self, *, fetch: DatasetFetchPolicy | None = None) -> None:
         """
-        Assemble the full unsampled population from refresh candidates before they replace stored data.
+        Load or refresh the required data and the population together.
 
-        Runs during a required-data refresh while the candidate seeds are visible, so the assembled
-        groups and the population's validators are checked before any write. A rejected refresh then
-        leaves the stored required datasets unchanged and earlier runs can still resume.
+        With required data, both halves are fetched first and the full unsampled assembly runs
+        against all candidates before any write, so a rejected refresh of either half leaves the
+        stored datasets unchanged and earlier runs can still resume.
+
+        Args:
+            fetch (DatasetFetchPolicy | None): Optional policy for this operation only.
         """
-        await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+        if self._required_data is None:
+            await self._dataset_config.prepare_async(fetch=fetch)
+            return
+        await self._required_data.prepare_async(
+            fetch=fetch,
+            population=self._dataset_config,
+            validate_assembly=lambda: self._resolve_seed_groups_by_dataset_async(apply_sampling=False),
+        )
 
     def _validate_runtime_configuration(self) -> None:
         """
@@ -1179,10 +1186,7 @@ class Scenario(ABC):
         # builders check compatibility. Inputs outside the saved run must not affect resume.
         is_resume = self._scenario_result_id is not None
         if not is_resume:
-            if self._required_data is not None:
-                self._required_data.set_refresh_validator(self._validate_required_data_refresh_async)
-                await self._required_data.prepare_async()
-            await self._dataset_config.prepare_async()
+            await self._prepare_datasets_async()
         seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
         if stored_plan is not None:
             planned_seed_ids = {group_id for group in stored_plan.atomic_groups for group_id in group.seed_group_ids}
