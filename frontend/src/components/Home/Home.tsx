@@ -239,7 +239,7 @@ export default function Home({
                         {op.name}
                       </Text>
                       <Badge appearance="tint" size="small">
-                        {op.attacks.length} {op.attacks.length === 1 ? 'attack' : 'attacks'}
+                        {op.attacks.length} sampled {op.attacks.length === 1 ? 'attack' : 'attacks'}
                       </Badge>
                     </div>
                     <Text size={200} className={styles.operationMeta}>
@@ -266,7 +266,7 @@ export default function Home({
                       ))}
                       {hiddenCount > 0 && (
                         <Text size={200} className={styles.operationMeta}>
-                          +{hiddenCount} more in history
+                          +{hiddenCount} more in sample
                         </Text>
                       )}
                     </div>

@@ -148,9 +148,9 @@ describe("Home", () => {
     expect(await screen.findByTestId("home-operation-op_alpha")).toBeInTheDocument();
     expect(screen.getByTestId("home-operation-op_beta")).toBeInTheDocument();
     // op_alpha has 2 attacks
-    expect(screen.getByTestId("home-operation-op_alpha")).toHaveTextContent(/2 attacks/i);
+    expect(screen.getByTestId("home-operation-op_alpha")).toHaveTextContent(/2 sampled attacks/i);
     // op_beta has 1 attack
-    expect(screen.getByTestId("home-operation-op_beta")).toHaveTextContent(/1 attack/);
+    expect(screen.getByTestId("home-operation-op_beta")).toHaveTextContent(/1 sampled attack/);
   });
 
   it("updates last-activity for newer attacks and formats hour/day/older timestamps", async () => {
@@ -245,9 +245,30 @@ describe("Home", () => {
     expect(within(card).getByText("first preview")).toBeInTheDocument();
     expect(within(card).getByText("third preview")).toBeInTheDocument();
     expect(within(card).queryByText("fourth preview")).not.toBeInTheDocument();
-    expect(within(card).getByText(/\+1 more in history/)).toBeInTheDocument();
+    expect(within(card).getByText(/\+1 more in sample/)).toBeInTheDocument();
     // f2 has no preview, so its row shows the attack type instead.
     expect(within(card).getByText("TestAttack")).toBeInTheDocument();
+  });
+
+  it("labels Home counts as a sample when more attack history is available", async () => {
+    const items = Array.from({ length: 50 }, (_unused, index) =>
+      makeAttack({
+        attack_result_id: `sample-${index}`,
+        operation: "op_sample",
+        updated_at: new Date(Date.now() - index * 1_000).toISOString(),
+      })
+    );
+    mockListAttacks.mockResolvedValue({
+      items,
+      pagination: { has_more: true, next_cursor: "cursor-next" },
+    });
+
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
+
+    const card = await screen.findByTestId("home-operation-op_sample");
+    expect(within(card).getByText("50 sampled attacks")).toBeInTheDocument();
+    expect(within(card).getByText("+47 more in sample")).toBeInTheDocument();
+    expect(mockListAttacks).toHaveBeenCalledWith({ limit: 50 });
   });
 
   it("groups ID-linked attacks under their saved Operation's current name", async () => {
@@ -260,7 +281,7 @@ describe("Home", () => {
     });
 
     render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
-    expect(await screen.findByTestId("home-operation-Renamed")).toHaveTextContent(/2 attacks/i);
+    expect(await screen.findByTestId("home-operation-Renamed")).toHaveTextContent(/2 sampled attacks/i);
     expect(screen.queryByTestId("home-operation-unlabeled")).not.toBeInTheDocument();
   });
 
