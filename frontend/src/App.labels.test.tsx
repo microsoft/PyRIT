@@ -66,6 +66,7 @@ jest.mock('@/services/api', () => ({
   scenariosApi: {
     listCatalog: jest.fn(),
     getScenario: jest.fn(),
+    getRunHierarchy: jest.fn(),
     estimateRun: jest.fn(),
     startRun: jest.fn(),
     cancelRun: jest.fn(),
@@ -183,6 +184,17 @@ describe('Shared new run labels', () => {
       attack_result_id: 'old_attack', main_conversation_id: 'old_conversation', conversations: [],
     })
     jest.mocked(scenariosApi.getScenario).mockResolvedValue(SCENARIO)
+    jest.mocked(scenariosApi.getRunHierarchy).mockResolvedValue({
+      scenario_result_id: 'saved_run', scenario_name: 'SavedScenario', scenario_version: 1,
+      status: 'COMPLETED', groups: [],
+      overall_counts: { completed: 0, planned: 0, succeeded: 0, success_percentage: 0, errors: 0, retries: 0 },
+      diagnostics: {
+        failed_attacks: [], failed_attacks_count: 0, failed_attacks_truncated: false,
+        attack_retries: [], attack_retries_count: 0, attack_retries_truncated: false,
+        total_retries: 0, rootless_result_ids: [], rootless_results_count: 0, rootless_results_truncated: false,
+      },
+      has_more: false, truncated: false,
+    })
     jest.mocked(scenariosApi.listCatalog).mockResolvedValue({
       items: [SCENARIO], pagination: { limit: 200, has_more: false },
     })
@@ -245,7 +257,7 @@ describe('Shared new run labels', () => {
     await chooseOperation(user, 'remembered_op')
     const bar = currentLabels()
 
-    for (const destination of ['Home', 'Technique.execute', 'Scanner']) {
+    for (const destination of ['Home', 'Attacks', 'Scanner']) {
       await user.click(screen.getByRole('button', { name: destination, exact: true }))
       expect(screen.getAllByTestId('labels-bar')).toHaveLength(1)
       expect(currentLabels()).toBe(bar)
@@ -333,7 +345,7 @@ describe('Shared new run labels', () => {
     expect(screen.getAllByTestId('labels-bar')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Scanner', exact: true }))
     expect(screen.queryByRole('group', { name: 'Chat controls' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Technique.execute', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Attacks', exact: true }))
     expect(screen.getAllByRole('group', { name: 'Chat controls' })).toHaveLength(1)
     expect(within(screen.getByRole('group', { name: 'Conversation actions' })).getByRole('switch')).toBeChecked()
   })
@@ -362,6 +374,7 @@ describe('Shared new run labels', () => {
     expect(saved).toHaveTextContent('original_team')
     expect(saved).not.toHaveTextContent('future_op')
     expect(within(saved).queryByRole('button', { name: /^Edit / })).not.toBeInTheDocument()
+    expect(scenariosApi.getRunHierarchy).toHaveBeenCalledTimes(1)
     expect(scenariosApi.startRun).not.toHaveBeenCalled()
     expect(scenariosApi.cancelRun).not.toHaveBeenCalled()
   })

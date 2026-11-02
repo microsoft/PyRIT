@@ -58,9 +58,11 @@ import {
 import { sameTarget, targetReference } from '@/utils/targetIdentity'
 import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useRuntime } from '@/hooks/useRuntime'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import { generationConfigError, parseGenerationConfig, withRequestGenerationConfig } from '@/utils/requestGeneration'
+import { NARROW_SCREEN_QUERY } from '@/styles/touchTargets'
 import {
   basenameFromValue,
   applyConvertedValues,
@@ -115,7 +117,6 @@ import { scenarioRunRoutePath } from '../../utils/routeParams'
 import type { ViewName } from '../Sidebar/Navigation'
 import { CHAT_NOTICE_FADE_DURATION_MS, useChatWindowStyles } from './ChatWindow.styles'
 
-const NARROW_SCREEN_QUERY = '(max-width: 600px)'
 const RETRYABLE_TARGET_RESPONSE_ERROR = 'processing'
 const CHAT_NOTICE_VISIBLE_DURATION_MS = 5_000
 
@@ -285,12 +286,6 @@ function getPersistedProcessingRecovery(
     conversions: {},
     source: 'persisted',
   }
-}
-
-function matchesNarrowScreen(): boolean {
-  return typeof window !== 'undefined'
-    && typeof window.matchMedia === 'function'
-    && window.matchMedia(NARROW_SCREEN_QUERY).matches
 }
 
 interface ChatWindowProps {
@@ -479,7 +474,7 @@ export default function ChatWindow({
   const [sendingConversations, setSendingConversations] = useState<Set<string>>(new Set())
   const isSending = activeConversationId ? sendingConversations.has(activeConversationId) : Boolean(sendingConversations.size)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
-  const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
+  const isNarrowScreen = useMediaQuery(NARROW_SCREEN_QUERY)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
   const launchStateRef = useRef({ generation: runtime.generation, ready: runtime.ready, defaultsReady })
   useLayoutEffect(() => {
@@ -659,19 +654,6 @@ export default function ChatWindow({
   ): void => {
     updatePreferences((current) => ({ ...current, chatMarkdown: data.checked }))
   }, [updatePreferences])
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-      return
-    }
-
-    const mediaQuery = window.matchMedia(NARROW_SCREEN_QUERY)
-    const handleChange = (event: MediaQueryListEvent) => {
-      setIsNarrowScreen(event.matches)
-    }
-    mediaQuery.addEventListener('change', handleChange)
-    return () => mediaQuery.removeEventListener('change', handleChange)
-  }, [])
 
   const conversionRevisionKey = useMemo(
     () => JSON.stringify({
@@ -1709,7 +1691,10 @@ export default function ChatWindow({
       if (chatInputText || draftAttachments.length || activePieceConversions.text) {
         const pieces: ConversationDraftPiece[] = [
           ...(chatInputText || activePieceConversions.text
-            ? [{ ...newDraftPiece(), draftId: 'text', original_value: chatInputText }] : []),
+            ? [{
+              ...newDraftPiece(), draftId: 'text', original_value: chatInputText,
+              prompt_metadata: inputBoxRef.current?.getTextMetadata(),
+            }] : []),
           ...draftAttachments.map(attachmentDraft),
         ].map((piece: ConversationDraftPiece) => {
           const conversion = activePieceConversions[piece.draftId]
@@ -2284,6 +2269,7 @@ export default function ChatWindow({
                 <Link
                   className={styles.breadcrumbLink}
                   to={scenarioRunRoutePath(scenarioResultId)}
+                  state={location.state}
                   aria-label={`Return to scenario run ${scenarioResultId}`}
                 >
                   Scenario run {scenarioResultId.slice(0, 8)}
