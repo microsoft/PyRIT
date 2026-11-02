@@ -1280,4 +1280,101 @@ describe('AttackHistory', () => {
       })
     )
   })
+
+  describe('pagination across filter visits', () => {
+    const FILTERS_A = { ...DEFAULT_HISTORY_FILTERS }
+    const FILTERS_B = { ...DEFAULT_HISTORY_FILTERS, outcome: 'success' as const }
+    const PAGE_ONE = [sampleAttacks[0]]
+    const PAGE_TWO = [sampleAttacks[1]]
+    const FILTERED = [{ ...sampleAttacks[0], attack_result_id: 'ar-filtered' }]
+
+    type ListAttacksParams = Parameters<typeof attacksApi.listAttacks>[0]
+
+    function mockListAttacks({ pendingFiltered = false } = {}) {
+      mockedAttacksApi.listAttacks.mockImplementation((params: ListAttacksParams) => {
+        if (params.outcome === 'success') {
+          if (pendingFiltered) return new Promise(() => {})
+          return Promise.resolve({ items: FILTERED, pagination: { limit: 25, has_more: false } })
+        }
+        if (params.cursor === 'a-page-2') {
+          return Promise.resolve({ items: PAGE_TWO, pagination: { limit: 25, has_more: false } })
+        }
+        return Promise.resolve({
+          items: PAGE_ONE,
+          pagination: { limit: 25, has_more: true, next_cursor: 'a-page-2' },
+        })
+      })
+    }
+
+    function historyWithFilters(filters: typeof FILTERS_A) {
+      return (
+        <TestWrapper>
+          <AttackHistory {...defaultProps} filters={filters} />
+        </TestWrapper>
+      )
+    }
+
+    async function openPageTwo() {
+      await screen.findByTestId('attack-row-ar-conv-1')
+      expect(screen.getByText('Page 1')).toBeInTheDocument()
+      expect(screen.getByTestId('prev-page-btn')).toBeDisabled()
+      fireEvent.click(screen.getByTestId('next-page-btn'))
+      expect(await screen.findByTestId('attack-row-ar-conv-2')).toBeInTheDocument()
+      expect(screen.getByText('Page 2')).toBeInTheDocument()
+      expect(screen.getByTestId('prev-page-btn')).toBeEnabled()
+    }
+
+    async function expectFirstPageOfA() {
+      expect(await screen.findByTestId('attack-row-ar-conv-1')).toBeInTheDocument()
+      expect(screen.queryByTestId('attack-row-ar-conv-2')).not.toBeInTheDocument()
+      expect(screen.getByText('Page 1')).toBeInTheDocument()
+      expect(screen.getByTestId('prev-page-btn')).toBeDisabled()
+      const lastCall = mockedAttacksApi.listAttacks.mock.calls.at(-1)?.[0]
+      expect(lastCall).not.toHaveProperty('cursor')
+      expect(lastCall).not.toHaveProperty('outcome')
+    }
+
+    it('keeps the page label and First button in sync with rows during first/next navigation', async () => {
+      mockListAttacks()
+      render(historyWithFilters(FILTERS_A))
+
+      await openPageTwo()
+      expect(mockedAttacksApi.listAttacks).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: 'a-page-2' })
+      )
+
+      fireEvent.click(screen.getByTestId('prev-page-btn'))
+      await expectFirstPageOfA()
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(3)
+    })
+
+    it('starts A on the first page again after an A-to-B-to-A change once B has loaded', async () => {
+      mockListAttacks()
+      const history = render(historyWithFilters(FILTERS_A))
+      await openPageTwo()
+
+      history.rerender(historyWithFilters(FILTERS_B))
+      expect(await screen.findByTestId('attack-row-ar-filtered')).toBeInTheDocument()
+      expect(screen.getByText('Page 1')).toBeInTheDocument()
+      expect(mockedAttacksApi.listAttacks.mock.calls.at(-1)?.[0]).not.toHaveProperty('cursor')
+
+      history.rerender(historyWithFilters(FILTERS_A))
+      await expectFirstPageOfA()
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(4)
+    })
+
+    it('starts A on the first page again after an A-to-B-to-A change while B is still loading', async () => {
+      mockListAttacks({ pendingFiltered: true })
+      const history = render(historyWithFilters(FILTERS_A))
+      await openPageTwo()
+
+      history.rerender(historyWithFilters(FILTERS_B))
+      expect(screen.getByText('Loading attacks...')).toBeInTheDocument()
+      await waitFor(() => expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(3))
+
+      history.rerender(historyWithFilters(FILTERS_A))
+      await expectFirstPageOfA()
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(4)
+    })
+  })
 })
