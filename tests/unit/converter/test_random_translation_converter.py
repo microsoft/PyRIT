@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from typing import get_args
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,7 +12,7 @@ from pyrit.converter import (
     WordPositionSelectionStrategy,
     WordProportionSelectionStrategy,
 )
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, PromptDataType
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 
@@ -45,6 +46,17 @@ async def test_random_translation_converter_sets_system_prompt(mock_target) -> N
     system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
     assert isinstance(system_arg, str)
     assert "Each word is associated with a target language on the same line." in system_arg
+
+
+@pytest.mark.parametrize("input_type", [data_type for data_type in get_args(PromptDataType) if data_type != "text"])
+async def test_random_translation_converter_input_not_supported(mock_target, input_type) -> None:
+    converter = RandomTranslationConverter(converter_target=mock_target)
+
+    with pytest.raises(ValueError, match=f"Input type {input_type} not supported"):
+        await converter.convert_async(prompt="being awesome", input_type=input_type)
+
+    mock_target.set_system_prompt_async.assert_not_called()
+    mock_target.send_prompt_async.assert_not_called()
 
 
 def test_random_translation_converter_default_languages() -> None:

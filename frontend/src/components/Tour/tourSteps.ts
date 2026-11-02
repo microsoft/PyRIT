@@ -28,7 +28,7 @@ export function createTourSteps({
     {
       target: '[data-tour="sidebar-nav"]',
       content:
-        'Ahoy! Welcome to Co-PyRIT! This is your main navigation panel. Home is your dashboard, Technique.execute opens Chat, ' +
+        'Ahoy! Welcome to Co-PyRIT! This is your main navigation panel. Home is your dashboard, Attacks opens Chat, ' +
         'History tracks past attacks and scanner runs, Scanner launches full test campaigns, and Registry is where you manage ' +
         'targets and converters.' +
         (canManageConfiguration
