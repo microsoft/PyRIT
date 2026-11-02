@@ -1,3 +1,5 @@
+import type { ReactElement } from 'react'
+
 import {
   Button,
   Menu,
@@ -5,6 +7,8 @@ import {
   MenuList,
   MenuPopover,
   MenuTrigger,
+  Tooltip,
+  mergeClasses,
   useRestoreFocusTarget,
 } from '@fluentui/react-components'
 import type { MenuCheckedValueChangeData, MenuCheckedValueChangeEvent } from '@fluentui/react-components'
@@ -21,7 +25,10 @@ import {
   TargetRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
+  PanelLeftContractRegular,
+  PanelLeftExpandRegular,
 } from '@fluentui/react-icons'
+
 import { useTheme } from '@/hooks/useTheme'
 import { isThemeMode, THEME_PRESETS } from '@/themes/themePresets'
 import type { ThemePreset } from '@/types'
@@ -44,19 +51,41 @@ interface NavigationProps {
   onNavigate: (view: ViewName) => void
   onOpenFeedback: () => void
   canManageConfiguration: boolean
+  expanded: boolean
+  onToggleExpanded: () => void
+}
+
+interface NavigationItem {
+  readonly view: ViewName
+  readonly label: string
+  readonly icon: ReactElement
 }
 
 const THEME_MENU_NAME = 'theme'
+const NAVIGATION_ITEMS: NavigationItem[] = [
+  { view: 'home', label: 'Home', icon: <HomeRegular /> },
+  { view: 'chat', label: 'Attacks', icon: <ChatRegular /> },
+  { view: 'scenarios', label: 'Scanner', icon: <TargetRegular /> },
+  { view: 'history', label: 'History', icon: <HistoryRegular /> },
+  { view: 'analytics', label: 'Analytics', icon: <DataBarVerticalRegular /> },
+  { view: 'operations', label: 'Operations', icon: <BriefcaseRegular /> },
+  { view: 'datasets', label: 'Datasets', icon: <DatabaseRegular /> },
+  { view: 'registry', label: 'Registry', icon: <ScriptRegular /> },
+  { view: 'configuration', label: 'Configuration', icon: <SettingsRegular /> },
+]
 
 export default function Navigation({
   currentView,
   onNavigate,
   onOpenFeedback,
   canManageConfiguration,
+  expanded,
+  onToggleExpanded,
 }: NavigationProps) {
   const styles = useNavigationStyles()
   const { mode, resolved, setMode } = useTheme()
   const feedbackRestoreFocusTarget = useRestoreFocusTarget()
+  const sidebarRestoreFocusTarget = useRestoreFocusTarget()
 
   const handleThemeChange = (
     _: MenuCheckedValueChangeEvent,
@@ -72,109 +101,42 @@ export default function Navigation({
   const triggerLabel = `Theme: ${mode === 'system' ? 'System' : THEME_PRESETS[mode].label}`
 
   return (
-    <div className={styles.root} data-tour="sidebar-nav">
+    <div className={mergeClasses(styles.root, expanded && styles.expanded)} data-tour="sidebar-nav">
+      <Button
+        {...sidebarRestoreFocusTarget}
+        className={styles.navButton}
+        appearance="subtle"
+        icon={expanded ? <PanelLeftContractRegular /> : <PanelLeftExpandRegular />}
+        aria-label={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+        title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+        aria-expanded={expanded}
+        data-testid="sidebar-toggle"
+        onClick={onToggleExpanded}
+      />
       <nav aria-label="Primary" className={styles.primaryNavigation}>
-        <Button
-          className={styles.navButton}
-          data-active={currentView === 'home'}
-          appearance="subtle"
-          icon={<HomeRegular />}
-          title="Home"
-          aria-label="Home"
-          aria-current={currentView === 'home' ? 'page' : undefined}
-          onClick={() => onNavigate('home')}
-        />
-
-        <Button
-          className={styles.navButton}
-          data-active={currentView === 'chat'}
-          appearance="subtle"
-          icon={<ChatRegular />}
-          title="Technique.execute"
-          aria-label="Technique.execute"
-          aria-current={currentView === 'chat' ? 'page' : undefined}
-          onClick={() => onNavigate('chat')}
-        />
-
-        <Button
-          className={styles.navButton}
-          data-active={currentView === 'history'}
-          appearance="subtle"
-          icon={<HistoryRegular />}
-          title="History"
-          aria-label="History"
-          aria-current={currentView === 'history' ? 'page' : undefined}
-          onClick={() => onNavigate('history')}
-        />
-
-        <Button
-          className={styles.navButton}
-          data-active={currentView === 'analytics'}
-          appearance="subtle"
-          icon={<DataBarVerticalRegular />}
-          title="Analytics"
-          aria-label="Analytics"
-          aria-current={currentView === 'analytics' ? 'page' : undefined}
-          onClick={() => onNavigate('analytics')}
-        />
-
-        <Button
-          className={styles.navButton}
-          data-active={currentView === 'operations'}
-          appearance="subtle"
-          icon={<BriefcaseRegular />}
-          title="Operations"
-          aria-label="Operations"
-          aria-current={currentView === 'operations' ? 'page' : undefined}
-          onClick={() => onNavigate('operations')}
-        />
-
-        <Button
-          className={styles.navButton}
-          data-active={currentView === 'scenarios'}
-          appearance="subtle"
-          icon={<TargetRegular />}
-          title="Scanner"
-          aria-label="Scanner"
-          aria-current={currentView === 'scenarios' ? 'page' : undefined}
-          onClick={() => onNavigate('scenarios')}
-        />
-
-        <Button
-          className={styles.navButton}
-          data-active={currentView === 'datasets'}
-          appearance="subtle"
-          icon={<DatabaseRegular />}
-          title="Datasets"
-          aria-label="Datasets"
-          aria-current={currentView === 'datasets' ? 'page' : undefined}
-          onClick={() => onNavigate('datasets')}
-        />
-
-        <Button
-          className={styles.navButton}
-          data-active={currentView === 'registry'}
-          appearance="subtle"
-          icon={<ScriptRegular />}
-          title="Registry"
-          aria-label="Registry"
-          aria-current={currentView === 'registry' ? 'page' : undefined}
-          onClick={() => onNavigate('registry')}
-        />
-
-        {canManageConfiguration && (
-          <Button
-            className={styles.navButton}
-            data-active={currentView === 'configuration'}
-            appearance="subtle"
-            icon={<SettingsRegular />}
-            title="Configuration"
-            aria-label="Configuration"
-            aria-current={currentView === 'configuration' ? 'page' : undefined}
-            onClick={() => onNavigate('configuration')}
-          />
-        )}
-
+        {NAVIGATION_ITEMS.filter((item: NavigationItem) =>
+          item.view !== 'configuration' || canManageConfiguration,
+        ).map((item: NavigationItem) => {
+          const button = (
+            <Button
+              key={item.view}
+              className={styles.navButton}
+              data-active={currentView === item.view}
+              appearance="subtle"
+              icon={item.icon}
+              aria-label={item.label}
+              aria-current={currentView === item.view ? 'page' : undefined}
+              onClick={() => onNavigate(item.view)}
+            >
+              {expanded && item.label}
+            </Button>
+          )
+          return expanded ? button : (
+            <Tooltip key={item.view} content={item.label} relationship="label" positioning="after">
+              {button}
+            </Tooltip>
+          )
+        })}
       </nav>
 
       <div className={styles.spacer} />
@@ -187,7 +149,9 @@ export default function Navigation({
         title="Feedback"
         aria-label="Feedback"
         onClick={onOpenFeedback}
-      />
+      >
+        {expanded && 'Feedback'}
+      </Button>
       <Menu
         checkedValues={{ [THEME_MENU_NAME]: [mode] }}
         onCheckedValueChange={handleThemeChange}
@@ -200,7 +164,9 @@ export default function Navigation({
             icon={triggerIcon}
             title={triggerLabel}
             aria-label={triggerLabel}
-          />
+          >
+            {expanded && 'Theme'}
+          </Button>
         </MenuTrigger>
         <MenuPopover className={styles.themeMenu}>
           <MenuList>

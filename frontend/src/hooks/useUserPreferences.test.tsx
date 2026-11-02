@@ -18,6 +18,7 @@ const chosenPreferences: UserPreferences = {
   theme: 'dark',
   chatMarkdown: true,
   chatScorer: { registry_name: 'judge', identifier_hash: 'full-identity' },
+  sidebarExpanded: false,
 }
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -65,6 +66,7 @@ describe('useUserPreferences', () => {
       }))
       result.current.updatePreferences((current) => ({ ...current, chatMarkdown: true }))
       result.current.updatePreferences((current) => ({ ...current, chatScorer: chosenPreferences.chatScorer }))
+      result.current.updatePreferences((current) => ({ ...current, sidebarExpanded: false }))
     })
     expect(readUserPreferences('tenant:alice')).toEqual({
       ...chosenPreferences,
@@ -200,11 +202,11 @@ describe('useUserPreferences', () => {
     rerender(
       <UserPreferencesProvider key="bob" accountKey="tenant:bob"><PreferenceControls /></UserPreferencesProvider>,
     )
-    expect(screen.getByLabelText('Preferences')).toHaveTextContent(JSON.stringify(DEFAULT_USER_PREFERENCES))
+    expect(JSON.parse(screen.getByLabelText('Preferences').textContent ?? '')).toEqual(DEFAULT_USER_PREFERENCES)
     rerender(
       <UserPreferencesProvider key="alice" accountKey="tenant:alice"><PreferenceControls /></UserPreferencesProvider>,
     )
-    expect(screen.getByLabelText('Preferences')).toHaveTextContent(JSON.stringify(chosenPreferences))
+    expect(JSON.parse(screen.getByLabelText('Preferences').textContent ?? '')).toEqual(chosenPreferences)
   })
 
   it('reads old account-scoped targets without importing browser-wide labels or display choices', () => {
@@ -236,6 +238,7 @@ describe('useUserPreferences', () => {
       hiddenTargetRegistryNames: [],
       operation: undefined,
       chatScorer: undefined,
+      sidebarExpanded: undefined,
     })
   })
 
@@ -264,6 +267,7 @@ describe('useUserPreferences', () => {
       labels: { team: 'blue' },
       operation: { name: 'op_legacy' },
       chatScorer: undefined,
+      sidebarExpanded: undefined,
     })
     writeUserPreferences('local', DEFAULT_USER_PREFERENCES)
     expect(readUserPreferences('local')).toEqual(DEFAULT_USER_PREFERENCES)
@@ -277,6 +281,7 @@ describe('useUserPreferences', () => {
     JSON.stringify({ ...chosenPreferences, labels: { bad: 5 } }),
     JSON.stringify({ ...chosenPreferences, theme: 'unknown' }),
     JSON.stringify({ ...chosenPreferences, chatMarkdown: 'markdown' }),
+    JSON.stringify({ ...chosenPreferences, sidebarExpanded: 'false' }),
     JSON.stringify({ ...chosenPreferences, hiddenTargetRegistryNames: [5] }),
     JSON.stringify({ ...chosenPreferences, operation: { id: '' } }),
     JSON.stringify({ ...chosenPreferences, operation: { id: 'saved', name: 'both' } }),
