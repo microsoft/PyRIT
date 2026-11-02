@@ -104,7 +104,8 @@ _NOT_STDOUT = rf"""(?!(?:-|"-"|'-'|/dev/stdout){_END})"""
 _SECONDS = (
     r"\+?+(?:(?:0*+[0-9]{1,6}(?:\.[0-9]*+)?+|\.[0-9]++)[eE](?:\+?+[0-9]|-[0-9]{1,2})"
     r"|(?:0*+[0-9]{1,15}|0++)(?:\.[0-9]*+)?+|\.[0-9]++"
-    r"|0[xX](?:[0-9a-fA-F]{1,9}(?:\.[0-9a-fA-F]*+)?+[pP](?:\+?+[0-9]|-[0-9]{1,2})|[0-9a-fA-F]{1,12}(?:\.[0-9a-fA-F]*+)?+))"
+    r"|0[xX](?:[0-9a-fA-F]{1,9}(?:\.[0-9a-fA-F]*+)?+[pP](?:\+?+[0-9]|-[0-9]{1,2})"
+    r"|[0-9a-fA-F]{1,12}(?:\.[0-9a-fA-F]*+)?+))"
 )
 _COUNT = r"\+?+(?:0*+[0-9]{1,18}|0++)"
 _DIGIT_PARTS = rf"""(?=["'0-9]{{1,15}}{_END})(?=["']*+[0-9]|["'0-9]*?[0-9])(?:"[0-9]*+"|'[0-9]*+'|[0-9])++"""
@@ -155,7 +156,8 @@ _CURL_OTHER_OPERAND = (
 # stop curl before the download, so outside `_CURL_TEXT_OPERAND` it is checked as a word of its own.
 _CURL_ANY_OPERAND = rf"(?:{_CURL_TEXT_OPERAND}|{_quoted(_CURL_OTHER_OPERAND)})"
 _CURL_NO_BODY = (
-    rf"(?-i:-{_CURL_FLAGS}(?:[OIKhVMdFT]|o(?:{_NOT_STDOUT}(?=[^\s)`])|{_SEP}{_NOT_STDOUT})|X(?:{_SEP})?+(?!{_quoted('GET')}{_END}))"
+    rf"(?-i:-{_CURL_FLAGS}(?:[OIKhVMdFT]|o(?:{_NOT_STDOUT}(?=[^\s)`])|{_SEP}{_NOT_STDOUT})"
+    rf"|X(?:{_SEP})?+(?!{_quoted('GET')}{_END}))"
     rf"|--output(?:=|{_SEP}){_NOT_STDOUT}|--request(?:=|{_SEP})(?!{_quoted('GET')}{_END})"
     rf"|--remote-name|--head|--config|--help|--version|--manual|--data|--form|--upload-file|--json)"
     rf"|{_quoted_option(_CURL_LETTERS, 'ADHbceuUw', _CURL_QUOTED_NAMES)}"
