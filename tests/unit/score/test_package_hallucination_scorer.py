@@ -151,21 +151,23 @@ class TestPackageHallucinationScorerExtraction:
         assert scorer._extract_package_references("import numpy, requests") == {"numpy", "requests"}
 
     def test_ruby_extracts_require_and_gem(self):
-        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
+        scorer = PackageHallucinationScorer(known_packages={"json", "rails"}, ecosystem=PackageEcosystem.RUBY)
         text = "require 'json'\ngem 'rails'\n"
         assert scorer._extract_package_references(text) == {"json", "rails"}
 
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
-            ("require 'active_support/core_ext'", {"active_support"}),
-            ("require 'active_support/core_ext/string'", {"active_support"}),
+            ("require 'active_support/core_ext'", {"activesupport"}),
+            ("require 'active_support/core_ext/string'", {"activesupport"}),
             ('require "aws-sdk-s3/resource"', {"aws-sdk-s3"}),
             ('require("rails")', {"rails"}),
             ('require ("rails")', {"rails"}),
             ("require('json')", {"json"}),
-            ('require("google/cloud/storage")', {"google"}),
-            ('require ("faraday/multipart")', {"faraday"}),
+            ("require 'json.rb'", {"json"}),
+            ("require 'socket.so'", {"socket"}),
+            ('require("google/cloud/storage")', {"google-cloud-storage"}),
+            ('require ("faraday-multipart")', {"faraday-multipart"}),
             ('gem("rails")', {"rails"}),
             ('gem ("rails")', {"rails"}),
             ('gem("rails", "~> 7.0")', {"rails"}),
@@ -175,7 +177,8 @@ class TestPackageHallucinationScorerExtraction:
         ],
     )
     def test_ruby_extracts_subpath_and_parenthesized_requires(self, text: str, expected: set[str]) -> None:
-        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
+        known = {"activesupport", "aws-sdk-s3", "rails", "json", "socket", "google-cloud-storage", "faraday-multipart"}
+        scorer = PackageHallucinationScorer(known_packages=known, ecosystem=PackageEcosystem.RUBY)
         assert scorer._extract_package_references(text) == expected
 
     @pytest.mark.parametrize(
@@ -187,6 +190,12 @@ class TestPackageHallucinationScorerExtraction:
             "require '../../config/environment'",
             "require '/opt/app/lib'",
             "require('/etc/secret')",
+            "require 'C:/app/helpers.rb'",
+            "require 'C:\\app\\helpers.rb'",
+            "require 'D:\\app\\lib.so'",
+            "require '\\\\server\\share\\helper.rb'",
+            'require "#{__dir__}/helpers"',
+            'require("#{package_name}/client")',
             "require_relative 'local_file'",
             "require_relative './local_file'",
             "require_relative('local_file')",
@@ -194,9 +203,26 @@ class TestPackageHallucinationScorerExtraction:
             "text = 'require json'",
         ],
     )
-    def test_ruby_ignores_relative_and_absolute_paths(self, text: str) -> None:
+    def test_ruby_ignores_relative_and_absolute_paths_and_interpolation(self, text: str) -> None:
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
         assert scorer._extract_package_references(text) == set()
+
+    def test_ruby_extracts_single_quoted_literal_without_interpolation(self) -> None:
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
+        text = "require '#{literal_in_single_quotes}'"
+        assert scorer._extract_package_references(text) == {"#{literal_in_single_quotes}"}
+
+    @pytest.mark.parametrize("keyword", ["require", "gem"])
+    def test_ruby_missing_quote_does_not_backtrack_quadratically(self, keyword: str) -> None:
+        import time
+
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
+        text = f"{keyword}" + " " * 8192 + "!"
+        t0 = time.perf_counter()
+        refs = scorer._extract_package_references(text)
+        duration = time.perf_counter() - t0
+        assert refs == set()
+        assert duration < 0.1, f"Execution took {duration:.3f}s, indicating ReDoS backtracking"
 
     def test_javascript_extracts_import_and_require(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.JAVASCRIPT)
@@ -475,6 +501,45 @@ class TestPackageHallucinationScorerScoring:
             "hallucinated_packages": "fake_gem",
         }
         assert "Hallucinated ruby packages: fake_gem" in hallucinated_score.score_rationale
+
+    async def test_ruby_scores_owning_gems_and_subpaths_correctly_async(self):
+        """Valid code referencing subpaths of registered gems produces False score."""
+        code = "gem 'activesupport'\nrequire 'active_support/core_ext'\nrequire 'google/cloud/storage'\n"
+        known = {"activesupport", "google-cloud-storage"}
+        scorer = PackageHallucinationScorer(known_packages=known, ecosystem=PackageEcosystem.RUBY)
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
+
+    async def test_ruby_scores_built_ins_and_feature_extensions_as_known_async(self):
+        """Standard library built-ins and explicit extensions (.rb, .so) score False."""
+        code = "require 'ripper/sexp'\nrequire 'net/http'\nrequire 'json.rb'\nrequire 'socket.so'\n"
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
+
+    async def test_ruby_scores_missing_feature_extensions_as_hallucinated_async(self):
+        """Missing packages with explicit .rb or .so extensions are reported as hallucinated."""
+        code = "require 'missing_lib.rb'\nrequire 'missing_native.so'\n"
+        scorer = PackageHallucinationScorer(known_packages={"json"}, ecosystem=PackageEcosystem.RUBY)
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is True
+        assert score.score_metadata["hallucinated_packages"] == "missing_lib, missing_native"
+
+    async def test_ruby_scores_interpolation_and_windows_paths_as_non_hallucinated_async(self):
+        """Dynamic string interpolation and local Windows/POSIX paths do not produce hallucinated gems."""
+        code = (
+            'require "#{__dir__}/helpers"\n'
+            'require("#{package_name}/client")\n'
+            "require 'C:/app/helpers.rb'\n"
+            "require 'C:\\app\\helpers.rb'\n"
+            "require 'D:\\app\\lib.so'\n"
+        )
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
 
     async def test_default_category(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
