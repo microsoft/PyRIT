@@ -15,6 +15,7 @@ import ConverterRegistry from './components/Registry/ConverterRegistry'
 import TechniqueRegistry from './components/Registry/TechniqueRegistry'
 import RegistryLayout from './components/Registry/RegistryLayout'
 import ScorerRegistry from './components/Registry/ScorerRegistry'
+import ScenarioPresetRegistry from './components/Registry/ScenarioPresetRegistry'
 import { useScorerRegistry } from './hooks/useScorerRegistry'
 import type { RegisteredComponentReference, ManualContinuation } from './types'
 import Configuration from './components/Configuration/Configuration'
@@ -29,10 +30,9 @@ import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
 import ScenarioDetail from './components/Scenarios/ScenarioDetail'
 import ScenarioRunPage from './components/Scenarios/ScenarioRunPage'
 import ScenarioPresetEditor from './components/ScenarioPresets/ScenarioPresetEditor'
-import ScenarioPresetLibrary from './components/ScenarioPresets/ScenarioPresetLibrary'
 import { presetEditorRoutePath } from './components/ScenarioPresets/presetRoutes'
 import ScenarioSuiteEditor from './components/ScenarioSuites/ScenarioSuiteEditor'
-import ScenarioSuiteLibrary from './components/ScenarioSuites/ScenarioSuiteLibrary'
+import ScenarioSuiteExecutionPage from './components/ScenarioSuites/ScenarioSuiteExecutionPage'
 import DatasetCatalog from './components/Datasets/DatasetCatalog'
 import DatasetSelection from './components/Datasets/DatasetSelection'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
@@ -67,6 +67,7 @@ import {
 } from './utils/targetIdentity'
 import { attacksApi, authApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
+import { getOperationWarning } from '@/utils/operationWarnings'
 import { useTour } from './hooks/useTour'
 import { ChatDraftProvider, useChatDraftHandoff } from './hooks/useChatDraftHandoff'
 import {
@@ -297,7 +298,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const operationId = operation.state.status === 'resolved' ? operation.state.operation.id : null
   const newActivityReady = defaultsReady && operationReady
   const operationBlockedReason = defaultsReady && !operationReady && operation.state.status !== 'loading'
-    ? 'Choose a saved Operation, register, or clear this one to start new attacks and scans.'
+    ? getOperationWarning(operation.state)
     : undefined
   const { remember: rememberOperation } = operation
   const handleOperationChange = useCallback((selected: Operation | null) => {
@@ -583,10 +584,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
         routeConversationId === readyAttack.mainConversationId ||
         readyAttack.relatedConversationIds.includes(routeConversationId)
       if (!isKnown && !findingEvidenceId) {
-        navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true })
+        navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true, state: location.state })
       }
     }
-  }, [readyAttack, routeConversationId, navigate, scenarioResultId, findingEvidenceId])
+  }, [readyAttack, routeConversationId, navigate, scenarioResultId, findingEvidenceId, location.state])
 
   const handleNavigate = useCallback((view: ViewName) => {
     // Re-attach the last filter query so returning to history restores filters.
@@ -718,8 +719,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
 
   const handleSelectConversation = useCallback((convId: string) => {
     if (!routeAttackId) return
-    navigate(attackConversationRoutePath(routeAttackId, convId, scenarioResultId))
-  }, [routeAttackId, navigate, scenarioResultId])
+    navigate(attackConversationRoutePath(routeAttackId, convId, scenarioResultId), { state: location.state })
+  }, [routeAttackId, navigate, scenarioResultId, location.state])
 
   const handleOpenAttack = useCallback((openAttackResultId: string) => {
     navigate(attackRoutePath(openAttackResultId))
@@ -846,11 +847,6 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 </MessageBarBody>
               </MessageBar>
             )}
-            {operationBlockedReason && (
-              <MessageBar intent="warning">
-                <MessageBarBody>{operationBlockedReason}</MessageBarBody>
-              </MessageBar>
-            )}
             {preferenceError && (
               <MessageBar intent="warning">
                 <MessageBarBody>{preferenceError}</MessageBarBody>
@@ -913,27 +909,28 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 <Route path="scorers" element={<ScorerRegistry scorers={scorerRegistry.scorers}
                   loading={scorerRegistry.loading} error={scorerRegistry.error} onRefresh={scorerRegistry.refresh} />} />
                 <Route path="techniques" element={<TechniqueRegistry />} />
-                <Route
-                  path="scenario-presets"
-                  element={
-                    <ScenarioPresetLibrary
-                      targets={registry.targets}
-                      defaultObjectiveTarget={targetDefaults.objectiveTarget}
-                      defaultAdversarialTarget={targetDefaults.adversarialTarget}
-                      labels={globalLabels}
-                      operationId={operationId}
-                      defaultsReady={newActivityReady}
-                    />
-                  }
-                />
+                <Route path="scenario-presets" element={<ScenarioPresetRegistry />} />
                 <Route path="scenario-presets/new" element={<ScenarioPresetEditor mode="create" />} />
                 <Route path="scenario-presets/:presetName/edit" element={<ScenarioPresetEditor mode="edit" />} />
-                <Route path="scenario-suites" element={<ScenarioSuiteLibrary />} />
+                <Route path="scenario-suites" element={<Navigate to="/registry/scenario-presets" replace />} />
                 <Route path="scenario-suites/new" element={<ScenarioSuiteEditor mode="create" />} />
                 <Route path="scenario-suites/:suiteName/edit" element={<ScenarioSuiteEditor mode="edit" />} />
               </Route>
               <Route path="/targets" element={<Navigate to="/registry/targets" replace />} />
-              <Route path="/scanner" element={<ScenarioCatalog />} />
+              <Route
+                path="/scanner"
+                element={
+                  <ScenarioCatalog
+                    targets={registry.targets}
+                    defaultObjectiveTarget={targetDefaults.objectiveTarget}
+                    defaultAdversarialTarget={targetDefaults.adversarialTarget}
+                    labels={globalLabels}
+                    operationId={operationId}
+                    defaultsReady={newActivityReady}
+                  />
+                }
+              />
+              <Route path="/scanner/suites/executions/:executionId" element={<ScenarioSuiteExecutionPage />} />
               <Route path={DATASETS_PATH} element={<DatasetCatalog />} />
               <Route path={DATASET_DETAIL_PATH} element={<DatasetSelection />} />
               <Route path="/scanner/presets" element={<Navigate to="/registry/scenario-presets" replace />} />
@@ -950,6 +947,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                       </MessageBarBody>
                     </MessageBar>
                   ) : <ScenarioDetail
+                    scorers={scorerRegistry.scorers}
+                    scorersLoading={scorerRegistry.loading}
+                    scorersError={scorerRegistry.error}
                     targets={registry.targets}
                     defaultObjectiveTarget={targetDefaults.objectiveTarget}
                     defaultAdversarialTarget={targetDefaults.adversarialTarget}

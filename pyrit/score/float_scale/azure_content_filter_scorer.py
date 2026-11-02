@@ -163,6 +163,9 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
             raise ValueError("Please provide the Azure Content Safety endpoint")
 
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
+        # A single-category scorer has one metrics registry, so get_scorer_metrics can find it before any evaluation.
+        if len(self._harm_categories) == 1:
+            self.evaluation_file_mapping = self._get_eval_files_for_category(self._harm_categories[0])
 
     @property
     def _category_values(self) -> list[str]:
@@ -220,13 +223,6 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
                 f"but {len(self._harm_categories)} categories are configured: {self._category_values}. "
                 "Create separate scorer instances for each category to evaluate them individually."
             )
-
-        # Set evaluation_file_mapping from the category mapping if not provided
-        if file_mapping is None:
-            category = self._harm_categories[0]
-            eval_files = self._get_eval_files_for_category(category)
-            if eval_files:
-                self.evaluation_file_mapping = eval_files
 
         return await super().evaluate_async(
             file_mapping=file_mapping,

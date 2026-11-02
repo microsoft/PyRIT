@@ -17,6 +17,7 @@ import uuid
 from bisect import bisect_right
 from collections import OrderedDict, deque
 from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -24,9 +25,12 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import TypeAdapter, ValidationError
 
-from pyrit.analytics.outcome_statistics import success_percentage
+from pyrit.analytics.outcome_statistics import compute_outcome_statistics, success_percentage
 from pyrit.analytics.scenario_statistics import (
-    compute_scenario_statistics,
+    ScenarioAttempt,
+    ScenarioExecutionUnit,
+    count_execution_units,
+    resolve_execution_unit,
     select_execution_attack_result_ids,
 )
 from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
@@ -37,14 +41,18 @@ from pyrit.backend.services.pagination import (
     fingerprint_filters,
     normalize_label_filters,
 )
+from pyrit.backend.services.saved_conversation_read_service import SavedConversationReadService
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_progress_read_model import (
+    ScenarioPlanLookup,
     ScenarioProgressReadModel,
     ScenarioProgressSnapshot,
 )
 from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.memory import AttackResultKeysetCursor, CentralMemory, SQLiteMemory
 from pyrit.memory.memory_interface import (
+    MemoryInterface,
+    ScenarioAttemptSeedSummary,
     ScenarioHistoryAggregate,
     ScenarioHistoryKeysetCursor,
     ScenarioHistoryRunRecord,
@@ -52,12 +60,20 @@ from pyrit.memory.memory_interface import (
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     SCENARIO_RUN_STARTED_AT_METADATA_KEY,
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultMetadata,
     ComponentIdentifier,
     ScenarioAttackResultDelta,
+    ScenarioHierarchyNode,
+    ScenarioHierarchyProjection,
     ScenarioIdentifier,
+    ScenarioProducerCategoryCounts,
+    ScenarioProducerCounts,
+    ScenarioProgressCounts,
     ScenarioProgressHeader,
+    ScenarioProgressResult,
     ScenarioQueueEntry,
     ScenarioQueueSnapshot,
     ScenarioResult,
@@ -101,12 +117,25 @@ _RESTART_INTERRUPTION_REASON = (
 _SHUTDOWN_INTERRUPTION_REASON = "The backend process shut down before this scenario run completed."
 _USER_CANCELLATION_REASON = "Run was cancelled by user"
 _LAUNCH_REQUEST_METADATA_KEY = "scenario_launch_request_v1"
+_RESERVED_INITIAL_METADATA_KEYS = frozenset(
+    {
+        _SCHEDULER_METADATA_KEY,
+        _LAUNCH_REQUEST_METADATA_KEY,
+        SCENARIO_RUN_PLAN_METADATA_KEY,
+        SCENARIO_RUN_STARTED_AT_METADATA_KEY,
+    }
+)
+_INITIAL_METADATA_CONTEXT: ContextVar[Mapping[str, Any] | None] = ContextVar(
+    "scenario_run_initial_metadata",
+    default=None,
+)
 _LAUNCH_REQUEST_FIELDS = (
     "scenario_name",
     "target_name",
     "adversarial_target_name",
     "techniques",
     "technique_override",
+    "objective_scorer",
     "datasets",
     "dataset_names",
     "max_dataset_size",
@@ -116,7 +145,9 @@ _LAUNCH_REQUEST_FIELDS = (
     "include_baseline",
 )
 # Fields added after the first saved launch records; older records omit them.
-_OPTIONAL_LAUNCH_FIELDS = frozenset({"adversarial_target_name", "datasets", "max_dataset_size", "technique_override"})
+_OPTIONAL_LAUNCH_FIELDS = frozenset(
+    {"adversarial_target_name", "datasets", "max_dataset_size", "technique_override", "objective_scorer"}
+)
 
 _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
     {
@@ -195,7 +226,13 @@ class ScenarioRunService:
     multiple replicas require a shared database-backed scheduler or lease.
     """
 
-    def __init__(self, *, max_concurrent_runs: int = _DEFAULT_MAX_CONCURRENT_RUNS) -> None:
+    def __init__(
+        self,
+        *,
+        max_concurrent_runs: int = _DEFAULT_MAX_CONCURRENT_RUNS,
+        memory: MemoryInterface | None = None,
+        progress_read_model: ScenarioProgressReadModel | None = None,
+    ) -> None:
         """
         Initialize the scenario run service.
 
@@ -204,10 +241,13 @@ class ScenarioRunService:
         """
         if max_concurrent_runs < 1:
             raise ValueError("max_concurrent_runs must be at least 1.")
-        self._memory = CentralMemory.get_memory_instance()
+        self._memory = memory if memory is not None else CentralMemory.get_memory_instance()
         self._active_tasks: dict[str, _ActiveTask] = {}
         self._configuration_resolver = ScenarioConfigurationResolver()
-        self._progress_read_model = ScenarioProgressReadModel(memory=self._memory)
+        self._progress_read_model = (
+            progress_read_model if progress_read_model is not None else ScenarioProgressReadModel(memory=self._memory)
+        )
+        self._saved_conversation_reader = SavedConversationReadService(memory=self._memory)
         self._technique_metadata_cache: dict[str, dict[str, ScenarioTechniqueSummary]] = {}
 
         self._preparations: set[asyncio.Task[_PreparedRun]] = set()
@@ -247,16 +287,28 @@ class ScenarioRunService:
         """Reject new preparations and prevent queued runs from starting."""
         self._stopping = True
 
-    async def start_run_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
+    async def start_run_async(
+        self,
+        *,
+        request: RunScenarioRequest,
+        initial_metadata: Mapping[str, Any] | None = None,
+    ) -> ScenarioRunSummary:
         """
         Initialize and schedule a new run or an explicitly configured continuation.
+
+        Args:
+            request: Scenario launch configuration.
+            initial_metadata: Internal caller-owned scenario metadata persisted
+                atomically with a fresh result. Reserved run-service keys cannot
+                be supplied.
 
         Returns:
             ScenarioRunSummary: Current scheduled run state.
         """
+        metadata = self._validate_initial_metadata(initial_metadata=initial_metadata)
         async with self._reserve_resume_request_async(request.scenario_result_id), self._launch_lock:
             await self._validate_resume_admission_async(scenario_result_id=request.scenario_result_id)
-            return await self._start_run_locked_async(request=request)
+            return await self._start_run_locked_async(request=request, initial_metadata=metadata)
 
     async def resume_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary:
         """
@@ -271,7 +323,7 @@ class ScenarioRunService:
             )
             assert stored is not None
             request = await asyncio.to_thread(self._restore_launch_request, stored=stored)
-            return await self._start_run_locked_async(request=request)
+            return await self._start_run_locked_async(request=request, initial_metadata={})
 
     @contextlib.asynccontextmanager
     async def _reserve_resume_request_async(self, scenario_result_id: str | None) -> AsyncGenerator[None, None]:
@@ -397,7 +449,12 @@ class ScenarioRunService:
             deep=True,
         )
 
-    async def _start_run_locked_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
+    async def _start_run_locked_async(
+        self,
+        *,
+        request: RunScenarioRequest,
+        initial_metadata: Mapping[str, Any],
+    ) -> ScenarioRunSummary:
         """
         Initialize and schedule a scenario run.
 
@@ -408,6 +465,8 @@ class ScenarioRunService:
 
         Args:
             request: The run request with scenario name, target, and options.
+            initial_metadata: Internal caller-owned metadata persisted with a
+                fresh scenario result.
 
         Returns:
             ScenarioRunSummary with a stable ID and current active or queued state.
@@ -427,7 +486,11 @@ class ScenarioRunService:
             resumed_from_cancelled = await self._is_run_cancelled_async(scenario_result_id=request.scenario_result_id)
             if request.scenario_result_id:
                 self._preparing_run_ids.add(request.scenario_result_id)
-            prepare_task = asyncio.create_task(self._prepare_run_async(request=request))
+            metadata_token = _INITIAL_METADATA_CONTEXT.set(initial_metadata)
+            try:
+                prepare_task = asyncio.create_task(self._prepare_run_async(request=request))
+            finally:
+                _INITIAL_METADATA_CONTEXT.reset(metadata_token)
             self._preparations.add(prepare_task)
             prepared = await asyncio.shield(prepare_task)
             return await self._schedule_prepared_run_async(
@@ -602,12 +665,19 @@ class ScenarioRunService:
         labels = {key: value for key, value in (request.labels or {}).items() if key != "operation"}
         return request.model_copy(update={"labels": labels if request.labels is not None else None})
 
-    async def _prepare_run_async(self, *, request: RunScenarioRequest) -> _PreparedRun:
+    async def _prepare_run_async(
+        self,
+        *,
+        request: RunScenarioRequest,
+        initial_metadata: Mapping[str, Any] | None = None,
+    ) -> _PreparedRun:
         """
         Resolve and initialize the scenario for a run request.
 
         Args:
             request: The run request with scenario name, target, and options.
+            initial_metadata: Internal caller-owned metadata persisted with a
+                fresh scenario result.
 
         Returns:
             _PreparedRun: The initialized scenario and its scoped default.
@@ -655,8 +725,31 @@ class ScenarioRunService:
                 memory_labels=request.labels,
             )
             init_kwargs["operation_id"] = request.operation_id
-            scenario = await self._initialize_scenario_async(request=request, init_kwargs=init_kwargs)
+            scenario = await self._initialize_scenario_async(
+                request=request,
+                init_kwargs=init_kwargs,
+                initial_metadata=(
+                    initial_metadata if initial_metadata is not None else (_INITIAL_METADATA_CONTEXT.get() or {})
+                ),
+            )
         return _PreparedRun(scenario=scenario, adversarial_target=adversarial_target)
+
+    @staticmethod
+    def _validate_initial_metadata(*, initial_metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+        """
+        Copy caller metadata after protecting run-service-owned fields.
+
+        Returns:
+            dict[str, Any]: A detached mapping safe to merge into scenario metadata.
+
+        Raises:
+            ValueError: If the caller attempts to replace a reserved metadata key.
+        """
+        metadata = dict(initial_metadata or {})
+        reserved = sorted(_RESERVED_INITIAL_METADATA_KEYS.intersection(metadata))
+        if reserved:
+            raise ValueError(f"Initial scenario metadata cannot set reserved keys: {', '.join(reserved)}")
+        return metadata
 
     async def get_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
         """
@@ -1241,7 +1334,13 @@ class ScenarioRunService:
                 raise ValueError(f"Initializer not found: {e}") from None
             await instance.initialize_async()
 
-    async def _initialize_scenario_async(self, *, request: RunScenarioRequest, init_kwargs: dict[str, Any]) -> Scenario:
+    async def _initialize_scenario_async(
+        self,
+        *,
+        request: RunScenarioRequest,
+        init_kwargs: dict[str, Any],
+        initial_metadata: Mapping[str, Any] | None = None,
+    ) -> Scenario:
         """
         Build and initialize the scenario via the registry.
 
@@ -1257,6 +1356,8 @@ class ScenarioRunService:
                 scenario_result_id).
             init_kwargs: The resolved common parameters to pass to
                 scenario.initialize_async.
+            initial_metadata: Internal caller-owned metadata persisted with a
+                fresh scenario result.
 
         Returns:
             The fully initialized Scenario instance ready for run_async.
@@ -1322,7 +1423,11 @@ class ScenarioRunService:
             request.scenario_name,
             scenario_params=request.scenario_params or {},
             scenario_result_id=request.scenario_result_id or None,
+            constructor_kwargs=self._configuration_resolver.resolve_constructor_kwargs(
+                scenario_class=scenario_class, objective_scorer=request.objective_scorer
+            ),
             initial_metadata={
+                **(initial_metadata or {}),
                 _SCHEDULER_METADATA_KEY: _SCHEDULER_METADATA_VALUE,
                 _LAUNCH_REQUEST_METADATA_KEY: launch_request,
             },
@@ -1532,11 +1637,16 @@ class ScenarioRunService:
                 retry_events = getattr(attack_result, "retry_events", None)
                 if isinstance(retry_events, list) and retry_events:
                     overload_events.extend(retry_events)
+                    truncated_retries = retry_events[:100]
+                    retries_truncated = len(retry_events) > 100
+                    total_r = max(0, retries) if isinstance(retries, int) else len(retry_events)
                     attack_retries.append(
                         AttackRetrySummary(
                             attack_result_id=str(attack_result.attack_result_id),
                             atomic_attack_name=atomic_attack_name,
-                            retries=retry_events,
+                            total_retries=total_r,
+                            retries=truncated_retries,
+                            retries_truncated=retries_truncated,
                         )
                     )
 
@@ -1647,6 +1757,7 @@ class ScenarioRunService:
         *,
         aggregates: dict[str, ScenarioHistoryAggregate],
         plans: Mapping[str, list[ScenarioRunPlanAtomicGroup] | None],
+        max_deltas: int | None = None,
     ) -> dict[str, ScenarioHistoryAggregate]:
         """
         Recount runs the SQL aggregate can't resolve with the shared statistics.
@@ -1662,10 +1773,157 @@ class ScenarioRunService:
         if not run_ids:
             return aggregates
         recounted = dict(aggregates)
-        for scenario_result in await self._memory.get_scenario_results_async(scenario_result_ids=run_ids):
-            run_id = str(scenario_result.id)
-            # A plan this service rejected counts as a legacy run, as in the SQL path.
-            overall = compute_scenario_statistics(scenario_result, use_saved_plan=plans.get(run_id) is not None).overall
+        for run_id in run_ids:
+            cursor: AttackResultKeysetCursor | None = None
+            all_summaries: list[ScenarioAttemptSeedSummary] = []
+            while True:
+                remaining_limit = min(500, max_deltas - len(all_summaries)) if max_deltas is not None else 500
+                if remaining_limit <= 0:
+                    break
+                page, has_more = await self._memory.get_scenario_recount_summaries_async(
+                    scenario_result_id=run_id,
+                    cursor=cursor,
+                    limit=remaining_limit,
+                )
+                all_summaries.extend(page)
+                if not has_more or not page or (max_deltas is not None and len(all_summaries) >= max_deltas):
+                    break
+                cursor = AttackResultKeysetCursor(
+                    timestamp=page[-1].timestamp, attack_result_id=page[-1].attack_result_id
+                )
+
+            saved_plan: ScenarioRunPlan | None = None
+            header = await self._memory.get_scenario_result_header_async(scenario_result_id=run_id)
+            if header is not None:
+                try:
+                    saved_plan = self._load_run_plan(scenario_result=header)
+                except (ValidationError, ValueError):
+                    logger.warning(
+                        "Scenario run %s has an invalid saved run plan; recounting as legacy run.",
+                        run_id,
+                    )
+            plan_lookup = ScenarioPlanLookup.from_plan(plan=saved_plan)
+            attempts: list[ScenarioAttempt] = []
+            for summary in all_summaries:
+                atomic_name = str(summary.attribution_data.get("parent_collection") or "")
+                eval_hash = summary.attribution_data.get("parent_eval_hash")
+                attr_seed = summary.attribution_data.get("seed_group_id")
+                typed_identifier = (
+                    AtomicAttackIdentifier.from_component_identifier(summary.atomic_attack_identifier)
+                    if isinstance(summary.atomic_attack_identifier, ComponentIdentifier)
+                    else None
+                )
+                unit = resolve_execution_unit(
+                    atomic_attack_name=atomic_name,
+                    technique_eval_hash=str(eval_hash) if eval_hash is not None else None,
+                    attributed_seed_group_id=str(attr_seed) if attr_seed else None,
+                    atomic_attack_identifier=typed_identifier,
+                    objective=summary.objective,
+                    objective_sha256=summary.objective_sha256,
+                    plan_lookup=plan_lookup,
+                )
+                res_metadata = AttackResultMetadata.from_metadata(metadata=summary.attribution_data)
+                attempts.append(
+                    ScenarioAttempt(
+                        unit=unit,
+                        atomic_attack_name=atomic_name,
+                        outcome=summary.outcome,
+                        timestamp=summary.timestamp,
+                        attempt_id=summary.attack_result_id,
+                        total_retries=summary.total_retries,
+                        result_role=res_metadata.result_role,
+                        attempt_index=res_metadata.attempt_index,
+                        child_attack_result_ids=summary.child_attack_result_ids,
+                    )
+                )
+            attempts.sort(key=lambda a: (a.timestamp, a.attempt_id))
+            attempts_by_unit: dict[ScenarioExecutionUnit, list[ScenarioAttempt]] = {}
+            for a in attempts:
+                attempts_by_unit.setdefault(a.unit, []).append(a)
+
+            if saved_plan is not None:
+                planned_units = list(
+                    dict.fromkeys(
+                        ScenarioExecutionUnit(atomic_group_id=group.id, seed_group_id=seed_id)
+                        for group in saved_plan.atomic_groups
+                        for seed_id in group.seed_group_ids
+                    )
+                )
+                counted_units = planned_units
+                planned = len(planned_units)
+            else:
+                counted_units = list(attempts_by_unit.keys())
+                planned = None
+
+            overall = count_execution_units(
+                units=counted_units,
+                attempts_by_unit=attempts_by_unit,
+                planned=planned,
+                producer_attempts=attempts,
+            )
+
+            recounted_group_counts: dict[str, ScenarioProgressCounts] = {}
+            if saved_plan is not None:
+                for group in saved_plan.atomic_groups:
+                    g_units = [
+                        ScenarioExecutionUnit(atomic_group_id=group.id, seed_group_id=seed_id)
+                        for seed_id in group.seed_group_ids
+                    ]
+                    g_producer_attempts = [a for a in attempts if a.unit.atomic_group_id == group.id]
+                    g_counts = count_execution_units(
+                        units=g_units,
+                        attempts_by_unit=attempts_by_unit,
+                        planned=len(g_units),
+                        producer_attempts=g_producer_attempts,
+                    )
+                    recounted_group_counts[group.id] = g_counts
+
+                unplanned_group_ids = {a.unit.atomic_group_id for a in attempts} - {
+                    g.id for g in saved_plan.atomic_groups
+                }
+                for gid in unplanned_group_ids:
+                    g_units = [u for u in attempts_by_unit if u.atomic_group_id == gid]
+                    g_producer_attempts = [a for a in attempts if a.unit.atomic_group_id == gid]
+                    g_counts = count_execution_units(
+                        units=g_units,
+                        attempts_by_unit=attempts_by_unit,
+                        planned=None,
+                        producer_attempts=g_producer_attempts,
+                    )
+                    recounted_group_counts[gid] = g_counts
+            else:
+                for gid in {a.unit.atomic_group_id for a in attempts}:
+                    g_units = [u for u in attempts_by_unit if u.atomic_group_id == gid]
+                    g_producer_attempts = [a for a in attempts if a.unit.atomic_group_id == gid]
+                    g_counts = count_execution_units(
+                        units=g_units,
+                        attempts_by_unit=attempts_by_unit,
+                        planned=None,
+                        producer_attempts=g_producer_attempts,
+                    )
+                    recounted_group_counts[gid] = g_counts
+
+            is_truncated = max_deltas is not None and len(all_summaries) >= max_deltas
+            raw_total_errors = (
+                aggregates[run_id].raw_total_errors
+                if is_truncated
+                else sum(1 for d in all_summaries if d.outcome == AttackOutcome.ERROR)
+            )
+            raw_total_retries = (
+                aggregates[run_id].raw_total_retries
+                if is_truncated
+                else ScenarioProgressReadModel.total_retry_pressure(
+                    attempts_per_unit=(len(a) for a in attempts_by_unit.values()),
+                    persisted_retries=(d.total_retries for d in all_summaries),
+                )
+            )
+            raw_retrying_attacks_count = (
+                aggregates[run_id].raw_retrying_attacks_count
+                if is_truncated
+                else sum(1 for d in all_summaries if d.has_retries or d.total_retries > 0)
+            )
+            merged_group_counts = {**aggregates[run_id].group_counts, **recounted_group_counts}
+
             recounted[run_id] = replace(
                 aggregates[run_id],
                 unit_count=overall.completed,
@@ -1673,6 +1931,14 @@ class ScenarioRunService:
                 successful_units=overall.succeeded,
                 error_attempts=overall.errors,
                 total_retries=overall.retries,
+                outcome_successes=overall.outcomes.successes if overall.outcomes else 0,
+                outcome_failures=overall.outcomes.failures if overall.outcomes else 0,
+                outcome_errors=overall.outcomes.errors if overall.outcomes else 0,
+                outcome_undetermined=overall.outcomes.undetermined if overall.outcomes else 0,
+                raw_total_errors=raw_total_errors,
+                raw_total_retries=raw_total_retries,
+                raw_retrying_attacks_count=raw_retrying_attacks_count,
+                group_counts=merged_group_counts,
                 target_facing_attempts=overall.producer_counts.target_facing.attempts,
                 target_facing_error_attempts=overall.producer_counts.target_facing.errors,
                 target_facing_retries=overall.producer_counts.target_facing.retries,
@@ -2291,6 +2557,332 @@ class ScenarioRunService:
         if timestamp.tzinfo is None:
             raise ValueError("Cursor timestamp must include a timezone.")
         return AttackResultKeysetCursor(timestamp=timestamp, attack_result_id=attack_result_id)
+
+    async def _get_hierarchy_aggregate_async(
+        self, *, scenario_result_id: str, plan: ScenarioRunPlan | None
+    ) -> ScenarioHistoryAggregate:
+        """
+        Read exact shared run statistics independently of the selected hierarchy page.
+
+        Returns:
+            ScenarioHistoryAggregate: The same SQL/SDK aggregate used by saved-run history.
+        """
+        aggregates = await self._memory.get_scenario_history_aggregates_async(
+            scenario_result_ids=[scenario_result_id],
+            plan_scenario_ids=[scenario_result_id] if plan is not None else [],
+        )
+        aggregates = await self._recount_with_sdk_statistics_async(
+            aggregates=aggregates,
+            plans={scenario_result_id: plan.atomic_groups if plan is not None else None},
+        )
+        return aggregates[scenario_result_id]
+
+    @staticmethod
+    def _hierarchy_counts(*, aggregate: ScenarioHistoryAggregate, planned: int | None) -> ScenarioProgressCounts:
+        """
+        Present the shared aggregate without choosing a second counting population.
+
+        Returns:
+            ScenarioProgressCounts: Exact logical counts, outcomes, and producer diagnostics.
+        """
+        return ScenarioProgressCounts(
+            planned=planned,
+            completed=aggregate.completed_units,
+            succeeded=aggregate.successful_units,
+            success_percentage=success_percentage(
+                succeeded=aggregate.successful_units, completed=aggregate.completed_units
+            ),
+            errors=aggregate.error_attempts,
+            retries=aggregate.total_retries,
+            producer_counts=ScenarioProducerCounts(
+                target_facing=ScenarioProducerCategoryCounts(
+                    attempts=aggregate.target_facing_attempts,
+                    errors=aggregate.target_facing_error_attempts,
+                    retries=aggregate.target_facing_retries,
+                ),
+                orchestration=ScenarioProducerCategoryCounts(
+                    attempts=aggregate.orchestration_attempts,
+                    errors=aggregate.orchestration_error_attempts,
+                    retries=aggregate.orchestration_retries,
+                ),
+                unknown=ScenarioProducerCategoryCounts(
+                    attempts=aggregate.unknown_role_attempts,
+                    errors=aggregate.unknown_role_error_attempts,
+                    retries=aggregate.unknown_role_retries,
+                ),
+            ),
+            outcomes=compute_outcome_statistics(
+                {
+                    AttackOutcome.SUCCESS: aggregate.outcome_successes,
+                    AttackOutcome.FAILURE: aggregate.outcome_failures,
+                    AttackOutcome.ERROR: aggregate.outcome_errors,
+                    AttackOutcome.UNDETERMINED: aggregate.outcome_undetermined,
+                }
+            ),
+        )
+
+    async def _load_hierarchy_preview_async(
+        self, *, scenario_result_id: str, roots: Sequence[ScenarioAttackResultDelta], max_nodes: int
+    ) -> list[ScenarioAttackResultDelta]:
+        """
+        Resolve only the bounded preview's descendants in breadth-first batches.
+
+        Returns:
+            list[ScenarioAttackResultDelta]: Roots and saved descendants, never more than the node budget.
+        """
+        deltas = {delta.attack_result_id: delta for delta in roots}
+        queried_ids = set(deltas)
+        frontier = list(roots)
+        for _ in range(10):
+            if not frontier or len(deltas) >= max_nodes:
+                break
+            pending = (
+                child_id
+                for delta in frontier
+                for child_id in self._progress_read_model._read_child_attack_result_ids(
+                    attack_metadata=delta.attack_metadata
+                )[:500]
+            )
+            batch: list[str] = []
+            batch_limit = min(500, max_nodes - len(deltas))
+            for child_id in pending:
+                if child_id in queried_ids:
+                    continue
+                queried_ids.add(child_id)
+                batch.append(child_id)
+                if len(batch) >= batch_limit:
+                    break
+            if not batch:
+                break
+            frontier = list(
+                await self._memory.get_scenario_attack_result_deltas_by_ids_async(
+                    scenario_result_id=scenario_result_id, attack_result_ids=batch
+                )
+            )
+            deltas.update((child.attack_result_id, child) for child in frontier)
+        return list(deltas.values())
+
+    async def get_run_hierarchy_async(
+        self,
+        *,
+        scenario_result_id: str,
+        max_nodes: int = 1000,
+        cursor: str | None = None,
+    ) -> ScenarioHierarchyProjection | None:
+        """
+        Get the bounded result hierarchy projection for a scenario run.
+
+        Args:
+            scenario_result_id: The persisted scenario run ID.
+            max_nodes: Maximum nodes to assemble in the hierarchy tree.
+            cursor: Optional continuation for the ascending page of true roots.
+
+        Returns:
+            ScenarioHierarchyProjection | None: The hierarchy projection, or None if the run does not exist.
+        """
+        header_result = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+        if header_result is None:
+            return None
+
+        try:
+            plan = self._load_run_plan(scenario_result=header_result)
+        except (ValidationError, ValueError):
+            logger.warning(
+                "Scenario run %s has invalid persisted plan metadata; treating the plan as unavailable.",
+                scenario_result_id,
+            )
+            plan = None
+        if not 1 <= max_nodes <= 5000:
+            raise ValueError("Hierarchy node budget must be between 1 and 5000.")
+        fingerprint = fingerprint_filters(filters={"kind": "hierarchy-roots", "run": scenario_result_id})
+        anchor = decode_keyset_cursor(cursor=cursor, fingerprint=fingerprint)
+        if cursor is not None and (anchor is None or anchor.position is not None):
+            raise ValueError("Invalid hierarchy root cursor.")
+        root_cursor = (
+            AttackResultKeysetCursor(timestamp=anchor.timestamp, attack_result_id=anchor.identifier)
+            if anchor is not None
+            else None
+        )
+        roots, has_more = await self._memory.get_scenario_root_deltas_async(
+            scenario_result_id=scenario_result_id, cursor=root_cursor, limit=min(500, max_nodes)
+        )
+        deltas = await self._load_hierarchy_preview_async(
+            scenario_result_id=scenario_result_id, roots=roots, max_nodes=max_nodes
+        )
+        aggregate = await self._get_hierarchy_aggregate_async(scenario_result_id=scenario_result_id, plan=plan)
+        summary_plan = plan or self._progress_read_model._synthesize_legacy_plan(deltas=deltas)
+        plan_lookup = ScenarioPlanLookup.from_plan(plan=summary_plan)
+        results = tuple(
+            self._progress_read_model._map_progress_delta(delta=delta, plan_lookup=plan_lookup) for delta in deltas
+        )
+        summary = self._progress_read_model._build_progress_summary(
+            plan=summary_plan,
+            plan_complete=plan is not None,
+            results=results,
+            active_group_ids=(),
+            terminal=header_result.scenario_run_state
+            in (ScenarioRunState.COMPLETED, ScenarioRunState.FAILED, ScenarioRunState.CANCELLED),
+            objective_scorer_identifier=None,
+            technique_details_by_group=self._progress_read_model._build_technique_details_by_group(
+                deltas=deltas, results=results
+            ),
+        )
+        raw_attempts = (
+            aggregate.target_facing_attempts + aggregate.orchestration_attempts + aggregate.unknown_role_attempts
+        )
+        progress_snapshot = ScenarioProgressSnapshot(
+            deltas=tuple(deltas),
+            results=results,
+            summary=summary,
+            plan=summary_plan,
+            has_more=has_more or raw_attempts > len(deltas),
+        )
+
+        hierarchy = self._progress_read_model.build_scenario_hierarchy(
+            scenario_result_id=scenario_result_id,
+            scenario_name=header_result.scenario_name,
+            scenario_version=header_result.scenario_version,
+            status=header_result.scenario_run_state,
+            snapshot=progress_snapshot,
+            max_nodes=max_nodes,
+            overall_counts=self._hierarchy_counts(aggregate=aggregate, planned=summary.overall.planned),
+            exact_total_errors=aggregate.raw_total_errors,
+            exact_total_retries=aggregate.raw_total_retries,
+            exact_retrying_attacks_count=aggregate.raw_retrying_attacks_count,
+            exact_group_counts=aggregate.group_counts,
+            root_result_ids=[root.attack_result_id for root in roots],
+        )
+        hierarchy.has_more = has_more
+        if has_more and roots:
+            hierarchy.next_cursor = encode_keyset_cursor(
+                timestamp=roots[-1].timestamp,
+                identifier=roots[-1].attack_result_id,
+                fingerprint=fingerprint,
+            )
+        if cursor is None and not roots and raw_attempts:
+            rootless, clipped = await self._memory.get_scenario_recount_summaries_async(
+                scenario_result_id=scenario_result_id, limit=min(100, max_nodes)
+            )
+            hierarchy.diagnostics.rootless_result_ids = [result.attack_result_id for result in rootless]
+            hierarchy.diagnostics.rootless_results_count = raw_attempts
+            hierarchy.diagnostics.rootless_results_truncated = clipped
+
+        return hierarchy
+
+    async def get_run_hierarchy_node_async(
+        self,
+        *,
+        scenario_result_id: str,
+        attack_result_id: str,
+        max_immediate_children: int = 200,
+        children_cursor: str | None = None,
+    ) -> ScenarioHierarchyNode | None:
+        """
+        Get bounded single-node hierarchy details and generic conversation projections without full-run hydration.
+
+        Args:
+            scenario_result_id: The persisted scenario run ID.
+            attack_result_id: The target attack result ID.
+            max_immediate_children: Maximum number of immediate child nodes to resolve.
+            children_cursor: Continuation bound to this run, node, and stored child ordering.
+
+        Returns:
+            ScenarioHierarchyNode | None: The node details, or None if the node is not found in this run.
+        """
+        if not 1 <= max_immediate_children <= 500:
+            raise ValueError("Hierarchy child page size must be between 1 and 500.")
+        deltas = await self._memory.get_scenario_attack_result_deltas_by_ids_async(
+            scenario_result_id=scenario_result_id,
+            attack_result_ids=[attack_result_id],
+        )
+        if not deltas:
+            return None
+
+        target_delta = deltas[0]
+
+        header_result = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+        plan = None
+        if header_result is not None:
+            try:
+                plan = self._load_run_plan(scenario_result=header_result)
+            except (ValidationError, ValueError):
+                logger.warning(
+                    "Scenario run %s has invalid persisted plan metadata; treating the plan as unavailable.",
+                    scenario_result_id,
+                )
+                plan = None
+
+        plan_lookup = ScenarioPlanLookup.from_plan(plan=plan)
+        target_result = self._progress_read_model._map_progress_delta(
+            delta=target_delta,
+            plan_lookup=plan_lookup,
+        )
+
+        child_ids = target_result.child_attack_result_ids
+        fingerprint = fingerprint_filters(
+            filters={
+                "kind": "hierarchy-children",
+                "run": scenario_result_id,
+                "node": attack_result_id,
+                "ordered_references": json.dumps(child_ids, separators=(",", ":")),
+            }
+        )
+        anchor = decode_keyset_cursor(cursor=children_cursor, fingerprint=fingerprint)
+        if children_cursor is not None and (
+            anchor is None
+            or anchor.position is None
+            or not 0 <= anchor.position < len(child_ids)
+            or anchor.identifier != target_delta.attack_result_id
+            or anchor.timestamp != target_delta.timestamp
+        ):
+            raise ValueError("Invalid or stale hierarchy child cursor.")
+        child_offset = anchor.position if anchor is not None and anchor.position is not None else 0
+        page_child_ids = child_ids[child_offset : child_offset + max_immediate_children]
+        next_offset = child_offset + len(page_child_ids)
+        next_children_cursor = (
+            encode_keyset_cursor(
+                timestamp=target_delta.timestamp,
+                identifier=target_delta.attack_result_id,
+                position=next_offset,
+                fingerprint=fingerprint,
+            )
+            if next_offset < len(child_ids)
+            else None
+        )
+        children_deltas: list[ScenarioAttackResultDelta] = []
+        children_results: list[ScenarioProgressResult] = []
+        if page_child_ids:
+            children_deltas = list(
+                await self._memory.get_scenario_attack_result_deltas_by_ids_async(
+                    scenario_result_id=scenario_result_id,
+                    attack_result_ids=page_child_ids,
+                )
+            )
+            children_results = [
+                self._progress_read_model._map_progress_delta(delta=d, plan_lookup=plan_lookup) for d in children_deltas
+            ]
+
+        conversations = await self._saved_conversation_reader.list_conversations_async(
+            attack_result_id=attack_result_id
+        )
+        if conversations is None:
+            return None
+
+        return self._progress_read_model.build_hierarchy_node(
+            delta=target_delta,
+            result=target_result,
+            children_deltas=children_deltas,
+            children_results=children_results,
+            conversations=conversations.conversations,
+            conversations_count=conversations.total_count,
+            conversations_truncated=(
+                conversations.pagination.has_more if conversations.pagination is not None else False
+            ),
+            children_truncated=child_offset > 0 or next_offset < len(child_ids),
+            child_offset=child_offset,
+            child_limit=max_immediate_children,
+            next_children_cursor=next_children_cursor,
+        )
 
     async def get_run_results_async(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """

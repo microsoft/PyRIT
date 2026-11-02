@@ -400,6 +400,19 @@ class TestMetadataParsingRemote:
             dataset_filter=SeedDatasetFilter(modalities={"audio"}),
         )
 
+    def test_filter_values_match_case_insensitively(self):
+        """Dataset metadata is stored lowercased, so filter values match regardless of case."""
+        metadata = SeedDatasetMetadata(
+            **SeedDatasetMetadata._coerce_metadata_values(
+                raw_metadata={"harm_categories": ["Violence"], "modalities": ["Text"], "size": "Large"}
+            )
+        )
+        for kwargs in ({"harm_categories": {"VIOLENCE"}}, {"modalities": {"Text"}}, {"size": {" Large "}}):
+            assert SeedDatasetProvider._match_filter_to_metadata(
+                metadata=metadata,
+                dataset_filter=SeedDatasetFilter(**kwargs),
+            ), kwargs
+
     def test_undeclared_axis_does_not_match(self):
         """A dataset silent on a filtered axis does not satisfy that axis."""
         metadata = SeedDatasetMetadata(tags={"safety"}, size={"small"}, source_type={"local"})

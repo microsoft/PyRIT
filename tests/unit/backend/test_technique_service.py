@@ -6,7 +6,7 @@
 import ast
 import asyncio
 import threading
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from typing import Any
@@ -550,9 +550,14 @@ async def test_launch_survives_registration_between_resolution_and_construction_
     service = ScenarioRunService()
     initialize = service._initialize_scenario_async
 
-    async def register_then_initialize_async(*, request: RunScenarioRequest, init_kwargs: dict[str, Any]) -> Scenario:
+    async def register_then_initialize_async(
+        *,
+        request: RunScenarioRequest,
+        init_kwargs: dict[str, Any],
+        initial_metadata: Mapping[str, Any] | None = None,
+    ) -> Scenario:
         await TechniqueService().create_async(CreateTechniqueRequest(name="during_launch", type="PromptSendingAttack"))
-        return await initialize(request=request, init_kwargs=init_kwargs)
+        return await initialize(request=request, init_kwargs=init_kwargs, initial_metadata=initial_metadata)
 
     try:
         with (

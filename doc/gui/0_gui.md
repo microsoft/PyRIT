@@ -112,6 +112,13 @@ the original launch configuration is available. It skips completed objectives
 with non-error outcomes, including `failure`. Retrying an unsuccessful technique
 is a separate setting in `technique.execute`.
 
+Compound-attack hierarchy browsing is a separate GUI follow-up. The
+[backend hierarchy API](../../pyrit/backend/README.md#scenario-result-hierarchy)
+provides paged roots and ordered child expansion without clipping run statistics.
+Conversation reads expose main and pruned conversations only; adversarial and
+preparation contexts remain internal. Transcript bodies load only for a selected
+saved conversation.
+
 ![History page with saved attacks](images/attack_history.png)
 
 ## Analytics
@@ -134,6 +141,11 @@ evidence. A model score does not create a finding automatically.
 Select an operation in the labels bar to associate new chats and scans with it.
 The operation page brings its findings, linked evidence, and execution history
 together.
+
+**Export findings** on the operation page downloads the findings you select as
+one Word or Markdown document to paste into a report. Evidence appears as links
+to the attacks in PyRIT, without transcripts or media. Nothing is redacted, so
+store and share exported files with care.
 
 ![Operations page with a test operation](images/operations.png)
 

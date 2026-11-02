@@ -121,6 +121,8 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
                             data_type="text",
                             dataset_name=self.dataset_name,
                             prompt_group_id=group_id,
+                            # Only user turns are kept, and a group with several sequences needs a role on each
+                            role="user",
                             sequence=i,
                             harm_categories=harm_categories,
                             description=description,
