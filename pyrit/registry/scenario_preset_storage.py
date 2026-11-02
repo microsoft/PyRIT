@@ -196,12 +196,17 @@ class ScenarioPresetStorage(FileDocumentStorage):
         Unset fields are omitted rather than written as ``null`` so a stored preset reads
         as the set of decisions its author actually made. The name is omitted too: it is
         the document key, so writing it would invite a hand-edit that looks like a rename
-        but is not one.
+        but is not one. Scanner visibility is written only when the preset is hidden:
+        builds that predate the flag reject unknown keys, and omitting the default keeps
+        every listed preset readable by them.
 
         Returns:
             bytes: Encoded JSON document content.
         """
-        payload = preset.model_dump(mode="json", exclude_none=True, exclude={"name"})
+        exclude = {"name"}
+        if preset.show_in_scanner:
+            exclude.add("show_in_scanner")
+        payload = preset.model_dump(mode="json", exclude_none=True, exclude=exclude)
         return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
     @staticmethod

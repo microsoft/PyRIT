@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from pyrit.executor.core import StrategyConverterConfig
-from pyrit.models import JsonSchemaDefinition, SeedPrompt
+from pyrit.models import AdversarialPrompts, JsonSchemaDefinition, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
 
@@ -89,6 +89,77 @@ class AttackAdversarialConfig:
     system_prompt_prefix: str | SeedPrompt | None = None
 
 
+@dataclass(frozen=True)
+class AdversarialPromptRequirements:
+    """Prompt inputs consumed by an attack and the default used for its system prompt."""
+
+    default_system_prompt_path: str | Path
+    system_prompt_parameters: tuple[str, ...]
+    accepts_user_messages: bool = False
+
+    def resolve_system_prompt(
+        self,
+        *,
+        system_prompt: str | SeedPrompt | None,
+        system_prompt_prefix: str | SeedPrompt | None = None,
+        error_message: str | None = None,
+    ) -> SeedPrompt:
+        """
+        Resolve the effective system prompt and validate its parameter contract.
+
+        Returns:
+            SeedPrompt: The replacement or default prompt with any prefix applied.
+
+        Raises:
+            ValueError: If parameters, prefix text, or response schemas conflict.
+        """
+        required = list(self.system_prompt_parameters)
+        base = (
+            SeedPrompt.from_value_with_required_parameters(
+                system_prompt,
+                required_parameters=required,
+                error_message=error_message,
+                component_name="adversarial system prompt",
+            )
+            if system_prompt is not None
+            else SeedPrompt.from_yaml_with_required_parameters(
+                template_path=self.default_system_prompt_path,
+                required_parameters=required,
+                error_message=error_message,
+            )
+        )
+        if system_prompt_prefix is None:
+            return base
+        return SeedPrompt.compose_with_prefix(
+            base_prompt=base,
+            prefix=system_prompt_prefix,
+            required_parameters=required,
+            base_component_name="resolved adversarial system prompt",
+            prefix_component_name="system_prompt_prefix",
+        )
+
+    def validate_prompts(
+        self, *, prompts: AdversarialPrompts, system_prompt_prefix: str | SeedPrompt | None = None
+    ) -> None:
+        """
+        Validate every supplied slot against the effective system prompt.
+
+        Raises:
+            ValueError: If an unused slot is supplied or the effective prompt contracts conflict.
+        """
+        if not self.accepts_user_messages:
+            unsupported = [
+                name for name in ("first_message", "feedback_template") if getattr(prompts, name) is not None
+            ]
+            if unsupported:
+                raise ValueError(f"Attack does not consume named prompt slots: {unsupported}.")
+        system = self.resolve_system_prompt(
+            system_prompt=prompts.system_prompt,
+            system_prompt_prefix=system_prompt_prefix,
+        )
+        resolve_adversarial_json_schema(system_prompt=system, first_message=prompts.first_message)
+
+
 def resolve_adversarial_system_prompt(
     *,
     config: AttackAdversarialConfig,
@@ -129,30 +200,13 @@ def resolve_adversarial_system_prompt(
             parameters, or if both the base prompt and the prefix declare a
             ``response_json_schema``.
     """
-    system_prompt = config.system_prompt
-    if system_prompt is not None:
-        base_prompt = SeedPrompt.from_value_with_required_parameters(
-            system_prompt,
-            required_parameters=required_parameters,
-            error_message=error_message,
-            component_name="adversarial system prompt",
-        )
-    else:
-        base_prompt = SeedPrompt.from_yaml_with_required_parameters(
-            template_path=default_system_prompt_path,
-            required_parameters=required_parameters,
-            error_message=error_message,
-        )
-
-    if config.system_prompt_prefix is None:
-        return base_prompt
-
-    return SeedPrompt.compose_with_prefix(
-        base_prompt=base_prompt,
-        prefix=config.system_prompt_prefix,
-        required_parameters=required_parameters,
-        base_component_name="resolved adversarial system prompt",
-        prefix_component_name="system_prompt_prefix",
+    return AdversarialPromptRequirements(
+        default_system_prompt_path=default_system_prompt_path,
+        system_prompt_parameters=tuple(required_parameters),
+    ).resolve_system_prompt(
+        system_prompt=config.system_prompt,
+        system_prompt_prefix=config.system_prompt_prefix,
+        error_message=error_message,
     )
 
 

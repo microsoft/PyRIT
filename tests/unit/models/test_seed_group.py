@@ -84,6 +84,23 @@ def test_outgoing_seed_user_messages_are_not_prepended_history() -> None:
     ]
 
 
+def test_seed_prompts_without_metadata_convert_to_messages() -> None:
+    group = SeedGroup(
+        seeds=[
+            SeedPrompt(value="Earlier request", role="user", sequence=0, metadata=None),
+            SeedPrompt(value="Next request", role="user", sequence=1, metadata=None),
+        ]
+    )
+
+    history = group.prepended_conversation
+    assert history is not None
+    assert history[0].get_piece().prompt_metadata == {MessagePiece.PREPENDED_HISTORY_METADATA_KEY: True}
+    next_message = group.next_message
+    assert next_message is not None
+    assert next_message.get_piece().prompt_metadata == {}
+    assert [message.get_piece().prompt_metadata for message in group.user_messages] == [{}, {}]
+
+
 class TestSeedGroupInit:
     """Tests for SeedGroup initialization."""
 

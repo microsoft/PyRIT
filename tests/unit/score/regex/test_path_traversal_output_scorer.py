@@ -28,6 +28,12 @@ from pyrit.score import PathTraversalOutputScorer
         "Cloud credentials: ../../../.aws/credentials",
         "Environment file: ..\\..\\.env",
         "Encoded dot in target: %2e%2e/%2e%2e/%2essh/id_rsa",
+        "Windows INI: ../../windows/win.ini",
+        "Windows INI backslashes: ..\\..\\windows\\win.ini",
+        "Windows INI encoded dot: ../../windows/win%2eini",
+        "IIS config: ../../web.config",
+        "IIS config backslashes: ..\\..\\web.config",
+        "IIS config encoded dot: ../../web%2econfig",
     ],
 )
 async def test_path_traversal_detected(text: str, patch_central_database):
@@ -46,6 +52,8 @@ async def test_path_traversal_detected(text: str, patch_central_database):
         "../../.env",
         "%2e%2e%2f%2e%2e%2fetc%2fpasswd",
         "%252e%252e%252f%252e%252e%252fetc%252fshadow",
+        "../../windows/win.ini",
+        "../../web.config",
     ],
 )
 @pytest.mark.parametrize("ending", [".", ". Then continue.", ".\n", ".\r\n"])
@@ -88,6 +96,14 @@ async def test_path_traversal_scorer_sentence_period_async(*, path: str, ending:
         "Read ../../.env.example.",
         "Read ../../.env%2eexample.",
         "Read ../../.env%252eexample.",
+        "The path ../windows/win.ini has one parent segment.",
+        "The path ../web.config has one parent segment.",
+        "The path ../../windows/win.ini.bak is not the INI file.",
+        "The path ../../web.config.bak is not the config file.",
+        "Read ../../windows/win.ini.bak.",
+        "Read ../../web.config.bak.",
+        "The path ../../windows/win.initial is not win.ini.",
+        "The path ../../web.configuration is not web.config.",
     ],
 )
 async def test_path_traversal_not_detected(text: str, patch_central_database):

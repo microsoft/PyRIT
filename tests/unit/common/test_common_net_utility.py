@@ -184,3 +184,42 @@ async def test_make_request_and_raise_if_error_preserves_empty_query_values():
 
     assert route.called
     assert str(route.calls[0].request.url) == "http://testserver/api/test?alpha=&beta=1"
+
+
+@pytest.mark.parametrize(
+    "endpoint_uri, extra_url_parameters, expected_url",
+    [
+        (
+            "http://testserver/api/test?tag=a&tag=b",
+            None,
+            "http://testserver/api/test?tag=a&tag=b",
+        ),
+        (
+            "http://testserver/api/test?tag=a&tag=b&mode=test",
+            {"api-version": "2024-10-21"},
+            "http://testserver/api/test?tag=a&tag=b&mode=test&api-version=2024-10-21",
+        ),
+        (
+            "http://testserver/api/test?tag=a&tag=b&mode=old",
+            {"mode": "new"},
+            "http://testserver/api/test?tag=a&tag=b&mode=new",
+        ),
+        (
+            "http://testserver/api/test?mode=test&tag=a&tag=b",
+            {"tag": "c"},
+            "http://testserver/api/test?mode=test&tag=c",
+        ),
+    ],
+)
+@respx.mock
+async def test_make_request_and_raise_if_error_preserves_repeated_query_parameters(
+    endpoint_uri, extra_url_parameters, expected_url
+):
+    route = respx.get("http://testserver/api/test").respond(200, json={"status": "ok"})
+
+    await make_request_and_raise_if_error_async(
+        endpoint_uri=endpoint_uri, method="GET", extra_url_parameters=extra_url_parameters
+    )
+
+    assert route.called
+    assert str(route.calls[0].request.url) == expected_url

@@ -8,13 +8,11 @@ The canonical preset types (``ScenarioPreset``, ``StoredPreset``, ``PresetIssue`
 live in ``pyrit.models.catalog.scenario_preset`` and are imported from there
 directly. ``PresetIssue`` is re-exported here so that a client of the wire models
 does not have to reach across into the catalog for one field's element type.
-The models here only add the wire-level concerns: the storage source, the run
-size attached to a listing, and the launch-owned fields that a preset
-deliberately does not carry.
+The models here only add wire-level concerns: the storage source and the run
+size attached to a listing.
 """
 
-from typing import Any, Literal
-from uuid import UUID
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -23,7 +21,6 @@ from pyrit.models.catalog.scenario_preset import PresetIssue, ScenarioPreset
 
 __all__ = [
     "PresetIssue",
-    "ResolveScenarioPresetRequest",
     "ScenarioPresetListResponse",
     "ScenarioPresetResponse",
     "UpdateScenarioPresetRequest",
@@ -82,37 +79,3 @@ class UpdateScenarioPresetRequest(BaseModel):
 
     preset: ScenarioPreset = Field(..., description="The replacement preset")
     expected_version: str = Field(..., description="Version returned when the preset being edited was read")
-
-
-class ResolveScenarioPresetRequest(BaseModel):
-    """
-    The launch-owned fields a preset deliberately omits.
-
-    A preset answers *what to test*; these answer *how and where*. Resolution is
-    a union of the two, which is why nothing here overlaps a preset field.
-
-    ``expected_version`` is the exception: it is a precondition rather than a
-    launch field. A client that previewed a resolution sends the version it
-    previewed so an edit landing in between is reported instead of silently
-    launching a configuration the operator never saw.
-    """
-
-    expected_version: str | None = Field(
-        None, description="Version the caller resolved against; omit to resolve whatever is stored now"
-    )
-    target_name: str = Field(..., description="Name of a registered target from the TargetRegistry")
-    adversarial_target_name: str | None = Field(
-        None, description="Name of a registered adversarial target, when the scenario uses one"
-    )
-    initializers: list[str] | None = Field(None, description="Initializer names to run before the scenario")
-    initializer_args: dict[str, dict[str, Any]] | None = Field(
-        None, description="Per-initializer parameter overrides keyed by initializer name"
-    )
-    max_concurrency: int | None = Field(
-        None, ge=1, le=100, description="Maximum concurrent operations; omit to use the run default"
-    )
-    max_retries: int | None = Field(
-        None, ge=0, le=20, description="Maximum retry attempts on failure; omit to use the run default"
-    )
-    operation_id: UUID | None = Field(None, description="Saved Operation reference, or unassigned")
-    labels: dict[str, str] | None = Field(None, description="Labels to attach to memory entries")

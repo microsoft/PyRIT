@@ -25,6 +25,7 @@ remains available via ``child.get_attack_strategy_identifier()``.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -33,7 +34,7 @@ from pyrit.executor.attack.compound.sequential_attack import (
     SequentialAttack,
     SequentialChildAttack,
 )
-from pyrit.models import AtomicAttackIdentifier, AttackResult
+from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier, AttackResult
 from pyrit.scenario.core.technique_requirements import (
     IncompatibleTechniqueError,
     IncompatibleTechniquePolicy,
@@ -44,9 +45,11 @@ from pyrit.scenario.core.technique_requirements import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from pyrit.executor.attack.core.attack_config import AttackScoringConfig
     from pyrit.executor.attack.core.attack_strategy import AttackStrategy
     from pyrit.models import AttackSeedGroup, AttackTechniqueSeedGroup, ComponentIdentifier
     from pyrit.prompt_target import PromptTarget
+    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.scenarios.adaptive.selectors import TechniqueSelector
     from pyrit.score import TrueFalseScorer
 
@@ -59,35 +62,85 @@ ADAPTIVE_ATTEMPT_LABEL: str = "_adaptive_attempt"
 @dataclass(frozen=True)
 class TechniqueBundle:
     """
-    Per-technique bundle consumed by the dispatcher.
+    A concrete technique or a factory retained for group-specific construction.
 
-    Carries the inner attack strategy alongside the factory-supplied
-    ``seed_technique`` (if any) and ``adversarial_chat`` (required when the
-    seed_technique contains a simulated-conversation config). ``name`` is the
-    factory-registration key; when set, the dispatcher records it on each
-    child's result metadata so reports can label the child with it (read via
-    ``child.technique_name``).
-
-    Adaptation-permitting bundles require a technique identifier so their
-    persisted child results use the same behavioral identity as selection.
+    Factories are required for named group prompts. Their requirements and technique
+    seeds remain authoritative. Compatible candidates bind before selection so saved
+    choices, statistics, and child results use the full configured technique identity.
+    Concrete attacks remain supported for groups without named prompts.
+    The catalog name is recorded on each child's result metadata for reporting.
     """
 
-    attack: AttackStrategy[Any, AttackResult]
+    attack: AttackStrategy[Any, AttackResult] | None = None
     name: str = ""
     seed_technique: AttackTechniqueSeedGroup | None = None
     adversarial_chat: PromptTarget | None = None
     requirements: TechniqueRequirements = field(default_factory=TechniqueRequirements)
     technique_identifier: ComponentIdentifier | None = None
+    factory: AttackTechniqueFactory | None = None
+    attack_scoring_config: AttackScoringConfig | None = None
 
     def __post_init__(self) -> None:
         """
-        Require behavioral identity when input adaptation is permitted.
+        Validate a concrete attack or a factory awaiting group-specific construction.
 
         Raises:
-            ValueError: If an adaptation-permitting bundle has no technique identifier.
+            ValueError: If the construction source or scoring configuration is missing or ambiguous.
         """
-        if self.requirements.adaptation is not None and self.technique_identifier is None:
+        if (self.attack is None) == (self.factory is None):
+            raise ValueError("Supply an attack or a technique factory, not both.")
+        if self.factory is not None:
+            if self.attack_scoring_config is None:
+                raise ValueError("Factory-backed techniques require an attack_scoring_config.")
+            object.__setattr__(self, "requirements", self.factory.requirements)
+            object.__setattr__(self, "seed_technique", self.factory.seed_technique)
+            object.__setattr__(self, "name", self.name or self.factory.name)
+        elif self.attack_scoring_config is not None:
+            raise ValueError("A concrete attack already owns its scoring configuration.")
+        elif self.requirements.adaptation is not None and self.technique_identifier is None:
             raise ValueError("Adaptation-permitting techniques require a technique_identifier")
+
+    def validate_group(self, seed_group: AttackSeedGroup) -> None:
+        """
+        Check group prompts before candidate selection.
+
+        Raises:
+            IncompatibleTechniqueError: If a concrete attack cannot bind the group's prompts.
+        """
+        if self.factory is not None:
+            self.factory.validate_group_adversarial_prompts(seed_group)
+        elif seed_group.adversarial_prompts is not None:
+            raise IncompatibleTechniqueError("Group adversarial prompts require a technique factory.")
+
+    async def bind_async(self, *, seed_group: AttackSeedGroup, objective_target: PromptTarget) -> TechniqueBundle:
+        """
+        Construct a fresh group-specific technique without blocking the event loop.
+
+        Returns:
+            TechniqueBundle: The concrete technique and its full behavioral identity.
+        """
+        await asyncio.to_thread(self.validate_group, seed_group)
+        if self.factory is None:
+            return self
+        assert self.attack_scoring_config is not None
+        technique = await asyncio.to_thread(
+            self.factory.create,
+            objective_target=objective_target,
+            attack_scoring_config=self.attack_scoring_config,
+            seed_group=seed_group,
+            adversarial_chat=self.adversarial_chat,
+        )
+        adversarial_chat = self.adversarial_chat
+        if adversarial_chat is None:
+            adversarial_chat = await asyncio.to_thread(self.factory.resolve_adversarial_chat)
+        return TechniqueBundle(
+            attack=technique.attack,
+            name=self.name,
+            seed_technique=technique.seed_technique,
+            adversarial_chat=adversarial_chat,
+            requirements=technique.requirements,
+            technique_identifier=technique.get_identifier(),
+        )
 
 
 class AdaptiveTechniqueDispatcher:
@@ -167,13 +220,13 @@ class AdaptiveTechniqueDispatcher:
 
     def compatible_techniques(self, *, seed_group: AttackSeedGroup) -> list[str]:
         """
-        Return technique hashes whose dataset requirements and full seed merge pass.
+        Return candidate keys whose input requirements and full seed merge pass.
 
         Used by ``AdaptiveScenario`` to drop seed groups with no usable
         techniques before building atomic attacks.
 
         Returns:
-            list[str]: Technique eval hashes in declaration order.
+            list[str]: Candidate keys in declaration order, before group-specific construction.
 
         Raises:
             IncompatibleTechniqueError: If dataset input is incompatible under RAISE.
@@ -181,11 +234,12 @@ class AdaptiveTechniqueDispatcher:
         compatible: list[str] = []
         for name, bundle in self._techniques.items():
             try:
-                prepare_seed_group(
+                prepared = prepare_seed_group(
                     seed_group=seed_group,
                     requirements=bundle.requirements.seed_group,
                     seed_technique=bundle.seed_technique,
                 )
+                bundle.validate_group(prepared.seed_group)
             except IncompatibleTechniqueError:
                 if self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
                     raise
@@ -213,7 +267,7 @@ class AdaptiveTechniqueDispatcher:
             seed_group (AttackSeedGroup): The seed group for the
                 objective this attack will run against. Must carry a
                 non-None objective.
-            compatible (list[str] | None): Precomputed result of
+            compatible (list[str] | None): Precomputed candidate keys from
                 ``compatible_techniques(seed_group=...)``. When ``None``
                 (default) the dispatcher computes it itself. Callers that
                 already filter empty pools out via ``compatible_techniques``
@@ -238,18 +292,29 @@ class AdaptiveTechniqueDispatcher:
             raise ValueError("seed_group.objective is not initialized")
 
         if compatible is None:
-            compatible = self.compatible_techniques(seed_group=seed_group)
+            compatible = await asyncio.to_thread(self.compatible_techniques, seed_group=seed_group)
         if not compatible:
             raise ValueError(
                 f"AdaptiveTechniqueDispatcher: no compatible techniques for seed group "
                 f"(objective={seed_group.objective.value!r})."
             )
 
+        bound: dict[str, TechniqueBundle] = {}
+        for candidate in compatible:
+            bundle = self._techniques[candidate]
+            concrete = await bundle.bind_async(seed_group=seed_group, objective_target=self._objective_target)
+            key = candidate
+            if bundle.factory is not None:
+                key = AtomicAttackEvaluationIdentifier(
+                    AtomicAttackIdentifier.build(technique_identifier=concrete.technique_identifier)
+                ).eval_hash
+            bound[key] = concrete
+
         chosen_hashes = list(
             selected_technique_eval_hashes
             if selected_technique_eval_hashes is not None
             else await self._selector.select_async(
-                technique_identifiers=compatible,
+                technique_identifiers=list(bound),
                 objective=seed_group.objective.value,
                 num_top_techniques=self._max_attempts,
                 scenario_result_id=self._scenario_result_id,
@@ -257,7 +322,7 @@ class AdaptiveTechniqueDispatcher:
         )
         if not chosen_hashes or len(chosen_hashes) > self._max_attempts:
             raise ValueError(f"Adaptive selection must contain between 1 and {self._max_attempts} technique hashes.")
-        unavailable = set(chosen_hashes) - set(compatible)
+        unavailable = set(chosen_hashes) - set(bound)
         if unavailable:
             raise ValueError(
                 f"Selected adaptive techniques are unavailable or incompatible with seed group "
@@ -268,7 +333,8 @@ class AdaptiveTechniqueDispatcher:
         self._selected_technique_eval_hashes = chosen_hashes
         self._selected_adaptations = {}
         for attempt_idx, chosen in enumerate(chosen_hashes):
-            bundle = self._techniques[chosen]
+            bundle = bound[chosen]
+            assert bundle.attack is not None
             prepared = prepare_seed_group(
                 seed_group=seed_group,
                 requirements=bundle.requirements.seed_group,

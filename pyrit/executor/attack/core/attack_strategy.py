@@ -65,6 +65,7 @@ if TYPE_CHECKING:
         PrependedHistorySendContext,
     )
     from pyrit.executor.attack.core.attack_config import (
+        AdversarialPromptRequirements,
         AttackAdversarialConfig,
         AttackScoringConfig,
     )
@@ -713,6 +714,11 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: Capability requirements placed on ``objective_target``. Subclasses
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+    #: A fixed execution-input contract for attacks that do not expose ``params_type``.
+    FIXED_PARAMS_TYPE: ClassVar[type[AttackParameters] | None] = None
+
+    #: Named prompt slots, template parameters, and defaults consumed by the attack.
+    ADVERSARIAL_PROMPT_REQUIREMENTS: ClassVar[AdversarialPromptRequirements | None] = None
 
     #: Compound attacks set this when children own outcome scoring and expectation validation.
     #: No scoring configuration alone does not imply delegation.
@@ -721,6 +727,22 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: What this strategy's persisted results represent. Compound attacks that only coordinate
     #: child attacks, and never call the objective target themselves, set ``ORCHESTRATION``.
     RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.TARGET_FACING
+
+    @classmethod
+    def get_adversarial_prompt_requirements(cls) -> AdversarialPromptRequirements:
+        """
+        Get the prompt contract declared by an adversarial attack.
+
+        Returns:
+            AdversarialPromptRequirements: The attack's shared construction and preflight contract.
+
+        Raises:
+            ValueError: If the attack does not declare named prompt support.
+        """
+        requirements = cls.ADVERSARIAL_PROMPT_REQUIREMENTS
+        if requirements is None:
+            raise ValueError(f"{cls.__name__} does not declare named adversarial prompt support.")
+        return requirements
 
     @classmethod
     def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
@@ -782,7 +804,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
 
         type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
         self._objective_target = objective_target
-        self._params_type = params_type
+        self._params_type = self.FIXED_PARAMS_TYPE or params_type
         self._prepended_conversation_config = prepended_conversation_config or PrependedConversationConfig()
         # Guard so subclasses that set converters before calling super() aren't clobbered
         if not hasattr(self, "_request_converters"):

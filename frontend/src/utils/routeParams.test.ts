@@ -10,9 +10,21 @@ import {
   scenarioRunRoutePath,
   findingEvidenceOrigin,
   selectionKeyFromSearchParams,
+  isDatasetsPath,
+  isChatPath,
 } from './routeParams'
+import attackConversationRouteCases from './attackConversationRoute.cases.json'
 
 const SCENARIO_RESULT_ID = '123e4567-e89b-12d3-a456-426614174000'
+
+describe('attack conversation route contract', () => {
+  // The backend's findings export builds the same links; its tests check these cases too.
+  it.each(attackConversationRouteCases)('builds $path', (routeCase) => {
+    expect(attackConversationRoutePath(
+      routeCase.attackResultId, routeCase.conversationId, routeCase.scenarioResultId, routeCase.findingEvidenceId,
+    )).toBe(routeCase.path)
+  })
+})
 
 describe('routerPathParamValue', () => {
   it('returns an empty value for a missing route parameter', () => {
@@ -123,5 +135,25 @@ describe('dataset detail paths', () => {
     expect(catalogPathFromNavigationState({ catalogPath: '//evil.example/datasets' })).toBe('/datasets')
     expect(catalogPathFromNavigationState({ catalogPath: '/datasets/detail?selection_key=dataset:unnamed' })).toBe('/datasets')
     expect(catalogPathFromNavigationState({ catalogPath: '/datasets/../admin' })).toBe('/datasets')
+  })
+})
+
+describe('isDatasetsPath and isChatPath', () => {
+  it('correctly detects datasets routes', () => {
+    expect(isDatasetsPath('/datasets')).toBe(true)
+    expect(isDatasetsPath('/datasets/detail')).toBe(true)
+    expect(isDatasetsPath('/datasets?filter=harmful')).toBe(true)
+    expect(isDatasetsPath('/chat')).toBe(false)
+    expect(isDatasetsPath('/attacks/123')).toBe(false)
+    expect(isDatasetsPath('')).toBe(false)
+  })
+
+  it('correctly detects chat and attack routes', () => {
+    expect(isChatPath('/chat')).toBe(true)
+    expect(isChatPath('/attacks/attack-123')).toBe(true)
+    expect(isChatPath('/attacks/attack-123/conversations/conv-456')).toBe(true)
+    expect(isChatPath('/datasets')).toBe(false)
+    expect(isChatPath('/history')).toBe(false)
+    expect(isChatPath('')).toBe(false)
   })
 })

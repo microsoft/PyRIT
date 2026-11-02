@@ -23,8 +23,8 @@ class SeedIdentifier(ComponentIdentifier):
 
     Promotes the seed properties that define its identity: the raw value, its
     SHA256, the originating dataset, the data type, and whether it is a general
-    technique. Objective conditions are retained as an unpromoted parameter in
-    the full identifier JSON; condition-free seeds retain their legacy identity.
+    technique. Objective conditions and named adversarial prompts are retained
+    in the full identifier JSON. Seeds without them retain their existing identity.
     """
 
     #: The seed's raw value.
@@ -53,16 +53,35 @@ class SeedIdentifier(ComponentIdentifier):
         Returns:
             An identifier capturing the seed's behavioral properties.
         """
-        conditions = seed.model_dump(mode="json", include={"conditions"}).get("conditions")
         return cls.of(
             seed,
-            params={"conditions": conditions} if conditions else None,
+            params=cls.get_behavioral_parameters(seed) or None,
             value=seed.value,
             value_sha256=seed.value_sha256,
             data_type=seed.data_type,
             dataset_name=seed.dataset_name,
             is_general_technique=seed.is_general_technique,
         )
+
+    @staticmethod
+    def get_behavioral_parameters(seed: Seed[Any]) -> dict[str, Any]:
+        """
+        Project conditions and named prompts for seed identity and storage.
+
+        Args:
+            seed (Seed): The seed whose behavioral inputs are projected.
+
+        Returns:
+            dict[str, Any]: Canonical inputs, excluding descriptive metadata and prompt IDs.
+        """
+        from pyrit.models.seeds.adversarial_prompts import AdversarialPrompts
+
+        conditions = seed.model_dump(mode="json", include={"conditions"}).get("conditions")
+        params = {"conditions": conditions} if conditions else {}
+        adversarial_prompts = AdversarialPrompts.from_metadata(seed.metadata)
+        if adversarial_prompts is not None:
+            params["adversarial_prompts"] = adversarial_prompts.identity
+        return params
 
 
 def compute_seed_group_hash(seed_identifiers: Sequence[SeedIdentifier]) -> str:

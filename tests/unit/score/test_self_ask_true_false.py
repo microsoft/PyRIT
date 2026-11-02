@@ -140,7 +140,69 @@ async def test_json_metadata_round_trips_async(
 
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize(
-    "response_text", ["", "[]", "{}", '{"score_value": "maybe", "rationale": "Judge explanation"}']
+    "response_text",
+    [
+        '{"score_value": true, "rationale": "r"} {"score_value": false, "rationale": "r"}',
+        '{"score_value": true, "rationale": "r"} {"score_value": 1, "rationale": "r"}',
+        '{"score_value": 1, "rationale": "r"} {"score_value": true, "rationale": "r"}',
+        '{"score_value": false, "rationale": "r"} {"score_value": 0, "rationale": "r"}',
+        '{"score_value": 0, "rationale": "r"} {"score_value": false, "rationale": "r"}',
+        '{"score_value": false, "rationale": "r"} {"n": ' + "1" * 5000 + "}",
+        '{"n": ' + "1" * 5000 + "}",
+    ],
+    ids=["distinct-verdicts", "true-one", "one-true", "false-zero", "zero-false", "suffix-limit", "single-limit"],
+)
+async def test_ambiguous_or_undecodable_judge_response_retries_async(
+    *, sqlite_instance: MemoryInterface, response_text: str
+) -> None:
+    target = MockPromptTarget()
+    scorer = SelfAskTrueFalseScorer.from_question(
+        chat_target=target, question=TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.GROUNDED.value)
+    )
+    message = await store_message_async(MessagePiece(role="assistant", original_value="scored content").to_message())
+    expectation = ScoringExpectation(objective="Assess grounding")
+    valid_response = json.dumps(
+        {
+            "score_value": False,
+            "description": "Grounding verdict",
+            "rationale": "Judge explanation",
+            "metadata": {"source": "judge"},
+        }
+    )
+    responses = [
+        [MessagePiece(role="assistant", original_value=value).to_message()] for value in (response_text, valid_response)
+    ]
+    with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, side_effect=responses) as send:
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message), expectation=expectation)
+
+    assert send.await_count == 2
+    assert len(scores) == 1
+    stored = await sqlite_instance.get_scores_async(score_ids=[str(scores[0].id)])
+    assert len(stored) == 1
+    score = stored[0]
+    assert score.get_value() is False
+    assert score.score_category == ["grounded"]
+    assert score.score_rationale == "Judge explanation"
+    assert score.score_value_description == "Grounding verdict"
+    assert score.score_metadata == {"source": "judge"}
+    assert score.scored_expectation == expectation
+    assert score.message_piece_id == message.get_piece().id
+    assert len(score.observation_ids) == 1
+    assert score == Score.model_validate_json(scores[0].model_dump_json())
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "response_text",
+    [
+        "",
+        "[]",
+        "{}",
+        '{"score_value": "maybe", "rationale": "Judge explanation"}',
+        '{"score_value": true, "rationale": "r"} {"score_value": 1, "rationale": "r"}',
+        '{"score_value": false, "rationale": "r"} {"n": ' + "1" * 5000 + "}",
+    ],
+    ids=["empty", "array", "missing-keys", "invalid-verdict", "ambiguous-types", "decoder-limit"],
 )
 async def test_invalid_judge_response_does_not_persist_a_score_async(
     *, sqlite_instance: MemoryInterface, response_text: str

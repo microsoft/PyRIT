@@ -17,7 +17,7 @@ from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from types import ModuleType
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Self, cast
 
-from jinja2 import StrictUndefined, Undefined, meta
+from jinja2 import StrictUndefined, TemplateSyntaxError, Undefined, meta
 from jinja2.sandbox import SandboxedEnvironment
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
 from typing_extensions import TypeVar
@@ -327,6 +327,43 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
     # narrow it to Literal["text"].
     # Pydantic resolves the generic field and validates its default at construction.
     data_type: Annotated[_SeedDataTypeT, Field(validate_default=True)] = cast("_SeedDataTypeT", "text")
+
+    def bind_template_parameters(self, **parameters: Any) -> Self:
+        """
+        Bind literal parameter values for a later template render.
+
+        Args:
+            **parameters (Any): Values retained as template data, not template source.
+
+        Returns:
+            Self: A copy with the supplied values bound and remaining parameters unchanged.
+        """
+        environment = _template_environment(StrictUndefined)
+        used = meta.find_undeclared_variables(environment.parse(self.value))
+        bindings = "".join(
+            f"{{% set {name} = {_serialize_template_binding(parameters[name])} %}}"
+            for name in sorted(used & parameters.keys())
+        )
+        updates: dict[str, Any] = {"value": bindings + self.value, "is_jinja_template": False}
+        declared = getattr(self, "parameters", None)
+        if declared is not None:
+            updates["parameters"] = [name for name in declared if name not in parameters]
+        return self.model_copy(update=updates, deep=True)
+
+    def get_template_parameter_names(self) -> list[str]:
+        """
+        Get the variable names used by this template.
+
+        Returns:
+            list[str]: Sorted template parameter names.
+
+        Raises:
+            ValueError: If the template syntax is invalid.
+        """
+        try:
+            return sorted(meta.find_undeclared_variables(_template_environment(StrictUndefined).parse(self.value)))
+        except TemplateSyntaxError as exc:
+            raise ValueError(f"Invalid prompt template: {exc}") from exc
 
     def render_template_value(self, **kwargs: Any) -> str:
         """

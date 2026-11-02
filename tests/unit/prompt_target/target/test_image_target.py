@@ -640,3 +640,49 @@ def test_transparent_background_with_valid_format_succeeds(patch_central_databas
     )
     assert target.background == "transparent"
     assert target.output_format == valid_format
+
+
+@pytest.mark.parametrize(
+    "file_names, expected_mime_types",
+    [
+        (["cat_photo.jpg"], ["image/jpeg"]),
+        (["first.png", "second.jpeg"], ["image/png", "image/jpeg"]),
+    ],
+)
+async def test_send_prompt_async_edit_uploads_images_under_their_own_names(
+    image_target: OpenAIImageTarget, tmp_path, file_names: list[str], expected_mime_types: list[str]
+):
+    image_pieces = []
+    for file_name in file_names:
+        image_path = tmp_path / file_name
+        image_path.write_bytes(b"image bytes for " + file_name.encode())
+        image_pieces.append(
+            MessagePiece(
+                role="user",
+                conversation_id="123",
+                original_value=str(image_path),
+                original_value_data_type="image_path",
+                converted_value_data_type="image_path",
+            )
+        )
+    text_piece = MessagePiece(role="user", conversation_id="123", original_value="edit this image")
+
+    mock_response = MagicMock()
+    mock_image = MagicMock()
+    mock_image.b64_json = "aGVsbG8="
+    mock_response.data = [mock_image]
+
+    with patch.object(image_target._async_client.images, "edit", new_callable=AsyncMock) as mock_edit:
+        mock_edit.return_value = mock_response
+
+        resp = await image_target.send_prompt_async(message=Message(message_pieces=[text_piece, *image_pieces]))
+
+        sent_images = mock_edit.call_args.kwargs["image"]
+        if isinstance(sent_images, tuple):
+            sent_images = [sent_images]
+        assert sent_images == [
+            (file_name, b"image bytes for " + file_name.encode(), mime_type)
+            for file_name, mime_type in zip(file_names, expected_mime_types, strict=True)
+        ]
+
+        os.remove(resp[0].message_pieces[0].original_value)

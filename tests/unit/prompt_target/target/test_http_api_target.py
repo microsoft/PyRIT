@@ -363,3 +363,185 @@ async def test_send_prompt_async_validates_upload_method_after_path(mock_request
         await target.send_prompt_async(message=message)
 
     mock_request.assert_not_called()
+
+
+def test_httpx_api_target_identifier_fields(patch_central_database):
+    target = HTTPXAPITarget(
+        http_url="https://example.com/api/v1",
+        method="POST",
+        http2=True,
+        follow_redirects=False,
+    )
+    identifier = target.get_identifier()
+
+    assert identifier.endpoint == "https://example.com/api/v1"
+    assert identifier.params["method"] == "POST"
+    assert identifier.params["follow_redirects"] is False
+    assert identifier.params["http2"] is True
+    assert target._destination_origin == ("https", "example.com", None)
+
+
+def test_httpx_api_target_identifier_distinguishes_urls_and_methods(patch_central_database):
+    first = HTTPXAPITarget(http_url="https://example.com/api/v1", method="POST")
+    different_url = HTTPXAPITarget(http_url="https://different.org/api/v2", method="POST")
+    different_method = HTTPXAPITarget(http_url="https://example.com/api/v1", method="GET")
+
+    assert first.get_identifier().hash != different_url.get_identifier().hash
+    assert first.get_identifier().hash != different_method.get_identifier().hash
+
+
+def test_httpx_api_target_identifier_keeps_non_credential_names_containing_credential_substrings(
+    patch_central_database,
+):
+    """Harmless names that merely contain a credential substring must keep their
+    values so distinct URLs keep distinct identifiers (regression: `design`
+    contains "sig" and `author` contains "auth", but neither is a credential)."""
+    kept = [
+        HTTPXAPITarget(http_url="https://example.test/api?design=alpha"),
+        HTTPXAPITarget(http_url="https://example.test/api?design=beta"),
+        HTTPXAPITarget(http_url="https://example.test/api?author=jane&model=gpt-4"),
+        HTTPXAPITarget(http_url="https://example.test/api?assigned_model=m1"),
+    ]
+    assert [t.get_identifier().endpoint for t in kept] == [
+        "https://example.test/api?design=alpha",
+        "https://example.test/api?design=beta",
+        "https://example.test/api?author=jane&model=gpt-4",
+        "https://example.test/api?assigned_model=m1",
+    ]
+
+    # Distinct values under the same harmless name no longer collide.
+    assert kept[0].get_identifier().hash != kept[1].get_identifier().hash
+
+    # Compound credential names are still redacted at word boundaries.
+    stripped = [
+        HTTPXAPITarget(http_url="https://example.test/api?api_key=k"),
+        HTTPXAPITarget(http_url="https://example.test/api?client_secret=s"),
+        HTTPXAPITarget(http_url="https://example.test/api?api-token=t"),
+        HTTPXAPITarget(http_url="https://example.test/api?access_token=t"),
+    ]
+    assert all(t.get_identifier().endpoint == "https://example.test/api" for t in stripped)
+
+    # camelCase spellings carry the same credential words and must redact too
+    # (regression: splitting only on punctuation treated `accessToken` as one
+    # opaque word, which leaked its value into the identifier).
+    for camel in ("accessToken", "clientSecret", "authToken", "apiKey", "APIKey"):
+        target = HTTPXAPITarget(http_url=f"https://example.test/api?{camel}=dummy-value")
+        dump = target.get_identifier().model_dump_json()
+        assert target.get_identifier().endpoint == "https://example.test/api", camel
+        assert "dummy-value" not in dump, camel
+
+
+def test_httpx_api_target_identifier_strips_fragment_and_extra_credential_queries(patch_central_database):
+    # A fragment is never part of the HTTP request target and can carry credentials.
+    target = HTTPXAPITarget(http_url="https://example.test/api#access_token=dummy-token")
+    identifier = target.get_identifier()
+    assert identifier.endpoint == "https://example.test/api"
+    assert "dummy-token" not in identifier.model_dump_json()
+    assert target.http_url == "https://example.test/api#access_token=dummy-token"
+
+    # Credential query names that bypass the original name filter.
+    target = HTTPXAPITarget(
+        http_url="https://example.test/api?jwt=dummy-token&client_assertion=dummy-assertion&model=gpt-4"
+    )
+    identifier = target.get_identifier()
+    assert identifier.endpoint == "https://example.test/api?model=gpt-4"
+    assert "dummy-token" not in identifier.model_dump_json()
+    assert "dummy-assertion" not in identifier.model_dump_json()
+
+
+async def test_httpx_api_target_identifier_matches_captured_request_url(patch_central_database):
+    """The identifier endpoint must resolve exactly like the httpx send path.
+
+    Uses the same URL-building semantics as httpx.AsyncClient: the base URL is
+    given a trailing slash and the request path is appended with any leading
+    slash stripped, so distinct base paths produce distinct endpoints instead
+    of colliding the way URL.join resolves them.
+    """
+    captured_urls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_urls.append(str(request.url))
+        return httpx.Response(200, json={"ok": True})
+
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="mock")])
+
+    targets = [
+        HTTPXAPITarget(
+            http_url="invoke",
+            method="POST",
+            base_url="https://example.test/alpha",
+            transport=httpx.MockTransport(handler),
+        ),
+        HTTPXAPITarget(
+            http_url="invoke",
+            method="POST",
+            base_url="https://example.test/beta",
+            transport=httpx.MockTransport(handler),
+        ),
+        HTTPXAPITarget(
+            http_url="/invoke",
+            method="POST",
+            base_url="https://example.test/alpha",
+            transport=httpx.MockTransport(handler),
+        ),
+    ]
+
+    for target in targets:
+        await target.send_prompt_async(message=message)
+
+    # httpx appends the request path to the base path (trailing slash added,
+    # leading slash stripped), so both spellings of the same path agree.
+    assert captured_urls == [
+        "https://example.test/alpha/invoke",
+        "https://example.test/beta/invoke",
+        "https://example.test/alpha/invoke",
+    ]
+
+    # The identifier endpoints match the URLs the client actually requested,
+    # so distinct base paths no longer collide.
+    endpoints = [target.get_identifier().endpoint for target in targets]
+    assert endpoints == captured_urls
+    assert targets[0].get_identifier().hash != targets[1].get_identifier().hash
+
+
+def test_httpx_api_target_identifier_redacts_credentials(patch_central_database):
+    url_with_creds = "https://user:fake-password@example.test/api?api_key=fake-token&model=gpt-4&version=1"
+    target = HTTPXAPITarget(http_url=url_with_creds, method="POST")
+
+    # Full URL is preserved for actual requests
+    assert target.http_url == url_with_creds
+
+    # Credentials must not appear in identifier or serialized metadata
+    identifier = target.get_identifier()
+    assert identifier.endpoint == "https://example.test/api?model=gpt-4&version=1"
+    assert target._destination_origin == ("https", "example.test", None)
+
+    dump = identifier.model_dump_json()
+    assert "fake-password" not in dump
+    assert "fake-token" not in dump
+    assert "user" not in dump
+
+
+def test_httpx_api_target_identifier_resolves_base_url(patch_central_database):
+    target_a = HTTPXAPITarget(http_url="invoke", base_url="https://a.example.test/api/")
+    target_b = HTTPXAPITarget(http_url="invoke", base_url="https://b.example.test/api/")
+
+    assert target_a.get_identifier().endpoint == "https://a.example.test/api/invoke"
+    assert target_b.get_identifier().endpoint == "https://b.example.test/api/invoke"
+    assert target_a._destination_origin == ("https", "a.example.test", None)
+    assert target_b._destination_origin == ("https", "b.example.test", None)
+
+    assert target_a.get_identifier().hash != target_b.get_identifier().hash
+
+
+def test_httpx_api_target_identifier_redacts_base_url_credentials(patch_central_database):
+    target = HTTPXAPITarget(
+        http_url="invoke?token=secret",
+        base_url="https://admin:pass@example.test/api/",
+    )
+
+    identifier = target.get_identifier()
+    assert identifier.endpoint == "https://example.test/api/invoke"
+    assert "pass" not in identifier.model_dump_json()
+    assert "secret" not in identifier.model_dump_json()
+    assert "admin" not in identifier.model_dump_json()

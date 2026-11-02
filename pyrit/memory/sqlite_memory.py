@@ -740,58 +740,62 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         if not conversation_ids:
             return {}
 
-        placeholders = ", ".join(f":cid{i}" for i in range(len(conversation_ids)))
-        params = {f"cid{i}": cid for i, cid in enumerate(conversation_ids)}
-
-        sql = text(
-            f"""
-            WITH aggregate_rows AS (
-                SELECT
-                    conversation_id,
-                    COUNT(DISTINCT sequence) AS msg_count,
-                    MIN(timestamp) AS created_at
-                FROM "PromptMemoryEntries"
-                WHERE conversation_id IN ({placeholders})
-                GROUP BY conversation_id
-            )
-            SELECT
-                aggregate_rows.conversation_id,
-                aggregate_rows.msg_count,
-                SUBSTR(latest.converted_value, 1, {ConversationStats.PREVIEW_FETCH_MAX_LEN}) AS last_preview,
-                latest.converted_value_data_type AS last_data_type,
-                aggregate_rows.created_at
-            FROM aggregate_rows
-            LEFT JOIN "PromptMemoryEntries" latest
-                ON latest.id = (
-                    SELECT p2.id
-                    FROM "PromptMemoryEntries" p2
-                    WHERE p2.conversation_id = aggregate_rows.conversation_id
-                    ORDER BY p2.sequence DESC, p2.id DESC
-                    LIMIT 1
-                )
-            """
-        )
+        batch_size = max(1, self._MAX_BIND_VARS)
+        result: dict[str, ConversationStats] = {}
 
         with closing(self._get_session()) as session:
-            rows = session.execute(sql, params).fetchall()
+            for start in range(0, len(conversation_ids), batch_size):
+                chunk = conversation_ids[start : start + batch_size]
+                placeholders = ", ".join(f":cid{i}" for i in range(len(chunk)))
+                params = {f"cid{i}": cid for i, cid in enumerate(chunk)}
 
-        result: dict[str, ConversationStats] = {}
-        for row in rows:
-            conv_id, msg_count, last_preview, last_data_type, raw_created_at = row
+                sql = text(
+                    f"""
+                    WITH aggregate_rows AS (
+                        SELECT
+                            conversation_id,
+                            COUNT(DISTINCT sequence) AS msg_count,
+                            MIN(timestamp) AS created_at
+                        FROM "PromptMemoryEntries"
+                        WHERE conversation_id IN ({placeholders})
+                        GROUP BY conversation_id
+                    )
+                    SELECT
+                        aggregate_rows.conversation_id,
+                        aggregate_rows.msg_count,
+                        SUBSTR(latest.converted_value, 1, {ConversationStats.PREVIEW_FETCH_MAX_LEN}) AS last_preview,
+                        latest.converted_value_data_type AS last_data_type,
+                        aggregate_rows.created_at
+                    FROM aggregate_rows
+                    LEFT JOIN "PromptMemoryEntries" latest
+                        ON latest.id = (
+                            SELECT p2.id
+                            FROM "PromptMemoryEntries" p2
+                            WHERE p2.conversation_id = aggregate_rows.conversation_id
+                            ORDER BY p2.sequence DESC, p2.id DESC
+                            LIMIT 1
+                        )
+                    """
+                )
 
-            created_at = None
-            if raw_created_at is not None:
-                if isinstance(raw_created_at, str):
-                    created_at = datetime.fromisoformat(raw_created_at)
-                else:
-                    created_at = raw_created_at
+                rows = session.execute(sql, params).fetchall()
 
-            result[conv_id] = ConversationStats(
-                message_count=msg_count,
-                last_message_preview=last_preview,
-                last_message_data_type=last_data_type,
-                created_at=created_at,
-            )
+                for row in rows:
+                    conv_id, msg_count, last_preview, last_data_type, raw_created_at = row
+
+                    created_at = None
+                    if raw_created_at is not None:
+                        if isinstance(raw_created_at, str):
+                            created_at = datetime.fromisoformat(raw_created_at)
+                        else:
+                            created_at = raw_created_at
+
+                    result[conv_id] = ConversationStats(
+                        message_count=msg_count,
+                        last_message_preview=last_preview,
+                        last_message_data_type=last_data_type,
+                        created_at=created_at,
+                    )
 
         return result
 

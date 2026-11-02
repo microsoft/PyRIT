@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pyrit.setup.initializers.scorers import ScorerInitializer
     from pyrit.setup.initializers.targets import TargetInitializer
     from pyrit.setup.initializers.techniques import TechniqueInitializer
+    from pyrit.setup.initializers.tools import ToolsInitializer
     from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
@@ -24,6 +25,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PyRITInitializer": "pyrit.setup.pyrit_initializer",
     "ConverterInitializer": "pyrit.setup.initializers.converters",
     "TechniqueInitializer": "pyrit.setup.initializers.techniques",
+    "ToolsInitializer": "pyrit.setup.initializers.tools",
     "ScorerInitializer": "pyrit.setup.initializers.scorers",
     "TargetInitializer": "pyrit.setup.initializers.targets",
     "LoadDefaultDatasets": "pyrit.setup.initializers.load_default_datasets",

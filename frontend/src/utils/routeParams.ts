@@ -41,7 +41,13 @@ export function attackRoutePath(
   )
 }
 
-/** Builds an attack-conversation route with optional bounded scenario-run provenance. */
+/**
+ * Builds an attack-conversation route with optional bounded scenario-run provenance.
+ *
+ * Exported findings documents link to this route (`_conversation_link` in
+ * `pyrit/backend/services/finding_export.py`), so keep its old shape working if it changes. Both
+ * builders are tested against `attackConversationRoute.cases.json`.
+ */
 export function attackConversationRoutePath(
   attackResultId: string,
   conversationId: string,
@@ -141,4 +147,18 @@ function isCatalogReturnPath(value: string): boolean {
     && url.password === ''
     && url.pathname === DATASETS_PATH
     && url.hash === ''
+}
+
+/** Returns true if the pathname or path belongs to the dataset catalog or dataset detail view. */
+export function isDatasetsPath(pathOrUrl: string): boolean {
+  if (!pathOrUrl) return false
+  const cleanPath = pathOrUrl.split('?')[0].split('#')[0]
+  return cleanPath === DATASETS_PATH || cleanPath === DATASET_DETAIL_PATH || cleanPath.startsWith(`${DATASETS_PATH}/`)
+}
+
+/** Returns true if the pathname or path belongs to the chat view or an attack view. */
+export function isChatPath(pathOrUrl: string): boolean {
+  if (!pathOrUrl) return false
+  const cleanPath = pathOrUrl.split('?')[0].split('#')[0]
+  return cleanPath === '/chat' || cleanPath.startsWith('/attacks/')
 }

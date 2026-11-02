@@ -159,11 +159,13 @@ class AudioTranscriptHelper:
             expectation (ScoringExpectation | None): Criteria forwarded to the transcript scorer.
 
         Returns:
-            List of scores for the transcribed audio.
+            List of scores for the transcribed audio, or an empty list when the
+            transcript is empty (there is no text to score).
 
         Raises:
             FileNotFoundError: If the audio file does not exist.
-            ValueError: If transcription fails or returns empty text.
+            Exception: Whatever the transcription step raises when it fails; the
+                original exception is re-raised as-is (see ``_transcribe_audio_async``).
         """
         audio_path = message_piece.converted_value
 

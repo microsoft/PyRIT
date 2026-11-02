@@ -19,13 +19,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import abstractmethod
+from collections import Counter, defaultdict, deque
 from typing import TYPE_CHECKING, Any, ClassVar, get_type_hints
 
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.models import (
-    AtomicAttackEvaluationIdentifier,
-    AtomicAttackIdentifier,
     BoundedDatasetSize,
     ScenarioRunPlanGroupKind,
     ScenarioRunSizeComponent,
@@ -33,9 +32,8 @@ from pyrit.models import (
 )
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack, build_baseline_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.scenario.core.technique_requirements import (
     IncompatibleTechniqueError,
     IncompatibleTechniquePolicy,
@@ -46,6 +44,8 @@ from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispat
 from pyrit.scenario.scenarios.adaptive.selectors import EpsilonGreedyTechniqueSelector, TechniqueSelector
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
     from pyrit.models import AttackSeedGroup, ScenarioRunPlan, ScenarioRunPlanAtomicGroup
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
@@ -227,14 +227,34 @@ class AdaptiveScenario(Scenario):
 
         atomic_attacks: list[AtomicAttack] = []
         if context.include_baseline:
-            atomic_attacks.append(
-                build_baseline_atomic_attack(
-                    objective_target=context.objective_target,
-                    objective_scorer=self._objective_scorer,
-                    seed_groups=list(context.seed_groups),
-                    memory_labels=context.memory_labels,
+            if context.stored_run_plan is None:
+                atomic_attacks.extend(
+                    build_baseline_atomic_attacks(
+                        objective_target=context.objective_target,
+                        objective_scorer=self._objective_scorer,
+                        seed_groups=list(context.seed_groups),
+                        memory_labels=context.memory_labels,
+                    )
                 )
-            )
+            else:
+                for planned, population in self._restore_planned_populations(
+                    seed_groups=context.seed_groups,
+                    planned_groups=(
+                        group
+                        for group in context.stored_run_plan.atomic_groups
+                        if group.kind is ScenarioRunPlanGroupKind.BASELINE
+                    ),
+                ):
+                    atomic_attacks.append(
+                        build_baseline_atomic_attack(
+                            objective_target=context.objective_target,
+                            objective_scorer=self._objective_scorer,
+                            seed_groups=population,
+                            memory_labels=context.memory_labels,
+                            atomic_attack_name=planned.atomic_attack_name,
+                            display_group=planned.display_group,
+                        )
+                    )
         for dataset_name, seed_groups in context.seed_groups_by_dataset.items():
             atomic_attacks.extend(
                 await self._build_atomics_for_dataset_async(
@@ -301,27 +321,14 @@ class AdaptiveScenario(Scenario):
         context: ScenarioContext,
     ) -> dict[str, TechniqueBundle]:
         """
-        Resolve selected techniques into a ``{eval_hash: TechniqueBundle}`` map.
+        Retain selected factories and matching scorer configurations for group binding.
 
-        Each bundle carries the inner attack technique along with the factory's
-        ``seed_technique`` and ``adversarial_chat`` so the dispatcher can
-        reproduce the static ``AtomicAttack`` execution path per attempt.
-
-        Technique keys use the full behavioral technique identity, including
-        technique-owned prompts and adaptation rules. Dataset seeds, scorers,
-        and operational target parameters are excluded. The dispatcher supplies
-        the same identity when recording child results, so saved choices and
-        historical success rates refer to the same behavioral configuration.
-
-        For factories whose attack class narrows ``attack_scoring_config`` to a
-        specific subtype (e.g. ``TAPAttackScoringConfig`` for TAP), this method
-        builds the matching subtype using the scenario's objective scorer.
-        Known target and scorer-type mismatches follow the scenario's compatibility
-        policy. Other construction errors propagate.
+        Target and scorer-type mismatches follow the scenario's compatibility policy.
+        The dispatcher constructs compatible candidates for each group and computes
+        their full technique hashes before selection.
 
         Returns:
-            dict[str, TechniqueBundle]: Mapping from technique eval hash to its
-                bundle, in the order selected techniques were resolved.
+            dict[str, TechniqueBundle]: Factory-backed bundles keyed by technique name.
 
         Raises:
             IncompatibleTechniqueError: If a known mismatch is found under RAISE.
@@ -359,24 +366,10 @@ class AdaptiveScenario(Scenario):
                 skipped_incompatible[technique_name] = reason
                 logger.warning(f"Skipping technique '{technique_name}': {reason}")
                 continue
-            technique = factory.create(
-                objective_target=context.objective_target,
+            techniques[technique_name] = TechniqueBundle(
+                factory=factory,
                 attack_scoring_config=scoring_config,
-            )
-            technique_identifier = technique.get_identifier()
-            eval_hash = AtomicAttackEvaluationIdentifier(
-                AtomicAttackIdentifier.build(technique_identifier=technique_identifier)
-            ).eval_hash
-            adversarial_chat = factory.adversarial_chat
-            if adversarial_chat is None and factory.uses_adversarial:
-                adversarial_chat = get_default_adversarial_target()
-            techniques[eval_hash] = TechniqueBundle(
-                attack=technique.attack,
                 name=technique_name,
-                seed_technique=technique.seed_technique,
-                adversarial_chat=adversarial_chat,
-                requirements=technique.requirements,
-                technique_identifier=technique_identifier,
             )
 
         if not techniques:
@@ -468,16 +461,32 @@ class AdaptiveScenario(Scenario):
                 Empty list when every seed group is incompatible with
                 every technique.
 
+        Raises:
+            ValueError: If a saved adaptive group does not contain exactly one source group.
         """
-        named_seed_groups = [
-            (
-                f"{self._atomic_attack_prefix()}_{dataset_name}::{to_sha256(group.objective.value)}",
-                group,
-            )
-            for group in seed_groups
-        ]
-        if stored_groups is not None:
-            named_seed_groups = [(name, group) for name, group in named_seed_groups if name in stored_groups]
+        named_seed_groups: list[tuple[str, AttackSeedGroup]] = []
+        if stored_groups is None:
+            objective_counts = Counter(group.objective.value for group in seed_groups)
+            occurrences: Counter[str] = Counter()
+            for group in seed_groups:
+                key = (
+                    group.logical_id
+                    if objective_counts[group.objective.value] > 1
+                    else to_sha256(group.objective.value)
+                )
+                occurrences[key] += 1
+                suffix = f"__{occurrences[key]}" if occurrences[key] > 1 else ""
+                named_seed_groups.append((f"{self._atomic_attack_prefix()}_{dataset_name}::{key}{suffix}", group))
+        else:
+            for planned, population in self._restore_planned_populations(
+                seed_groups=seed_groups,
+                planned_groups=(group for group in stored_groups.values() if group.display_group == dataset_name),
+            ):
+                if len(population) != 1:
+                    raise ValueError(
+                        f"Adaptive atomic group '{planned.atomic_attack_name}' must contain one seed group."
+                    )
+                named_seed_groups.append((planned.atomic_attack_name, population[0]))
         seed_groups = [group for _, group in named_seed_groups]
 
         dispatcher = AdaptiveTechniqueDispatcher(
@@ -493,13 +502,15 @@ class AdaptiveScenario(Scenario):
         compatible_source_ids = {
             technique_hash: {
                 group.logical_id
-                for group in filter_seed_groups(
+                for group in await asyncio.to_thread(
+                    filter_seed_groups,
                     seed_groups=seed_groups,
                     requirements=bundle.requirements.seed_group,
                     seed_technique=bundle.seed_technique,
                     technique_name=bundle.name,
                     dataset_name=dataset_name,
                     policy=context.incompatible_technique_policy,
+                    validate_group=bundle.validate_group,
                 )
             }
             for technique_hash, bundle in techniques.items()
@@ -524,7 +535,7 @@ class AdaptiveScenario(Scenario):
             )
             atomic = AtomicAttack(
                 atomic_attack_name=atomic_attack_name,
-                attack_technique=AttackTechnique(attack=attack),
+                attack_technique=AttackTechnique(attack=attack, adversarial_prompts=seed_group.adversarial_prompts),
                 seed_groups=[seed_group],
                 objective_scorer=self._objective_scorer,
                 memory_labels=dict(context.memory_labels),
@@ -544,6 +555,37 @@ class AdaptiveScenario(Scenario):
             )
 
         return atomics
+
+    @staticmethod
+    def _restore_planned_populations(
+        *,
+        seed_groups: Sequence[AttackSeedGroup],
+        planned_groups: Iterable[ScenarioRunPlanAtomicGroup],
+    ) -> list[tuple[ScenarioRunPlanAtomicGroup, list[AttackSeedGroup]]]:
+        """
+        Restore saved populations in plan order, consuming each source occurrence once.
+
+        Returns:
+            list[tuple]: Planned atomic groups paired with their original population sizes.
+
+        Raises:
+            ValueError: If the source cannot supply a planned seed-group occurrence.
+        """
+        available: dict[str, deque[AttackSeedGroup]] = defaultdict(deque)
+        for seed_group in seed_groups:
+            available[seed_group.logical_id].append(seed_group)
+        populations = []
+        for planned in planned_groups:
+            population = []
+            for seed_group_id in planned.seed_group_ids:
+                if not available[seed_group_id]:
+                    raise ValueError(
+                        f"Cannot resume atomic group '{planned.atomic_attack_name}': "
+                        f"planned seed-group occurrence '{seed_group_id}' is missing."
+                    )
+                population.append(available[seed_group_id].popleft())
+            populations.append((planned, population))
+        return populations
 
     def _build_run_plan(self) -> ScenarioRunPlan:
         """

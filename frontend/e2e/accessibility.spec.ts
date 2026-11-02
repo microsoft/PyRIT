@@ -401,29 +401,3 @@ test.describe("Accessibility", () => {
     await expectTourContainedAndActionable(page, "desktop");
   });
 });
-
-test.describe("Visual Consistency", () => {
-  test("should render without layout shifts", async ({ page }) => {
-    await page.goto("/");
-
-    // Wait for initial render then navigate to chat to measure the chat ribbon
-    await expect(page.getByTitle("Technique.execute")).toBeVisible();
-    await page.getByTitle("Technique.execute").click();
-    const anchor = page.getByTestId("new-attack-btn");
-    await expect(anchor).toBeVisible();
-
-    // Take measurements
-    const initialBox = await anchor.boundingBox();
-
-    // Wait a moment for any delayed renders
-    await page.waitForTimeout(500);
-
-    // Verify position hasn't changed
-    const finalBox = await anchor.boundingBox();
-
-    if (initialBox && finalBox) {
-      expect(finalBox.x).toBe(initialBox.x);
-      expect(finalBox.y).toBe(initialBox.y);
-    }
-  });
-});

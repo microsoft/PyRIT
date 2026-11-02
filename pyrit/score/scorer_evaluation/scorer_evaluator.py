@@ -52,6 +52,7 @@ class ScorerEvalDatasetFiles:
 
     Maps input dataset files (via glob patterns) to an output result file.
     Multiple files matching the patterns will be concatenated before evaluation.
+    Each matched path is loaded once, even when patterns overlap or repeat.
 
     Args:
         human_labeled_datasets_files (list[str]): List of glob patterns to match CSV files.
@@ -160,8 +161,8 @@ class ScorerEvaluator(abc.ABC):
             return None
 
         # Load each CSV as a HumanLabeledDataset and combine entries
-        # Sort csv_files for deterministic ordering when concatenating versions
-        csv_files = sorted(csv_files)
+        # Deduplicate overlapping matches and keep deterministic version ordering.
+        csv_files = sorted(set(csv_files))
         all_entries = []
         dataset_versions = []
         harm_definition_versions = set()

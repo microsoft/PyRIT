@@ -248,7 +248,13 @@ def _get_nlp() -> Any:
 
 def _pos_lookup(prompt: str) -> dict[str, str]:
     """
-    Map each alphabetic noun/verb in the prompt (by ``_word_key``) to its clue label.
+    Map each noun/verb in the prompt (by ``_word_key``) to its clue label.
+
+    The prompt is normalized before tagging because the tagger is sensitive to the spelling
+    it receives: composed "café" and decomposed "cafe\u0301" are given different parts of
+    speech, which would make the same prompt select a different word. Words are accepted with
+    ``_MASKABLE_WORD_PATTERN``, the same test ``_iter_words`` uses, so a word carrying a
+    combining mark keeps its tag; ``token.is_alpha`` is false for all of them.
 
     Returns an empty mapping when spaCy is unavailable.
 
@@ -262,8 +268,8 @@ def _pos_lookup(prompt: str) -> dict[str, str]:
     if nlp is None:
         return {}
     lookup: dict[str, str] = {}
-    for token in nlp(prompt):
-        if token.is_alpha and token.pos_ in _MASKABLE_POS:
+    for token in nlp(unicodedata.normalize("NFC", prompt)):
+        if _MASKABLE_WORD_PATTERN.fullmatch(token.text) and token.pos_ in _MASKABLE_POS:
             # Keep the first tag seen for a given surface form.
             lookup.setdefault(_word_key(token.text), _MASKABLE_POS[token.pos_])
     return lookup
