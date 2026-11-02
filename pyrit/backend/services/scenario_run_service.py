@@ -376,10 +376,12 @@ class ScenarioRunService:
                 )
         if not isinstance(original_scorer_hash, str):
             original = stored.objective_scorer_identifier
-            if request.objective_scorer is not None:
-                original_scorer_hash = request.objective_scorer.identifier_hash
-            elif original is not None and current_scorer is not None and original.hash == current_scorer:
+            if original is not None and current_scorer is not None and original.hash == current_scorer:
                 original_scorer_hash = current_scorer
+            elif original is not None and request.objective_scorer is not None and current_scorer is not None:
+                raise ScenarioRunConflictError(
+                    "The saved objective scorer changed. Start a new configuration explicitly."
+                )
             else:
                 raise ScenarioRunConflictError(
                     "The saved launch scorer identity is unavailable. Start a new configuration explicitly."
