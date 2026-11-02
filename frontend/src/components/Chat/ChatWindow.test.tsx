@@ -2052,7 +2052,7 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByRole("button", { name: "Objective achieved outcome: undetermined" })).toBeInTheDocument();
       expect(screen.queryByText("Accepted result")).not.toBeInTheDocument();
       expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("Original prompt");
-      await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+      await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
       await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
       expect(screen.getByRole("button", { name: "Apply scorer", exact: true })).toBeDisabled();
       expect(screen.queryByText("Original saved verdict")).not.toBeInTheDocument();

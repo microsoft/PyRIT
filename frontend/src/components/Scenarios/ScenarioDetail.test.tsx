@@ -1802,7 +1802,7 @@ describe('ScenarioDetail', () => {
     expect(request.max_retries).toBe(0)
   })
 
-  it('shows the combined configured dataset size without submitting it as an override', async () => {
+  it('shows the combined configured dataset selection limit without submitting it as an override', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValueOnce(
       makeScenario({
@@ -1853,14 +1853,21 @@ describe('ScenarioDetail', () => {
     expect(screen.queryByText('Advanced options')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('Up to 8')
     const estimate = screen.getByTestId('run-estimate')
-    expect(within(estimate).getByText('Dataset size')).toBeInTheDocument()
+    expect(within(estimate).getByText('Dataset selection limit')).toBeInTheDocument()
     expect(within(estimate).getByText('8')).toBeInTheDocument()
     expect(within(estimate).getByText('Number techniques')).toBeInTheDocument()
     expect(within(estimate).getByText('2')).toBeInTheDocument()
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
 
-    await confirmRunPreview(user)
+    await user.hover(within(estimate).getByText('Dataset selection limit'))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'The configured maximum number of examples to select. The actual selection may be smaller after filtering or because fewer examples are available.',
+    )
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByText(/dataset selection limit: 8/i)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeEnabled())
+    await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('max_dataset_size')
   })
@@ -1912,6 +1919,8 @@ describe('ScenarioDetail', () => {
     await screen.findByRole('table', { name: 'Selected datasets' })
     expect(screen.queryByRole('textbox', { name: 'Maximum objectives' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Use all data' })).not.toBeInTheDocument()
+    expect(within(screen.getByTestId('run-estimate')).getByText('Dataset selection limit')).toBeInTheDocument()
+    expect(within(screen.getByTestId('run-estimate')).getByText('Not applicable')).toBeInTheDocument()
   })
 
   it('keeps scenario defaults when the dataset-limit field is cleared', async () => {
@@ -1944,7 +1953,11 @@ describe('ScenarioDetail', () => {
     await user.click(screen.getByRole('checkbox', { name: 'All available for Maximum objectives' }))
     await user.keyboard('{Escape}')
     await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('datasets.max_total', 'all'))
-    await confirmRunPreview(user)
+    expect(within(screen.getByTestId('run-estimate')).getByText('No total limit')).toBeInTheDocument()
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByText(/dataset selection limit: No total limit/i)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeEnabled())
+    await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0]).toHaveProperty('datasets.max_total', 'all')
   })

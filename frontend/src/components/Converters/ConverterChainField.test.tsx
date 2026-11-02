@@ -46,7 +46,7 @@ function Harness({ value, disabled = false }: { value?: ConverterSelection[]; di
     setSelection(value ?? [source])
   }
   return <FluentProvider theme={webLightTheme}>
-    <ConverterChainField label="Request converters" converters={converters} value={selection}
+    <ConverterChainField label="Request converters" help={HELP_DEFINITIONS.requestConverters} converters={converters} value={selection}
       onChange={setSelection} onConvertersChanged={setConverters} disabled={disabled} />
   </FluentProvider>
 }
@@ -61,6 +61,13 @@ describe('ConverterChainField registry save', () => {
   it('should disable the menu while the chain is disabled', () => {
     render(<Harness disabled />)
     expect(screen.getByRole('button', { name: /Settings for converter/ })).toBeDisabled()
+  })
+
+  it('should provide request-converter help in the registry save harness', async () => {
+    const user = userEvent.setup()
+    render(<Harness />)
+    await user.click(screen.getByRole('button', { name: /Request converters.*information/i }))
+    expect(await screen.findByRole('note')).toHaveTextContent(HELP_DEFINITIONS.requestConverters)
   })
 
   it('should not replace another stage after the temporary stage is removed', async () => {

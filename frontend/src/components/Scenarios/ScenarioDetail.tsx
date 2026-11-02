@@ -1784,8 +1784,8 @@ function ScenarioLaunchForm({
                   <dd>{formatAtomicAttackCount(estimateState)}</dd>
                 </div>
                 {supportsDatasets && <div className={styles.costEstimateRow}>
-                  <dt><ContextualHelpLabel term="Dataset size">
-                    Selected examples available to this run, after its dataset limits and filters.
+                  <dt><ContextualHelpLabel term="Dataset selection limit">
+                    The configured maximum number of examples to select. The actual selection may be smaller after filtering or because fewer examples are available.
                   </ContextualHelpLabel></dt>
                   <dd>
                     {datasetSizeLabel}
@@ -1964,7 +1964,7 @@ function ScenarioLaunchForm({
                           </Text>
                           <Text size={200} className={styles.hint}>
                             {previewDatasets.length > 0 ? 'Custom override' : 'Scenario defaults'}
-                            {` - dataset size: ${datasetSizeLabel}`}
+                            {` - dataset selection limit: ${datasetSizeLabel}`}
                           </Text>
                         </div>
                       </dd>

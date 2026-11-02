@@ -319,7 +319,7 @@ describe('App draft handoff with the real chat and composer', () => {
     })
     const rendered = render(<MemoryRouter initialEntries={['/attack/chat']}><App /></MemoryRouter>)
     await prepareNewSend(user)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
     await user.selectOptions(screen.getByRole('combobox', { name: 'Chat scorer' }), '')
     await user.keyboard('{Escape}')
