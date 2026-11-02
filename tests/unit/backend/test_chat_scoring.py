@@ -240,8 +240,9 @@ async def test_apply_conversation_snapshot_reuse_projection_and_judge_owner_asyn
         assert len(target.prompt_sent) == 2
 
 
+@pytest.mark.parametrize("private_value", [None, '{"1": null}', {"0": None, "1": None}])
 async def test_public_metadata_cannot_authorize_stale_nested_projection_async(
-    latest_response_chat, sqlite_instance: SQLiteMemory
+    latest_response_chat, sqlite_instance: SQLiteMemory, private_value
 ) -> None:
     policy, attack, request, _ = latest_response_chat
     scorer = TrueFalseCompositeScorer(
@@ -266,24 +267,29 @@ async def test_public_metadata_cannot_authorize_stale_nested_projection_async(
             entry = session.get(ScoreEntry, first.score.id)
             assert entry is not None
             assert entry.snapshot_participation == {"0": None, "1": None}
-            entry.snapshot_participation = None
+            entry.snapshot_participation = private_value
             entry.score_metadata = {**entry.score_metadata, "pyrit_internal_snapshot_participation": '{"1": null}'}
             session.commit()
             session.expire_all()
             raw = session.get(ScoreEntry, first.score.id)
-            assert raw.snapshot_participation is None
+            assert raw.snapshot_participation == private_value
+            assert type(raw.snapshot_participation) is type(private_value)
             assert raw.score_metadata["pyrit_internal_snapshot_participation"] == '{"1": null}'
-            assert (
-                session.scalar(
-                    sa.select(ScoreEntry.snapshot_participation.is_(None)).where(ScoreEntry.id == first.score.id)
+            if private_value is None:
+                assert (
+                    session.scalar(
+                        sa.select(ScoreEntry.snapshot_participation.is_(None)).where(ScoreEntry.id == first.score.id)
+                    )
+                    is True
                 )
-                is True
-            )
 
         await run_memory_session_async(memory=sqlite_instance, operation=forge_public_metadata)
         [persisted] = await sqlite_instance.get_scores_async(score_ids=[first.score.id])
-        assert persisted._snapshot_participation is None
+        assert persisted._snapshot_participation == private_value
         assert persisted.score_metadata["pyrit_internal_snapshot_participation"] == '{"1": null}'
+        unchanged = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+        assert unchanged.reused and unchanged.score.id == first.score.id
+        assert evaluate.call_count == 1
         await sqlite_instance.add_message_to_memory_async(
             request=MessagePiece(
                 role="user", original_value="Changed history", conversation_id=attack.conversation_id

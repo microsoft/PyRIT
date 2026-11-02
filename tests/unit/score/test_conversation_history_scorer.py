@@ -271,6 +271,12 @@ async def test_each_participating_branch_requires_a_distinct_snapshot_async(patc
         {"\u0660": None, "1": None},
         {"0": 17, "1": None},
         {"0": {"00": None}, "1": None},
+        '{"1": null}',
+        '"{\\"1\\": null}"',
+        "not-json",
+        [None, None],
+        17,
+        True,
     ],
 )
 async def test_reloaded_invalid_provenance_cannot_skip_stale_branch_async(
@@ -304,6 +310,7 @@ async def test_reloaded_invalid_provenance_cannot_skip_stale_branch_async(
     [reloaded] = await memory.get_scores_async(score_ids=[original.id])
     assert reloaded._snapshot_participation == participation
     assert reloaded.score_metadata["pyrit_internal_snapshot_participation"] == '{"1": null}'
+    assert await scorer.find_matching_scores_async(scores=[reloaded], scorable=trigger) == [reloaded]
     await memory.add_message_to_memory_async(
         request=MessagePiece(
             role="user", original_value="Changed history", conversation_id=response.conversation_id
