@@ -9,7 +9,7 @@ Opt-in techniques that are not part of the default ``core`` set. Exposes
 ``build_technique_factories``.
 """
 
-from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
+from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH, EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
 from pyrit.converter import (
     CharNoiseConverter,
     CharSwapConverter,
@@ -168,6 +168,47 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
                     response_converters=[
                         ConverterConfiguration(
                             converters=[SearchReplaceConverter(pattern=r"(\.){2}|(?<=\S)\.(?=\S)", replace=r"\1")],
+                            prompt_data_types_to_apply=["text"],
+                        )
+                    ],
+                ),
+            },
+        ),
+        AttackTechniqueFactory(
+            name="context_wrap",
+            attack_class=PromptSendingAttack,
+            description=(
+                "Instructs the target to wrap each response sentence in <seg> tags interleaved with "
+                "compiler diagnostic lines and extracts the plain sentences before scoring."
+            ),
+            technique_tags=["single_turn", "light", "experimental"],
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=[
+                        ConverterConfiguration(
+                            converters=[
+                                PromptTemplateConverter(
+                                    template=SeedPrompt.from_yaml_file(
+                                        CONVERTER_SEED_PROMPT_PATH / "context_wrap.yaml"
+                                    ).value
+                                )
+                            ],
+                            prompt_data_types_to_apply=["text"],
+                        )
+                    ],
+                    response_converters=[
+                        ConverterConfiguration(
+                            converters=[
+                                SearchReplaceConverter(
+                                    # Preserve tagged content, including literal diagnostic lines.
+                                    pattern=(
+                                        r"(<seg>[\s\S]*?</seg>)"
+                                        r"|(?m:^[ \t]*\[DIAG-[0-9]+\][ \t]+[^\r\n]*(?:\r?\n|$))"
+                                    ),
+                                    replace=r"\1",
+                                ),
+                                SearchReplaceConverter(pattern=r"</?seg>", replace=""),
+                            ],
                             prompt_data_types_to_apply=["text"],
                         )
                     ],

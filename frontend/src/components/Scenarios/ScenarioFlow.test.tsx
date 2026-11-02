@@ -25,6 +25,7 @@ jest.mock('@/services/api', () => ({
   scenariosApi: {
     cancelRun: jest.fn(),
     estimateRun: jest.fn(),
+    getRunHierarchy: jest.fn(() => new Promise(() => {})),
     getScenario: jest.fn(),
     listCatalog: jest.fn(),
     startRun: jest.fn(),

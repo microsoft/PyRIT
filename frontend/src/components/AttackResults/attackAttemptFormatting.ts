@@ -28,6 +28,11 @@ export function formatAttackSuccess(outcome: ScenarioProgressResult['outcome']):
   return outcome.replace(/^\w/, (letter) => letter.toUpperCase())
 }
 
+/** The attack's outcome as a word, for places headed "Attack outcome" rather than "Attack success". */
+export function formatAttackOutcome(outcome: ScenarioProgressResult['outcome']): string {
+  return outcome.replace(/^\w/, (letter) => letter.toUpperCase())
+}
+
 export function formatScore(score: ScenarioProgressResult['score']): string {
   if (!score || score.status === 'undetermined') {
     return 'Undetermined'

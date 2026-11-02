@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Combobox, MessageBar, MessageBarBody, mergeClasses, Option, Text, useId } from '@fluentui/react-components'
+import { Button, Combobox, MessageBar, MessageBarBody, mergeClasses, Option, useId } from '@fluentui/react-components'
 import { DismissRegular } from '@fluentui/react-icons'
 
 import OperationCreateDialog from '@/components/Operations/OperationCreateDialog'
@@ -13,13 +13,15 @@ const MAX_LISTED = 200
 
 interface OperationPickerProps {
   selection: OperationSelectionState
+  warning?: string
   onSelect: (operation: Operation | null) => void
   onRetry: () => void
 }
 
-export default function OperationPicker({ selection, onSelect, onRetry }: OperationPickerProps) {
+export default function OperationPicker({ selection, warning, onSelect, onRetry }: OperationPickerProps) {
   const styles = useLabelsBarStyles()
   const unregisteredId = useId('operation-unregistered')
+  const errorId = useId('operation-error')
   const rootRef = useRef<HTMLDivElement>(null)
   const localInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
@@ -71,9 +73,9 @@ export default function OperationPicker({ selection, onSelect, onRetry }: Operat
       <div className={styles.operationStatus}>
         <Combobox
           ref={localInputRef}
-          className={mergeClasses(styles.operationPicker,
-            selection.status === 'unregistered' ? styles.metadataPlaceholder : undefined)}
-          aria-describedby={selection.status === 'unregistered' ? unregisteredId : undefined}
+          className={mergeClasses(styles.operationPicker, warning ? styles.metadataWarning : undefined)}
+          aria-describedby={selection.status === 'error' ? errorId
+            : selection.status === 'unregistered' ? unregisteredId : undefined}
           size="small"
           freeform
           open={open}
@@ -128,18 +130,16 @@ export default function OperationPicker({ selection, onSelect, onRetry }: Operat
           <span id={unregisteredId} className={styles.srOnly}>Not registered</span>
           <Button size="small" className={styles.actionButton} onClick={() => startCreate(selection.name)}>Register</Button>
         </>}
-        {selection.status === 'missing' && <Text size={200} className={styles.operationNoteError}>Saved operation not found</Text>}
-        {(selection.status === 'unregistered' || selection.status === 'missing') && (
+        {selection.status === 'error' && (
+          <Button size="small" className={styles.actionButton} onClick={onRetry}>Retry</Button>
+        )}
+        {(selection.status === 'unregistered' || selection.status === 'missing' || selection.status === 'error') && (
           <Button size="small" className={styles.actionButton} onClick={() => onSelect(null)}>Clear</Button>
         )}
       </div>
-      {selection.status === 'error' && (
-        <MessageBar intent="error"><MessageBarBody>
-          Could not load the selected operation: {selection.error}{' '}
-          <Button size="small" className={styles.actionButton} onClick={onRetry}>Retry</Button>
-          <Button size="small" className={styles.actionButton} onClick={() => onSelect(null)}>Clear</Button>
-        </MessageBarBody></MessageBar>
-      )}
+      <span id={errorId} role="alert" aria-atomic="true" className={styles.srOnly}>
+        {selection.status === 'error' ? warning : ''}
+      </span>
       {!loading && error && (
         <MessageBar intent="error"><MessageBarBody>
           {error}{' '}
