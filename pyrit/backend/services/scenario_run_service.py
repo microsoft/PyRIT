@@ -1456,13 +1456,35 @@ class ScenarioRunService:
 
         except asyncio.CancelledError:
             try:
-                await self._memory.try_update_scenario_run_state_async(
+                # The service owns the reason a task was cancelled: shutdown sets
+                # cancellation_state to FAILED before cancelling, while a user
+                # cancel leaves it CANCELLED. Scenario.run_async already persisted
+                # CANCELLED by the time this handler runs, so the gated write
+                # below is a no-op for a shutdown-cancelled run: the row is
+                # already terminal and the compare-and-swap refuses to overwrite
+                # it. In exactly that case — the stored state is CANCELLED but
+                # the service's cancellation intent differs — overwrite it with
+                # the service's state, so a shutdown-interrupted run lands as
+                # FAILED/ScenarioInterruptedError and stays eligible for
+                # saved-config resume. Any other terminal state is left alone.
+                updated = await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
                     expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
                     scenario_run_state=active.cancellation_state,
                     error_message=active.cancellation_reason,
                     error_type=active.cancellation_error_type,
                 )
+                if not updated and active.cancellation_state != ScenarioRunState.CANCELLED:
+                    header = await self._memory.get_scenario_result_header_async(
+                        scenario_result_id=scenario_result_id
+                    )
+                    if header is not None and header.scenario_run_state == ScenarioRunState.CANCELLED:
+                        await self._memory.update_scenario_run_state_async(
+                            scenario_result_id=scenario_result_id,
+                            scenario_run_state=active.cancellation_state,
+                            error_message=active.cancellation_reason,
+                            error_type=active.cancellation_error_type,
+                        )
             except Exception as exc:
                 handoff_ready = False
                 active.error = str(exc)
