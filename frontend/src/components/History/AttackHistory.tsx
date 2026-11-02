@@ -30,6 +30,17 @@ const PAGE_SIZE = 25
 
 type ListParams = Parameters<typeof attacksApi.listAttacks>[0]
 
+/**
+ * One history page request. The cursor and the displayed page index always
+ * change together, and `filterKey` records which filter visit they belong to.
+ */
+interface PageRequest {
+  filterKey: string
+  cursor: string | undefined
+  page: number
+  requestId: number
+}
+
 function buildListParams(filters: HistoryFilters, pageCursor: string | undefined): ListParams {
   const labelParams = [...filters.otherLabels]
 
@@ -69,7 +80,6 @@ export default function AttackHistory({
 }: AttackHistoryProps) {
   const styles = useAttackHistoryStyles()
   const [attacks, setAttacks] = useState<AttackSummary[]>([])
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   // Filter options
@@ -84,9 +94,8 @@ export default function AttackHistory({
   } | null>(null)
 
   // Pagination
-  const [cursor, setCursor] = useState<string | undefined>(undefined)
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined)
   const [isLastPage, setIsLastPage] = useState(true)
-  const [page, setPage] = useState(0)
   const filterKey = JSON.stringify([
     filters.attackTypes,
     filters.outcome,
@@ -98,7 +107,22 @@ export default function AttackHistory({
     filters.operationId,
     filters.otherLabels,
   ])
-  const [settledFilterKey, setSettledFilterKey] = useState<string | null>(null)
+  const [pageRequest, setPageRequest] = useState<PageRequest>(() => ({
+    filterKey,
+    cursor: undefined,
+    page: 0,
+    requestId: 0,
+  }))
+  const [settledRequestId, setSettledRequestId] = useState<number | null>(null)
+  // Every filter change (including A -> B -> A, even while B is still loading)
+  // starts a new visit on the first page, so a cursor from an earlier visit of
+  // the same filters is never reused.
+  // Uses the "adjust state during render" pattern (see React docs:
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders)
+  // instead of a useEffect so we don't trigger react-hooks/set-state-in-effect.
+  if (pageRequest.filterKey !== filterKey) {
+    setPageRequest({ filterKey, cursor: undefined, page: 0, requestId: pageRequest.requestId + 1 })
+  }
   const labelOptionFilterKey = JSON.stringify([
     filters.operator,
     filters.otherLabels,
@@ -110,19 +134,12 @@ export default function AttackHistory({
     ? narrowedOtherLabelOptions.options
     : allOtherLabelOptions
 
-  // Bumped from event handlers (Refresh button, pagination) to re-trigger the
+  // Called from event handlers (Refresh button, pagination) to re-trigger the
   // fetch effect without calling setState synchronously inside it.
-  const [fetchToken, setFetchToken] = useState({
-    cursor: undefined as string | undefined,
-    filterKey,
-    nonce: 0,
-  })
-
-  const fetchAttacks = useCallback((pageCursor?: string) => {
-    setLoading(true)
+  const fetchAttacks = useCallback((pageCursor: string | undefined, page: number) => {
     setError(null)
-    setFetchToken(prev => ({ cursor: pageCursor, filterKey, nonce: prev.nonce + 1 }))
-  }, [filterKey])
+    setPageRequest(prev => ({ ...prev, cursor: pageCursor, page, requestId: prev.requestId + 1 }))
+  }, [])
 
   // Attack and converter options do not depend on the active history filters.
   useEffect(() => {
@@ -170,36 +187,26 @@ export default function AttackHistory({
     labelOptionFilterKey,
   ])
 
-  // Fetch attacks whenever filters change or an event handler bumps fetchToken.
-  // All setState calls live in .then/.catch/.finally so we don't trigger
+  // Fetch attacks whenever filters change or an event handler issues a new
+  // page request. All setState calls live in .then/.catch so we don't trigger
   // react-hooks/set-state-in-effect.
   useEffect(() => {
     let cancelled = false
-    const effectiveCursor = fetchToken.filterKey === filterKey && settledFilterKey === filterKey
-      ? fetchToken.cursor
-      : undefined
-    attacksApi.listAttacks(buildListParams(filters, effectiveCursor))
+    const { cursor, requestId } = pageRequest
+    attacksApi.listAttacks(buildListParams(filters, cursor))
       .then(response => {
         if (cancelled) return
         setAttacks(response.items.map(attack => ({ ...attack, labels: attack.labels ?? {} })))
         setIsLastPage(!response.pagination.has_more)
-        setCursor(response.pagination.next_cursor ?? undefined)
-        setSettledFilterKey(filterKey)
+        setNextCursor(response.pagination.next_cursor ?? undefined)
+        setSettledRequestId(requestId)
         setError(null)
-        // Reset displayed page index when the trigger is a filter change (no
-        // explicit cursor). Pagination handlers pass an explicit cursor and
-        // update `page` themselves.
-        if (!effectiveCursor) setPage(0)
       })
       .catch(err => {
         if (cancelled) return
         setAttacks([])
-        setSettledFilterKey(filterKey)
+        setSettledRequestId(requestId)
         setError(toApiError(err).detail)
-        if (!effectiveCursor) setPage(0)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
       })
     return () => {
       cancelled = true
@@ -218,21 +225,17 @@ export default function AttackHistory({
     filters.operator,
     filters.operationId,
     filters.otherLabels,
-    filterKey,
-    fetchToken,
+    pageRequest,
   ])
 
   const handleNextPage = () => {
-    if (cursor) {
-      setPage(p => p + 1)
-      fetchAttacks(cursor)
+    if (nextCursor) {
+      fetchAttacks(nextCursor, pageRequest.page + 1)
     }
   }
 
   const handlePrevPage = () => {
-    setPage(0)
-    setCursor(undefined)
-    fetchAttacks()
+    fetchAttacks(undefined, 0)
   }
 
   const formatDate = (dateStr: string) => {
@@ -250,8 +253,9 @@ export default function AttackHistory({
     filters.hasConverters !== undefined ||
     !filters.includeScenarioAttacks ||
     filters.operator.length > 0 || filters.operationId.length > 0 || filters.otherLabels.length > 0
-  const filtersPending = settledFilterKey !== filterKey
-  const displayLoading = loading || filtersPending
+  // Rows and pagination are only shown once the current request has settled,
+  // so the page label always describes the rows on screen.
+  const displayLoading = settledRequestId !== pageRequest.requestId
   const emptyStateGuidance = activeTarget
     ? {
         text: 'Start an attack to see it here.',
@@ -275,7 +279,7 @@ export default function AttackHistory({
             className={styles.touchTargetHeight}
             appearance="subtle"
             icon={<ArrowSyncRegular />}
-            onClick={() => fetchAttacks()}
+            onClick={() => fetchAttacks(undefined, 0)}
             disabled={displayLoading}
             data-testid="refresh-btn"
           >
@@ -307,7 +311,7 @@ export default function AttackHistory({
               className={styles.touchTargetHeight}
               appearance="primary"
               icon={<ArrowSyncRegular />}
-              onClick={() => fetchAttacks()}
+              onClick={() => fetchAttacks(undefined, 0)}
               disabled={displayLoading}
               data-testid="retry-btn"
             >
@@ -338,7 +342,7 @@ export default function AttackHistory({
 
       {!displayLoading && attacks.length > 0 && (
         <HistoryPagination
-          page={page}
+          page={pageRequest.page}
           isLastPage={isLastPage}
           onPrevPage={handlePrevPage}
           onNextPage={handleNextPage}
