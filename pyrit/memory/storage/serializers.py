@@ -22,9 +22,7 @@ from pyrit.memory.storage.storage import DiskStorageIO, StorageIO
 
 if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
-    from pyrit.models.literals import PromptDataType
-    from pyrit.models.messages.message_piece import MessagePiece
-    from pyrit.models.seeds.seed import Seed
+    from pyrit.models import MessagePiece, PromptDataType, Seed
 
 # Define allowed categories for validation
 AllowedCategories = Literal["seed-prompt-entries", "prompt-memory-entries", "scorable-content-entries"]

@@ -2354,7 +2354,7 @@ class AttackResultEntry(Base):
         # Deserialize retry events from JSON
         retry_events = []
         if self.retry_events_json:
-            from pyrit.models.retry_event import RetryEvent
+            from pyrit.models import RetryEvent
 
             retry_events = [RetryEvent.model_validate(evt_dict) for evt_dict in json.loads(self.retry_events_json)]
 

@@ -47,6 +47,13 @@ repos:
         language: python
         files: ^pyrit/.*\.py$
         pass_filenames: false
+      - id: check-public-imports
+        name: Prefer public PyRIT package imports
+        entry: python -m build_scripts.check_public_imports
+        language: python
+        additional_dependencies: ['ipython']
+        files: \.(py|ipynb)$
+        pass_filenames: false
       - id: memory-migrations-check
         name: Check Memory Migrations
         entry: python -m build_scripts.memory_migrations check

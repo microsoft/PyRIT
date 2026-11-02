@@ -11,8 +11,7 @@ from pyrit.auth import (
     get_default_azure_scope,
     is_azure_openai_endpoint,
 )
-from pyrit.common import default_values, net_utility
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import default_values, net_utility, print_deprecation_message
 from pyrit.models import (
     ComponentIdentifier,
     Message,

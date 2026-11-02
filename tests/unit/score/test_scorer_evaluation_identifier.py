@@ -13,9 +13,8 @@ from itertools import permutations
 import pytest
 
 from pyrit.models import ComponentIdentifier, Identifiable, Score, ScorerEvaluationIdentifier, compute_eval_hash
-from pyrit.score import SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
+from pyrit.score import SubStringScorer, TrueFalseAggregatorFunc, TrueFalseCompositeScorer, TrueFalseScoreAggregator
 from pyrit.score.score_aggregator_result import ScoreAggregatorResult
-from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 
 
 class TestScorerEvaluationIdentifierConstants:

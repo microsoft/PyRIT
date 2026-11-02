@@ -12,7 +12,7 @@ from pyrit.common import apply_defaults
 from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.converter import TextJailbreakConverter
 from pyrit.datasets import TextJailBreak
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import (
     AttackTechniqueSeedGroup,
     BoundedDatasetSize,
@@ -20,9 +20,8 @@ from pyrit.models import (
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
 )
-from pyrit.prompt_target import CapabilityName
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.prompt_target import CapabilityName, TargetRequirements
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import (

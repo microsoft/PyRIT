@@ -17,8 +17,10 @@ from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import CreateTable
 
-from pyrit.memory.memory_models import (
+from pyrit.memory import (
     AttackResultEntry,
+)
+from pyrit.memory.memory_models import (
     FindingEntry,
     FindingEvidenceEntry,
     OperationEntry,

@@ -13,10 +13,8 @@ import pytest
 from pyrit.exceptions import EmptyResponseException
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import A2ATarget
+from pyrit.prompt_target import A2ATarget, TargetCapabilities, TargetConfiguration
 from pyrit.prompt_target.a2a_target import _A2AConversationState
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 ENDPOINT = "https://agent.example.com/a2a"
 

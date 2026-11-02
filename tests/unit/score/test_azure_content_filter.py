@@ -19,12 +19,9 @@ from azure.core.exceptions import HttpResponseError
 from PIL import Image
 from unit.mocks import get_audio_message_piece, get_image_message_piece, get_test_message_piece, store_message_async
 
-from pyrit.memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece, Score
-from pyrit.score import MessageScorable
-from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score import AzureContentFilterScorer, FloatScaleScorer, MessageScorable
 
 
 @pytest.fixture

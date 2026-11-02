@@ -142,7 +142,7 @@ def test_init_rejects_mismatched_modalities():
 
 @pytest.mark.usefixtures("patch_central_database")
 def test_init_rejects_mismatched_policy():
-    from pyrit.prompt_target.common.target_capabilities import (
+    from pyrit.prompt_target import (
         CapabilityHandlingPolicy,
         CapabilityName,
         UnsupportedCapabilityBehavior,

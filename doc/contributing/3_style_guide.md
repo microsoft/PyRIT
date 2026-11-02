@@ -30,3 +30,35 @@ Deviations from any particular rule can occur depending on context and need.
 - Naming should follow typical Python naming. e.g. some_descriptive_name
 - PyRIT imports go last (after a newline)
 - Imports should go in alphabetical order
+
+## Public PyRIT imports
+
+Use the shortest package that already exports a symbol. This keeps callers
+independent of implementation filenames:
+
+```python
+from pyrit.analytics import analyze_results
+from pyrit.executor.attack import AttackStrategy
+from pyrit.models import Message
+```
+
+Do not import these from `pyrit.analytics.result_analysis`,
+`pyrit.executor.attack.core.attack_strategy`, or `pyrit.models.messages.message`.
+Keep distinct executor APIs such as `pyrit.executor.attack` and
+`pyrit.executor.workflow`; do not flatten them into `pyrit.executor`.
+
+Internal imports within the package owning the public export still use
+implementation modules to avoid circular imports. Helpers without a public export, such as
+`pyrit.common.net_utility.get_httpx_client`, also keep their direct imports.
+Package initializers and immutable Alembic revisions are excluded.
+
+The `check-public-imports` pre-commit hook enforces this for tracked Python files
+and notebook code cells using existing `_LAZY_EXPORTS` declarations. Run it directly:
+
+```bash
+uv run python -m build_scripts.check_public_imports
+```
+
+Ruff's [`TID251`](https://docs.astral.sh/ruff/rules/banned-api/) can ban fixed API
+paths, but cannot infer public re-exports or exempt internal sibling imports
+selectively. The export-aware hook avoids maintaining a second list of public APIs.

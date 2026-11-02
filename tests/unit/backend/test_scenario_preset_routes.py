@@ -12,14 +12,13 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import current_user_name, require_admin
-from pyrit.backend.models.scenario_presets import (
+from pyrit.backend.models import (
     PresetIssue,
     ScenarioPresetListResponse,
     ScenarioPresetResponse,
 )
-from pyrit.backend.services.scenario_preset_service import ScenarioPresetService
-from pyrit.models.catalog import ScenarioPreset, ScenarioRunSizeEstimate
-from pyrit.models.catalog.scenario import ScenarioRunSizeComponent
+from pyrit.backend.services import ScenarioPresetService
+from pyrit.models import ScenarioPreset, ScenarioRunSizeComponent, ScenarioRunSizeEstimate
 from pyrit.registry import (
     ScenarioPresetConflictError,
     ScenarioPresetNameRegisteredError,

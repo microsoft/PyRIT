@@ -13,10 +13,9 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
-from pyrit.models import JSONValue, Parameter, TargetIdentifier
-from pyrit.models.catalog.target import TargetInstance
+from pyrit.models import JSONValue, Parameter, TargetCapabilities, TargetIdentifier
+from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec
-from pyrit.models.target.target_capabilities import TargetCapabilities
 
 __all__ = [
     "CreateTargetRequest",

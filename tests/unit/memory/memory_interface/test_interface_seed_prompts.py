@@ -15,8 +15,7 @@ from sqlalchemy import String, event, select
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import SQLAlchemyError
 
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import SeedEntry
+from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import AnswerMatches, MessagePiece, SeedDataset, SeedGroup, SeedObjective, SeedOrigin, SeedPrompt
 
 

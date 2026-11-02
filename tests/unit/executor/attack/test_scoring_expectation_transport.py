@@ -29,17 +29,18 @@ from pyrit.executor.attack import (
     ChunkedRequestAttack,
     CrescendoAttack,
     MultiPromptSendingAttack,
+    MultiPromptSendingAttackParameters,
     PromptSendingAttack,
     RedTeamingAttack,
+    SequentialAttack,
+    SequentialChildAttack,
     SingleTurnAttackContext,
-)
-from pyrit.executor.attack.compound import SequentialAttack, SequentialChildAttack
-from pyrit.executor.attack.multi_turn.chunked_request import ChunkedRequestAttackParameters
-from pyrit.executor.attack.multi_turn.multi_prompt_sending import MultiPromptSendingAttackParameters
-from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackContext,
-    TAPAttackScoringConfig,
     TreeOfAttacksWithPruningAttack,
+)
+from pyrit.executor.attack.multi_turn.chunked_request import ChunkedRequestAttackParameters
+from pyrit.executor.attack.multi_turn.tree_of_attacks import (
+    TAPAttackScoringConfig,
 )
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (

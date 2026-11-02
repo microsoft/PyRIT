@@ -20,6 +20,12 @@ attack_manager_mod = pytest.importorskip(
 )
 torch = pytest.importorskip("torch", reason="torch not installed")
 
+from pyrit.executor.promptgen.gcg import (  # noqa: E402
+    GCGAlgorithmConfig,
+    GCGModelConfig,
+    GCGStrategyConfig,
+    SuffixInitializer,  # noqa: E402
+)
 from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E402
     AttackPrompt,
     EvaluateAttack,
@@ -34,8 +40,6 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E
     get_embedding_matrix,
     get_embeddings,
 )
-from pyrit.executor.promptgen.gcg.config import GCGAlgorithmConfig, GCGModelConfig, GCGStrategyConfig  # noqa: E402
-from pyrit.executor.promptgen.gcg.extension_protocols import SuffixInitializer  # noqa: E402
 
 gcg_attack_mod = pytest.importorskip(
     "pyrit.executor.promptgen.gcg.attack.gcg.gcg_attack",

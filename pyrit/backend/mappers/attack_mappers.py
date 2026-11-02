@@ -25,7 +25,7 @@ from azure.storage.blob import ContainerSasPermissions, generate_container_sas
 from azure.storage.blob.aio import BlobServiceClient
 
 from pyrit.backend.mappers._preview import format_last_message_preview
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
     AttackSummary,
     MessagePieceRequest,
@@ -55,7 +55,7 @@ _LEGACY_MANUAL_ATTACK_PLACEHOLDER = "Manual attack via GUI"
 
 if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
-    from pyrit.models.conversation_stats import ConversationStats
+    from pyrit.models import ConversationStats
     from pyrit.models.results.attack_result import AttackScoringInputs
 
 # ============================================================================

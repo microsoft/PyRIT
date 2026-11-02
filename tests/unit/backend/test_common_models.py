@@ -10,12 +10,22 @@ import uuid
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
+    ConverterPreviewRequest,
     CreateAttackRequest,
+    CreateConverterRequest,
+    CreateTargetRequest,
+    FieldError,
     MessagePieceRequest,
-    SaveConversationRequest,
+    PaginationInfo,
+    ProblemDetail,
+    RegisterInitializerRequest,
     UpdateAttackRequest,
+    filter_sensitive_fields,
+)
+from pyrit.backend.models.attacks import (
+    SaveConversationRequest,
 )
 from pyrit.backend.models.common import (
     MAX_FILE_CONTENT_LENGTH,
@@ -24,21 +34,14 @@ from pyrit.backend.models.common import (
     MAX_LABEL_KEY_LENGTH,
     MAX_LABEL_VALUE_LENGTH,
     MAX_TEXT_LENGTH,
-    FieldError,
     LabelFilterStr,
-    PaginationInfo,
-    ProblemDetail,
-    filter_sensitive_fields,
 )
 from pyrit.backend.models.configuration import (
     ReinitializeRequest,
     UpdateConfigurationFileRequest,
     UpdateEnvironmentFileRequest,
 )
-from pyrit.backend.models.converters import ConverterPreviewRequest, CreateConverterRequest
-from pyrit.backend.models.initializers import RegisterInitializerRequest
 from pyrit.backend.models.scores import ManualScoreRequest
-from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.models.techniques import CreateTechniqueRequest
 
 

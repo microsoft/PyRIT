@@ -462,6 +462,7 @@ known-first-party = ["pyrit"]
 # subclasses, but not models whose base is an intermediate PyRIT class, so we
 # enumerate those bases here to keep their field imports runtime-evaluated.
 runtime-evaluated-base-classes = [
+    "pyrit.models.StrategyResult",
     "pyrit.models.results.strategy_result.StrategyResult",
 ]
 

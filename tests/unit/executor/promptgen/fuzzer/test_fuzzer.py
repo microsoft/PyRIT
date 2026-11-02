@@ -781,7 +781,7 @@ def test_create_normalizer_requests_raises_when_seed_group_message_none():
     """Test that _create_normalizer_requests raises ValueError when seed_group.next_message is None."""
     from unittest.mock import PropertyMock
 
-    from pyrit.executor.promptgen.fuzzer.fuzzer import FuzzerGenerator
+    from pyrit.executor.promptgen.fuzzer import FuzzerGenerator
 
     generator = FuzzerGenerator.__new__(FuzzerGenerator)
     generator._request_converters = []

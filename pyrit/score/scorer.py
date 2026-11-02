@@ -11,7 +11,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, final, overload
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions import PyritException, execution_context, get_execution_context
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -34,9 +34,8 @@ from pyrit.models import (
     ScoreType,
     ScoringExpectation,
 )
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, CapabilityName, TargetRequirements
 from pyrit.prompt_target.batch_helper import batch_task_async
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
     _collect_scores,
@@ -223,7 +222,7 @@ class Scorer(Identifiable, abc.ABC):
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="Scorer")
         if any(

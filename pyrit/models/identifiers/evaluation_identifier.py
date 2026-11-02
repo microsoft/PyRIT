@@ -49,7 +49,7 @@ from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
 
 if TYPE_CHECKING:
-    from pyrit.executor.attack.core.attack_strategy import AttackStrategy
+    from pyrit.executor.attack import AttackStrategy
 
 # ``AttackIdentifier`` is imported for the eval-config deriver's type graph walk.
 _ = AttackIdentifier

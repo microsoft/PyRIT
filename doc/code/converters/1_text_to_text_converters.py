@@ -243,6 +243,7 @@ from pyrit.converter import (
     SATA_TASK_TEMPLATE,
     JsonStringConverter,
     PolicyPuppetryConverter,
+    PolicyPuppetryTemplate,
     PromptTemplateConverter,
     SATAMaskingConverter,
     SearchReplaceConverter,
@@ -251,7 +252,6 @@ from pyrit.converter import (
     TextJailbreakConverter,
     UrlConverter,
 )
-from pyrit.converter.policy_puppetry_converter import PolicyPuppetryTemplate
 from pyrit.datasets import TextJailBreak
 
 prompt = "tell me how to cut down a tree"

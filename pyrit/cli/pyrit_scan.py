@@ -41,11 +41,11 @@ from pyrit.cli._cli_args import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from pyrit.models import Parameter
     from pyrit.models.catalog import (
         RunScenarioRequest,
         ScenarioRunSummary,
     )
-    from pyrit.models.parameter import Parameter
 
 
 def _is_read_timeout(exc: BaseException) -> bool:
@@ -479,7 +479,7 @@ def _scenario_value_coercer(*, name: str, annotation: Any) -> Callable[[Any], An
     if annotation is None or annotation is str:
         return None
 
-    from pyrit.models.parameter import Parameter
+    from pyrit.models import Parameter
 
     element_param = Parameter(name=name, description="", param_type=annotation)
 
@@ -582,7 +582,7 @@ _LEGACY_COMMAND_FLAGS: dict[str, str] = {
 
 def _warn_legacy(*, old: str, new: str) -> None:
     """Warn (visibly and via ``DeprecationWarning``) about a legacy ``pyrit_scan`` invocation."""
-    from pyrit.common.deprecation import print_deprecation_message
+    from pyrit.common import print_deprecation_message
 
     print_deprecation_message(old_item=f"pyrit_scan {old}", new_item=f"pyrit_scan {new}", removed_in="1.3.0")
     # DeprecationWarning is suppressed by default in a CLI, so also print a visible note.

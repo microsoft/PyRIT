@@ -19,7 +19,7 @@ from pyrit.message_normalizer.message_normalizer import (
 from pyrit.models import ChatMessage, Message, MessagePiece
 
 if TYPE_CHECKING:
-    from pyrit.models.literals import ChatMessageRole
+    from pyrit.models import ChatMessageRole
 
 
 class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNormalizer):

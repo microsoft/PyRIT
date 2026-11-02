@@ -13,14 +13,20 @@ from sqlalchemy import inspect, or_, select, text
 from sqlalchemy.dialects import mssql
 from sqlalchemy.orm import Query, Session
 
-from pyrit.common.singleton import Singleton
-from pyrit.converter.base64_converter import Base64Converter
-from pyrit.memory import AzureSQLMemory, EmbeddingDataEntry, MemoryInterface, PromptMemoryEntry
-from pyrit.memory.memory_interface import AttackResultKeysetCursor, MessagePieceKeysetCursor, _AttackResultQuery
+from pyrit.common import Singleton
+from pyrit.converter import Base64Converter
+from pyrit.memory import (
+    AttackResultKeysetCursor,
+    AzureSQLMemory,
+    EmbeddingDataEntry,
+    MemoryInterface,
+    PromptMemoryEntry,
+    set_message_piece_sha256_async,
+)
+from pyrit.memory.memory_interface import MessagePieceKeysetCursor, _AttackResultQuery
 from pyrit.memory.memory_models import ScenarioResultEntry
-from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import Conversation, MessagePiece
-from pyrit.prompt_target.text_target import TextTarget
+from pyrit.prompt_target import TextTarget
 from unit.mocks import get_azure_sql_memory_async, get_sample_conversation_entries
 
 if TYPE_CHECKING:
@@ -805,7 +811,7 @@ def test_get_condition_json_property_match_sql_text(
 
 def test_get_condition_json_array_match_all_mode_joins_with_and(memory_interface: AzureSQLMemory):
     """match_mode='all' (default) produces per-element EXISTS clauses joined by AND."""
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     condition = memory_interface._get_condition_json_array_match(
         json_column=AttackResultEntry.atomic_attack_identifier,
@@ -826,7 +832,7 @@ def test_get_condition_json_array_match_any_mode_joins_with_or(memory_interface:
     The outer parens are essential: without them, operator precedence would bind the outer
     ``ISJSON(...) = 1 AND`` tighter than the inner ``OR``, corrupting the predicate.
     """
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     condition = memory_interface._get_condition_json_array_match(
         json_column=AttackResultEntry.atomic_attack_identifier,
@@ -849,7 +855,7 @@ def test_get_condition_json_array_match_any_mode_preserves_empty_absence_overloa
     """match_mode is ignored when array_to_match is empty — always returns the 'no converters' predicate."""
     import re
 
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     def _normalize(condition) -> str:
         # _uid() generates a random per-call suffix on param names; strip it for equality.

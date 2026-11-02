@@ -35,9 +35,16 @@ from pyrit.models import (
     AttackResultSelection,
     AttackSeedGroup,
     BoundedDatasetSize,
+    ComponentType,
+    DatasetFetchPolicy,
     DatasetLimitInput,
     DatasetLimitState,
     IndeterminateDatasetSize,
+    Parameter,
+    RegistryReference,
+    ScenarioDatasetOptions,
+    ScenarioDatasetRequest,
+    ScenarioDatasetSettings,
     ScenarioDatasetSizeCap,
     ScenarioDatasetSizeEstimate,
     ScenarioDatasetSummary,
@@ -56,15 +63,7 @@ from pyrit.models import (
     ScenarioRunState,
     config_hash,
 )
-from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
-from pyrit.models.scenario_dataset import (
-    DatasetFetchPolicy,
-    ScenarioDatasetOptions,
-    ScenarioDatasetRequest,
-    ScenarioDatasetSettings,
-)
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -171,7 +170,7 @@ class Scenario(ABC):
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="Scenario")
 
@@ -226,7 +225,7 @@ class Scenario(ABC):
             The scenario description is automatically extracted from the class's docstring (__doc__)
             with whitespace normalized for display.
         """
-        from pyrit.registry.registry_metadata import RegistryMetadata
+        from pyrit.registry import RegistryMetadata
 
         description = RegistryMetadata.description_from_docstring(self.__class__)
 

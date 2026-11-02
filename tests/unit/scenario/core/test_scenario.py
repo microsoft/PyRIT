@@ -16,8 +16,7 @@ from unit.mocks import MockPromptTarget, make_scenario_identifier, make_scenario
 
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.datasets import SeedDatasetProvider
-from pyrit.executor.attack import AttackStrategy, PromptSendingAttack, RedTeamingAttack
-from pyrit.executor.attack.core import AttackExecutorResult
+from pyrit.executor.attack import AttackExecutorResult, AttackStrategy, PromptSendingAttack, RedTeamingAttack
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
@@ -38,6 +37,8 @@ from pyrit.models import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import (
+    AttackTechnique,
+    AttackTechniqueFactory,
     DatasetAttackConfiguration,
     DatasetConfiguration,
     DatasetFetchPolicy,
@@ -49,12 +50,15 @@ from pyrit.scenario import (
     TechniqueRequirements,
 )
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack, build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.score import Scorer, SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
-from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
+from pyrit.score import (
+    Scorer,
+    SubStringScorer,
+    TrueFalseAggregatorFunc,
+    TrueFalseCompositeScorer,
+    TrueFalseScoreAggregator,
+)
 
 # Reusable test scorer identifier
 _TEST_SCORER_ID = ComponentIdentifier(
@@ -884,7 +888,7 @@ class TestScenarioInitialization2:
 
     def test_scenario_base_target_requirements_is_empty(self):
         """Base Scenario declares an empty TargetRequirements so it accepts any target by default."""
-        from pyrit.prompt_target.common.target_requirements import TargetRequirements
+        from pyrit.prompt_target import TargetRequirements
 
         assert isinstance(Scenario.TARGET_REQUIREMENTS, TargetRequirements)
         assert Scenario.TARGET_REQUIREMENTS.required == frozenset()
@@ -1673,7 +1677,7 @@ class TestScenarioBaselineUniformObjectives:
         mock_objective_target,
     ):
         from pyrit.models import SeedGroup, SeedObjective
-        from pyrit.scenario.core.attack_technique import AttackTechnique
+        from pyrit.scenario import AttackTechnique
 
         seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
         config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
@@ -1742,7 +1746,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
 
     class _StrategyScenario(ConcreteScenarioWithTrueFalseScorer):
         async def _build_atomic_attacks_async(self, *, context):
-            from pyrit.scenario.core.attack_technique import AttackTechnique
+            from pyrit.scenario import AttackTechnique
 
             attacks = []
             if context.include_baseline:
@@ -1765,7 +1769,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
 
     class _PerObjectiveScenario(ConcreteScenarioWithTrueFalseScorer):
         async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
-            from pyrit.scenario.core.attack_technique import AttackTechnique
+            from pyrit.scenario import AttackTechnique
 
             attacks: list[AtomicAttack] = []
             if context.include_baseline:

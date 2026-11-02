@@ -12,21 +12,21 @@ from unit.mocks import get_mock_scorer_identifier
 
 from pyrit.models import AnswerMatches, ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score import (
+    AudioFloatScaleScorer,
+    AudioTrueFalseScorer,
     DecodingScorer,
+    MessageFloatScaleScorer,
     MessageScorer,
+    MessageTrueFalseScorer,
     QuestionAnswerScorer,
+    ScorerPromptValidator,
     SystemPromptExtractionScorer,
     create_conversation_scorer,
 )
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
-from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
-from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
-from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 if TYPE_CHECKING:
-    from pyrit.score.scorer import Scorer
+    from pyrit.score import Scorer
 
 
 class MockTextTrueFalseScorer(MessageTrueFalseScorer):

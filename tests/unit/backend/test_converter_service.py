@@ -22,12 +22,12 @@ from pydantic import ValidationError
 
 from pyrit import converter
 from pyrit.backend.main import app
-from pyrit.backend.models.converters import (
+from pyrit.backend.models import (
     ConverterPreviewRequest,
     CreateConverterRequest,
 )
 from pyrit.backend.routes import converters as converter_routes
-from pyrit.backend.services.converter_service import (
+from pyrit.backend.services import (
     ConverterService,
     get_converter_service,
 )
@@ -44,13 +44,13 @@ from pyrit.converter import (
     SuffixAppendConverter,
     TokenSelectionStrategy,
     TranslationConverter,
+    get_converter_modalities,
 )
-from pyrit.converter.converter import get_converter_modalities
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.registry.components import ConverterRegistry, TargetRegistry
+from pyrit.registry import ConverterRegistry, TargetRegistry
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
@@ -2101,7 +2101,7 @@ def _try_instantiate_converter(converter_name: str):
             kwargs[pname] = Base64Converter()
         # TextSelectionStrategy — use a real concrete technique
         elif "TextSelectionStrategy" in ann_str:
-            from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy
+            from pyrit.converter import AllWordsSelectionStrategy
 
             kwargs[pname] = AllWordsSelectionStrategy()
         # Tokenizer protocol — use a representative vocab object
@@ -2109,7 +2109,7 @@ def _try_instantiate_converter(converter_name: str):
             kwargs[pname] = _MockTokenizerWithVocab()
         # TextJailBreak — use string template
         elif "TextJailBreak" in ann_str:
-            from pyrit.datasets.jailbreak.text_jailbreak import TextJailBreak
+            from pyrit.datasets import TextJailBreak
 
             kwargs[pname] = TextJailBreak(string_template="Test {{ prompt }}")
         # Path — use a temp JPEG file

@@ -11,15 +11,14 @@ from pyrit.message_normalizer import (
     JsonSchemaNormalizer,
     MessageListNormalizer,
 )
-from pyrit.models import Message, MessagePiece
-from pyrit.models.literals import ChatMessageRole
-from pyrit.prompt_target.common.target_capabilities import (
+from pyrit.models import ChatMessageRole, Message, MessagePiece
+from pyrit.prompt_target import (
     CapabilityHandlingPolicy,
     CapabilityName,
     TargetCapabilities,
+    TargetConfiguration,
     UnsupportedCapabilityBehavior,
 )
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 @pytest.fixture

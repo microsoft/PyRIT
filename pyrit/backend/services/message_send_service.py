@@ -21,7 +21,7 @@ from typing import Any
 from pydantic import PydanticUserError
 
 from pyrit.backend.mappers import request_piece_to_pyrit_message_piece, request_to_pyrit_message
-from pyrit.backend.models.attacks import AddMessageRequest, ConverterConfigurationRequest, MessagePieceRequest
+from pyrit.backend.models import AddMessageRequest, ConverterConfigurationRequest, MessagePieceRequest
 from pyrit.backend.models.message_sends import (
     MessageSendConversation,
     MessageSendFailureStage,
@@ -42,8 +42,8 @@ from pyrit.backend.services.manual_send_scheduler import (
 )
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
 from pyrit.backend.services.target_service import get_target_service
+from pyrit.common import print_deprecation_message
 from pyrit.common.attack_result_scope import attack_result_id_scope
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.executor.attack import attack_outcome_from_score
 from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.memory import CentralMemory, data_serializer_factory

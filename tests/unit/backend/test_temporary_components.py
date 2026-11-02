@@ -17,28 +17,34 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from pyrit.backend.authentication_policy import AuthenticationPolicy
-from pyrit.backend.mappers.target_mappers import target_object_to_instance
-from pyrit.backend.models.attacks import (
+from pyrit.backend.mappers import target_object_to_instance
+from pyrit.backend.models import (
+    ConverterPreviewRequest,
     CreateAttackRequest,
     CreateConversationRequest,
+    CreateConverterRequest,
+    CreateScorerRequest,
+    CreateTargetRequest,
     MessagePieceRequest,
     MessageRequest,
+)
+from pyrit.backend.models.attacks import (
     SaveConversationRequest,
 )
-from pyrit.backend.models.converters import ConverterPreviewRequest, CreateConverterRequest
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendState
-from pyrit.backend.models.scorers import CreateScorerRequest
-from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.routes import converters, scorers, targets
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import (
+    AttackService,
+    ConverterService,
+    TargetService,
+    get_converter_service,
+    get_target_service,
+)
 from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
-from pyrit.backend.services.converter_service import ConverterService, get_converter_service
 from pyrit.backend.services.manual_send_scheduler import ManualSendScheduler
 from pyrit.backend.services.message_send_service import MessageSendService, resolve_applied_converter_identifiers
 from pyrit.backend.services.scorer_service import ScorerService, get_scorer_service
-from pyrit.backend.services.target_service import TargetService, get_target_service
-from pyrit.common.apply_defaults import reset_default_values, set_default_value
-from pyrit.common.brick_contract import forward_init_parameters
+from pyrit.common import forward_init_parameters, reset_default_values, set_default_value
 from pyrit.converter import (
     CaesarConverter,
     Converter,

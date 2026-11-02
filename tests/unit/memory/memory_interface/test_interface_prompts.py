@@ -12,14 +12,13 @@ from uuid import uuid4
 import pytest
 from unit.mocks import get_mock_target
 
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.memory import MemoryInterface, PromptMemoryEntry
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.memory import MemoryInterface, PromptMemoryEntry, set_message_piece_sha256_async
 from pyrit.memory.memory_models import (
     ConverterIdentifierEntry,
     PromptConverterIdentifierEntry,
     TargetIdentifierEntry,
 )
-from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,

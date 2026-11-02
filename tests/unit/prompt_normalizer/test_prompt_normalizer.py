@@ -44,13 +44,12 @@ from pyrit.models import (
     SeedGroup,
     SeedPrompt,
 )
-from pyrit.prompt_normalizer import NormalizerRequest, PromptNormalizer
-from pyrit.prompt_normalizer.converter_configuration import (
+from pyrit.prompt_normalizer import (
     ConverterConfiguration,
+    NormalizerRequest,
+    PromptNormalizer,
 )
-from pyrit.prompt_target import CapabilityName, PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetCapabilities, TargetConfiguration
 
 
 @pytest.fixture

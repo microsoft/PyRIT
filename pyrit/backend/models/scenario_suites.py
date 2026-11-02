@@ -8,8 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from pyrit.models.catalog.scenario_preset import PresetIssue
-from pyrit.models.catalog.scenario_suite import ScenarioSuite
+from pyrit.models import PresetIssue, ScenarioSuite
 
 __all__ = [
     "ScenarioSuiteEntryStatus",

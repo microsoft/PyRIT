@@ -11,14 +11,14 @@ from uuid import uuid4
 
 import pandas as pd
 
-from pyrit.common.utils import verify_and_resolve_path
+from pyrit.common import verify_and_resolve_path
 from pyrit.models import Message, MessagePiece, PromptDataType
 from pyrit.score.scorer_evaluation.metrics_type import MetricsType
 
 if TYPE_CHECKING:
     from collections.abc import Hashable
 
-    from pyrit.models.harm_definition import HarmDefinition
+    from pyrit.models import HarmDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,7 @@ class HumanLabeledDataset:
             return None
 
         if self._harm_definition_obj is None:
-            from pyrit.models.harm_definition import HarmDefinition
+            from pyrit.models import HarmDefinition
 
             self._harm_definition_obj = HarmDefinition.from_yaml(self.harm_definition)
 

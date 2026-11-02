@@ -9,9 +9,9 @@ import pytest
 from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier
 from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
-from pyrit.score import FloatScaleScorer
-from pyrit.score.scorer_evaluation.scorer_evaluator import HarmScorerEvaluator
-from pyrit.score.scorer_evaluation.scorer_metrics import (
+from pyrit.score import (
+    FloatScaleScorer,
+    HarmScorerEvaluator,
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
 )
@@ -90,7 +90,7 @@ def test_init_negative_indent_raises():
 
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
 async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     identifier = _make_scorer_identifier(class_name="MyScorer")
@@ -112,7 +112,7 @@ async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, c
 
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
 async def test_write_async_objective_omits_optional_fields(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
@@ -133,7 +133,7 @@ async def test_write_async_objective_omits_optional_fields(mock_find, mock_eval_
 
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
 async def test_write_async_objective_no_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="xyz")

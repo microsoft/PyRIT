@@ -23,8 +23,8 @@ from sqlalchemy import select, update
 import pyrit
 import pyrit.backend.services.pagination as backend_pagination
 import pyrit.common.pagination as common_pagination
-from pyrit.backend.mappers.target_mappers import target_object_to_instance
-from pyrit.backend.models.attacks import (
+from pyrit.backend.mappers import target_object_to_instance
+from pyrit.backend.models import (
     AddMessageRequest,
     AttackSummary,
     ConversationMessagesResponse,
@@ -33,14 +33,18 @@ from pyrit.backend.models.attacks import (
     MessagePieceRequest,
     MessageRequest,
     PrependedMessageRequest,
-    SaveConversationRequest,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
 )
-from pyrit.backend.services.attack_service import (
-    AttackObjectiveConflictError,
+from pyrit.backend.models.attacks import (
+    SaveConversationRequest,
+)
+from pyrit.backend.services import (
     AttackService,
     get_attack_service,
+)
+from pyrit.backend.services.attack_service import (
+    AttackObjectiveConflictError,
 )
 from pyrit.backend.services.manual_send_scheduler import (
     ManualSendConflictError,
@@ -55,8 +59,8 @@ from pyrit.backend.services.pagination import (
     normalize_label_filters,
 )
 from pyrit.common.utils import to_sha256
-from pyrit.memory import CentralMemory, SQLiteMemory
-from pyrit.memory.memory_models import AttackResultEntry, ConversationEntry, OperationEntry
+from pyrit.memory import AttackResultEntry, CentralMemory, SQLiteMemory
+from pyrit.memory.memory_models import ConversationEntry, OperationEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -67,6 +71,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Conversation,
     ConversationReference,
+    ConversationStats,
     ConversationType,
     Message,
     MessagePiece,
@@ -76,7 +81,6 @@ from pyrit.models import (
     Score,
     TargetIdentifier,
 )
-from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_normalizer import PromptNormalizer
 from unit.async_utils import TEST_WATCHDOG_SECONDS, settle_tasks_async, wait_for_event_async
 from unit.backend.mocks import _make_matching_target_mock, make_attack_result, make_mock_memory
@@ -2927,7 +2931,7 @@ class TestCreateRelatedConversation:
 
     async def test_returns_none_when_attack_not_found(self, attack_service, mock_memory):
         """Should return None when the attack doesn't exist."""
-        from pyrit.backend.models.attacks import CreateConversationRequest
+        from pyrit.backend.models import CreateConversationRequest
 
         mock_memory.get_attack_results_async.return_value = []
 
@@ -2940,7 +2944,7 @@ class TestCreateRelatedConversation:
 
     async def test_creates_conversation_and_adds_to_related(self, attack_service, mock_memory):
         """Should create a new conversation and add it to pruned_conversation_ids."""
-        from pyrit.backend.models.attacks import CreateConversationRequest
+        from pyrit.backend.models import CreateConversationRequest
 
         ar = make_attack_result(conversation_id="attack-1")
         mock_memory.get_attack_results_async.return_value = [ar]
@@ -2987,7 +2991,7 @@ class TestCreateRelatedConversation:
 
     async def test_rejects_source_conversation_from_different_attack(self, attack_service, mock_memory):
         """Should raise ValueError when source_conversation_id doesn't belong to the attack."""
-        from pyrit.backend.models.attacks import CreateConversationRequest
+        from pyrit.backend.models import CreateConversationRequest
 
         ar = make_attack_result(conversation_id="attack-1")
         mock_memory.get_attack_results_async.return_value = [ar]
@@ -3168,7 +3172,7 @@ class TestAddMessageTargetConversation:
 
     async def test_stores_message_in_target_conversation(self, attack_service, mock_memory):
         """When target_conversation_id is set, messages should go to that conversation."""
-        from pyrit.backend.models.attacks import AttackSummary, ConversationMessagesResponse
+        from pyrit.backend.models import AttackSummary, ConversationMessagesResponse
         from pyrit.models import ConversationReference, ConversationType
 
         ar = make_attack_result(conversation_id="attack-1")
@@ -3253,7 +3257,7 @@ class TestConversationCount:
 
     async def test_create_conversation_increments_count(self, attack_service, mock_memory):
         """Creating a related conversation should add to pruned_conversation_ids."""
-        from pyrit.backend.models.attacks import CreateConversationRequest
+        from pyrit.backend.models import CreateConversationRequest
 
         ar = make_attack_result(conversation_id="attack-1")
         mock_memory.get_attack_results_async.return_value = [ar]
@@ -3271,7 +3275,7 @@ class TestConversationCount:
 
     async def test_create_second_conversation_preserves_first(self, attack_service, mock_memory):
         """Creating a second related conversation should keep the first one."""
-        from pyrit.backend.models.attacks import CreateConversationRequest
+        from pyrit.backend.models import CreateConversationRequest
         from pyrit.models import ConversationReference, ConversationType
 
         ar = make_attack_result(conversation_id="attack-1")
@@ -3393,7 +3397,7 @@ class TestAttackServiceAdditionalCoverage:
         has_target: bool,
     ) -> None:
         """Prepare the history without committing it before the atomic branch insertion."""
-        from pyrit.backend.models.attacks import CreateConversationRequest
+        from pyrit.backend.models import CreateConversationRequest
         from pyrit.models import Conversation
 
         ar = make_attack_result(conversation_id="attack-1", has_target=has_target)

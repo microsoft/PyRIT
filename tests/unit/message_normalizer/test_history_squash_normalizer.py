@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from pyrit.message_normalizer import HistorySquashNormalizer, MessageStringNormalizer
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
-from pyrit.models.literals import ChatMessageRole
+from pyrit.models import JSON_SCHEMA_METADATA_KEY, ChatMessageRole, Message, MessagePiece
 
 
 def _make_message(role: ChatMessageRole, content: str) -> Message:

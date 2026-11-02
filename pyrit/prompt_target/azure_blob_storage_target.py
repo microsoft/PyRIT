@@ -12,8 +12,7 @@ from azure.identity.aio import DefaultAzureCredential
 from azure.storage.blob import ContentSettings
 from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
-from pyrit.common import default_values
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import default_values, print_deprecation_message
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities

@@ -12,12 +12,14 @@ from typing import ClassVar
 
 import pytest
 
-from pyrit.models.identifiers import (
+from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
+    ChildEvalRule,
     ComponentIdentifier,
+    EvaluationIdentifier,
     compute_eval_hash,
 )
-from pyrit.models.identifiers.evaluation_identifier import ChildEvalRule, EvaluationIdentifier, _build_eval_dict
+from pyrit.models.identifiers.evaluation_identifier import _build_eval_dict
 
 # ---------------------------------------------------------------------------
 # Concrete subclass for testing the ABC
@@ -571,7 +573,7 @@ class TestInnerChildName:
     def test_scorer_eval_hash_matches_with_and_without_round_robin(self):
         """ScorerEvaluationIdentifier produces the same eval_hash whether
         the scorer uses a direct target or a RoundRobinTarget wrapping it."""
-        from pyrit.models.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+        from pyrit.models import ScorerEvaluationIdentifier
 
         inner_target = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -634,9 +636,11 @@ class TestComputeInnerAttackEvalHash:
 
     def test_matches_manual_two_step_composition(self):
         """Helper equals the executor recipe (AtomicAttackIdentifier.build + AtomicAttackEvaluationIdentifier)."""
-        from pyrit.models.identifiers import (
+        from pyrit.models import (
             AtomicAttackEvaluationIdentifier,
             AtomicAttackIdentifier,
+        )
+        from pyrit.models.identifiers import (
             compute_inner_attack_eval_hash,
         )
 
@@ -673,9 +677,9 @@ class TestComputeInnerAttackEvalHash:
     def test_matches_persisted_row_eval_hash(self):
         """Whatever the helper returns, persisting an attack result with the same
         identifier must yield an entry with the same eval_hash."""
-        from pyrit.memory.memory_models import AttackResultEntry
-        from pyrit.models import AttackResult
-        from pyrit.models.identifiers import AtomicAttackIdentifier, compute_inner_attack_eval_hash
+        from pyrit.memory import AttackResultEntry
+        from pyrit.models import AtomicAttackIdentifier, AttackResult
+        from pyrit.models.identifiers import compute_inner_attack_eval_hash
 
         inner_id = ComponentIdentifier(
             class_name="MyAttack",
@@ -823,7 +827,7 @@ class TestObjectiveTargetEvaluationIdentifier:
 
     def test_different_endpoints_same_eval_hash(self):
         """Same model name + temperature + top_p on different endpoints → same eval hash."""
-        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+        from pyrit.models import ObjectiveTargetEvaluationIdentifier
 
         target_east = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -854,7 +858,7 @@ class TestObjectiveTargetEvaluationIdentifier:
 
     def test_different_temperature_different_eval_hash(self):
         """Behavioral params (temperature) DO contribute to the eval hash."""
-        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+        from pyrit.models import ObjectiveTargetEvaluationIdentifier
 
         target_cold = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -873,7 +877,7 @@ class TestObjectiveTargetEvaluationIdentifier:
 
     def test_model_name_fallback_to_model_name(self):
         """When underlying_model_name is missing, model_name is used as fallback."""
-        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+        from pyrit.models import ObjectiveTargetEvaluationIdentifier
 
         target_underlying = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -892,7 +896,7 @@ class TestObjectiveTargetEvaluationIdentifier:
 
     def test_stored_eval_hash_is_ignored_and_recomputed(self):
         """A pre-stamped eval_hash is ignored; the value is always recomputed from params."""
-        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+        from pyrit.models import ObjectiveTargetEvaluationIdentifier
 
         stored = "objective_target_stored_hash" + "0" * 36
         cid = ComponentIdentifier(
@@ -922,7 +926,8 @@ class TestDeriveEvalConfig:
 
     def test_target_root_projection_and_unwrap(self):
         """TargetIdentifier root yields the behavioral own_rule and a root unwrap slot."""
-        from pyrit.models.identifiers import TargetIdentifier, derive_eval_config
+        from pyrit.models import TargetIdentifier
+        from pyrit.models.identifiers import derive_eval_config
 
         child_rules, own_rule, root_unwrap = derive_eval_config(TargetIdentifier)
 
@@ -935,7 +940,8 @@ class TestDeriveEvalConfig:
 
     def test_scorer_root_has_no_own_rule(self):
         """ScorerIdentifier has no excluded params, so its root needs no own_rule."""
-        from pyrit.models.identifiers import ScorerIdentifier, derive_eval_config
+        from pyrit.models import ScorerIdentifier
+        from pyrit.models.identifiers import derive_eval_config
 
         child_rules, own_rule, root_unwrap = derive_eval_config(ScorerIdentifier)
 
@@ -947,7 +953,8 @@ class TestDeriveEvalConfig:
 
     def test_objective_target_slot_restricted_to_temperature(self):
         """AttackIdentifier.objective_target restricts the target subtree to temperature."""
-        from pyrit.models.identifiers import AtomicAttackIdentifier, derive_eval_config
+        from pyrit.models import AtomicAttackIdentifier
+        from pyrit.models.identifiers import derive_eval_config
 
         child_rules, _, _ = derive_eval_config(AtomicAttackIdentifier)
 
@@ -956,7 +963,8 @@ class TestDeriveEvalConfig:
 
     def test_excluded_children_not_listed_with_subtree(self):
         """Excluded slots get an exclude rule; neutral (default-include) slots are omitted."""
-        from pyrit.models.identifiers import AtomicAttackIdentifier, derive_eval_config
+        from pyrit.models import AtomicAttackIdentifier
+        from pyrit.models.identifiers import derive_eval_config
 
         child_rules, _, _ = derive_eval_config(AtomicAttackIdentifier)
 
@@ -972,8 +980,7 @@ class TestConverterTargetRestriction:
 
     def test_converter_target_endpoint_does_not_affect_attack_eval_hash(self):
         """Two attacks whose converter targets differ only by endpoint share an eval hash."""
-        from pyrit.models.identifiers import AtomicAttackIdentifier
-        from pyrit.models.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
+        from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier
 
         def _attack_with_converter_endpoint(endpoint: str) -> ComponentIdentifier:
             converter_target = ComponentIdentifier(
@@ -1006,7 +1013,7 @@ class TestObjectiveTargetRootUnwrap:
 
     def test_wrapper_root_eval_hash_matches_bare_inner(self):
         """RoundRobinTarget(gpt-4o) eval-hashes the same as bare gpt-4o as an objective target."""
-        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+        from pyrit.models import ObjectiveTargetEvaluationIdentifier
 
         bare = ComponentIdentifier(
             class_name="OpenAIChatTarget",

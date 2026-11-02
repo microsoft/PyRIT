@@ -18,11 +18,11 @@ from unit.async_utils import wait_for_completion_async, wait_for_event_async
 
 from pyrit.executor.attack import (
     AttackExecutor,
+    AttackExecutorResult,
     AttackParameters,
     AttackStrategy,
     SingleTurnAttackContext,
 )
-from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,

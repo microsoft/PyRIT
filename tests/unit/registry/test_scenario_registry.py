@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.models import DatasetSelectionMode, ScenarioDatasetOptions, ScenarioDatasetSettings
-from pyrit.registry.components.scenario_registry import ScenarioRegistry
+from pyrit.registry import ScenarioRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
     BaselineAttackPolicy,

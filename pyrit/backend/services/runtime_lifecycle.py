@@ -26,7 +26,7 @@ from pyrit.backend.services.service_lifecycle import (
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.memory import CentralMemory
 from pyrit.registry import InitializerRegistry, ScenarioPresetRegistry, ScenarioSuiteRegistry
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import validate_reinitialization_memory
 

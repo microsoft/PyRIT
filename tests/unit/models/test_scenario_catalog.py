@@ -24,7 +24,7 @@ from pyrit.models import (
     ScenarioRunSizeEstimateStatus,
     ScenarioRunSizeFactor,
 )
-from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.models.catalog import RunScenarioRequest
 
 
 @pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])

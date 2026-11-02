@@ -7,8 +7,8 @@
 import math
 import re
 
-from pyrit.analytics.text_matching import ApproximateTextMatching
-from pyrit.memory.central_memory import CentralMemory
+from pyrit.analytics import ApproximateTextMatching
+from pyrit.memory import CentralMemory
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator

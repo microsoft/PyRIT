@@ -16,8 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from pyrit.models.catalog.scenario import ScenarioRunSizeEstimate
-from pyrit.models.catalog.scenario_preset import PresetIssue, ScenarioPreset
+from pyrit.models import PresetIssue, ScenarioPreset, ScenarioRunSizeEstimate
 
 __all__ = [
     "PresetIssue",

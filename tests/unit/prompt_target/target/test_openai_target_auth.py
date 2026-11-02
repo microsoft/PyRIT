@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.auth import ensure_async_token_provider
-from pyrit.common.auth_mode import AuthMode
-from pyrit.prompt_target.openai.openai_target import OpenAITarget
+from pyrit.common import AuthMode
+from pyrit.prompt_target import OpenAITarget
 
 
 class _ConcreteOpenAITarget(OpenAITarget):

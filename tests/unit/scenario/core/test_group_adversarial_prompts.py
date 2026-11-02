@@ -15,9 +15,10 @@ from pyrit.executor.attack import (
     CrescendoAttack,
     PromptSendingAttack,
     RedTeamingAttack,
+    SequentialAttack,
+    SequentialChildAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.executor.attack.compound import SequentialAttack, SequentialChildAttack
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AdversarialPrompts,
@@ -34,11 +35,14 @@ from pyrit.models import (
     SeedPrompt,
     get_common_json_schema,
 )
-from pyrit.scenario import AtomicAttack
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario import (
+    AtomicAttack,
+    AttackTechnique,
+    AttackTechniqueFactory,
+    IncompatibleTechniqueError,
+    IncompatibleTechniquePolicy,
+)
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
-from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, IncompatibleTechniquePolicy
 from pyrit.score import SubStringScorer
 from pyrit.setup.initializers.techniques.core import get_technique_factories
 

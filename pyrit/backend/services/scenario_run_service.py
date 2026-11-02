@@ -25,16 +25,18 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import TypeAdapter, ValidationError
 
-from pyrit.analytics.outcome_statistics import compute_outcome_statistics, success_percentage
+from pyrit.analytics import (
+    compute_outcome_statistics,
+    count_execution_units,
+)
+from pyrit.analytics.outcome_statistics import success_percentage
 from pyrit.analytics.scenario_statistics import (
     ScenarioAttempt,
     ScenarioExecutionUnit,
-    count_execution_units,
     resolve_execution_unit,
     select_execution_attack_result_ids,
 )
-from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
-from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.backend.models import PaginationInfo, ScenarioRunListResponse, filter_sensitive_fields
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -49,13 +51,15 @@ from pyrit.backend.services.scenario_progress_read_model import (
     ScenarioProgressSnapshot,
 )
 from pyrit.common.async_compatibility import run_legacy_sync_async
-from pyrit.memory import AttackResultKeysetCursor, CentralMemory, SQLiteMemory
-from pyrit.memory.memory_interface import (
+from pyrit.memory import (
+    AttackResultKeysetCursor,
+    CentralMemory,
     MemoryInterface,
     ScenarioAttemptSeedSummary,
     ScenarioHistoryAggregate,
     ScenarioHistoryKeysetCursor,
     ScenarioHistoryRunRecord,
+    SQLiteMemory,
 )
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
@@ -77,21 +81,23 @@ from pyrit.models import (
     ScenarioQueueEntry,
     ScenarioQueueSnapshot,
     ScenarioResult,
+    ScenarioRunListItem,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunProgress,
     ScenarioRunState,
+    ScenarioTechniqueSummary,
     TargetIdentifier,
 )
-from pyrit.models.catalog.scenario import (
+from pyrit.models.catalog import (
     AttackErrorSummary,
     AttackRetrySummary,
     RunScenarioRequest,
-    ScenarioOverloadSummary,
-    ScenarioRunListItem,
     ScenarioRunSummary,
+)
+from pyrit.models.catalog.scenario import (
+    ScenarioOverloadSummary,
     ScenarioTargetSummary,
-    ScenarioTechniqueSummary,
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
@@ -2349,7 +2355,7 @@ class ScenarioRunService:
         Returns:
             dict[str, ScenarioTechniqueSummary]: Technique metadata keyed by name.
         """
-        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+        from pyrit.registry import AttackTechniqueRegistry
 
         revision = AttackTechniqueRegistry.get_registry_singleton().catalog_revision
         if getattr(self, "_technique_metadata_revision", None) != revision:

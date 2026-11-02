@@ -208,6 +208,18 @@ from pyrit.common.net_utility import get_httpx_client
 
 Within the same package, import from the specific file to avoid circular imports.
 
+Use the shortest existing public package export, including for nested APIs:
+`from pyrit.executor.attack import AttackStrategy`, not
+`from pyrit.executor.attack.core.attack_strategy import AttackStrategy`.
+Do not add exports just to shorten an import or flatten separate executor APIs.
+
+The `check-public-imports` pre-commit hook reads `_LAZY_EXPORTS` statically and
+checks tracked Python files and notebook code cells, including deferred and
+`TYPE_CHECKING` imports. It follows chained re-exports without importing PyRIT.
+Imports within the package owning the public export, package initializers, and
+immutable Alembic revisions retain their implementation imports.
+Run it with `uv run python -m build_scripts.check_public_imports`.
+
 ### Typing Backports (`typing_extensions`)
 
 Import typing features from ``typing`` when they exist on every supported Python

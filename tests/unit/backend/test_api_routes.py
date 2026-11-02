@@ -20,14 +20,21 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import AuthenticatedUser
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageResponse,
     AttackListResponse,
     AttackSummary,
     ConversationMessagesResponse,
+    ConverterInstance,
+    ConverterInstanceListResponse,
+    ConverterPreviewResponse,
+    ConverterTypeResponse,
     CreateAttackResponse,
     MessagePieceView,
     MessageView,
+    PaginationInfo,
+    PreviewStep,
+    TargetListResponse,
     TargetResponseStatus,
 )
 from pyrit.backend.models.common import (
@@ -36,27 +43,19 @@ from pyrit.backend.models.common import (
     MAX_ITEMS,
     MAX_LABEL_KEY_LENGTH,
     MAX_LABEL_VALUE_LENGTH,
-    PaginationInfo,
-)
-from pyrit.backend.models.converters import (
-    ConverterInstance,
-    ConverterInstanceListResponse,
-    ConverterPreviewResponse,
-    ConverterTypeResponse,
-    PreviewStep,
 )
 from pyrit.backend.models.targets import (
-    TargetListResponse,
     TargetTypeResponse,
 )
 from pyrit.backend.routes import version as version_routes
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.routes.scores import _get_user_identifier
-from pyrit.backend.services.attack_service import AttackObjectiveConflictError, AttackService
+from pyrit.backend.services import AttackService
+from pyrit.backend.services.attack_service import AttackObjectiveConflictError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.memory import MemoryInterface
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
-from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.catalog import TargetInstance
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:

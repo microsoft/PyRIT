@@ -18,15 +18,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import pyrit.backend.services.scenario_progress_read_model as progress_module
-from pyrit.analytics.scenario_statistics import compute_scenario_statistics
-from pyrit.backend.models.attacks import UpdateAttackRequest
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.analytics import compute_scenario_statistics
+from pyrit.backend.models import UpdateAttackRequest
+from pyrit.backend.services import AttackService, ScenarioRunService
 from pyrit.backend.services.scenario_progress_read_model import (
     ScenarioPlanLookup,
     ScenarioProgressReadModel,
     ScenarioProgressSnapshot,
 )
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import (
     AttackScoringConfig,
@@ -35,8 +34,7 @@ from pyrit.executor.attack import (
     SequentialChildAttack,
 )
 from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure, AttackPreparationFailureKind
-from pyrit.memory import AttackResultKeysetCursor
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
@@ -57,11 +55,10 @@ from pyrit.models import (
     SeedObjective,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario import DatasetConfiguration
+from pyrit.scenario import AttackTechnique, DatasetConfiguration
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
-from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
-from pyrit.scenario.scenarios.adaptive.dispatcher import (
+from pyrit.scenario.scenarios.adaptive import (
     ADAPTIVE_ATTEMPT_LABEL,
     AdaptiveTechniqueDispatcher,
     TechniqueBundle,

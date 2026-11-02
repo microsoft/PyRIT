@@ -13,7 +13,7 @@ from pyrit.converter import (
     WordProportionSelectionStrategy,
 )
 from pyrit.models import Message, MessagePiece, PromptDataType
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget
 
 
 def test_random_translation_converter_raises_when_converter_target_is_none():

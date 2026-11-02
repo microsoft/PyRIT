@@ -12,7 +12,7 @@ from contextlib import nullcontext
 from dataclasses import replace
 from typing import TYPE_CHECKING, ClassVar, cast
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions import (
     ComponentRole,

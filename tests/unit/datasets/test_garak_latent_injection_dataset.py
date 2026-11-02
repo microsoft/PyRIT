@@ -14,7 +14,7 @@ import pytest
 
 from pyrit.models import Seed, SeedDataset
 from pyrit.scenario import DatasetSource
-from pyrit.scenario.scenarios.garak.latent_injection import LatentInjectionDatasetConfiguration
+from pyrit.scenario.scenarios.garak import LatentInjectionDatasetConfiguration
 
 _DATASET_DIR = Path(__file__).parent.parent.parent.parent / "pyrit" / "datasets" / "seed_datasets" / "local" / "garak"
 

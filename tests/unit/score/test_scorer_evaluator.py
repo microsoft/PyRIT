@@ -1029,7 +1029,7 @@ async def test_run_evaluation_async_combines_dataset_versions_with_duplicates(
     mock_evals_path, mock_from_csv, mock_harm_scorer, tmp_path
 ):
     """Test that run_evaluation_async concatenates all dataset versions including duplicates."""
-    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+    from pyrit.score import ScorerEvalDatasetFiles
 
     # Create mock CSV files
     csv1 = tmp_path / "harm" / "file1.csv"
@@ -1103,7 +1103,7 @@ async def test_run_evaluation_async_combines_mixed_dataset_versions(
     mock_evals_path, mock_from_csv, mock_harm_scorer, tmp_path
 ):
     """Test that run_evaluation_async concatenates mixed dataset versions in sorted file order."""
-    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+    from pyrit.score import ScorerEvalDatasetFiles
 
     # Create mock CSV files (named to control sort order)
     csv1 = tmp_path / "harm" / "a_file.csv"
@@ -1171,7 +1171,7 @@ async def test_run_evaluation_async_raises_on_mismatched_harm_definition_version
     mock_evals_path, mock_from_csv, mock_harm_scorer, tmp_path
 ):
     """Test that run_evaluation_async raises error when harm_definition_versions differ."""
-    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+    from pyrit.score import ScorerEvalDatasetFiles
 
     csv1 = tmp_path / "harm" / "file1.csv"
     csv2 = tmp_path / "harm" / "file2.csv"
@@ -1224,7 +1224,7 @@ async def test_run_evaluation_async_raises_when_harm_csv_missing_harm_definition
     mock_evals_path, mock_from_csv, mock_harm_scorer, tmp_path
 ):
     """Test that run_evaluation_async raises when harm CSVs have no harm_definition header."""
-    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+    from pyrit.score import ScorerEvalDatasetFiles
 
     csv1 = tmp_path / "harm" / "file1.csv"
     (tmp_path / "harm").mkdir(parents=True)

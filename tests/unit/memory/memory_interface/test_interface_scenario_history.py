@@ -14,8 +14,8 @@ from sqlalchemy import and_, select, text
 from unit.mocks import get_mock_target_identifier, make_scenario_result, run_memory_session_async
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import MemoryInterface, ScenarioHistoryKeysetCursor, SQLiteMemory
-from pyrit.memory.memory_models import AttackResultEntry, ScenarioResultEntry
+from pyrit.memory import AttackResultEntry, MemoryInterface, ScenarioHistoryKeysetCursor, SQLiteMemory
+from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,

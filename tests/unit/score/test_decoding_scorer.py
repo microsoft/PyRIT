@@ -17,8 +17,7 @@ from pyrit.executor.attack import (
     PrependedConversationConfig,
     PromptSendingAttack,
 )
-from pyrit.memory.central_memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import AttackOutcome, ChatMessageRole, Message, MessagePiece, RequestTraceContext
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import OpenAIResponseTarget

@@ -13,7 +13,7 @@ import pytest
 from pyrit.common.path import JAILBREAK_TEMPLATES_PATH
 from pyrit.converter import TextJailbreakConverter
 from pyrit.datasets import TextJailBreak
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
     ComponentIdentifier,
@@ -21,22 +21,21 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import TargetRegistry
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.registry.components.scenario_registry import ScenarioRegistry
-from pyrit.scenario import IncompatibleTechniqueError
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.scenario import AttackTechniqueFactory, IncompatibleTechniqueError
 from pyrit.scenario.core import BaselineAttackPolicy, DatasetAttackConfiguration
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario.scenarios.airt import (
+    Jailbreak,
+)
 from pyrit.scenario.scenarios.airt.jailbreak import (
     _DEFAULT_NUM_JAILBREAKS,
     _DEFAULT_TECHNIQUES,
     _JAILBREAK_SYSTEM_PROMPT,
     _JAILBREAK_TEMPLATES_METADATA_KEY,
     _PROMPT_SENDING,
-    Jailbreak,
     _build_jailbreak_technique,
 )
-from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
+from pyrit.score import TrueFalseInverterScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 # Synthetic many-shot examples — prevents reading the real JSON if a factory is constructed.
@@ -374,7 +373,7 @@ class TestJailbreakInitialization:
             assert scenario._resolved_jailbreaks == [subdir_name]
 
     async def test_init_raises_exception_when_no_datasets_available(self, mock_objective_target, mock_objective_scorer):
-        from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
+        from pyrit.scenario.core import DatasetConstraintError
 
         scenario = Jailbreak(objective_scorer=mock_objective_scorer)
         with patch(

@@ -14,7 +14,7 @@ from __future__ import annotations
 from enum import Enum, EnumMeta
 from typing import TYPE_CHECKING, Any, ClassVar, Self
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

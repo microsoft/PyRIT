@@ -12,18 +12,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import PydanticUserError
 
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
     CreateAttackRequest,
     CreateConversationRequest,
     MessagePieceRequest,
     MessageRequest,
-    SaveConversationRequest,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
 )
+from pyrit.backend.models.attacks import (
+    SaveConversationRequest,
+)
 from pyrit.backend.models.message_sends import MessageSendRequest
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import AttackService
 from pyrit.backend.services.chat_scoring_service import ChatScoringService
 from pyrit.backend.services.manual_send_scheduler import ManualSendScheduler
 from pyrit.backend.services.message_send_service import MessageSendService

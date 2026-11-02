@@ -20,7 +20,7 @@ from pyrit.models import (
 )
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer, MessageFloatScaleScorer
 from pyrit.score.message_scorer import MessageScorer
-from pyrit.score.observation.conversation_source import ConversationSource
+from pyrit.score.observation import ConversationSource
 from pyrit.score.observation.execution import _collect_observation, _ObservationEvidenceResolver
 from pyrit.score.observation.observation_source import ObservationSource
 from pyrit.score.scorer import Scorer

@@ -4,10 +4,7 @@
 
 import pytest
 
-from pyrit.models import AtomicAttackIdentifier, ComponentIdentifier
-from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
-from pyrit.models.seeds.seed_objective import SeedObjective
-from pyrit.models.seeds.seed_prompt import SeedPrompt
+from pyrit.models import AtomicAttackIdentifier, AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
 
 
 def _make_prompt(*, value="test prompt", sequence=0):
