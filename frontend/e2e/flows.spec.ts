@@ -204,13 +204,13 @@ async function activateTarget(
   page: Page,
   targetRegistryName: string,
 ): Promise<void> {
-  await page.getByTitle("Registry").click();
+  await page.getByRole("button", { name: "Registry", exact: true }).click();
   await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10_000 });
   const row = page.getByTestId(`target-row-${targetRegistryName}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
   await page.getByRole("combobox", { name: "Default objective target", exact: true })
     .selectOption(targetRegistryName);
-  await page.getByTitle("Technique.execute").click();
+  await page.getByRole("button", { name: "Attacks", exact: true }).click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5_000 });
 }
 
@@ -219,7 +219,7 @@ async function openAttackInHistory(
   page: Page,
   attackResultId: string,
 ): Promise<void> {
-  await page.getByTitle("History").click();
+  await page.getByRole("button", { name: "History", exact: true }).click();
   await expect(page.getByTestId("attacks-table")).toBeVisible({
     timeout: 10_000,
   });

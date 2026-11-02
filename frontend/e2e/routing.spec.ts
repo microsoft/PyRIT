@@ -296,11 +296,11 @@ test.describe("URL-driven routing", () => {
       )
       .toBe(true);
 
-    await page.getByTitle("History").click();
+    await page.getByRole("button", { name: "History", exact: true }).click();
     await expect(page).toHaveURL(/\/history\/attacks$/);
     await expect(page.getByTestId("attacks-table")).toBeVisible();
 
-    await page.getByTitle("Technique.execute").click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
     await expect(page).toHaveURL(/\/chat$/);
     await expect(page.getByRole("switch", { name: "Markdown" })).toBeChecked();
 

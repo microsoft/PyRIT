@@ -32,8 +32,8 @@ for new work; it does not change saved results.
 
 ## Chat
 
-Chat (`/chat`) is the manual conversation workspace. Select a target and write
-the messages yourself. You can attach media, transform content with converters,
+Select **Attacks** in the sidebar to open Chat (`/chat`), the manual conversation
+workspace. Select a target and write the messages yourself. You can attach media, transform content with converters,
 and branch or edit conversations to try another approach. Add an objective and
 select a chat scorer if you want automated assessment of responses.
 
@@ -163,6 +163,10 @@ for requirements and limits.
 ![Configuration page with backend setup controls](images/configuration.png)
 
 ## Preferences
+
+Use the icon at the top of the sidebar to show or hide navigation labels. This
+choice is saved for your account in this browser. On narrow screens, the same
+icon opens a navigation panel without reducing the workspace width.
 
 Use the sidebar's **Theme** menu to change the appearance. User preferences,
 such as default targets, are saved in this browser for the current account.
