@@ -886,6 +886,86 @@ describe("CreateTargetDialog", () => {
     });
   });
 
+  it("announces an invalid HTTP request and associates the error with its field", async () => {
+    const user = userEvent.setup();
+    const createTargetError = Object.assign(
+      new Error("Invalid HTTP request line"),
+      {
+        isAxiosError: true,
+        response: {
+          status: 400,
+          data: { detail: "Invalid HTTP request line" },
+        },
+      },
+    );
+    let rejectCreateTarget: (error: unknown) => void = () => undefined;
+    mockedTargetsApi.createTarget.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectCreateTarget = reject;
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("HTTPTarget");
+
+    const requestField = screen.getByLabelText(/Http Request/) as HTMLTextAreaElement;
+    fireEvent.change(requestField, { target: { value: "not an HTTP request" } });
+
+    const createButton = screen.getByRole("button", { name: "Create Target" });
+    await act(async () => createButton.focus());
+    await user.keyboard(" ");
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Target Type" })).toBeDisabled();
+      expect(requestField).toBeDisabled();
+    });
+    await act(async () => rejectCreateTarget(createTargetError));
+
+    await waitFor(() => {
+      const error = screen.getByRole("alert");
+      expect(requestField).toHaveFocus();
+      expect(requestField).toHaveAttribute("aria-invalid", "true");
+      expect(error).toHaveTextContent("Invalid HTTP request line");
+      expect(requestField.getAttribute("aria-describedby")?.split(/\s+/)).toContain(error.id);
+    });
+
+    expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+      type: "HTTPTarget",
+      params: { http_request: "not an HTTP request" },
+    });
+
+    fireEvent.change(requestField, {
+      target: { value: "POST /chat HTTP/1.1\nHost: example.com" },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(requestField).not.toHaveAttribute("aria-invalid", "true");
+    });
+
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(Object.assign(
+      new Error("Target service unavailable"),
+      {
+        isAxiosError: true,
+        response: {
+          status: 500,
+          data: { detail: "Target service unavailable" },
+        },
+      },
+    ));
+    await user.click(createButton);
+
+    await waitFor(() => {
+      const error = screen.getByRole("alert");
+      expect(error).toHaveTextContent("Target service unavailable");
+      expect(error).toHaveFocus();
+      expect(requestField).not.toHaveAttribute("aria-invalid", "true");
+    });
+  });
+
   it("should include API key in params when provided", async () => {
     const user = userEvent.setup();
     mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({

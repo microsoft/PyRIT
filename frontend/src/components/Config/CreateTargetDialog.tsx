@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   Dialog,
   DialogSurface,
@@ -269,6 +269,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const [parameterValues, setParameterValues] = useState<Record<string, ParameterFormValue>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [httpRequestError, setHttpRequestError] = useState<string | null>(null)
+  const errorMessageRef = useRef<HTMLDivElement>(null)
+  const httpRequestFieldRef = useRef<HTMLTextAreaElement>(null)
   const [fieldErrors, setFieldErrors] = useState<{
     targetType?: string
     endpoint?: string
@@ -276,6 +279,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     underlyingModel?: string
     apiKey?: string
   }>({})
+
+  useEffect(() => {
+    if (httpRequestError) {
+      httpRequestFieldRef.current?.focus()
+    } else if (error) {
+      errorMessageRef.current?.focus()
+    }
+  }, [error, httpRequestError])
 
   // --- RoundRobin-specific state ---
   // The list of targets available for selection (fetched once when dialog opens).
@@ -477,6 +488,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     )
   }
 
+  const handleParameterChange = (name: string, value: ParameterFormValue) => {
+    setParameterValues((current) => ({ ...current, [name]: value }))
+    if (name === 'http_request' && httpRequestError !== null) {
+      setHttpRequestError(null)
+      setError(null)
+    }
+  }
+
   const resetForm = () => {
     setTargetType('')
     setEndpoint('')
@@ -487,6 +506,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     setApiKey('')
     setParameterValues({})
     setError(null)
+    setHttpRequestError(null)
     setFieldErrors({})
     setSelectedInnerTargets([])
   }
@@ -567,6 +587,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
     setSubmitting(true)
     setError(null)
+    setHttpRequestError(null)
 
     try {
       const params: Record<string, unknown> = { ...(metadataParams.parameters ?? {}) }
@@ -601,7 +622,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     } catch (err) {
       // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
       // messages) rather than the generic axios "Request failed with status code 400".
-      setError(toApiError(err).detail)
+      const apiError = toApiError(err)
+      setError(apiError.detail)
+      setHttpRequestError(
+        targetType === 'HTTPTarget' && apiError.status === 400 ? apiError.detail : null,
+      )
     } finally {
       setSubmitting(false)
     }
@@ -618,10 +643,12 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               data-testid="create-target-form"
               onSubmit={(e) => { e.preventDefault(); handleSubmit() }}
             >
-              {error && (
-                <MessageBar intent="error">
-                  <MessageBarBody>{error}</MessageBarBody>
-                </MessageBar>
+              {error && !httpRequestError && (
+                <div ref={errorMessageRef} role="alert" tabIndex={-1}>
+                  <MessageBar intent="error">
+                    <MessageBarBody>{error}</MessageBarBody>
+                  </MessageBar>
+                </div>
               )}
 
               {typeMetadataStatus === 'loading' && (
@@ -648,6 +675,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 <Dropdown
                   aria-label="Target Type"
                   className={styles.fullWidthSelect}
+                  disabled={submitting}
                   listbox={{ className: styles.targetTypeListbox }}
                   placeholder="Select a target type"
                   positioning={{ matchTargetSize: 'width' }}
@@ -658,6 +686,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     if (!next) return
                     setTargetType(next)
                     setParameterValues({})
+                    if (httpRequestError !== null) {
+                      setHttpRequestError(null)
+                      setError(null)
+                    }
                     const nextEntry = targetTypeByName.get(next)
                     const nextSupportsIdentity = nextEntry
                       ? nextEntry.supported_auth_modes.includes('identity')
@@ -951,10 +983,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         extraHint={identityConflict
                           ? 'Ignored with Identity-based authentication.'
                           : undefined}
-                        onChange={(name, value) => setParameterValues((current) => ({
-                          ...current,
-                          [name]: value,
-                        }))}
+                        validationMessage={parameter.name === 'http_request' ? httpRequestError ?? undefined : undefined}
+                        controlRef={parameter.name === 'http_request' ? httpRequestFieldRef : undefined}
+                        onChange={handleParameterChange}
                       />
                     )
                   })}
@@ -966,10 +997,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       disabled={submitting}
                       label="GitHub Token"
                       testIdPrefix="target-param"
-                      onChange={(name, value) => setParameterValues((current) => ({
-                        ...current,
-                        [name]: value,
-                      }))}
+                      onChange={handleParameterChange}
                     />
                   )}
 
@@ -1044,6 +1072,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                               extraHint={identityConflict
                                 ? 'Ignored with Identity-based authentication.'
                                 : undefined}
+                              validationMessage={parameter.name === 'http_request' ? httpRequestError ?? undefined : undefined}
+                              controlRef={parameter.name === 'http_request' ? httpRequestFieldRef : undefined}
                               onChange={(name, value) => setParameterValues((current) => ({
                                 ...current,
                                 [name]: value,
