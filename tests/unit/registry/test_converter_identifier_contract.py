@@ -8,129 +8,62 @@ from __future__ import annotations
 import copy
 import enum
 import inspect
-import random
-import re
+import json
+import os
+import subprocess
+import sys
+from collections import Counter
+from datetime import UTC, datetime
 from functools import cache
-from itertools import product
-from pathlib import Path
-from types import UnionType
+from types import FunctionType, UnionType
 from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin
+from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
-from PIL import Image
 
 from pyrit.common import REQUIRED_VALUE
-from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
-from pyrit.converter import (
-    Base64Converter,
-    BinaryConverter,
-    CodeAttackConverter,
+from pyrit.converter import Base64Converter, PolicyPuppetryTemplate
+from pyrit.converter.text_selection_strategy import (
     IndexSelectionStrategy,
+    TextSelectionStrategy,
     WordIndexSelectionStrategy,
+    WordSelectionStrategy,
 )
-from pyrit.converter.text_selection_strategy import TextSelectionStrategy, WordSelectionStrategy
 from pyrit.datasets import TextJailBreak
-from pyrit.models import ComponentType, Identifiable, Parameter, SeedPrompt
+from pyrit.memory import CentralMemory
+from pyrit.models import ComponentType, Parameter, SeedPrompt
 from pyrit.registry.components import ConverterRegistry
 from unit.mocks import MockPromptTarget
+from unit.registry.converter_identifier_samples import (
+    ALLOWED_VALUES_NEED,
+    BASELINE_SETTINGS,
+    KEYWORD_SETTINGS,
+    KNOWN_GAPS,
+    NEUTRAL_SETTINGS,
+    SELECTION_STRATEGY_SETTINGS,
+    SETTINGS_A_MODE_REPLACES,
+    SETTINGS_THAT_NEED_ANOTHER,
+    SINGLE_VALUE_SETTINGS,
+    make_samples,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 
-def _reverse(text: str) -> str:
-    return text[::-1]
+_ROOT_SEED = 7
+_COLOR_VALUES = 256
+_PROCESS_TIMEOUT_SECONDS = 600
 
-
-def _token() -> str:
-    return "token"
-
-
-_SAME_QUALNAME_FUNCTIONS = (
-    lambda text: text.upper(),
-    lambda text: text.lower(),
+_STRATEGY_PARAMETERS = (
+    ("SelectiveTextConverter", "selection_strategy", TextSelectionStrategy),
+    ("ROT13Converter", "word_selection_strategy", WordSelectionStrategy),
 )
-
-
-_RETRIES = "controls how often the request is retried, not what the converter produces"
-_AZURE_SPEECH_RESOURCE = (
-    "selects which Azure Speech resource serves the request, not how the text or audio is converted"
-)
-_AZURE_SPEECH_KEY = "a credential, and credentials are never part of an identifier"
-
-NEUTRAL_SETTINGS: dict[tuple[str, str], str] = {
-    ("LLMGenericTextConverter", "max_retry_attempts"): _RETRIES,
-    ("LLMGenericTextConverter", "retry_wait_max_seconds"): _RETRIES,
-    ("LLMGenericTextConverter", "retry_exceptions"): _RETRIES,
-    ("TranslationConverter", "max_retries"): _RETRIES,
-    ("TranslationConverter", "max_wait_time_in_seconds"): _RETRIES,
-    ("MathObfuscationConverter", "rng"): (
-        "a random.Random is run-time state, not a setting: its state moves with every draw, so one instance gives "
-        "different coefficients on its next call and there is no fixed value to record. The range it draws from, "
-        "min_n..max_n, is identified."
-    ),
-    ("AzureSpeechAudioToTextConverter", "azure_speech_region"): _AZURE_SPEECH_RESOURCE,
-    ("AzureSpeechAudioToTextConverter", "azure_speech_resource_id"): _AZURE_SPEECH_RESOURCE,
-    ("AzureSpeechAudioToTextConverter", "azure_speech_key"): _AZURE_SPEECH_KEY,
-    ("AzureSpeechTextToAudioConverter", "azure_speech_region"): _AZURE_SPEECH_RESOURCE,
-    ("AzureSpeechTextToAudioConverter", "azure_speech_resource_id"): _AZURE_SPEECH_RESOURCE,
-    ("AzureSpeechTextToAudioConverter", "azure_speech_key"): _AZURE_SPEECH_KEY,
-}
-
-SINGLE_VALUE_SETTINGS: dict[tuple[str, str], str] = {
-    (name, "output_format"): "only 'wav' is accepted, so there is nothing to vary"
-    for name in (
-        "AudioEchoConverter",
-        "AudioFrequencyConverter",
-        "AudioSpeedConverter",
-        "AudioVolumeConverter",
-        "AudioWhiteNoiseConverter",
-    )
-}
-
-KNOWN_GAPS: dict[tuple[str, str], str] = {
-    ("CodeChameleonConverter", "encrypt_function"): "custom functions are not identified yet, see #3761",
-    ("CodeChameleonConverter", "decrypt_function"): "custom functions are not identified yet, see #3761",
-    ("PolicyPuppetryConverter", "prompt_template"): "custom templates are identified by name only, see #3759",
-    ("TextJailbreakConverter", "jailbreak_template"): "inline templates share one identifier, see #3760",
-}
-
-BASELINE_SETTINGS: dict[str, dict[str, Any]] = {
-    "AzureSpeechAudioToTextConverter": {"azure_speech_region": "eastus", "azure_speech_key": "test-key"},
-    "AzureSpeechTextToAudioConverter": {"azure_speech_region": "eastus", "azure_speech_key": "test-key"},
-}
-
-_CUSTOM_CODECHAMELEON = {"encrypt_type": "custom", "encrypt_function": _reverse, "decrypt_function": _reverse}
-_CUSTOM_CODE_ATTACK = {
-    "template": Path(CONVERTER_SEED_PROMPT_PATH) / "code_attack_python_list.yaml",
-    "encoding": CodeAttackConverter.Encoding.PYTHON_LIST,
-}
-
-SETTINGS_THAT_NEED_ANOTHER: dict[tuple[str, str], dict[str, Any]] = {
-    ("DecompositionConverter", "codewords"): {"use_word_game": True},
-    ("DecompositionConverter", "word_game_prompt"): {"use_word_game": True},
-    ("SelectiveTextConverter", "word_separator"): {"selection_strategy": WordIndexSelectionStrategy(indices=[0])},
-    ("ImagePromptStyleConverter", "variation"): {"filter_name": "public_space_tv_broadcast"},
-    ("CodeChameleonConverter", "encrypt_function"): _CUSTOM_CODECHAMELEON,
-    ("CodeChameleonConverter", "decrypt_function"): _CUSTOM_CODECHAMELEON,
-    ("CodeAttackConverter", "encoding"): _CUSTOM_CODE_ATTACK,
-    ("CodeAttackConverter", "template"): _CUSTOM_CODE_ATTACK,
-    **{
-        (name, "azure_speech_resource_id"): {"azure_speech_key": _token, "azure_speech_resource_id": "resource"}
-        for name in ("AzureSpeechAudioToTextConverter", "AzureSpeechTextToAudioConverter")
-    },
-}
 
 _MISSING = object()
-
-
-class _Vocabulary:
-    def __init__(self, letters: str) -> None:
-        self._tokens = {"".join(token): index for index, token in enumerate(product(letters, repeat=3))}
-
-    def get_vocab(self) -> dict[str, int]:
-        return self._tokens
 
 
 @cache
@@ -141,7 +74,7 @@ def _registry() -> ConverterRegistry:
 @pytest.fixture(autouse=True)
 def fixed_root_seed() -> Iterator[None]:
     previous_seed = get_configured_random_seed()
-    configure_random_seed(seed=0)
+    configure_random_seed(seed=_ROOT_SEED)
     try:
         yield
     finally:
@@ -150,91 +83,7 @@ def fixed_root_seed() -> Iterator[None]:
 
 @pytest.fixture(scope="module")
 def samples(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[Any, ...]]:
-    folder = tmp_path_factory.mktemp("converter_contract")
-    images = []
-    for index in range(20):
-        png, jpg = folder / f"image_{index}.png", folder / f"image_{index}.jpg"
-        Image.new("RGB", (32, 32), (index * 10, 0, 0)).save(png)
-        Image.new("RGB", (32, 32), (index * 10, 0, 0)).save(jpg)
-        images.append((str(png), str(jpg)))
-    documents = []
-    for name in ("first.pdf", "second.pdf", "first.docx", "second.docx"):
-        (folder / name).write_bytes(b"placeholder")
-        documents.append(folder / name)
-    pngs, jpgs = [png for png, _ in images], [jpg for _, jpg in images]
-    styles = Path(CONVERTER_SEED_PROMPT_PATH) / "image_prompt_style"
-    filters = []
-    for subfolder, source in (("first", "gritty_documentary.yaml"), ("second", "laundromat_fisheye.yaml")):
-        (folder / subfolder).mkdir()
-        filters.append(folder / subfolder / "custom.yaml")
-        filters[-1].write_bytes((styles / source).read_bytes())
-    code_attack = _CUSTOM_CODE_ATTACK["template"].read_text(encoding="utf-8")
-    code_attack_templates = (folder / "first_code_attack.yaml", folder / "second_code_attack.yaml")
-    code_attack_templates[0].write_text(
-        code_attack.replace("{{ wrapped_input }}", "{{ wrapped_input }}  ", 1), encoding="utf-8"
-    )
-    code_attack_templates[1].write_text(
-        code_attack.replace("{{ wrapped_input }}", "{{ wrapped_input }} ", 1), encoding="utf-8"
-    )
-    return {
-        "img_to_add": (pngs[0], pngs[1]),
-        "base_image": (pngs[0], pngs[1]),
-        "carrier_image_path": (pngs[0], pngs[1]),
-        "benign_image_path": (jpgs[0], jpgs[1]),
-        "innocuous_images": (pngs[:19], pngs[1:]),
-        "payload_background": (pngs[0], pngs[1]),
-        "PDFConverter.existing_pdf": (documents[0], documents[1]),
-        "WordDocConverter.existing_docx": (documents[2], documents[3]),
-        "PDFConverter.prompt_template": (
-            SeedPrompt(value="First {{ prompt }}", parameters=["prompt"]),
-            SeedPrompt(value="Second {{ prompt }}", parameters=["prompt"]),
-        ),
-        "WordDocConverter.prompt_template": (
-            SeedPrompt(value="First {{ prompt }}", parameters=["prompt"]),
-            SeedPrompt(value="Second {{ prompt }}", parameters=["prompt"]),
-        ),
-        "LLMGenericTextConverter.system_prompt_template": (SeedPrompt(value="First"), SeedPrompt(value="Second")),
-        "LLMGenericTextConverter.user_prompt_template_with_objective": (
-            SeedPrompt(value="First {{ objective }}", parameters=["objective"]),
-            SeedPrompt(value="Second {{ objective }}", parameters=["objective"]),
-        ),
-        "AddImageTextConverter.bounding_box": ((0, 0, 10, 10), (0, 0, 20, 20)),
-        "BinaryConverter.bits_per_char": tuple(BinaryConverter.BitsPerChar),
-        "CodeAttackConverter.template": code_attack_templates,
-        "CodeAttackConverter.encoding": tuple(CodeAttackConverter.Encoding),
-        "ScientificTranslationConverter.mode": ("academic", "technical"),
-        "RepeatTokenConverter.token_insert_mode": ("prepend", "append", "repeat"),
-        "SATAMaskingConverter.num_masks": (3, 4),
-        "SATAMaskingConverter.skip_first": (2, 3),
-        "video_path": ("first.mp4", "second.mp4"),
-        "wordswap_path": ("filipino.yaml", "indian.yaml"),
-        "font_name": (Path("first.ttf"), Path("second.ttf")),
-        "filter_path": tuple(filters),
-        "injection_items": ([{"text": "first"}], [{"text": "second"}]),
-        "encrypt_function": _SAME_QUALNAME_FUNCTIONS,
-        "decrypt_function": _SAME_QUALNAME_FUNCTIONS,
-        "filter_name": ("laundromat_fisheye", "polaroid_vintage_film"),
-        "variation": ("dive_bar_reflection", "airport_lounge"),
-        "replace": ("first", "second"),
-        "zero_char": ("\u200b", "\u200c"),
-        "one_char": ("\u200d", "\u2060"),
-        "base_char_utf8": ("a", "b"),
-        "custom_substitutions": ({"a": ["4"]}, {"a": ["@"]}),
-        "stopwords": (["the"], ["a"]),
-        "candidate_words": (["alpha"], ["beta"]),
-        "template": ("First {{ prompt }}", "Second {{ prompt }}"),
-        "trap_template": ("{prompt} is {wrong_value}", "Is {prompt} {wrong_value}?"),
-        "encrypt_type": ("reverse", "binary_tree"),
-        "persuasion_technique": ("authority_endorsement", "expert_endorsement"),
-        "tokenizer": (_Vocabulary("abcdefgh"), _Vocabulary("ijklmnop")),
-        "MathObfuscationConverter.rng": (random.Random(1), random.Random(2)),
-        "retry_exceptions": ((ValueError,), (KeyError,)),
-        "SearchReplaceConverter.regex_flags": (re.IGNORECASE, re.MULTILINE),
-        "jailbreak_template": (
-            TextJailBreak(string_template="First {{ prompt }}"),
-            TextJailBreak(string_template="Second {{ prompt }}"),
-        ),
-    }
+    return make_samples(tmp_path_factory.mktemp("converter_contract"))
 
 
 def _unwrap_optional(annotation: Any) -> Any:
@@ -261,12 +110,6 @@ def _changed(value: Any) -> Any:
         changed = copy.deepcopy(value)
         changed.value = f"{value.value}\nchanged"
         return changed
-    if (
-        isinstance(value, tuple)
-        and value
-        and all(isinstance(item, int) and not isinstance(item, bool) for item in value)
-    ):
-        return tuple((item + 1) % 256 for item in value)
     if isinstance(value, (list, tuple)) and value:
         last = _changed(value[-1])
         return _MISSING if last is _MISSING else type(value)([*value[:-1], last])
@@ -304,37 +147,75 @@ def _fresh(annotation: Any) -> Any:
     return _MISSING
 
 
-def _sample_values(
-    owner: str, parameter: Parameter, default: Any, samples: dict[str, tuple[Any, ...]]
-) -> tuple[Any, ...] | None:
-    for key in (f"{owner}.{parameter.name}", parameter.name):
-        if key in samples:
-            return samples[key]
+def _each_position_changed(value: list[Any] | tuple[Any, ...]) -> tuple[Any, ...] | None:
+    items = [*value, _changed(value[-1])] if len(value) == 1 else list(value)
+    changed = [(item + 1) % _COLOR_VALUES if isinstance(item, int) else _changed(item) for item in items]
+    if _MISSING in (*items, *changed):
+        return None
+    kind = type(value)
+    return (
+        kind(items),
+        *(kind([*items[:index], item, *items[index + 1 :]]) for index, item in enumerate(changed)),
+    )
+
+
+def _allowed_values(parameter: Parameter) -> tuple[Any, ...]:
     annotation = _unwrap_optional(parameter.param_type)
-    allowed = get_args(annotation) if get_origin(annotation) is Literal else None
+    if get_origin(annotation) is Literal:
+        return get_args(annotation)
     if inspect.isclass(annotation) and issubclass(annotation, enum.Enum):
-        allowed = tuple(annotation)
-    if allowed is not None:
+        return tuple(annotation)
+    return ()
+
+
+def _generated_values(parameter: Parameter, default: Any) -> tuple[Any, ...] | None:
+    annotation = _unwrap_optional(parameter.param_type)
+    allowed = _allowed_values(parameter)
+    if allowed:
         others = tuple(value for value in allowed if value != default)
         return others or None
     if inspect.isclass(annotation) and issubclass(annotation, WordSelectionStrategy):
         return WordIndexSelectionStrategy(indices=[0]), WordIndexSelectionStrategy(indices=[1])
     if inspect.isclass(annotation) and issubclass(annotation, TextSelectionStrategy):
         return IndexSelectionStrategy(start=0, end=3), IndexSelectionStrategy(start=1, end=4)
-    first = _changed(default) if default is not None else _fresh(annotation)
+    start = default if default is not None else _fresh(annotation)
+    if start is _MISSING:
+        return None
+    if isinstance(start, (list, tuple)) and start:
+        return _each_position_changed(start)
+    first = _changed(start) if default is not None else start
     if first is _MISSING:
         return None
     second = _changed(first)
     if second is _MISSING or second == default:
         return (first, default) if default is not None else None
+    if isinstance(first, dict) and first:
+        return first, second, {f"other_{key}": item for key, item in first.items()}
     return first, second
+
+
+def _sample_values(
+    owner: str, parameter: Parameter, default: Any, samples: dict[str, tuple[Any, ...]]
+) -> tuple[Any, ...] | None:
+    for key in (f"{owner}.{parameter.name}", parameter.name):
+        if key in samples:
+            return samples[key]
+    values = _generated_values(parameter, default)
+    takes_none = type(None) in get_args(parameter.param_type) and (owner, parameter.name) not in NEUTRAL_SETTINGS
+    return (*values, None) if values and default is not None and takes_none else values
+
+
+def _target(model_name: str) -> MockPromptTarget:
+    target = MockPromptTarget()
+    target._model_name = model_name
+    return target
 
 
 def _reference(parameter: Parameter, variant: int) -> Any:
     if parameter.reference is None:
         return _MISSING
     if parameter.reference.component_type is ComponentType.TARGET:
-        return MockPromptTarget(rpm=10 + variant)
+        return _target(f"model_{variant}")
     if parameter.reference.component_type is ComponentType.CONVERTER:
         converter = Base64Converter(encoding_func="b32encode") if variant else Base64Converter()
         return [converter] if parameter.is_list else converter
@@ -441,19 +322,33 @@ def _build(cls: type, kwargs: dict[str, Any], parameter_name: str | None = None)
         pytest.fail(f"{setting}: add a sample value the converter accepts ({error})")
 
 
-def _copied(kwargs: dict[str, Any]) -> dict[str, Any]:
-    components = [
-        item
-        for value in kwargs.values()
-        for item in (value if isinstance(value, list) else [value])
-        if isinstance(item, Identifiable)
-    ]
-    return copy.deepcopy(kwargs, {id(component): component for component in components})
+def _rebuilt(value: Any) -> Any:
+    if isinstance(value, (list, tuple)):
+        return type(value)(_rebuilt(item) for item in value)
+    if isinstance(value, MockPromptTarget):
+        return _target(value._model_name)
+    if isinstance(value, Base64Converter):
+        return Base64Converter(encoding_func=value._encoding_func)
+    if isinstance(value, FunctionType):
+        rebuilt = FunctionType(
+            value.__code__.replace(), value.__globals__, value.__name__, value.__defaults__, value.__closure__
+        )
+        rebuilt.__kwdefaults__ = value.__kwdefaults__
+        rebuilt.__annotations__ = value.__annotations__
+        return rebuilt
+    if isinstance(value, SeedPrompt):
+        return value.model_copy(deep=True, update={"id": uuid4(), "date_added": datetime.now(tz=UTC)})
+    if isinstance(value, TextJailBreak):
+        rebuilt = copy.copy(value)
+        rebuilt.template = _rebuilt(value.template)
+        return rebuilt
+    return copy.deepcopy(value)
 
 
 def _hash(cls: type, kwargs: dict[str, Any], parameter_name: str | None = None) -> str:
+    equal_settings = {name: _rebuilt(value) for name, value in kwargs.items()}
     repeated: set[str] = {
-        _build(cls, built, parameter_name).get_identifier().hash for built in (kwargs, _copied(kwargs))
+        _build(cls, built, parameter_name).get_identifier().hash for built in (kwargs, equal_settings)
     }
     if len(repeated) != 1:
         setting = cls.__name__ if parameter_name is None else f"{cls.__name__}.{parameter_name}"
@@ -478,6 +373,7 @@ def test_converter_setting_reaches_identifier(
     hashes = _hashes(cls, kwargs, parameter_name, values)
 
     picked = "" if parameter_name in kwargs else ", unless a sample is the value it picks when the setting is left out"
+    picked = f"{picked}; if it only matters with another setting, list that in SETTINGS_THAT_NEED_ANOTHER"
     assert len(set(hashes)) == len(hashes), (
         f"{converter_name}.{parameter_name} changes the converter but not its identifier{picked}"
     )
@@ -500,11 +396,238 @@ def test_neutral_setting_leaves_identifier_unchanged(
     )
 
 
+@pytest.mark.usefixtures("patch_central_database")
+def test_known_gaps_keep_their_named_templates_apart() -> None:
+    registry = _registry()
+    jailbreak_converter = registry.get_class("TextJailbreakConverter")
+    jailbreaks = {
+        _hash(jailbreak_converter, {"jailbreak_template": TextJailBreak(template_file_name=name)})
+        for name in ("aim.yaml", "dan_1.yaml")
+    }
+    assert len(jailbreaks) == 2, "TextJailbreakConverter no longer tells its template files apart"
+
+    puppetry_converter = registry.get_class("PolicyPuppetryConverter")
+    puppetry = {
+        _hash(puppetry_converter, {"prompt_template": template.to_seed_prompt()}) for template in PolicyPuppetryTemplate
+    }
+    assert len(puppetry) == len(PolicyPuppetryTemplate), "PolicyPuppetryConverter no longer tells its templates apart"
+
+
+def _settings_with_allowed_values() -> list[tuple[str, str]]:
+    registry = _registry()
+    return [
+        (name, parameter.name)
+        for name in registry.get_class_names()
+        for parameter in registry.get_class_metadata(registry.get_class(name)).parameters
+        if len(_allowed_values(parameter)) > 1
+    ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(("converter_name", "parameter_name"), _settings_with_allowed_values())
+def test_every_allowed_value_gets_its_own_identifier(
+    converter_name: str, parameter_name: str, samples: dict[str, tuple[Any, ...]]
+) -> None:
+    registry = _registry()
+    cls = registry.get_class(converter_name)
+    parameters = list(registry.get_class_metadata(cls).parameters)
+    allowed = _allowed_values(next(item for item in parameters if item.name == parameter_name))
+    kwargs = {**_baseline(cls, parameters, samples), **ALLOWED_VALUES_NEED.get((converter_name, parameter_name), {})}
+
+    hashes = [_hash(cls, {**kwargs, parameter_name: value}, parameter_name) for value in allowed]
+
+    assert len(set(hashes)) == len(hashes), f"{converter_name}.{parameter_name}: two allowed values share an identifier"
+
+
+def _pyrit_strategies(base: type = TextSelectionStrategy) -> set[type]:
+    found: set[type] = set()
+    for subclass in base.__subclasses__():
+        if subclass.__module__.startswith("pyrit."):
+            found |= _pyrit_strategies(subclass) | (set() if inspect.isabstract(subclass) else {subclass})
+    return found
+
+
+def test_every_selection_strategy_setting_has_a_sample() -> None:
+    assert _pyrit_strategies() == set(SELECTION_STRATEGY_SETTINGS), "add the strategy to SELECTION_STRATEGY_SETTINGS"
+    for strategy, settings in SELECTION_STRATEGY_SETTINGS.items():
+        parameters = inspect.signature(strategy).parameters.values()
+        variadic = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        named = {item.name for item in parameters if item.kind not in variadic}
+        assert named <= {name for setting in settings for name in setting}, f"{strategy.__name__}: add a sample"
+
+
+def _strategy_hashes(
+    converter_name: str, parameter_name: str, kind: type, samples: dict[str, tuple[Any, ...]]
+) -> dict[str, str]:
+    registry = _registry()
+    cls = registry.get_class(converter_name)
+    kwargs = _baseline(cls, list(registry.get_class_metadata(cls).parameters), samples)
+    return {
+        f"{converter_name} with {strategy.__name__}({setting})": _hash(
+            cls, {**kwargs, parameter_name: strategy(**setting)}, parameter_name
+        )
+        for strategy, settings in SELECTION_STRATEGY_SETTINGS.items()
+        if issubclass(strategy, kind)
+        for setting in settings
+    }
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(("converter_name", "parameter_name", "kind"), _STRATEGY_PARAMETERS)
+def test_each_selection_strategy_gets_its_own_identifier(
+    converter_name: str, parameter_name: str, kind: type, samples: dict[str, tuple[Any, ...]]
+) -> None:
+    found = _strategy_hashes(converter_name, parameter_name, kind, samples)
+
+    counts = Counter(found.values())
+    assert not [built for built, value in found.items() if counts[value] > 1], "these strategies share an identifier"
+
+
+def _keyword_hashes(converter_name: str, samples: dict[str, tuple[Any, ...]]) -> list[str]:
+    registry = _registry()
+    cls = registry.get_class(converter_name)
+    kwargs = _baseline(cls, list(registry.get_class_metadata(cls).parameters), samples)
+    return [_hash(cls, {**kwargs, **extra}) for extra in ({}, *KEYWORD_SETTINGS[converter_name])]
+
+
+def _takes_keywords(name: str) -> bool:
+    parameters = inspect.signature(_registry().get_class(name)).parameters.values()
+    return any(item.kind is inspect.Parameter.VAR_KEYWORD for item in parameters)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("converter_name", [name for name in _registry().get_class_names() if _takes_keywords(name)])
+def test_constructor_keywords_reach_identifier(converter_name: str, samples: dict[str, tuple[Any, ...]]) -> None:
+    registry = _registry()
+    cls = registry.get_class(converter_name)
+    kwargs = _baseline(cls, list(registry.get_class_metadata(cls).parameters), samples)
+    if converter_name not in KEYWORD_SETTINGS:
+        try:
+            cls(**kwargs, not_a_setting=1)
+        except (TypeError, ValueError):
+            return
+        pytest.fail(f"{converter_name} keeps extra keywords; list what they do in KEYWORD_SETTINGS")
+
+    hashes = _keyword_hashes(converter_name, samples)
+
+    assert len(set(hashes)) == len(hashes), f"{converter_name}: extra keywords do not reach the identifier"
+
+
+def _picks_a_mode(parameter: Parameter) -> bool:
+    annotation = _unwrap_optional(parameter.param_type)
+    return annotation is bool or (inspect.isclass(annotation) and issubclass(annotation, TextSelectionStrategy))
+
+
+def _modes() -> list[tuple[str, str]]:
+    registry = _registry()
+    return [
+        (name, parameter.name)
+        for name in registry.get_class_names()
+        for parameter in registry.get_class_metadata(registry.get_class(name)).parameters
+        if (name, parameter.name) not in NEUTRAL_SETTINGS and _picks_a_mode(parameter)
+    ]
+
+
+@pytest.mark.filterwarnings("ignore:.*TaskFramingConverter is deprecated:DeprecationWarning")
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(("converter_name", "mode"), _modes())
+def test_settings_reach_identifier_in_every_mode(
+    converter_name: str, mode: str, samples: dict[str, tuple[Any, ...]]
+) -> None:
+    registry = _registry()
+    cls = registry.get_class(converter_name)
+    mode_value = _setup(converter_name, mode, samples)[2][0]
+    replaced = {mode, *SETTINGS_A_MODE_REPLACES.get((converter_name, mode), set())}
+    for parameter in registry.get_class_metadata(cls).parameters:
+        setting = (converter_name, parameter.name)
+        if parameter.name in replaced or setting in {*NEUTRAL_SETTINGS, *KNOWN_GAPS, *SINGLE_VALUE_SETTINGS}:
+            continue
+        _, kwargs, values = _setup(converter_name, parameter.name, samples)
+        in_mode = {**kwargs, mode: mode_value, **SETTINGS_THAT_NEED_ANOTHER.get(setting, {})}
+
+        hashes = _hashes(cls, in_mode, parameter.name, values)
+
+        assert len(set(hashes)) == len(hashes), f"{converter_name}.{parameter.name} is lost when {mode} is {mode_value}"
+
+
+def _setting_hashes(samples: dict[str, tuple[Any, ...]]) -> dict[tuple[str, str], list[str]]:
+    registry = _registry()
+    found: dict[tuple[str, str], list[str]] = {}
+    for name in registry.get_class_names():
+        for parameter in registry.get_class_metadata(registry.get_class(name)).parameters:
+            if (name, parameter.name) not in SINGLE_VALUE_SETTINGS:
+                cls, kwargs, values = _setup(name, parameter.name, samples)
+                found[name, parameter.name] = _hashes(cls, kwargs, parameter.name, values)
+    return found
+
+
+@pytest.mark.filterwarnings("ignore:.*TaskFramingConverter is deprecated:DeprecationWarning")
+@pytest.mark.usefixtures("patch_central_database")
+def test_no_two_settings_share_an_identifier(samples: dict[str, tuple[Any, ...]]) -> None:
+    exempt = {*NEUTRAL_SETTINGS, *KNOWN_GAPS}
+    changed = [
+        (found, setting)
+        for setting, hashes in _setting_hashes(samples).items()
+        if setting not in exempt
+        for found in hashes[1:]
+    ]
+
+    counts = Counter(found for found, _ in changed)
+    assert not [setting for found, setting in changed if counts[found] > 1], "these settings share an identifier"
+
+
+def _every_identifier(folder: Path) -> dict[str, Any]:
+    samples = make_samples(folder)
+    configure_random_seed(seed=_ROOT_SEED)
+    with patch.object(CentralMemory, "get_memory_instance"):
+        strategies = [_strategy_hashes(*parameters, samples) for parameters in _STRATEGY_PARAMETERS]
+        return {
+            **{".".join(setting): hashes for setting, hashes in _setting_hashes(samples).items()},
+            **{built: found for sweep in strategies for built, found in sweep.items()},
+            **{f"{name} keywords": _keyword_hashes(name, samples) for name in KEYWORD_SETTINGS},
+        }
+
+
+@pytest.mark.filterwarnings("ignore:.*TaskFramingConverter is deprecated:DeprecationWarning")
+def test_identifiers_stay_the_same_in_another_process(tmp_path: Path) -> None:
+    output = tmp_path / "identifiers.json"
+    script = (
+        f"from json import dumps; from pathlib import Path; from {__name__} import _every_identifier; "
+        f"Path({str(output)!r}).write_text(dumps(_every_identifier(Path({str(tmp_path)!r}))))"
+    )
+    hash_seed = "2" if os.environ.get("PYTHONHASHSEED") == "1" else "1"
+    environment = {**os.environ, "PYTHONHASHSEED": hash_seed, "PYTHONPATH": os.pathsep.join(sys.path)}
+
+    other = subprocess.run(
+        [sys.executable, "-c", script],
+        env=environment,
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=False,
+        timeout=_PROCESS_TIMEOUT_SECONDS,
+    )
+
+    assert other.returncode == 0, other.stderr[-2000:]
+    theirs = json.loads(output.read_text())
+    ours = _every_identifier(tmp_path)
+    moved = sorted(name for name in {*ours, *theirs} if ours.get(name) != theirs.get(name))
+    assert not moved, f"the identifier depends on the process: {moved}"
+
+
 def test_exemptions_point_at_registered_settings() -> None:
     registry = _registry()
     assert not NEUTRAL_SETTINGS.keys() & KNOWN_GAPS.keys(), "a setting cannot be both neutral and a known gap"
     assert set(BASELINE_SETTINGS) <= set(registry.get_class_names()), "BASELINE_SETTINGS names an unknown converter"
-    exemptions = [*NEUTRAL_SETTINGS, *KNOWN_GAPS, *SETTINGS_THAT_NEED_ANOTHER, *SINGLE_VALUE_SETTINGS]
+    assert set(KEYWORD_SETTINGS) <= set(registry.get_class_names()), "KEYWORD_SETTINGS names an unknown converter"
+    exemptions = [
+        *NEUTRAL_SETTINGS,
+        *KNOWN_GAPS,
+        *SETTINGS_THAT_NEED_ANOTHER,
+        *SINGLE_VALUE_SETTINGS,
+        *SETTINGS_A_MODE_REPLACES,
+        *ALLOWED_VALUES_NEED,
+    ]
     for converter_name, parameter_name in exemptions:
         parameters = registry.get_class_metadata(registry.get_class(converter_name)).parameters
         assert parameter_name in {parameter.name for parameter in parameters}, f"{converter_name}.{parameter_name}"
