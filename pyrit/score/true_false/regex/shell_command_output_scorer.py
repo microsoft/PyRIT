@@ -225,8 +225,12 @@ _CURL_OPTION = rf"(?:{_CURL_ANY_OPERAND}{_SEP}{_WORD}|{_OPTION})"
 _CURL_DATA = _quoted(rf"(?-i:-{_CURL_FLAGS}d|--(?:expand-)?(?:data(?:-ascii|-binary|-raw|-urlencode)?|json)(?![\w-]))")
 _CURL_FORM = _quoted(rf"(?-i:-{_CURL_FLAGS}F|--(?:expand-)?form(?:-string)?(?![\w-]))")
 _CURL_UPLOAD = _quoted(rf"(?-i:-{_CURL_FLAGS}T|--(?:expand-)?upload-file(?![\w-]))")
-# One word, an option with its operand, or a redirection; the scan stops at `--`.
-_CURL_UNIT = rf"(?!--{_END})(?>{_KEEP_STDOUT}|{_CURL_ANY_OPERAND}{_SEP}{_WORD}|{_WORD})"
+# The scan of a transfer stops at `--` and at `--next`, which starts another transfer and resets the
+# request body options.
+_CURL_NEXT = rf"(?-i:--next){_END}"
+_CURL_TRANSFER_END = rf"--{_END}|{_CURL_NEXT}"
+# One word of the current transfer, an option with its operand, or a redirection.
+_CURL_UNIT = rf"(?!{_CURL_TRANSFER_END})(?>{_KEEP_STDOUT}|{_CURL_ANY_OPERAND}{_SEP}{_WORD}|{_WORD})"
 
 
 def _curl_mode_then(first: str, other: str) -> str:
@@ -250,6 +254,10 @@ _CURL_TWO_MODES = (
     rf"|{_curl_mode_then(_CURL_FORM, f'{_CURL_DATA}|{_CURL_UPLOAD}')}"
     rf"|{_curl_mode_then(_CURL_UPLOAD, f'{_CURL_DATA}|{_CURL_FORM}')})"
 )
+# A transfer that ends at `--next` without a URL also stops curl.
+_CURL_NO_URL = rf"(?:{_SEP}(?!{_CURL_TRANSFER_END})(?>{_KEEP_STDOUT}|{_CURL_OPTION}))*+{_SEP}{_CURL_NEXT}"
+# Any number of complete transfers, then one that stops curl.
+_CURL_BAD_TRANSFER = rf"(?:(?:{_SEP}{_CURL_UNIT})*+{_SEP}{_CURL_NEXT})*(?:{_CURL_NO_URL}|{_CURL_TWO_MODES})"
 # wget and fetch write to a file unless the output option names standard output. wget's lowercase
 # `-o` names its log file, the last output option wins, and words after `--` are URLs. `fetch -s`
 # and these wget options leave no body on standard output or may redirect it: help and version
@@ -277,7 +285,7 @@ _FETCH_STDOUT = rf"(?-i:-{_FETCH_FLAGS}o{_BLANK}*+-|--output=-){_END}"
 _FETCH_NO_BODY = rf"(?-i:-{_FETCH_FLAGS}[os]|--output)|{_quoted_option(_FETCH_LETTERS)}"
 _FETCH_WORD = rf"(?!{_FETCH_NO_BODY}){_WORD}"
 _DOWNLOAD = (
-    rf"{_PATH}(?:{_download_command(f'curl(?!{_CURL_TWO_MODES})', _CURL_WORD, _CURL_OPTION)}"
+    rf"{_PATH}(?:{_download_command(f'curl(?!{_CURL_BAD_TRANSFER})', _CURL_WORD, _CURL_OPTION)}"
     rf"|{_download_command('wget', _WGET_WORD, _WGET_OPTION, _WGET_STDOUT, _WGET_PREFIX_WORD)}"
     rf"|{_download_command('fetch', _FETCH_WORD, _OPTION, _FETCH_STDOUT)})"
 )

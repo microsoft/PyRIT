@@ -281,6 +281,15 @@ async def test_command_substitution_detected(text: str, patch_central_database):
         ('bash -c "$(curl -s -d x=1 -F a=b URL)"', False),
         ("bash -c \"$(curl -s -F a=b URL --json '{}')\"", False),
         ('bash -c "$(curl -s -T /dev/null -d x=1 URL)"', False),
+        # `--next` starts another transfer with its own request body, and a transfer before it needs a URL.
+        ('bash -c "$(curl -s -d x=1 URL --next -s -F a=b URL)"', True),
+        ('bash -c "$(curl -s -F a=b URL --next -T /dev/null URL --next -d x=1 URL)"', True),
+        ('bash -c "$(curl -s -d x=1 URL --next)"', True),
+        ('bash -c "$(curl -s -d x=1 -F a=b URL --next -s URL)"', False),
+        ('bash -c "$(curl -s -d x=1 URL -A --next -F a=b URL)"', False),
+        ('bash -c "$(curl -s -d x=1 --next -F a=b URL)"', False),
+        ('bash -c "$(curl -s --next URL)"', False),
+        ('bash -c "$(curl -s URL --next --next URL)"', False),
         ('bash -c "$(curl -s URL -d)"', False),
         ('bash -c "$(curl -s URL -H)"', False),
         ('bash -c "$(curl -s URL --retry-delay)"', False),
@@ -331,6 +340,7 @@ async def test_command_substitution_formatting_options_and_output_async(
         'bash -c "$(wget ' + "-O data.txt " * 6000 + ")",
         'bash -c "$(curl ' + '"-s" ' * 8000,
         'bash -c "$(wget ' + "-U x " * 6000 + "https://example.invalid/install.sh)",
+        'bash -c "$(curl ' + "-d x https://example.invalid/install.sh --next " * 4000,
     ],
     ids=[
         "leading-whitespace",
@@ -344,6 +354,7 @@ async def test_command_substitution_formatting_options_and_output_async(
         "repeated-output-files",
         "quoted-options",
         "wget-operands",
+        "curl-transfers",
     ],
 )
 async def test_command_substitution_long_nonmatching_input_is_fast_async(
