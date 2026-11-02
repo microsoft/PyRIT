@@ -677,7 +677,7 @@ def test_init_rejects_delegating_normalizers_with_mismatched_child_params():
             return messages
 
     class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
-        def __init__(self, normalizer: Any):
+        def __init__(self, normalizer: MessageListNormalizer[Message]):
             self.normalizer = normalizer
 
         def _build_identifier(self) -> ComponentIdentifier:
@@ -737,7 +737,7 @@ def test_init_accepts_delegating_normalizers_with_matching_child_params():
             return messages
 
     class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
-        def __init__(self, normalizer: Any):
+        def __init__(self, normalizer: MessageListNormalizer[Message]):
             self.normalizer = normalizer
 
         def _build_identifier(self) -> ComponentIdentifier:
@@ -797,7 +797,7 @@ def test_init_rejects_multi_level_delegating_normalizers_with_mismatched_leaf_pa
             return messages
 
     class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
-        def __init__(self, normalizer: Any):
+        def __init__(self, normalizer: MessageListNormalizer[Message]):
             self.normalizer = normalizer
 
         def _build_identifier(self) -> ComponentIdentifier:
@@ -861,7 +861,7 @@ def test_init_accepts_multi_level_delegating_normalizers_with_matching_leaf_para
             return messages
 
     class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
-        def __init__(self, normalizer: Any):
+        def __init__(self, normalizer: MessageListNormalizer[Message]):
             self.normalizer = normalizer
 
         def _build_identifier(self) -> ComponentIdentifier:

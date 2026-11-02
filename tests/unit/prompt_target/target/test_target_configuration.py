@@ -559,7 +559,7 @@ def test_serialize_normalizer_retains_child_identifier_configuration():
             return messages
 
     class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
-        def __init__(self, normalizer: Any):
+        def __init__(self, normalizer: MessageListNormalizer[Message]):
             self.normalizer = normalizer
 
         def _build_identifier(self) -> ComponentIdentifier:
@@ -595,7 +595,7 @@ def test_serialize_normalizer_recursively_serializes_nested_children():
             return messages
 
     class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
-        def __init__(self, normalizer: Any):
+        def __init__(self, normalizer: MessageListNormalizer[Message]):
             self.normalizer = normalizer
 
         def _build_identifier(self) -> ComponentIdentifier:
