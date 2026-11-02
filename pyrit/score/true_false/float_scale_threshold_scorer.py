@@ -4,6 +4,7 @@
 import copy
 import math
 import uuid
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -129,6 +130,27 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return the scorer whose value is compared to the threshold."""
         return (self._scorer,)
+
+    async def _filter_matching_scores_by_snapshot_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+        used_observation_ids: dict[str, set[str]],
+    ) -> list[Score]:
+        """
+        Validate the wrapped float scorer's evidence before reusing its threshold result.
+
+        Returns:
+            list[Score]: The candidates linked to the wrapped scorer's current snapshot.
+        """
+        return await self._filter_matching_scores_by_children_async(
+            scores=scores,
+            scorable=scorable,
+            expectation=expectation,
+            used_observation_ids=used_observation_ids,
+        )
 
     async def _score_scorable_async(
         self,

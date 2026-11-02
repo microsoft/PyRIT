@@ -3,6 +3,7 @@
 
 import copy
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -131,6 +132,27 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return the scorers whose verdicts are combined."""
         return tuple(self._scorers)
+
+    async def _filter_matching_scores_by_snapshot_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+        used_observation_ids: dict[str, set[str]],
+    ) -> list[Score]:
+        """
+        Require current snapshots from every participating same-input child.
+
+        Returns:
+            list[Score]: The candidates with current snapshots from every child.
+        """
+        return await self._filter_matching_scores_by_children_async(
+            scores=scores,
+            scorable=scorable,
+            expectation=expectation,
+            used_observation_ids=used_observation_ids,
+        )
 
     async def _score_scorable_async(
         self,

@@ -76,28 +76,70 @@ class ConversationScorer(MessageScorer, ABC):
         Returns:
             Scores for the exact captured evidence and effective expectation, newest first.
         """
+        conversation_scorable = await self._get_conversation_scorable_async(scorable=scorable)
+        if conversation_scorable is None:
+            return []
+        prepared = self.prepare_expectation(expectation=expectation)
+        candidates = self.find_matching_scores(scores=scores, scorable=conversation_scorable, expectation=prepared)
+        if not candidates:
+            return []
+        return await self._filter_matching_scores_by_snapshot_async(
+            scores=candidates,
+            scorable=conversation_scorable,
+            expectation=prepared,
+            used_observation_ids={str(score.id): set() for score in candidates},
+        )
+
+    async def _get_conversation_scorable_async(self, *, scorable: Scorable) -> ConversationScorable | None:
+        """
+        Resolve a message trigger to its single complete conversation scope.
+
+        Returns:
+            ConversationScorable | None: The conversation scope, or None for an invalid trigger.
+        """
         if isinstance(scorable, MessageScorable):
             messages = await self._memory.get_message_pieces_async(prompt_ids=list(scorable.message_piece_ids))
             if {piece.id for piece in messages} != set(scorable.message_piece_ids):
-                return []
+                return None
             conversation_ids = {piece.conversation_id for piece in messages}
             if len(conversation_ids) != 1:
-                return []
+                return None
             conversation_id = messages[0].conversation_id
             if conversation_id is None:
-                return []
+                return None
             scorable = ConversationScorable(conversation_id=conversation_id)
         if not isinstance(scorable, ConversationScorable):
+            return None
+        return scorable
+
+    async def _filter_matching_scores_by_snapshot_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+        used_observation_ids: dict[str, set[str]],
+    ) -> list[Score]:
+        """
+        Retain root candidates linked to a complete observation of the current conversation.
+
+        Returns:
+            list[Score]: The candidates linked to an exact current snapshot.
+        """
+        conversation_scorable = await self._get_conversation_scorable_async(scorable=scorable)
+        if conversation_scorable is None:
             return []
-        candidates = self.find_matching_scores(scores=scores, scorable=scorable, expectation=expectation)
-        if not candidates:
-            return []
-        current = await self._source.acquire_async(scorable=scorable)
+        current = await self._source.acquire_async(scorable=conversation_scorable)
         if current.acquisition != Acquisition.COMPLETE or not isinstance(
             current.payload, ConversationObservationPayload
         ):
             return []
-        observation_ids = {observation_id for score in candidates for observation_id in score.observation_ids}
+        observation_ids = {
+            observation_id
+            for score in scores
+            for observation_id in score.observation_ids
+            if str(observation_id) not in used_observation_ids.setdefault(str(score.id), set())
+        }
         if not observation_ids:
             return []
         observations = await self._memory.get_observations_async(observation_ids=list(observation_ids))
@@ -105,11 +147,25 @@ class ConversationScorer(MessageScorer, ABC):
             observation.id
             for observation in observations
             if observation.acquisition == Acquisition.COMPLETE
-            and observation.scorable == scorable
+            and observation.scorable == conversation_scorable
             and observation.source_identifier == current.source_identifier
             and observation.payload == current.payload
         }
-        return [score for score in candidates if matching_ids.intersection(score.observation_ids)]
+        matched_scores = []
+        for score in scores:
+            available_ids = (
+                set(score.observation_ids)
+                .intersection(matching_ids)
+                .difference(
+                    observation_id
+                    for observation_id in score.observation_ids
+                    if str(observation_id) in used_observation_ids.setdefault(str(score.id), set())
+                )
+            )
+            if available_ids:
+                used_observation_ids[str(score.id)].add(str(min(available_ids, key=str)))
+                matched_scores.append(score)
+        return matched_scores
 
     async def _score_message_scorable_async(
         self,

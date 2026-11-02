@@ -337,6 +337,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   combined coverage. Use separate leaves and a composite for independent checks.
 - `score_observation_async` coordinates replay of stored evidence without calling the target. Scorer target response replay owns the checks for the exact original expectation, scorer configuration, and response-handler contract; evidence resolution checks that scored evidence and response content are unchanged.
 - `find_matching_scores` selects the stored results that the same scorer configuration produced for the same evidence and the input `score_async` prepares. The scorer owns this match rule; callers decide whether a match replaces a new evaluation and how it is recorded.
+- Same-input wrappers also validate freshness requirements from the child scorers that contributed to a stored result. Conversation scorers require a linked complete observation of the current ordered conversation; wrappers preserve their own score identity, and fallback matching checks only branches that contributed a result.
 - Tool-event observations can be matched against new tool-name expectations
   without querying the trace client again. This does not relax scorer target response replay rules.
 - **Does not own**: acting on its own result. A scorer evaluates a response and returns a score; branching on that score is the attack's job, and aggregating scores across runs is analytics'. It may call a target to evaluate, but it doesn't send the attack's objective prompt or manage the conversation.

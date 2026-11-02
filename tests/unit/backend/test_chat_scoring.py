@@ -61,6 +61,8 @@ from pyrit.score import (
     ScorerPromptValidator,
     SelfAskTrueFalseScorer,
     SubStringScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseScoreAggregator,
     create_conversation_scorer,
 )
 from unit.async_utils import TEST_WATCHDOG_SECONDS
@@ -83,16 +85,26 @@ class _ChatJudgeTarget(MockPromptTarget):
 
 
 @pytest.mark.parametrize("target_backed", [False, True])
+@pytest.mark.parametrize("wrapped_root", [False, True])
 async def test_apply_conversation_snapshot_reuse_projection_and_judge_owner_async(
     *,
     latest_response_chat: tuple[ChatScoringService, AttackResult, ApplyChatScorerRequest, SubStringScorer],
     sqlite_instance: SQLiteMemory,
     target_backed: bool,
+    wrapped_root: bool,
 ) -> None:
     policy, attack, request, _ = latest_response_chat
     target = _ChatJudgeTarget()
     child = SelfAskTrueFalseScorer(chat_target=target) if target_backed else SubStringScorer(substring="default")
-    scorer = create_conversation_scorer(scorer=child)
+    conversation_scorer = create_conversation_scorer(scorer=child)
+    scorer = (
+        TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.AND,
+            scorers=[conversation_scorer, SubStringScorer(substring="default")],
+        )
+        if wrapped_root
+        else conversation_scorer
+    )
     ScorerRegistry.get_registry_singleton().instances.register(scorer, name="conversation-judge")
     reference = RegisteredComponentReference(
         registry_name="conversation-judge", identifier_hash=scorer.get_identifier().hash

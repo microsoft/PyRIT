@@ -2,9 +2,10 @@
 # Licensed under the MIT license.
 
 from abc import abstractmethod
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from pyrit.models import ComponentIdentifier, MessageScorable, Scorable, Score, ScoringExpectation
+from pyrit.models import ComponentIdentifier, MessageScorable, Scorable, Score, ScoreStatus, ScoringExpectation
 from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.scorer import Scorer
@@ -59,6 +60,51 @@ class _FallbackScorer(Scorer):
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return both children for shared condition validation."""
         return (self._scorer, self._fallback_scorer)
+
+    async def _filter_matching_scores_by_snapshot_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+        used_observation_ids: dict[str, set[str]],
+    ) -> list[Score]:
+        """
+        Validate snapshots only for the primary and fallback branches that produced a result.
+
+        Returns:
+            list[Score]: Candidates with fresh observations for every participating branch.
+        """
+        primary_expectation = self._scorer._select_expectation(expectation=expectation)
+        primary_matches = await self._scorer._filter_matching_scores_by_snapshot_async(
+            scores=scores,
+            scorable=scorable,
+            expectation=primary_expectation,
+            used_observation_ids=used_observation_ids,
+        )
+        primary_only: set[str] = set()
+        fallback_matches: list[Score] = []
+        for score in primary_matches:
+            metadata = score.score_metadata or {}
+            resolved_by = metadata.get("resolved_by")
+            fallback_status = metadata.get("fallback_status")
+            if resolved_by == "primary" and fallback_status in (None, "not_applicable"):
+                primary_only.add(str(score.id))
+            elif resolved_by == "fallback" and fallback_status in {status.value for status in ScoreStatus}:
+                fallback_matches.append(score)
+
+        fallback_ids: set[str] = set()
+        if fallback_matches:
+            fallback_expectation = self._fallback_scorer._select_expectation(expectation=expectation)
+            valid_fallback_matches = await self._fallback_scorer._filter_matching_scores_by_snapshot_async(
+                scores=fallback_matches,
+                scorable=scorable,
+                expectation=fallback_expectation,
+                used_observation_ids=used_observation_ids,
+            )
+            fallback_ids = {str(score.id) for score in valid_fallback_matches}
+
+        return [score for score in primary_matches if str(score.id) in primary_only or str(score.id) in fallback_ids]
 
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
         """

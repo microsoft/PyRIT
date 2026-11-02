@@ -920,7 +920,64 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             Matching scores in newest-first order, including undetermined results.
         """
-        return self.find_matching_scores(scores=scores, scorable=scorable, expectation=expectation)
+        prepared = self.prepare_expectation(expectation=expectation)
+        candidates = self.find_matching_scores(scores=scores, scorable=scorable, expectation=prepared)
+        if not candidates:
+            return []
+        return await self._filter_matching_scores_by_snapshot_async(
+            scores=candidates,
+            scorable=scorable,
+            expectation=prepared,
+            used_observation_ids={str(score.id): set() for score in candidates},
+        )
+
+    async def _filter_matching_scores_by_snapshot_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+        used_observation_ids: dict[str, set[str]],
+    ) -> list[Score]:
+        """
+        Filter identity matches whose required evidence snapshots are no longer current.
+
+        Leaf scorers without snapshot-dependent children keep the root identity match.
+        Same-input wrappers can recurse into their children while retaining the root scores.
+
+        Returns:
+            list[Score]: The candidates whose required snapshots remain current.
+        """
+        return list(scores)
+
+    async def _filter_matching_scores_by_children_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+        used_observation_ids: dict[str, set[str]],
+    ) -> list[Score]:
+        """
+        Apply each same-input child's freshness contract to the root identity matches.
+
+        Child observations are consumed per root score so one linked snapshot cannot stand
+        in for multiple participating conversation-scoring branches.
+
+        Returns:
+            list[Score]: The candidates whose same-input children remain current.
+        """
+        candidates = list(scores)
+        for child, child_expectation in self._get_child_expectations(expectation=expectation):
+            candidates = await child._filter_matching_scores_by_snapshot_async(
+                scores=candidates,
+                scorable=scorable,
+                expectation=child_expectation,
+                used_observation_ids=used_observation_ids,
+            )
+            if not candidates:
+                return []
+        return candidates
 
     def find_matching_scores(
         self,
