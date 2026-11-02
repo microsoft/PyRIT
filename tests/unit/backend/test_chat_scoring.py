@@ -237,10 +237,12 @@ async def test_apply_reuses_and_projects_legacy_snapshot_free_fallback_collision
     assert "snapshot_participation" not in score_view.model_dump()
 
 
+@pytest.mark.parametrize("forged_public_metadata", [False, True])
 async def test_apply_rechecks_legacy_composite_missing_required_conversation_provenance_async(
     *,
     latest_response_chat: tuple[ChatScoringService, AttackResult, ApplyChatScorerRequest, SubStringScorer],
     sqlite_instance: SQLiteMemory,
+    forged_public_metadata: bool,
 ) -> None:
     policy, attack, request, _ = latest_response_chat
     scorer = TrueFalseCompositeScorer(
@@ -267,16 +269,37 @@ async def test_apply_rechecks_legacy_composite_missing_required_conversation_pro
             entry = session.get(ScoreEntry, first.score.id)
             assert entry is not None
             entry.snapshot_participation = None
-            entry.observation_links.clear()
+            if forged_public_metadata:
+                entry.score_metadata = {
+                    **entry.score_metadata,
+                    "pyrit_internal_snapshot_participation": '{"1": null}',
+                }
+            else:
+                entry.observation_links.clear()
             session.commit()
+            session.expire_all()
+            reloaded = session.get(ScoreEntry, first.score.id)
+            assert reloaded is not None and reloaded.snapshot_participation is None
+            if forged_public_metadata:
+                assert reloaded.score_metadata["pyrit_internal_snapshot_participation"] == '{"1": null}'
 
         await run_memory_session_async(memory=sqlite_instance, operation=remove_legacy_provenance)
+        if forged_public_metadata:
+            await sqlite_instance.add_message_to_memory_async(
+                request=MessagePiece(
+                    role="user", original_value="An appended live request", conversation_id=attack.conversation_id
+                ).to_message()
+            )
         [legacy_root] = [
             score
             for score in await sqlite_instance.get_prompt_scores_async(prompt_ids=[request.response_id])
             if score.id == first.score.id
         ]
-        assert not legacy_root.observation_ids
+        if forged_public_metadata:
+            assert legacy_root.observation_ids == first.score.observation_ids
+            assert legacy_root.score_metadata["pyrit_internal_snapshot_participation"] == '{"1": null}'
+        else:
+            assert not legacy_root.observation_ids
         assert legacy_root._snapshot_participation is None
         stale_projection = await AttackService().get_conversation_messages_async(
             attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id

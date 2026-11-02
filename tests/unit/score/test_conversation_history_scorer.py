@@ -535,7 +535,10 @@ async def test_noncanonical_snapshot_participation_cannot_skip_stale_conversatio
     )
 
 
-async def test_public_metadata_collision_cannot_authorize_skipping_conversation_branch(patch_central_database) -> None:
+@pytest.mark.parametrize("persisted", [False, True])
+async def test_public_metadata_collision_cannot_authorize_skipping_conversation_branch(
+    patch_central_database, persisted: bool
+) -> None:
     memory = CentralMemory.get_memory_instance()
     conversation_id = str(uuid.uuid4())
     request = MessagePiece(role="user", original_value="Request", conversation_id=conversation_id)
@@ -552,8 +555,27 @@ async def test_public_metadata_collision_cannot_authorize_skipping_conversation_
     scorable = MessageScorable.from_message(response.to_message())
     expectation = ScoringExpectation(objective="Goal")
     [score] = await scorer.score_async(scorable=scorable, expectation=expectation)
-    score._snapshot_participation = None
-    score.score_metadata["pyrit_internal_snapshot_participation"] = '{"1": null}'
+    if persisted:
+
+        def forge_public_metadata(session) -> None:
+            entry = session.get(ScoreEntry, score.id)
+            assert entry is not None
+            entry.score_metadata = {**entry.score_metadata, "pyrit_internal_snapshot_participation": '{"1": null}'}
+            entry.snapshot_participation = None
+            session.commit()
+            session.expire_all()
+            reloaded = session.get(ScoreEntry, score.id)
+            assert reloaded is not None
+            assert reloaded.score_metadata["pyrit_internal_snapshot_participation"] == '{"1": null}'
+            assert reloaded.snapshot_participation is None
+
+        await run_memory_session_async(memory=memory, operation=forge_public_metadata)
+        [score] = await memory.get_scores_async(score_ids=[str(score.id)])
+        assert score.score_metadata["pyrit_internal_snapshot_participation"] == '{"1": null}'
+        assert score._snapshot_participation is None
+    else:
+        score._snapshot_participation = None
+        score.score_metadata["pyrit_internal_snapshot_participation"] = '{"1": null}'
 
     await memory.add_message_to_memory_async(
         request=MessagePiece(
