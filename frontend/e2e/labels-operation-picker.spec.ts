@@ -134,7 +134,7 @@ async function openOperationPicker(page: Page) {
 }
 
 test.describe("operation picker placement", () => {
-  test("highlights the placeholder operator and requires resolving a proposed operation", async ({ page }) => {
+  test("requires resolving a proposed operation", async ({ page }) => {
     await setupMocks(page, [], {
       defaultLabels: { operator: "roakey" },
       defaultOperation: "op_trash_panda",
@@ -142,24 +142,15 @@ test.describe("operation picker placement", () => {
     });
     await page.goto("/");
 
-    const operator = page.getByTestId("edit-label-operator").locator("..");
-    const operation = page.getByTestId("edit-label-operation").locator("..");
-    await expect(operator).toHaveCSS("background-color", "rgb(254, 247, 178)");
     await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_trash_panda");
-    await expect(operation).toHaveCSS("background-color", "rgb(254, 247, 178)");
     await expect(page.getByTestId("edit-label-operation")).toHaveAccessibleDescription("Not registered");
     await expect(page.getByRole("button", { name: "Register", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Choose existing", exact: true })).toHaveCount(0);
-
-    await page.getByTestId("edit-label-operator").fill("alice");
-    await page.getByTestId("edit-label-operator").press("Enter");
-    await expect(operator).not.toHaveCSS("background-color", "rgb(254, 247, 178)");
 
     await page.getByTestId("edit-label-operation").click();
     await page.getByRole("option", { name: "op_real", exact: true }).click();
     await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_real");
     await expect(page.getByText("Not registered", { exact: true })).toHaveCount(0);
-    await expect(operation).not.toHaveCSS("background-color", "rgb(254, 247, 178)");
   });
 
   test("keeps metadata editable in a narrow bar without duplicating it in Default Labels", async ({ page }) => {

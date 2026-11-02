@@ -142,6 +142,11 @@ Select an operation in the labels bar to associate new chats and scans with it.
 The operation page brings its findings, linked evidence, and execution history
 together.
 
+**Export findings** on the operation page downloads the findings you select as
+one Word or Markdown document to paste into a report. Evidence appears as links
+to the attacks in PyRIT, without transcripts or media. Nothing is redacted, so
+store and share exported files with care.
+
 ![Operations page with a test operation](images/operations.png)
 
 ## Configuration
