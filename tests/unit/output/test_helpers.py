@@ -19,9 +19,12 @@ from pyrit.models import (
     Score,
 )
 from pyrit.output.conversation.source import MemoryConversationSource
+from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
+from pyrit.output.finding_report.report import FindingReport, FindingReportEntry, FindingReportField
 from pyrit.output.helpers import (
     output_attack_async,
     output_conversation_async,
+    output_finding_report_async,
     output_scenario_async,
     output_scenario_attacks_async,
     output_scenario_conversations_async,
@@ -30,7 +33,7 @@ from pyrit.output.helpers import (
     output_scorer_async,
 )
 from pyrit.output.scenario_result.json import JsonScenarioResultMemoryPrinter
-from pyrit.output.sink import FileSink, IPythonMarkdownSink, StdoutSink, get_default_sink
+from pyrit.output.sink import FileSink, IPythonMarkdownSink, Sink, StdoutSink, get_default_sink
 
 # --- get_default_sink tests ---
 
@@ -239,6 +242,42 @@ async def test_output_score_async_pretty_default(mock_cls):
 async def test_output_score_async_unsupported_format():
     with pytest.raises(ValueError, match="Unsupported format"):
         await output_score_async([AsyncMock()], format="markdown")
+
+
+# --- output_finding_report_async tests ---
+
+FINDING_REPORT = FindingReport(
+    operation_name="Synthetic evaluation",
+    findings=(
+        FindingReportEntry(
+            title="Synthetic finding",
+            severity=FindingReportField(label="Severity", value="Low"),
+            fields=(FindingReportField(label="Description", value="First line\nsecond line"),),
+            evidence=(),
+        ),
+    ),
+)
+
+
+class _RecordingSink(Sink):
+    def __init__(self) -> None:
+        self.written: list[str] = []
+
+    async def write_async(self, data: str) -> None:
+        self.written.append(data)
+
+
+async def test_output_finding_report_async_writes_markdown_to_the_sink():
+    sink = _RecordingSink()
+
+    await output_finding_report_async(FINDING_REPORT, sink=sink)
+
+    assert sink.written == [await MarkdownFindingReportPrinter().render_async(FINDING_REPORT)]
+
+
+async def test_output_finding_report_async_rejects_other_formats():
+    with pytest.raises(ValueError, match="Unsupported format for finding reports: 'json'"):
+        await output_finding_report_async(FINDING_REPORT, format="json")
 
 
 # --- json-branch tests (each routes to the Json* memory printer) ---

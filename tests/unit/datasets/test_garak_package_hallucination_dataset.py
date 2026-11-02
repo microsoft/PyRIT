@@ -125,6 +125,12 @@ async def test_max_examples_caps_seed_count():
     assert [s.value for s in dataset.seeds] == ["pkg0", "pkg1"]
 
 
+@pytest.mark.parametrize("max_examples", [0, -1])
+def test_max_examples_below_one_raises(max_examples):
+    with pytest.raises(ValueError, match="max_examples must be at least 1"):
+        _GarakNpmDataset(max_examples=max_examples)
+
+
 async def test_max_examples_none_loads_all(mock_npm_rows):
     loader = _GarakNpmDataset(max_examples=None)
 

@@ -180,6 +180,32 @@ describe('TechniqueEditor', () => {
     expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({ response_converters: ['base64'] })
   })
 
+  it.each(['request_converters', 'response_converters'] as const)(
+    'should save a temporary %s stage with Enter in the inline editor', async (chain) => {
+      const user = userEvent.setup()
+      const original = configuration()
+      original.settings[chain] = ['base64', 'base64']
+      const initial = configuration()
+      const source = { source_name: 'base64', source_hash: 'b64', params: {}, effective_hash: 'b64' }
+      initial.settings[chain] = ['base64', source]
+      const onApplied = jest.fn()
+      const saved = { converter_id: 'saved_base64', identifier: { class_name: 'Base64Converter', hash: 'b64' } }
+      jest.mocked(convertersApi.createConverter).mockResolvedValue(saved)
+      render(<FluentProvider theme={webLightTheme}>
+        <TechniqueEditor original={original} initial={initial} autoApply onApplied={onApplied} />
+      </FluentProvider>)
+      const label = chain === 'request_converters' ? 'Request converters' : 'Response converters'
+      await user.click(await screen.findByRole('button', { name: `Settings for converter base64, ${label} stage 2` }))
+      await user.click(screen.getByRole('menuitem', { name: 'Save to registry' }))
+      await user.type(screen.getByRole('textbox', { name: /Registry name/ }), 'saved_base64{Enter}')
+      await screen.findByRole('button', { name: `Settings for converter saved_base64, ${label} stage 2` })
+      expect(screen.queryByText('Temporary')).not.toBeInTheDocument()
+      expect(convertersApi.createConverter).toHaveBeenCalledWith({ name: 'saved_base64', type: 'Base64Converter', source })
+      await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
+      expect(onApplied.mock.calls[0][0].override.changes[chain]).toEqual(['base64', 'saved_base64'])
+    },
+  )
+
   it('should create and append a converter from the shared picker', async () => {
     const user = userEvent.setup()
     jest.mocked(convertersApi.listConverterTypes).mockResolvedValue({ items: [{
