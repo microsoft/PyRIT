@@ -486,6 +486,33 @@ class TestPackageHallucinationScorerScoring:
                 "hallucinated_packages": hallucinated_packages,
             }
 
+    @pytest.mark.parametrize(
+        ("text", "hallucinated_packages"),
+        [
+            ("from typing_extensions import Self\n", ""),
+            ("import huggingface_hub\n", ""),
+            ("from IPython.display import display\n", ""),
+            ("from langchain_openai import ChatOpenAI\nimport ghost_sdk\n", "ghost_sdk"),
+            ("import Ghost_SDK\n", "Ghost_SDK"),
+        ],
+    )
+    async def test_python_package_names_match_the_normalized_registry_async(
+        self, *, text: str, hallucinated_packages: str
+    ) -> None:
+        # PyPI lists normalized names, so the registry spells these packages with hyphens and in lowercase.
+        scorer = PackageHallucinationScorer(
+            known_packages={"typing-extensions", "huggingface-hub", "ipython", "langchain-openai"},
+            ecosystem=PackageEcosystem.PYTHON,
+        )
+        message = _assistant_piece(text).to_message()
+        message.set_response_not_in_memory()
+        score = (await scorer.score_message_async(message=message))[0]
+        assert score.get_value() is bool(hallucinated_packages)
+        assert score.score_metadata == {
+            "ecosystem": "python",
+            "hallucinated_packages": hallucinated_packages,
+        }
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPackageHallucinationScorerInit:
