@@ -276,7 +276,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
     const preset = configToPreset(
       { name: trimmedName, scenarioName: scenario.scenario_name, description, showInScanner },
       builtConfig.config,
-      { scenario, previous: loaded?.preset ?? null },
+      { scenario, previous: loaded?.preset ?? null, scenarioParamValues: config.scenarioParamValues },
     )
 
     setSaving(true)

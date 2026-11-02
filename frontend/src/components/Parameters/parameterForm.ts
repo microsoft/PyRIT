@@ -101,6 +101,17 @@ function elementTypeName(param: Parameter): string {
 }
 
 function parseListValue(raw: string): string[] {
+  const trimmed = raw.trim()
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (Array.isArray(parsed) && parsed.every((entry) => typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean')) {
+        return parsed.map((entry) => String(entry))
+      }
+    } catch {
+      // Fall back to comma-splitting if not valid JSON
+    }
+  }
   return raw
     .split(',')
     .map((entry) => entry.trim())
@@ -167,11 +178,13 @@ export function getInitialFormValues(
         break
       }
       case 'list': {
-        values[param.name] = Array.isArray(source)
-          ? source.map((entry) => String(entry)).join(', ')
-          : source != null
-            ? String(source)
-            : ''
+        values[param.name] = Array.isArray(source) && source.length === 0
+          ? []
+          : Array.isArray(source)
+            ? source.map((entry) => String(entry)).join(', ')
+            : source != null
+              ? String(source)
+              : ''
         break
       }
       default: {

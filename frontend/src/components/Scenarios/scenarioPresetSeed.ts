@@ -98,7 +98,7 @@ export function untouchedPresetScenarioParams(
 }
 
 function sameFormValue(left: ParameterFormValue | undefined, right: ParameterFormValue | undefined): boolean {
-  if (typeof left === 'string' || typeof right === 'string' || left === undefined || right === undefined) {
+  if (left == null || right == null || typeof left === 'string' || typeof right === 'string') {
     return left === right
   }
   if (Array.isArray(left) || Array.isArray(right)) {

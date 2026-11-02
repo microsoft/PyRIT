@@ -1,4 +1,4 @@
-import { buildParametersFromForm, getInitialFormValues } from '@/components/Parameters/parameterForm'
+import { buildParametersFromForm, getInitialFormValues, type ParameterFormValue } from '@/components/Parameters/parameterForm'
 import {
   dynamicScenarioParameters,
   initialScenarioConfigState,
@@ -6,6 +6,7 @@ import {
   type ScenarioConfigFields,
   type ScenarioConfigFormState,
 } from '@/components/Scenarios/scenarioConfigForm'
+import { untouchedPresetScenarioParams } from '@/components/Scenarios/scenarioPresetSeed'
 import type { RegisteredScenario, ScenarioPreset } from '@/types'
 import { validateRegistryName } from '@/utils/registryName'
 
@@ -82,6 +83,8 @@ interface PresetWriteContext {
   scenario: RegisteredScenario
   /** The document being edited, or `null` when creating. A field it already pins stays pinned. */
   previous: ScenarioPreset | null
+  /** The current form values for scenario parameters, used to preserve untouched stored values. */
+  scenarioParamValues?: Record<string, ParameterFormValue>
 }
 
 interface ScenarioOwnedDefaults {
@@ -126,10 +129,15 @@ function matchesTechniques(value: string[], fallback: string[]): boolean {
 
 function presetScenarioParams(
   config: ScenarioConfigFields,
-  { scenario, previous }: PresetWriteContext,
+  { scenario, previous, scenarioParamValues }: PresetWriteContext,
   defaults: Record<string, unknown>,
 ): Record<string, unknown> | null {
   const stored = previous?.scenario_params ?? {}
+  const dynamicParameters = dynamicScenarioParameters(scenario)
+  const formValues = scenarioParamValues ?? config.scenarioParamValues
+  const untouched = formValues
+    ? untouchedPresetScenarioParams(previous?.scenario_params, dynamicParameters, formValues)
+    : {}
   const edited = Object.entries(config.scenario_params ?? {}).filter(
     ([name, value]) => (
       Object.prototype.hasOwnProperty.call(stored, name) || !matchesDefault(value, defaults[name])
@@ -137,6 +145,7 @@ function presetScenarioParams(
   )
   const merged = {
     ...Object.fromEntries(edited),
+    ...untouched,
     ...uneditableScenarioParams(scenario, previous),
   }
   return Object.keys(merged).length > 0 ? merged : null

@@ -97,6 +97,12 @@ describe('getInitialFormValues', () => {
     expect(values).toEqual({ tags: ['x'], names: 'one, two' })
   })
 
+  it('derives an empty list array from an explicit empty list initial value', () => {
+    const params = [makeParameter({ name: 'names', type_name: 'list[str]', is_list: true })]
+    const values = getInitialFormValues(params, { names: [] })
+    expect(values).toEqual({ names: [] })
+  })
+
   it('honors a declared list default when no initial value is provided', () => {
     const params = [
       makeParameter({ name: 'tags', type_name: 'list[str]', is_list: true, choices: ['x', 'y'], default: ['y'] }),
@@ -272,6 +278,12 @@ describe('buildParametersFromForm', () => {
     const params = [makeParameter({ name: 'names', type_name: 'list[str]', is_list: true })]
     const result = buildParametersFromForm(params, { names: 'a, b ,, c' })
     expect(result).toEqual({ ok: true, parameters: { names: ['a', 'b', 'c'] } })
+  })
+
+  it('parses a JSON array in list input losslessly preserving commas inside elements', () => {
+    const params = [makeParameter({ name: 'names', type_name: 'list[str]', is_list: true })]
+    const result = buildParametersFromForm(params, { names: '["Hello, world!", "Second goal"]' })
+    expect(result).toEqual({ ok: true, parameters: { names: ['Hello, world!', 'Second goal'] } })
   })
 
   it('coerces list elements to the declared element type', () => {

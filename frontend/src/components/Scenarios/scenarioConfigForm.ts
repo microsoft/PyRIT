@@ -54,6 +54,7 @@ export interface ScenarioConfigFields {
   include_baseline: boolean
   datasets?: ScenarioDatasetRequest
   scenario_params?: Record<string, unknown>
+  scenarioParamValues?: Record<string, ParameterFormValue>
 }
 
 export type BuildScenarioConfigResult =
@@ -163,7 +164,11 @@ export function buildScenarioConfig({
     scenarioParams = result.parameters
   }
 
-  const config: ScenarioConfigFields = { techniques, include_baseline: includeBaseline }
+  const config: ScenarioConfigFields = {
+    techniques,
+    include_baseline: includeBaseline,
+    scenarioParamValues,
+  }
   if (!datasetRequestIsEmpty(datasets)) {
     config.datasets = datasets
   }

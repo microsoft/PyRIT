@@ -457,4 +457,100 @@ describe('configToPreset', () => {
 
     expect(roundTripped).toEqual(original)
   })
+
+  it('preserves an untouched list with commas, significant whitespace, duplicates, and order when editing description', () => {
+    const goalsParam: Parameter = {
+      name: 'goals',
+      type_name: 'list[str]',
+      is_list: true,
+      required: false,
+      default: null,
+    }
+    const suffixParam: Parameter = {
+      name: 'suffix',
+      type_name: 'str',
+      required: false,
+      default: null,
+    }
+    const scenario = makeScenario({ supported_parameters: [goalsParam, suffixParam] })
+    const original = makePreset({
+      description: 'Original description.',
+      scenario_params: {
+        goals: ['Hello, world!', 'Second goal', 'Second goal'],
+        suffix: '  padded  ',
+      },
+    })
+    const state = presetToConfigState(scenario, original)
+
+    const roundTripped = configToPreset(
+      { ...IDENTITY, description: 'Updated description.' },
+      buildConfig({
+        techniques: state.techniques,
+        dynamicParameters: [goalsParam, suffixParam],
+        scenarioParamValues: state.scenarioParamValues,
+      }),
+      { scenario, previous: original, scenarioParamValues: state.scenarioParamValues },
+    )
+
+    expect(roundTripped.description).toBe('Updated description.')
+    expect(roundTripped.scenario_params).toEqual({
+      goals: ['Hello, world!', 'Second goal', 'Second goal'],
+      suffix: '  padded  ',
+    })
+  })
+
+  it('preserves an untouched empty list parameter', () => {
+    const skipParam: Parameter = {
+      name: 'skip_texts',
+      type_name: 'list[str]',
+      is_list: true,
+      required: false,
+      default: null,
+    }
+    const scenario = makeScenario({ supported_parameters: [skipParam] })
+    const original = makePreset({
+      scenario_params: { skip_texts: [] },
+    })
+    const state = presetToConfigState(scenario, original)
+
+    const roundTripped = configToPreset(
+      IDENTITY,
+      buildConfig({
+        techniques: state.techniques,
+        dynamicParameters: [skipParam],
+        scenarioParamValues: state.scenarioParamValues,
+      }),
+      { scenario, previous: original, scenarioParamValues: state.scenarioParamValues },
+    )
+
+    expect(roundTripped.scenario_params).toEqual({ skip_texts: [] })
+  })
+
+  it('updates a list parameter when the operator edits it', () => {
+    const goalsParam: Parameter = {
+      name: 'goals',
+      type_name: 'list[str]',
+      is_list: true,
+      required: false,
+      default: null,
+    }
+    const scenario = makeScenario({ supported_parameters: [goalsParam] })
+    const original = makePreset({
+      scenario_params: { goals: ['Hello, world!', 'Second goal'] },
+    })
+    const state = presetToConfigState(scenario, original)
+    const editedFormValues = { ...state.scenarioParamValues, goals: 'new one, new two' }
+
+    const updated = configToPreset(
+      IDENTITY,
+      buildConfig({
+        techniques: state.techniques,
+        dynamicParameters: [goalsParam],
+        scenarioParamValues: editedFormValues,
+      }),
+      { scenario, previous: original, scenarioParamValues: editedFormValues },
+    )
+
+    expect(updated.scenario_params).toEqual({ goals: ['new one', 'new two'] })
+  })
 })

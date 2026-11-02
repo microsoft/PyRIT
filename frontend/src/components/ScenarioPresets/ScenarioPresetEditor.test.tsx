@@ -790,4 +790,42 @@ describe('ScenarioPresetEditor dynamic parameters', () => {
       'v1',
     ))
   })
+
+  it('preserves comma-containing exact goals through a description-only edit', async () => {
+    const user = userEvent.setup()
+    const scenarioWithGoals = makeScenario({
+      supported_parameters: [
+        {
+          name: 'goals',
+          type_name: 'list[str]',
+          is_list: true,
+          required: false,
+          default: null,
+          description: 'Exact goals.',
+        },
+      ],
+    })
+    mockGetScenario.mockResolvedValue(scenarioWithGoals)
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, scenario_params: { goals: ['Hello, world!', 'Second goal'] } },
+      version: 'v1',
+      issues: [],
+    })
+
+    renderEdit()
+
+    const description = await screen.findByTestId('preset-description-input')
+    await user.clear(description)
+    await user.type(description, 'Updated description only.')
+    await user.click(screen.getByTestId('save-preset-btn'))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
+      'nightly_probe',
+      expect.objectContaining({
+        description: 'Updated description only.',
+        scenario_params: { goals: ['Hello, world!', 'Second goal'] },
+      }),
+      'v1',
+    ))
+  })
 })
