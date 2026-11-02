@@ -360,7 +360,7 @@ class TestClassMetadata:
         assert any(p.is_reference_to(ComponentType.TARGET) for p in meta.parameters)
 
     def test_metadata_supported_auth_modes_projects_class_attribute(self, registry: TargetRegistry):
-        # Identity-capable targets expose both modes; api-key-only targets expose one.
+        # OpenAI targets expose all three modes; api-key-only targets expose one.
         assert self._metadata_for(registry, "OpenAIChatTarget").supported_auth_modes == ("api_key", "identity", "none")
         assert self._metadata_for(registry, "TextTarget").supported_auth_modes == ("api_key",)
 
