@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, RequestGenerationInfo
 from pyrit.prompt_target.http_target.http_target import HTTPTarget
 from pyrit.prompt_target.http_target.http_target_callback_functions import (
     get_http_target_json_response_callback_function,
@@ -65,21 +65,13 @@ def test_http_target_sets_endpoint_and_rate_limit(mock_callback_function, sqlite
 
 @patch("httpx.AsyncClient.request")
 async def test_send_prompt_async(mock_request, mock_http_target, mock_http_response):
-    message = MagicMock()
-    message.message_pieces = [
-        MagicMock(
-            converted_value="test_prompt",
-            converted_value_data_type="text",
-            attack_identifier=None,
-            conversation_id="",
-            labels={},
-            prompt_metadata={},
-        )
-    ]
+    message = Message.from_prompt(prompt="test_prompt", role="user")
     mock_request.return_value = mock_http_response
     response = await mock_http_target.send_prompt_async(message=message)
     assert len(response) == 1
     assert response[0].get_value() == "value1"
+    assert RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata) is None
+    assert RequestGenerationInfo.from_metadata(metadata=response[0].get_piece().prompt_metadata) is None
     assert mock_request.call_count == 1
     mock_request.assert_called_with(
         method="POST",
@@ -93,17 +85,7 @@ async def test_send_prompt_async(mock_request, mock_http_target, mock_http_respo
 @patch("httpx.AsyncClient.request", new_callable=AsyncMock)
 async def test_send_prompt_async_uses_data_for_dict_body(mock_request, mock_http_response, patch_central_database):
     target = HTTPTarget(http_request="POST / HTTP/1.1\nHost: example.com\n\n")
-    message = MagicMock()
-    message.message_pieces = [
-        MagicMock(
-            converted_value="test_prompt",
-            converted_value_data_type="text",
-            attack_identifier=None,
-            conversation_id="",
-            labels={},
-            prompt_metadata={},
-        )
-    ]
+    message = Message.from_prompt(prompt="test_prompt", role="user")
     mock_request.return_value = mock_http_response
 
     with patch.object(
@@ -158,17 +140,7 @@ async def test_send_prompt_async_client_kwargs(patch_central_database):
         # Create instance of HTTPTarget with httpx_client_kwargs
         # Use **httpx_client_kwargs to pass them as keyword arguments
         http_target = HTTPTarget(http_request=sample_request, **httpx_client_kwargs)
-        message = MagicMock()
-        message.message_pieces = [
-            MagicMock(
-                converted_value="",
-                converted_value_data_type="text",
-                attack_identifier=None,
-                conversation_id="",
-                labels={},
-                prompt_metadata={},
-            )
-        ]
+        message = Message.from_prompt(prompt="", role="user")
         mock_response = MagicMock()
         mock_response.content = b"Response content"
         mock_request.return_value = mock_response
@@ -334,17 +306,7 @@ async def test_send_prompt_regex_parse_async(mock_request, mock_http_target):
     callback_function = get_http_target_regex_matching_callback_function(key=r"Match: (\d+)")
     mock_http_target.callback_function = callback_function
 
-    message = MagicMock()
-    message.message_pieces = [
-        MagicMock(
-            converted_value="test_prompt",
-            converted_value_data_type="text",
-            attack_identifier=None,
-            conversation_id="",
-            labels={},
-            prompt_metadata={},
-        )
-    ]
+    message = Message.from_prompt(prompt="test_prompt", role="user")
 
     mock_response = httpx.Response(200, content=b"<html><body>Match: 1234</body></html>")
     mock_request.return_value = mock_response
@@ -368,17 +330,7 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
     mock_request.return_value = mock_http_response
 
     # Send first prompt
-    message = MagicMock()
-    message.message_pieces = [
-        MagicMock(
-            converted_value="test_prompt",
-            converted_value_data_type="text",
-            attack_identifier=None,
-            conversation_id="",
-            labels={},
-            prompt_metadata={},
-        )
-    ]
+    message = Message.from_prompt(prompt="test_prompt", role="user")
     response = await mock_http_target.send_prompt_async(message=message)
 
     assert len(response) == 1
@@ -395,17 +347,7 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
     )
 
     # Send second prompt
-    second_message = MagicMock()
-    second_message.message_pieces = [
-        MagicMock(
-            converted_value="second_test_prompt",
-            converted_value_data_type="text",
-            attack_identifier=None,
-            conversation_id="",
-            labels={},
-            prompt_metadata={},
-        )
-    ]
+    second_message = Message.from_prompt(prompt="second_test_prompt", role="user")
     await mock_http_target.send_prompt_async(message=second_message)
 
     # Assert that the original template is still the same
@@ -451,17 +393,7 @@ async def test_http_target_with_injected_client(patch_central_database):
         mock_response.content = b'{"mock_key": "test_value"}'
         mock_request.return_value = mock_response
 
-        message = MagicMock()
-        message.message_pieces = [
-            MagicMock(
-                converted_value="test_prompt",
-                converted_value_data_type="text",
-                attack_identifier=None,
-                conversation_id="",
-                labels={},
-                prompt_metadata={},
-            )
-        ]
+        message = Message.from_prompt(prompt="test_prompt", role="user")
 
         response = await target.send_prompt_async(message=message)
 
