@@ -284,3 +284,35 @@ def test_history_squash_as_identifier_params_with_config():
     assert "message_normalizer" in params
     assert params["message_normalizer"]["class_name"] == "ConversationContextNormalizer"
     assert normalizer.get_identifier().params == params
+
+
+def test_history_squash_as_identifier_params_reflects_child_normalizer_configuration():
+    from pyrit.message_normalizer import ChatMessageNormalizer
+
+    child_default = ChatMessageNormalizer()
+    child_dev = ChatMessageNormalizer(use_developer_role=True)
+    child_ignore = ChatMessageNormalizer(system_message_behavior="ignore")
+
+    squash_default = HistorySquashNormalizer(message_normalizer=child_default, expected_history_message_count=3)
+    squash_dev = HistorySquashNormalizer(message_normalizer=child_dev)
+    squash_ignore = HistorySquashNormalizer(message_normalizer=child_ignore)
+
+    params_default = squash_default.as_identifier_params()
+    params_dev = squash_dev.as_identifier_params()
+    params_ignore = squash_ignore.as_identifier_params()
+
+    assert params_default != params_dev
+    assert params_default != params_ignore
+    assert params_default["expected_history_message_count"] == 3
+    assert params_default["message_normalizer"]["params"] == {
+        "use_developer_role": False,
+        "system_message_behavior": "keep",
+    }
+    assert params_dev["message_normalizer"]["params"] == {
+        "use_developer_role": True,
+        "system_message_behavior": "keep",
+    }
+    assert params_ignore["message_normalizer"]["params"] == {
+        "use_developer_role": False,
+        "system_message_behavior": "ignore",
+    }

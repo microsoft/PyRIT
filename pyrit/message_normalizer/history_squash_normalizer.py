@@ -68,9 +68,14 @@ class HistorySquashNormalizer(MessageListNormalizer[Message], Identifiable):
         """
         params: dict[str, Any] = {}
         if self._message_normalizer is not None:
-            params["message_normalizer"] = self._message_normalizer.get_identifier().model_dump(
-                mode="json", exclude={"pyrit_version", "hash", "eval_hash"}
-            )
+            params_fn = getattr(self._message_normalizer, "as_identifier_params", None)
+            child_params = params_fn() if callable(params_fn) else {}
+            params["message_normalizer"] = {
+                **self._message_normalizer.get_identifier().model_dump(
+                    mode="json", exclude={"pyrit_version", "hash", "eval_hash"}
+                ),
+                "params": child_params,
+            }
         if self._expected_history_message_count is not None:
             params["expected_history_message_count"] = self._expected_history_message_count
         return params

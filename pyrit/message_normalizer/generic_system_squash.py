@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from typing import Any
+
 from pyrit.message_normalizer._helpers import build_squashed_user_message
 from pyrit.message_normalizer.message_normalizer import MessageListNormalizer
 from pyrit.models import Message, MessagePiece
@@ -10,6 +12,15 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
     """
     Normalizer that combines system messages with the following user message using generic instruction tags.
     """
+
+    def as_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the parameters that affect generic system squash normalization.
+
+        Returns:
+            dict[str, Any]: Empty dict since this normalizer has no configurable parameters.
+        """
+        return {}
 
     async def normalize_async(self, messages: list[Message]) -> list[Message]:
         """

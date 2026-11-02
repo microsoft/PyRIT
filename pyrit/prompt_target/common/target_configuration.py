@@ -201,9 +201,7 @@ class TargetConfiguration:
             # ``normalize_async`` builds a throwaway pipeline and never mutates
             # ``self._pipeline``. Attack-owned overrides are represented by the
             # attack identifier instead.
-            "normalization_pipeline": [
-                self._serialize_normalizer(normalizer) for normalizer in self._pipeline.normalizers
-            ],
+            "normalization_pipeline": self.project_pipeline(),
         }
 
     @classmethod
@@ -282,6 +280,28 @@ class TargetConfiguration:
             else:
                 serialized[key] = val
         return serialized
+
+    @classmethod
+    def project_normalizer(cls, normalizer: Any) -> dict[str, Any]:
+        """
+        Project a normalizer into a deterministic dict containing its type and parameters.
+
+        Args:
+            normalizer (Any): The message normalizer instance to project.
+
+        Returns:
+            dict[str, Any]: Dictionary with 'type' and 'params' keys.
+        """
+        return cls._serialize_normalizer(normalizer)
+
+    def project_pipeline(self) -> list[dict[str, Any]]:
+        """
+        Return a deterministic projection of the normalization pipeline.
+
+        Returns:
+            list[dict[str, Any]]: Ordered list of projected normalizers.
+        """
+        return [self._serialize_normalizer(normalizer) for normalizer in self._pipeline.normalizers]
 
     @staticmethod
     def _capabilities_to_identifier_params(capabilities: TargetCapabilities) -> dict[str, Any]:
