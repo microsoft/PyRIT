@@ -14,6 +14,7 @@ nb_directory_path = pathlib.Path(path.DOCS_CODE_PATH, "targets").resolve()
 
 skipped_files = [
     "4_openai_video_target.ipynb",  # requires OpenAI video API key
+    "7_non_open_ai_chat_targets.ipynb",  # waiting on GPU quota to restore the AML deployment
     "8_non_llm_targets.ipynb",  # requires Azure Blob Storage data-plane credentials
     "10_1_playwright_target.ipynb",  # Playwright installation takes too long
     "10_2_playwright_target_copilot.ipynb",  # Playwright installation takes too long, plus requires M365 account

@@ -37,15 +37,38 @@ class ServerSettings:
 
 class ConfigError(Exception):
     """
-    Raised when a CLI config file exists but cannot be parsed or is structurally
-    invalid (e.g. malformed YAML, a non-mapping root, or a wrong-typed
-    ``server`` setting).
+    Raised when an explicitly supplied CLI config file does not exist, or when a
+    config file exists but cannot be parsed or is structurally invalid (e.g.
+    malformed YAML, a non-mapping root, or a wrong-typed ``server`` setting).
 
-    A *missing* config file or a *missing* field is not an error -- the CLI just
-    falls back to its defaults. This is reserved for configs the user clearly
-    intended to set but got wrong, so callers can surface a clear message instead
-    of silently using the default.
+    A missing *default* config file or a *missing* field is not an error -- the
+    CLI just falls back to its defaults. This is reserved for configs the user
+    clearly intended to set but got wrong, so callers can surface a clear message
+    instead of silently using the default.
     """
+
+
+def _resolve_config_paths(*, config_file: Path | None) -> list[Path]:
+    """
+    Return the config files to load, in layering order.
+
+    Args:
+        config_file (Path | None): Optional explicit config path.
+
+    Returns:
+        list[Path]: The default config (if it exists) followed by *config_file* (if provided).
+
+    Raises:
+        ConfigError: If *config_file* is provided but does not exist.
+    """
+    paths: list[Path] = []
+    if _DEFAULT_CONFIG_FILE.exists():
+        paths.append(_DEFAULT_CONFIG_FILE)
+    if config_file is not None:
+        if not config_file.exists():
+            raise ConfigError(f"Config file {config_file} does not exist.")
+        paths.append(config_file)
+    return paths
 
 
 def _load_config_mapping(*, path: Path, yaml_module: Any) -> dict | None:
@@ -85,7 +108,7 @@ def read_server_url(*, config_file: Path | None = None) -> str | None:
 
     Layers (later wins):
       1. ``~/.pyrit/.pyrit_conf`` (if it exists)
-      2. *config_file* (if provided and exists)
+      2. *config_file* (if provided; it must exist)
 
     Args:
         config_file (Path | None): Optional explicit config path.
@@ -94,7 +117,7 @@ def read_server_url(*, config_file: Path | None = None) -> str | None:
         str | None: The server URL, or ``None`` if not configured.
 
     Raises:
-        ConfigError: If a config file exists but is malformed.
+        ConfigError: If *config_file* does not exist or a config file is malformed.
     """
     return read_server_settings(config_file=config_file).url
 
@@ -113,15 +136,11 @@ def read_server_settings(*, config_file: Path | None = None) -> ServerSettings:
         ServerSettings: The resolved URL, startup timeout, and authentication mode.
 
     Raises:
-        ConfigError: If a config file exists but is malformed.
+        ConfigError: If *config_file* does not exist or a config file is malformed.
     """
     import yaml
 
-    paths: list[Path] = []
-    if _DEFAULT_CONFIG_FILE.exists():
-        paths.append(_DEFAULT_CONFIG_FILE)
-    if config_file is not None and config_file.exists():
-        paths.append(config_file)
+    paths = _resolve_config_paths(config_file=config_file)
 
     settings = ServerSettings()
     for p in paths:
@@ -141,15 +160,12 @@ def validate_client_config(*, config_file: Path | None = None) -> None:
             is always checked when present.
 
     Raises:
-        ConfigError: If a config file is malformed or contains a removed option.
+        ConfigError: If *config_file* does not exist, or a config file is
+            malformed or contains a removed option.
     """
     import yaml
 
-    paths: list[Path] = []
-    if _DEFAULT_CONFIG_FILE.exists():
-        paths.append(_DEFAULT_CONFIG_FILE)
-    if config_file is not None and config_file.exists():
-        paths.append(config_file)
+    paths = _resolve_config_paths(config_file=config_file)
 
     for p in paths:
         data = _load_config_mapping(path=p, yaml_module=yaml)

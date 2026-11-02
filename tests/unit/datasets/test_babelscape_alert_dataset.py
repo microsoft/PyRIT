@@ -80,7 +80,7 @@ class TestBabelscapeAlertDataset:
         expected_mappings = {
             "crime_cyber": ["MALWARE", "COORDINATION_HARM"],
             "crime_injury": ["VIOLENT_CONTENT"],
-            "crime_kidnapp": ["VIOLENT_THREATS", "COORDINATION_HARM"],
+            "crime_kidnap": ["VIOLENT_THREATS", "COORDINATION_HARM"],
             "crime_other": ["COORDINATION_HARM"],
             "crime_privacy": ["PPI"],
             "crime_propaganda": ["INFO_INTEGRITY"],

@@ -3,6 +3,7 @@ import {
   Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger,
   MessageBar, MessageBarBody, Text, Tooltip,
 } from '@fluentui/react-components'
+import { DeleteRegular } from '@fluentui/react-icons'
 
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -64,7 +65,7 @@ export default function OperationDeleteDialog({ operation, onInUse, onDeleted }:
     }}>
       <DialogTrigger disableButtonEnhancement>
         <Tooltip relationship="description" content={blockedReason ?? 'Delete this empty operation.'}>
-          <Button className={styles.button} disabledFocusable={blockedReason !== undefined}>Delete</Button>
+          <Button className={styles.button} icon={<DeleteRegular />} disabledFocusable={blockedReason !== undefined}>Delete</Button>
         </Tooltip>
       </DialogTrigger>
       <DialogSurface>

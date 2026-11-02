@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -59,7 +59,7 @@ class JsonResponseConfig(BaseModel):
         return self
 
     @classmethod
-    def from_metadata(cls, *, metadata: dict[str, Any] | None) -> JsonResponseConfig:
+    def from_metadata(cls, *, metadata: dict[str, Any] | None) -> Self:
         """
         Reconstruct a config from a ``MessagePiece``'s ``prompt_metadata``.
 

@@ -47,6 +47,27 @@ class TestPipelineGuardrails(unittest.TestCase):
             "docker build"
         )
 
+    def test_build_reclaims_docker_space_before_build_and_post_job_scanning(self) -> None:
+        stage = next(stage for stage in self.pipeline["stages"] if stage.get("stage") == "Build")
+        assert stage["pool"] == {"vmImage": "ubuntu-latest"}
+        steps = stage["jobs"][0]["steps"]
+        build_index = next(index for index, step in enumerate(steps) if step.get("name") == "BuildImage")
+        before, after = steps[build_index - 1], steps[build_index + 1]
+        assert before["displayName"] == "Reclaim Docker disk space before build"
+        assert after["displayName"] == "Reclaim Docker disk space after build"
+        assert after["condition"] == "always()"
+        assert steps[-1] == after
+        for cleanup in (before, after):
+            assert not cleanup.get("continueOnError", False)
+            commands = cleanup["bash"].splitlines()
+            assert commands == [
+                "set -euo pipefail",
+                "df -h /",
+                "docker system df",
+                "docker system prune --all --force",
+                "df -h /",
+            ]
+
     def test_all_deployment_stages_share_one_template_and_remain_visible(self) -> None:
         stages = self.pipeline["stages"]
         assert [stage.get("stage") or stage["parameters"]["stageName"] for stage in stages] == [

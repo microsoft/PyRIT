@@ -21,6 +21,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from pyrit.models.catalog.scenario import (
+    ScenarioLaunchConfiguration,
     _RequestName,
     _RequestParams,
     _RequestTechniques,
@@ -32,10 +33,11 @@ from pyrit.models.scenario_dataset import ScenarioDatasetRequest
 PRESET_SCHEMA_VERSION = 1
 
 # Excluded from the behavioral identity: ``name`` is the registry key rather than
-# configuration, ``schema_version`` describes the document shape, and ``description`` and
-# ``author`` are descriptive. Naming the exclusions rather than the inclusions means a
-# configuration field added later counts as behavioral without touching this.
-_NON_BEHAVIORAL_FIELDS = frozenset({"name", "schema_version", "description", "author"})
+# configuration, ``schema_version`` describes the document shape, ``description`` and
+# ``author`` are descriptive, and ``show_in_scanner`` only decides where the preset is
+# offered. Naming the exclusions rather than the inclusions means a configuration field
+# added later counts as behavioral without touching this.
+_NON_BEHAVIORAL_FIELDS = frozenset({"name", "schema_version", "description", "author", "show_in_scanner"})
 
 
 class ScenarioPreset(BaseModel, Identifiable):
@@ -67,6 +69,13 @@ class ScenarioPreset(BaseModel, Identifiable):
     author: str | None = Field(
         None,
         description="Who created this preset; descriptive only, never used to authorize a read or a write",
+    )
+    show_in_scanner: bool = Field(
+        True,
+        description=(
+            "Whether the Scanner lists this preset as an entry of its own. Hide a preset that exists only "
+            "to run inside a scenario suite; a hidden preset still runs through its suites."
+        ),
     )
     techniques: _RequestTechniques | None = Field(None, description="Technique names; None uses the scenario default")
     datasets: ScenarioDatasetRequest | None = Field(
@@ -142,6 +151,21 @@ class ScenarioPreset(BaseModel, Identifiable):
             ComponentIdentifier: Identity derived from the current field values.
         """
         return self._build_identifier()
+
+
+class ResolveScenarioPresetRequest(ScenarioLaunchConfiguration):
+    """
+    Launch-owned fields a preset deliberately omits.
+
+    ``expected_version`` is a precondition rather than launch configuration. A
+    caller that previewed a stored preset supplies that opaque version so an edit
+    landing before launch is reported instead of silently changing the run.
+    """
+
+    expected_version: str | None = Field(
+        None,
+        description="Version the caller resolved against; omit to resolve the current definition",
+    )
 
 
 class StoredPreset(BaseModel):

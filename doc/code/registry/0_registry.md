@@ -171,9 +171,7 @@ Construction and reference resolution remain owned by `ScorerRegistry`.
 Scorer list responses build identifiers only for the requested page. Runtime
 replacement clears the cached scorer service so requests use the new registry.
 
-The backend owns file-upload handling and cleanup, not the registry. See the
-[registry API migration notes](../../gui/0_gui.md#registry-api-migration-notes)
-for the REST contract and temporary compatibility behavior.
+The backend owns file-upload handling and cleanup, not the registry.
 
 ## Attack Class Registry
 

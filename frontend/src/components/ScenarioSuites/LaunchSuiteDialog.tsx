@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from 'react'
 
 import {
+  Badge,
   Button,
   Dialog,
   DialogActions,
@@ -26,26 +27,29 @@ import {
   MIN_MAX_RETRIES,
   resolveSpinButtonValue,
 } from '@/components/Scenarios/scenarioRunLimits'
-import { scenarioPresetsApi, scenariosApi } from '@/services/api'
+import { scenarioSuitesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { RunScenarioRequest, ScenarioPreset, TargetInstance } from '@/types'
-import { scenarioRunRoutePath } from '@/utils/routeParams'
+import type {
+  LaunchScenarioSuiteRequest,
+  ScenarioSuiteResponse,
+  TargetInstance,
+} from '@/types'
 
-import { useLaunchPresetDialogStyles } from './LaunchPresetDialog.styles'
+import { useLaunchSuiteDialogStyles } from './LaunchSuiteDialog.styles'
+import { suiteExecutionRoutePath } from './suiteRoutes'
 
-interface LaunchPresetDialogProps {
-  preset: ScenarioPreset
-  version: string | null
+interface LaunchSuiteDialogProps {
+  suite: ScenarioSuiteResponse
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
-  /** The saved Operation that this run joins, or null for an unassigned run. */
+  /** The saved Operation that every child run joins, or null for none. */
   operationId: string | null
   /** False while server defaults or the global Operation selection are unresolved. */
   defaultsReady: boolean
   onDismiss: () => void
-  onPresetChanged: () => void
+  onSuiteChanged: () => void
 }
 
 function initialTargetName(
@@ -61,47 +65,8 @@ function initialTargetName(
   return match ? candidate.target_registry_name : ''
 }
 
-/**
- * Restates what the preset pins. The dialog covers the library card, so without
- * this the operator commits to a run knowing only the preset and scenario name.
- * Omitted fields read as scenario defaults because that is what the server does
- * with them, and a limit of 'default' is an explicit way of saying the same thing.
- */
-function presetSummary(preset: ScenarioPreset): string {
-  const techniques = preset.techniques ?? []
-  const sources = preset.datasets?.sources ?? []
-  const parts = [
-    techniques.length === 0
-      ? 'Scenario default techniques'
-      : `${techniques.length} technique${techniques.length === 1 ? '' : 's'}`,
-    sources.length === 0 ? 'scenario default datasets' : sources.map((source) => source.name).join(', '),
-  ]
-  const total = preset.datasets?.max_total
-  if (total != null && total !== 'default') {
-    parts.push(total === 'all' ? 'every case' : `max ${total} cases`)
-  }
-  const perDataset = preset.datasets?.max_per_dataset
-  if (perDataset != null && perDataset !== 'default') {
-    parts.push(perDataset === 'all' ? 'every case per dataset' : `max ${perDataset} per dataset`)
-  }
-  if (preset.include_baseline != null) {
-    parts.push(preset.include_baseline ? 'baseline included' : 'baseline excluded')
-  }
-  return parts.join(' · ')
-}
-
-/**
- * Collects the launch-owned fields a preset deliberately omits, then asks the
- * server to merge them with the stored preset. Resolution stays server-side so
- * the browser never reimplements the preset-to-run mapping.
- *
- * The summary above describes the preset as it was read, so the launch sends that
- * version back. An edit landing in between is reported rather than launched, which
- * is the one case where a run would otherwise differ from what was confirmed.
- */
-export default function LaunchPresetDialog({
-  preset,
-  version,
+export default function LaunchSuiteDialog({
+  suite,
   targets,
   defaultObjectiveTarget,
   defaultAdversarialTarget,
@@ -109,9 +74,9 @@ export default function LaunchPresetDialog({
   operationId,
   defaultsReady,
   onDismiss,
-  onPresetChanged,
-}: LaunchPresetDialogProps) {
-  const styles = useLaunchPresetDialogStyles()
+  onSuiteChanged,
+}: LaunchSuiteDialogProps) {
+  const styles = useLaunchSuiteDialogStyles()
   const navigate = useNavigate()
   const adversarialTargets = targets.filter(
     (target) => target.capabilities?.supports_multi_turn === true,
@@ -132,38 +97,35 @@ export default function LaunchPresetDialog({
     if (targetName === '' || submitting || !defaultsReady) {
       return
     }
+
+    const request: LaunchScenarioSuiteRequest = {
+      expected_version: suite.version,
+      entries: suite.entry_statuses.map((entry) => ({
+        entry_id: entry.entry_id,
+        preset_name: entry.preset_name,
+        origin: entry.origin,
+        preset_version: entry.preset_version,
+      })),
+      target_name: targetName,
+      ...(adversarialTargetName === '' ? {} : { adversarial_target_name: adversarialTargetName }),
+      max_concurrency: maxConcurrency,
+      max_retries: maxRetries,
+      ...(operationId ? { operation_id: operationId } : {}),
+      ...(Object.keys(labels).length > 0 ? { labels } : {}),
+    }
+
     setSubmitting(true)
     setError(null)
-    let request: RunScenarioRequest
     try {
-      request = await scenarioPresetsApi.resolve(preset.name, {
-        expected_version: version,
-        target_name: targetName,
-        ...(adversarialTargetName === '' ? {} : { adversarial_target_name: adversarialTargetName }),
-        max_concurrency: maxConcurrency,
-        max_retries: maxRetries,
-        ...(operationId ? { operation_id: operationId } : {}),
-        ...(Object.keys(labels).length > 0 ? { labels } : {}),
-      })
-    } catch (err) {
+      const execution = await scenarioSuitesApi.launch(suite.suite.name, request)
+      navigate(suiteExecutionRoutePath(execution.suite_execution_id))
+    } catch (err: unknown) {
       const apiError = toApiError(err)
       if (apiError.status === 409) {
-        // The summary on screen no longer describes the preset, so re-reading is the
-        // only way forward; keeping the dialog open would invite a confirm-and-retry loop.
-        onPresetChanged()
+        onSuiteChanged()
         return
       }
       setError(apiError.detail)
-      setSubmitting(false)
-      return
-    }
-    try {
-      const summary = await scenariosApi.startRun(request)
-      navigate(scenarioRunRoutePath(summary.scenario_result_id), {
-        state: { scenarioName: preset.scenario_name },
-      })
-    } catch (err) {
-      setError(toApiError(err).detail)
       setSubmitting(false)
     }
   }
@@ -173,19 +135,27 @@ export default function LaunchPresetDialog({
       <DialogSurface>
         <form onSubmit={handleSubmit}>
           <DialogBody>
-            <DialogTitle>Launch {preset.name}</DialogTitle>
+            <DialogTitle>Launch {suite.suite.name}</DialogTitle>
             <DialogContent className={styles.body}>
               <div className={styles.summary}>
-                <Text className={styles.scenarioLine} size={200}>
-                  Runs <strong>{preset.scenario_name}</strong> with this preset&apos;s saved configuration.
+                <Text size={200} className={styles.summaryText}>
+                  Queues {suite.suite.entries.length} scenario run
+                  {suite.suite.entries.length === 1 ? '' : 's'} in this order.
                 </Text>
-                <Text
-                  className={styles.scenarioLine}
-                  size={200}
-                  data-testid="launch-preset-summary"
-                >
-                  {presetSummary(preset)}
-                </Text>
+                <ol className={styles.entryList} data-testid="launch-suite-entries">
+                  {suite.entry_statuses.map((entry) => (
+                    <li key={entry.entry_id}>
+                      <span className={styles.entryIdentity}>
+                        <Text size={200}>{entry.preset_name}</Text>
+                        {entry.origin === 'registered' && (
+                          <Badge appearance="tint" color="informative" size="small">
+                            Defined in code
+                          </Badge>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
               </div>
               {error && (
                 <MessageBar intent="error">
@@ -197,7 +167,7 @@ export default function LaunchPresetDialog({
                 value={targetName}
                 onChange={(target) => setTargetName(target?.target_registry_name ?? '')}
                 label="Target"
-                hint="The registered target this run attacks."
+                hint="The registered target every suite entry attacks."
                 placeholder="Select a target"
                 disabled={submitting}
               />
@@ -206,11 +176,11 @@ export default function LaunchPresetDialog({
                 value={adversarialTargetName}
                 onChange={(target) => setAdversarialTargetName(target?.target_registry_name ?? '')}
                 label="Adversarial Target"
-                hint="Only used by scenarios that generate attacks with a second target."
+                hint="Only used by suite entries whose scenarios require a second target."
                 placeholder="Use server default"
                 disabled={submitting}
               />
-              <Field label="Max concurrency">
+              <Field label="Max concurrency per run">
                 <SingleStepSpinButton
                   className={styles.numberInput}
                   value={maxConcurrency}
@@ -218,10 +188,10 @@ export default function LaunchPresetDialog({
                   max={MAX_MAX_CONCURRENCY}
                   disabled={submitting}
                   onChange={(_, data) => setMaxConcurrency(resolveSpinButtonValue(data, maxConcurrency))}
-                  data-testid="preset-max-concurrency-input"
+                  data-testid="suite-max-concurrency-input"
                 />
               </Field>
-              <Field label="Max retries">
+              <Field label="Max retries per run">
                 <SingleStepSpinButton
                   className={styles.numberInput}
                   value={maxRetries}
@@ -229,7 +199,7 @@ export default function LaunchPresetDialog({
                   max={MAX_MAX_RETRIES}
                   disabled={submitting}
                   onChange={(_, data) => setMaxRetries(resolveSpinButtonValue(data, maxRetries))}
-                  data-testid="preset-max-retries-input"
+                  data-testid="suite-max-retries-input"
                 />
               </Field>
             </DialogContent>
@@ -241,9 +211,9 @@ export default function LaunchPresetDialog({
                 appearance="primary"
                 type="submit"
                 disabled={targetName === '' || submitting || !defaultsReady}
-                data-testid="confirm-launch-preset"
+                data-testid="confirm-launch-suite"
               >
-                {submitting ? 'Launching...' : 'Launch'}
+                {submitting ? 'Launching...' : 'Launch suite'}
               </Button>
             </DialogActions>
           </DialogBody>

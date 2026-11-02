@@ -132,6 +132,28 @@ export function retryAfterMilliseconds(error: unknown): number {
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0
 }
 
+/**
+ * Replace a file download's Blob error body with its JSON, or its text when it
+ * isn't JSON, so compatibility checks, token refresh and {@link toApiError} can
+ * read it. An unreadable body is left as is; other errors are unchanged.
+ */
+export async function decodeBlobErrorAsync(error: unknown): Promise<void> {
+  const response = isAxiosError(error) ? error.response : undefined
+  const body: unknown = response?.data
+  if (!response || !(body instanceof Blob)) return
+  let text: string
+  try {
+    text = await readBlobText(body)
+  } catch {
+    return
+  }
+  try {
+    response.data = JSON.parse(text)
+  } catch {
+    response.data = text
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -139,6 +161,15 @@ export function retryAfterMilliseconds(error: unknown): number {
 /** Type-guard for Axios errors. */
 function isAxiosError(err: unknown): err is AxiosError {
   return typeof err === 'object' && err !== null && (err as AxiosError).isAxiosError === true
+}
+
+function readBlobText(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(blob)
+  })
 }
 
 /**

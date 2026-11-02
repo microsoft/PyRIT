@@ -11,6 +11,7 @@ constructs local media endpoint URLs for media content.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -53,6 +54,7 @@ logger = logging.getLogger(__name__)
 _LEGACY_MANUAL_ATTACK_PLACEHOLDER = "Manual attack via GUI"
 
 if TYPE_CHECKING:
+    from pyrit.memory import MemoryInterface
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.results.attack_result import AttackScoringInputs
 
@@ -334,7 +336,9 @@ async def _resolve_and_sign_media_async(*, value: str | None, data_type: str) ->
     Returns:
         The resolved (and signed, if a blob) URL, or ``None`` when *value* is empty.
     """
-    resolved = _resolve_media_url(value=value, data_type=data_type)
+    if not value or data_type not in MEDIA_PATH_DATA_TYPES:
+        return None
+    resolved = await asyncio.to_thread(_resolve_media_url, value=value, data_type=data_type)
     if resolved and _is_azure_blob_url(resolved):
         return await _sign_blob_url_async(blob_url=resolved)
     return resolved
@@ -376,6 +380,7 @@ def _score_lookup_key(*, piece: MessagePiece) -> str:
 async def _fetch_scores_by_piece_async(
     *,
     pyrit_messages: list[Message],
+    memory: MemoryInterface | None = None,
 ) -> dict[str, list[Score]]:
     """
     Batch-fetch scores for every piece in ``pyrit_messages`` and group by piece id.
@@ -390,8 +395,8 @@ async def _fetch_scores_by_piece_async(
     if not score_lookup_ids:
         return {}
 
-    memory = CentralMemory.get_memory_instance()
-    fetched = await memory.get_prompt_scores_async(prompt_ids=score_lookup_ids)
+    source = memory if memory is not None else CentralMemory.get_memory_instance()
+    fetched = await source.get_prompt_scores_async(prompt_ids=score_lookup_ids)
 
     grouped: dict[str, list[Score]] = {}
     for score in fetched:
@@ -403,6 +408,7 @@ async def pyrit_messages_to_dto_async(
     pyrit_messages: list[Message],
     *,
     objective_score_id: uuid.UUID | str | None = None,
+    memory: MemoryInterface | None = None,
 ) -> list[MessageView]:
     """
     Translate PyRIT messages to backend MessageView responses.
@@ -414,15 +420,15 @@ async def pyrit_messages_to_dto_async(
     - Local files -> ``/api/media?path=...`` (served by the media endpoint)
     - Azure Blob Storage files -> signed URLs with SAS tokens
 
-    Scores are fetched from ``CentralMemory`` (``MessagePiece`` no longer carries
-    them) via a single batched ``get_prompt_scores`` call and attached to their
+    Scores are fetched from the supplied memory, or ``CentralMemory`` by default
+    (``MessagePiece`` no longer carries them), in one batched read and attached to their
     originating piece. When ``objective_score_id`` is provided, the matching
     score is marked as the attack's canonical objective score.
 
     Returns:
         List of MessageView responses for the API.
     """
-    scores_by_piece = await _fetch_scores_by_piece_async(pyrit_messages=pyrit_messages)
+    scores_by_piece = await _fetch_scores_by_piece_async(pyrit_messages=pyrit_messages, memory=memory)
 
     messages: list[MessageView] = []
     for msg in pyrit_messages:

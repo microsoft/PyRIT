@@ -3,7 +3,7 @@ import { AddRegular } from '@fluentui/react-icons'
 
 import type { ConverterInstance } from '@/types'
 
-import { useConverterPanelStyles } from './ConverterPanel.styles'
+import { useSelectConverterInputStyles } from './SelectConverterInput.styles'
 
 const CREATE_CONVERTER_OPTION = '__create_new_converter__'
 
@@ -16,6 +16,8 @@ export interface SelectConverterInputProps {
   groupedConverters: ConverterGroup[]
   onOptionSelect: (converterId: string) => void
   onCreateNew: () => void
+  label?: string
+  disabled?: boolean
 }
 
 function formatDataType(dataType: string): string {
@@ -26,12 +28,15 @@ export default function SelectConverterInput({
   groupedConverters,
   onOptionSelect,
   onCreateNew,
+  label = 'Add converter',
+  disabled = false,
 }: SelectConverterInputProps) {
-  const styles = useConverterPanelStyles()
+  const styles = useSelectConverterInputStyles()
 
   return (
     <Dropdown
-      aria-label="Add converter"
+      aria-label={label}
+      disabled={disabled}
       className={styles.converterPicker}
       inlinePopup
       listbox={{ className: styles.converterPickerListbox }}

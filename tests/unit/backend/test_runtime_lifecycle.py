@@ -162,16 +162,17 @@ async def test_management_configures_scenario_suite_storage_source_async(tmp_pat
     )
     initializer_registry = MagicMock()
     preset_registry = MagicMock()
-    suite_service = MagicMock()
+    suite_registry = MagicMock()
 
     with (
         patch.object(lifecycle_module.InitializerRegistry, "get_registry_singleton", return_value=initializer_registry),
         patch.object(lifecycle_module.ScenarioPresetRegistry, "get_registry_singleton", return_value=preset_registry),
-        patch.object(lifecycle_module, "get_scenario_suite_service", return_value=suite_service),
+        patch.object(lifecycle_module.ScenarioSuiteRegistry, "get_registry_singleton", return_value=suite_registry),
     ):
         await lifecycle._management_async(config)
 
-    suite_service.configure_source.assert_called_once_with(suite_source)
+    suite_registry.configure_source.assert_called_once_with(suite_source)
+    suite_registry.scan_stored_suites.assert_called_once_with()
 
 
 @pytest.mark.parametrize(
@@ -312,6 +313,18 @@ async def test_active_work_rejects_apply_without_stopping_or_mutating(runtime: R
     assert runtime.state == "ready"
     lifecycle_module.close_services_async.assert_not_awaited()
     assert not hasattr(service, "request_stop") or not service.request_stop.called
+
+
+async def test_active_suite_submission_rejects_apply_without_mutating(runtime: RuntimeLifecycle) -> None:
+    """Test process-local suite coordination participates in the idle barrier."""
+    service = MagicMock()
+    service.has_active_work.return_value = True
+    with patch.object(lifecycle_module, "peek_scenario_suite_execution_service", return_value=service):
+        await apply_async(runtime)
+
+    assert runtime.outcome == "busy"
+    assert runtime.state == "ready"
+    lifecycle_module.close_services_async.assert_not_awaited()
 
 
 @pytest.mark.parametrize("count", [1, 3])
