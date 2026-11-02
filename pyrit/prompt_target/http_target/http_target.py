@@ -275,9 +275,16 @@ class HTTPTarget(PromptTarget):
         header_lines = header_lines[1:]  # rest of the raw request is the headers info
 
         # Loop through each line and split into key-value pairs
+        request_headers: dict[str, str] = {}
         for line in header_lines:
             key, value = line.split(":", 1)
-            headers_dict[key.strip().lower()] = value.strip()
+            key = key.strip().lower()
+            value = value.strip()
+            # HTTP/2 can split cookies across lines, which must be rejoined with "; " (RFC 9113 8.2.3).
+            if key == "cookie" and key in request_headers:
+                value = "; ".join(part for part in (request_headers[key], value) if part)
+            request_headers[key] = value
+        headers_dict.update(request_headers)
 
         for framing_header in ("content-length", "transfer-encoding"):
             headers_dict.pop(framing_header, None)
