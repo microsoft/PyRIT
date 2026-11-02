@@ -10,6 +10,19 @@ Built by the Microsoft AI Red Team and an open-source community of contributors,
 PyRIT brings a command-line scanner, a graphical interface, and an extensible
 Python framework together in one toolkit.
 
+[![Code contributors](https://img.shields.io/github/contributors/microsoft/PyRIT?label=code%20contributors)](https://github.com/microsoft/PyRIT/graphs/contributors)
+[![PRs merged](https://img.shields.io/github/issues-search?query=repo%3Amicrosoft%2FPyRIT%20is%3Apr%20is%3Amerged&label=PRs%20merged)](https://github.com/microsoft/PyRIT/pulls?q=is%3Apr+is%3Amerged)
+[![Issues closed](https://img.shields.io/github/issues-closed/microsoft/PyRIT?label=issues%20closed)](https://github.com/microsoft/PyRIT/issues?q=is%3Aissue+is%3Aclosed)
+
+You do not need to be a Microsoft employee or an experienced red teamer to get involved.
+Join our [Discord community](https://discord.gg/9fMpq3tc8u) to ask questions, exchange
+techniques, share what you are building, and connect with maintainers and other users.
+
+Contributions include code, documentation, examples, bug reports, testing, and feedback
+from real-world use. Read the
+[contributor guide](https://microsoft.github.io/PyRIT/latest/contributing/readme/) and
+explore [issues labeled "help wanted"](https://github.com/microsoft/PyRIT/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
+
 **[Get started](https://microsoft.github.io/PyRIT/) |
 [Join Discord](https://discord.gg/9fMpq3tc8u) |
 [Read the whitepaper](https://commandline.microsoft.com/wp-content/uploads/2026/08/PyRIT_Whitepaper_2026.pdf)**
@@ -45,24 +58,6 @@ Test complete applications and other endpoints through
 [WebSockets](https://microsoft.github.io/PyRIT/latest/code/targets/websocket-target/),
 [browser automation with Playwright](https://microsoft.github.io/PyRIT/latest/code/targets/playwright-target/),
 or [custom targets](https://microsoft.github.io/PyRIT/latest/code/targets/custom-targets/).
-
-## Built with the community
-
-[![Code contributors](https://img.shields.io/github/contributors/microsoft/PyRIT?label=code%20contributors)](https://github.com/microsoft/PyRIT/graphs/contributors)
-[![PRs merged](https://img.shields.io/github/issues-search?query=repo%3Amicrosoft%2FPyRIT%20is%3Apr%20is%3Amerged&label=PRs%20merged)](https://github.com/microsoft/PyRIT/pulls?q=is%3Apr+is%3Amerged)
-[![Issues closed](https://img.shields.io/github/issues-closed/microsoft/PyRIT?label=issues%20closed)](https://github.com/microsoft/PyRIT/issues?q=is%3Aissue+is%3Aclosed)
-
-These are all-time GitHub activity counts. Code contributors include maintainers
-and bots; the API count can differ from GitHub's sidebar.
-
-You do not need to be a Microsoft employee or an experienced red teamer to get involved.
-Join our [Discord community](https://discord.gg/9fMpq3tc8u) to ask questions, exchange
-techniques, share what you are building, and connect with maintainers and other users.
-
-Contributions include code, documentation, examples, bug reports, testing, and feedback
-from real-world use. Read the
-[contributor guide](https://microsoft.github.io/PyRIT/latest/contributing/readme/) and
-explore [issues labeled "help wanted"](https://github.com/microsoft/PyRIT/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
 
 ## Research and citation
 
