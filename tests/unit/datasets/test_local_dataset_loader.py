@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.datasets.seed_datasets.local.local_dataset_loader import _LocalDatasetLoader
+from pyrit.memory import SQLiteMemory
 from pyrit.models import SeedDataset, SeedOrigin, SeedPrompt
 
 
@@ -121,3 +122,56 @@ seeds:
         loader = _LocalDatasetLoader(file_path=Path("non_existent.yaml"))
         with pytest.raises(Exception):
             await loader.fetch_dataset_async()
+
+    async def test_fetch_dataset_assigns_filename_fallback_to_seeds_async(self, tmp_path: Path) -> None:
+        """When YAML omits dataset_name, seeds inherit the filename stem fallback unless explicitly set."""
+        file_path = tmp_path / "filename_fallback_test.yaml"
+        file_path.write_text(
+            """
+seeds:
+  - value: seed without dataset name
+    data_type: text
+  - value: seed with custom dataset name
+    data_type: text
+    dataset_name: explicit_seed_dataset
+""",
+            encoding="utf-8",
+        )
+
+        loader = _LocalDatasetLoader(file_path=file_path)
+        assert loader.dataset_name == "filename_fallback_test"
+
+        dataset = await loader.fetch_dataset_async()
+        assert dataset.dataset_name == "filename_fallback_test"
+        assert len(dataset.seeds) == 2
+        assert dataset.seeds[0].dataset_name == "filename_fallback_test"
+        assert dataset.seeds[1].dataset_name == "explicit_seed_dataset"
+
+    async def test_filename_fallback_seeds_queryable_after_ingestion_async(
+        self, tmp_path: Path, sqlite_instance: SQLiteMemory
+    ) -> None:
+        """Seeds loaded from filename-only YAML are queryable by fallback dataset name in memory."""
+        file_path = tmp_path / "unnamed_yaml_dataset.yaml"
+        file_path.write_text(
+            """
+seeds:
+  - value: prompt 1
+    data_type: text
+  - value: prompt 2
+    data_type: text
+""",
+            encoding="utf-8",
+        )
+
+        loader = _LocalDatasetLoader(file_path=file_path)
+        dataset = await loader.fetch_dataset_async()
+
+        await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="tester")
+
+        stored_seeds = await sqlite_instance.get_seeds_async(dataset_name="unnamed_yaml_dataset")
+        assert len(stored_seeds) == 2
+        assert {s.value for s in stored_seeds} == {"prompt 1", "prompt 2"}
+        assert all(s.dataset_name == "unnamed_yaml_dataset" for s in stored_seeds)
+
+        dataset_names = await sqlite_instance.get_seed_dataset_names_async()
+        assert "unnamed_yaml_dataset" in dataset_names
