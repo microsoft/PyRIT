@@ -56,7 +56,7 @@ def _quoted_option(flags: str, text_operand: str = "", names: str = "") -> str:
     if text_operand:
         safe += rf"|-[{flags}]*+[{text_operand}]"
     if names:
-        safe += rf"""|["'](?:{names})["']{_END}"""
+        safe += rf"""|(?:"(?:{names})"|'(?:{names})'){_END}"""
     return rf"""(?={_DASH})(?=[^\s()<>|;&`'"\\]*+["'])(?!{safe}))"""
 
 
@@ -88,18 +88,46 @@ def _download_command(
 
 # curl writes the body to standard output unless an option names a file (`-o FILE`, `-oFILE`,
 # `--output FILE`, `-O`, `--remote-name`), asks for headers only (`-I`, `--head`, `-X HEAD`), reads its
-# options from a config file (`-K`, `--config`), or prints help, version or manual text instead
-# (`-h`, `-V`, `-M`). Short options are case-sensitive, and the letters in `_CURL_FLAGS` take no
+# options from a config file (`-K`, `--config`), prints help, version or manual text instead
+# (`-h`, `-V`, `-M`), or sends a request other than GET (`-d`, `-F`, `-T`, `--json`, `-X POST`), whose
+# reply depends on the server. Short options are case-sensitive, and the letters in `_CURL_FLAGS` take no
 # operand, so an `o` or `X` after them starts the option's operand.
 _CURL_LETTERS = "#0-46aBfgGijJklLnNpqRsSvZ"
 _CURL_FLAGS = rf"[{_CURL_LETTERS}]*+"
 _NOT_STDOUT = rf"""(?!(?:-|"-"|'-'|/dev/stdout){_END})"""
-# Options that take a number, and option names that keep the body when written inside quotes.
-_CURL_NUMBER = rf"(?-i:-{_CURL_FLAGS}[CYmy]|--(?:max-time|connect-timeout|continue-at|retry|speed-limit|speed-time))"
+
+
+# Options that take a number, and the numbers curl accepts for them: seconds with an optional
+# fraction and exponent, a whole number, or a whole number or `-` for the resume offset.
+def _curl_number_option(letters: str, names: str, number: str) -> str:
+    """
+    Build the pattern for a curl option that takes a number, followed by an operand that is not one.
+
+    Args:
+        letters (str): The short option letters.
+        names (str): The long option names.
+        number (str): The pattern for an operand curl accepts.
+
+    Returns:
+        str: The pattern for the option and an operand curl rejects.
+    """
+    short = rf"-{_CURL_FLAGS}[{letters}]"
+    option = rf"(?-i:{short}(?:{_SEP})?+|{_quoted(short)}{_SEP}|{_quoted(f'--(?:{names})')}{_SEP})"
+    return rf"{option}(?!{_quoted(number)}{_END})"
+
+
+_CURL_NOT_NUMBER = (
+    _curl_number_option("m", "max-time|connect-timeout", r"(?:[0-9]++\.?+[0-9]*+|\.[0-9]++)(?:[eE][+-]?+[0-9]++)?+")
+    + "|"
+    + _curl_number_option("Yy", "retry|speed-limit|speed-time", "[0-9]++")
+    + "|"
+    + _curl_number_option("C", "continue-at", "(?:[0-9]++|-)")
+)
+# Option names that keep the body when the whole name is written inside quotes.
 _CURL_QUOTED_NAMES = (
-    rf"(?-i:-[{_CURL_LETTERS}]*+[ADHbceuUwCEFPQTYmrtxyz]|--(?:silent|show-error|location|fail|insecure|compressed"
+    rf"(?-i:-[{_CURL_LETTERS}]*+[ADHbceuUwCYmy]|--(?:silent|show-error|location|fail|insecure|compressed"
     r"|verbose|progress-bar|globoff|no-progress-meter|fail-with-body|user-agent|header|referer|user|cookie"
-    r"|max-time|connect-timeout|retry|proxy))"
+    r"|max-time|connect-timeout|continue-at|retry|speed-limit|speed-time))"
 )
 # These options take any text as their operand and still download the body, so the operand is read
 # with its option: `-A -o` sets the user agent to `-o`.
@@ -116,13 +144,13 @@ _CURL_OTHER_OPERAND = (
 # stop curl before the download, so outside `_CURL_TEXT_OPERAND` it is checked as a word of its own.
 _CURL_ANY_OPERAND = rf"(?:{_CURL_TEXT_OPERAND}|{_quoted(_CURL_OTHER_OPERAND)})"
 _CURL_NO_BODY = (
-    rf"(?-i:-{_CURL_FLAGS}(?:[OIKhVM]|o(?:{_NOT_STDOUT}(?=[^\s)`])|{_SEP}{_NOT_STDOUT})|X(?:{_SEP})?+HEAD{_END})"
-    rf"|--output(?:=|{_SEP}){_NOT_STDOUT}|--request(?:=|{_SEP})HEAD{_END}"
-    rf"|--remote-name|--head|--config|--help|--version|--manual)"
+    rf"(?-i:-{_CURL_FLAGS}(?:[OIKhVMdFT]|o(?:{_NOT_STDOUT}(?=[^\s)`])|{_SEP}{_NOT_STDOUT})|X(?:{_SEP})?+(?!GET{_END}))"
+    rf"|--output(?:=|{_SEP}){_NOT_STDOUT}|--request(?:=|{_SEP})(?!GET{_END})"
+    rf"|--remote-name|--head|--config|--help|--version|--manual|--data|--form|--upload-file|--json)"
     rf"|{_quoted_option(_CURL_LETTERS, 'ADHbceuUw', _CURL_QUOTED_NAMES)}"
     # An unknown short option (`-s5`), or a numeric option whose operand is not a number, stops curl.
     rf"""|(?-i:-{_CURL_FLAGS}(?![ACDEFHKPQTUXYbcdehmortuwxyzIMOV"'-]|{_END}))"""
-    rf"""|{_quoted(_CURL_NUMBER)}{_SEP}(?!["']?+[0-9.]|["']?+-["']?+{_END})"""
+    rf"|{_CURL_NOT_NUMBER}"
 )
 _CURL_WORD = rf"(?!{_CURL_NO_BODY})(?:{_CURL_TEXT_OPERAND}{_SEP}{_WORD}|{_WORD})"
 _CURL_OPTION = rf"(?:{_CURL_ANY_OPERAND}{_SEP}{_WORD}|{_OPTION})"
