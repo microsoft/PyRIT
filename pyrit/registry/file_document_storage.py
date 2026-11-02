@@ -253,25 +253,30 @@ class FileDocumentStorage:
         """
         directory = self._local_directory(create=True)
         # ``Path.glob`` returns nothing for a directory it can't read; listing it directly raises instead.
-        # ``fnmatch`` keeps glob's per-platform case rule, so both listings see the same files.
+        # ``fnmatch`` applies the platform's case rule, as ``glob`` does.
         with os.scandir(directory) as entries:
-            file_names = sorted(entry.name for entry in entries if fnmatch.fnmatch(entry.name, f"*{self._extension}"))
+            candidates = sorted(
+                (entry.name, entry.is_file()) for entry in entries if fnmatch.fnmatch(entry.name, f"*{self._extension}")
+            )
         documents: dict[str, bytes] = {}
         unreadable: list[UnreadableDocument] = []
         ignored: list[IgnoredDocument] = []
-        for file_name in file_names:
+        for file_name, is_file in candidates:
             name = Path(file_name).stem
             problem = self._name_problem(name)
             if problem is not None:
                 ignored.append(IgnoredDocument(file_name=file_name, message=problem))
-                continue
-            try:
-                documents[name] = (directory / file_name).read_bytes()
-            except FileNotFoundError:
-                # Deleted after the directory was listed, so it is no longer part of the listing.
-                continue
-            except OSError as error:
-                unreadable.append(UnreadableDocument(name=name, message=error.strerror or type(error).__name__))
+            elif not is_file:
+                # A broken link, a folder, or a pipe, which would block if read.
+                unreadable.append(UnreadableDocument(name=name, message="Not a regular file"))
+            else:
+                try:
+                    documents[name] = (directory / file_name).read_bytes()
+                except FileNotFoundError:
+                    # Deleted after the directory was listed, so it is no longer part of the listing.
+                    continue
+                except OSError as error:
+                    unreadable.append(UnreadableDocument(name=name, message=self._describe_read_error(error)))
         return DocumentListing(documents=documents, unreadable=tuple(unreadable), ignored=tuple(ignored))
 
     def _list_blob_documents_with_issues(self) -> DocumentListing:
@@ -281,7 +286,8 @@ class FileDocumentStorage:
         Returns:
             DocumentListing: The documents and issues found under the configured prefix.
         """
-        from azure.core.exceptions import AzureError, ResourceNotFoundError
+        from azure.core.exceptions import AzureError
+        from azure.storage.blob import StorageErrorCode
 
         documents: dict[str, bytes] = {}
         unreadable: list[UnreadableDocument] = []
@@ -301,14 +307,30 @@ class FileDocumentStorage:
                     continue
                 try:
                     documents[name] = client.download_blob(blob_name).readall()
-                except ResourceNotFoundError:
-                    # Deleted after the container was listed, so it is no longer part of the listing.
-                    continue
                 except AzureError as error:
-                    status = getattr(error, "status_code", None)
-                    reason = type(error).__name__ if status is None else f"{type(error).__name__} ({status})"
-                    unreadable.append(UnreadableDocument(name=name, message=reason))
+                    if getattr(error, "error_code", None) == StorageErrorCode.BLOB_NOT_FOUND:
+                        # Deleted after the container was listed, so it is no longer part of the listing.
+                        continue
+                    unreadable.append(UnreadableDocument(name=name, message=self._describe_read_error(error)))
         return DocumentListing(documents=documents, unreadable=tuple(unreadable), ignored=tuple(ignored))
+
+    @staticmethod
+    def _describe_read_error(error: Exception) -> str:
+        """
+        Describe a storage error in a few words, leaving out any path or URL it carries.
+
+        Returns:
+            str: For example ``Permission denied`` or ``HttpResponseError (403, AuthorizationPermissionMismatch)``.
+        """
+        if isinstance(error, OSError) and error.strerror:
+            return error.strerror
+        error_code = getattr(error, "error_code", None)
+        details = [
+            str(detail)
+            for detail in (getattr(error, "status_code", None), getattr(error_code, "value", error_code))
+            if detail is not None
+        ]
+        return f"{type(error).__name__} ({', '.join(details)})" if details else type(error).__name__
 
     @staticmethod
     def _name_problem(name: str) -> str | None:

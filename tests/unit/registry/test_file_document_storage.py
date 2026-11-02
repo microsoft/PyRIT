@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
-from azure.storage.blob import ContainerClient
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError, ServiceRequestError
+from azure.storage.blob import ContainerClient, StorageErrorCode
 
 from pyrit.registry.file_document_storage import DocumentListing, FileDocumentStorage, UnreadableDocument
 
@@ -88,6 +89,30 @@ class TestLocalListingWithIssues:
 
         assert listing == DocumentListing(documents={"kept": b"kept"})
 
+    def test_reports_entries_that_are_not_regular_files_without_reading_them(self, tmp_path: Path) -> None:
+        (tmp_path / "folder.json").mkdir()
+        try:
+            (tmp_path / "broken_link.json").symlink_to(tmp_path / "missing_target.json")
+        except OSError:
+            pytest.skip("Creating symbolic links isn't permitted here")
+
+        with patch.object(Path, "read_bytes", autospec=True) as read_bytes:
+            listing = _local_storage(tmp_path)._list_documents_with_issues()
+
+        assert listing.unreadable == (
+            UnreadableDocument(name="broken_link", message="Not a regular file"),
+            UnreadableDocument(name="folder", message="Not a regular file"),
+        )
+        read_bytes.assert_not_called()
+
+    def test_matches_extensions_like_the_legacy_listing(self, tmp_path: Path) -> None:
+        (tmp_path / "lower.json").write_bytes(b"one")
+        (tmp_path / "upper.JSON").write_bytes(b"two")
+
+        storage = _local_storage(tmp_path)
+
+        assert storage._list_documents_with_issues().documents == storage._list_documents()
+
     def test_creates_missing_directory_and_lists_nothing(self, tmp_path: Path) -> None:
         listing = _local_storage(tmp_path / "missing")._list_documents_with_issues()
 
@@ -134,12 +159,19 @@ class TestBlobListingWithIssues:
         downloaded = [call.args[0] for call in client.download_blob.call_args_list]
         assert downloaded == ["saved/broken.json", "saved/good.json"]
 
-    def test_skips_a_blob_deleted_after_listing(self) -> None:
-        client = _blob_client(names=["saved/kept.json", "saved/deleted.json"])
+    def test_skips_only_a_blob_deleted_after_listing(self) -> None:
+        client = _blob_client(names=["saved/kept.json", "saved/deleted.json", "saved/container_gone.json"])
+        error_codes = {
+            "saved/deleted.json": StorageErrorCode.BLOB_NOT_FOUND,
+            "saved/container_gone.json": StorageErrorCode.CONTAINER_NOT_FOUND,
+        }
 
         def download_blob(blob_name: str) -> SimpleNamespace:
-            if blob_name == "saved/deleted.json":
-                raise ResourceNotFoundError(message="The specified blob does not exist.")
+            if blob_name in error_codes:
+                error = ResourceNotFoundError(message="Not found.")
+                error.status_code = 404
+                error.error_code = error_codes[blob_name]
+                raise error
             return SimpleNamespace(readall=lambda: b"kept")
 
         client.download_blob.side_effect = download_blob
@@ -147,12 +179,48 @@ class TestBlobListingWithIssues:
         with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
             listing = _blob_storage()._list_documents_with_issues()
 
-        assert listing == DocumentListing(documents={"kept": b"kept"})
+        assert listing == DocumentListing(
+            documents={"kept": b"kept"},
+            unreadable=(
+                UnreadableDocument(name="container_gone", message="ResourceNotFoundError (404, ContainerNotFound)"),
+            ),
+        )
 
     def test_raises_when_the_container_cannot_be_listed(self) -> None:
+        def failing_pages() -> Iterator[SimpleNamespace]:
+            raise HttpResponseError(message="listing failed")
+            yield SimpleNamespace(name="saved/never.json")
+
         client = _blob_client(names=[])
-        client.list_blobs.side_effect = HttpResponseError(message="listing failed")
+        client.list_blobs.return_value = failing_pages()
 
         with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
             with pytest.raises(HttpResponseError):
                 _blob_storage()._list_documents_with_issues()
+
+
+class TestDescribeReadError:
+    @pytest.mark.parametrize(
+        ("error", "expected"),
+        [
+            (PermissionError(13, "Permission denied", "/server/path/secret.json"), "Permission denied"),
+            (OSError(), "OSError"),
+            (ServiceRequestError(message="https://account.blob.core.windows.net/x?sig=secret"), "ServiceRequestError"),
+        ],
+    )
+    def test_describes_errors_without_their_details(self, error: Exception, expected: str) -> None:
+        assert FileDocumentStorage._describe_read_error(error) == expected
+
+    @pytest.mark.parametrize(
+        ("error_code", "expected"),
+        [
+            (StorageErrorCode.AUTHORIZATION_FAILURE, "HttpResponseError (403, AuthorizationFailure)"),
+            ("AuthorizationPermissionMismatch", "HttpResponseError (403, AuthorizationPermissionMismatch)"),
+        ],
+    )
+    def test_includes_the_azure_status_and_error_code(self, error_code: str, expected: str) -> None:
+        error = HttpResponseError(message="https://account.blob.core.windows.net/x?sig=secret")
+        error.status_code = 403
+        error.error_code = error_code
+
+        assert FileDocumentStorage._describe_read_error(error) == expected
