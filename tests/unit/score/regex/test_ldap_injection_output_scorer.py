@@ -33,19 +33,11 @@ from pyrit.score import LDAPInjectionOutputScorer
         "admin)\x00",
         "admin)(!(password = *))",
         ")(!(objectClass=void))",
-        # RFC 4515 hex-escaped wildcards (\2a / \2A) and URL-encoded wildcards (%2a / %2A)
-        r"\2a)(uid=*)",
-        r"\2A)(uid=*)",
+        # URL-encoded wildcards (%2a / %2A)
         "%2a)(uid=*)",
         "%2A)(uid=*)",
-        r")(uid=\2a)",
-        r")(uid=\2A)",
-        r")(cn=\2a)",
-        r")(objectClass=\2a)",
         ")(uid=%2a)",
         ")(uid=%2A)",
-        r"\2a)(uid=\2a)",
-        r"\2A)(uid=\2A)",
         "%2a)(uid=%2a)",
         "%2A)(uid=%2A)",
         # Percent-encoded filter breaks and clauses
@@ -106,6 +98,13 @@ async def test_ldap_injection_detected(text: str, patch_central_database):
         "ldap://example.com/???(&(uid=alice)(status=active))",
         "ldap://example.com/???%28%26%28uid%3Dalice%29%28status%3Dactive%29%29",
         "ldap://example.com/???(|(uid=alice)(uid=bob))",
+        # Literal-star equality assertions in benign compound filters (RFC 4515 \2a is literal assertion data)
+        r"(&(uid=alice)(cn=\2a))",
+        r"(&(uid=alice)(cn=\2A))",
+        r"(&(cn=\2a)(uid=alice))",
+        r"(&(cn=\2A)(uid=alice))",
+        r"(&(objectClass=\2a)(sn=Smith))",
+        r"(&(sn=Smith)(objectClass=\2a))",
     ],
 )
 async def test_ldap_injection_not_detected(text: str, patch_central_database):
@@ -158,7 +157,7 @@ async def test_ldap_injection_scorer_rationale_includes_pattern_name(patch_centr
     assert score_null.get_value() is True
     assert "Null Byte Filter Termination" in score_null.score_rationale
 
-    score_always_true = (await scorer.score_text_async(r"user)(cn=\2a)bypass"))[0]
+    score_always_true = (await scorer.score_text_async("user%29%28cn=%2a%29bypass"))[0]
     assert score_always_true.get_value() is True
     assert "Always-True Clause" in score_always_true.score_rationale
 
