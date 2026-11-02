@@ -105,6 +105,18 @@ class TestLocalListingWithIssues:
         )
         read_bytes.assert_not_called()
 
+    def test_reports_a_link_loop_and_keeps_the_others(self, tmp_path: Path) -> None:
+        (tmp_path / "good.json").write_bytes(b"ok")
+        try:
+            (tmp_path / "loop.json").symlink_to(tmp_path / "loop.json")
+        except OSError:
+            pytest.skip("Creating symbolic links isn't permitted here")
+
+        listing = _local_storage(tmp_path)._list_documents_with_issues()
+
+        assert listing.documents == {"good": b"ok"}
+        assert [issue.name for issue in listing.unreadable] == ["loop"]
+
     def test_matches_extensions_like_the_legacy_listing(self, tmp_path: Path) -> None:
         (tmp_path / "lower.json").write_bytes(b"one")
         (tmp_path / "upper.JSON").write_bytes(b"two")

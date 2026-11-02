@@ -256,28 +256,42 @@ class FileDocumentStorage:
         # ``fnmatch`` applies the platform's case rule, as ``glob`` does.
         with os.scandir(directory) as entries:
             candidates = sorted(
-                (entry.name, entry.is_file()) for entry in entries if fnmatch.fnmatch(entry.name, f"*{self._extension}")
+                (entry for entry in entries if fnmatch.fnmatch(entry.name, f"*{self._extension}")),
+                key=lambda entry: entry.name,
             )
         documents: dict[str, bytes] = {}
         unreadable: list[UnreadableDocument] = []
         ignored: list[IgnoredDocument] = []
-        for file_name, is_file in candidates:
-            name = Path(file_name).stem
+        for entry in candidates:
+            name = Path(entry.name).stem
             problem = self._name_problem(name)
             if problem is not None:
-                ignored.append(IgnoredDocument(file_name=file_name, message=problem))
-            elif not is_file:
-                # A broken link, a folder, or a pipe, which would block if read.
-                unreadable.append(UnreadableDocument(name=name, message="Not a regular file"))
-            else:
-                try:
-                    documents[name] = (directory / file_name).read_bytes()
-                except FileNotFoundError:
-                    # Deleted after the directory was listed, so it is no longer part of the listing.
-                    continue
-                except OSError as error:
-                    unreadable.append(UnreadableDocument(name=name, message=self._describe_read_error(error)))
+                ignored.append(IgnoredDocument(file_name=entry.name, message=problem))
+                continue
+            content = self._read_local_entry(entry=entry, name=name)
+            if isinstance(content, bytes):
+                documents[name] = content
+            elif content is not None:
+                unreadable.append(content)
         return DocumentListing(documents=documents, unreadable=tuple(unreadable), ignored=tuple(ignored))
+
+    def _read_local_entry(self, *, entry: os.DirEntry[str], name: str) -> bytes | UnreadableDocument | None:
+        """
+        Read one listed local document.
+
+        Returns:
+            bytes | UnreadableDocument | None: The content, why it can't be read, or None if it was
+                deleted after the directory was listed.
+        """
+        try:
+            if not entry.is_file():
+                # A broken link, a folder, or a pipe, which would block if read.
+                return UnreadableDocument(name=name, message="Not a regular file")
+            return Path(entry.path).read_bytes()
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            return UnreadableDocument(name=name, message=self._describe_read_error(error))
 
     def _list_blob_documents_with_issues(self) -> DocumentListing:
         """
