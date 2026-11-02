@@ -439,3 +439,38 @@ class TestPyAVAudioConversion:
         finally:
             if result != non_compliant_wav_file and os.path.exists(result):
                 os.remove(result)
+
+    def test_audio_to_wav_removes_temp_file_when_conversion_fails(self, tmp_path):
+        """A failed conversion must not leave its temporary WAV behind."""
+        import av
+
+        from pyrit.score.audio_transcript_scorer import _audio_to_wav
+
+        not_audio = tmp_path / "not_audio.mp4"
+        not_audio.write_bytes(b"this is not an audio or video container")
+        temp_dir = tmp_path / "temp"
+        temp_dir.mkdir()
+
+        with patch.object(tempfile, "tempdir", str(temp_dir)):
+            with pytest.raises(av.error.InvalidDataError):
+                _audio_to_wav(str(not_audio), sample_rate=16000, channels=1)
+
+        assert list(temp_dir.iterdir()) == []
+
+    def test_extract_audio_from_video_without_audio_leaves_no_temp_file(self, tmp_path):
+        """A video with no audio track returns None and leaves no temporary WAV behind."""
+        cv2 = pytest.importorskip("cv2")
+        import numpy as np
+
+        video_path = tmp_path / "silent.mp4"
+        writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), 20, (64, 64))
+        for _ in range(20):
+            writer.write(np.zeros((64, 64, 3), dtype=np.uint8))
+        writer.release()
+        temp_dir = tmp_path / "temp"
+        temp_dir.mkdir()
+
+        with patch.object(tempfile, "tempdir", str(temp_dir)):
+            assert AudioTranscriptHelper.extract_audio_from_video(str(video_path)) is None
+
+        assert list(temp_dir.iterdir()) == []
