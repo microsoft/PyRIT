@@ -88,13 +88,13 @@ def _download_command(
 
 # curl writes the body to standard output unless an option names a file (`-o FILE`, `-oFILE`,
 # `--output FILE`, `-O`, `--remote-name`), asks for headers only (`-I`, `--head`, `-X HEAD`), reads its
-# options from a config file (`-K`, `--config`), prints help, version or manual text instead
-# (`-h`, `-V`, `-M`), or sends a request other than GET (`-d`, `-F`, `-T`, `--json`, `-X POST`), whose
-# reply depends on the server. Short options are case-sensitive, and the letters in `_CURL_FLAGS` take no
-# operand, so an `o` or `X` after them starts the option's operand.
+# options from a config file (`-K`, `--config`), or prints help, version or manual text instead
+# (`-h`, `-V`, `-M`). Options that only change the request (`-d`, `-F`, `-T`, `--json`, `-X POST`) keep
+# the reply body on standard output. Short options are case-sensitive, and the letters in `_CURL_FLAGS`
+# take no operand, so an `o` or `X` after them starts the option's operand.
 _CURL_LETTERS = "#0-46aBfgGijJklLnNpqRsSvZ"
 _CURL_FLAGS = rf"[{_CURL_LETTERS}]*+"
-_NOT_STDOUT = rf"""(?!(?:-|"-"|'-'|/dev/stdout){_END})"""
+_NOT_STDOUT = rf"""(?!(?:-|"-"|'-'|\\-|/dev/stdout){_END})"""
 
 
 # Options that take a number, and the numbers curl accepts for them: seconds below 10^15, decimal or
@@ -112,6 +112,22 @@ _COUNT = r"\+?+(?:0*+[0-9]{1,18}|0++)"
 _DIGIT_PARTS = rf"""(?=["'0-9]{{1,15}}{_END})(?=["']*+[0-9]|["'0-9]*?[0-9])(?:"[0-9]*+"|'[0-9]*+'|[0-9])++"""
 
 
+def _curl_option(letters: str, names: str) -> str:
+    """
+    Build the pattern for a curl option that takes an operand, up to the operand.
+
+    Args:
+        letters (str): The short option letters.
+        names (str): The long option names.
+
+    Returns:
+        str: The pattern for the short option, with or without blanks before its operand, or the short
+            or long option written plain or quoted and followed by blanks.
+    """
+    short = rf"-{_CURL_FLAGS}[{letters}]"
+    return rf"(?-i:{short}(?:{_SEP})?+|{_quoted(short)}{_SEP}|{_quoted(f'--(?:{names})')}{_SEP})"
+
+
 def _curl_number_option(letters: str, names: str, number: str) -> str:
     """
     Build the pattern for a curl option that takes a number, followed by an operand that is not one.
@@ -124,9 +140,7 @@ def _curl_number_option(letters: str, names: str, number: str) -> str:
     Returns:
         str: The pattern for the option and an operand curl rejects.
     """
-    short = rf"-{_CURL_FLAGS}[{letters}]"
-    option = rf"(?-i:{short}(?:{_SEP})?+|{_quoted(short)}{_SEP}|{_quoted(f'--(?:{names})')}{_SEP})"
-    return rf"{option}(?!(?:{_quoted(number)}|{_DIGIT_PARTS}){_END})"
+    return rf"{_curl_option(letters, names)}(?!(?:{_quoted(number)}|{_DIGIT_PARTS}){_END})"
 
 
 _CURL_NOT_NUMBER = (
@@ -136,38 +150,106 @@ _CURL_NOT_NUMBER = (
     + "|"
     + _curl_number_option("C", "continue-at", rf"(?:{_COUNT}|-)")
 )
+# Short options whose operand may be any text, apart from `-o`.
+_CURL_TEXT_LETTERS = "ADHbcdeuUw"
 # Option names that keep the body when the whole name is written inside quotes.
 _CURL_QUOTED_NAMES = (
-    rf"(?-i:-[{_CURL_LETTERS}]*+[ADHbceuUwCYmy]|--(?:silent|show-error|location|fail|insecure|compressed"
+    rf"(?-i:-[{_CURL_LETTERS}]*+[{_CURL_TEXT_LETTERS}CFTXYmy]|--(?:silent|show-error|location|fail|insecure|compressed"
     r"|verbose|progress-bar|globoff|no-progress-meter|fail-with-body|user-agent|header|referer|user|cookie"
-    r"|max-time|connect-timeout|continue-at|retry|speed-limit|speed-time))"
+    r"|max-time|connect-timeout|continue-at|retry|speed-limit|speed-time|data|json|form|upload-file|request))"
 )
 # These options take any text as their operand and still download the body, so the operand is read
 # with its option: `-A -o` sets the user agent to `-o`.
 _CURL_TEXT_OPERAND = _quoted(
-    r"(?-i:-" + _CURL_FLAGS + r"[ADHbceouUw]"
-    r"|--(?:output|user-agent|header|referer|user|cookie|cookie-jar|dump-header|proxy-user|write-out))"
+    rf"(?-i:-{_CURL_FLAGS}[{_CURL_TEXT_LETTERS}o]"
+    r"|--(?:expand-)?(?:output|user-agent|header|referer|user|cookie|cookie-jar|dump-header|proxy-user|write-out"
+    r"|data(?:-ascii|-binary|-raw|-urlencode)?|json))"
 )
+# The other options that take an operand, from curl's option table (`curl --help all` in curl 8.7.1 and
+# `src/tool_getparam.c` on curl master). `--url` is left out because its operand is the URL. Each one
+# can also be written as `--expand-<name>`, whose operand may name a curl variable (`{{name}}`), so its
+# value is not checked.
 _CURL_OTHER_OPERAND = (
     rf"(?-i:-{_CURL_FLAGS}[CEFKPQTXYmrtxyz]"
-    r"|--(?:max-time|connect-timeout|continue-at|retry|speed-limit|speed-time|proxy|cert|key|cacert|upload-file"
-    r"|form|range|time-cond|config|request|data(?:-raw|-binary|-urlencode|-ascii)?))"
+    r"|--(?:expand-)?(?:abstract-unix-socket|alt-svc|aws-sigv4|cacert|capath|cert|cert-type|ciphers|config|connect-timeout"
+    r"|connect-to|continue-at|create-file-mode|crlfile|curves|delegation|dns-interface|dns-ipv4-addr"
+    r"|dns-ipv6-addr|dns-servers|doh-url|ech|egd-file|engine|etag-compare|etag-save|expect100-timeout|form"
+    r"|form-string|ftp-account|ftp-alternative-to-user|ftp-method|ftp-port|ftp-ssl-ccc-mode"
+    r"|happy-eyeballs-timeout-ms|haproxy-clientip|hostpubmd5|hostpubsha256|hsts|httpsig-algo|httpsig-headers"
+    r"|httpsig-key|httpsig-keyid|interface|ip-tos|ipfs-gateway|keepalive-cnt|keepalive-time|key|key-type"
+    r"|knownhosts|krb|krb4|libcurl|limit-rate|local-port|login-options|mail-auth|mail-from|mail-rcpt"
+    r"|max-filesize|max-redirs|max-time|netrc-file|noproxy|oauth2-bearer|output-dir|parallel-max"
+    r"|parallel-max-host"
+    r"|pass|pinnedpubkey|preproxy|proto|proto-default|proto-redir|proxy|proxy-cacert|proxy-capath|proxy-cert"
+    r"|proxy-cert-type|proxy-ciphers|proxy-crlfile|proxy-header|proxy-key|proxy-key-type|proxy-pass"
+    r"|proxy-pinnedpubkey|proxy-service-name|proxy-tls13-ciphers|proxy-tlsauthtype|proxy-tlspassword"
+    r"|proxy-tlsuser|proxy1\.0|pubkey|quote|random-file|range|rate|request|request-target|resolve|retry"
+    r"|retry-delay|retry-max-time|sasl-authzid|service-name|sigalgs|socks4|socks4a|socks5"
+    r"|socks5-gssapi-service|socks5-hostname|speed-limit|speed-time|ssl-sessions|stderr|telnet-option"
+    r"|tftp-blksize|time-cond|tls-max|tls13-ciphers|tlsauthtype|tlspassword|tlsuser|trace|trace-ascii"
+    r"|trace-config|unix-socket|upload-file|upload-flags|url-query|variable|vlan-priority)(?![\w.-]))"
 )
-# Every option that takes an operand, for finding the URL. The operand of `-m`, `-x` or `-T` can
+# Every option that takes an operand, for finding the URL. The operand of `-m`, `-x`, `-T` or `-F` can
 # stop curl before the download, so outside `_CURL_TEXT_OPERAND` it is checked as a word of its own.
 _CURL_ANY_OPERAND = rf"(?:{_CURL_TEXT_OPERAND}|{_quoted(_CURL_OTHER_OPERAND)})"
 _CURL_NO_BODY = (
-    rf"(?-i:-{_CURL_FLAGS}(?:[OIKhVMdFT]|o(?:{_NOT_STDOUT}(?=[^\s)`])|{_SEP}{_NOT_STDOUT})"
-    rf"|X(?:{_SEP})?+(?!{_quoted('GET')}{_END}))"
-    rf"|--output(?:=|{_SEP}){_NOT_STDOUT}|--request(?:=|{_SEP})(?!{_quoted('GET')}{_END})"
-    rf"|--remote-name|--head|--config|--help|--version|--manual|--data|--form|--upload-file|--json)"
-    rf"|{_quoted_option(_CURL_LETTERS, 'ADHbceuUw', _CURL_QUOTED_NAMES)}"
+    rf"(?-i:-{_CURL_FLAGS}(?:[OIKhVM]|o(?:{_NOT_STDOUT}(?=[^\s)`])|{_SEP}{_NOT_STDOUT}))"
+    # A literal `--expand-output` file; `{{name}}` in the operand is a curl variable.
+    rf"|--output{_SEP}{_NOT_STDOUT}|--expand-output{_SEP}(?![^\s)`]*?\{{\{{){_NOT_STDOUT}"
+    # curl reads `--name=value` as one unknown option and stops.
+    rf"|--[\w.-]++="
+    rf"|--(?:remote-name|head(?!er{_END})|config|help|version|manual)"
+    # An unknown name that starts like a request body option (`--jsonx`) stops curl.
+    rf"|--(?:expand-)?(?!(?:json|data(?:-ascii|-binary|-raw|-urlencode)?|form(?:-escape|-string)?|upload-file){_END})"
+    rf"(?:json|data|form|upload-file))"
+    # HEAD, in any shell spelling, or an empty method.
+    rf"""|{_curl_option("X", "request")}(?-i:[\\"']*+H[\\"']*+E[\\"']*+A[\\"']*+D[\\"']*+|""|''){_END}"""
+    rf"|{_quoted_option(_CURL_LETTERS, _CURL_TEXT_LETTERS, _CURL_QUOTED_NAMES)}"
+    # A form field without `=` stops curl.
+    rf"|{_curl_option('F', 'form|form-string')}[^\s()<>|;&`\\=]*+{_END}"
     # An unknown short option (`-s5`), or a numeric option whose operand is not a number, stops curl.
     rf"""|(?-i:-{_CURL_FLAGS}(?![ACDEFHKPQTUXYbcdehmortuwxyzIMOV"'-]|{_END}))"""
     rf"|{_CURL_NOT_NUMBER}"
+    # An option that takes an operand, as the last word without one, stops curl. At the end of a cluster
+    # curl takes an empty operand for most letters (`-sd`), but not for these.
+    rf"""|(?-i:(?=["']?+-(?:-|[^{_CURL_LETTERS}-]|[{_CURL_LETTERS}]*+[CDFKPXYcmory]))){_CURL_ANY_OPERAND}"""
+    rf"(?=(?:{_SEP}{_KEEP_STDOUT})*+{_PAD}[)`])"
 )
-_CURL_WORD = rf"(?!{_CURL_NO_BODY})(?:{_CURL_TEXT_OPERAND}{_SEP}{_WORD}|{_WORD})"
+# Every word after `--` is a URL.
+_CURL_WORD = (
+    rf"(?!{_CURL_NO_BODY})(?:--{_END}(?:{_SEP}(?:{_KEEP_STDOUT}|{_WORD}))*+|{_CURL_TEXT_OPERAND}{_SEP}{_WORD}|{_WORD})"
+)
 _CURL_OPTION = rf"(?:{_CURL_ANY_OPERAND}{_SEP}{_WORD}|{_OPTION})"
+# curl sends one request body: data (`-d`, `--json`), a form (`-F`) or an upload (`-T`). Two of them in one
+# command stop curl ("You can only select one HTTP request method!").
+_CURL_DATA = _quoted(rf"(?-i:-{_CURL_FLAGS}d|--(?:expand-)?(?:data(?:-ascii|-binary|-raw|-urlencode)?|json)(?![\w-]))")
+_CURL_FORM = _quoted(rf"(?-i:-{_CURL_FLAGS}F|--(?:expand-)?form(?:-string)?(?![\w-]))")
+_CURL_UPLOAD = _quoted(rf"(?-i:-{_CURL_FLAGS}T|--(?:expand-)?upload-file(?![\w-]))")
+# One word, an option with its operand, or a redirection; the scan stops at `--`.
+_CURL_UNIT = rf"(?!--{_END})(?>{_KEEP_STDOUT}|{_CURL_ANY_OPERAND}{_SEP}{_WORD}|{_WORD})"
+
+
+def _curl_mode_then(first: str, other: str) -> str:
+    """
+    Build the pattern for a `first` request body option followed later by an `other` one.
+
+    Args:
+        first (str): The pattern for the first option.
+        other (str): The pattern for the options that conflict with it.
+
+    Returns:
+        str: The pattern, starting at the first option.
+    """
+    return rf"(?={first}){_CURL_UNIT}(?:{_SEP}(?!{other}){_CURL_UNIT})*+{_SEP}(?:{other})"
+
+
+_CURL_MODE = f"{_CURL_DATA}|{_CURL_FORM}|{_CURL_UPLOAD}"
+_CURL_TWO_MODES = (
+    rf"(?:{_SEP}(?!{_CURL_MODE}){_CURL_UNIT})*+{_SEP}"
+    rf"(?:{_curl_mode_then(_CURL_DATA, f'{_CURL_FORM}|{_CURL_UPLOAD}')}"
+    rf"|{_curl_mode_then(_CURL_FORM, f'{_CURL_DATA}|{_CURL_UPLOAD}')}"
+    rf"|{_curl_mode_then(_CURL_UPLOAD, f'{_CURL_DATA}|{_CURL_FORM}')})"
+)
 # wget and fetch write to a file unless the output option names standard output. wget's lowercase
 # `-o` names its log file, the last output option wins, and words after `--` are URLs. `fetch -s`
 # and these wget options leave no body on standard output or may redirect it: help and version
@@ -195,7 +277,7 @@ _FETCH_STDOUT = rf"(?-i:-{_FETCH_FLAGS}o{_BLANK}*+-|--output=-){_END}"
 _FETCH_NO_BODY = rf"(?-i:-{_FETCH_FLAGS}[os]|--output)|{_quoted_option(_FETCH_LETTERS)}"
 _FETCH_WORD = rf"(?!{_FETCH_NO_BODY}){_WORD}"
 _DOWNLOAD = (
-    rf"{_PATH}(?:{_download_command('curl', _CURL_WORD, _CURL_OPTION)}"
+    rf"{_PATH}(?:{_download_command(f'curl(?!{_CURL_TWO_MODES})', _CURL_WORD, _CURL_OPTION)}"
     rf"|{_download_command('wget', _WGET_WORD, _WGET_OPTION, _WGET_STDOUT, _WGET_PREFIX_WORD)}"
     rf"|{_download_command('fetch', _FETCH_WORD, _OPTION, _FETCH_STDOUT)})"
 )
