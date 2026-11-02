@@ -168,8 +168,8 @@ class VideoHelper:
         if not Path(video_path).exists():
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
-        # Extract frames from video
-        frames = await asyncio.to_thread(self._extract_frames, video_path)
+        # Extract frames from video (and clean up temporary files if cancelled)
+        frames = await self._extract_frames_async(video_path)
         if not frames:
             raise ValueError("No frames extracted from video for scoring.")
 
@@ -209,6 +209,34 @@ class VideoHelper:
             raise ValueError("No scores returned for image frames extracted from video.")
 
         return frame_scores, len(frames)
+
+    async def _extract_frames_async(self, video_path: str) -> list[str]:
+        """
+        Extract frames off-loop and clean up temporary frame files before propagating cancellation.
+
+        Returns:
+            list[str]: Paths of the extracted temporary frame files.
+
+        Raises:
+            asyncio.CancelledError: After extraction finishes and temporary frame files are removed.
+        """
+        frame_paths: list[str] = []
+
+        def extract_frames() -> list[str]:
+            frame_paths.extend(self._extract_frames(video_path))
+            return frame_paths
+
+        try:
+            return await run_legacy_sync_async(extract_frames)
+        except asyncio.CancelledError:
+            if frame_paths:
+                await run_legacy_sync_async(self._unlink_frame_files, frame_paths)
+            raise
+
+    @staticmethod
+    def _unlink_frame_files(frame_paths: list[str]) -> None:
+        for frame_path in frame_paths:
+            Path(frame_path).unlink(missing_ok=True)
 
     def _extract_frames(self, video_path: str) -> list[str]:
         """
