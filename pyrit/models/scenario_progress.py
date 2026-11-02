@@ -14,7 +14,7 @@ from pyrit.models.catalog.scenario import (
     ScenarioOverloadSummary,
     ScenarioProducerCounts,
     ScenarioTargetSummary,
-)  # noqa: TC001
+)
 from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
 from pyrit.models.results.attack_result import AttackOutcome, AttackResultRole
 from pyrit.models.results.scenario_result import ScenarioRunState

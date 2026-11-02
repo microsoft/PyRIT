@@ -169,7 +169,7 @@ class _ObjectiveTargetConversationLifecycle:
             except asyncio.CancelledError as cancellation:
                 # Attempt every reset, then honor the first cancellation after the loop.
                 pending_cancellation = pending_cancellation or cancellation
-            except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+            except Exception as error:  # cleanup must not replace the attack outcome
                 self._logger.warning(
                     "Failed to reset objective-target conversation %s: %s",
                     conversation_id,
@@ -1191,7 +1191,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             stopped.add(id(observer))
             try:
                 observer.stop_observing(attempt_id=attempt_id)
-            except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+            except Exception as error:  # cleanup must not replace the attack outcome
                 self._logger.warning(
                     "Failed to stop %s observing attempt %s: %s",
                     type(observer).__name__,

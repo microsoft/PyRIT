@@ -118,7 +118,7 @@ class RefreshDatasets(PyRITInitializer):
             try:
                 await self._refresh_dataset_async(memory=memory, dataset_name=name)
                 refreshed.append(name)
-            except Exception as exc:  # noqa: BLE001 - isolate one dataset's failure from the rest
+            except Exception as exc:  # isolate one dataset's failure from the rest
                 logger.warning(f"Skipping refresh for dataset '{name}': {exc}")
                 failed.append(name)
 

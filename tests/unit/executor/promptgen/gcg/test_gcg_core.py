@@ -2389,7 +2389,7 @@ class TestRandomSeedDeterminism:
                     barrier=barrier,
                     switches=switches,
                 )
-            except BaseException as exc:  # noqa: BLE001 - release the peer thread, then surface the error
+            except BaseException as exc:  # release the peer thread, then surface the error
                 barrier.abort()
                 outcomes[run_id] = exc
 

@@ -408,6 +408,7 @@ select = [
     "ERA",  # https://docs.astral.sh/ruff/rules/#eradicate-era
     "EXE",  # https://docs.astral.sh/ruff/rules/#flake8-executable-exe
     "F401",  # unused-import
+    "F821",  # undefined-name
     "FA",  # https://docs.astral.sh/ruff/rules/#flake8-future-annotations-fa
     "FLY",  # https://docs.astral.sh/ruff/rules/#flynt-fly
     "I",  # isort
@@ -422,6 +423,10 @@ select = [
     "Q",  # https://docs.astral.sh/ruff/rules/#flake8-quotes-q
     "RET",  # https://docs.astral.sh/ruff/rules/#flake8-return-ret
     "RSE",  # https://docs.astral.sh/ruff/rules/#flake8-raise-rse
+    "RUF006",  # asyncio-dangling-task
+    "RUF013",  # implicit-optional
+    "RUF019",  # unnecessary-key-check
+    "RUF100",  # unused-noqa
     "SIM",  # https://docs.astral.sh/ruff/rules/#flake8-simplify-sim
     "SLOT",  # https://docs.astral.sh/ruff/rules/#flake8-slots-slot
     "T10",  # https://docs.astral.sh/ruff/rules/#flake8-debugger-t10
@@ -487,6 +492,9 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 # Allow broad pytest.raises(Exception) in tests
 "tests/**/*.py" = ["ANN", "B017"]
 # Infrastructure/utility scripts — not part of the library API
+# Migration scripts are immutable once added (enforce_alembic_revision_immutability),
+# so a noqa in an existing revision cannot be removed when it goes stale
+"pyrit/memory/alembic/versions/*.py" = ["RUF100"]
 "build_scripts/**/*.py" = ["ANN"]
 "docker/**/*.py" = ["ANN"]
 "frontend/dev.py" = ["ANN"]
