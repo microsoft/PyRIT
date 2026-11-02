@@ -209,6 +209,16 @@ def test_workflow_preserves_full_build_and_frozen_release_dependencies() -> None
     assert all("continue-on-error" not in step for job in jobs.values() for step in job["steps"])
 
 
+def test_workflow_checks_current_docs_links_before_rendering() -> None:
+    steps = _workflow()["jobs"]["build"]["steps"]
+    check = _step(job="build", name="Check documentation links")
+    assert check["if"] == "steps.cache.outputs.cache-hit != 'true' && matrix.slug == 'latest'"
+    assert check["working-directory"] == "doc"
+    assert check["run"] == "uv run --frozen --no-sync jupyter-book build --site --strict --check-links"
+    assert steps.index(_step(job="build", name="Generate API reference (pydoc2json + gen_api_md)")) < steps.index(check)
+    assert steps.index(check) < steps.index(_step(job="build", name="Build the static HTML site"))
+
+
 def test_docs_and_dependency_inputs_trigger_pr_validation_and_main_publication() -> None:
     events = _workflow()["on"]
     assert events["push"]["branches"] == ["main", "releases/v*"]
