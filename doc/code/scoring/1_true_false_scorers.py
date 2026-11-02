@@ -138,7 +138,7 @@ print(f"[keyword] meth synthesis terms -> {hit.get_value()}")
 # ([OWASP LLM02 — Insecure Output Handling](https://genai.owasp.org/llmrisk/llm02-insecure-output-handling/)):
 #
 # - **`XSSOutputScorer`** — `<script>`, `onerror=`, `javascript:` URIs, SVG-embedded script.
-# - **`SQLInjectionOutputScorer`** — `UNION SELECT`, `;DROP TABLE`, `';--`.
+# - **`SQLInjectionOutputScorer`** — `UNION SELECT`, `;DROP TABLE`, `';--`, `' OR 1=1`.
 # - **`ShellCommandOutputScorer`** — `curl ... | sh`, `rm -rf /`, reverse shells.
 # - **`PathTraversalOutputScorer`** — `../../etc/passwd` and similar walks to sensitive files.
 # - **`SSRFOutputScorer`** — `169.254.169.254` metadata, `http://localhost`/RFC1918 targets, `gopher://` schemes.
