@@ -548,7 +548,10 @@ def test_serialize_normalizer_defaults_to_empty_params():
 
 
 def test_serialize_normalizer_retains_child_identifier_configuration():
-    class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
+    class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
+        pass
+
+    class CustomPrefixNormalizer(_IdentifiableListNormalizer):
         def __init__(self, prefix: str):
             self._prefix = prefix
 
@@ -558,8 +561,8 @@ def test_serialize_normalizer_retains_child_identifier_configuration():
         async def normalize_async(self, messages: list[Message]) -> list[Message]:
             return messages
 
-    class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
-        def __init__(self, normalizer: MessageListNormalizer[Message]):
+    class CustomWrapperNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, normalizer: _IdentifiableListNormalizer):
             self.normalizer = normalizer
 
         def _build_identifier(self) -> ComponentIdentifier:
@@ -584,7 +587,10 @@ def test_serialize_normalizer_retains_child_identifier_configuration():
 
 
 def test_serialize_normalizer_recursively_serializes_nested_children():
-    class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
+    class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
+        pass
+
+    class CustomPrefixNormalizer(_IdentifiableListNormalizer):
         def __init__(self, prefix: str):
             self._prefix = prefix
 
@@ -594,8 +600,8 @@ def test_serialize_normalizer_recursively_serializes_nested_children():
         async def normalize_async(self, messages: list[Message]) -> list[Message]:
             return messages
 
-    class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
-        def __init__(self, normalizer: MessageListNormalizer[Message]):
+    class CustomWrapperNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, normalizer: _IdentifiableListNormalizer):
             self.normalizer = normalizer
 
         def _build_identifier(self) -> ComponentIdentifier:

@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Any
 
 import pytest
 from unit.mocks import MockPromptTarget
@@ -666,7 +665,10 @@ def test_init_rejects_delegating_normalizers_with_mismatched_child_params():
         UnsupportedCapabilityBehavior,
     )
 
-    class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
+    class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
+        pass
+
+    class CustomPrefixNormalizer(_IdentifiableListNormalizer):
         def __init__(self, prefix: str):
             self._prefix = prefix
 
@@ -676,8 +678,8 @@ def test_init_rejects_delegating_normalizers_with_mismatched_child_params():
         async def normalize_async(self, messages: list[Message]) -> list[Message]:
             return messages
 
-    class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
-        def __init__(self, normalizer: MessageListNormalizer[Message]):
+    class CustomWrapperNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, normalizer: _IdentifiableListNormalizer):
             self.normalizer = normalizer
 
         def _build_identifier(self) -> ComponentIdentifier:
@@ -726,7 +728,10 @@ def test_init_accepts_delegating_normalizers_with_matching_child_params():
         UnsupportedCapabilityBehavior,
     )
 
-    class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
+    class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
+        pass
+
+    class CustomPrefixNormalizer(_IdentifiableListNormalizer):
         def __init__(self, prefix: str):
             self._prefix = prefix
 
@@ -736,8 +741,8 @@ def test_init_accepts_delegating_normalizers_with_matching_child_params():
         async def normalize_async(self, messages: list[Message]) -> list[Message]:
             return messages
 
-    class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
-        def __init__(self, normalizer: MessageListNormalizer[Message]):
+    class CustomWrapperNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, normalizer: _IdentifiableListNormalizer):
             self.normalizer = normalizer
 
         def _build_identifier(self) -> ComponentIdentifier:
@@ -786,7 +791,10 @@ def test_init_rejects_multi_level_delegating_normalizers_with_mismatched_leaf_pa
         UnsupportedCapabilityBehavior,
     )
 
-    class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
+    class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
+        pass
+
+    class CustomPrefixNormalizer(_IdentifiableListNormalizer):
         def __init__(self, prefix: str):
             self._prefix = prefix
 
@@ -796,8 +804,8 @@ def test_init_rejects_multi_level_delegating_normalizers_with_mismatched_leaf_pa
         async def normalize_async(self, messages: list[Message]) -> list[Message]:
             return messages
 
-    class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
-        def __init__(self, normalizer: MessageListNormalizer[Message]):
+    class CustomWrapperNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, normalizer: _IdentifiableListNormalizer):
             self.normalizer = normalizer
 
         def _build_identifier(self) -> ComponentIdentifier:
@@ -850,7 +858,10 @@ def test_init_accepts_multi_level_delegating_normalizers_with_matching_leaf_para
         UnsupportedCapabilityBehavior,
     )
 
-    class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
+    class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
+        pass
+
+    class CustomPrefixNormalizer(_IdentifiableListNormalizer):
         def __init__(self, prefix: str):
             self._prefix = prefix
 
@@ -860,8 +871,8 @@ def test_init_accepts_multi_level_delegating_normalizers_with_matching_leaf_para
         async def normalize_async(self, messages: list[Message]) -> list[Message]:
             return messages
 
-    class CustomWrapperNormalizer(Identifiable, MessageListNormalizer[Message]):
-        def __init__(self, normalizer: MessageListNormalizer[Message]):
+    class CustomWrapperNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, normalizer: _IdentifiableListNormalizer):
             self.normalizer = normalizer
 
         def _build_identifier(self) -> ComponentIdentifier:
