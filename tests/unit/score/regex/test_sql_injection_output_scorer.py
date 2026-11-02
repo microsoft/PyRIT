@@ -201,6 +201,57 @@ async def test_sqli_union_with_comment_separators_detected(text: str, patch_cent
     assert score.score_rationale == "Matched: UNION Injection"
 
 
+@pytest.mark.parametrize("line_ending", ["\r", "\n", "\r\n"])
+@pytest.mark.parametrize(
+    "template",
+    [
+        "UNION-- comment{line_ending}SELECT 1",
+        "UNION-- comment{line_ending}ALL SELECT 1",
+        "UNION ALL-- comment{line_ending}SELECT 1",
+        "UNION SELECT-- comment{line_ending}1",
+    ],
+)
+async def test_sqli_union_line_comment_endings_detected(
+    *,
+    template: str,
+    line_ending: str,
+    patch_central_database: MagicMock,
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    scorer = SQLInjectionOutputScorer()
+    score = (await scorer.score_text_async(text=template.format(line_ending=line_ending)))[0]
+    persisted = await sqlite_instance.get_scores_async(score_ids=[str(score.id)])
+
+    assert score.get_value() is True
+    assert score.score_rationale == "Matched: UNION Injection"
+    assert len(persisted) == 1
+    assert persisted[0].get_value() is True
+    assert persisted[0].score_category == ["security"]
+    assert persisted[0].score_rationale == score.score_rationale
+    assert persisted[0].scorer_class_identifier == score.scorer_class_identifier
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("UNION-- first\rhidden\nSELECT 1", True),
+        ("UNION-- first\rhidden\nALL-- second\rhidden\nSELECT-- third\rhidden\n1", True),
+        ("UNION# first\rhidden\nSELECT 1", True),
+        ("UNION# first\rSELECT 1", False),
+        ("UNION-- first\rALL-- second\rhidden\nSELECT-- final\r1", False),
+        ("UNION# first\nSELECT-- second\r1", False),
+        ("UNION-- SELECT 1\nnot_a_select", False),
+        ("UNION-- comment\vSELECT 1", False),
+    ],
+)
+async def test_sqli_union_line_comments_keep_consistent_dialect(
+    *, text: str, expected: bool, patch_central_database: MagicMock
+) -> None:
+    score = (await SQLInjectionOutputScorer().score_text_async(text=text))[0]
+    assert score.get_value() is expected
+    assert score.score_rationale == ("Matched: UNION Injection" if expected else "")
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -209,8 +260,6 @@ async def test_sqli_union_with_comment_separators_detected(text: str, patch_cent
         "UNION/**/SELECTED 1",
         "UNION -- SELECT 1",
         "UNION # SELECT 1",
-        "UNION--x\rSELECT 1",
-        "UNION/**/SELECT--x\r1",
     ],
 )
 async def test_sqli_union_without_token_separator_not_detected(text: str, patch_central_database: MagicMock) -> None:
