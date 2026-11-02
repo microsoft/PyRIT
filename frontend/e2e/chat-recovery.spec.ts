@@ -708,7 +708,7 @@ test.describe("Chat processing recovery @seeded", () => {
     });
   }
 
-  test("warns about lost converter choices when recovering a saved failure to a new attack", async ({
+  test("restores original media when recovering a saved failure to a new attack", async ({
     page, request, localTarget, imageConverterId,
   }) => {
     await page.getByTestId("file-input").setInputFiles({
@@ -747,7 +747,6 @@ test.describe("Chat processing recovery @seeded", () => {
     await expect(page).toHaveURL((url: URL) => url.pathname.includes(created.attack_result_id));
     await expect(page.getByTestId("chat-input")).toHaveValue("Restore the original image");
     await expect(page.getByRole("button", { name: `Remove ${originalImage.original_filename}`, exact: true })).toBeVisible();
-    await expect(page.getByText(/Converter choices could not be restored/)).toBeVisible();
     await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(0);
     await expect(page.getByTestId(/^message-bubble-/)).toHaveCount(0);
     expect(localTarget.requestBodies).toHaveLength(1);
@@ -761,7 +760,6 @@ test.describe("Chat processing recovery @seeded", () => {
     expect(payload.pieces.every((piece) => !piece.applied_converter_ids?.length)).toBe(true);
     expect(retried.messages.messages[0].message_pieces[1].original_value)
       .toBe(originalImage.original_value);
-    await expect(page.getByText(/Converter choices could not be restored/)).toHaveCount(0);
     const historyResponse = await request.get(
       `/api/attacks/${retried.attack.attack_result_id}/messages?conversation_id=${retried.messages.conversation_id}`,
       { headers: compatibilityHeaders() },

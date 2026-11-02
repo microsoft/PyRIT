@@ -54,6 +54,12 @@ class TestVLSUMultimodalDataset:
         with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
             _VLSUMultimodalDataset(categories=[])
 
+    @pytest.mark.parametrize("max_examples", [0, -1])
+    def test_init_with_max_examples_below_one_raises(self, max_examples):
+        """Test that max_examples below 1 raises ValueError instead of still loading one pair."""
+        with pytest.raises(ValueError, match="max_examples must be at least 1"):
+            _VLSUMultimodalDataset(max_examples=max_examples)
+
     def test_init_with_unsafe_grades(self):
         """Test initialization with custom unsafe grades."""
         dataset = _VLSUMultimodalDataset(unsafe_grades=["unsafe"])

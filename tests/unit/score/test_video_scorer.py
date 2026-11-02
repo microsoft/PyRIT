@@ -17,7 +17,6 @@ from pyrit.models import AnswerMatches, ComponentIdentifier, MessagePiece, Score
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScorer
-from pyrit.score.observation.execution import _scoring_expectation_context
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 from pyrit.score.true_false.video_true_false_scorer import VideoTrueFalseScorer
@@ -162,7 +161,6 @@ async def test_video_forwards_explicit_conditions_and_templates_async(float_scal
         audio_objective_template="Audio: {objective}",
     )
     expectation = ScoringExpectation(objective="question", conditions=(AnswerMatches(correct_answer="Paris"),))
-    unrelated = ScoringExpectation(conditions=(AnswerMatches(correct_answer="London"),))
     audio_path = tmp_path / "typed-audio.wav"
     audio_path.write_bytes(b"audio")
     frame = MessagePiece(role="assistant", original_value="frame.png", original_value_data_type="image_path")
@@ -181,7 +179,6 @@ async def test_video_forwards_explicit_conditions_and_templates_async(float_scal
             ],
         ) as image_score,
         patch.object(audio_scorer, "_score_batch_nested_async", return_value=[]) as audio_score,
-        _scoring_expectation_context(unrelated),
     ):
         scores = await scorer._score_async(video.to_message(), expectation=expectation)
 
