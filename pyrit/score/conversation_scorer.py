@@ -25,7 +25,7 @@ from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.observation.conversation_source import ConversationSource
 from pyrit.score.observation.execution import _collect_observation, _ObservationEvidenceResolver
 from pyrit.score.observation.observation_source import ObservationSource
-from pyrit.score.scorer import Scorer
+from pyrit.score.scorer import Scorer, SnapshotParticipation, _read_snapshot_participation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
 
@@ -88,6 +88,7 @@ class ConversationScorer(MessageScorer, ABC):
             scorable=conversation_scorable,
             expectation=prepared,
             used_observation_ids={str(score.id): set() for score in candidates},
+            participation_by_score={str(score.id): _read_snapshot_participation(score) for score in candidates},
         )
 
     async def _get_conversation_scorable_async(self, *, scorable: Scorable) -> ConversationScorable | None:
@@ -119,6 +120,7 @@ class ConversationScorer(MessageScorer, ABC):
         scorable: Scorable,
         expectation: ScoringExpectation | None,
         used_observation_ids: dict[str, set[str]],
+        participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
         Retain root candidates linked to a complete observation of the current conversation.

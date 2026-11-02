@@ -85,26 +85,34 @@ class _ChatJudgeTarget(MockPromptTarget):
 
 
 @pytest.mark.parametrize("target_backed", [False, True])
-@pytest.mark.parametrize("wrapped_root", [False, True])
+@pytest.mark.parametrize("wrapper_mode", ["direct", "composite", "nested"])
 async def test_apply_conversation_snapshot_reuse_projection_and_judge_owner_async(
     *,
     latest_response_chat: tuple[ChatScoringService, AttackResult, ApplyChatScorerRequest, SubStringScorer],
     sqlite_instance: SQLiteMemory,
     target_backed: bool,
-    wrapped_root: bool,
+    wrapper_mode: str,
 ) -> None:
     policy, attack, request, _ = latest_response_chat
     target = _ChatJudgeTarget()
     child = SelfAskTrueFalseScorer(chat_target=target) if target_backed else SubStringScorer(substring="default")
     conversation_scorer = create_conversation_scorer(scorer=child)
-    scorer = (
-        TrueFalseCompositeScorer(
+    if wrapper_mode == "composite":
+        scorer = TrueFalseCompositeScorer(
             aggregator=TrueFalseScoreAggregator.AND,
             scorers=[conversation_scorer, SubStringScorer(substring="default")],
         )
-        if wrapped_root
-        else conversation_scorer
-    )
+    elif wrapper_mode == "nested":
+        inner = TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.AND,
+            scorers=[conversation_scorer, SubStringScorer(substring="default")],
+        )
+        scorer = TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.OR,
+            scorers=[inner, SubStringScorer(substring="default")],
+        )
+    else:
+        scorer = conversation_scorer
     ScorerRegistry.get_registry_singleton().instances.register(scorer, name="conversation-judge")
     reference = RegisteredComponentReference(
         registry_name="conversation-judge", identifier_hash=scorer.get_identifier().hash

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import abc
+import json
 import logging
 import uuid
 from abc import abstractmethod
@@ -62,7 +63,91 @@ logger = logging.getLogger(__name__)
 
 #: Release in which the message-shaped ``score_async`` parameters are removed.
 LEGACY_SCORE_ASYNC_REMOVED_IN = "2.0.0"
+_SNAPSHOT_PARTICIPATION_METADATA_KEY = "pyrit_internal_snapshot_participation"
+SnapshotParticipation = dict[str, Any]
 ConditionT = TypeVar("ConditionT", bound=Condition)
+
+
+def _read_snapshot_participation(score: Score) -> SnapshotParticipation | None:
+    """
+    Read the same-input child participation tree stored on a wrapper result.
+
+    Returns:
+        The validated child tree, or ``None`` when it is absent or invalid.
+    """
+    raw = (score.score_metadata or {}).get(_SNAPSHOT_PARTICIPATION_METADATA_KEY)
+    if not isinstance(raw, str):
+        return None
+    try:
+        participation = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return participation if _is_snapshot_participation(participation) else None
+
+
+def _is_snapshot_participation(value: Any) -> bool:
+    """
+    Validate persisted participation metadata before using it to skip a freshness check.
+
+    Returns:
+        Whether the value is a valid participation tree.
+    """
+    return isinstance(value, dict) and all(
+        isinstance(index, str) and index.isdecimal() and (child is None or _is_snapshot_participation(child))
+        for index, child in value.items()
+    )
+
+
+def _participates_in_snapshot(
+    *,
+    score: Score,
+    child_index: int,
+    participation_by_score: dict[str, SnapshotParticipation | None],
+) -> bool:
+    """Return whether a child participated, conservatively including unknown legacy branches."""
+    participation = participation_by_score.get(str(score.id))
+    return participation is None or str(child_index) in participation
+
+
+def _child_snapshot_participation(
+    *,
+    score: Score,
+    child_index: int,
+    participation_by_score: dict[str, SnapshotParticipation | None],
+) -> SnapshotParticipation | None:
+    """Return the nested participation tree for one child, if known."""
+    participation = participation_by_score.get(str(score.id))
+    return participation.get(str(child_index)) if participation is not None else None
+
+
+def _validated_snapshot_participation(
+    *,
+    score: Score,
+    child_count: int,
+    participation_by_score: dict[str, SnapshotParticipation | None],
+) -> SnapshotParticipation | None:
+    """
+    Treat incomplete or out-of-range participation data as unknown.
+
+    Returns:
+        The validated participation tree, or ``None`` when the tree is unknown.
+    """
+    participation = participation_by_score.get(str(score.id))
+    if participation is None or not participation:
+        return None
+    if any(int(index) >= child_count for index in participation):
+        return None
+    return participation
+
+
+def _set_snapshot_participation(*, score: Score, child_scores: dict[int, Score]) -> None:
+    """Attach the exact same-input child branches that contributed to a wrapper score."""
+    metadata = dict(score.score_metadata or {})
+    metadata[_SNAPSHOT_PARTICIPATION_METADATA_KEY] = json.dumps(
+        {str(index): _read_snapshot_participation(child) for index, child in sorted(child_scores.items())},
+        sort_keys=True,
+    )
+    score.score_metadata = metadata
 
 
 class LegacyScorerHookError(TypeError):
@@ -929,6 +1014,7 @@ class Scorer(Identifiable, abc.ABC):
             scorable=scorable,
             expectation=prepared,
             used_observation_ids={str(score.id): set() for score in candidates},
+            participation_by_score={str(score.id): _read_snapshot_participation(score) for score in candidates},
         )
 
     async def _filter_matching_scores_by_snapshot_async(
@@ -938,6 +1024,7 @@ class Scorer(Identifiable, abc.ABC):
         scorable: Scorable,
         expectation: ScoringExpectation | None,
         used_observation_ids: dict[str, set[str]],
+        participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
         Filter identity matches whose required evidence snapshots are no longer current.
@@ -957,6 +1044,7 @@ class Scorer(Identifiable, abc.ABC):
         scorable: Scorable,
         expectation: ScoringExpectation | None,
         used_observation_ids: dict[str, set[str]],
+        participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
         Apply each same-input child's freshness contract to the root identity matches.
@@ -967,14 +1055,49 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             list[Score]: The candidates whose same-input children remain current.
         """
-        candidates = list(scores)
-        for child, child_expectation in self._get_child_expectations(expectation=expectation):
-            candidates = await child._filter_matching_scores_by_snapshot_async(
-                scores=candidates,
+        candidates: list[Score] = list(scores)
+        child_expectations = self._get_child_expectations(expectation=expectation)
+        normalized_participation_by_score = {
+            str(score.id): _validated_snapshot_participation(
+                score=score,
+                child_count=len(child_expectations),
+                participation_by_score=participation_by_score,
+            )
+            for score in scores
+        }
+        participation_by_score = normalized_participation_by_score
+        for child_index, (child, child_expectation) in enumerate(child_expectations):
+            participating_scores = [
+                score
+                for score in candidates
+                if _participates_in_snapshot(
+                    score=score,
+                    child_index=child_index,
+                    participation_by_score=participation_by_score,
+                )
+            ]
+            if not participating_scores:
+                continue
+            child_participation = {
+                str(score.id): _child_snapshot_participation(
+                    score=score,
+                    child_index=child_index,
+                    participation_by_score=participation_by_score,
+                )
+                for score in participating_scores
+            }
+            fresh_scores = await child._filter_matching_scores_by_snapshot_async(
+                scores=participating_scores,
                 scorable=scorable,
                 expectation=child_expectation,
                 used_observation_ids=used_observation_ids,
+                participation_by_score=child_participation,
             )
+            fresh_ids = {str(score.id) for score in fresh_scores}
+            participating_ids = {str(score.id) for score in participating_scores}
+            candidates = [
+                score for score in candidates if str(score.id) not in participating_ids or str(score.id) in fresh_ids
+            ]
             if not candidates:
                 return []
         return candidates

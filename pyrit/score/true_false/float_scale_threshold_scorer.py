@@ -22,7 +22,7 @@ from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleAggre
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
-from pyrit.score.scorer import Scorer
+from pyrit.score.scorer import Scorer, SnapshotParticipation, _set_snapshot_participation
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
@@ -138,6 +138,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         scorable: Scorable,
         expectation: ScoringExpectation | None,
         used_observation_ids: dict[str, set[str]],
+        participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
         Validate the wrapped float scorer's evidence before reusing its threshold result.
@@ -150,6 +151,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             scorable=scorable,
             expectation=expectation,
             used_observation_ids=used_observation_ids,
+            participation_by_score=participation_by_score,
         )
 
     async def _score_scorable_async(
@@ -174,13 +176,16 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         )
         if not scores:
             return []
-        return self._apply_threshold(
+        thresholded = self._apply_threshold(
             scores=scores,
             expectation=expectation,
             # Score rejects a kind outside the union when it is constructed below.
             scorable=cast("ScorableUnion | None", scorable),
             message_piece_id=self._piece_id_from_scorable(scorable),
         )
+        for result in thresholded:
+            _set_snapshot_participation(score=result, child_scores={0: scores[0]})
+        return thresholded
 
     def _apply_threshold(
         self,

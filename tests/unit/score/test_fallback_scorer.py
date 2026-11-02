@@ -145,6 +145,7 @@ async def test_complete_primary_skips_fallback_async(
         "resolved_by": "primary",
         "primary.model": "primary",
         "primary.resolved_by": "inner",
+        "pyrit_internal_snapshot_participation": '{"0": null}',
     }
     assert child_score == original
     assert [score.id for score in (await sqlite_instance.get_scores_async(score_type=family))] == [result.id]
@@ -225,6 +226,7 @@ async def test_fallback_preserves_both_attempts_without_mutating_children_async(
         "primary_rationale": "uncertain",
         "fallback_rationale": "second opinion",
         "fallback_status": fallback_score.status.value,
+        "pyrit_internal_snapshot_participation": '{"0": null, "1": null}',
     }
     assert "uncertain" in result.score_rationale
     assert "second opinion" in result.score_rationale

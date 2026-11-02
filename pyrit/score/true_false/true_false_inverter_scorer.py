@@ -15,7 +15,7 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
-from pyrit.score.scorer import Scorer
+from pyrit.score.scorer import Scorer, SnapshotParticipation, _set_snapshot_participation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -93,6 +93,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         scorable: Scorable,
         expectation: ScoringExpectation | None,
         used_observation_ids: dict[str, set[str]],
+        participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
         Validate the wrapped scorer's snapshot without changing the inverted result.
@@ -105,6 +106,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             scorable=scorable,
             expectation=expectation,
             used_observation_ids=used_observation_ids,
+            participation_by_score=participation_by_score,
         )
 
     async def _score_scorable_async(
@@ -129,7 +131,10 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         )
         if not scores:
             return []
-        return self._invert(scores)
+        inverted = self._invert(scores)
+        for result, child_score in zip(inverted, scores, strict=True):
+            _set_snapshot_participation(score=result, child_scores={0: child_score})
+        return inverted
 
     def _invert(self, scores: list[Score]) -> list[Score]:
         """

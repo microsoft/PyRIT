@@ -21,7 +21,7 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.score.observation.execution import _merge_observation_ids
-from pyrit.score.scorer import Scorer
+from pyrit.score.scorer import Scorer, SnapshotParticipation, _set_snapshot_participation
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -140,6 +140,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         scorable: Scorable,
         expectation: ScoringExpectation | None,
         used_observation_ids: dict[str, set[str]],
+        participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
         Require current snapshots from every participating same-input child.
@@ -152,6 +153,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             scorable=scorable,
             expectation=expectation,
             used_observation_ids=used_observation_ids,
+            participation_by_score=participation_by_score,
         )
 
     async def _score_scorable_async(
@@ -180,21 +182,24 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             )
             for scorer in self._scorers
         )
-        applicable_results = [scores for scores in score_list_results if scores]
+        applicable_results = [(index, scores) for index, scores in enumerate(score_list_results) if scores]
         skipped_count = len(score_list_results) - len(applicable_results)
         if skipped_count:
             logger.debug("Ignoring %d non-applicable child scorer result(s) in composite scoring.", skipped_count)
         if not applicable_results:
             return []
-        return [
-            self._build_aggregate_score(
-                score_list_results=applicable_results,
-                expectation=expectation,
-                # Score rejects a kind outside the union when it is constructed below.
-                scorable=cast("ScorableUnion | None", scorable),
-                message_piece_id=self._piece_id_from_scorable(scorable),
-            )
-        ]
+        result = self._build_aggregate_score(
+            score_list_results=[scores for _, scores in applicable_results],
+            expectation=expectation,
+            # Score rejects a kind outside the union when it is constructed below.
+            scorable=cast("ScorableUnion | None", scorable),
+            message_piece_id=self._piece_id_from_scorable(scorable),
+        )
+        _set_snapshot_participation(
+            score=result,
+            child_scores={index: child_scores[0] for index, child_scores in applicable_results},
+        )
+        return [result]
 
     def _build_aggregate_score(
         self,

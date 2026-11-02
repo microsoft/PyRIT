@@ -5,10 +5,17 @@ from abc import abstractmethod
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from pyrit.models import ComponentIdentifier, MessageScorable, Scorable, Score, ScoreStatus, ScoringExpectation
+from pyrit.models import ComponentIdentifier, MessageScorable, Scorable, Score, ScoringExpectation
 from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
-from pyrit.score.scorer import Scorer
+from pyrit.score.scorer import (
+    Scorer,
+    SnapshotParticipation,
+    _child_snapshot_participation,
+    _participates_in_snapshot,
+    _set_snapshot_participation,
+    _validated_snapshot_participation,
+)
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -68,6 +75,7 @@ class _FallbackScorer(Scorer):
         scorable: Scorable,
         expectation: ScoringExpectation | None,
         used_observation_ids: dict[str, set[str]],
+        participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
         Validate snapshots only for the primary and fallback branches that produced a result.
@@ -75,36 +83,64 @@ class _FallbackScorer(Scorer):
         Returns:
             list[Score]: Candidates with fresh observations for every participating branch.
         """
-        primary_expectation = self._scorer._select_expectation(expectation=expectation)
+        participation_by_score = {
+            str(score.id): _validated_snapshot_participation(
+                score=score,
+                child_count=2,
+                participation_by_score=participation_by_score,
+            )
+            for score in scores
+        }
+        primary_scores = [
+            score
+            for score in scores
+            if _participates_in_snapshot(score=score, child_index=0, participation_by_score=participation_by_score)
+        ]
+        primary_participation = {
+            str(score.id): _child_snapshot_participation(
+                score=score, child_index=0, participation_by_score=participation_by_score
+            )
+            for score in primary_scores
+        }
         primary_matches = await self._scorer._filter_matching_scores_by_snapshot_async(
-            scores=scores,
+            scores=primary_scores,
             scorable=scorable,
-            expectation=primary_expectation,
+            expectation=self._scorer._select_expectation(expectation=expectation),
             used_observation_ids=used_observation_ids,
+            participation_by_score=primary_participation,
         )
-        primary_only: set[str] = set()
-        fallback_matches: list[Score] = []
-        for score in primary_matches:
-            metadata = score.score_metadata or {}
-            resolved_by = metadata.get("resolved_by")
-            fallback_status = metadata.get("fallback_status")
-            if resolved_by == "primary" and fallback_status in (None, "not_applicable"):
-                primary_only.add(str(score.id))
-            elif resolved_by == "fallback" and fallback_status in {status.value for status in ScoreStatus}:
-                fallback_matches.append(score)
-
+        primary_matches_ids = {str(score.id) for score in primary_matches}
+        fallback_scores = [
+            score
+            for score in primary_matches
+            if _participates_in_snapshot(score=score, child_index=1, participation_by_score=participation_by_score)
+        ]
         fallback_ids: set[str] = set()
-        if fallback_matches:
+        if fallback_scores:
             fallback_expectation = self._fallback_scorer._select_expectation(expectation=expectation)
             valid_fallback_matches = await self._fallback_scorer._filter_matching_scores_by_snapshot_async(
-                scores=fallback_matches,
+                scores=fallback_scores,
                 scorable=scorable,
                 expectation=fallback_expectation,
                 used_observation_ids=used_observation_ids,
+                participation_by_score={
+                    str(score.id): _child_snapshot_participation(
+                        score=score, child_index=1, participation_by_score=participation_by_score
+                    )
+                    for score in fallback_scores
+                },
             )
             fallback_ids = {str(score.id) for score in valid_fallback_matches}
 
-        return [score for score in primary_matches if str(score.id) in primary_only or str(score.id) in fallback_ids]
+        return [
+            score
+            for score in scores
+            if str(score.id) in primary_matches_ids
+            and (
+                not _participates_in_snapshot(score=score, child_index=1, participation_by_score=participation_by_score)
+                or str(score.id) in fallback_ids
+            )
+        ]
 
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
         """
@@ -117,14 +153,21 @@ class _FallbackScorer(Scorer):
         if primary is None:
             return []
         if not primary.is_undetermined:
-            return [self._build_result(primary=primary)]
+            result = self._build_result(primary=primary)
+            _set_snapshot_participation(score=result, child_scores={0: primary})
+            return [result]
 
         fallback = await self._score_child_async(
             scorer=self._fallback_scorer, scorable=scorable, expectation=expectation
         )
         if fallback is not None:
             self._validate_comparable_results(primary=primary, fallback=fallback)
-        return [self._build_result(primary=primary, fallback=fallback, fallback_attempted=True)]
+        result = self._build_result(primary=primary, fallback=fallback, fallback_attempted=True)
+        child_scores = {0: primary}
+        if fallback is not None:
+            child_scores[1] = fallback
+        _set_snapshot_participation(score=result, child_scores=child_scores)
+        return [result]
 
     async def _score_child_async(
         self, *, scorer: Scorer, scorable: Scorable, expectation: ScoringExpectation | None
@@ -183,7 +226,9 @@ class _FallbackScorer(Scorer):
         """
         selected = fallback if fallback is not None else primary
         metadata: dict[str, str | int | float] = {
-            f"primary.{key}": value for key, value in (primary.score_metadata or {}).items()
+            f"primary.{key}": value
+            for key, value in (primary.score_metadata or {}).items()
+            if key != "pyrit_internal_snapshot_participation"
         }
         metadata["resolved_by"] = "fallback" if fallback is not None else "primary"
         # Attacks rank true/false scores by this top-level key, so keep the selected child's value.
@@ -194,7 +239,13 @@ class _FallbackScorer(Scorer):
             metadata["primary_rationale"] = primary.score_rationale or ""
             metadata["fallback_status"] = fallback.status.value if fallback is not None else "not_applicable"
             if fallback is not None:
-                metadata.update({f"fallback.{key}": value for key, value in (fallback.score_metadata or {}).items()})
+                metadata.update(
+                    {
+                        f"fallback.{key}": value
+                        for key, value in (fallback.score_metadata or {}).items()
+                        if key != "pyrit_internal_snapshot_participation"
+                    }
+                )
                 metadata["fallback_rationale"] = fallback.score_rationale or ""
             rationale = self._fallback_rationale(primary=primary, fallback=fallback)
 
