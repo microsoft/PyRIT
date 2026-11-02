@@ -4,6 +4,8 @@
 """Tests for the Garak PromptInject scenario."""
 
 import random
+from collections.abc import Callable
+from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,6 +21,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetConstraintError,
     DatasetSource,
+    ResolvedDataset,
     require_seed_type,
 )
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
@@ -31,6 +34,16 @@ from pyrit.score import SubStringScorer, TrueFalseScorer
 
 def _mock_id(name: str) -> ComponentIdentifier:
     return ComponentIdentifier(class_name=name, class_module="test")
+
+
+@dataclass
+class _SeedTypeValidator:
+    """An unhashable callable validator, like a user's own dataclass validator."""
+
+    seed_type: type
+
+    def __call__(self, resolved: ResolvedDataset) -> None:
+        require_seed_type(self.seed_type)(resolved)
 
 
 @pytest.fixture
@@ -531,15 +544,26 @@ class TestPromptInjectDatasetSampling:
         assert len(_objective_values(scenario)) == 3
         assert scenario._build_scenario_identifier().datasets == PromptInject.required_datasets()
 
+    @pytest.mark.parametrize(
+        "make_validator",
+        [
+            pytest.param(lambda: require_seed_type(SeedPrompt), id="function"),
+            pytest.param(lambda: _SeedTypeValidator(SeedPrompt), id="callable-object"),
+        ],
+    )
     async def test_migrated_legacy_validators_check_the_raw_templates_async(
-        self, *, mock_objective_target: PromptTarget
+        self,
+        *,
+        mock_objective_target: PromptTarget,
+        make_validator: Callable[[], Callable[[ResolvedDataset], None]],
     ) -> None:
         # A legacy validator wrote against the raw template seeds, so it must keep seeing those
-        # (SeedPrompt) after migration, not the assembled objectives (SeedObjective).
+        # (SeedPrompt) after migration, not the assembled objectives (SeedObjective). The callable
+        # object is an unhashable validator, which the migration must still move.
         scenario = PromptInject()
         legacy = PromptInjectDatasetConfiguration(
             sources=[DatasetSource(name=name) for name in PromptInject.required_datasets()],
-            validators=[require_seed_type(SeedPrompt)],
+            validators=[make_validator()],
             max_total=3,
         )
 
