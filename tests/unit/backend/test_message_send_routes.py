@@ -114,6 +114,8 @@ def test_invalid_fields_are_not_admitted(
     ("error", "status"),
     [
         (ValueError("Attack not found"), 404),
+        (ValueError("The destination attack does not exist"), 404),
+        (LookupError("The destination attack does not exist"), 404),
         (ValueError("Target mismatch"), 400),
         (ManualSendConflictError("Conversation busy"), 409),
         (AttackStateConflictError("History changed"), 409),
