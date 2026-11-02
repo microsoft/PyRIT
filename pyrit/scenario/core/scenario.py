@@ -1016,8 +1016,10 @@ class Scenario(ABC):
             validators=config._user_validators,
         )
         stripped = config.with_overrides(sources=[])
-        moved = set(config._user_validators)
-        stripped._validators = [validator for validator in stripped._validators if validator not in moved]
+        # Remove the moved validators by identity: a validator may be any callable, including an
+        # unhashable instance, so they can't go in a set.
+        moved = {id(validator) for validator in config._user_validators}
+        stripped._validators = [validator for validator in stripped._validators if id(validator) not in moved]
         stripped._user_validators = []
         self._dataset_config = stripped
 
