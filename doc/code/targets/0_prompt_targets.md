@@ -81,9 +81,7 @@ message = Message(
         )
     ]
 )
-response = await PromptNormalizer().send_prompt_async(
-    message=message, target=target, conversation_id=conversation_id
-)
+response = await PromptNormalizer().send_prompt_async(message=message, target=target, conversation_id=conversation_id)
 ```
 
 `to_metadata()` produces `{"request_generation_config": {"temperature": 0}}` in
