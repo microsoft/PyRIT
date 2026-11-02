@@ -2,6 +2,10 @@
 
 # PyRIT: AI red teaming for models and applications
 
+[![Code contributors](https://img.shields.io/github/contributors/microsoft/PyRIT?label=code%20contributors)](https://github.com/microsoft/PyRIT/graphs/contributors)
+[![PRs merged](https://img.shields.io/github/issues-search?query=repo%3Amicrosoft%2FPyRIT%20is%3Apr%20is%3Amerged&label=PRs%20merged)](https://github.com/microsoft/PyRIT/pulls?q=is%3Apr+is%3Amerged)
+[![Issues closed](https://img.shields.io/github/issues-closed/microsoft/PyRIT?label=issues%20closed)](https://github.com/microsoft/PyRIT/issues?q=is%3Aissue+is%3Aclosed)
+
 PyRIT (Python Risk Identification Tool for generative AI) is an open-source toolkit
 for finding security and safety weaknesses in generative AI systems through automated
 scans, adaptive multi-turn attacks, and human-led testing.
@@ -9,10 +13,6 @@ scans, adaptive multi-turn attacks, and human-led testing.
 Built by the Microsoft AI Red Team and an open-source community of contributors,
 PyRIT brings a command-line scanner, a graphical interface, and an extensible
 Python framework together in one toolkit.
-
-[![Code contributors](https://img.shields.io/github/contributors/microsoft/PyRIT?label=code%20contributors)](https://github.com/microsoft/PyRIT/graphs/contributors)
-[![PRs merged](https://img.shields.io/github/issues-search?query=repo%3Amicrosoft%2FPyRIT%20is%3Apr%20is%3Amerged&label=PRs%20merged)](https://github.com/microsoft/PyRIT/pulls?q=is%3Apr+is%3Amerged)
-[![Issues closed](https://img.shields.io/github/issues-closed/microsoft/PyRIT?label=issues%20closed)](https://github.com/microsoft/PyRIT/issues?q=is%3Aissue+is%3Aclosed)
 
 You do not need to be a Microsoft employee or an experienced red teamer to get involved.
 Join our [Discord community](https://discord.gg/9fMpq3tc8u) to ask questions, exchange
