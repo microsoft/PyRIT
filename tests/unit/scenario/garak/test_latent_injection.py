@@ -125,8 +125,8 @@ class TestLatentDefaults:
     async def test_e2e_limit_preserves_every_family_trigger_pair_async(self) -> None:
         cap = SCENARIO_MAX_TOTAL["garak.latent_injection"]
         config = _config(max_total=cap)
-        await config.prepare_async()
-        groups = await config.get_attack_seed_groups_async()
+        await _prepare_ingredients_async()
+        groups = await _resolve_async(config)
         assert len(groups) == cap
         assert len(config.coverage_keys) == cap
         assert {config._coverage_key(group) for group in groups} == set(config.coverage_keys)
