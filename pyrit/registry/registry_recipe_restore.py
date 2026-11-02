@@ -8,7 +8,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
-from urllib.parse import urlparse
 
 from pyrit.models.catalog.registry_recipe import (
     ComponentRecipe,
@@ -55,7 +54,7 @@ class RegistryRecipeRestorer:
     """
 
     _RESERVED_TECHNIQUE_NAMES: ClassVar[frozenset[str]] = frozenset({"all", "default", "types"})
-    _URL_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s'\"<>]+")
+    _URL_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
     _KIND_BY_COMPONENT_TYPE: ClassVar[dict[ComponentType, RegistryRecipeKind]] = {
         ComponentType.TARGET: RegistryRecipeKind.TARGETS,
         ComponentType.CONVERTER: RegistryRecipeKind.CONVERTERS,
@@ -219,7 +218,8 @@ class RegistryRecipeRestorer:
             list[SavedEntryRef]: The adversarial target, converters, and attack parameter references.
 
         Raises:
-            _RecipeRejectedError: If the name is reserved or the attack type isn't registered.
+            _RecipeRejectedError: If the name is reserved, the attack type isn't registered, or the
+                recipe holds a credential.
         """
         from pyrit.registry.components.attack_registry import AttackRegistry
 
@@ -237,6 +237,7 @@ class RegistryRecipeRestorer:
         if recipe.adversarial_chat is not None:
             references.append(SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name=recipe.adversarial_chat))
         parameters = attack_registry.get_class_metadata(attack_class).parameters
+        self._check_stored_credentials(parameters=parameters, params=recipe.params)
         return references + self._parameter_references(parameters=parameters, params=recipe.params)
 
     @staticmethod
@@ -509,24 +510,30 @@ class RegistryRecipeRestorer:
         """
         Describe an error for the failure report, removing credentials from any URL it mentions.
 
-        Constructor errors can quote a server setting, such as an endpoint with a SAS token.
+        Constructor errors can quote a server setting, such as an endpoint with a SAS token. A URL
+        runs to the next whitespace, since quotes and other punctuation can appear inside one.
 
         Returns:
-            str: The error's type and text, with every URL reduced to its scheme, host, and path.
+            str: The error's type and text, with every URL cut before its query or fragment and
+                without a user name or password; just the type if the text can't be read.
         """
-        text = cls._URL_PATTERN.sub(lambda match: cls._redact_url(match.group(0)), str(error))
+        try:
+            text = cls._URL_PATTERN.sub(lambda match: cls._redact_url(match.group(0)), str(error))
+        except Exception:
+            text = ""
         return f"{type(error).__name__}: {text}" if text else type(error).__name__
 
     @staticmethod
     def _redact_url(url: str) -> str:
         """
-        Drop the user name, password, query, and fragment from a URL.
+        Drop the user name, password, query, and fragment from a URL, without parsing it.
 
         Returns:
-            str: The URL without anything that can carry a credential.
+            str: The scheme, host, and path, which can't carry a credential.
         """
-        parsed = urlparse(url)
-        return parsed._replace(netloc=parsed.netloc.rpartition("@")[2], query="", fragment="").geturl()
+        scheme, _, rest = url.partition("://")
+        rest = re.split(r"[?#]", rest, maxsplit=1)[0]
+        return f"{scheme}://{rest.rpartition('@')[2]}"
 
 
 class _RecipeRejectedError(Exception):

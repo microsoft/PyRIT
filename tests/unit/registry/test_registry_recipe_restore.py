@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import dataclasses
 import json
 import os
 import sys
@@ -20,7 +21,9 @@ from pyrit.models.catalog.registry_recipe import (
     SavedEntryRef,
     TechniqueRecipe,
 )
+from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget
+from pyrit.registry.components.attack_registry import AttackRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.components.converter_registry import ConverterRegistry
 from pyrit.registry.components.scorer_registry import ScorerRegistry
@@ -146,6 +149,12 @@ class TestRestoreOrderAndRebuild:
             request.model_dump(exclude_unset=True, exclude={"name", "type", "tags"})
         )
 
+    def test_technique_recipe_defaults_match_the_create_request(self) -> None:
+        recipe = TechniqueRecipe.model_validate({"type": "RedTeamingAttack"})
+        request = CreateTechniqueRequest.model_validate({"name": "formal_red_team", "type": "RedTeamingAttack"})
+
+        assert recipe.model_dump(exclude={"schema_version"}) == request.model_dump(exclude={"name"})
+
     @pytest.mark.parametrize(
         "changes",
         [
@@ -156,6 +165,7 @@ class TestRestoreOrderAndRebuild:
             {"params": {"x" * 300: 1}},
             {"request_converters": ["c"] * 101},
             {"params": {"temperature": float("nan")}},
+            {"description": "x" * 100_001},
             {"unexpected": True},
         ],
     )
@@ -272,6 +282,29 @@ class TestRestoreFailures:
         assert "sk-secret-value" not in failure.message
         assert [ref.name for ref in report.restored] == ["good"]
 
+    def test_restores_a_class_whose_optional_credentials_are_left_empty(self, tmp_path: Path) -> None:
+        _save(
+            tmp_path,
+            RegistryRecipeKind.TARGETS,
+            "anonymous_agent",
+            {
+                "class_module": "pyrit.prompt_target.a2a_target",
+                "class_name": "A2ATarget",
+                "params": {"endpoint": "https://agent.example.test"},
+            },
+        )
+
+        with patch.object(TargetRegistry, "create_named_instance") as build:
+            report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        assert report.failures == []
+        build.assert_called_once_with(
+            name="anonymous_agent",
+            type_name="A2ATarget",
+            params={"endpoint": "https://agent.example.test"},
+            external_input=True,
+        )
+
     def test_refuses_a_class_that_needs_the_server_upload_folder(self, tmp_path: Path) -> None:
         _save(
             tmp_path,
@@ -315,8 +348,14 @@ class TestRestoreFailures:
         assert failure.message == "RuntimeError: unexpected"
         assert [ref.name for ref in report.restored] == ["b_second"]
 
-    def test_build_errors_drop_credentials_from_urls(self, tmp_path: Path) -> None:
-        endpoint = "https://user:hunter2@evil.example/openai/v1?sig=SYNTHETIC-SAS#frag"
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "https://user:hunter2@evil.example/openai/v1?sig=SYNTHETIC-SAS#frag",
+            "https://user:hunter2@evil.example/openai/v1'part?sig=SYNTHETIC-SAS#frag",
+        ],
+    )
+    def test_build_errors_drop_credentials_from_urls(self, tmp_path: Path, endpoint: str) -> None:
         no_endpoint = {**_IDENTITY_TARGET, "params": {"auth_mode": "identity", "model_name": "gpt-4o"}}
         _save(tmp_path, RegistryRecipeKind.TARGETS, "server_endpoint", no_endpoint)
 
@@ -325,9 +364,49 @@ class TestRestoreFailures:
 
         (failure,) = report.failures
         assert failure.reason is RestoreFailureReason.BUILD_ERROR
-        assert "https://evil.example/openai/v1" in failure.message
+        assert "evil.example/openai/v1" in failure.message
         for secret in ("hunter2", "SYNTHETIC-SAS", "frag"):
             assert secret not in failure.message
+
+    def test_error_text_that_is_not_a_valid_url_fails_only_that_entry(self, tmp_path: Path) -> None:
+        malformed = {
+            **_IDENTITY_TARGET,
+            "params": {**_IDENTITY_TARGET["params"], "temperature": "https://[x?sig=SECRET"},
+        }
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "malformed", malformed)
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "good", _IDENTITY_TARGET)
+
+        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        (failure,) = report.failures
+        assert (failure.name, failure.reason) == ("malformed", RestoreFailureReason.BUILD_ERROR)
+        assert failure.version
+        assert "could not be coerced" in failure.message
+        assert "SECRET" not in failure.message
+        assert [ref.name for ref in report.restored] == ["good"]
+
+    def test_refuses_a_stored_credential_in_attack_parameters(self, tmp_path: Path) -> None:
+        attack_registry = AttackRegistry.get_registry_singleton()
+        original_get_class_metadata = attack_registry.get_class_metadata
+
+        def with_credential(cls: type) -> Any:
+            metadata = original_get_class_metadata(cls)
+            credential = Parameter(name="api_key", description="", sensitive=True)
+            return dataclasses.replace(metadata, parameters=(*metadata.parameters, credential))
+
+        _save(
+            tmp_path,
+            RegistryRecipeKind.TECHNIQUES,
+            "keyed",
+            {"type": "RedTeamingAttack", "params": {"api_key": "sk-x"}},
+        )
+
+        with patch.object(attack_registry, "get_class_metadata", side_effect=with_credential):
+            report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        (failure,) = report.failures
+        assert (failure.name, failure.reason) == ("keyed", RestoreFailureReason.UNSUPPORTED_CREDENTIAL)
+        assert "sk-x" not in failure.message
 
     def test_an_empty_reference_is_left_unset(self, tmp_path: Path) -> None:
         _save(
@@ -422,31 +501,20 @@ class TestRestoreFailures:
         assert failures["pool"].reason is RestoreFailureReason.FAILED_DEPENDENCY
         assert TargetRegistry.get_registry_singleton().instances.get("contoso_gpt4o") is startup_target
 
-    def test_reports_a_technique_name_taken_in_another_case(self, tmp_path: Path) -> None:
+    def test_reports_a_technique_name_that_matches_a_tag_in_another_case(self, tmp_path: Path) -> None:
+        without_converters = {key: value for key, value in _TECHNIQUE.items() if key != "request_converters"}
         _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
-        _save(
-            tmp_path,
-            RegistryRecipeKind.CONVERTERS,
-            "tone_formal",
-            {
-                "class_module": "pyrit.converter.tone_converter",
-                "class_name": "ToneConverter",
-                "params": {"converter_target": "contoso_gpt4o", "tone": "formal"},
-            },
-        )
-        _save(tmp_path, RegistryRecipeKind.TECHNIQUES, "formal_red_team", _TECHNIQUE)
-        restorer = RegistryRecipeRestorer(source=str(tmp_path))
-        assert restorer.restore().failures == []
-        for registry in (TargetRegistry, ConverterRegistry):
-            registry.reset_registry_singleton()
-        (tmp_path / "techniques" / "formal_red_team.json").rename(tmp_path / "techniques" / "formal_red_team_copy.json")
-        _save(tmp_path, RegistryRecipeKind.TECHNIQUES, "custom", {**_TECHNIQUE, "tags": []})
+        _save(tmp_path, RegistryRecipeKind.TECHNIQUES, "formal_red_team", {**without_converters, "tags": ["Custom"]})
+        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+        TargetRegistry.reset_registry_singleton()
+        (tmp_path / "techniques" / "formal_red_team.json").unlink()
+        _save(tmp_path, RegistryRecipeKind.TECHNIQUES, "custom", {**without_converters, "tags": []})
 
-        report = restorer.restore()
+        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
-        failures = _failures_by_name(report.failures)
-        assert failures["custom"].reason is RestoreFailureReason.NAME_CLASH
-        assert "custom" in failures["custom"].message
+        (failure,) = report.failures
+        assert (failure.name, failure.reason) == ("custom", RestoreFailureReason.NAME_CLASH)
+        assert "custom" in failure.message
 
     def test_builds_nothing_when_a_folder_cannot_be_listed(self, tmp_path: Path) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
