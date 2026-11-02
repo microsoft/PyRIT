@@ -811,7 +811,7 @@ describe('ScenarioHistory', () => {
     type ListRunsParams = Parameters<typeof scenariosApi.listRuns>[0]
 
     function mockListRuns({ pendingFiltered = false } = {}) {
-      mockedScenariosApi.listRuns.mockImplementation((params: ListRunsParams) => {
+      mockedScenariosApi.listRuns.mockImplementation((params: ListRunsParams = {}) => {
         if (params.run_statuses?.includes('FAILED')) {
           if (pendingFiltered) return new Promise<ScenarioRunListResponse>(() => {})
           return Promise.resolve({ items: [FILTERED_RUN], pagination: { limit: 25, has_more: false } })

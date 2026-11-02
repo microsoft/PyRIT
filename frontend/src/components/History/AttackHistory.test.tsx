@@ -1291,7 +1291,7 @@ describe('AttackHistory', () => {
     type ListAttacksParams = Parameters<typeof attacksApi.listAttacks>[0]
 
     function mockListAttacks({ pendingFiltered = false } = {}) {
-      mockedAttacksApi.listAttacks.mockImplementation((params: ListAttacksParams) => {
+      mockedAttacksApi.listAttacks.mockImplementation((params: ListAttacksParams = {}) => {
         if (params.outcome === 'success') {
           if (pendingFiltered) return new Promise(() => {})
           return Promise.resolve({ items: FILTERED, pagination: { limit: 25, has_more: false } })
