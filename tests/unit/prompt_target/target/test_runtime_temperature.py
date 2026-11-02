@@ -28,10 +28,10 @@ from pyrit.models import (
     WebSearchMode,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget
+from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, get_known_capabilities
 from pyrit.prompt_target.common import utils as target_utils
-from pyrit.prompt_target.common.target_capabilities import get_known_capabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.openai.openai_chat_target import _OpenAIModelSampling
 from pyrit.score import SelfAskTrueFalseScorer
 
 
@@ -56,6 +56,105 @@ def request(temperature: float | None = None) -> Message:
 
 def completion() -> ChatCompletion:
     return ChatCompletion.model_validate({**openai_chat_response_json_dict(), "created": 0})
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-4",
+        "gpt-4-0314",
+        "gpt-4-0613",
+        "gpt-4-32k",
+        "gpt-4-32k-0613",
+        "gpt-4-turbo",
+        "gpt-4-turbo-2024-04-09",
+        "gpt-4-turbo-preview",
+        "gpt-4-1106-preview",
+        "gpt-4-0125-preview",
+        "gpt-4-vision-preview",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4o-2024-08-06",
+        "gpt-4o-mini-2024-07-18",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "gpt-4.1-mini-2025-04-14",
+    ],
+)
+def test_openai_non_reasoning_sampling_families(model: str) -> None:
+    assert _OpenAIModelSampling.supports_temperature(model_name=model)
+    assert not _OpenAIModelSampling.supports_temperature(model_name=model, declared_support=False)
+
+
+@pytest.mark.parametrize(
+    ("model", "default_supported"),
+    [
+        ("gpt-5.1", True),
+        ("gpt-5.1-2025-11-13", True),
+        ("gpt-5.2", True),
+        ("gpt-5.4", True),
+        ("gpt-5.4-mini", True),
+        ("gpt-5.4-nano-2026-03-17", True),
+        ("gpt-5.5", False),
+        ("gpt-5.6", False),
+        ("gpt-5.6-sol", False),
+        ("gpt-5.6-terra", False),
+        ("gpt-5.6-luna", False),
+    ],
+)
+@pytest.mark.parametrize("effort", [None, "none", "minimal", "low", "medium", "high", "xhigh", "max", ""])
+def test_openai_conditional_sampling_uses_model_reasoning_default(
+    model: str, default_supported: bool, effort: str | None
+) -> None:
+    expected = default_supported if effort is None else effort == "none"
+    assert _OpenAIModelSampling.supports_temperature(model_name=model, reasoning_effort=effort) is expected
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-nano-2025-08-07",
+        "gpt-5.2-pro",
+        "gpt-5.4-pro",
+        "gpt-5.1-codex",
+        "gpt-5.3-codex",
+        "o1",
+        "o3",
+        "o3-mini",
+        "o4-mini",
+        "gpt-4o-audio-preview-2024-12-17",
+        "gpt-4o-mini-realtime-preview",
+    ],
+)
+def test_known_unsupported_sampling_cannot_be_enabled_by_declaration(model: str) -> None:
+    assert not _OpenAIModelSampling.supports_temperature(
+        model_name=model, reasoning_effort="none", declared_support=True
+    )
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "private-deployment",
+        "gpt-4o-custom",
+        "gpt-4o-search-preview",
+        "gpt-4.1-future",
+        "gpt-5.4-custom-2026-01-01",
+        "gpt-5.4-mini-extra",
+        "gpt-5.99",
+        "gpt-4o-2024-08-06-custom",
+        "",
+    ],
+)
+def test_unknown_sampling_variants_require_explicit_support(model: str) -> None:
+    assert not _OpenAIModelSampling.supports_temperature(model_name=model)
+    assert _OpenAIModelSampling.supports_temperature(model_name=model, declared_support=True)
+    assert not _OpenAIModelSampling.supports_temperature(
+        model_name=model, declared_support=True, reasoning_effort="high"
+    )
 
 
 @pytest.mark.parametrize("temperature", [None, 0, 0.9, 2])
@@ -364,13 +463,51 @@ async def test_explicit_capability_enables_unlisted_models_async(patch_central_d
     assert send.call_args.kwargs["temperature"] == 0
 
 
-def test_temperature_support_comes_from_profile_not_model_name(patch_central_database: Any) -> None:
-    profile = get_known_capabilities("gpt-4o")
-    with patch("pyrit.prompt_target.openai.openai_chat_target.get_known_capabilities", return_value=profile):
-        target = OpenAIChatTarget(
-            model_name="new-model-in-catalog", endpoint="https://example.test/v1", api_key="test-only-key"
-        )
+@pytest.mark.parametrize(
+    ("model", "extras", "supported"),
+    [
+        ("gpt-4.1-nano", {}, True),
+        ("gpt-5.5", {}, False),
+        ("gpt-5.5", {"reasoning_effort": "none"}, True),
+        ("gpt-5.5", {"reasoning_effort": "medium"}, False),
+    ],
+)
+def test_sampling_support_is_resolved_without_a_full_model_profile(
+    patch_central_database: Any, model: str, extras: dict[str, Any], supported: bool
+) -> None:
+    assert get_known_capabilities(model) is None
+    target = OpenAIChatTarget(
+        model_name="production-deployment",
+        underlying_model=model,
+        endpoint="https://example.test/v1",
+        api_key="test-only-key",
+        extra_body_parameters=extras,
+    )
+    assert target.capabilities == OpenAIChatTarget._DEFAULT_CONFIGURATION.capabilities.model_copy(
+        update={"supports_temperature": supported}
+    )
+    if supported:
+        assert target.validate_request_generation_config(request(0)).temperature == 0
+    else:
+        with pytest.raises(ValueError, match="does not support runtime temperature"):
+            target.validate_request_generation_config(request(0))
+
+
+@pytest.mark.parametrize("model", ["gpt-4o", "gpt-5.1", "gpt-5.4"])
+def test_sampling_resolution_does_not_modify_shared_model_profiles(patch_central_database: Any, model: str) -> None:
+    profile = get_known_capabilities(model)
+    assert profile is not None
+    assert not profile.supports_temperature
+    target = OpenAIChatTarget(
+        model_name="production-deployment",
+        underlying_model=model,
+        endpoint="https://example.test/v1",
+        api_key="test-only-key",
+    )
     assert target.capabilities.supports_temperature
+    assert target.capabilities == profile.model_copy(update={"supports_temperature": True})
+    assert get_known_capabilities(model) is profile
+    assert not profile.supports_temperature
 
 
 def test_explicit_capability_disable_overrides_known_profile(patch_central_database: Any) -> None:

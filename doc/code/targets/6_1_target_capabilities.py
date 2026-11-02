@@ -99,8 +99,9 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 # and other models pick up the right modality combinations automatically. Unknown models fall back to
 # the class default.
 #
-# `OpenAIChatTarget` resolves `supports_temperature` separately from full model profiles,
-# using shared sampling rules and the effective model and reasoning settings:
+# Model profiles do not resolve runtime generation support. Check the instantiated
+# target's `capabilities.supports_temperature`; `OpenAIChatTarget` computes it using
+# its own sampling rules and the effective model and reasoning settings:
 #
 # | Model family | Runtime temperature |
 # | --- | --- |

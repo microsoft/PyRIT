@@ -2,9 +2,10 @@
 # Licensed under the MIT license.
 
 import logging
+import re
 from collections.abc import MutableSequence, Sequence
 from copy import deepcopy
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from openai.types.chat import ChatCompletion
 
@@ -37,9 +38,7 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
 )
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
-    OpenAIModelSampling,
     TargetCapabilities,
-    get_known_capabilities,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
@@ -55,6 +54,108 @@ from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioC
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 logger = logging.getLogger(__name__)
+
+
+class _OpenAIModelSampling:
+    """Resolve sampling support for OpenAI Chat without duplicating full model profiles."""
+
+    _RULES: ClassVar[
+        tuple[tuple[frozenset[str], Literal["supported", "requires_none", "unsupported"], str | None], ...]
+    ] = (
+        (
+            frozenset(
+                {
+                    "gpt-4",
+                    "gpt-4-0314",
+                    "gpt-4-0613",
+                    "gpt-4-32k",
+                    "gpt-4-32k-0314",
+                    "gpt-4-32k-0613",
+                    "gpt-4-turbo",
+                    "gpt-4-turbo-preview",
+                    "gpt-4-1106-preview",
+                    "gpt-4-0125-preview",
+                    "gpt-4-vision-preview",
+                    "gpt-4o",
+                    "gpt-4o-mini",
+                    "gpt-4.1",
+                    "gpt-4.1-mini",
+                    "gpt-4.1-nano",
+                }
+            ),
+            "supported",
+            None,
+        ),
+        (frozenset({"gpt-5.1", "gpt-5.2", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}), "requires_none", "none"),
+        (
+            frozenset({"gpt-5.5", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}),
+            "requires_none",
+            "medium",
+        ),
+        (
+            frozenset(
+                {
+                    "gpt-5",
+                    "gpt-5-mini",
+                    "gpt-5-nano",
+                    "gpt-5-pro",
+                    "gpt-5.2-pro",
+                    "gpt-5.4-pro",
+                    "gpt-5.5-pro",
+                    "gpt-5-codex",
+                    "gpt-5.1-codex",
+                    "gpt-5.1-codex-mini",
+                    "gpt-5.1-codex-max",
+                    "gpt-5.2-codex",
+                    "gpt-5.3-codex",
+                    "o1",
+                    "o1-mini",
+                    "o1-preview",
+                    "o1-pro",
+                    "o3",
+                    "o3-mini",
+                    "o3-pro",
+                    "o4-mini",
+                    "gpt-4o-audio-preview",
+                    "gpt-4o-mini-audio-preview",
+                    "gpt-4o-realtime-preview",
+                    "gpt-4o-mini-realtime-preview",
+                }
+            ),
+            "unsupported",
+            None,
+        ),
+    )
+    _SNAPSHOT_SUFFIX: ClassVar[re.Pattern[str]] = re.compile(r"-\d{4}-\d{2}-\d{2}$")
+
+    @classmethod
+    def supports_temperature(
+        cls, *, model_name: object, reasoning_effort: object = None, declared_support: bool | None = None
+    ) -> bool:
+        """
+        Resolve support using the model's sampling rule and effective reasoning effort.
+
+        Args:
+            model_name (object): Effective model or deployment name from the request configuration.
+            reasoning_effort (object): Effective effort, or None to use the documented model default.
+            declared_support (bool | None): Explicit capability declaration. False disables support;
+                True permits unrecognized deployments but cannot bypass a known model's restrictions.
+
+        Returns:
+            bool: Whether this model configuration accepts a runtime temperature.
+        """
+        if declared_support is False or not isinstance(model_name, str):
+            return False
+        # Only dated snapshots inherit a named model's rule, not arbitrary prefixed variants.
+        model = cls._SNAPSHOT_SUFFIX.sub("", model_name)
+        for models, mode, default_effort in cls._RULES:
+            if model in models:
+                if mode == "unsupported":
+                    return False
+                if mode == "requires_none":
+                    return (default_effort if reasoning_effort is None else reasoning_effort) == "none"
+                return reasoning_effort in (None, "none")
+        return declared_support is True and reasoning_effort in (None, "none")
 
 
 class OpenAIChatTarget(OpenAITarget):
@@ -207,22 +308,15 @@ class OpenAIChatTarget(OpenAITarget):
 
     def _refresh_generation_capabilities(self) -> None:
         parameters = self._effective_generation_parameters()
-        model = parameters["model"]
-        known = get_known_capabilities(model) if isinstance(model, str) else None
         support = {
-            capability.value: self._generation_capability_overrides.get(
-                capability, known is not None and known.includes(capability=capability)
-            )
+            capability.value: self._generation_capability_overrides.get(capability, False)
             for capability in self._SUPPORTED_GENERATION_CAPABILITIES
         }
-        if (
-            CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES
-            and CapabilityName.TEMPERATURE not in self._generation_capability_overrides
-        ):
-            support["supports_temperature"] = OpenAIModelSampling.supports_temperature(
-                model_name=model,
+        if CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES:
+            support["supports_temperature"] = _OpenAIModelSampling.supports_temperature(
+                model_name=parameters["model"],
                 reasoning_effort=parameters.get("reasoning_effort"),
-                declared_support=True if support["supports_temperature"] else None,
+                declared_support=self._generation_capability_overrides.get(CapabilityName.TEMPERATURE),
             )
         self.apply_capabilities(capabilities=self.capabilities.model_copy(update=support))
 
@@ -238,7 +332,7 @@ class OpenAIChatTarget(OpenAITarget):
         parameters = self._effective_generation_parameters()
         temperature_supported = (
             CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES
-            and OpenAIModelSampling.supports_temperature(
+            and _OpenAIModelSampling.supports_temperature(
                 model_name=parameters["model"],
                 reasoning_effort=parameters.get("reasoning_effort"),
                 declared_support=capabilities.includes(capability=CapabilityName.TEMPERATURE),

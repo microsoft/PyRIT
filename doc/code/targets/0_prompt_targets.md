@@ -301,6 +301,9 @@ A `TargetConfiguration` composes three concerns:
 Each target class defines defaults; instances can override individual capabilities when they depend on deployment configuration (e.g. `HTTPTarget`, `PlaywrightTarget`).
 
 For well-known underlying models, you can look up a profile with `get_known_capabilities(underlying_model="gpt-4o")` from `pyrit.prompt_target`.
+These profiles do not resolve runtime generation support. Check the instantiated
+target's `capabilities.supports_temperature`, which accounts for the adapter and
+its configured model mode.
 
 Tool-call history uses the existing `function_call` and `function_call_output` input
 modalities. These describe acceptance of prior calls and results, not tool execution.
