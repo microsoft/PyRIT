@@ -961,6 +961,13 @@ class TestPersistDataUriParams:
                 request=CreateConverterRequest(type="ColloquialWordswapConverter", register=False, source=spec)
             )
         with pytest.raises(ValueError, match="'wordswap_path' must be uploaded as a data URI"):
+            await upload_service.create_converter_async(
+                request=CreateConverterRequest(
+                    type="ColloquialWordswapConverter", register=True, name="saved_wordswap", source=spec
+                )
+            )
+        assert upload_service._registry.instances.get("saved_wordswap") is None
+        with pytest.raises(ValueError, match="'wordswap_path' must be uploaded as a data URI"):
             await upload_service.preview_conversion_async(
                 request=ConverterPreviewRequest(
                     original_value="hello", converter_ids=["wordswap"], converter_specs=[spec]
