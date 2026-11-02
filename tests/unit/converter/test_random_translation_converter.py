@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from unit.mocks import get_mock_target_identifier
 
+from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
 from pyrit.converter import (
     RandomTranslationConverter,
     WordPositionSelectionStrategy,
@@ -79,6 +80,25 @@ def test_random_translation_converter_identifier_canonicalizes_language_order(mo
     reordered = RandomTranslationConverter(converter_target=mock_target, languages=["Spanish", "French"])
 
     assert first.get_identifier().hash == reordered.get_identifier().hash
+
+
+async def test_random_translation_converter_canonicalizes_language_order_for_selection(mock_target) -> None:
+    """Same language pool in a different order must produce the same translations under one seed."""
+    original_seed = get_configured_random_seed()
+    configure_random_seed(seed=42)
+    try:
+        first = RandomTranslationConverter(converter_target=mock_target, languages=["French", "Spanish"])
+        reordered = RandomTranslationConverter(converter_target=mock_target, languages=["Spanish", "French"])
+
+        await first.convert_async(prompt="alpha beta gamma delta epsilon")
+        await reordered.convert_async(prompt="alpha beta gamma delta epsilon")
+    finally:
+        configure_random_seed(seed=original_seed)
+
+    assert first.get_identifier().hash == reordered.get_identifier().hash
+    first_message = mock_target.send_prompt_async.call_args_list[0].kwargs["message"]
+    reordered_message = mock_target.send_prompt_async.call_args_list[1].kwargs["message"]
+    assert first_message.message_pieces[0].original_value == reordered_message.message_pieces[0].original_value
 
 
 def test_random_translation_converter_identifier_distinguishes_language_pools(mock_target) -> None:
