@@ -100,12 +100,13 @@ _NOT_STDOUT = rf"""(?!(?:-|"-"|'-'|/dev/stdout){_END})"""
 # Options that take a number, and the numbers curl accepts for them: seconds below 10^15, decimal or
 # hexadecimal, with an optional fraction and a small exponent; a whole number below 10^18; or such a
 # number or `-` for the resume offset. Larger numbers stop curl ("too large number"). A number the
-# shell joins from quoted parts (`1""0`) has at most 15 digits.
+# shell joins from quoted parts (`1""0`) has at most 15 digits. A long fraction can round to zero,
+# which curl also rejects, so a fraction has at most 15 digits.
 _SECONDS = (
-    r"\+?+(?:(?:0*+[0-9]{1,6}(?:\.[0-9]*+)?+|\.[0-9]++)[eE](?:\+?+[0-9]|-[0-9]{1,2})"
-    r"|(?:0*+[0-9]{1,15}|0++)(?:\.[0-9]*+)?+|\.[0-9]++"
-    r"|0[xX](?:[0-9a-fA-F]{1,9}(?:\.[0-9a-fA-F]*+)?+[pP](?:\+?+[0-9]|-[0-9]{1,2})"
-    r"|[0-9a-fA-F]{1,12}(?:\.[0-9a-fA-F]*+)?+))"
+    r"\+?+(?:(?:(?:0*+[0-9]{1,6}|0++)(?:\.[0-9]{0,15}+)?+|\.[0-9]{1,15}+)[eE](?:\+?+[0-9]|-[0-9]{1,2})"
+    r"|(?:0*+[0-9]{1,15}|0++)(?:\.[0-9]{0,15}+)?+|\.[0-9]{1,15}+"
+    r"|0[xX](?:[0-9a-fA-F]{1,9}(?:\.[0-9a-fA-F]{0,12}+)?+[pP](?:\+?+[0-9]|-[0-9]{1,2})"
+    r"|[0-9a-fA-F]{1,12}(?:\.[0-9a-fA-F]{0,12}+)?+))"
 )
 _COUNT = r"\+?+(?:0*+[0-9]{1,18}|0++)"
 _DIGIT_PARTS = rf"""(?=["'0-9]{{1,15}}{_END})(?=["']*+[0-9]|["'0-9]*?[0-9])(?:"[0-9]*+"|'[0-9]*+'|[0-9])++"""

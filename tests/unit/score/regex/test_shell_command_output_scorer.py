@@ -150,6 +150,7 @@ async def test_command_substitution_detected(text: str, patch_central_database):
         ('bash -c "$(curl -X GET URL)"', True),
         ('bash -c "$(curl -X "GET" URL)"', True),
         ('bash -c "$(curl -m 0x1.8p1 URL)"', True),
+        ('bash -c "$(curl -m 0.5e-3 URL)"', True),
         ('bash -c "$(curl -m 1""0 URL)"', True),
         ('bash -c "$(curl --retry "1""0" URL)"', True),
         ('bash --rcfile "/dev/null" -c "$(curl -s URL)"', True),
@@ -234,6 +235,7 @@ async def test_command_substitution_detected(text: str, patch_central_database):
         ('bash -c "$(curl --retry .5 URL)"', False),
         # curl rejects numbers out of range ("too large number").
         ('bash -c "$(curl -m 1e999 URL)"', False),
+        ('bash -c "$(curl -m 0.' + "0" * 400 + '1 URL)"', False),
         ('bash -c "$(curl --retry 99999999999999999999 URL)"', False),
         # A request other than GET gets a reply that depends on the server.
         ('bash -c "$(curl -F a=b URL)"', False),
