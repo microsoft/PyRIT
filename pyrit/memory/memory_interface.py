@@ -1942,6 +1942,8 @@ class MemoryInterface(abc.ABC):
         for dependency in cls._iter_identifier_dependencies(identifier):
             cls._persist_identifier(session=session, identifier=dependency)
 
+        # Without an outer SQLite transaction, releasing the savepoint would commit this row early.
+        _begin_sqlite_write(session)
         try:
             with session.begin_nested():
                 session.add(entry_type.from_domain_model(identifier))
