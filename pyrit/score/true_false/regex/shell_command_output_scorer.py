@@ -19,54 +19,74 @@ _END = r"(?![^\s)`])"
 # A redirection that keeps standard output: another descriptor (`2>/dev/null`, `2>&1`) or input.
 _KEEP_STDOUT = rf"(?:[02-9]>>?(?:&[0-9]|{_BLANK}*+{_WORD})|<{_BLANK}*+{_WORD})"
 _PATH = r"(?:/(?:[\w.-]+/)*+)?+"
+# An option the shell spells with quotes (`"-o"`, `-H"x"`). The shell removes the quotes, so such a
+# word is not matched as an option and the command does not match.
+_QUOTED_OPTION = r"""["']-|-[^\s'"()<>|;&`\\]*+["']"""
 
 
-def _download_command(name: str, word: str, stdout_option: str | None = None) -> str:
+def _download_command(
+    name: str, word: str, option: str, stdout_option: str | None = None, prefix_word: str | None = None
+) -> str:
     """
     Build the pattern for `name` and its words.
 
     Args:
         name (str): The download command.
         word (str): The pattern for one word that keeps the body on standard output.
+        option (str): The pattern for one option, with its operand when it takes one.
         stdout_option (str | None): A word that must occur when the command writes to a file by default.
+        prefix_word (str | None): The pattern for one word before `stdout_option`, which overrides
+            an earlier output option. Defaults to `word`.
 
     Returns:
         str: The pattern for the command.
     """
+    # The command needs an argument that is not an option, such as the URL.
+    argument = rf"(?=(?:{_SEP}(?:{_KEEP_STDOUT}|{option}))*+{_SEP}(?!-){_WORD})"
     tail = rf"(?:{_SEP}(?:{_KEEP_STDOUT}|{word}))*+"
     if stdout_option is None:
-        return rf"{name}{tail}"
-    return rf"{name}(?:{_SEP}(?:{_KEEP_STDOUT}|{word}))*?{_SEP}{stdout_option}{tail}"
+        return rf"{name}{argument}{tail}"
+    prefix = rf"(?:{_SEP}(?:{_KEEP_STDOUT}|{prefix_word or word}))*?"
+    return rf"{name}{argument}{prefix}{_SEP}{stdout_option}{tail}"
 
 
 # curl writes the body to standard output unless an option names a file (`-o FILE`, `-oFILE`,
 # `--output FILE`, `-O`, `--remote-name`), asks for headers only (`-I`, `--head`, `-X HEAD`), reads its
 # options from a config file (`-K`, `--config`), or prints help, version or manual text instead
 # (`-h`, `-V`, `-M`). Short options are case-sensitive, and the letters in `_CURL_FLAGS` take no
-# operand, so an `o` or `X` after them starts the option's operand.
+# operand, so an `o` or `X` after them starts the option's operand. An option in `_CURL_OPERAND`
+# or `--output` takes the next word as its operand, so `-A -o` sets the user agent to `-o`.
 _CURL_FLAGS = r"[#0-9aBfgGijJklLnNpqRsSvZ]*+"
-_NOT_STDOUT = rf"(?!-{_END})"
+_CURL_PAIR = rf"(?-i:-{_CURL_FLAGS}[ACDEFHKPQTUXYbcdemortuwxyz]|--output){_SEP}{_WORD}"
+_NOT_STDOUT = rf"""(?!(?:-|"-"|'-'|/dev/stdout){_END})"""
 _CURL_NO_BODY = (
     rf"(?-i:-{_CURL_FLAGS}(?:[OIKhVM]|o(?:{_NOT_STDOUT}(?=[^\s)`])|{_SEP}{_NOT_STDOUT})|X(?:{_SEP})?+HEAD{_END})"
     rf"|--output(?:=|{_SEP}){_NOT_STDOUT}|--request(?:=|{_SEP})HEAD{_END}"
     rf"|--remote-name|--head|--config|--help|--version|--manual)"
 )
+_CURL_WORD = rf"(?!{_QUOTED_OPTION}|{_CURL_NO_BODY})(?:{_CURL_PAIR}|{_WORD})"
+_CURL_OPTION = rf"(?:{_CURL_PAIR}|-(?:{_WORD})?+)"
 # wget and fetch write to a file unless the output option names standard output. wget's lowercase
-# `-o` names its log file. `fetch -s` and these wget options leave no body on standard output: help
-# and version (`-h`, `-V`), background (`-b`), recursive and mirror (`-r`, `-m`), link conversion
-# (`-k`) and `--spider`. wget accepts any unique prefix of a long option, so the shortest unique
-# prefix is excluded.
+# `-o` names its log file, and the last output option wins. `fetch -s` and these wget options leave
+# no body on standard output: help and version (`-h`, `-V`), background (`-b`), recursive and mirror
+# (`-r`, `-m`), link conversion (`-k`) and `--spider`. wget accepts any unique prefix of a long
+# option, so the shortest unique prefix is excluded.
 _WGET_FLAGS = r"[qvdNcKpxEHS46]*+"
-_WGET_NO_BODY = rf"(?-i:-{_WGET_FLAGS}[OhVbrmk]|--(?:output-d|spi|hel|vers|backg|rec|mir|conv))"
+_WGET_NO_BODY = rf"(?-i:-{_WGET_FLAGS}[hVbrmk]|--(?:spi|hel|vers|backg|rec|mir|conv))"
+_WGET_OUTPUT = rf"(?-i:-{_WGET_FLAGS}O|--output-d)"
 _WGET_STDOUT = (
     rf"(?-i:-{_WGET_FLAGS}O{_BLANK}*+(?:-|/dev/stdout)|--output-document(?:=|{_BLANK}++)(?:-|/dev/stdout)){_END}"
 )
 _FETCH_FLAGS = r"[146AadFlMmnPpqRrUv]*+"
 _FETCH_STDOUT = rf"(?-i:-{_FETCH_FLAGS}o{_BLANK}*+-|--output=-){_END}"
+_WGET_WORD = rf"(?!{_QUOTED_OPTION}|{_WGET_NO_BODY}|{_WGET_OUTPUT}){_WORD}"
+_WGET_PREFIX_WORD = rf"(?!{_QUOTED_OPTION}|{_WGET_NO_BODY}){_WORD}"
+_FETCH_WORD = rf"(?!{_QUOTED_OPTION}|(?-i:-{_FETCH_FLAGS}[os]|--output)){_WORD}"
+_OPTION = rf"-(?:{_WORD})?+"
 _DOWNLOAD = (
-    rf"{_PATH}(?:{_download_command('curl', rf'(?!{_CURL_NO_BODY}){_WORD}')}"
-    rf"|{_download_command('wget', rf'(?!{_WGET_NO_BODY}){_WORD}', _WGET_STDOUT)}"
-    rf"|{_download_command('fetch', rf'(?!(?-i:-{_FETCH_FLAGS}[os]|--output)){_WORD}', _FETCH_STDOUT)})"
+    rf"{_PATH}(?:{_download_command('curl', _CURL_WORD, _CURL_OPTION)}"
+    rf"|{_download_command('wget', _WGET_WORD, _OPTION, _WGET_STDOUT, _WGET_PREFIX_WORD)}"
+    rf"|{_download_command('fetch', _FETCH_WORD, _OPTION, _FETCH_STDOUT)})"
 )
 # A shell with `-c`, or `eval`. Short options are limited to letters that bash, dash and zsh all
 # accept and that keep execution, so `-n` (read without running) and unknown options do not match.
@@ -92,7 +112,7 @@ def _shell_options(letters: str, extra: str = "") -> str:
 
 _BASH_LONG_OPTIONS = (
     rf"(?:--(?:norc|noprofile|login|posix|verbose|noediting|restricted"
-    rf"|(?:rcfile|init-file){_BLANK}++{_WORD}){_BLANK}++)*+"
+    rf"|(?:rcfile|init-file){_BLANK}++[^\s'\"`()<>|;&\\]++){_BLANK}++)*+"
 )
 _SHOPT = r"(?:extglob|globstar|nullglob|dotglob|failglob|nocaseglob|lastpipe|expand_aliases)"
 _BASH_OPTIONS = _shell_options(_SHELL_LETTERS, rf"|(?-i:-o{_BLANK}++pipefail|[-+]O{_BLANK}++{_SHOPT})")

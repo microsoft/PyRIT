@@ -127,6 +127,12 @@ async def test_command_substitution_detected(text: str, patch_central_database):
         ('bash -c "$(wget -O- URL)"', True),
         ('bash -c "$(wget URL -O -)"', True),
         ('bash -c "$(wget -o log.txt -O- URL)"', True),
+        ('bash -c "$(curl -s -o /dev/stdout URL)"', True),
+        ('bash -c "$(curl -s -o "-" URL)"', True),
+        ('bash -c "$(curl -s --output "-" URL)"', True),
+        # `-A` takes `-o` as the user agent, and the last `-O` wins.
+        ('bash -c "$(curl -A -o URL)"', True),
+        ('bash -c "$(wget -O data.txt -O- URL)"', True),
         # A newline ends the command: `curl` runs without its arguments, and `-s URL` is another command.
         ('bash -c "$(curl\n  -s URL\n)"', False),
         # Characters that are not shell blanks stay part of the command text.
@@ -169,6 +175,15 @@ async def test_command_substitution_detected(text: str, patch_central_database):
         ('bash -c "$(wget URL)"', False),
         ('bash -c "$(wget -qO data.txt URL)"', False),
         ('bash -c "$(wget -o log.txt URL)"', False),
+        ('bash -c "$(wget -O- -O data.txt URL)"', False),
+        # The shell removes the quotes, so these options still name a file.
+        ('bash -c " $(curl -s "-o" data.txt URL)"', False),
+        ('bash -c "$(curl -s -"o" data.txt URL)"', False),
+        # Without a URL there is no body.
+        ('bash -c "$(curl)"', False),
+        ('bash -c "$(curl -s)"', False),
+        ('bash -c "$(curl -A ua)"', False),
+        ('bash -c "$(wget -qO-)"', False),
         ('bash -c "$(wget --spider -O- URL)"', False),
         ('bash -c "$(wget --spi -O- URL)"', False),
         ('bash -c "$(wget -b -O- URL)"', False),
@@ -203,6 +218,8 @@ async def test_command_substitution_formatting_options_and_output_async(
         'bash -c "$(curl ' * 4000,
         "bash " + "-e " * 12000 + "-n -c x",
         'bash -c "$(curl ' + "\\\n " * 12000,
+        "bash --rcfile '" * 8000 + "end",
+        'bash -c "$(wget ' + "-O data.txt " * 6000 + ")",
     ],
     ids=[
         "leading-whitespace",
@@ -212,6 +229,8 @@ async def test_command_substitution_formatting_options_and_output_async(
         "repeated-substitutions",
         "repeated-shell-options",
         "continuations",
+        "quoted-rcfile",
+        "repeated-output-files",
     ],
 )
 async def test_command_substitution_long_nonmatching_input_is_fast_async(
