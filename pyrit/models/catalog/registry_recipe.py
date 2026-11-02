@@ -10,7 +10,7 @@ from typing import Annotated, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
-from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
+from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_TEXT_LENGTH
 
 _Identifier = Annotated[str, Field(max_length=MAX_IDENTIFIER_LENGTH)]
 _TechniqueTag = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
@@ -63,7 +63,7 @@ class TechniqueRecipe(_RegistryRecipe):
     params: dict[_Identifier, JsonValue] = Field(
         default_factory=dict, max_length=MAX_ITEMS, description="Attack constructor parameters"
     )
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=MAX_TEXT_LENGTH)
     tags: list[_TechniqueTag] = Field(default_factory=list, max_length=MAX_ITEMS)
     request_converters: list[_Identifier] | None = Field(default=None, max_length=MAX_ITEMS)
     response_converters: list[_Identifier] | None = Field(default=None, max_length=MAX_ITEMS)
