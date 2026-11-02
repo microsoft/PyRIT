@@ -5117,6 +5117,7 @@ class MemoryInterface(abc.ABC):
                 "authors": entry.authors or [],
                 "groups": entry.groups or [],
                 "source": entry.source,
+                "is_general_technique": entry.is_general_technique,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -5200,7 +5201,10 @@ class MemoryInterface(abc.ABC):
         Returns:
             str: Canonical JSON, preserving condition and template-parameter order.
         """
-        return json.dumps(SeedIdentifier.get_behavioral_parameters(seed), sort_keys=True, separators=(",", ":"))
+        params = dict(SeedIdentifier.get_behavioral_parameters(seed))
+        if getattr(seed, "is_general_technique", False):
+            params["is_general_technique"] = True
+        return json.dumps(params, sort_keys=True, separators=(",", ":"))
 
     def _get_new_behavior_group_ids(
         self,
