@@ -30,6 +30,11 @@ if TYPE_CHECKING:
         ScenarioPresetRegistry,
     )
     from pyrit.registry.components.scenario_registry import ScenarioMetadata, ScenarioRegistry
+    from pyrit.registry.components.scenario_suite_registry import (
+        ScenarioSuiteMetadata,
+        ScenarioSuiteNameRegisteredError,
+        ScenarioSuiteRegistry,
+    )
     from pyrit.registry.components.scorer_registry import ScorerMetadata, ScorerRegistry
     from pyrit.registry.components.target_registry import TargetMetadata, TargetRegistry
 
@@ -48,6 +53,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ScenarioPresetRegistry": "pyrit.registry.components.scenario_preset_registry",
     "ScenarioPresetMetadata": "pyrit.registry.components.scenario_preset_registry",
     "ScenarioPresetNameRegisteredError": "pyrit.registry.components.scenario_preset_registry",
+    "ScenarioSuiteRegistry": "pyrit.registry.components.scenario_suite_registry",
+    "ScenarioSuiteMetadata": "pyrit.registry.components.scenario_suite_registry",
+    "ScenarioSuiteNameRegisteredError": "pyrit.registry.components.scenario_suite_registry",
     "TargetRegistry": "pyrit.registry.components.target_registry",
     "TargetMetadata": "pyrit.registry.components.target_registry",
 }

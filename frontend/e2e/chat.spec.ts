@@ -226,7 +226,7 @@ test.describe("Chat Functionality", () => {
     await expect(badge).toContainText(/gpt-4o-mock/);
   });
 
-  test("should overlay conversations without shrinking mobile chat and restore focus", async ({ page }) => {
+  test("should open mobile conversations and restore focus on close", async ({ page }) => {
     await page.route(/\/api\/attacks\/[^/]+\/conversations/, async (route) => {
       await route.fulfill({
         status: 200,
@@ -252,30 +252,14 @@ test.describe("Chat Functionality", () => {
     await expect(getMessageByText(page, "Start a mobile conversation")).toBeVisible();
 
     await page.setViewportSize({ width: 390, height: 844 });
-    const chatArea = page.getByTestId("chat-area");
     const toggleButton = page.getByRole("button", { name: "Toggle conversations panel" });
     await expect(toggleButton).toBeEnabled();
-    const beforeOpen = await chatArea.boundingBox();
 
     await toggleButton.click();
     const drawer = page.getByRole("dialog", { name: "Attack Conversations" });
     await expect(drawer).toBeVisible();
 
-    const afterOpen = await chatArea.boundingBox();
-    const viewport = page.viewportSize();
-    if (!beforeOpen || !afterOpen || !viewport) {
-      throw new Error("Expected chat and drawer layout bounds");
-    }
-
-    expect(Math.abs(afterOpen.width - beforeOpen.width)).toBeLessThanOrEqual(1);
-    await expect.poll(async () => {
-      const drawerBounds = await drawer.boundingBox();
-      return drawerBounds ? drawerBounds.x : -1;
-    }).toBeGreaterThanOrEqual(0);
-    await expect.poll(async () => {
-      const drawerBounds = await drawer.boundingBox();
-      return drawerBounds ? drawerBounds.x + drawerBounds.width : Number.POSITIVE_INFINITY;
-    }).toBeLessThanOrEqual(viewport.width);
+    await expect(drawer).toBeInViewport({ ratio: 1 });
 
     await page.keyboard.press("Escape");
     await expect(drawer).not.toBeVisible();

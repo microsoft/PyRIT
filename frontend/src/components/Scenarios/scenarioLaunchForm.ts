@@ -3,6 +3,7 @@ import type {
   Parameter,
   RegisteredScenario,
   ScenarioDatasetRequest,
+  ScenarioPresetResponse,
   ScenarioTechniqueSummary,
   TargetInstance,
 } from '@/types'
@@ -66,6 +67,8 @@ export interface ScenarioLaunchFormRules {
   techniqueNames: string[]
   maxConcreteTechniques: number | null
   singleTechnique: boolean
+  /** Seeded preset tokens with no checkbox of their own; kept verbatim across reselection. */
+  presetTokens?: ReadonlySet<string>
 }
 
 export type ScenarioLaunchFormAction =
@@ -92,6 +95,10 @@ interface InitialFormInput {
   defaultTechniques: string[]
   dynamicParameters: Parameter[]
   initialConversationId: string
+  /** The preset pre-filling the form, or null for none. Seeds initial state only. */
+  preset?: ScenarioPresetResponse | null
+  /** Techniques already resolved from the preset; falls back to the scenario defaults. */
+  seededTechniques?: string[]
 }
 
 function defaultTargetName(target: TargetInstance | null, available: TargetInstance[]): string {
@@ -107,20 +114,23 @@ export function initialScenarioLaunchForm({
   defaultTechniques,
   dynamicParameters,
   initialConversationId,
+  preset = null,
+  seededTechniques,
 }: InitialFormInput): ScenarioLaunchFormState {
   return {
     targetName: defaultTargetName(defaultObjectiveTarget, targets),
     adversarialTargetName: defaultTargetName(defaultAdversarialTarget, adversarialTargets),
-    selectedTechniques: defaultTechniques,
-    baselineChecked: scenario.baseline_policy !== 'forbidden' && scenario.include_baseline_by_default,
-    datasetEdits: {},
+    selectedTechniques: seededTechniques ?? defaultTechniques,
+    baselineChecked: scenario.baseline_policy !== 'forbidden'
+      && (preset?.preset.include_baseline ?? scenario.include_baseline_by_default),
+    datasetEdits: preset?.preset.datasets ?? {},
     datasetError: null,
     maxConcurrency: DEFAULT_MAX_CONCURRENCY,
     maxRetries: DEFAULT_MAX_RETRIES,
-    scenarioParamValues: getInitialFormValues(
-      dynamicParameters,
-      initialConversationId ? { prepended_conversation_id: initialConversationId } : undefined,
-    ),
+    scenarioParamValues: getInitialFormValues(dynamicParameters, {
+      ...(preset?.preset.scenario_params ?? {}),
+      ...(initialConversationId ? { prepended_conversation_id: initialConversationId } : {}),
+    }),
   }
 }
 
@@ -162,7 +172,8 @@ export function reduceScenarioLaunchForm(
     case 'keepAvailableTechniques':
       return {
         ...state,
-        selectedTechniques: state.selectedTechniques.filter((name) => rules.techniqueNames.includes(name)),
+        selectedTechniques: state.selectedTechniques.filter((name) =>
+          rules.techniqueNames.includes(name) || rules.presetTokens?.has(name)),
       }
     case 'setBaseline':
       return { ...state, baselineChecked: action.checked }
@@ -177,7 +188,11 @@ export function reduceScenarioLaunchForm(
       }
       return {
         ...state,
-        selectedTechniques: rules.techniqueNames.filter((name) => selected.has(name)),
+        selectedTechniques: [
+          ...rules.techniqueNames.filter((name) => selected.has(name)),
+          ...state.selectedTechniques.filter((name) =>
+            rules.presetTokens?.has(name) && !rules.techniqueNames.includes(name)),
+        ],
         baselineChecked: action.includesBaseline ? action.select : state.baselineChecked,
       }
     }

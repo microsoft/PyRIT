@@ -1,4 +1,4 @@
-import { Badge, Checkbox, Radio, Text, ToggleButton } from '@fluentui/react-components'
+import { Badge, Checkbox, Radio, Tag, TagGroup, Text, ToggleButton } from '@fluentui/react-components'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import { exceedsTechniqueLimit, type SelectableTechnique } from './scenarioLaunchForm'
@@ -14,9 +14,12 @@ interface ScenarioTechniqueSectionProps {
   selectionOverLimit: boolean
   selectionError: string | null
   disabled: boolean
+  /** Seeded preset tokens running without a checkbox of their own. */
+  tokensWithoutCheckbox: string[]
   isSelected: (technique: SelectableTechnique) => boolean
   onTechniqueChange: (technique: SelectableTechnique, checked: boolean) => void
   onTagChange: (tag: string) => void
+  onRemoveToken: (token: string) => void
 }
 
 export default function ScenarioTechniqueSection({
@@ -29,9 +32,11 @@ export default function ScenarioTechniqueSection({
   selectionOverLimit,
   selectionError,
   disabled,
+  tokensWithoutCheckbox,
   isSelected,
   onTechniqueChange,
   onTagChange,
+  onRemoveToken,
 }: ScenarioTechniqueSectionProps) {
   const styles = useScenarioDetailStyles()
   return (
@@ -48,6 +53,32 @@ export default function ScenarioTechniqueSection({
         <Text className={styles.errorText} role="alert">
           {selectionError}
         </Text>
+      )}
+      {supportsTechniques && tokensWithoutCheckbox.length > 0 && (
+        <div className={styles.pinnedTokens}>
+          <Text size={200} className={styles.hint}>
+            Also running, with no checkbox of their own:
+          </Text>
+          <TagGroup
+            aria-label="Techniques without a checkbox"
+            data-testid="techniques-without-checkbox"
+            onDismiss={(_, data) => onRemoveToken(String(data.value))}
+          >
+            {tokensWithoutCheckbox.map((token) => (
+              <Tag
+                key={token}
+                className={styles.touchTarget}
+                value={token}
+                dismissible
+                disabled={disabled}
+                size="small"
+                aria-label={`Remove ${token}`}
+              >
+                {token}
+              </Tag>
+            ))}
+          </TagGroup>
+        </div>
       )}
       <div className={styles.techniqueList} role="group" aria-label="Techniques">
         {techniques.map((technique) => {

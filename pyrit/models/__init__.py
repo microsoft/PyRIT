@@ -49,9 +49,11 @@ if TYPE_CHECKING:
     from pyrit.models.catalog import (
         PresetEntry,
         PresetIssue,
+        ResolveScenarioPresetRequest,
         ScenarioDatasetSizeCap,
         ScenarioDatasetSummary,
         ScenarioDefaultRunSizeEstimate,
+        ScenarioLaunchConfiguration,
         ScenarioPreset,
         ScenarioProducerCategoryCounts,
         ScenarioProducerCounts,
@@ -69,6 +71,7 @@ if TYPE_CHECKING:
         StoredScenarioSuite,
     )
     from pyrit.models.conversation_stats import ConversationStats
+    from pyrit.models.conversation_summary import ConversationSummary
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
     from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, FindingSeverity
     from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
@@ -165,6 +168,13 @@ if TYPE_CHECKING:
         ScenarioDatasetSizeEstimateKind,
         scenario_dataset_size_from_limit,
     )
+    from pyrit.models.scenario_hierarchy import (
+        ScenarioHierarchyDiagnostics,
+        ScenarioHierarchyGroup,
+        ScenarioHierarchyNode,
+        ScenarioHierarchyProjection,
+        ScenarioOrchestrationParentSummary,
+    )
     from pyrit.models.scenario_progress import (
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_PLAN_VERSION,
@@ -194,6 +204,18 @@ if TYPE_CHECKING:
         ScenarioScorerIdentity,
         ScenarioSeedGroupProgress,
         ScenarioTechniqueProgress,
+    )
+    from pyrit.models.scenario_suite_execution import (
+        SCENARIO_SUITE_EXECUTION_METADATA_KEY,
+        SCENARIO_SUITE_EXECUTION_METADATA_VERSION,
+        LaunchScenarioSuiteRequest,
+        ScenarioSuiteExecutionEntryState,
+        ScenarioSuiteExecutionEntrySummary,
+        ScenarioSuiteExecutionMetadata,
+        ScenarioSuiteExecutionStatus,
+        ScenarioSuiteExecutionSummary,
+        ScenarioSuiteLaunchEntrySnapshot,
+        ScenarioSuiteSubmissionState,
     )
     from pyrit.models.score import (
         Acquisition,
@@ -417,6 +439,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ConversationRetry": "pyrit.models.messages.conversation_retry",
     "ConversationRetryReason": "pyrit.models.messages.conversation_retry",
     "ConversationStats": "pyrit.models.conversation_stats",
+    "ConversationSummary": "pyrit.models.conversation_summary",
     "Finding": "pyrit.models.finding",
     "FindingCreate": "pyrit.models.finding",
     "FindingEvidence": "pyrit.models.finding",
@@ -510,6 +533,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDatasetSummary": "pyrit.models.catalog",
     "ScenarioDefaultRunSizeEstimate": "pyrit.models.catalog",
     "ScenarioPreset": "pyrit.models.catalog",
+    "ResolveScenarioPresetRequest": "pyrit.models.catalog",
+    "ScenarioLaunchConfiguration": "pyrit.models.catalog",
     "ScenarioSuite": "pyrit.models.catalog",
     "ScenarioSuiteEntry": "pyrit.models.catalog",
     "ScenarioProducerCategoryCounts": "pyrit.models.catalog",
@@ -527,6 +552,16 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SCENARIO_RUN_PLAN_METADATA_KEY": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_PLAN_VERSION": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_STARTED_AT_METADATA_KEY": "pyrit.models.scenario_progress",
+    "SCENARIO_SUITE_EXECUTION_METADATA_KEY": "pyrit.models.scenario_suite_execution",
+    "SCENARIO_SUITE_EXECUTION_METADATA_VERSION": "pyrit.models.scenario_suite_execution",
+    "LaunchScenarioSuiteRequest": "pyrit.models.scenario_suite_execution",
+    "ScenarioSuiteExecutionEntryState": "pyrit.models.scenario_suite_execution",
+    "ScenarioSuiteExecutionEntrySummary": "pyrit.models.scenario_suite_execution",
+    "ScenarioSuiteExecutionMetadata": "pyrit.models.scenario_suite_execution",
+    "ScenarioSuiteExecutionStatus": "pyrit.models.scenario_suite_execution",
+    "ScenarioSuiteExecutionSummary": "pyrit.models.scenario_suite_execution",
+    "ScenarioSuiteLaunchEntrySnapshot": "pyrit.models.scenario_suite_execution",
+    "ScenarioSuiteSubmissionState": "pyrit.models.scenario_suite_execution",
     "ScenarioAttackResultDelta": "pyrit.models.scenario_progress",
     "ScenarioAtomicGroupProgress": "pyrit.models.scenario_progress",
     "ScenarioAttackTechniqueDetails": "pyrit.models.scenario_progress",
@@ -534,6 +569,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDisplayGroupProgress": "pyrit.models.scenario_progress",
     "ScenarioExecutionStatistics": "pyrit.models.scenario_progress",
     "ScenarioExecutionUnit": "pyrit.models.scenario_progress",
+    "ScenarioHierarchyDiagnostics": "pyrit.models.scenario_hierarchy",
+    "ScenarioHierarchyGroup": "pyrit.models.scenario_hierarchy",
+    "ScenarioHierarchyNode": "pyrit.models.scenario_hierarchy",
+    "ScenarioHierarchyProjection": "pyrit.models.scenario_hierarchy",
+    "ScenarioOrchestrationParentSummary": "pyrit.models.scenario_hierarchy",
     "ScenarioObjectiveScorer": "pyrit.models.scenario_progress",
     "ScenarioObjectiveScorerMetrics": "pyrit.models.scenario_progress",
     "ScenarioProgressCounts": "pyrit.models.scenario_progress",

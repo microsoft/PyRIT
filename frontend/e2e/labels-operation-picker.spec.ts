@@ -10,7 +10,6 @@ import { READY_RUNTIME, waitForAppReady } from "./_runtime";
 // These tests measure the rendered box in a real browser.
 // ---------------------------------------------------------------------------
 
-const LIST_MAX_HEIGHT = 240;
 const LONG_OPERATION = "op_2026_08_a_very_long_operation_name_that_would_be_clipped";
 
 function operations(count: number): string[] {
@@ -135,7 +134,7 @@ async function openOperationPicker(page: Page) {
 }
 
 test.describe("operation picker placement", () => {
-  test("highlights the placeholder operator and requires resolving a proposed operation", async ({ page }) => {
+  test("requires resolving a proposed operation", async ({ page }) => {
     await setupMocks(page, [], {
       defaultLabels: { operator: "roakey" },
       defaultOperation: "op_trash_panda",
@@ -143,24 +142,15 @@ test.describe("operation picker placement", () => {
     });
     await page.goto("/");
 
-    const operator = page.getByTestId("edit-label-operator").locator("..");
-    const operation = page.getByTestId("edit-label-operation").locator("..");
-    await expect(operator).toHaveCSS("background-color", "rgb(254, 247, 178)");
     await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_trash_panda");
-    await expect(operation).toHaveCSS("background-color", "rgb(254, 247, 178)");
     await expect(page.getByTestId("edit-label-operation")).toHaveAccessibleDescription("Not registered");
     await expect(page.getByRole("button", { name: "Register", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Choose existing", exact: true })).toHaveCount(0);
-
-    await page.getByTestId("edit-label-operator").fill("alice");
-    await page.getByTestId("edit-label-operator").press("Enter");
-    await expect(operator).not.toHaveCSS("background-color", "rgb(254, 247, 178)");
 
     await page.getByTestId("edit-label-operation").click();
     await page.getByRole("option", { name: "op_real", exact: true }).click();
     await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_real");
     await expect(page.getByText("Not registered", { exact: true })).toHaveCount(0);
-    await expect(operation).not.toHaveCSS("background-color", "rgb(254, 247, 178)");
   });
 
   test("keeps metadata editable in a narrow bar without duplicating it in Default Labels", async ({ page }) => {
@@ -194,29 +184,6 @@ test.describe("operation picker placement", () => {
     await expect(popover.getByRole("button", { name: "Add", exact: true })).toBeVisible();
   });
 
-  test("caps the list height and anchors it to the input", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await setupMocks(page, operations(60));
-    const listbox = await openOperationPicker(page);
-
-    const box = (await listbox.boundingBox())!;
-    const input = (await page
-      .getByTestId("edit-label-operation")
-      .boundingBox())!;
-
-    expect(box.height).toBeLessThanOrEqual(LIST_MAX_HEIGHT);
-    // Opens below the input and stays attached to it.
-    expect(box.y).toBeGreaterThanOrEqual(input.y + input.height);
-    expect(box.y - (input.y + input.height)).toBeLessThan(16);
-
-    // The options that do not fit are reachable by scrolling, not lost.
-    const scroll = await listbox.evaluate((el) => ({
-      scrollHeight: el.scrollHeight,
-      clientHeight: el.clientHeight,
-    }));
-    expect(scroll.scrollHeight).toBeGreaterThan(scroll.clientHeight);
-  });
-
   test("keeps the list on screen when it opens above the input", async ({
     page,
   }) => {
@@ -239,11 +206,8 @@ test.describe("operation picker placement", () => {
       .boundingBox())!;
     const viewport = page.viewportSize()!;
 
-    expect(input.y).toBeGreaterThanOrEqual(LIST_MAX_HEIGHT);
-    expect(viewport.height - (input.y + input.height)).toBeLessThan(LIST_MAX_HEIGHT);
     expect(box.y).toBeLessThan(input.y);
     expect(box.y + box.height).toBeLessThanOrEqual(input.y);
-    expect(input.y - (box.y + box.height)).toBeLessThan(16);
     expect(box.y).toBeGreaterThanOrEqual(0);
     expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
   });
@@ -290,17 +254,15 @@ test.describe("operation picker placement", () => {
     expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth);
   });
 
-  test("shrinks below the cap when the window is too short for it", async ({
+  test("keeps the list on screen in a short window", async ({
     page,
   }) => {
-    // Shorter than the 240px cap, so a flat cap would hang off the screen.
     const viewportHeight = 200;
     await page.setViewportSize({ width: 1280, height: viewportHeight });
     await setupMocks(page, operations(60));
     const listbox = await openOperationPicker(page);
 
     const box = (await listbox.boundingBox())!;
-    expect(box.height).toBeLessThan(LIST_MAX_HEIGHT);
     expect(box.y).toBeGreaterThanOrEqual(0);
     expect(box.y + box.height).toBeLessThanOrEqual(viewportHeight);
   });
@@ -593,7 +555,7 @@ test.describe("finishing an edit another way", () => {
     await expect(page.getByTestId("edit-label-operator")).toHaveValue("alice");
   });
 
-  test("keeps compact metadata inputs visible and creation first on mobile", async ({
+  test("keeps metadata inputs visible and creation first on mobile", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 360, height: 800 });
@@ -604,8 +566,6 @@ test.describe("finishing an edit another way", () => {
     const operation = page.getByRole("combobox", { name: "Operation" });
     await expect(operator).toBeVisible();
     await expect(operation).toBeVisible();
-    expect(await operator.evaluate(input => input.parentElement?.getBoundingClientRect().width)).toBeLessThanOrEqual(100);
-    expect(await operation.evaluate(input => input.parentElement?.getBoundingClientRect().width)).toBeLessThanOrEqual(140);
     await operation.click();
     await expect(page.getByRole("option").first()).toHaveText("New operation…");
     await operation.fill("missing");

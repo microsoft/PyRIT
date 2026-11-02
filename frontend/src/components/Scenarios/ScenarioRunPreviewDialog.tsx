@@ -47,6 +47,8 @@ interface ScenarioRunPreviewDialogProps {
   refresh: DatasetRefreshPreview
   /** The objective target name, or null when the scenario takes no target. */
   objectiveTarget: string | null
+  /** The objective scorer label, or null when the scenario takes no objective scorer. */
+  objectiveScorer?: string | null
   /** The adversarial target shown, or null when the scenario has no adversarial target. */
   adversarialTarget: string | null
   /** The selected techniques, or null when the scenario takes neither techniques nor a baseline. */
@@ -55,6 +57,8 @@ interface ScenarioRunPreviewDialogProps {
   datasets: DatasetSelectionPreview | null
   dynamicParameters: Parameter[]
   scenarioParamValues: Record<string, ParameterFormValue>
+  /** Preset parameters sent verbatim that have no rendered field, already formatted. */
+  carriedParameters?: { name: string, value: string }[]
   estimateState: ScenarioRunEstimateState
 }
 
@@ -67,12 +71,14 @@ export default function ScenarioRunPreviewDialog({
   onConfirm,
   refresh,
   objectiveTarget,
+  objectiveScorer = null,
   adversarialTarget,
   techniques,
   techniqueOverride,
   datasets,
   dynamicParameters,
   scenarioParamValues,
+  carriedParameters = [],
   estimateState,
 }: ScenarioRunPreviewDialogProps) {
   const styles = useScenarioDetailStyles()
@@ -109,6 +115,10 @@ export default function ScenarioRunPreviewDialog({
                 {objectiveTarget !== null && <>
                   <dt>Objective Target</dt>
                   <dd>{objectiveTarget}</dd>
+                  {objectiveScorer !== null && <>
+                    <dt>Objective scorer</dt>
+                    <dd>{objectiveScorer}</dd>
+                  </>}
                 </>}
                 {adversarialTarget !== null && (
                   <>
@@ -178,7 +188,7 @@ export default function ScenarioRunPreviewDialog({
               <div className={styles.previewGroup}>
                 <dt>Parameters</dt>
                 <dd>
-                  {dynamicParameters.length > 0 ? (
+                  {dynamicParameters.length > 0 || carriedParameters.length > 0 ? (
                     <dl className={styles.parameterPreview}>
                       {dynamicParameters.map((parameter) => (
                         <div className={styles.parameterPreviewRow} key={parameter.name}>
@@ -190,6 +200,12 @@ export default function ScenarioRunPreviewDialog({
                               estimate,
                             )}
                           </dd>
+                        </div>
+                      ))}
+                      {carriedParameters.map((parameter) => (
+                        <div className={styles.parameterPreviewRow} key={parameter.name}>
+                          <dt>{parameter.name}</dt>
+                          <dd>{parameter.value}</dd>
                         </div>
                       ))}
                     </dl>

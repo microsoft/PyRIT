@@ -67,6 +67,9 @@ async function mockScenarioCatalog(page: Page): Promise<void> {
       await route.fulfill({ json: TOUR_SCENARIO.default_run_size });
     }
   );
+  await page.route(/\/api\/scenario-(?:presets|suites)(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { source: "tour", items: [] } });
+  });
 }
 
 test.describe("Onboarding tour", () => {

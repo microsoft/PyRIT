@@ -1,6 +1,7 @@
 import { buildParametersFromForm, type ParameterFormValue } from '@/components/Parameters/parameterForm'
 import type {
   Parameter,
+  RegisteredComponentReference,
   RegisteredScenario,
   RunScenarioRequest,
   ScenarioDatasetRequest,
@@ -60,12 +61,20 @@ export interface ScenarioLaunchInput {
   techniques: string[]
   dynamicParameters: Parameter[]
   scenarioParamValues: Record<string, ParameterFormValue>
+  /**
+   * Preset values sent verbatim over the built form values: parameters the form has no
+   * control for, and rendered ones whose field is untouched.
+   */
+  presetScenarioParams?: Record<string, unknown>
   datasetEdits: ScenarioDatasetRequest
   datasetError: string | null
   includeBaseline: boolean
   techniqueOverride?: TechniqueOverride
   techniqueEditError?: string
   supportsPrependedConversation?: boolean
+  supportsPrompt?: boolean
+  objectiveScorer?: RegisteredComponentReference | null
+  scorerError?: string
   operationId: string | null
   maxConcurrency: number
   maxRetries: number
@@ -87,14 +96,19 @@ export function buildEstimateRequest({
   techniques,
   dynamicParameters,
   scenarioParamValues,
+  presetScenarioParams = {},
   datasetEdits,
   datasetError,
   includeBaseline,
   techniqueOverride,
   techniqueEditError,
   supportsPrependedConversation = true,
+  supportsPrompt = true,
+  objectiveScorer,
+  scorerError,
 }: ScenarioLaunchInput): BuildEstimateRequestResult {
   if (techniqueEditError) return { ok: false, error: techniqueEditError }
+  if (scorerError) return { ok: false, error: scorerError }
   if (supportsParameter(scenario, 'scenario_techniques') && techniques.length === 0) {
     return { ok: false, error: 'Select at least one technique.' }
   }
@@ -106,11 +120,17 @@ export function buildEstimateRequest({
   let scenarioParams: Record<string, unknown> | null = null
   if (dynamicParameters.length > 0) {
     const history = scenarioParamValues.prepended_conversation_id
+    const prompt = scenarioParamValues.prompt
+    if (!supportsPrompt && typeof prompt === 'string' && prompt.trim()) {
+      return { ok: false, error: 'This technique cannot send a separate prompt. Clear the prompt or select a compatible technique.' }
+    }
     if (!supportsPrependedConversation && typeof history === 'string' && history.trim()) {
       return { ok: false, error: 'This technique does not support a prepended conversation. Clear the saved conversation before launch.' }
     }
     const result = buildParametersFromForm(
-      dynamicParameters.filter((parameter) => supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(parameter.name)),
+      dynamicParameters.filter((parameter) =>
+        (supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(parameter.name))
+        && (supportsPrompt || parameter.name !== 'prompt')),
       scenarioParamValues,
     )
     if (!result.ok) {
@@ -122,6 +142,7 @@ export function buildEstimateRequest({
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
   if (supportsDatasets && datasetError) return { ok: false, error: datasetError }
   const request: ScenarioRunSizeEstimateRequest = {}
+  if (objectiveScorer) request.objective_scorer = objectiveScorer
   if (techniqueOverride) request.technique_override = techniqueOverride
   if (supportsParameter(scenario, 'scenario_techniques')) {
     request.techniques = techniques
@@ -138,8 +159,14 @@ export function buildEstimateRequest({
   if (supportsDatasets && Object.keys(datasetEdits).length > 0) {
     request.datasets = datasetEdits
   }
-  if (scenarioParams) {
-    request.scenario_params = scenarioParams
+  const sentPresetParams = Object.fromEntries(Object.entries(presetScenarioParams).filter(
+    ([name]) => supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(name),
+  ))
+  const mergedScenarioParams = Object.keys(sentPresetParams).length > 0
+    ? { ...(scenarioParams ?? {}), ...sentPresetParams }
+    : scenarioParams
+  if (mergedScenarioParams) {
+    request.scenario_params = mergedScenarioParams
   }
   return { ok: true, request }
 }

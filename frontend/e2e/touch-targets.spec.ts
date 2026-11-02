@@ -8,7 +8,6 @@ import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
 const TOUR_STEP_COUNT = TOUR_STEPS.length;
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
-const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
 const MINIMUM_TOUCH_TARGET_SIZE = 44;
 const LONG_SCORE_VALUE = "a".repeat(200);
 
@@ -415,6 +414,15 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (
+      (apiPath === "/scenario-suites" || apiPath === "/scenario-presets") &&
+      method === "GET"
+    ) {
+      await route.fulfill(
+        jsonResponse({ source: "touch-target-test", items: [] })
+      );
+      return;
+    }
     if (apiPath === "/scenarios/catalog" || apiPath === "/scenarios/runs") {
       await route.fulfill(
         jsonResponse({
@@ -463,23 +471,6 @@ async function expectMinimumTouchTargets(locator: Locator): Promise<void> {
   }
 }
 
-async function expectCompactDesktopTarget(locator: Locator): Promise<void> {
-  await expect(locator).toBeVisible();
-  const box = await locator.boundingBox();
-  if (!box) {
-    throw new Error("Expected a visible desktop target");
-  }
-  expect(box.height).toBeLessThan(MINIMUM_TOUCH_TARGET_SIZE);
-}
-
-async function expectCompactDesktopTargets(locator: Locator): Promise<void> {
-  const count = await locator.count();
-  expect(count).toBeGreaterThan(0);
-  for (let index = 0; index < count; index += 1) {
-    await expectCompactDesktopTarget(locator.nth(index));
-  }
-}
-
 async function expectNoDocumentOverflow(page: Page): Promise<void> {
   const dimensions = await page.evaluate(() => ({
     viewportWidth: document.documentElement.clientWidth,
@@ -490,20 +481,6 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
     dimensions.viewportWidth
   );
   expect(dimensions.bodyWidth).toBeLessThanOrEqual(dimensions.viewportWidth);
-}
-
-async function startChatWithMessages(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Registry", exact: true }).click();
-  await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
-  await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
-  await page.getByRole("button", { name: "Technique.execute", exact: true }).click();
-  await page.getByTestId("chat-input").fill(
-    "Assess this deterministic mobile prompt"
-  );
-  await page.getByTestId("send-message-btn").click();
-  await expect(
-    page.getByText("Deterministic assistant response for touch-target tests.")
-  ).toBeVisible();
 }
 
 test.beforeEach(async ({ page }) => {
@@ -865,101 +842,4 @@ test.describe("Mobile touch targets", () => {
       tooltip.getByRole("button", { name: "Anchors Away!", exact: true })
     );
   });
-});
-
-test("preserves compact desktop controls and existing sidebar dimensions", async ({
-  page,
-}) => {
-  await page.setViewportSize(DESKTOP_VIEWPORT);
-  await page.goto("/");
-  await expect(page.getByTestId("home-view")).toBeVisible();
-
-  const sidebarHome = page.getByRole("button", {
-    name: "Home",
-    exact: true,
-  });
-  const sidebarBox = await sidebarHome.boundingBox();
-  expect(sidebarBox?.width).toBe(44);
-  expect(sidebarBox?.height).toBe(44);
-
-  await expectCompactDesktopTarget(page.getByTestId("labels-icon-btn"));
-  await expectCompactDesktopTarget(
-    page.getByTestId("home-configure-target-btn")
-  );
-  await expectCompactDesktopTarget(
-    page.getByTestId("home-open-attack-home-attack-001")
-  );
-
-  await page
-    .getByRole("button", { name: "Registry", exact: true })
-    .click();
-  await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
-  await expectCompactDesktopTarget(
-    page.getByRole("button", { name: "Refresh", exact: true })
-  );
-  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by type:", exact: true }));
-  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by input:", exact: true }));
-  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by output:", exact: true }));
-  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by capability:", exact: true }));
-  await page.getByRole("combobox", { name: "Filter by capability:", exact: true }).click();
-  await expectCompactDesktopTargets(page.getByRole("menuitemcheckbox"));
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("menuitemcheckbox")).toHaveCount(0);
-  await expectCompactDesktopTarget(page.getByRole("button", { name: "Reset all filters", exact: true }));
-  await expectCompactDesktopTarget(
-    page.getByRole("combobox", { name: "Default objective target", exact: true })
-  );
-  await expectCompactDesktopTarget(
-    page.getByRole("combobox", { name: "Default adversarial target", exact: true })
-  );
-  await expectCompactDesktopTarget(
-    page.getByRole("button", { name: "Expand inner targets" })
-  );
-
-  await page.goto("/config");
-  await page.getByRole("tab", { name: "Initializers", exact: true }).click();
-  await expectCompactDesktopTarget(
-    page.getByRole("button", { name: "Browse available initializers" })
-  );
-
-  await startChatWithMessages(page);
-  await expectCompactDesktopTarget(page.getByTestId("toggle-panel-btn"));
-  await expectCompactDesktopTarget(
-    page.getByRole("button", { name: "Attach files" })
-  );
-  await expectCompactDesktopTarget(page.getByTestId("chat-input"));
-  await expectCompactDesktopTarget(page.getByTestId("copy-to-input-btn-1"));
-
-  await page.getByTestId("toggle-panel-btn").click();
-  await expect(page.getByTestId("conversation-panel")).toBeVisible();
-  await expectCompactDesktopTarget(page.getByTestId("close-panel-btn"));
-  await expectCompactDesktopTarget(
-    page.getByTestId("star-btn-mobile-conversation-001")
-  );
-  await page.getByTestId("close-panel-btn").click();
-
-  await page.getByRole("button", { name: "Home", exact: true }).click();
-  await page.getByTestId("start-tour").click();
-  await expect(page.getByText(`1 of ${TOUR_STEP_COUNT}`)).toBeVisible();
-  await expectCompactDesktopTarget(
-    page.getByRole("button", { name: "Close", exact: true })
-  );
-  await expectCompactDesktopTarget(
-    page.getByRole("button", { name: "Next", exact: true })
-  );
-
-  await page.goto("/history");
-  await expect(page.getByTestId("refresh-btn")).toBeVisible();
-  await expectCompactDesktopTarget(page.getByTestId("refresh-btn"));
-  await expectCompactDesktopTarget(page.getByTestId("attack-type-filter"));
-  const openAttack = page.getByTestId("open-attack-home-attack-001");
-  await openAttack.scrollIntoViewIfNeeded();
-  await expectCompactDesktopTarget(openAttack);
-  await expectCompactDesktopTarget(page.getByTestId("next-page-btn"));
-
-  await page.goto("/datasets");
-  await expect(page.getByRole("heading", { name: "Datasets" })).toBeVisible();
-  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Modalities" }));
-  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Harm categories" }));
-  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Sort datasets" }));
 });

@@ -184,6 +184,8 @@ class ScenarioProgressResult(BaseModel):
     result_role: AttackResultRole = AttackResultRole.UNKNOWN
     #: Ordered results this orchestration parent ran, as persisted by ``SequentialAttack``.
     child_attack_result_ids: list[str] = Field(default_factory=list)
+    #: Related conversation IDs for this attack attempt (e.g. pruned, adversarial, preparation).
+    related_conversation_ids: list[str] = Field(default_factory=list)
     #: 1-based position of this result among its orchestration parent's children.
     attempt_index: int | None = Field(default=None, ge=1)
 
@@ -401,8 +403,11 @@ class ScenarioAttackResultDelta(BaseModel):
     total_retries: int = 0
     error_type: str | None = None
     error_message: str | None = None
+    executed_turns: int | None = None
+    outcome_reason: str | None = None
     attribution_data: dict[str, Any] = Field(default_factory=dict)
     attack_metadata: dict[str, Any] = Field(default_factory=dict)
+    related_conversation_ids: list[str] = Field(default_factory=list)
     score: ScenarioProgressScore | None = None
 
 

@@ -64,11 +64,11 @@ export default function FindingDialog({
 
   useEffect(() => {
     if (!draft.title && !draft.description && !draft.severity_other && !draft.harm_type && !draft.harm_type_other
-      && !attackResultId) return
+      && draft.severity === initialValues.severity && !attackResultId) return
     const protectDraft = (event: BeforeUnloadEvent): void => { event.preventDefault() }
     window.addEventListener('beforeunload', protectDraft)
     return () => { window.removeEventListener('beforeunload', protectDraft) }
-  }, [draft.title, draft.description, draft.severity_other, draft.harm_type, draft.harm_type_other, attackResultId])
+  }, [draft.title, draft.description, draft.severity_other, draft.harm_type, draft.harm_type_other, draft.severity, initialValues.severity, attackResultId])
 
   const save = async (): Promise<void> => {
     if (submitting.current || !canSave) return

@@ -27,6 +27,10 @@ export function formatEffectiveParameterPreview(
   return effectiveValue?.toString() ?? 'Not set'
 }
 
+export function formatCarriedParameterPreview(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value) ?? 'Not set'
+}
+
 export function estimateFromState(state: ScenarioRunEstimateState): ScenarioRunEstimate | undefined {
   switch (state.status) {
     case 'available':

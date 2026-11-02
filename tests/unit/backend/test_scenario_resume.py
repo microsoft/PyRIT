@@ -7,7 +7,7 @@ import asyncio
 import pathlib
 import threading
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -868,7 +868,8 @@ async def test_overlapping_resume_requests_only_initialize_once_async(
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def fail_launch_async(*, request: RunScenarioRequest) -> None:
+    async def fail_launch_async(*, request: RunScenarioRequest, initial_metadata: Mapping[str, Any]) -> None:
+        assert initial_metadata == {}
         entered.set()
         await release.wait()
         raise ValueError("Synthetic initialization failure")

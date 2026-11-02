@@ -19,6 +19,7 @@ class TranslationConverter(LLMGenericTextConverter):
     """
 
     RETRY_EXCEPTIONS = (Exception,)
+    DEFAULT_PROMPT_TEMPLATE = SeedPrompt.from_yaml_file(CONVERTER_SEED_PROMPT_PATH / "translation_converter.yaml")
 
     @apply_defaults
     def __init__(
@@ -26,7 +27,7 @@ class TranslationConverter(LLMGenericTextConverter):
         *,
         converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         language: str,
-        prompt_template: SeedPrompt | None = None,
+        prompt_template: SeedPrompt | None = DEFAULT_PROMPT_TEMPLATE,
         max_retries: int = 3,
         max_wait_time_in_seconds: int = 60,
     ) -> None:
@@ -48,11 +49,7 @@ class TranslationConverter(LLMGenericTextConverter):
         if not language:
             raise ValueError("Language must be provided for translation conversion")
 
-        system_prompt_template = (
-            prompt_template
-            if prompt_template
-            else SeedPrompt.from_yaml_file(pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "translation_converter.yaml")
-        )
+        system_prompt_template = prompt_template if prompt_template else self.DEFAULT_PROMPT_TEMPLATE
 
         user_prompt_template = SeedPrompt.from_yaml_file(
             pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "translation_user_prompt.yaml"
