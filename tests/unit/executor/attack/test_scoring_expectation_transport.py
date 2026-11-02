@@ -655,7 +655,7 @@ class TestExecutionExpectationTransport:
         original = ValueError("scoring failed")
 
         def record_write(*args: Any) -> None:
-            if args[2] == "BEGIN IMMEDIATE":
+            if args[2] == "BEGIN IMMEDIATE" and objective.calls:
                 write_started.set()
 
         async def fail_auxiliary_async(**_kwargs: Any) -> list[Score]:
