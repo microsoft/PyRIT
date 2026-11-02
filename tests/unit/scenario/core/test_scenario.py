@@ -2826,15 +2826,45 @@ class TestScenarioParallelExecution:
     async def test_concurrent_run_async_distinct_scenarios_run_in_parallel(
         self, sqlite_instance: MemoryInterface, mock_objective_target
     ):
-        """Two different scenarios with distinct run_ids run concurrently without blocking each other."""
+        """Two different scenarios with distinct run_ids run concurrently without blocking each other.
+
+        Uses an event-based rendezvous barrier so both scenarios must actively enter
+        execution in parallel before either can complete, strictly verifying that
+        unrelated scenarios are never serialized.
+        """
         Scenario._clear_active_runs()
         attacks1, sample_results1 = _make_mock_atomic_attacks(count=2)
         attacks2, sample_results2 = _make_mock_atomic_attacks(count=2)
 
-        for i, a in enumerate(attacks1):
-            a.run_async = create_mock_run_async([sample_results1[i]], atomic_attack=a)
-        for i, a in enumerate(attacks2):
-            a.run_async = create_mock_run_async([sample_results2[i]], atomic_attack=a)
+        entered1 = asyncio.Event()
+        entered2 = asyncio.Event()
+
+        base_run_1 = create_mock_run_async([sample_results1[0]], atomic_attack=attacks1[0])
+        base_run_2 = create_mock_run_async([sample_results2[0]], atomic_attack=attacks2[0])
+
+        async def run_with_rendezvous(
+            entered_this: asyncio.Event,
+            entered_other: asyncio.Event,
+            base_run: Any,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            entered_this.set()
+            # Both scenarios must enter their attack execution before either can proceed
+            await asyncio.wait_for(entered_other.wait(), timeout=5.0)
+            return await base_run(*args, **kwargs)
+
+        async def attack1_run(*args: Any, **kwargs: Any) -> Any:
+            return await run_with_rendezvous(entered1, entered2, base_run_1, *args, **kwargs)
+
+        async def attack2_run(*args: Any, **kwargs: Any) -> Any:
+            return await run_with_rendezvous(entered2, entered1, base_run_2, *args, **kwargs)
+
+        attacks1[0].run_async = AsyncMock(side_effect=attack1_run)
+        attacks1[1].run_async = create_mock_run_async([sample_results1[1]], atomic_attack=attacks1[1])
+
+        attacks2[0].run_async = AsyncMock(side_effect=attack2_run)
+        attacks2[1].run_async = create_mock_run_async([sample_results2[1]], atomic_attack=attacks2[1])
 
         scenario1 = ConcreteScenario(name="Distinct Scenario 1", version=1, atomic_attacks_to_return=attacks1)
         scenario1.set_params_from_args(args={"objective_target": mock_objective_target, "max_concurrency": 2})
@@ -2844,7 +2874,17 @@ class TestScenarioParallelExecution:
         scenario2.set_params_from_args(args={"objective_target": mock_objective_target, "max_concurrency": 2})
         await scenario2.initialize_async()
 
-        res1, res2 = await asyncio.gather(scenario1.run_async(), scenario2.run_async())
+        task1 = asyncio.create_task(scenario1.run_async())
+        task2 = asyncio.create_task(scenario2.run_async())
+
+        try:
+            res1, res2 = await asyncio.wait_for(asyncio.gather(task1, task2), timeout=10.0)
+        except BaseException:
+            task1.cancel()
+            task2.cancel()
+            await asyncio.gather(task1, task2, return_exceptions=True)
+            raise
+
         assert isinstance(res1, ScenarioResult)
         assert isinstance(res2, ScenarioResult)
         assert res1.id != res2.id
