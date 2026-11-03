@@ -425,7 +425,6 @@ def _colliding_sets() -> tuple[set[int], set[int]]:
             PureWindowsPath("styles", "noir.yaml"),
             PurePosixPath("styles", "noir.yaml"),
         ),
-        ("{{ objective }}{% for word in words %} {{ word }}{% endfor %}", *_colliding_sets()),
         ("{{ objective }} {{ words.missing }}", defaultdict(list), defaultdict(dict)),
         ("{{ objective }} {{ words.missing }}", defaultdict(_empty_list), defaultdict(_empty_dict)),
         ("{{ objective }} {{ words }}", _TemplateText("French"), _TemplateText("Spanish")),
@@ -466,7 +465,7 @@ async def test_generic_llm_converter_identifier_distinguishes_values_that_render
 
 def test_generic_llm_converter_identifier_is_stable_for_equal_template_parameters(mock_target) -> None:
     template = _custom_template("{{ objective }} {{ words }} {{ path }} {{ tags }}", "objective")
-    tags = {"x", "y", "z"}
+    tags = ("x", "y", "z")
 
     first = LLMGenericTextConverter(
         converter_target=mock_target,
@@ -523,7 +522,7 @@ class _UnrepresentableValue:
     [
         {1: "first", "two": "second"},
         {("a", "b"): "pair", None: "none"},
-        {frozenset({1, "x"}), 2.5, b"bytes"},
+        ("x", 2.5, b"bytes"),
         _UnrepresentableValue(),
     ],
 )
@@ -543,6 +542,47 @@ async def test_generic_llm_converter_converts_with_any_renderable_template_param
     request = mock_target.send_prompt_async.call_args.kwargs["message"]
     assert request.message_pieces[0].converter_identifiers[0].hash == converter.get_identifier().hash
     assert len(converter.get_identifier().params["template_parameters_hash"]) == 16
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"alpha", "beta"},
+        frozenset({"alpha", "beta"}),
+        {"nested": [{"alpha"}]},
+        [("ordered", frozenset({"beta"}))],
+        {frozenset({"key"}): "value"},
+    ],
+)
+def test_generic_llm_converter_rejects_unordered_template_parameters(mock_target, value) -> None:
+    with pytest.raises(ValueError, match="contains a set or frozenset"):
+        LLMGenericTextConverter(converter_target=mock_target, tone=value)
+
+
+def test_generic_llm_converter_rejects_differently_ordered_equal_sets(mock_target) -> None:
+    for words in _colliding_sets():
+        with pytest.raises(ValueError, match="ordered list or tuple"):
+            LLMGenericTextConverter(converter_target=mock_target, words=words)
+
+
+def test_generic_llm_converter_rejects_set_in_object_state(mock_target) -> None:
+    with pytest.raises(ValueError, match="contains a set or frozenset"):
+        LLMGenericTextConverter(converter_target=mock_target, words=_StatefulTemplateValue({"alpha"}))
+
+
+def test_generic_llm_converter_rejects_nested_set_in_recursive_list(mock_target) -> None:
+    words = ["first"]
+    words.append(words)
+    words.append({"second"})
+    with pytest.raises(ValueError, match="contains a set or frozenset"):
+        LLMGenericTextConverter(converter_target=mock_target, words=words)
+
+
+def test_generic_llm_converter_accepts_explicit_ordered_template_parameters(mock_target) -> None:
+    words = tuple(sorted({"alpha", "beta", "gamma"}))
+    first = LLMGenericTextConverter(converter_target=mock_target, words=words)
+    second = LLMGenericTextConverter(converter_target=mock_target, words=words)
+    assert first.get_identifier().hash == second.get_identifier().hash
 
 
 @pytest.mark.usefixtures("patch_central_database")

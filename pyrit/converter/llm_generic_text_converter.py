@@ -31,6 +31,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+def _reject_unordered_template_values(
+    value: Any, *, parameter_name: str, enclosing: frozenset[int] = frozenset()
+) -> None:
+    """Reject unordered containers whose rendering and identifier can vary between runs."""
+    if isinstance(value, (set, frozenset)):
+        raise ValueError(
+            f"Template parameter {parameter_name!r} contains a set or frozenset. "
+            "Use an ordered list or tuple for reproducible rendering and identifiers."
+        )
+    if id(value) in enclosing:
+        return
+    nested = enclosing | {id(value)}
+
+    def check(item: Any) -> None:
+        _reject_unordered_template_values(item, parameter_name=parameter_name, enclosing=nested)
+
+    if is_dataclass(value) and not isinstance(value, type):
+        for item in fields(value):
+            check(getattr(value, item.name))
+    if isinstance(value, dict):
+        for key, item in value.items():
+            check(key)
+            check(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            check(item)
+
+    attributes = getattr(value, "__dict__", None)
+    if isinstance(attributes, dict):
+        for item in attributes.values():
+            check(item)
+
+
 
 def _describe_template_value(value: Any, *, enclosing: frozenset[int] = frozenset()) -> str:
     """
@@ -148,13 +181,19 @@ class LLMGenericTextConverter(Converter):
             kwargs: Additional parameters forwarded to both the system prompt and user prompt templates
                 during rendering. Their constructor-time state contributes to the identifier, including
                 container iteration order, path flavor and object fields. Parameters should remain static
-                after construction. The incoming prompt supplies ``objective`` at render time.
+                after construction. Sets and frozensets are not accepted, including when nested inside
+                other parameters, because their iteration order can vary between processes. Pass an ordered
+                list or tuple instead. The incoming prompt supplies ``objective`` at render time.
 
         Raises:
             ValueError: If converter_target is not provided and no default has been configured.
             ValueError: If ``user_prompt_template_with_objective`` does not declare an ``objective``
                 parameter.
+            ValueError: If a template parameter contains an unordered set or frozenset.
         """
+        for name, value in kwargs.items():
+            _reject_unordered_template_values(value, parameter_name=name)
+
         super().__init__(converter_target=converter_target)
         self._converter_target = converter_target
         self._system_prompt_template = system_prompt_template
