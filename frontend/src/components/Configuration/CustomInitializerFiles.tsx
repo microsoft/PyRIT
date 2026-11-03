@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
-import { MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components'
+import { Button, MessageBar, MessageBarActions, MessageBarBody, Spinner } from '@fluentui/react-components'
+import { DismissRegular } from '@fluentui/react-icons'
 
 import CustomInitializers from '@/components/Initializers/CustomInitializers'
 import { initializersApi } from '@/services/api'
@@ -11,8 +12,9 @@ import type { CustomInitializer } from '@/types'
 import { useConfigurationStyles } from './Configuration.styles'
 
 interface StatusMessage {
-  intent: 'success' | 'error'
+  intent: 'success' | 'error' | 'warning'
   text: string
+  canRetryRefresh?: boolean
 }
 
 export default function CustomInitializerFiles() {
@@ -20,6 +22,7 @@ export default function CustomInitializerFiles() {
   const styles = useConfigurationStyles()
   const [items, setItems] = useState<CustomInitializer[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [registering, setRegistering] = useState(false)
   const [deletingName, setDeletingName] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
@@ -55,20 +58,46 @@ export default function CustomInitializerFiles() {
     setItems(response.items)
   }
 
+  const handleRetryRefresh = async (): Promise<void> => {
+    setRefreshing(true)
+    try {
+      await reload()
+      setStatusMessage({ intent: 'success', text: 'Refreshed custom initializers catalog.' })
+    } catch (error) {
+      setStatusMessage({
+        intent: 'warning',
+        text: `Failed to refresh custom initializers: ${toApiError(error).detail}`,
+        canRetryRefresh: true,
+      })
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   const handleRegister = async (name: string, scriptContent: string): Promise<boolean> => {
     setRegistering(true)
     setStatusMessage(null)
     try {
       await initializersApi.register({ name, script_content: scriptContent })
-      await reload()
-      setStatusMessage({ intent: 'success', text: `Added and registered ${name}.` })
-      return true
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+      setRegistering(false)
       return false
+    }
+
+    try {
+      await reload()
+      setStatusMessage({ intent: 'success', text: `Added and registered ${name}.` })
+    } catch (refreshError) {
+      setStatusMessage({
+        intent: 'warning',
+        text: `Added and registered ${name}, but failed to refresh catalog: ${toApiError(refreshError).detail}`,
+        canRetryRefresh: true,
+      })
     } finally {
       setRegistering(false)
     }
+    return true
   }
 
   const handleDelete = async (name: string): Promise<void> => {
@@ -94,6 +123,23 @@ export default function CustomInitializerFiles() {
       {statusMessage && (
         <MessageBar intent={statusMessage.intent}>
           <MessageBarBody>{statusMessage.text}</MessageBarBody>
+          <MessageBarActions>
+            {statusMessage.canRetryRefresh && (
+              <Button
+                appearance="secondary"
+                disabled={refreshing || registering || deletingName !== null}
+                onClick={handleRetryRefresh}
+              >
+                Retry refresh
+              </Button>
+            )}
+            <Button
+              appearance="subtle"
+              icon={<DismissRegular />}
+              aria-label="Dismiss notification"
+              onClick={() => setStatusMessage(null)}
+            />
+          </MessageBarActions>
         </MessageBar>
       )}
       <CustomInitializers
