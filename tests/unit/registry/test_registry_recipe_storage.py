@@ -3,16 +3,20 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 from azure.storage.blob import ContainerClient
 
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.models.catalog.registry_recipe import (
     ComponentRecipe,
+    IgnoredRecipeFile,
     RegistryRecipeKind,
+    RestoreFailure,
     RestoreFailureReason,
     TechniqueRecipe,
 )
@@ -65,6 +69,22 @@ class TestRegistryRecipeStorageSource:
 
         client.list_blobs.assert_called_once_with(name_starts_with="techniques/")
         assert list(listing.recipes) == ["formal"]
+
+
+class TestRestoreReportText:
+    def test_text_that_is_not_utf8_is_escaped_so_it_can_be_sent_as_json(self) -> None:
+        ignored = IgnoredRecipeFile(
+            kind=RegistryRecipeKind.TARGETS, file_name="bad\udcffname.json", message="bad\udcffname"
+        )
+        failure = RestoreFailure(
+            kind=RegistryRecipeKind.TARGETS, name="x", reason=RestoreFailureReason.BUILD_ERROR, message="got \udcff"
+        )
+
+        assert ignored.file_name == "bad\\udcffname.json"
+        assert failure.message == "got \\udcff"
+        json.dumps([ignored.model_dump(mode="json"), failure.model_dump(mode="json")], ensure_ascii=False).encode(
+            "utf-8"
+        )
 
 
 class TestRegistryRecipeStorageListing:
@@ -135,6 +155,20 @@ class TestRegistryRecipeStorageListing:
         (failure,) = listing.failures
         assert failure.reason is RestoreFailureReason.NEWER_SCHEMA_VERSION
         assert "newer PyRIT" in failure.message
+
+    def test_reports_a_file_name_that_is_not_utf8(self, tmp_path: Path) -> None:
+        folder = tmp_path / "targets"
+        folder.mkdir()
+        try:
+            (folder / os.fsdecode(b"bad\xffname.json")).write_text("{}")
+        except (OSError, UnicodeError):
+            pytest.skip("This file system only allows UTF-8 file names")
+
+        listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
+
+        (ignored,) = listing.ignored
+        assert ignored.file_name == "bad\\udcffname.json"
+        json.dumps(ignored.model_dump(mode="json"), ensure_ascii=False).encode("utf-8")
 
     def test_reports_unreadable_and_ignored_files(self, tmp_path: Path) -> None:
         folder = tmp_path / "scorers"

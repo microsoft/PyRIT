@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -504,24 +505,29 @@ class RegistryRecipeRestorer:
     @staticmethod
     def _safe_message(error: Exception) -> str:
         """
-        Describe an error for the failure report without any credential it may quote.
+        Describe an error for the failure report without any credential a URL in it may carry.
 
         Constructor errors can quote a server setting, such as an endpoint with a SAS token. The text
         is cut at the first ``?`` or ``#``, where a URL's query or fragment starts. A user name and
-        password can't be told apart reliably, so text with an ``@`` isn't shown at all.
+        password can't be told apart reliably, so text with an ``@`` isn't shown at all. Look-alike
+        characters, such as a full-width ``＠``, count as the characters they look like.
 
         Returns:
-            str: The error's type and its text before any ``?`` or ``#``, or the type alone.
+            str: The error's type and its text, noting when the rest of the text or all of it is hidden.
         """
         name = type(error).__name__
+        hidden = "because it may include a credential"
         try:
-            text = str(error)
+            # A plain str, so no string method a subclass overrides runs on the text below.
+            text = unicodedata.normalize("NFKC", str.__str__(str(error)))
         except Exception:
             return name
         if "@" in text:
-            return f"{name} (message hidden because it may include a credential)"
+            return f"{name} (message hidden {hidden})"
         cut = text.split("?", 1)[0].split("#", 1)[0]
-        return f"{name}: {cut}" if cut else name
+        if cut == text:
+            return f"{name}: {text}" if text else name
+        return f"{name}: {cut} (rest hidden {hidden})" if cut.strip() else f"{name} (message hidden {hidden})"
 
 
 class _RecipeRejectedError(Exception):

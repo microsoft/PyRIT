@@ -374,7 +374,7 @@ class TestRestoreFailures:
             assert failure.message == "ValueError (message hidden because it may include a credential)"
         else:
             assert failure.message.startswith("ValueError: Identity-based authentication requires")
-            assert shown in failure.message
+            assert failure.message.endswith(f"{shown} (rest hidden because it may include a credential)")
         for secret in ("hunter2", "hun", "ter2", "SYNTHETIC", "SYNTH", "ETIC", "frag"):
             assert secret not in failure.message
 
@@ -408,11 +408,31 @@ class TestRestoreFailures:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
-            ("got https://host/v1?sig=SECRET", "ValueError: got https://host/v1"),
-            ("got https:host/p#SECRET", "ValueError: got https:host/p"),
-            ("got https://host/v1#a?b=SECRET", "ValueError: got https://host/v1"),
-            ("got https://host/v1? sig=SEC\tRET tail", "ValueError: got https://host/v1"),
-            ("got host/v1?api-version=1 &sig=SECRET", "ValueError: got host/v1"),
+            (
+                "got https://host/v1?sig=SECRET",
+                "ValueError: got https://host/v1 (rest hidden because it may include a credential)",
+            ),
+            (
+                "got https:host/p#SECRET",
+                "ValueError: got https:host/p (rest hidden because it may include a credential)",
+            ),
+            (
+                "got https://host/v1#a?b=SECRET",
+                "ValueError: got https://host/v1 (rest hidden because it may include a credential)",
+            ),
+            (
+                "got https://host/v1? sig=SEC\tRET tail",
+                "ValueError: got https://host/v1 (rest hidden because it may include a credential)",
+            ),
+            (
+                "got host/v1?api-version=1 &sig=SECRET",
+                "ValueError: got host/v1 (rest hidden because it may include a credential)",
+            ),
+            (
+                "got 'https://host/v1#SECRET' (again 'https://host/v1#SECRET')",
+                "ValueError: got 'https://host/v1 (rest hidden because it may include a credential)",
+            ),
+            ("?sig=SECRET", "ValueError (message hidden because it may include a credential)"),
             ("could not be coerced to float: 'hot'", "ValueError: could not be coerced to float: 'hot'"),
             (
                 "Missing required parameters: ['objective_target']",
@@ -421,6 +441,12 @@ class TestRestoreFailures:
             ("got https://host/v1", "ValueError: got https://host/v1"),
             ("got //user:SECRET@host/v1", "ValueError (message hidden because it may include a credential)"),
             ("got https://user:SEC\nRET@host/v1", "ValueError (message hidden because it may include a credential)"),
+            ("got https://user:SE?CRET@host/v1", "ValueError (message hidden because it may include a credential)"),
+            ("got https://user:SECRET\uff20host/v1", "ValueError (message hidden because it may include a credential)"),
+            (
+                "got https://host/v1\uff1fsig=SECRET",
+                "ValueError: got https://host/v1 (rest hidden because it may include a credential)",
+            ),
             ("contact admin@example.com", "ValueError (message hidden because it may include a credential)"),
         ],
     )
@@ -433,6 +459,33 @@ class TestRestoreFailures:
                 raise RuntimeError("cannot print")
 
         assert RegistryRecipeRestorer._safe_message(UnprintableError()) == "UnprintableError"
+
+    def test_safe_message_ignores_string_methods_an_error_overrides(self) -> None:
+        class KeepEverything(str):
+            __slots__ = ()
+
+            def split(self, *args: Any, **kwargs: Any) -> list[str]:
+                return [self]
+
+        class Exploding(str):
+            __slots__ = ()
+
+            def __contains__(self, item: object) -> bool:
+                raise RuntimeError("cannot search")
+
+        class QuotingError(Exception):
+            def __init__(self, text: str) -> None:
+                super().__init__()
+                self.text = text
+
+            def __str__(self) -> str:
+                return self.text
+
+        keep = RegistryRecipeRestorer._safe_message(QuotingError(KeepEverything("got https://host/v1?sig=SECRET")))
+        exploding = RegistryRecipeRestorer._safe_message(QuotingError(Exploding("got https://host/v1")))
+
+        assert keep == "QuotingError: got https://host/v1 (rest hidden because it may include a credential)"
+        assert exploding == "QuotingError: got https://host/v1"
 
     def test_refuses_a_stored_credential_in_attack_parameters(self, tmp_path: Path) -> None:
         attack_registry = AttackRegistry.get_registry_singleton()
