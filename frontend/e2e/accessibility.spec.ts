@@ -1,5 +1,6 @@
 import { test, expect, selectChatTarget, type Locator, type Page } from "./_fixtures";
 import { mockVersion } from "./_compatibility";
+import { READY_RUNTIME } from "./_runtime";
 import { makeTarget } from "./_targets";
 import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
 
@@ -100,6 +101,9 @@ async function expectTourContainedAndActionable(
 
 test.describe("Accessibility", () => {
   test.beforeEach(async ({ page }) => {
+    await page.route("**/api/runtime", async (route) => {
+      await route.fulfill({ json: READY_RUNTIME });
+    });
     await page.goto("/");
   });
 
@@ -346,9 +350,20 @@ test.describe("Accessibility", () => {
 
     test("mobile audit controls provide 44px touch targets", async ({ page }) => {
       await page.setViewportSize(MOBILE_VIEWPORT);
+      await page.route(/\/api\/targets/, async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            items: [],
+            pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
+          }),
+        });
+      });
+      await page.reload();
 
       await expectMinimumTouchTarget(page.getByTestId("labels-icon-btn"));
-      await expectMinimumTouchTarget(page.getByRole("button", { name: "Open Registry" }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Register a target" }));
       await expectMinimumTouchTarget(page.getByRole("button", { name: "Take a tour" }));
 
       await page.route(/\/api\/targets/, async (route) => {
@@ -368,6 +383,8 @@ test.describe("Accessibility", () => {
           }),
         });
       });
+      await page.reload();
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Open Registry" }));
 
       await page.getByRole("button", { name: "Registry", exact: true }).click();
       await expect(

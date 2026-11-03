@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from functools import lru_cache, partial
 from typing import Any
 
-from pyrit.backend.mappers import request_piece_to_pyrit_message_piece, request_to_pyrit_message
+from pyrit.backend.mappers import request_to_pyrit_message
 from pyrit.backend.models.attacks import AddMessageRequest, ConverterConfigurationRequest, MessagePieceRequest
 from pyrit.backend.models.message_sends import (
     MessageSendConversation,
@@ -113,6 +113,7 @@ class _MessageSendContext(TargetSendContext):
 
     def mark_target_invoked(self) -> None:
         self._target_invocation_count += 1
+        self._progress.target_invoked = True
         self._progress.state = MessageSendState.SENDING
 
     def finish_send(self, *, succeeded: bool) -> None:
@@ -417,12 +418,18 @@ class MessageSendService:
                 if progress is not None:
                     progress.state = MessageSendState.PREPARING
                 with attack_result_id_scope(attack_result_id=attack_result_id):
+                    target_identifier = validated.target.get_identifier() if validated.target else None
+                    if not request.send:
+                        existing_metadata = await self._memory.get_conversation_metadata_async(
+                            conversation_id=request.target_conversation_id
+                        )
+                        target_identifier = existing_metadata.target_identifier if existing_metadata else None
                     await complete_owned_write_async(
                         partial(
                             self._memory.add_conversation_to_memory_async,
                             conversation=Conversation(
                                 conversation_id=request.target_conversation_id,
-                                target_identifier=validated.target.get_identifier() if validated.target else None,
+                                target_identifier=target_identifier,
                                 attack_result_id=attack_result_id,
                             ),
                         )
@@ -765,12 +772,10 @@ class MessageSendService:
                     progress=progress,
                 )
         else:
-            existing_metadata = await self._memory.get_conversation_metadata_async(conversation_id=msg_conversation_id)
             await self._store_message_only_async(
                 conversation_id=msg_conversation_id,
                 request=request,
                 sequence=sequence,
-                target_identifier=existing_metadata.target_identifier if existing_metadata else None,
                 applied_converter_identifiers=applied_converter_identifiers,
             )
 
@@ -1134,7 +1139,6 @@ class MessageSendService:
         request: AddMessageRequest,
         sequence: int,
         applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
-        target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store message without sending (send=False)."""
         await self._persist_base64_pieces_async(request)
@@ -1144,7 +1148,6 @@ class MessageSendService:
                 conversation_id=conversation_id,
                 request=request,
                 sequence=sequence,
-                target_identifier=target_identifier,
                 applied_converter_identifiers=applied_converter_identifiers,
             )
         )
@@ -1155,22 +1158,14 @@ class MessageSendService:
         conversation_id: str,
         request: AddMessageRequest,
         sequence: int,
-        target_identifier: ComponentIdentifier | None,
         applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
     ) -> None:
-        await self._memory.add_conversation_to_memory_async(
-            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
-        )
-        for index, p in enumerate(request.pieces):
-            piece = request_piece_to_pyrit_message_piece(
-                piece=p,
-                role=request.role,
-                conversation_id=conversation_id,
-                sequence=sequence,
-            )
-            piece.set_simulated_role()
-            piece.converter_identifiers.extend(applied_converter_identifiers.get(index, []))
-            await self._memory.add_message_pieces_to_memory_async(message_pieces=[piece])
+        """Persist all pieces atomically."""
+        message = request_to_pyrit_message(request=request, conversation_id=conversation_id, sequence=sequence)
+        message.set_simulated_role()
+        for index, identifiers in applied_converter_identifiers.items():
+            message.message_pieces[index].converter_identifiers.extend(identifiers)
+        await self._memory.add_message_pieces_to_memory_async(message_pieces=message.message_pieces)
 
     async def _resolve_video_remix_metadata_async(self, request: AddMessageRequest) -> None:
         """

@@ -122,7 +122,7 @@ export default function Home({
       })
     }
     load(attacksApi.listAttacks({ limit: RECENT_WORK_LIMIT, include_scenario_attacks: false }), setAttackResult)
-    load(scenariosApi.listRuns({ limit: RECENT_WORK_LIMIT }), setScanResult)
+    load(scenariosApi.listRuns({ limit: RECENT_WORK_LIMIT, sort_by: 'activity' }), setScanResult)
     load(operationsApi.list(), setOperationResult)
     return () => { ignore = true }
   }, [requestKey, ready, generation])

@@ -68,6 +68,8 @@ import type {
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
+  ScenarioHierarchyNode,
+  ScenarioHierarchyProjection,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -699,6 +701,7 @@ export const scenariosApi = {
     return response.data
   },
 
+  /** Lists scenario runs by creation time by default or by activity when requested. */
   listRuns: async (params?: {
     limit?: number
     cursor?: string
@@ -707,6 +710,7 @@ export const scenariosApi = {
     label?: string[]
     operation_id?: string[]
     reference_id?: string
+    sort_by?: 'created_at' | 'activity'
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,
@@ -736,6 +740,33 @@ export const scenariosApi = {
     (await apiClient.get(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/conversations/${encodeURIComponent(conversationId)}`,
     )).data,
+
+  /** Loads one page of hierarchy roots. `cursor` continues roots only, never a node's children. */
+  getRunHierarchy: async (
+    scenarioResultId: string,
+    params?: { max_nodes?: number; cursor?: string },
+    signal?: AbortSignal,
+  ): Promise<ScenarioHierarchyProjection> => {
+    const response = await apiClient.get<ScenarioHierarchyProjection>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  /** Loads one page of a node's saved children, continued with that node's `next_children_cursor`. */
+  getRunHierarchyNode: async (
+    scenarioResultId: string,
+    attackResultId: string,
+    params?: { limit?: number; children_cursor?: string },
+    signal?: AbortSignal,
+  ): Promise<ScenarioHierarchyNode> => {
+    const response = await apiClient.get<ScenarioHierarchyNode>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy/nodes/${encodeURIComponent(attackResultId)}`,
+      { params, signal },
+    )
+    return response.data
+  },
 
   getQueue: async (signal?: AbortSignal): Promise<ScenarioQueueSnapshot> => {
     const response = await apiClient.get('/scenarios/runs/queue', { signal })

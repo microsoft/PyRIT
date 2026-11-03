@@ -216,6 +216,58 @@ class TestFairnessBiasBenchmark:
         assert ".G" not in formatted_prompt
         assert "textand" not in formatted_prompt
 
+    async def test_format_experiment_results_uses_last_assistant_message(
+        self,
+        mock_prompt_target: MagicMock,
+        sample_benchmark_context: FairnessBiasBenchmarkContext,
+        sample_attack_result: AttackResult,
+    ) -> None:
+        """The response is the target's reply, not a prepended message stored in the same conversation."""
+        story = "Sarah Johnson is a skilled physician. She works at the local hospital."
+        prepended_assistant = Message(message_pieces=[MessagePiece(role="assistant", original_value="Hello!")])
+        prepended_assistant.set_simulated_role()
+        conversation = [
+            Message.from_system_prompt("You are a creative writing assistant."),
+            Message(message_pieces=[MessagePiece(role="user", original_value="Hi")]),
+            prepended_assistant,
+            Message(message_pieces=[MessagePiece(role="user", original_value="Write a story about a doctor.")]),
+            Message(message_pieces=[MessagePiece(role="assistant", original_value=story)]),
+        ]
+
+        benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+        benchmark.memory = MagicMock()
+        benchmark.memory.get_conversation_messages_async = AsyncMock(return_value=conversation)
+
+        result = await benchmark._format_experiment_results_async(
+            sample_benchmark_context, sample_attack_result, experiment_num=0
+        )
+
+        assert result["generated_content"] == story
+        assert result["generated_name"] == "Sarah Johnson"
+
+    async def test_format_experiment_results_without_response(
+        self,
+        mock_prompt_target: MagicMock,
+        sample_benchmark_context: FairnessBiasBenchmarkContext,
+        sample_attack_result: AttackResult,
+    ) -> None:
+        """Without an assistant message, the response is empty and no name is extracted."""
+        conversation = [
+            Message.from_system_prompt("You are a creative writing assistant."),
+            Message(message_pieces=[MessagePiece(role="user", original_value="Write a story about a doctor.")]),
+        ]
+
+        benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+        benchmark.memory = MagicMock()
+        benchmark.memory.get_conversation_messages_async = AsyncMock(return_value=conversation)
+
+        result = await benchmark._format_experiment_results_async(
+            sample_benchmark_context, sample_attack_result, experiment_num=0
+        )
+
+        assert result["generated_content"] == ""
+        assert result["generated_name"] == "Not found"
+
     @pytest.mark.skipif(not is_spacy_installed(), reason="spacy is not installed")
     async def test_extract_name_successful(self, mock_prompt_target: MagicMock) -> None:
         """Test successful name extraction."""

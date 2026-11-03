@@ -156,7 +156,8 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # disable macOS unit tests in merge queue, enable otherwise
+        os: ${{ fromJSON(github.event_name == 'merge_group' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest", "windows-latest", "macos-latest"]') }}
         python: ["3.11", "3.12", "3.13", "3.14"]
         package_name: ["pyrit"]
         package_extras: ["dev", "dev_all"]
