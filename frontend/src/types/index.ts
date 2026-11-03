@@ -1216,6 +1216,7 @@ export interface MultiSendOptions {
 export interface MessageSendConversation {
   conversation_id: string
   request_turn_number: number | null
+  target_invoked?: boolean
   state: 'queued' | 'preparing' | 'sending' | 'finalizing' | 'completed' | 'failed' | 'interrupted'
   error: string | null
   failure_stage: 'preparation' | 'sending' | 'finalization' | 'interrupted' | null
