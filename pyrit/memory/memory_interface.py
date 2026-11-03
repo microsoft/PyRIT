@@ -7213,6 +7213,7 @@ class MemoryInterface(abc.ABC):
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
@@ -7240,6 +7241,7 @@ class MemoryInterface(abc.ABC):
             statuses=statuses,
             labels=labels,
             operation_ids=operation_ids,
+            reference_id=reference_id,
             cursor=cursor,
             limit=limit,
         )
@@ -11814,6 +11816,7 @@ class MemoryInterface(abc.ABC):
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
@@ -11835,6 +11838,7 @@ class MemoryInterface(abc.ABC):
             statuses=statuses,
             labels=labels,
             operation_ids=operation_ids,
+            reference_id=reference_id,
             cursor=cursor,
             limit=limit,
         )
@@ -11847,6 +11851,7 @@ class MemoryInterface(abc.ABC):
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
@@ -11872,6 +11877,7 @@ class MemoryInterface(abc.ABC):
             statuses=statuses,
             labels=labels,
             operation_ids=operation_ids,
+            reference_id=reference_id,
             cursor=cursor,
             limit=limit,
         )

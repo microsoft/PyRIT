@@ -278,6 +278,9 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         max_length=MAX_ITEMS,
         description="Saved Operation IDs; repeated values are OR-matched. Legacy name-only runs never match.",
     ),
+    reference_id: uuid.UUID | None = Query(
+        None, description="Exact conversation, attack, finding, or scenario result ID"
+    ),
     limit: int = Query(100, ge=1, le=100, description="Maximum items per page"),
     cursor: CursorStr | None = Query(None, description="Opaque descending history cursor"),
 ) -> ScenarioRunListResponse:
@@ -289,6 +292,7 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         run_statuses: Run states to match.
         label: Repeated key:value label filters.
         operation_id: Saved Operation IDs to match.
+        reference_id: Exact conversation, attack, finding, or scenario result ID.
         limit: Maximum number of runs to return.
         cursor: Opaque cursor from the previous page.
 
@@ -301,6 +305,7 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         statuses=run_statuses,
         labels=parse_label_query_params(label),
         operation_ids=operation_id,
+        reference_id=reference_id,
         limit=limit,
         cursor=cursor,
     )
