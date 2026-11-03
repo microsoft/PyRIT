@@ -73,7 +73,7 @@ class TestRegistryRecipeStorageSource:
 
 
 class TestRestoreReportText:
-    def test_text_that_is_not_utf8_is_escaped_so_it_can_be_sent_as_json(self) -> None:
+    def test_text_that_is_not_utf8_is_escaped_when_sent_as_json(self) -> None:
         ignored = IgnoredRecipeFile(
             kind=RegistryRecipeKind.TARGETS, file_name="bad\udcffname.json", message="bad\udcffname"
         )
@@ -85,17 +85,28 @@ class TestRestoreReportText:
             dependency=SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\ud800"),
         )
 
-        assert ignored.file_name == "bad\\udcffname.json"
-        assert (failure.name, failure.message) == ("x\\udcff", "got \\udcff")
-        assert failure.dependency == SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\\ud800")
-        json.dumps([ignored.model_dump(mode="json"), failure.model_dump(mode="json")], ensure_ascii=False).encode(
-            "utf-8"
+        sent_ignored, sent_failure = json.loads(
+            json.dumps([ignored.model_dump(mode="json"), failure.model_dump(mode="json")], ensure_ascii=False).encode(
+                "utf-8"
+            )
         )
+
+        assert (sent_ignored["file_name"], sent_ignored["message"]) == ("bad\\udcffname.json", "bad\\udcffname")
+        assert (sent_failure["name"], sent_failure["message"]) == ("x\\udcff", "got \\udcff")
+        assert sent_failure["dependency"]["name"] == "ghost\\ud800"
+        assert json.loads(failure.model_dump_json())["dependency"]["name"] == "ghost\\ud800"
+
+    def test_names_keep_the_text_they_were_given(self) -> None:
+        ref = SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\ud800")
+
+        assert ref.name == "ghost\ud800"
+        assert ref == SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\ud800")
+        assert ref != SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\\ud800")
 
     def test_valid_text_is_kept_as_written(self) -> None:
         ref = SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="caf\u00e9 \uff10\uff0e\uff15 \U0001f600")
 
-        assert ref.name == "caf\u00e9 \uff10\uff0e\uff15 \U0001f600"
+        assert ref.model_dump(mode="json")["name"] == "caf\u00e9 \uff10\uff0e\uff15 \U0001f600"
 
 
 class TestRegistryRecipeStorageListing:
@@ -178,8 +189,9 @@ class TestRegistryRecipeStorageListing:
         listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
 
         (ignored,) = listing.ignored
-        assert ignored.file_name == "bad\\udcffname.json"
-        json.dumps(ignored.model_dump(mode="json"), ensure_ascii=False).encode("utf-8")
+        assert ignored.file_name == os.fsdecode(b"bad\xffname.json")
+        sent = json.loads(json.dumps(ignored.model_dump(mode="json"), ensure_ascii=False).encode("utf-8"))
+        assert sent["file_name"] == "bad\\udcffname.json"
 
     def test_reports_unreadable_and_ignored_files(self, tmp_path: Path) -> None:
         folder = tmp_path / "scorers"

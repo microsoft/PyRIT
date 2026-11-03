@@ -8,7 +8,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, ClassVar
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, PlainSerializer, field_validator
 
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_TEXT_LENGTH
 
@@ -26,7 +26,8 @@ def _escape_invalid_text(value: str) -> str:
     return value.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
-_DisplayText = Annotated[str, AfterValidator(_escape_invalid_text)]
+# The model keeps the text it was given, so a name still matches the entry it names; only JSON output is escaped.
+_DisplayText = Annotated[str, PlainSerializer(_escape_invalid_text, return_type=str, when_used="json")]
 
 
 class RegistryRecipeKind(str, Enum):
