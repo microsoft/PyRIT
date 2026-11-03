@@ -18,6 +18,7 @@ from pyrit.models.catalog.registry_recipe import (
     RegistryRecipeKind,
     RestoreFailure,
     RestoreFailureReason,
+    SavedEntryRef,
     TechniqueRecipe,
 )
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
@@ -77,14 +78,24 @@ class TestRestoreReportText:
             kind=RegistryRecipeKind.TARGETS, file_name="bad\udcffname.json", message="bad\udcffname"
         )
         failure = RestoreFailure(
-            kind=RegistryRecipeKind.TARGETS, name="x", reason=RestoreFailureReason.BUILD_ERROR, message="got \udcff"
+            kind=RegistryRecipeKind.TARGETS,
+            name="x\udcff",
+            reason=RestoreFailureReason.MISSING_DEPENDENCY,
+            message="got \udcff",
+            dependency=SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\ud800"),
         )
 
         assert ignored.file_name == "bad\\udcffname.json"
-        assert failure.message == "got \\udcff"
+        assert (failure.name, failure.message) == ("x\\udcff", "got \\udcff")
+        assert failure.dependency == SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\\ud800")
         json.dumps([ignored.model_dump(mode="json"), failure.model_dump(mode="json")], ensure_ascii=False).encode(
             "utf-8"
         )
+
+    def test_valid_text_is_kept_as_written(self) -> None:
+        ref = SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="caf\u00e9 \uff10\uff0e\uff15 \U0001f600")
+
+        assert ref.name == "caf\u00e9 \uff10\uff0e\uff15 \U0001f600"
 
 
 class TestRegistryRecipeStorageListing:
