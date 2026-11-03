@@ -405,7 +405,7 @@ describe("ChatWindow Integration", () => {
     expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.queryByRole("button", { name: "Edit objective" })).not.toBeInTheDocument();
     expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
     expect(screen.getByRole("button", { name: "Add", exact: true })).toBeEnabled();
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Continue manually", exact: true }));
@@ -1081,7 +1081,7 @@ describe("ChatWindow Integration", () => {
         class_name: "SubStringScorer", class_module: "pyrit.score", hash: "hash", scorer_type: "true_false",
       } }]} /></TestWrapper>);
     await screen.findByText("Saved response");
-    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
     await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
     expect(mockedAttacksApi.applyScorer).not.toHaveBeenCalled();
     expect(readUserPreferences("local").lastUsedChatScorer).toBeUndefined();
@@ -1208,7 +1208,7 @@ describe("ChatWindow Integration", () => {
 
     async function openScorerPane(user: ReturnType<typeof userEvent.setup>): Promise<void> {
       await screen.findByText("Saved response");
-      await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+      await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
       await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
     }
 
@@ -1344,7 +1344,7 @@ describe("ChatWindow Integration", () => {
         class_name: "SubStringScorer", class_module: "pyrit.score", hash: "hash", scorer_type: "true_false",
       } }]} /></TestWrapper>);
     await screen.findByText("Saved response");
-    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
     await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
     await user.click(screen.getByRole("button", { name: "Apply scorer", exact: true }));
     const pane = screen.getByRole("region", { name: "Automated scorer selection" });
@@ -1393,7 +1393,7 @@ describe("ChatWindow Integration", () => {
       act(() => { jest.advanceTimersByTime(8500); });
       expect(screen.queryByText(notice)).not.toBeInTheDocument();
       expect(screen.getByText("Delivered response")).toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+      await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
       await user.click(screen.getByRole("button", { name: /scoring error.*view details/i }));
       expect(screen.getByText(/objective scorer was unavailable/)).toBeInTheDocument();
       expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(2);
@@ -1417,7 +1417,7 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: "Add objective" }));
     await user.type(screen.getByRole("textbox", { name: "Attack objective" }), "Goal");
     await user.click(within(screen.getByTestId("objective-header")).getByRole("button", { name: "Save", exact: true }));
-    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
     await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
     const picker = screen.getByRole("combobox", { name: "Chat scorer" });
     expect(picker).toHaveValue("registered:judge");
@@ -1472,7 +1472,7 @@ describe("ChatWindow Integration", () => {
     await user.type(screen.getByRole("textbox", { name: "Attack objective" }), "Temporary objective");
     await user.click(screen.getByRole("button", { name: "Save", exact: true }));
     if (chooseOff) {
-      await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+      await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
       await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
       await user.selectOptions(screen.getByRole("combobox", { name: "Chat scorer", exact: true }), "");
       await user.keyboard("{Escape}");
@@ -1567,7 +1567,7 @@ describe("ChatWindow Integration", () => {
     render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="scan" conversationId="scan"
       objective="Goal" outcome="success" chatScorer={original} chatScorerInherited
       defaultChatScorer={{ registry_name: "personal", identifier_hash: "personal-hash" }} availableScorers={catalog} /></TestWrapper>);
-    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
     await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
     expect(screen.getByRole("combobox", { name: "Chat scorer" })).toHaveValue(
       "registered:scan-judge",
@@ -1661,7 +1661,7 @@ describe("ChatWindow Integration", () => {
       await user.click(screen.getByRole("button", { name: "Copy or Branch" }));
       expect(screen.getByRole("menuitem", { name: "Branch conversation", exact: true })).not.toHaveAttribute("aria-disabled", "true");
       await user.keyboard("{Escape}");
-      await user.selectOptions(screen.getByRole("combobox", { name: "Chat target" }), "editable");
+      await user.selectOptions(screen.getByRole("combobox", { name: "Objective target" }), "editable");
       expect(screen.getByRole("button", { name: "Send message", exact: true })).not.toHaveAttribute("aria-disabled");
       expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
     });
@@ -1724,7 +1724,7 @@ describe("ChatWindow Integration", () => {
       await user.click(screen.getByTestId("conversation-editor"));
       expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
       expect(screen.getByTestId("conversation-editor")).toBeInTheDocument();
-      await user.selectOptions(screen.getByRole("combobox", { name: "Chat target" }), "editable-history");
+      await user.selectOptions(screen.getByRole("combobox", { name: "Objective target" }), "editable-history");
       expect(screen.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
       expect(screen.getByRole("button", { name: "Save to new attack", exact: true })).toBeEnabled();
       await user.click(screen.getByRole("button", { name: "Save to new attack", exact: true }));
@@ -2095,7 +2095,7 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByRole("button", { name: "Objective achieved outcome: undetermined" })).toBeInTheDocument();
       expect(screen.queryByText("Accepted result")).not.toBeInTheDocument();
       expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("Original prompt");
-      await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+      await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
       await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
       expect(screen.getByRole("button", { name: "Apply scorer", exact: true })).toBeDisabled();
       expect(screen.queryByText("Original saved verdict")).not.toBeInTheDocument();
@@ -2880,7 +2880,7 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: "Save to new attack" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
-    const picker = await screen.findByRole("combobox", { name: "Chat target" });
+    const picker = await screen.findByRole("combobox", { name: "Objective target" });
     await user.selectOptions(picker, "");
     await user.click(screen.getByRole("button", { name: "Insert message at start" }));
     const message = screen.getByRole("region", { name: "Message 1" });
@@ -2941,7 +2941,7 @@ describe("ChatWindow Integration", () => {
     render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
       <RouterProvider router={router} />
     </UserPreferencesProvider></FluentProvider>);
-    const targetPicker = screen.getByRole("combobox", { name: "Chat target" });
+    const targetPicker = screen.getByRole("combobox", { name: "Objective target" });
     const editButton = screen.getByRole("button", { name: "Edit Conversation" });
     expect(targetPicker.compareDocumentPosition(editButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await user.click(editButton);
@@ -3474,7 +3474,7 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByRole("combobox", { name: "Chat target" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Objective target" })).toHaveValue("");
     expect(screen.queryByTestId("no-target-banner")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Configure Target" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /add objective/i })).toBeEnabled();
@@ -3737,10 +3737,17 @@ describe("ChatWindow Integration", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     if (interaction === "hover") await user.hover(input);
     else {
-      await user.click(screen.getByRole("combobox", { name: "Chat target" }));
+      await user.click(screen.getByRole("combobox", { name: "Objective target" }));
+      await user.tab();
+      const information = screen.getByRole("button", { name: /Temperature.*information/i });
+      expect(information).toHaveFocus();
+      await user.keyboard("{Enter}");
+      expect(await screen.findByRole("note")).toHaveTextContent("Controls variation in generated responses.");
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(information).toHaveFocus());
       await user.tab();
     }
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(explanation);
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(explanation));
     expect(targetsApi.buildTarget).not.toHaveBeenCalled();
   });
 

@@ -147,7 +147,7 @@ test.describe("Onboarding tour", () => {
       "Saved chats automatically select their original registered target"
     );
     await expect(
-      page.locator('[data-tour="chat-prerequisite"]').getByRole("combobox", { name: "Chat target" })
+      page.locator('[data-tour="chat-prerequisite"]').getByRole("combobox", { name: "Objective target" })
     ).toBeVisible();
     await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
   });
@@ -208,7 +208,7 @@ test.describe("Onboarding tour", () => {
     await expect(page).toHaveURL(/\/attack\/chat$/);
     await expect(dialog).toContainText("Chat shows the message composer");
     await expect(dialog).toContainText("Toggle converter panel");
-    await expect(page.getByRole("combobox", { name: "Chat target", exact: true })).toHaveValue("tour-target");
+    await expect(page.getByRole("combobox", { name: "Objective target", exact: true })).toHaveValue("tour-target");
     await expect(page.getByRole("textbox", { name: "Type prompt here", exact: true })).toBeVisible();
     await expect(page.locator('[data-tour="converter-toggle"]')).toHaveAttribute(
       "aria-label",
@@ -269,7 +269,7 @@ test.describe("Onboarding tour", () => {
 
     await expect(page).toHaveURL(/\/attack\/chat$/);
     await expect(dialog).toContainText("Click Select a target in the chat ribbon");
-    await page.getByRole("combobox", { name: "Chat target", exact: true }).selectOption("tour-target");
+    await page.getByRole("combobox", { name: "Objective target", exact: true }).selectOption("tour-target");
     await expect(page.getByRole("textbox", { name: "Type prompt here", exact: true })).toBeVisible();
     await expect(page.locator('[data-tour="converter-toggle"]')).toHaveAttribute(
       "aria-label",

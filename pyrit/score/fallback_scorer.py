@@ -78,14 +78,16 @@ class _FallbackScorer(Scorer):
         participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
-        Check only primary and fallback branches that actually contributed scores.
+        Validate snapshots only for the primary and fallback branches that produced a result.
 
         Returns:
-            Candidates with current evidence for every participating branch.
+            list[Score]: Candidates with fresh observations for every participating branch.
         """
         participation_by_score = {
             str(score.id): _validated_snapshot_participation(
-                score=score, child_count=2, participation_by_score=participation_by_score
+                score=score,
+                child_count=2,
+                participation_by_score=participation_by_score,
             )
             for score in scores
         }
@@ -94,18 +96,20 @@ class _FallbackScorer(Scorer):
             for score in scores
             if _participates_in_snapshot(score=score, child_index=0, participation_by_score=participation_by_score)
         ]
+        primary_participation = {
+            str(score.id): _child_snapshot_participation(
+                score=score, child_index=0, participation_by_score=participation_by_score
+            )
+            for score in primary_scores
+        }
         primary_matches = await self._scorer._filter_matching_scores_by_snapshot_async(
             scores=primary_scores,
             scorable=scorable,
             expectation=self._scorer._select_expectation(expectation=expectation),
             used_observation_ids=used_observation_ids,
-            participation_by_score={
-                str(score.id): _child_snapshot_participation(
-                    score=score, child_index=0, participation_by_score=participation_by_score
-                )
-                for score in primary_scores
-            },
+            participation_by_score=primary_participation,
         )
+        primary_matches_ids = {str(score.id) for score in primary_matches}
         fallback_scores = [
             score
             for score in primary_matches
@@ -113,10 +117,11 @@ class _FallbackScorer(Scorer):
         ]
         fallback_ids: set[str] = set()
         if fallback_scores:
-            fallback_matches = await self._fallback_scorer._filter_matching_scores_by_snapshot_async(
+            fallback_expectation = self._fallback_scorer._select_expectation(expectation=expectation)
+            valid_fallback_matches = await self._fallback_scorer._filter_matching_scores_by_snapshot_async(
                 scores=fallback_scores,
                 scorable=scorable,
-                expectation=self._fallback_scorer._select_expectation(expectation=expectation),
+                expectation=fallback_expectation,
                 used_observation_ids=used_observation_ids,
                 participation_by_score={
                     str(score.id): _child_snapshot_participation(
@@ -125,12 +130,16 @@ class _FallbackScorer(Scorer):
                     for score in fallback_scores
                 },
             )
-            fallback_ids = {str(score.id) for score in fallback_matches}
+            fallback_ids = {str(score.id) for score in valid_fallback_matches}
+
         return [
             score
-            for score in primary_matches
-            if not _participates_in_snapshot(score=score, child_index=1, participation_by_score=participation_by_score)
-            or str(score.id) in fallback_ids
+            for score in scores
+            if str(score.id) in primary_matches_ids
+            and (
+                not _participates_in_snapshot(score=score, child_index=1, participation_by_score=participation_by_score)
+                or str(score.id) in fallback_ids
+            )
         ]
 
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
