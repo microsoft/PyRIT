@@ -478,23 +478,30 @@ class TestRestoreFailures:
         assert RegistryRecipeRestorer._safe_message(ValueError(text)) == expected
 
     @pytest.mark.parametrize(
-        "mark", ["\u2047", "\u2048", "\u2049", "\ufe16", "\ufe56", "\ufe5f", "\uff03", "\uff1f", "\ufe6b", "\uff20"]
+        "mark", ["?", "#", "\u2047", "\u2048", "\u2049", "\ufe16", "\ufe56", "\ufe5f", "\uff03", "\uff1f"]
     )
-    def test_safe_message_treats_every_look_alike_as_the_real_mark(self, mark: str) -> None:
+    def test_safe_message_cuts_at_any_form_of_a_query_or_fragment_mark(self, mark: str) -> None:
         message = RegistryRecipeRestorer._safe_message(ValueError(f"got https://host/v1{mark}SECRET"))
 
-        assert "SECRET" not in message
-        assert message.endswith("because it may include a credential)")
+        assert message == "ValueError: got https://host/v1 (rest hidden because it may include a credential)"
+
+    @pytest.mark.parametrize("mark", ["@", "\ufe6b", "\uff20"])
+    def test_safe_message_hides_text_with_any_form_of_an_at_sign(self, mark: str) -> None:
+        message = RegistryRecipeRestorer._safe_message(ValueError(f"got https://USER:SECRET{mark}host/v1"))
+
+        assert message == "ValueError (message hidden because it may include a credential)"
 
     def test_safe_message_folds_one_character_at_a_time(self) -> None:
         marks = "\u0315" * 50 + "\u0300" * 50
+        text = f"a{marks}\uff1fsig=SECRET"
         with patch(
             "pyrit.registry.registry_recipe_restore.unicodedata.normalize", wraps=unicodedata.normalize
         ) as normalize:
-            message = RegistryRecipeRestorer._safe_message(ValueError(f"a{marks}\uff1fsig=SECRET"))
+            message = RegistryRecipeRestorer._safe_message(ValueError(text))
 
         assert message == f"ValueError: a{marks} (rest hidden because it may include a credential)"
         assert {len(call.args[1]) for call in normalize.call_args_list} == {1}
+        assert normalize.call_count <= 2 * len(text)
 
     def test_safe_message_survives_an_error_that_cannot_be_printed(self) -> None:
         class UnprintableError(Exception):
