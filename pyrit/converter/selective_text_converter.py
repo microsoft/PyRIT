@@ -310,6 +310,10 @@ class SelectiveTextConverter(Converter):
         # Convert selected words
         for idx in selected_indices:
             conversion_result = await self._sub_converter.convert_async(prompt=words[idx], input_type="text")
+            if conversion_result.output_type != "text":
+                raise ValueError(
+                    f"SelectiveTextConverter requires text output, but received {conversion_result.output_type}."
+                )
             converted_word = conversion_result.output_text
 
             if self._preserve_tokens:
@@ -343,6 +347,10 @@ class SelectiveTextConverter(Converter):
 
         # Convert the selected region
         conversion_result = await self._sub_converter.convert_async(prompt=selected_text, input_type="text")
+        if conversion_result.output_type != "text":
+            raise ValueError(
+                f"SelectiveTextConverter requires text output, but received {conversion_result.output_type}."
+            )
         converted_text = conversion_result.output_text
 
         if self._preserve_tokens:

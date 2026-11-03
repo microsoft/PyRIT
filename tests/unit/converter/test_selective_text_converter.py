@@ -177,6 +177,29 @@ async def test_token_selection_rejects_nontext_output_async(*, preserve_tokens: 
             await converter.convert_async(prompt="⟪test⟫")
 
 
+@pytest.mark.parametrize(
+    "selection_strategy",
+    [
+        RangeSelectionStrategy(start_proportion=0.0, end_proportion=1.0),
+        WordIndexSelectionStrategy(indices=[0]),
+    ],
+)
+@pytest.mark.parametrize("preserve_tokens", [False, True])
+async def test_range_and_word_selection_reject_nontext_output_async(
+    *, selection_strategy, preserve_tokens: bool
+) -> None:
+    sub_converter = Base64Converter()
+    converter = SelectiveTextConverter(
+        sub_converter=sub_converter,
+        selection_strategy=selection_strategy,
+        preserve_tokens=preserve_tokens,
+    )
+    with patch.object(sub_converter, "convert_async", new_callable=AsyncMock) as convert:
+        convert.return_value = ConverterResult(output_text="output.png", output_type="image_path")
+        with pytest.raises(ValueError, match="text output"):
+            await converter.convert_async(prompt="hello world")
+
+
 @pytest.mark.parametrize("token_entry", [False, True])
 @pytest.mark.parametrize("outer_preserves", [False, True])
 @pytest.mark.parametrize("inner_preserves", [False, True])
