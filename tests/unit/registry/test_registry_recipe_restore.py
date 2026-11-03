@@ -127,6 +127,20 @@ class TestRestoreOrderAndRebuild:
         assert factory is not None
         assert factory.technique_tags == ["custom"]
 
+    def test_finds_a_startup_entry_by_its_exact_name(self, tmp_path: Path) -> None:
+        registry = TargetRegistry.get_registry_singleton()
+        for name in ("ghost\ud800", "other\udcff"):
+            startup_target = OpenAIChatTarget(
+                endpoint="https://startup.openai.azure.com/openai/v1", model_name="gpt-4o", auth_mode="identity"
+            )
+            registry.instances.register(startup_target, name=name)
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "a_pool", _round_robin("ghost\ud800", "other\udcff"))
+
+        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        assert report.failures == []
+        assert isinstance(registry.instances.get("a_pool"), RoundRobinTarget)
+
     def test_orders_entries_of_the_same_kind(self, tmp_path: Path) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "a_pool", _round_robin("b_member", "c_member"))
         _save(tmp_path, RegistryRecipeKind.TARGETS, "b_member", _IDENTITY_TARGET)
@@ -509,8 +523,9 @@ class TestRestoreFailures:
 
         (failure,) = report.failures
         assert failure.reason is RestoreFailureReason.MISSING_DEPENDENCY
-        assert failure.dependency == SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\\ud800")
-        json.dumps(report.model_dump(mode="json"), ensure_ascii=False).encode("utf-8")
+        assert failure.dependency == SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\ud800")
+        sent = json.loads(json.dumps(report.model_dump(mode="json"), ensure_ascii=False).encode("utf-8"))
+        assert sent["failures"][0]["dependency"]["name"] == "ghost\\ud800"
 
     def test_refuses_a_stored_credential_in_attack_parameters(self, tmp_path: Path) -> None:
         attack_registry = AttackRegistry.get_registry_singleton()
