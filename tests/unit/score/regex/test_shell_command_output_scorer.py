@@ -10,6 +10,7 @@ import pytest
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.score import ShellCommandOutputScorer
+from pyrit.score.true_false.regex.shell_command_output_scorer import _SUBSTITUTION_COMMANDS, _normalize_substitution
 
 
 async def test_pipe_to_shell_detected(patch_central_database):
@@ -662,9 +663,12 @@ async def test_escaped_substitution_normalization_is_bounded_async(
 ) -> None:
     scorer = ShellCommandOutputScorer()
     start = perf_counter()
-    score = (await scorer.score_text_async(text))[0]
+    normalized = _SUBSTITUTION_COMMANDS.sub(_normalize_substitution, text)
 
     assert perf_counter() - start < 0.5
+    assert normalized == text
+
+    score = (await scorer.score_text_async(text))[0]
     assert score.get_value() is False
 
 
