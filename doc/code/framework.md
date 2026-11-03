@@ -308,6 +308,7 @@ These modules support every component.
 
 - Give every component that runs code (targets, converters, dataset generators, and scorers) the same injected client contract, `SandboxClient`. Select a runtime profile by name; the client owns its configuration.
 - Leave environments to the caller, who provisions and isolates them. The one exception is `DockerSandboxClient`, which manages disposable containers from a caller-supplied daemon and pinned image.
+- Treat no execution location as a security boundary. A container on Docker's default runtime shares the host kernel, so it suits development and trusted programs, not hostile code. For hostile code, the caller supplies a backend built as a boundary, such as an isolated execution service or a microVM or user-space kernel runtime named by `DockerRuntimeProfile.runtime`.
 - **Does not own**: interpreting results, scoring criteria, or persistence. The consumer does.
 
 # Application Surfaces

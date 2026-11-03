@@ -33,6 +33,15 @@ class SandboxClient(Protocol):
     A runtime profile is a trusted name the client maps to its own configuration; the program
     cannot choose an image or a command. The caller supplies the running backend and trusted
     runtimes, and decides how to use the returned results.
+
+    The contract does not say where code runs: a client may drive a backend on the caller's
+    machine or call a remote service. Neither location is a security boundary by itself. A
+    container that shares the host kernel is process isolation, which suits development and
+    programs the caller trusts but is not a sufficient boundary for hostile code. Hostile code
+    needs a backend built as a boundary, such as an isolated execution service or a virtual
+    machine or user-space kernel runtime, chosen and operated by the caller. A client documents
+    the boundary its backend enforces and reports that configuration from ``get_identifier``, so
+    stored evidence names the backend that produced it.
     """
 
     def get_identifier(self) -> ComponentIdentifier:
