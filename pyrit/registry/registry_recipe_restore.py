@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -505,30 +504,23 @@ class RegistryRecipeRestorer:
     @staticmethod
     def _safe_message(error: Exception) -> str:
         """
-        Describe an error for the failure report without any credential a URL in it may carry.
+        Describe an error for the failure report without any credential it may quote.
 
-        Constructor errors can quote a server setting, such as an endpoint with a SAS token. A word
-        with a ``:`` or ``//`` may hold a URL, so it's cut before any ``?`` or ``#``. If such a word
-        has an ``@`` (a user name or password), or a ``//`` URL can't be cut cleanly because it
-        contains a space, only the error's type is kept.
+        Constructor errors can quote a server setting, such as an endpoint with a SAS token. The text
+        is cut at the first ``?`` or ``#``, where a URL's query or fragment starts. A user name and
+        password can't be told apart reliably, so text with an ``@`` isn't shown at all.
 
         Returns:
-            str: The error's type and its text with URLs cut, or just the type.
+            str: The error's type and its text before any ``?`` or ``#``, or the type alone.
         """
         name = type(error).__name__
         try:
             text = str(error)
         except Exception:
             return name
-        words = re.split(r"([ \t\n\r\f\v]+)", text)
-        may_be_url = [":" in word or "//" in word for word in words]
-        if any("@" in word for word, url in zip(words, may_be_url, strict=True) if url):
-            return name
-        cut = "".join(
-            re.split(r"[?#]", word, maxsplit=1)[0] if url else word for word, url in zip(words, may_be_url, strict=True)
-        )
-        if "//" in text and ("?" in cut or "#" in cut):
-            return name
+        if "@" in text:
+            return f"{name} (message hidden because it may include a credential)"
+        cut = text.split("?", 1)[0].split("#", 1)[0]
         return f"{name}: {cut}" if cut else name
 
 
