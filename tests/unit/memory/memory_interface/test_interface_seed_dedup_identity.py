@@ -85,9 +85,30 @@ async def test_add_singleton_groups_skip_exact_duplicate_content(sqlite_instance
     assert len(await sqlite_instance.get_seeds_async(dataset_name=DATASET)) == 1
 
 
+async def test_metadata_only_changes_dedupe_across_shapes(sqlite_instance: MemoryInterface) -> None:
+    """A metadata-only edit and grouped/ungrouped shapes dedupe on execution identity."""
+
+    def prompt(harm: str) -> SeedPrompt:
+        return SeedPrompt(value="v", dataset_name=DATASET, data_type="text", harm_categories=[harm])
+
+    await _add(sqlite_instance, prompt("a"))
+    await _add(sqlite_instance, *SeedGroup(seeds=[prompt("b")]).seeds)
+    await _add(sqlite_instance, prompt("c"))
+
+    assert len(await sqlite_instance.get_seeds_async(dataset_name=DATASET)) == 1
+
+
 async def test_add_standalone_seeds_skip_exact_duplicates(sqlite_instance: MemoryInterface) -> None:
     """Exact duplicate standalone seeds are still skipped."""
     await _add(sqlite_instance, SeedPrompt(value="plain value", dataset_name=DATASET, data_type="text"))
     await _add(sqlite_instance, SeedPrompt(value="plain value", dataset_name=DATASET, data_type="text"))
 
     assert len(await sqlite_instance.get_seeds_async(dataset_name=DATASET)) == 1
+
+
+async def test_add_standalone_seeds_keep_distinct_schemas_and_roles(sqlite_instance: MemoryInterface) -> None:
+    """Standalone execution identity includes the response schema and the role."""
+    for extra in ({}, {"response_json_schema": SCHEMA_ALPHA}, {"role": "system"}):
+        await _add(sqlite_instance, SeedPrompt(value="v", dataset_name=DATASET, data_type="text", **extra))
+
+    assert len(await sqlite_instance.get_seeds_async(dataset_name=DATASET)) == 3

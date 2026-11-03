@@ -5010,13 +5010,15 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
-        Standalone seeds with the same value hash, dataset, seed type, data type, response schema,
-        and behavioral inputs already present in storage are skipped. Singleton groups, and groups
-        whose complete membership is already stored, are compared by full member identity, including
-        roles, sequence, metadata, and behavioral inputs. Multi-seed groups are compared as complete
-        groups, so shared content cannot strip members from a different conversation. Duplicates
-        *within* ``seeds`` are all inserted, because the check looks at what storage held when the
-        call started.
+        Seeds already present in storage are skipped by execution identity: value hash, dataset,
+        seed type, data type, role (``None`` counts as ``user``), response schema, and behavioral
+        inputs. Non-execution metadata such as harm categories or descriptions is not part of that
+        identity, so a metadata-only edit does not create a duplicate and sending a seed standalone
+        or inside a singleton group deduplicates the same way. Retained multi-seed groups keep their
+        complete membership; they are compared as complete groups by full member identity, including
+        roles, sequence, metadata, and behavioral inputs, so shared content cannot strip members from
+        a different conversation. Duplicates *within* ``seeds`` are all inserted, because the check
+        looks at what storage held when the call started.
         When a stored seed is copied to a new group, its caller-visible ID is updated after
         successful insertion.
 
@@ -5033,30 +5035,38 @@ class MemoryInterface(abc.ABC):
     def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
         """Deduplicate and store seeds after their media is prepared."""
         existing_pairs, existing_hashes, existing_seeds = self._get_existing_seed_keys(seeds=seeds)
+        # Compute each stored seed's full member identity once; retained groups and the
+        # complete-group check both use it.
+        existing_group_members: list[tuple[uuid.UUID, str | None, str, uuid.UUID | None]] = []
+        for dataset, seed in existing_seeds:
+            if seed.prompt_group_id is not None:
+                existing_group_members.append(
+                    (seed.prompt_group_id, dataset, self._seed_group_member_key(seed), seed.id)
+                )
         retained_group_ids = self._get_new_behavior_group_ids(
             seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
         )
-        retained_group_ids.update(self._get_new_seed_group_ids(seeds=seeds, existing_seeds=existing_seeds))
+        retained_group_ids.update(
+            self._get_new_seed_group_ids(seeds=seeds, existing_group_members=existing_group_members)
+        )
         stored_group_members = {
-            (seed.prompt_group_id, dataset, self._seed_group_member_key(seed))
-            for dataset, seed in existing_seeds
-            if seed.prompt_group_id is not None
+            (group_id, dataset, member_key)
+            for group_id, dataset, member_key, _ in existing_group_members
+            if group_id in retained_group_ids
         }
-        # Seeds whose group is not retained as a new group (singleton groups, and groups whose
-        # complete membership is already stored) fall through to the standalone check below. Compare
-        # them by full member identity so schema- or metadata-distinct groups are not collapsed.
-        stored_member_pairs = {
-            (dataset, self._seed_group_member_key(seed)) for dataset, seed in existing_seeds if dataset
-        }
-        stored_member_keys = {self._seed_group_member_key(seed) for dataset, seed in existing_seeds if not dataset}
-        # Standalone identity additionally tracks the seed type and data type, which change what a
-        # seed executes as even when its value, dataset, and behavioral inputs match.
-        stored_standalone_pairs = {
-            (seed.value_sha256, dataset, self._seed_standalone_key(seed)) for dataset, seed in existing_seeds if dataset
-        }
-        stored_standalone_hashes = {
-            (seed.value_sha256, self._seed_standalone_key(seed)) for dataset, seed in existing_seeds if not dataset
-        }
+        # Everything not retained as a new group is deduplicated by one execution key, computed
+        # once per stored seed. Seeds that are not retained include singleton groups and groups
+        # whose complete membership is already stored, so a metadata-only edit and the same seed
+        # arriving grouped or standalone deduplicate identically.
+        stored_standalone_pairs: set[tuple[str | None, str | None, str]] = set()
+        stored_standalone_hashes: set[tuple[str | None, str]] = set()
+        if any(prompt.value_sha256 and prompt.prompt_group_id not in retained_group_ids for prompt in seeds):
+            for dataset, seed in existing_seeds:
+                standalone_key = self._seed_standalone_key(seed)
+                if dataset:
+                    stored_standalone_pairs.add((seed.value_sha256, dataset, standalone_key))
+                else:
+                    stored_standalone_hashes.add((seed.value_sha256, standalone_key))
         retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in retained_group_ids]
         stored_groups = (
             {
@@ -5091,22 +5101,12 @@ class MemoryInterface(abc.ABC):
                     copied_seed_ids.append((prompt, entry.id))
                 entries.append(entry)
                 continue
-            if prompt.prompt_group_id is not None:
-                # A singleton group (or a group already stored as a complete group) has no retained
-                # group ID; identify it by its full member identity instead of the standalone key.
-                member_key = self._seed_group_member_key(prompt)
-                if prompt.dataset_name:
-                    if (prompt.dataset_name, member_key) in stored_member_pairs:
-                        continue
-                elif member_key in stored_member_keys:
+            standalone_key = self._seed_standalone_key(prompt)
+            if prompt.dataset_name:
+                if (prompt.value_sha256, prompt.dataset_name, standalone_key) in stored_standalone_pairs:
                     continue
-            else:
-                standalone_key = self._seed_standalone_key(prompt)
-                if prompt.dataset_name:
-                    if (prompt.value_sha256, prompt.dataset_name, standalone_key) in stored_standalone_pairs:
-                        continue
-                elif (prompt.value_sha256, standalone_key) in stored_standalone_hashes:
-                    continue
+            elif (prompt.value_sha256, standalone_key) in stored_standalone_hashes:
+                continue
             entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
@@ -5150,7 +5150,7 @@ class MemoryInterface(abc.ABC):
     @staticmethod
     def _seed_standalone_key(seed: Seed[Any]) -> str:
         """
-        Identify a standalone seed by its type fields and behavioral inputs.
+        Identify a standalone seed by its execution fields and behavioral inputs.
 
         Returns:
             str: Canonical standalone identity.
@@ -5160,6 +5160,7 @@ class MemoryInterface(abc.ABC):
             {
                 "seed_type": entry.seed_type,
                 "data_type": entry.data_type,
+                "role": entry.role or "user",
                 "response_json_schema": getattr(seed, "response_json_schema", None),
                 "behavioral_parameters": SeedIdentifier.get_behavioral_parameters(seed),
             },
@@ -5171,7 +5172,7 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         seeds: Sequence[Seed[Any]],
-        existing_seeds: Sequence[tuple[str | None, Seed[Any]]],
+        existing_group_members: Sequence[tuple[uuid.UUID, str | None, str, uuid.UUID | None]],
     ) -> set[uuid.UUID]:
         """
         Retain multi-seed groups unless an equivalent complete group is already stored.
@@ -5189,10 +5190,8 @@ class MemoryInterface(abc.ABC):
             return set()
 
         matches: dict[tuple[str | None, str], dict[uuid.UUID, set[uuid.UUID | None]]] = {}
-        for dataset, seed in existing_seeds:
-            if seed.prompt_group_id is not None:
-                key = (dataset, self._seed_group_member_key(seed))
-                matches.setdefault(key, {}).setdefault(seed.prompt_group_id, set()).add(seed.id)
+        for group_id, dataset, member_key, seed_id in existing_group_members:
+            matches.setdefault((dataset, member_key), {}).setdefault(group_id, set()).add(seed_id)
 
         candidate_groups: dict[uuid.UUID, set[uuid.UUID]] = {}
         for group_id, members in members_by_group.items():
