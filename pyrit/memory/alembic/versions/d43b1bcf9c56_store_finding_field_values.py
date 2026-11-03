@@ -11,7 +11,7 @@ column. Finding IDs, Operation links, creation times, and evidence links do not 
 old columns only while no findings exist.
 
 Revision ID: d43b1bcf9c56
-Revises: c8d3e5f7a901
+Revises: e7c4a2d9f013
 Create Date: 2026-10-27 12:00:00.000000
 """
 
@@ -22,7 +22,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d43b1bcf9c56"
-down_revision: str | None = "c8d3e5f7a901"
+down_revision: str | None = "e7c4a2d9f013"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

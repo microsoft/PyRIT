@@ -44,7 +44,7 @@ class TestSystemPromptExtractionScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = SystemPromptExtractionScorer(excerpt_threshold=0.95)
-            scores = await scorer._score_piece_async(piece)
+            scores = await scorer._score_piece_with_expectation_async(piece, expectation=None)
 
         assert len(scores) == 1
         assert scores[0].score_type == "float_scale"
@@ -56,7 +56,7 @@ class TestSystemPromptExtractionScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = SystemPromptExtractionScorer()
-            scores = await scorer._score_piece_async(piece)
+            scores = await scorer._score_piece_with_expectation_async(piece, expectation=None)
 
         assert scores[0].get_value() == pytest.approx(0.0)
 
@@ -66,7 +66,7 @@ class TestSystemPromptExtractionScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = SystemPromptExtractionScorer()
-            scores = await scorer._score_piece_async(piece)
+            scores = await scorer._score_piece_with_expectation_async(piece, expectation=None)
 
         value = scores[0].get_value()
         assert 0.0 < value < 1.0
@@ -77,7 +77,7 @@ class TestSystemPromptExtractionScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = SystemPromptExtractionScorer()
-            scores = await scorer._score_piece_async(piece)
+            scores = await scorer._score_piece_with_expectation_async(piece, expectation=None)
 
         assert scores[0].get_value() == pytest.approx(0.0)
         assert "No system prompt" in scores[0].score_rationale
@@ -91,7 +91,7 @@ class TestSystemPromptExtractionScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = SystemPromptExtractionScorer(excerpt_threshold=0.9)
-            scores = await scorer._score_piece_async(piece)
+            scores = await scorer._score_piece_with_expectation_async(piece, expectation=None)
 
         assert scores[0].get_value() == pytest.approx(0.9)
         assert "excerpt" in scores[0].score_rationale.lower()
@@ -104,7 +104,7 @@ class TestSystemPromptExtractionScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = SystemPromptExtractionScorer(min_prompt_len=20, excerpt_threshold=0.95)
-            scores = await scorer._score_piece_async(piece)
+            scores = await scorer._score_piece_with_expectation_async(piece, expectation=None)
 
         assert scores[0].get_value() < 0.95
 
@@ -115,8 +115,14 @@ class TestSystemPromptExtractionScorer:
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             insensitive = SystemPromptExtractionScorer(case_sensitive=False)
             sensitive = SystemPromptExtractionScorer(case_sensitive=True)
-            insensitive_value = (await insensitive._score_piece_async(_assistant_piece(upper_response)))[0].get_value()
-            sensitive_value = (await sensitive._score_piece_async(_assistant_piece(upper_response)))[0].get_value()
+            insensitive_value = (
+                await insensitive._score_piece_with_expectation_async(
+                    _assistant_piece(upper_response), expectation=None
+                )
+            )[0].get_value()
+            sensitive_value = (
+                await sensitive._score_piece_with_expectation_async(_assistant_piece(upper_response), expectation=None)
+            )[0].get_value()
 
         assert insensitive_value == pytest.approx(0.95)
         assert sensitive_value < insensitive_value
@@ -128,7 +134,7 @@ class TestSystemPromptExtractionScorer:
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = SystemPromptExtractionScorer(n=4)
             with patch.object(ApproximateTextMatching, "get_overlap_score", return_value=0.42) as mock_overlap:
-                scores = await scorer._score_piece_async(piece)
+                scores = await scorer._score_piece_with_expectation_async(piece, expectation=None)
 
         mock_overlap.assert_called_once()
         assert mock_overlap.call_args.kwargs["target"] == SYSTEM_PROMPT
@@ -158,8 +164,12 @@ class TestSystemPromptExtractionScorer:
         memory = _memory_with_system_prompt(multiline_prompt)
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = SystemPromptExtractionScorer(n=4)
-            reflowed = await scorer._score_piece_async(_assistant_piece(reflowed_leak))
-            with_newlines = await scorer._score_piece_async(_assistant_piece(same_leak_with_newlines))
+            reflowed = await scorer._score_piece_with_expectation_async(
+                _assistant_piece(reflowed_leak), expectation=None
+            )
+            with_newlines = await scorer._score_piece_with_expectation_async(
+                _assistant_piece(same_leak_with_newlines), expectation=None
+            )
 
         # Neither response contains the whole prompt, so both take the n-gram path.
         assert reflowed[0].get_value() < scorer._excerpt_threshold
@@ -174,7 +184,7 @@ class TestSystemPromptExtractionScorer:
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = SystemPromptExtractionScorer(n=4)
             with patch.object(ApproximateTextMatching, "get_overlap_score", return_value=0.5) as mock_overlap:
-                await scorer._score_piece_async(_assistant_piece(response))
+                await scorer._score_piece_with_expectation_async(_assistant_piece(response), expectation=None)
 
         assert "\n" not in mock_overlap.call_args.kwargs["target"]
         assert "\n" not in mock_overlap.call_args.kwargs["text"]
@@ -186,7 +196,7 @@ class TestSystemPromptExtractionScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = SystemPromptExtractionScorer(categories=["system_prompt_extraction"])
-            scores = await scorer._score_piece_async(piece)
+            scores = await scorer._score_piece_with_expectation_async(piece, expectation=None)
 
         assert scores[0].score_category == ["system_prompt_extraction"]
 
@@ -218,6 +228,6 @@ class TestSystemPromptExtractionScorer:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = SystemPromptExtractionScorer(excerpt_threshold=excerpt_threshold)
-            scores = await scorer._score_piece_async(piece)
+            scores = await scorer._score_piece_with_expectation_async(piece, expectation=None)
 
         assert scores[0].get_value() == pytest.approx(excerpt_threshold)

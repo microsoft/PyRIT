@@ -5,6 +5,8 @@ import { decodeBlobErrorAsync, toApiError } from './errors'
 import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
+  ApplyChatScorerRequest,
+  ApplyChatScorerResponse,
   TargetInstance,
   UnregisteredTarget,
   UnregisteredConverter,
@@ -66,7 +68,8 @@ import type {
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
-  PairedOutcomeStatistics,
+  ScenarioHierarchyNode,
+  ScenarioHierarchyProjection,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -472,6 +475,9 @@ export const initializersApi = {
 }
 
 export const attacksApi = {
+  applyScorer: async (attackResultId: string, request: ApplyChatScorerRequest): Promise<ApplyChatScorerResponse> => {
+    return (await apiClient.post(`/attacks/${encodeURIComponent(attackResultId)}/apply-scorer`, request)).data
+  },
   saveConversation: async (request: SaveConversationRequest): Promise<AddMessageResponse> => {
     const response = await apiClient.post('/attacks/save-conversation', request)
     return response.data
@@ -695,6 +701,7 @@ export const scenariosApi = {
     return response.data
   },
 
+  /** Lists scenario runs by creation time by default or by activity when requested. */
   listRuns: async (params?: {
     limit?: number
     cursor?: string
@@ -702,6 +709,8 @@ export const scenariosApi = {
     run_statuses?: ScenarioRunState[]
     label?: string[]
     operation_id?: string[]
+    reference_id?: string
+    sort_by?: 'created_at' | 'activity'
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,
@@ -724,13 +733,36 @@ export const scenariosApi = {
     return response.data
   },
 
-  getPairedOutcomes: async (
+  getLaunchConfiguration: async (scenarioResultId: string, signal?: AbortSignal): Promise<RunScenarioRequest> =>
+    (await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/launch-configuration`, { signal })).data,
+
+  getRunConversation: async (scenarioResultId: string, conversationId: string): Promise<ConversationMessagesResponse> =>
+    (await apiClient.get(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/conversations/${encodeURIComponent(conversationId)}`,
+    )).data,
+
+  /** Loads one page of hierarchy roots. `cursor` continues roots only, never a node's children. */
+  getRunHierarchy: async (
     scenarioResultId: string,
-    params: { baseline_group_id: string; attack_group_id: string },
+    params?: { max_nodes?: number; cursor?: string },
     signal?: AbortSignal,
-  ): Promise<PairedOutcomeStatistics> => {
-    const response = await apiClient.get<PairedOutcomeStatistics>(
-      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes`,
+  ): Promise<ScenarioHierarchyProjection> => {
+    const response = await apiClient.get<ScenarioHierarchyProjection>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  /** Loads one page of a node's saved children, continued with that node's `next_children_cursor`. */
+  getRunHierarchyNode: async (
+    scenarioResultId: string,
+    attackResultId: string,
+    params?: { limit?: number; children_cursor?: string },
+    signal?: AbortSignal,
+  ): Promise<ScenarioHierarchyNode> => {
+    const response = await apiClient.get<ScenarioHierarchyNode>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy/nodes/${encodeURIComponent(attackResultId)}`,
       { params, signal },
     )
     return response.data

@@ -13,6 +13,15 @@ Your choice is saved in this browser. System follows the operating system's
 light/dark preference. High-contrast mode overrides every palette and hides
 decorations without forgetting the selected preset.
 
+## Contextual help
+
+Hover over a term or field label to read its explanation. Its information
+button also opens the help with a click, tap, or Enter/Space. Press Escape
+to dismiss it. Label clicks still focus the field. Field descriptions remain
+available to assistive technology while the help is closed. Required markers,
+validation errors, input-format guidance, and unavailable-estimate reasons
+stay visible.
+
 ## Conversation selection
 
 Opening a saved attack with related conversations automatically opens the
@@ -268,7 +277,6 @@ npm run test:coverage # Run with coverage report (85%+ threshold)
 # End-to-End Tests (Playwright)
 npm run test:e2e          # Run headless (default local setup uses dev.py)
 npm run test:e2e:headed   # Run with visible browser windows (requires display)
-npm run test:e2e:paired-outcomes # Real SQLite/API paired-outcome acceptance tests
 npm run test:e2e:ui       # Interactive UI mode (requires display)
 ```
 

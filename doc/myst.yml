@@ -42,6 +42,18 @@ project:
         - "http://api.openai.com/**"
         - "https://cognitiveservices.azure.com/**"
         - "https://www.youtube.com/watch?v=jq9DcEL3cHE"
+    # Wikimedia's robot policy returns 403 to automated link checks. Keep the
+    # canonical attribution URL and limit the exception to this source image.
+    - rule: link-resolves
+      severity: ignore
+      keys:
+        - "https://commons.wikimedia.org/wiki/File:Gorch_Fock_unter_Segeln_Kieler_Foerde_2006.jpg"
+    # The live crates.io homepage rejects automated requests with 403/404.
+    # Do not exclude package pages or other registry URLs.
+    - rule: link-resolves
+      severity: ignore
+      keys:
+        - "https://crates.io"
   toc:
     - file: index.md
     - file: security.md

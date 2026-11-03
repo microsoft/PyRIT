@@ -20,7 +20,7 @@ from sqlalchemy.schema import CreateTable
 from pyrit.memory.memory_models import FindingEntry
 from pyrit.memory.migration import check_schema_migrations
 
-PREVIOUS_REVISION = "c8d3e5f7a901"
+PREVIOUS_REVISION = "e7c4a2d9f013"
 REVISION = "d43b1bcf9c56"
 CHECKS = ("ck_findings_severity", "ck_findings_severity_other", "ck_findings_harm_type_other")
 OPERATION_ID = "00000000-0000-0000-0000-000000000001"
@@ -192,7 +192,7 @@ def test_upgrade_compiles_for_sql_server() -> None:
     with Operations.context(context):
         _migration().upgrade()
     ddl = output.getvalue()
-    assert _migration().down_revision == "c8d3e5f7a901"
+    assert _migration().down_revision == "e7c4a2d9f013"
     for name in CHECKS:
         assert f"DROP CONSTRAINT {name}" in ddl
     drops = [match.start() for match in re.finditer("DROP CONSTRAINT", ddl)]
