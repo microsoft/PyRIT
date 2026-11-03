@@ -437,6 +437,12 @@ export default function ChatWindow({
   const undoInFlight = useRef(false)
 
   const handoffRestoredRef = useRef<number | null>(null)
+  // An accepted send restored before its prompt reached history; kept until the composer changes.
+  const restoredAcceptedSendRef = useRef<{
+    submissionId: string
+    conversationId: string | null
+    draftRevision?: number
+  } | null>(null)
   const importInFlightRef = useRef<string | null>(null)
   const importFailedRef = useRef<string | null>(null)
   const importMountedRef = useRef(true)
@@ -653,6 +659,7 @@ export default function ChatWindow({
       preserveOnUnmountRef.current = null
       ownsDraftRef.current = false
       handoffRestoredRef.current = null
+      restoredAcceptedSendRef.current = null
       lastTextRef.current = ''
       lastAttachmentsSignatureRef.current = ''
       inputBoxRef.current?.detachDraft()
@@ -693,6 +700,12 @@ export default function ChatWindow({
     isActiveDraftDirtyRef.current = isActiveDraftDirty
     if (isDraftDestinationReady || isActiveDraftDirty) ownsDraftRef.current = true
     const savedDraft = { ...activeDraft, textMetadata: inputBoxRef.current?.getTextMetadata() }
+    // The composer handle is detached before the unmount callback runs, so read its revision now.
+    const composerRevision = inputBoxRef.current?.getDraftRevision()
+    const restoredAcceptedSend = restoredAcceptedSendRef.current
+    if (restoredAcceptedSend && restoredAcceptedSend.draftRevision === undefined) {
+      restoredAcceptedSend.draftRevision = composerRevision
+    }
     const preservedForThis = draftHandoff.getPreservedDraft(draftAttackId, draftConversationId)
     const isWaitingForRestore = matchingPreservedDraft !== null
       && handoffRestoredRef.current !== preservedForThis?.sequence
@@ -711,8 +724,13 @@ export default function ChatWindow({
       const acceptedSubmissionId = operation?.progress
         && operation.originalValue === savedDraft.text
         && getLatestSendId() === operation.submissionId
+        && operation.draftRevision === composerRevision
         ? operation.submissionId
-        : undefined
+        : restoredAcceptedSend
+          && restoredAcceptedSend.conversationId === draftConversationId
+          && restoredAcceptedSend.draftRevision === composerRevision
+          ? restoredAcceptedSend.submissionId
+          : undefined
       draftHandoff.preserveDraft({
         originatingAttackId: draftAttackId,
         originatingConversationId: draftConversationId,
@@ -810,8 +828,18 @@ export default function ChatWindow({
             .map((piece: BackendMessagePiece) => piece.original_value)
             .filter((value: string | null | undefined): value is string => Boolean(value))),
       )
+      restoredAcceptedSendRef.current = consumed.acceptedSubmissionId && !completedAcceptedSend
+        ? { submissionId: consumed.acceptedSubmissionId, conversationId: draftConversationId }
+        : null
+      // Match a normal completed send: keep converter pipelines, clear only their working state.
       draft = completedAcceptedSend
-        ? { ...consumed, text: '', attachments: [], textMetadata: undefined, converters: undefined, acceptedSubmissionId: undefined, systemPrompt: consumed.systemPrompt ?? '' }
+        ? {
+          ...consumed, text: '', attachments: [], textMetadata: undefined, acceptedSubmissionId: undefined,
+          converters: consumed.converters && {
+            ...consumed.converters, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
+          },
+          systemPrompt: consumed.systemPrompt ?? '',
+        }
         : { ...consumed, systemPrompt: consumed.systemPrompt ?? '' }
       if (consumed.conversation) {
         let editorTarget: TargetInstance | null = consumed.conversation.target === null ? null : activeTarget
@@ -842,6 +870,7 @@ export default function ChatWindow({
     } else {
       if (!canApplyImportNow || !pending) return
       if (importInFlightRef.current === pending.id || importFailedRef.current === pending.id) return
+      restoredAcceptedSendRef.current = null
 
       const executeImportHandoff = async (): Promise<void> => {
         const snapshotGeneration = runtime.generation
